@@ -5,6 +5,7 @@ import hashlib
 import logging
 import uuid
 from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from dataclasses import fields, is_dataclass
 from inspect import isroutine
 from pathlib import PurePath
@@ -31,38 +32,86 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-def _reject_unordered_template_values(
-    value: Any, *, parameter_name: str, enclosing: frozenset[int] = frozenset()
-) -> None:
-    """Reject unordered containers whose rendering and identifier can vary between runs."""
-    if isinstance(value, (set, frozenset)):
-        raise ValueError(
-            f"Template parameter {parameter_name!r} contains a set or frozenset. "
-            "Use an ordered list or tuple for reproducible rendering and identifiers."
-        )
+
+def _reproducible_order(items: Iterable[Any]) -> list[Any]:
+    """
+    Sort set items in an order that does not depend on ``PYTHONHASHSEED``.
+
+    Args:
+        items (Iterable[Any]): The items of a set.
+
+    Returns:
+        list[Any]: Strings or integers sorted by value, and any other items sorted by their description.
+    """
+    items = list(items)
+    if all(type(item) is str for item in items) or all(type(item) is int for item in items):
+        return sorted(items)
+    return sorted(items, key=_describe_template_value)
+
+
+class _OrderedSet(set):
+    """A ``set`` that iterates, and so renders, in a reproducible order."""
+
+    __slots__ = ()
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(_reproducible_order(super().__iter__()))
+
+    def __repr__(self) -> str:
+        return f"{{{', '.join(map(repr, self))}}}" if self else "set()"
+
+
+class _OrderedFrozenSet(frozenset):
+    """A ``frozenset`` that iterates, and so renders, in a reproducible order."""
+
+    __slots__ = ()
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(_reproducible_order(super().__iter__()))
+
+    def __repr__(self) -> str:
+        return f"frozenset({{{', '.join(map(repr, self))}}})" if self else "frozenset()"
+
+
+def _order_template_sets(value: Any, *, enclosing: frozenset[int] = frozenset()) -> Any:
+    """
+    Replace sets with copies that iterate in a reproducible order.
+
+    Set iteration order depends on ``PYTHONHASHSEED``, so a template that prints or loops over a set
+    would otherwise render a different prompt, and get a different identifier, in each process.
+    Sets nested in lists, tuples and dictionaries are replaced too, by copying the containers that
+    hold them. Other values, including subclasses of these types, are returned unchanged.
+
+    Args:
+        value (Any): The template parameter value.
+        enclosing (frozenset[int]): Ids of the containers being copied, to stop at self-references.
+
+    Returns:
+        Any: The value with its sets ordered, or the value itself if it holds no sets.
+    """
     if id(value) in enclosing:
-        return
+        return value
     nested = enclosing | {id(value)}
 
-    def check(item: Any) -> None:
-        _reject_unordered_template_values(item, parameter_name=parameter_name, enclosing=nested)
+    def order(item: Any) -> Any:
+        return _order_template_sets(item, enclosing=nested)
 
-    if is_dataclass(value) and not isinstance(value, type):
-        for item in fields(value):
-            check(getattr(value, item.name))
-    if isinstance(value, dict):
-        for key, item in value.items():
-            check(key)
-            check(item)
-    elif isinstance(value, (list, tuple)):
-        for item in value:
-            check(item)
-
-    attributes = getattr(value, "__dict__", None)
-    if isinstance(attributes, dict):
-        for item in attributes.values():
-            check(item)
-
+    if type(value) is set:
+        return _OrderedSet(map(order, value))
+    if type(value) is frozenset:
+        return _OrderedFrozenSet(map(order, value))
+    if type(value) in (list, tuple):
+        items = [order(item) for item in value]
+        changed = any(new is not old for new, old in zip(items, value, strict=True))
+        return type(value)(items) if changed else value
+    if type(value) is dict:
+        entries = [(order(key), order(item)) for key, item in value.items()]
+        changed = any(
+            new_key is not key or new_item is not item
+            for (new_key, new_item), (key, item) in zip(entries, value.items(), strict=True)
+        )
+        return dict(entries) if changed else value
+    return value
 
 
 def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozenset()) -> str:
@@ -181,22 +230,19 @@ class LLMGenericTextConverter(Converter):
             kwargs: Additional parameters forwarded to both the system prompt and user prompt templates
                 during rendering. Their constructor-time state contributes to the identifier, including
                 container iteration order, path flavor and object fields. Parameters should remain static
-                after construction. Sets and frozensets are not accepted, including when nested inside
-                other parameters, because their iteration order can vary between processes. Pass an ordered
-                list or tuple instead. The incoming prompt supplies ``objective`` at render time.
+                after construction. Sets and frozensets, including those nested in lists, tuples and
+                dictionaries, are rendered in a reproducible order so that the prompt and identifier do not
+                change between processes. The incoming prompt supplies ``objective`` at render time.
 
         Raises:
             ValueError: If converter_target is not provided and no default has been configured.
             ValueError: If ``user_prompt_template_with_objective`` does not declare an ``objective``
                 parameter.
-            ValueError: If a template parameter contains an unordered set or frozenset.
         """
-        for name, value in kwargs.items():
-            _reject_unordered_template_values(value, parameter_name=name)
-
         super().__init__(converter_target=converter_target)
         self._converter_target = converter_target
         self._system_prompt_template = system_prompt_template
+        kwargs = {name: _order_template_sets(value) for name, value in kwargs.items()}
         self._prompt_kwargs = kwargs
         # Some subclasses add per-call values (such as the current prompt) to ``_prompt_kwargs``
         # before converting, so the identifier is based on the parameters given here only.
