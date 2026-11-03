@@ -336,7 +336,9 @@ export interface TargetPreferences {
 export type OperationSelection = { readonly id: string } | { readonly name: string }
 
 export interface UserPreferences {
-  readonly targets: TargetPreferences
+  readonly targets: Pick<TargetPreferences, 'adversarial'>
+  readonly lastUsedTargets?: TargetPreferences
+  readonly lastUsedChatScorer?: RegisteredComponentReference | null
   readonly hiddenTargetRegistryNames: string[]
   readonly labels: Record<string, string | null>
   /** Omitted to use the server default; null when the user cleared the selection. */
@@ -1214,6 +1216,7 @@ export interface MultiSendOptions {
 export interface MessageSendConversation {
   conversation_id: string
   request_turn_number: number | null
+  target_invoked?: boolean
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
@@ -1226,6 +1229,11 @@ export interface MessageSendStatus extends MessageSendConversation {
   attack_result_id: string
   count?: number
   conversations?: MessageSendConversation[]
+}
+
+export interface MessageSendObservation {
+  readProgress: (refresh?: boolean) => Promise<MessageSendStatus>
+  readAttack: (refresh?: boolean) => Promise<AttackSummary>
 }
 
 export interface AttackListResponse {

@@ -3509,6 +3509,7 @@ class TestAsyncMessageSend:
         assert status.state == MessageSendState.FAILED
         assert status.failure_stage == MessageSendFailureStage.PREPARATION
         assert status.error
+        assert not status.target_invoked
 
     @pytest.mark.parametrize("count", [1, 3])
     @pytest.mark.parametrize("failure", ["conversion", "normalization", "validation", "target", "metadata"])
@@ -3546,10 +3547,49 @@ class TestAsyncMessageSend:
         )
         pieces = await sqlite_instance.get_message_pieces_async(conversation_id=ar.conversation_id)
         assert len(pieces) == (2 if failure in ("target", "metadata") else 0)
+        receipts = status.conversations or [status]
+        assert all(progress.target_invoked == (failure in ("target", "metadata")) for progress in receipts)
         if failure == "target":
             assert pieces[-1].response_error == "processing"
         assert not service._scheduler._conversations
         assert request.pieces[0].original_value == "Hello"
+
+    @pytest.mark.parametrize("count", [1, 3])
+    async def test_interrupted_preparation_retains_uninvoked_receipt_after_turn_allocation_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        count: int,
+    ) -> None:
+        service, attack, target, converter = real_send_context
+        preparing = asyncio.Event()
+
+        async def hold_conversion_async(**_: Any) -> None:
+            preparing.set()
+            await asyncio.Event().wait()
+
+        request = _submission(conversation_id=attack.conversation_id, count=count)
+        request.request_converter_mode = RequestConverterMode.PER_BRANCH
+        request.request_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
+        with (
+            patch.object(converter, "convert_async", side_effect=hold_conversion_async),
+            patch.object(target, "_send_prompt_to_target_async", wraps=target._send_prompt_to_target_async) as send,
+        ):
+            status = await service.submit_async(attack_result_id=attack.attack_result_id, request=request)
+            try:
+                task = service._sends[status.send_id].task
+                assert task is not None
+                await wait_for_event_async(event=preparing, tasks=[task])
+                during = await service.get_status_async(
+                    attack_result_id=attack.attack_result_id, send_id=status.send_id
+                )
+                assert any(progress.request_turn_number is not None for progress in (during.conversations or [during]))
+            finally:
+                await service.shutdown_async()
+            final = await service.get_status_async(attack_result_id=attack.attack_result_id, send_id=status.send_id)
+            assert final.state == MessageSendState.INTERRUPTED
+            assert all(not progress.target_invoked for progress in (final.conversations or [final]))
+            send.assert_not_called()
 
     @pytest.mark.parametrize("preflight_method", ["_get_normalized_conversation_async", "_validate_request"])
     async def test_preflight_retry_preserves_history_and_provider_boundary_async(
@@ -3662,6 +3702,8 @@ class TestAsyncMessageSend:
         status = await message_send_service.get_status_async(attack_result_id="attack", send_id=status.send_id)
         assert status.state == MessageSendState.INTERRUPTED
         assert status.failure_stage == MessageSendFailureStage.INTERRUPTED
+        receipts = status.conversations or [status]
+        assert all(progress.target_invoked == (not before_start) for progress in receipts)
         assert not message_send_service._scheduler._conversations
         for operation in [
             message_send_service.submit_async(attack_result_id="attack", request=_submission()),

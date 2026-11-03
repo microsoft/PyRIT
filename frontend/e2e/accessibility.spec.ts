@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from "./_fixtures";
+import { test, expect, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
@@ -123,13 +123,7 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Save an objective default, then open a new chat with that target.
-    await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
-    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
-    await objectiveDefault.selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await selectChatTarget(page, "a11y-form-target");
 
     // Input should be accessible
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
@@ -266,13 +260,7 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Save an objective default, then open a new chat with that target.
-    await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
-    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
-    await objectiveDefault.selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await selectChatTarget(page, "a11y-focus-target");
 
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await expect(input).toBeEnabled({ timeout: 5000 });

@@ -171,8 +171,9 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
         </div>
       </div>
       <div className={scorerStyles.defaultPicker}>
-        <ChatScorerPicker label="Default objective scorer for chats" value={preferences.chatScorer ?? null}
+        <ChatScorerPicker label="Default objective scorer for chats" value={preferences.chatScorer}
           scorers={scorers} loading={loading} error={error}
+          onUseLastUsed={() => updatePreferences((current) => ({ ...current, chatScorer: undefined }))}
           onChange={(chatScorer: RegisteredComponentReference | null) => updatePreferences((current) => ({ ...current, chatScorer }))} />
       </div>
       <Divider className={scorerStyles.separator} aria-label="Scorer registry" />
