@@ -293,6 +293,8 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   useEffect(() => () => { openEpochRef.current += 1 }, [])
   // Bumped on type change; a failure from the previous type's form names no field.
   const typeSelectionRef = useRef(0)
+  // Fields edited since the last submit; a late failure is not attributed to them.
+  const editedSinceSubmitRef = useRef(new Set<string>())
   const advancedSettingsRef = useRef<HTMLDetailsElement>(null)
 
   // Keyed on the attempt only, so editing an attributed field doesn't steal focus back.
@@ -535,6 +537,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
   // Editing the attributed field un-marks it; the summary stays until the next submit.
   const clearFieldAttribution = (field: string) => {
+    editedSinceSubmitRef.current.add(field)
     setError((current) => (
       current?.field === field ? { ...current, field: undefined } : current
     ))
@@ -585,6 +588,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     fieldFor: (apiError: ApiError) => string | null = () => null,
   ) => {
     const epoch = openEpochRef.current
+    editedSinceSubmitRef.current.clear()
     submittingRef.current = true
     setSubmitting(true)
     setError(null)
@@ -596,7 +600,10 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     } catch (err) {
       // Surface the backend's RFC 7807 `detail` rather than axios's generic message.
       const apiError = toApiError(err)
-      if (openEpochRef.current === epoch) reportError(apiError.detail, fieldFor(apiError))
+      if (openEpochRef.current === epoch) {
+        const field = fieldFor(apiError)
+        reportError(apiError.detail, field && !editedSinceSubmitRef.current.has(field) ? field : null)
+      }
     } finally {
       if (openEpochRef.current === epoch) {
         submittingRef.current = false

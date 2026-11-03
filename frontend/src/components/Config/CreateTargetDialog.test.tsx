@@ -2891,7 +2891,7 @@ describe("submit error accessibility (#3710)", () => {
     expect(invalidControls()).toHaveLength(0);
   });
 
-  describe("loop 2 audit edge cases", () => {
+  describe("late responses and edge cases", () => {
     function deferredCreateSuccess() {
       let resolve: (value: CreateTargetResult) => void = () => {};
       const promise = new Promise<CreateTargetResult>((resolvePromise) => {
@@ -3020,6 +3020,73 @@ describe("submit error accessibility (#3710)", () => {
 
       await expectSummaryFocused("endpoint is unreachable");
       expect(invalidControls()).toHaveLength(0);
+    });
+
+    it("does not attribute a late rejection to a parameter edited while the request was pending", async () => {
+      const user = userEvent.setup();
+      const create = deferredCreate();
+      render(dialogTree());
+
+      const httpRequestField = await fillHttpTarget();
+      await user.click(getCreateButton());
+      await waitFor(() => {
+        expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+      });
+
+      fireEvent.change(httpRequestField, { target: { value: "GET / HTTP/1.1" } });
+      await act(async () => {
+        create.reject(axiosError(400, HTTP_ERROR));
+      });
+
+      await expectSummaryFocused(HTTP_ERROR);
+      expect(httpRequestField).not.toHaveAttribute("aria-invalid", "true");
+      expect(invalidControls()).toHaveLength(0);
+    });
+
+    it("does not attribute a late rejection to a client field edited while the request was pending", async () => {
+      const user = userEvent.setup();
+      const create = deferredCreate();
+      render(dialogTree());
+
+      await selectTargetType("OpenAIChatTarget");
+      const endpointField = screen.getByPlaceholderText("https://your-resource.openai.azure.com/");
+      fireEvent.change(endpointField, { target: { value: "https://example.com" } });
+      await user.click(getCreateButton());
+      await waitFor(() => {
+        expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+      });
+
+      fireEvent.change(endpointField, { target: { value: "https://fixed.openai.azure.com/" } });
+      await act(async () => {
+        create.reject(axiosError(400, "endpoint is unreachable"));
+      });
+
+      await expectSummaryFocused("endpoint is unreachable");
+      expect(invalidControls()).toHaveLength(0);
+    });
+
+    it("still attributes a late rejection when only a different field was edited", async () => {
+      const user = userEvent.setup();
+      const create = deferredCreate();
+      render(dialogTree());
+
+      await selectTargetType("OpenAIChatTarget");
+      const endpointField = screen.getByPlaceholderText("https://your-resource.openai.azure.com/");
+      fireEvent.change(endpointField, { target: { value: "https://example.com" } });
+      await user.click(getCreateButton());
+      await waitFor(() => {
+        expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
+      });
+
+      fireEvent.change(screen.getByPlaceholderText("e.g. gpt-4o, my-deployment"), {
+        target: { value: "gpt-4o" },
+      });
+      await act(async () => {
+        create.reject(axiosError(400, "endpoint is unreachable"));
+      });
+
+      await expectSummaryFocused("endpoint is unreachable");
+      expect(endpointField).toHaveAttribute("aria-invalid", "true");
     });
 
     // An attributed optional parameter opens Advanced settings, and it stays open.
