@@ -101,11 +101,15 @@ class AudioFrequencyConverter(Converter):
                 samples=data.astype(np.float64) - midpoint, sample_rate=sample_rate
             )
 
-            # Keep the input sample format so integer audio isn't rescaled or wrapped.
-            output_data = shifted_data + midpoint
+            # Keep the input sample format so integer audio isn't wrapped. The one-way shift can raise
+            # peaks above the input's, and clipping them would add distortion that lands back in the
+            # audible band, so output that would not fit is scaled down just enough instead.
             if np.issubdtype(data.dtype, np.integer):
                 info = np.iinfo(data.dtype)
-                output_data = np.clip(output_data, info.min, info.max)
+                shifted_data = _fit_within(samples=shifted_data, upper=info.max - midpoint, lower=info.min - midpoint)
+                output_data = np.clip(shifted_data + midpoint, info.min, info.max)
+            else:
+                output_data = shifted_data + midpoint
             output_data = output_data.astype(data.dtype)
 
             # Write to a fresh buffer so a shorter output cannot retain input bytes.
@@ -148,3 +152,25 @@ class AudioFrequencyConverter(Converter):
         if upsampled.ndim > 1:
             phase = phase[:, np.newaxis]
         return output_rate, np.real(signal.hilbert(upsampled, axis=0) * phase)
+
+
+def _fit_within(*, samples: np.ndarray, upper: float, lower: float) -> np.ndarray:
+    """
+    Scale samples down uniformly so that none exceeds the given bounds.
+
+    Args:
+        samples (np.ndarray): Zero-centred samples.
+        upper (float): The largest allowed value, at least zero.
+        lower (float): The smallest allowed value, at most zero.
+
+    Returns:
+        np.ndarray: The samples unchanged when they already fit, otherwise scaled by one factor.
+    """
+    scale = 1.0
+    peak = samples.max(initial=0.0)
+    trough = samples.min(initial=0.0)
+    if peak > upper:
+        scale = min(scale, upper / peak)
+    if trough < lower:
+        scale = min(scale, lower / trough)
+    return samples if scale == 1.0 else samples * scale

@@ -115,6 +115,27 @@ async def test_default_shift_moves_tone_above_hearing_without_audible_peaks_asyn
     assert spectrum[audible].max() < 1e-3 * spectrum.max()
 
 
+@pytest.mark.usefixtures("sqlite_instance")
+@pytest.mark.parametrize(("dtype", "midpoint", "amplitude"), [(np.int16, 0, 32767), (np.uint8, 128, 127)])
+async def test_full_scale_input_is_scaled_instead_of_clipped_async(
+    tmp_path: Path, dtype: type[np.integer], midpoint: int, amplitude: int
+) -> None:
+    """Shifted peaks above full scale are scaled to fit, so clipping cannot add audible distortion."""
+    square = amplitude * np.sign(np.sin(2 * np.pi * _TONE_HZ * np.arange(16000) / 16000))
+    source = tmp_path / "square.wav"
+    await asyncio.to_thread(wavfile.write, source, 16000, (midpoint + square).astype(dtype))
+
+    result = await AudioFrequencyConverter().convert_async(prompt=str(source))
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+
+    centred = output.astype(np.float64) - midpoint
+    spectrum = np.abs(np.fft.rfft(centred * np.hanning(len(centred))))
+    frequencies = np.fft.rfftfreq(len(centred), d=1 / rate)
+    audible = (frequencies >= 20) & (frequencies < 20000)
+    assert output.dtype == dtype
+    assert spectrum[audible].max() < 1e-3 * spectrum.max()
+
+
 def test_init_rejects_negative_shift_value() -> None:
     with pytest.raises(ValueError, match="shift_value must be zero or positive"):
         AudioFrequencyConverter(shift_value=-1)
