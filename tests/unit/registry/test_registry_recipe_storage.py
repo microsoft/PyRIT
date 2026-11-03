@@ -115,14 +115,16 @@ class TestRegistryRecipeStorageListing:
         assert (failure.name, failure.reason) == ("deep", RestoreFailureReason.INVALID_RECIPE)
         assert list(listing.recipes) == ["contoso_gpt4o"]
 
-    def test_reports_a_technique_description_over_the_limit(self, tmp_path: Path) -> None:
-        document = {"type": "RedTeamingAttack", "description": "x" * 100_001}
-        _write(tmp_path / "techniques", "long_description", json.dumps(document))
+    def test_limits_a_technique_description_like_the_create_request(self, tmp_path: Path) -> None:
+        folder = tmp_path / "techniques"
+        _write(folder, "at_limit", json.dumps({"type": "RedTeamingAttack", "description": "x" * 100_000}))
+        _write(folder, "over_limit", json.dumps({"type": "RedTeamingAttack", "description": "x" * 100_001}))
 
         listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TECHNIQUES, source=str(tmp_path)).list_recipes()
 
+        assert list(listing.recipes) == ["at_limit"]
         (failure,) = listing.failures
-        assert (failure.name, failure.reason) == ("long_description", RestoreFailureReason.INVALID_RECIPE)
+        assert (failure.name, failure.reason) == ("over_limit", RestoreFailureReason.INVALID_RECIPE)
         assert "description" in failure.message
 
     def test_reports_a_newer_schema_version_before_checking_fields(self, tmp_path: Path) -> None:
