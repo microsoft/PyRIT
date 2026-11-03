@@ -4,7 +4,7 @@
 import re
 from typing import cast
 
-from pyrit.models import ComponentIdentifier, MessagePiece, Score, config_hash
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation, config_hash
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -103,17 +103,20 @@ class RegexScorer(MessageTrueFalseScorer):
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Check text against all patterns. Returns True if any pattern matches.
 
         Args:
             message_piece (MessagePiece): The message piece to evaluate.
-            objective (str | None): The objective to evaluate against. Defaults to None.
+            expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
 
         Returns:
             list[Score]: A list containing a single Score with True if any pattern matched.
         """
+        objective = expectation.objective if expectation else None
         text = message_piece.converted_value
         matched: list[str] = [name for name, pattern in self._compiled.items() if pattern.search(text)]
 

@@ -40,6 +40,7 @@ import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import ParameterField from '@/components/Parameters/ParameterField'
@@ -499,7 +500,7 @@ function ScenarioDetailStateFrame({ children }: ScenarioDetailStateFrameProps) {
   return (
     <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
+        <Link to="/scanner/launch" className={styles.backLink}>
           <ArrowLeftRegular /> Back to scanners
         </Link>
         {children}
@@ -649,7 +650,7 @@ function ScenarioDetailContent({
         <div className={styles.centeredState} data-testid="preset-not-found">
           <Text size={400}>Preset &quot;{presetName}&quot; was not found</Text>
           <Text size={200}>It may have been renamed or deleted.</Text>
-          <Link to={`/scanner/${encodeURIComponent(decodedScenarioName)}`}>
+          <Link to={`/scanner/launch/${encodeURIComponent(decodedScenarioName)}`}>
             Open {decodedScenarioName} without a preset
           </Link>
         </div>
@@ -742,6 +743,7 @@ function ScenarioLaunchForm({
   scorersError = null,
 }: ScenarioLaunchFormProps) {
   const runtime = useRuntime()
+  const { rememberScanTargets } = useUserPreferences()
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
   const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(null)
@@ -1256,6 +1258,7 @@ function ScenarioLaunchForm({
 
     try {
       const summary = await scenariosApi.startRun(requestResult.request)
+      rememberScanTargets(targets, requestResult.request)
       datasetMetadata.reload()
       setPreviewOpen(false)
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {
@@ -1363,12 +1366,12 @@ function ScenarioLaunchForm({
       aria-labelledby="scenario-detail-title"
     >
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
+        <Link to="/scanner/launch" className={styles.backLink}>
           <ArrowLeftRegular /> Back to scanners
         </Link>
 
         <div className={styles.headerText}>
-          <Text id="scenario-detail-title" as="h1" size={600} weight="semibold">
+          <Text id="scenario-detail-title" as="h2" size={600} weight="semibold">
             {scenario.scenario_name}
           </Text>
         </div>

@@ -14,7 +14,7 @@ from markdown_it.common.utils import normalizeReference
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin
 
 if TYPE_CHECKING:
-    from pyrit.models import MessagePiece, Score
+    from pyrit.models import MessagePiece, Score, ScoringExpectation
 
 _INLINE = "Markdown Image (inline)"
 _REFERENCE = "Markdown Image (reference)"
@@ -179,17 +179,20 @@ class MarkdownInjectionScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     }
     _DEFAULT_CATEGORIES: tuple[str, ...] = ("security",)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Check text against all patterns, and follow images across lines for default image patterns.
 
         Args:
             message_piece (MessagePiece): The message piece to evaluate.
-            objective (str | None): The objective to evaluate against. Defaults to None.
+            expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
 
         Returns:
             list[Score]: A list containing a single Score with True if any pattern matched.
         """
+        objective = expectation.objective if expectation else None
         text = message_piece.converted_value
         followed = {name for name, pattern in _IMAGE_PATTERNS.items() if self._patterns.get(name) == pattern}
         found = _find_images(text) & followed if followed else set()

