@@ -433,6 +433,7 @@ class TestRestoreFailures:
                 "ValueError: got 'https://host/v1 (rest hidden because it may include a credential)",
             ),
             ("?sig=SECRET", "ValueError (message hidden because it may include a credential)"),
+            (" \t?sig=SECRET", "ValueError (message hidden because it may include a credential)"),
             ("could not be coerced to float: 'hot'", "ValueError: could not be coerced to float: 'hot'"),
             (
                 "Missing required parameters: ['objective_target']",
@@ -448,6 +449,14 @@ class TestRestoreFailures:
                 "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
             ),
             ("contact admin@example.com", "ValueError (message hidden because it may include a credential)"),
+            (
+                "could not convert '\uff10\uff0e\uff15' or 10\u00b3",
+                "ValueError: could not convert '\uff10\uff0e\uff15' or 10\u00b3",
+            ),
+            (
+                "got '\uff15' at https://host/v1\ufe56sig=SECRET",
+                "ValueError: got '\uff15' at https://host/v1 (rest hidden because it may include a credential)",
+            ),
         ],
     )
     def test_safe_messages_drop_queries_fragments_and_user_info(self, text: str, expected: str) -> None:
@@ -464,8 +473,8 @@ class TestRestoreFailures:
         class KeepEverything(str):
             __slots__ = ()
 
-            def split(self, *args: Any, **kwargs: Any) -> list[str]:
-                return [self]
+            def __getitem__(self, key: Any) -> str:
+                return str.__str__(self)
 
         class Exploding(str):
             __slots__ = ()
@@ -486,6 +495,22 @@ class TestRestoreFailures:
 
         assert keep == "QuotingError: got https://host/v1 (rest hidden because it may include a credential)"
         assert exploding == "QuotingError: got https://host/v1"
+
+    def test_reports_a_reference_name_that_is_not_valid_text(self, tmp_path: Path) -> None:
+        _save_text(
+            tmp_path,
+            RegistryRecipeKind.TARGETS,
+            "pool",
+            '{"class_module": "pyrit.prompt_target.round_robin_target", "class_name": "RoundRobinTarget", '
+            '"params": {"targets": ["ghost\\ud800"]}}',
+        )
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert failure.reason is RestoreFailureReason.MISSING_DEPENDENCY
+        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\\ud800")
+        json.dumps(report.model_dump(mode="json"), ensure_ascii=False).encode("utf-8")
 
     def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
         attack_registry = AttackRegistry.get_registry_singleton()
