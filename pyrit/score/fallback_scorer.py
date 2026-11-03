@@ -3,9 +3,9 @@
 
 from abc import abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from pyrit.models import ComponentIdentifier, MessageScorable, Scorable, Score, ScoringExpectation
+from pyrit.models import ComponentIdentifier, MessageScorable, Scorable, ScorableUnion, Score, ScoringExpectation
 from pyrit.score.observation.execution import _merge_observation_ids
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
 from pyrit.score.scorer import (
@@ -153,7 +153,7 @@ class _FallbackScorer(Scorer):
         if primary is None:
             return []
         if not primary.is_undetermined:
-            result = self._build_result(primary=primary)
+            result = self._build_result(primary=primary, scorable=scorable)
             _set_snapshot_participation(score=result, child_scores={0: primary})
             return [result]
 
@@ -162,7 +162,7 @@ class _FallbackScorer(Scorer):
         )
         if fallback is not None:
             self._validate_comparable_results(primary=primary, fallback=fallback)
-        result = self._build_result(primary=primary, fallback=fallback, fallback_attempted=True)
+        result = self._build_result(primary=primary, scorable=scorable, fallback=fallback, fallback_attempted=True)
         child_scores = {0: primary}
         if fallback is not None:
             child_scores[1] = fallback
@@ -216,7 +216,7 @@ class _FallbackScorer(Scorer):
             raise ValueError("Fallback results must use the same scoring expectation.")
 
     def _build_result(
-        self, *, primary: Score, fallback: Score | None = None, fallback_attempted: bool = False
+        self, *, primary: Score, scorable: Scorable, fallback: Score | None = None, fallback_attempted: bool = False
     ) -> Score:
         """
         Create a wrapper result without modifying either child score.
@@ -250,8 +250,8 @@ class _FallbackScorer(Scorer):
             score_rationale=rationale,
             score_metadata=metadata,
             scorer_class_identifier=self.get_identifier(),
-            scorable=selected.scorable,
-            message_piece_id=selected.message_piece_id,
+            scorable=cast("ScorableUnion", scorable),
+            message_piece_id=self._piece_id_from_scorable(scorable),
             scored_expectation=selected.scored_expectation,
             observation_ids=_merge_observation_ids(scores=[primary, fallback] if fallback is not None else [primary]),
         )

@@ -2,11 +2,11 @@
 # Licensed under the MIT license.
 
 """
-Persist scorer wrapper participation outside the public score metadata.
+Persist scorer wrapper participation outside public score metadata.
 
 Revision ID: e7c4a2d9f013
 Revises: c8d3e5f7a901
-Create Date: 2026-11-02 10:00:00.000000
+Create Date: 2026-11-02 08:05:00.000000
 """
 
 from collections.abc import Sequence
@@ -24,7 +24,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Add nullable storage for private scorer participation trees."""
     with op.batch_alter_table("ScoreEntries") as batch_op:
-        batch_op.add_column(sa.Column("snapshot_participation", sa.JSON(), nullable=True))
+        batch_op.add_column(sa.Column("snapshot_participation", sa.JSON(none_as_null=True), nullable=True))
 
 
 def downgrade() -> None:

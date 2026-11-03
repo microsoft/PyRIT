@@ -1444,7 +1444,7 @@ class ScoreEntry(Base):
     score_category: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     score_rationale = mapped_column(String, nullable=True)
     score_metadata: Mapped[dict[str, str | int | float]] = mapped_column(JSON)
-    snapshot_participation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    snapshot_participation: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     scorer_class_identifier: Mapped[dict[str, Any]] = mapped_column(JSON)
     # What the score is about, in the shape the Scorable owns. Always a reference once stored.
     scorable: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
@@ -1548,8 +1548,7 @@ class ScoreEntry(Base):
                 else None
             ),
         )
-        if self.snapshot_participation is not None:
-            score._snapshot_participation = self.snapshot_participation
+        score._snapshot_participation = self.snapshot_participation
         return score
 
     def to_dict(self) -> dict[str, Any]:

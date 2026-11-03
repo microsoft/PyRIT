@@ -12,6 +12,7 @@ from typing import Any
 from msal_extensions import FilePersistence, build_encrypted_persistence
 
 from pyrit.auth.authenticator import Authenticator
+from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.path import PYRIT_CACHE_PATH
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ class CopilotAuthenticator(Authenticator):
     DEFAULT_TOKEN_CAPTURE_TIMEOUT: int = 60
     #: Default timeout for waiting on page elements (in seconds)
     DEFAULT_ELEMENT_TIMEOUT_SECONDS: int = 10
-    #: Number of retries for network operations
+    #: Deprecated and unused; will be removed in 1.3.0 together with the ``network_retries`` argument.
     DEFAULT_NETWORK_RETRIES: int = 3
 
     def __init__(
@@ -54,7 +55,7 @@ class CopilotAuthenticator(Authenticator):
         maximized: bool = True,
         timeout_for_elements_seconds: int = DEFAULT_ELEMENT_TIMEOUT_SECONDS,
         token_capture_timeout_seconds: int = DEFAULT_TOKEN_CAPTURE_TIMEOUT,
-        network_retries: int = DEFAULT_NETWORK_RETRIES,
+        network_retries: int | None = None,
         fallback_to_plaintext: bool = False,
     ) -> None:
         """
@@ -65,7 +66,8 @@ class CopilotAuthenticator(Authenticator):
             maximized (bool): Whether to start the browser maximized. Default is True.
             timeout_for_elements_seconds (int): Timeout used when waiting for page elements, in seconds.
             token_capture_timeout_seconds (int): Maximum time to wait for token capture via network monitoring.
-            network_retries (int): Number of retry attempts for network operations. Default is 3.
+            network_retries (int | None): Deprecated and ignored; no operation is retried. Will be removed in
+                1.3.0. Default is None.
             fallback_to_plaintext (bool): Whether to fallback to plaintext storage if encryption is unavailable.
                 If set to False (default), an exception will be raised if encryption cannot be used.
                 WARNING: Setting to True stores tokens in plaintext.
@@ -75,6 +77,13 @@ class CopilotAuthenticator(Authenticator):
         """
         super().__init__()
 
+        if network_retries is not None:
+            print_deprecation_message(
+                old_item="CopilotAuthenticator(network_retries=...)",
+                new_item="CopilotAuthenticator()",
+                removed_in="1.3.0",
+            )
+
         self._username = os.getenv("COPILOT_USERNAME")
         self._password = os.getenv("COPILOT_PASSWORD")
 
@@ -82,7 +91,6 @@ class CopilotAuthenticator(Authenticator):
         self._maximized = maximized
         self._elements_timeout = timeout_for_elements_seconds * 1000
         self._token_capture_timeout = token_capture_timeout_seconds
-        self._network_retries = network_retries
         self._fallback_to_plaintext = fallback_to_plaintext
 
         self._cache_dir = PYRIT_CACHE_PATH

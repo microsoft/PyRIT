@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 from pyrit.models import (
     ComponentIdentifier,
     Scorable,
+    ScorableUnion,
     Score,
     ScoringExpectation,
 )
@@ -133,6 +134,8 @@ class TrueFalseInverterScorer(TrueFalseScorer):
             return []
         inverted = self._invert(scores)
         for result, child_score in zip(inverted, scores, strict=True):
+            result.scorable = cast("ScorableUnion", scorable)
+            result.message_piece_id = self._piece_id_from_scorable(scorable)
             _set_snapshot_participation(score=result, child_scores={0: child_score})
         return inverted
 

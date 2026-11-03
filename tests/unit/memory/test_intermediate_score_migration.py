@@ -12,6 +12,7 @@ from alembic.operations import Operations
 
 from pyrit.memory.memory_models import ScoreEntry
 from pyrit.models import Score
+from unit.mocks import run_memory_session_async
 
 
 @pytest.mark.parametrize("is_intermediate", [False, True])
@@ -33,7 +34,7 @@ def test_score_storage_marker_stays_private(is_intermediate: bool) -> None:
     assert entry.get_score()._snapshot_participation == {"0": None}
 
 
-@pytest.mark.parametrize("value", ["not-json", '{"0": null}', 17, 1.5])
+@pytest.mark.parametrize("value", ["not-json", '{"0": null}', '{"1": null}', 17, 1.5])
 async def test_score_preserves_reserved_name_as_caller_metadata_async(value, sqlite_instance) -> None:
     metadata = {"pyrit_internal_snapshot_participation": value}
     score = Score(score_value="true", score_type="true_false", score_metadata=metadata)
@@ -47,6 +48,34 @@ async def test_score_preserves_reserved_name_as_caller_metadata_async(value, sql
     [persisted] = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
     assert persisted.score_metadata == metadata
     assert persisted._snapshot_participation is None
+
+
+async def test_private_participation_survives_commit_expire_and_canonical_root_reload_async(sqlite_instance) -> None:
+    score = Score(
+        score_value="true",
+        score_type="true_false",
+        score_metadata={"pyrit_internal_snapshot_participation": '{"1": null}'},
+    )
+    score._snapshot_participation = {"0": {"0": None}, "1": None}
+    await sqlite_instance.add_scores_to_memory_async(scores=[score])
+
+    def inspect_raw_round_trip(session) -> None:
+        entry = session.get(ScoreEntry, score.id)
+        assert entry.id == score.id
+        assert entry.snapshot_participation == score._snapshot_participation
+        session.commit()
+        session.expire_all()
+        reloaded = session.get(ScoreEntry, score.id)
+        assert reloaded.id == score.id
+        assert reloaded.snapshot_participation == {"0": {"0": None}, "1": None}
+        assert reloaded.score_metadata == score.score_metadata
+
+    await run_memory_session_async(memory=sqlite_instance, operation=inspect_raw_round_trip)
+    [canonical] = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
+    assert canonical.id == score.id
+    assert canonical._snapshot_participation == score._snapshot_participation
+    assert canonical.score_metadata == score.score_metadata
+    assert "_snapshot_participation" not in canonical.model_dump()
 
 
 def test_intermediate_score_migration_preserves_legacy_results() -> None:

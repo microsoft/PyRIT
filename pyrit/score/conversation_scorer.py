@@ -123,10 +123,10 @@ class ConversationScorer(MessageScorer, ABC):
         participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
-        Retain root candidates linked to a complete observation of the current conversation.
+        Require an unused linked observation of this branch's exact current conversation.
 
         Returns:
-            list[Score]: The candidates linked to an exact current snapshot.
+            list[Score]: Root candidates with a complete current snapshot for this participant.
         """
         conversation_scorable = await self._get_conversation_scorable_async(scorable=scorable)
         if conversation_scorable is None:
@@ -155,15 +155,11 @@ class ConversationScorer(MessageScorer, ABC):
         }
         matched_scores = []
         for score in scores:
-            available_ids = (
-                set(score.observation_ids)
-                .intersection(matching_ids)
-                .difference(
-                    observation_id
-                    for observation_id in score.observation_ids
-                    if str(observation_id) in used_observation_ids.setdefault(str(score.id), set())
-                )
-            )
+            available_ids = {
+                observation_id
+                for observation_id in score.observation_ids
+                if observation_id in matching_ids and str(observation_id) not in used_observation_ids[str(score.id)]
+            }
             if available_ids:
                 used_observation_ids[str(score.id)].add(str(min(available_ids, key=str)))
                 matched_scores.append(score)
@@ -371,7 +367,9 @@ class ConversationScorer(MessageScorer, ABC):
             turn_index += 1
         return "".join(lines)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Not used - ConversationScorer operates at conversation level via
         ``_score_prepared_message_async``.

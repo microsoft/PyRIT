@@ -685,6 +685,29 @@ def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
     assert "scenario_registry_name_1" in combined_statement.compile().params
 
 
+def test_scenario_history_reference_id_binds_pruned_conversation_fallback(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    reference_id = uuid.uuid4()
+    session = MagicMock(spec=Session)
+    session.execute.return_value.all.return_value = []
+    with (
+        patch.object(memory_interface, "_get_session", return_value=session),
+        patch.object(memory_interface, "_uid", return_value="history_reference"),
+    ):
+        result = memory_interface._execute_get_scenario_run_history_page(reference_id=reference_id, limit=1)
+
+    compiled = session.execute.call_args.args[0].compile(dialect=mssql.dialect())
+    sql = " ".join(str(compiled).split())
+    assert result == ([], {}, False)
+    assert 'OPENJSON(JSON_QUERY("AttackResultEntries".pruned_conversation_ids, :pp_history_reference))' in sql
+    assert compiled.params["pp_history_reference"] == "$"
+    assert compiled.params["mv_history_reference_0"] == str(reference_id)
+    assert str(reference_id) not in sql
+    assert "[AttackResultEntries].attribution_parent_id = [ScenarioResultEntries].id" in sql
+    assert "LOWER(value) = :mv_history_reference_0" in sql
+
+
 def test_scenario_history_legacy_label_condition_binds_each_value(
     memory_interface: AzureSQLMemory,
 ) -> None:

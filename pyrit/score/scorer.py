@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import abc
-import json
 import logging
 import uuid
 from abc import abstractmethod
@@ -75,16 +74,7 @@ def _read_snapshot_participation(score: Score) -> SnapshotParticipation | None:
         The validated child tree, or ``None`` when it is absent or invalid.
     """
     raw: Any = score._snapshot_participation
-    if not isinstance(raw, str):
-        participation = raw
-    else:
-        try:
-            participation = json.loads(raw)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(participation, dict) or not _is_snapshot_participation(participation):
-        return None
-    return participation
+    return raw if _is_snapshot_participation(raw) else None
 
 
 def _is_snapshot_participation(value: Any) -> bool:

@@ -534,6 +534,49 @@ describe("ChatWindow Integration", () => {
     jest.restoreAllMocks();
   });
 
+  it.each([false, true])("keeps first-send evidence across delayed route commits (settled read: %s)", async (settledRead) => {
+    const user = userEvent.setup();
+    const attackId = "default-created-attack";
+    const conversationId = "default-created-conversation";
+    const reply: ConversationMessagesResponse = {
+      ...makeTextResponse("Confirmed first reply").messages, conversation_id: conversationId,
+      outcome: "success", latest_response_id: "p-resp", automated_score: {
+        id: "first-score", message_piece_id: "p-resp", scorer_type: "SubStringScorer",
+        score_type: "true_false", score_value: "true", timestamp: "",
+      },
+    };
+    let finishRead: (value: ConversationMessagesResponse) => void = () => {};
+    mockedAttacksApi.getMessages.mockImplementation(() => new Promise((resolve) => { finishRead = resolve; }));
+    mockedAttacksApi.submitMessageSend.mockResolvedValue({
+      send_id: "first-send", attack_result_id: attackId, conversation_id: conversationId,
+      request_turn_number: 0, state: "completed", error: null, failure_stage: null,
+    });
+    mockedAttacksApi.getAttack.mockResolvedValue({
+      attack_result_id: attackId, conversation_id: conversationId, attack_type: "ManualAttack",
+      objective: "", converters: [], message_count: 2, related_conversation_ids: [],
+      labels: {}, created_at: "", updated_at: "",
+    });
+    const rendered = render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
+    await user.type(screen.getByPlaceholderText("Type prompt here"), "First prompt");
+    await user.click(screen.getByRole("button", { name: "Send message", exact: true }));
+    await waitFor(() => expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1));
+    if (settledRead) {
+      await act(async () => { finishRead(reply); });
+    }
+    rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} attackResultId={attackId}
+      conversationId={conversationId} activeConversationId={conversationId} /></TestWrapper>);
+    if (!settledRead) {
+      await act(async () => { finishRead(reply); });
+    }
+    expect(await screen.findByText("Confirmed first reply")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Objective achieved outcome: success" })).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar", { name: "Loading conversation..." })).not.toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText("Type prompt here"), "Next prompt");
+    expect(screen.getByRole("button", { name: "Send message", exact: true })).not.toHaveAttribute("aria-disabled", "true");
+    expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+  });
+
   describe("asynchronous sending", () => {
     const props = {
       ...defaultProps,

@@ -1701,6 +1701,19 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(false)
   })
 
+  it('explains baseline identity locally without changing its selection', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+
+    await user.click(screen.getByRole('button', { name: 'Identity for baseline' }))
+
+    expect(screen.getByRole('region', { name: 'Identity for baseline' }))
+      .toHaveTextContent('Baseline identity is available after launch.')
+    expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).toBeChecked()
+    expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
   it('includes the baseline when a shared tag selects or clears its members', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/launch/foundry.red_team_agent')

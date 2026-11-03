@@ -34,6 +34,8 @@ available below these sections for setup. Operation links put the selected saved
 operation first, then the newest-created records, not the most recently active
 records. When the complete registry confirms that no targets are registered, the
 secondary setup action offers **Register a target**.
+The shared labels bar applies the selected operator, operation, and custom labels
+to new work; changes do not alter saved results.
 
 ![Home page with workflows and recent work](images/home.png)
 
@@ -148,6 +150,10 @@ They are stored separately from live component instances.
 Suite launch dialogs apply arriving target defaults only to untouched selections.
 An explicit target choice, including clearing an optional adversarial target to
 use the server default, is retained when the registry refreshes.
+
+Editing a preset preserves unchanged parameter values exactly, including commas
+and whitespace inside list entries, empty lists, duplicates, and their order.
+Editing a list field uses the comma-separated format shown in the editor.
 
 Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use

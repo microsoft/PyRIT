@@ -255,6 +255,8 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
             comparison_symbol = "="
 
         score = self._create_wrapper_score(scores[0])
+        score.scorable = scorable
+        score.message_piece_id = message_piece_id
         score.score_type = "true_false"
         score.score_value = str(threshold_result)
         score.status = ScoreStatus.COMPLETE
