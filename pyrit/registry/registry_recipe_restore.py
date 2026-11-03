@@ -523,16 +523,16 @@ class RegistryRecipeRestorer:
             text = str.__str__(str(error))
         except Exception:
             return name
-        if any(_looks_like(char, "@") for char in text):
+        if any(_looks_like(char=char, marks="@") for char in text):
             return f"{name} (message hidden {hidden})"
-        cut_at = next((index for index, char in enumerate(text) if _looks_like(char, "?#")), None)
+        cut_at = next((index for index, char in enumerate(text) if _looks_like(char=char, marks="?#")), None)
         if cut_at is None:
             return f"{name}: {text}" if text else name
         cut = text[:cut_at]
         return f"{name}: {cut} (rest hidden {hidden})" if cut.strip() else f"{name} (message hidden {hidden})"
 
 
-def _looks_like(char: str, marks: str) -> bool:
+def _looks_like(*, char: str, marks: str) -> bool:
     """
     Return whether a character is, or looks like, one of the given marks.
 
