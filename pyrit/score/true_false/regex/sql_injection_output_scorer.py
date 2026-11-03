@@ -3,7 +3,7 @@
 
 import re
 
-from pyrit.models import MessagePiece, Score, ScoringExpectation
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
@@ -91,6 +91,18 @@ class SQLInjectionOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         """
         self._use_default_patterns = patterns is None
         super().__init__(patterns=patterns, score_aggregator=score_aggregator)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Include quote filtering alongside the regex configuration.
+
+        Returns:
+            ComponentIdentifier: The scorer identity including its quote-filtering policy.
+        """
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(
+            params={**base_identifier.params, "filter_quote_breakouts": self._use_default_patterns}
+        )
 
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None

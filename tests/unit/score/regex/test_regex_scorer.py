@@ -282,7 +282,7 @@ def test_explicit_default_patterns_follow_effective_identity(scorer_class: type[
     assert default_patterns is not None
     explicit_identity = _identity(_scorer_factory(scorer_class)(patterns=dict(default_patterns)))
     default_identity = _identity(_scorer_factory(scorer_class)())
-    if scorer_class is LDAPInjectionOutputScorer:
+    if scorer_class in (LDAPInjectionOutputScorer, SQLInjectionOutputScorer):
         assert explicit_identity[0] != default_identity[0]
         assert explicit_identity[1] != default_identity[1]
     else:
