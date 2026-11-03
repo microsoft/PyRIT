@@ -102,7 +102,7 @@ class SavedEntryRef(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: RegistryRecipeKind
-    name: str
+    name: _DisplayText
 
 
 class StoredRecipe(BaseModel):
@@ -139,7 +139,7 @@ class RestoreFailure(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: RegistryRecipeKind
-    name: str | None = Field(None, description="Entry name; None when the whole folder couldn't be read")
+    name: _DisplayText | None = Field(None, description="Entry name; None when the whole folder couldn't be read")
     reason: RestoreFailureReason
     message: _DisplayText = Field(..., description="Why, in words safe to show users")
     version: str | None = Field(None, description="Version of the stored document, when it could be read")
