@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { ThemeProvider, useTheme } from "@/hooks/useTheme";
 import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
+import { readUserPreferences } from "@/utils/userPreferences";
 import MainLayout from "./MainLayout";
 
 // Mock the api module
@@ -23,34 +24,16 @@ jest.mock("../../services/api", () => ({
   },
 }));
 
-// Mock Navigation to simplify testing
-jest.mock("../Sidebar/Navigation", () => {
-  const MockNavigation = ({
-    currentView,
-    onNavigate,
-  }: {
-    currentView: string;
-    onNavigate: (view: string) => void;
-  }) => {
-    return (
-      <div data-testid="navigation" data-current-view={currentView}>
-        <button onClick={() => onNavigate("registry")}>Registry</button>
-      </div>
-    );
-  };
-  MockNavigation.displayName = "MockNavigation";
-  return {
-    __esModule: true,
-    default: MockNavigation,
-  };
-});
-
 import { versionApi } from "../../services/api";
 
 const mockedVersionApi = versionApi as jest.Mocked<typeof versionApi>;
 
 const renderWithProvider = (ui: React.ReactElement) => {
-  return render(<FluentProvider theme={webLightTheme}>{ui}</FluentProvider>);
+  return render(
+    <UserPreferencesProvider accountKey="local">
+      <FluentProvider theme={webLightTheme}>{ui}</FluentProvider>
+    </UserPreferencesProvider>,
+  );
 };
 
 describe("MainLayout", () => {
@@ -67,6 +50,32 @@ describe("MainLayout", () => {
     labels: { operator: 'alice', operation: 'test_op' },
     onLabelsChange: jest.fn(),
   };
+
+  it("saves expansion without remounting the workspace and restores it on reload", async () => {
+    mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });
+    const user = userEvent.setup();
+    const content = (
+      <MainLayout {...defaultProps}>
+        <input aria-label="Draft" />
+      </MainLayout>
+    );
+    const app = renderWithProvider(content);
+    const draft = screen.getByRole("textbox", { name: "Draft" });
+    const labels = screen.getByRole("region", { name: "Default Labels" });
+    await user.type(draft, "Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false");
+    expect(readUserPreferences("local").sidebarExpanded).toBe(false);
+    expect(screen.getByRole("textbox", { name: "Draft" })).toBe(draft);
+    expect(draft).toHaveValue("Keep this draft");
+    expect(screen.getByRole("region", { name: "Default Labels" })).toBe(labels);
+
+    app.unmount();
+    renderWithProvider(content);
+    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(readUserPreferences("local").sidebarExpanded).toBe(true);
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toHaveAttribute("aria-expanded", "true");
+  });
 
   it("renders the header with title and subtitle", async () => {
     mockedVersionApi.getVersion.mockResolvedValue({ version: "1.0.0" });

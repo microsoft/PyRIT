@@ -49,6 +49,7 @@ const defaultProps = {
   activeTarget: null as TargetInstance | null,
   onNavigate: jest.fn(),
   onOpenAttack: jest.fn(),
+  onOpenHistory: jest.fn(),
 };
 
 describe("Home", () => {
@@ -301,9 +302,8 @@ describe("Home", () => {
 
   it("navigates to history when 'View all history' is clicked", async () => {
     const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    render(<TestWrapper><Home {...defaultProps} onNavigate={onNavigate} /></TestWrapper>);
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
     await user.click(screen.getByTestId("home-view-all-history-btn"));
-    expect(onNavigate).toHaveBeenCalledWith("history");
+    expect(defaultProps.onOpenHistory).toHaveBeenCalled();
   });
 });

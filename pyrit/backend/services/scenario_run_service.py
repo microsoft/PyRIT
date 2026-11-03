@@ -803,6 +803,7 @@ class ScenarioRunService:
         statuses: Sequence[ScenarioRunState | str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         limit: int = 100,
         cursor: str | None = None,
     ) -> ScenarioRunListResponse:
@@ -815,6 +816,7 @@ class ScenarioRunService:
             labels: Labels with OR-within-key and AND-across-key semantics.
             operation_ids: Saved Operation IDs to match. Legacy runs that only carry an
                 operation label never match.
+            reference_id: Exact conversation, attack, finding, or scenario result ID.
             limit: Maximum number of runs to return.
             cursor: Opaque cursor from the previous page.
 
@@ -837,6 +839,8 @@ class ScenarioRunService:
         }
         if operation_ids:
             fingerprint_values["operation_ids"] = [str(operation_id) for operation_id in operation_ids]
+        if reference_id is not None:
+            fingerprint_values["reference_id"] = str(reference_id)
         fingerprint = fingerprint_filters(filters=fingerprint_values)
         decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
         after = (
@@ -852,6 +856,7 @@ class ScenarioRunService:
             statuses=normalized_statuses,
             labels=normalized_labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=after,
             limit=limit,
         )
