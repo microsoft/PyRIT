@@ -259,11 +259,19 @@ class TargetService:
         """
         Rebuild a private target and verify its saved effective identity.
 
+        Overrides may set the target's caller path parameters, as on create, but not
+        the upload folder, which only the server sets.
+
         Returns:
             PromptTarget: The caller-owned target.
         """
         source = self._registry.resolve_source(name=spec.source_name, identifier_hash=spec.source_hash)
-        target = self._registry.recreate_instance(source=source, params=spec.params, external_input=True)
+        target = self._registry.recreate_instance(
+            source=source,
+            params=spec.params,
+            external_input=True,
+            allowed_path_params=type(source).caller_path_parameters,
+        )
         if spec.effective_hash and target.get_identifier().hash != spec.effective_hash:
             await release_component_async(target)
             raise ValueError("The saved target configuration cannot be reconstructed")
