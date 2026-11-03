@@ -110,8 +110,11 @@ class TestCopilotAuthenticatorInitialization:
             assert authenticator._token_capture_timeout == 120
             assert authenticator._fallback_to_plaintext is True
 
-    def test_init_does_not_warn_by_default(self, mock_env_vars, mock_persistent_cache):
-        """Test that constructing without the deprecated network_retries argument emits no deprecation warning."""
+    @pytest.mark.parametrize("explicit_none", [False, True])
+    def test_init_does_not_warn_by_default(
+        self, *, mock_env_vars: None, mock_persistent_cache: MagicMock, explicit_none: bool
+    ) -> None:
+        """Test that omitting network_retries or passing None emits no deprecation warning."""
 
         with (
             patch(
@@ -121,19 +124,32 @@ class TestCopilotAuthenticatorInitialization:
             warnings.catch_warnings(),
         ):
             warnings.simplefilter("error", DeprecationWarning)
-            CopilotAuthenticator()
+            if explicit_none:
+                CopilotAuthenticator(network_retries=None)
+            else:
+                CopilotAuthenticator()
 
-    def test_init_network_retries_is_deprecated(self, mock_env_vars, mock_persistent_cache):
-        """Test that passing the deprecated network_retries argument emits a DeprecationWarning."""
+    @pytest.mark.parametrize("network_retries", [0, CopilotAuthenticator.DEFAULT_NETWORK_RETRIES, 5])
+    def test_init_network_retries_is_deprecated(
+        self, *, mock_env_vars: None, mock_persistent_cache: MagicMock, network_retries: int
+    ) -> None:
+        """Test that every explicit retry count warns with migration guidance at the caller."""
 
         with (
             patch(
                 "pyrit.auth.copilot_authenticator.CopilotAuthenticator._create_persistent_cache",
                 return_value=mock_persistent_cache,
             ),
-            pytest.warns(DeprecationWarning, match="network_retries"),
+            pytest.warns(DeprecationWarning) as captured,
         ):
-            CopilotAuthenticator(network_retries=5)
+            CopilotAuthenticator(network_retries=network_retries)
+
+        assert len(captured) == 1
+        assert str(captured[0].message) == (
+            "CopilotAuthenticator(network_retries=...) is deprecated and will be removed in 1.3.0. "
+            "Use CopilotAuthenticator() instead."
+        )
+        assert captured[0].filename == __file__
 
     def test_init_missing_env_var_raises_error(self):
         """Test that missing a required environment variable raises ValueError."""
