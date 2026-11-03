@@ -245,7 +245,7 @@ describe('App draft handoff with the real chat and composer', () => {
     request_turn_number: 0, state: 'completed', failure_stage: null, error: null,
   }
   async function prepareNewSend(user: UserEvent): Promise<void> {
-    const picker = await screen.findByRole('combobox', { name: 'Chat target' })
+    const picker = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(picker).toBeEnabled())
     await user.selectOptions(picker, TARGET.target_registry_name)
     await user.click(screen.getByRole('button', { name: 'Add objective', exact: true }))
@@ -319,7 +319,7 @@ describe('App draft handoff with the real chat and composer', () => {
     })
     const rendered = render(<MemoryRouter initialEntries={['/attack/chat']}><App /></MemoryRouter>)
     await prepareNewSend(user)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
     await user.selectOptions(screen.getByRole('combobox', { name: 'Chat scorer' }), '')
     await user.keyboard('{Escape}')
@@ -392,7 +392,7 @@ describe('App draft handoff with the real chat and composer', () => {
         initialEntries: ['/attack/chat'],
       })
       render(<RouterProvider router={router} />)
-      const target = await screen.findByRole('combobox', { name: 'Chat target' })
+      const target = await screen.findByRole('combobox', { name: 'Objective target' })
       await waitFor(() => expect(target).toBeEnabled())
       await user.selectOptions(target, 'draft-target')
       await user.type(screen.getByPlaceholderText('Type prompt here'), 'Unsent prompt')
@@ -403,7 +403,7 @@ describe('App draft handoff with the real chat and composer', () => {
       await screen.findByRole('heading', { name: 'Home', exact: true })
       await returnToChat(user)
       expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent prompt')
-      expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+      expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('draft-target')
       expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
       expect(attacksApi.createAttack).not.toHaveBeenCalled()
       expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
@@ -441,7 +441,7 @@ describe('App draft handoff with the real chat and composer', () => {
       renderChat(path)
       await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
       if (path === '/attack/chat') {
-        const target = screen.getByRole('combobox', { name: 'Chat target' })
+        const target = screen.getByRole('combobox', { name: 'Objective target' })
         await waitFor(() => expect(target).toBeEnabled())
         await user.selectOptions(target, 'draft-target')
       }
@@ -456,8 +456,7 @@ describe('App draft handoff with the real chat and composer', () => {
       await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
       const firstDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
       await user.click(within(firstDialog).getByRole('button', { name: 'Keep editing' }))
-      await screen.findByRole('region', { name: 'Message 1' })
-      expect(within(screen.getByRole('region', { name: 'Message 1' }))
+      expect(within(await screen.findByRole('region', { name: 'Message 1' }))
         .getByPlaceholderText('Type prompt here')).toHaveValue('Unsaved conversation edit')
 
       await user.click(await screen.findByRole('button', { name: 'Cancel', exact: true }))
@@ -722,14 +721,14 @@ describe('App draft handoff with the real chat and composer', () => {
   it('should preserve target selection and system prompt without changing defaults', async () => {
     const user = userEvent.setup()
     renderChat()
-    const selector = await screen.findByRole('combobox', { name: 'Chat target' })
+    const selector = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.selectOptions(selector, 'draft-target')
     await user.click(screen.getByRole('button', { name: /system prompt/i }))
     await user.type(screen.getByRole('textbox', { name: /system prompt/i }), 'System instruction')
     await visitDatasets(user)
     await returnToChat(user)
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('draft-target')
     await user.click(screen.getByRole('button', { name: /system prompt/i }))
     expect(screen.getByRole('textbox', { name: /system prompt/i })).toHaveValue('System instruction')
   })
@@ -737,12 +736,12 @@ describe('App draft handoff with the real chat and composer', () => {
   it('should preserve a target selected before entering text', async () => {
     const user = userEvent.setup()
     renderChat()
-    const selector = await screen.findByRole('combobox', { name: 'Chat target' })
+    const selector = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.selectOptions(selector, 'draft-target')
     await visitDatasets(user)
     await returnToChat(user)
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('draft-target')
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
@@ -753,12 +752,12 @@ describe('App draft handoff with the real chat and composer', () => {
     })
     const user = userEvent.setup()
     renderChat()
-    const selector = await screen.findByRole('combobox', { name: 'Chat target' })
+    const selector = await screen.findByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toHaveValue('draft-target'))
     await user.selectOptions(selector, '')
     await visitDatasets(user)
     await returnToChat(user)
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('')
   })
 
   it.each(['', 'Unconverted text'])('should preserve an unapplied converter pipeline with text "%s"', async (text: string) => {
@@ -890,7 +889,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await visitDatasets(user)
     await returnToChat(user)
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('draft-target')
   })
 
   it('should retain uploaded media across visits and release it when explicitly removed', async () => {

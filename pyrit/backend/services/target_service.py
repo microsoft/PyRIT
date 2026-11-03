@@ -167,6 +167,25 @@ class TargetService:
             supported_auth_modes.append(auth_mode)
         return supported_auth_modes
 
+    @staticmethod
+    def _allowed_path_params(*, target_cls: type[PromptTarget]) -> frozenset[str]:
+        """
+        Return the path parameters a target built from API input may receive.
+
+        These are the path parameters callers may set, plus the upload folder of a
+        target that uploads local files, which only the server sets.
+
+        Args:
+            target_cls (type[PromptTarget]): Target class being described or built.
+
+        Returns:
+            frozenset[str]: Path parameter names the target may receive.
+        """
+        upload_directory = target_cls.upload_directory_parameter
+        if upload_directory is None:
+            return target_cls.caller_path_parameters
+        return target_cls.caller_path_parameters | {upload_directory}
+
     def _project_target_parameters(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> list[Parameter]:
         """
         Project registry parameters into the API contract.
@@ -175,7 +194,8 @@ class TargetService:
         can resolve them from dotenv configuration. The GUI must still collect them
         explicitly, so the API marks those values required without changing the
         target constructor signatures. The upload folder of a target that uploads
-        local files is set by the server, so it is left out.
+        local files is set by the server, so it is left out, and so are parameters
+        that take Python objects and path parameters callers may not set.
 
         Args:
             target_type (str): Registered target class name.
@@ -192,6 +212,7 @@ class TargetService:
             parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
             for parameter in parameters
             if parameter.name != target_cls.upload_directory_parameter
+            and parameter.is_allowed_external_input(allowed_path_params=target_cls.caller_path_parameters)
         ]
 
     async def list_target_types_async(self, *, upload_directory: str | None = None) -> TargetTypeResponse:
@@ -201,9 +222,9 @@ class TargetService:
         Returns every target that external callers can build, with the
         constructor parameters they may supply, each described in the form callers
         send it, and the auth modes it supports, all projected from the registry's
-        ``TargetMetadata``; targets that need a Python object for a required
-        parameter are left out, and so are targets that upload local files when the
-        server has no upload folder. Deciding which entries to surface to a
+        ``TargetMetadata``; targets that need a Python object or a path callers may not
+        set for a required parameter are left out, and so are targets that upload local
+        files when the server has no upload folder. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
 
@@ -224,13 +245,12 @@ class TargetService:
                         target_type=metadata.class_name,
                         parameters=metadata.parameters,
                     )
-                    if parameter.is_external_input
                 ],
                 supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )
             for metadata in metadata_items
-            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+            if self._has_required_params(target_type=metadata.class_name, parameters=metadata.parameters)
             and self._has_upload_directory(target_type=metadata.class_name, upload_directory=upload_directory)
         ]
         return TargetTypeResponse(items=items)
@@ -239,11 +259,19 @@ class TargetService:
         """
         Rebuild a private target and verify its saved effective identity.
 
+        Overrides may set the target's caller path parameters, as on create, but not
+        the upload folder, which only the server sets.
+
         Returns:
             PromptTarget: The caller-owned target.
         """
         source = self._registry.resolve_source(name=spec.source_name, identifier_hash=spec.source_hash)
-        target = self._registry.recreate_instance(source=source, params=spec.params, external_input=True)
+        target = self._registry.recreate_instance(
+            source=source,
+            params=spec.params,
+            external_input=True,
+            allowed_path_params=type(source).caller_path_parameters,
+        )
         if spec.effective_hash and target.get_identifier().hash != spec.effective_hash:
             await release_component_async(target)
             raise ValueError("The saved target configuration cannot be reconstructed")
@@ -257,6 +285,24 @@ class TargetService:
             PromptTarget: The caller-owned target.
         """
         return await self.build_from_source_async(binding.to_spec())
+
+    def _has_required_params(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> bool:
+        """
+        Return whether a target type can receive every required parameter when built from API input.
+
+        Args:
+            target_type (str): Registered target class name.
+            parameters (tuple[Parameter, ...]): Constructor parameters derived by the registry.
+
+        Returns:
+            bool: False when a required parameter needs a Python object or a path callers may not set.
+        """
+        allowed_path_params = self._allowed_path_params(target_cls=self._registry.get_class(target_type))
+        return all(
+            parameter.is_allowed_external_input(allowed_path_params=allowed_path_params)
+            for parameter in parameters
+            if parameter.required
+        )
 
     def _has_upload_directory(self, *, target_type: str, upload_directory: str | None) -> bool:
         """
@@ -434,7 +480,9 @@ class TargetService:
         target_obj = (
             await self.build_from_source_async(request.source)
             if request.source
-            else self._registry.create_instance_from_external_input(request.type, params=params)
+            else self._registry.create_instance_from_external_input(
+                request.type, params=params, allowed_path_params=self._allowed_path_params(target_cls=target_cls)
+            )
         )
         if not request.register:
             try:

@@ -93,10 +93,10 @@ class ConversationScorer(MessageScorer, ABC):
 
     async def _get_conversation_scorable_async(self, *, scorable: Scorable) -> ConversationScorable | None:
         """
-        Resolve the trigger to its complete single-conversation scope.
+        Resolve a message trigger to its single complete conversation scope.
 
         Returns:
-            The conversation scope, or None for an invalid trigger.
+            ConversationScorable | None: The conversation scope, or None for an invalid trigger.
         """
         if isinstance(scorable, MessageScorable):
             messages = await self._memory.get_message_pieces_async(prompt_ids=list(scorable.message_piece_ids))
@@ -126,7 +126,7 @@ class ConversationScorer(MessageScorer, ABC):
         Require an unused linked observation of this branch's exact current conversation.
 
         Returns:
-            Root candidates with a complete current snapshot for this participant.
+            list[Score]: Root candidates with a complete current snapshot for this participant.
         """
         conversation_scorable = await self._get_conversation_scorable_async(scorable=scorable)
         if conversation_scorable is None:
@@ -140,7 +140,7 @@ class ConversationScorer(MessageScorer, ABC):
             observation_id
             for score in scores
             for observation_id in score.observation_ids
-            if str(observation_id) not in used_observation_ids[str(score.id)]
+            if str(observation_id) not in used_observation_ids.setdefault(str(score.id), set())
         }
         if not observation_ids:
             return []

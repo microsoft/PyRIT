@@ -2,6 +2,7 @@ import { expect, test, type Page } from "./_fixtures";
 import { mockVersion } from "./_compatibility";
 
 import { READY_RUNTIME } from "./_runtime";
+import type { ScenarioHierarchyProjection } from "../src/types";
 
 const RUN_ID = "123e4567-e89b-12d3-a456-426614174000";
 const ACTIVE_RUN_ID = "123e4567-e89b-12d3-a456-426614174001";
@@ -222,7 +223,7 @@ const progressAttempt = {
   atomic_group_id: "group-1",
   atomic_attack_name: "prompt_sending",
   seed_group_id: "seed-1",
-  outcome: "success",
+  outcome: "success" as const,
   execution_time_ms: 500,
   timestamp: "2026-08-07T00:00:30Z",
   total_retries: 1,
@@ -679,6 +680,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
   });
 
   test("preserves filtered history and scenario provenance through native attempt navigation", async ({ page }) => {
+    await page.clock.install();
     await mockScenarioAPIs(page);
     await page.goto("/scanner/history?operator=alice&status=COMPLETED");
 
@@ -686,7 +688,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(page.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
     const row = page.getByTestId(`scenario-history-row-${RUN_ID}`);
     await expect(row).toBeVisible();
-    await page.getByTestId("scenario-history-refresh").click();
+    await page.clock.fastForward(60_000);
     await expect(row).toBeVisible();
     await row.getByRole("link", { name: new RegExp(`Open ${SCENARIO_NAME.replace(".", "\\.")} scenario run`, "i") }).press("Enter");
     await expect(page).toHaveURL(`/scanner/history/${RUN_ID}`);
@@ -726,9 +728,10 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       `/attack/chat/${ATTACK_ID}/conversations/conversation-1?scenarioResultId=${RUN_ID}`,
     );
 
-    const backToScan = page.getByRole("link", { name: "Back to scan", exact: true });
-    await expect(backToScan).toHaveAttribute("href", `/scanner/history/${RUN_ID}`);
-    await backToScan.click();
+    const breadcrumb = page.getByRole("link", { name: "Back to scan", exact: true });
+    await expect(breadcrumb).toBeVisible();
+    await expect(breadcrumb).toHaveAttribute("href", `/scanner/history/${RUN_ID}`);
+    await breadcrumb.click();
     await expect(page).toHaveURL(`/scanner/history/${RUN_ID}`);
     await page.goBack();
     await expect(page).toHaveURL(
@@ -747,16 +750,20 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/scanner/history");
 
-    const refresh = page.getByTestId("scenario-history-refresh");
     const row = page.getByTestId(`scenario-history-row-${RUN_ID}`);
-    await expect(refresh).toBeVisible();
+    await expect(page.getByTestId("scenario-history-refresh")).toHaveCount(0);
     await expect(row).toBeVisible();
-    expect((await refresh.boundingBox())?.height).toBeGreaterThanOrEqual(44);
     expect((await row.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   });
 
   test("renders deterministic FIFO position changes and queued-to-completed handoff", async ({ page }) => {
     await mockScenarioAPIs(page);
+    let documentRequests = 0;
+    page.on("request", (request) => {
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+        documentRequests += 1;
+      }
+    });
     let progressRequests = 0;
     let queueRequests = 0;
     let phase: "position-two" | "position-one" | "running" | "completed" = "position-two";
@@ -854,8 +861,93 @@ test.describe("Scenario catalog, history, and live run routing", () => {
       });
     });
 
+    await page.route(new RegExp(`/api/scenarios/runs/${QUEUED_RUN_ID}/hierarchy(?:\\?.*)?$`), async (route) => {
+      const completed = phase === "completed";
+      const status = completed ? "COMPLETED" : phase === "running" ? "IN_PROGRESS" : "QUEUED";
+      const counts = {
+        completed: completed ? 1 : 0,
+        planned: 1,
+        succeeded: completed ? 1 : 0,
+        success_percentage: completed ? 100 : null,
+        errors: 0,
+        retries: completed ? progressAttempt.total_retries : 0,
+      };
+      const projection: ScenarioHierarchyProjection = {
+        scenario_result_id: QUEUED_RUN_ID,
+        scenario_name: "Jailbreak",
+        scenario_version: 4,
+        status,
+        groups: completed ? [{
+          atomic_group_id: progressAttempt.atomic_group_id,
+          atomic_attack_name: progressAttempt.atomic_attack_name,
+          display_group: plan.atomic_groups[0].display_group,
+          technique: null,
+          roots: [{
+            attack_result_id: progressAttempt.attack_result_id,
+            conversation_id: progressAttempt.conversation_id,
+            parent_attack_result_id: null,
+            child_index: null,
+            result_role: "target_facing",
+            attempt_index: 1,
+            atomic_attack_name: progressAttempt.atomic_attack_name,
+            atomic_group_id: progressAttempt.atomic_group_id,
+            seed_group_id: progressAttempt.seed_group_id,
+            objective: plan.seed_groups[0].objective,
+            outcome: progressAttempt.outcome,
+            outcome_reason: null,
+            execution_time_ms: progressAttempt.execution_time_ms,
+            executed_turns: 1,
+            timestamp: progressAttempt.timestamp,
+            score: null,
+            error_type: null,
+            error_message: null,
+            total_retries: progressAttempt.total_retries,
+            retries: progressAttempt.retries,
+            retries_truncated: false,
+            child_attack_result_ids: [],
+            child_references_truncated: false,
+            children: [],
+            children_truncated: false,
+            children_count: 0,
+            child_offset: 0,
+            next_children_cursor: null,
+            unresolved_child_attack_result_ids: [],
+            unresolved_child_references_truncated: false,
+            conversations: [],
+            conversations_count: null,
+            conversations_truncated: false,
+            orchestration: null,
+          }],
+          counts,
+        }] : [],
+        overall_counts: counts,
+        diagnostics: {
+          failed_attacks: [],
+          failed_attacks_count: 0,
+          failed_attacks_truncated: false,
+          attack_retries: [],
+          attack_retries_count: 0,
+          attack_retries_truncated: false,
+          total_retries: completed ? progressAttempt.total_retries : 0,
+          rootless_result_ids: [],
+          rootless_results_count: 0,
+          rootless_results_truncated: false,
+        },
+        has_more: false,
+        next_cursor: null,
+        truncated: false,
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(projection),
+      });
+    });
+
     await page.goto(`/scanner/history/${QUEUED_RUN_ID}`);
 
+    await expect(page.getByText("No saved results are available for this run yet.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Could not load the result relationships", { exact: false })).toHaveCount(0);
     await expect(page.getByTestId("run-state-badge")).toHaveText("Queued");
     const progress = page.getByRole("region", { name: "Scan progress", exact: true });
     await expect(progress).toContainText("Position 2");
@@ -892,12 +984,22 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(page).toHaveURL(`/scanner/history/${QUEUED_RUN_ID}`);
     await expect(page.getByTestId("scenario-run-page")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("run-state-badge")).toHaveText("Executing");
+    expect(documentRequests).toBe(1);
+    await expect(page.getByText("No saved results are available for this run yet.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Could not load the result relationships", { exact: false })).toHaveCount(0);
     await expect(progress).not.toContainText("Queued");
     const liveProgressRequests = progressRequests;
     phase = "completed";
     await expect(page.getByTestId("run-state-badge")).toHaveText("Completed");
     await expect(progress).toHaveCount(0);
     expect(progressRequests).toBeGreaterThan(liveProgressRequests);
+    await page.getByRole("button", { name: "Reload hierarchy", exact: true }).click();
+    const savedResults = page.getByRole("table", { name: "Prompt sending attack results", exact: true });
+    await expect(savedResults.getByRole("link", { name: plan.seed_groups[0].objective, exact: true }))
+      .toHaveAttribute("title", plan.seed_groups[0].objective);
+    await expect(savedResults.getByRole("link", { name: "Conversation", exact: true }))
+      .toHaveAttribute("href", `/attack/chat/${ATTACK_ID}/conversations/conversation-1?scenarioResultId=${QUEUED_RUN_ID}`);
+    await expect(page.getByText("Could not load the result relationships", { exact: false })).toHaveCount(0);
     await page.goBack();
     await expect(page).toHaveURL("/scanner/queue");
     await expect(page.getByText("No active or queued scenarios.", { exact: true })).toBeVisible();

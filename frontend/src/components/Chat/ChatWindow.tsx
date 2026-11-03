@@ -6,7 +6,6 @@ import {
   Breadcrumb,
   BreadcrumbDivider,
   BreadcrumbItem,
-  Field,
   Input,
   Drawer,
   Menu,
@@ -37,6 +36,7 @@ import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
 import ChatTargetPicker from './ChatTargetPicker'
 import { generateClientId } from '@/utils/clientId'
+import HelpField from '@/components/HelpField'
 import ObjectiveHeader from './ObjectiveHeader'
 import type { ApplyScorerStatus, RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance } from '@/types'
 import ConversationEditor from './ConversationEditor'
@@ -2314,7 +2314,8 @@ export default function ChatWindow({
           )}
         </div>
         {temperatureTarget && (
-          <Field label="Temperature:" orientation="horizontal" size="small" className={styles.temperatureField}
+          <HelpField label="Temperature:" orientation="horizontal" size="small" className={styles.temperatureField}
+            help="Controls variation in generated responses. Lower values are usually more consistent; higher values can produce more variation. Some targets do not support changes."
             hint={!temperatureReadOnly && temperatureTarget.supports_temperature_override && editDraft !== null
               ? 'Changes apply only to a new attack.' : undefined}>
             <Tooltip content={temperatureExplanation} relationship="description"
@@ -2341,7 +2342,7 @@ export default function ChatWindow({
                   }} />
               </span>
             </Tooltip>
-          </Field>
+          </HelpField>
         )}
         <div className={styles.editActions}>
           <Button appearance="subtle" className={styles.ribbonAction} icon={<EditRegular />}

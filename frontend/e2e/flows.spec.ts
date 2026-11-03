@@ -208,17 +208,23 @@ async function activateTarget(
   await selectChatTarget(page, targetRegistryName);
 }
 
+const historyClockPages = new WeakSet<Page>();
+
 /** Navigate to an attack by opening the History view and clicking its row. */
 async function openAttackInHistory(
   page: Page,
   attackResultId: string,
 ): Promise<void> {
+  if (!historyClockPages.has(page)) {
+    await page.clock.install();
+    historyClockPages.add(page);
+  }
   await page.getByRole("button", { name: "Attacks", exact: true }).click();
   await page.getByRole("tab", { name: "History", exact: true }).click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({
     timeout: 10_000,
   });
-  await page.getByTestId("refresh-btn").click();
+  await page.clock.fastForward(60_000);
   const row = page.getByTestId(`attack-row-${attackResultId}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.click();
