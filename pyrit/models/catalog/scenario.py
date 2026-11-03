@@ -437,7 +437,6 @@ class RegisteredScenario(BaseModel):
     scenario_type: str = Field(..., description="Scenario type identifier (e.g., 'RedTeamAgentScenario')")
     scenario_version: int = Field(1, ge=1, description="Scenario definition version used for default metadata")
     supports_objective_scorer: bool = False
-    baseline_identifier: ComponentIdentifier | None = None
     description: str = Field(..., description="Human-readable description of the scenario")
     description_markdown: str = Field(
         "",

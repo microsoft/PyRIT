@@ -1239,6 +1239,7 @@ export interface MultiSendOptions {
 export interface MessageSendConversation {
   conversation_id: string
   request_turn_number: number | null
+  target_invoked?: boolean
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
@@ -1476,7 +1477,6 @@ export interface ScenarioDatasetLoadResponse {
 
 export interface RegisteredScenario {
   supports_objective_scorer?: boolean
-  baseline_identifier?: ComponentIdentifier | null
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
   max_concrete_techniques?: number | null
   scenario_name: string

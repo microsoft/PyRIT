@@ -55,6 +55,7 @@ from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import ClauseElement
 
 from pyrit.analytics.outcome_statistics import compute_outcome_statistics, success_percentage
+from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
@@ -1942,6 +1943,8 @@ class MemoryInterface(abc.ABC):
         for dependency in cls._iter_identifier_dependencies(identifier):
             cls._persist_identifier(session=session, identifier=dependency)
 
+        # Without an outer SQLite transaction, releasing the savepoint would commit this row early.
+        _begin_sqlite_write(session)
         try:
             with session.begin_nested():
                 session.add(entry_type.from_domain_model(identifier))
@@ -7378,7 +7381,10 @@ class MemoryInterface(abc.ABC):
                 outcomes=g_outcomes,
             )
             run_groups = groups_by_run.setdefault(run_id, {})
-            run_groups[canonical_gid] = counts
+            if canonical_gid in run_groups:
+                run_groups[canonical_gid] = combine_execution_counts([run_groups[canonical_gid], counts])
+            else:
+                run_groups[canonical_gid] = counts
             if canonical_gid != raw_gid:
                 run_groups[raw_gid] = counts
 

@@ -95,6 +95,11 @@ class _ScenarioHistoryQueries:
                 or_(
                     AttackResultEntry.id == reference_id,
                     AttackResultEntry.conversation_id == str(reference_id),
+                    self._memory._get_condition_json_array_match(
+                        json_column=AttackResultEntry.pruned_conversation_ids,
+                        property_path="$",
+                        array_to_match=[str(reference_id)],
+                    ),
                     AttackResultEntry.id.in_(conversation_attacks),
                     AttackResultEntry.id.in_(finding_attacks),
                 ),

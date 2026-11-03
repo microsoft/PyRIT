@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy import and_, select, text
 from sqlalchemy.dialects import mssql, sqlite
+from sqlalchemy.orm import Session
 from unit.mocks import get_mock_target_identifier, make_scenario_result, run_memory_session_async
 
 from pyrit.common.utils import to_sha256
@@ -513,6 +514,62 @@ def test_recorded_history_lookup_compiles_correlated_verified_read(dialect_name:
     scenario_table = 'FROM "ScenarioResultEntries"' if dialect_name == "sqlite" else "FROM [ScenarioResultEntries]"
     assert sql.count(scenario_table) == 1
     assert "NOT (EXISTS" in sql
+
+
+async def test_history_id_lookup_matches_legacy_pruned_conversation_before_pagination_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
+    pruned_id = uuid.uuid4()
+    scenarios = [
+        _make_scenario(
+            result_id=uuid.uuid4(),
+            timestamp=timestamp + timedelta(minutes=index),
+            name=f"LegacyScenario{index}",
+            state=ScenarioRunState.COMPLETED,
+            labels={},
+        )
+        for index in range(3)
+    ]
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios)
+
+    def persist_legacy_entries(session: Session) -> None:
+        for scenario, pruned_ids in zip(scenarios, ([str(pruned_id)], [], None), strict=True):
+            entry = AttackResultEntry(
+                entry=AttackResult(
+                    attack_result_id=str(uuid.uuid4()),
+                    conversation_id=str(uuid.uuid4()),
+                    objective="objective",
+                    outcome=AttackOutcome.FAILURE,
+                    execution_time_ms=1,
+                    timestamp=timestamp,
+                    attribution_parent_id=str(scenario.id),
+                    attribution_data={"parent_collection": "attack"},
+                )
+            )
+            entry.pruned_conversation_ids = pruned_ids
+            session.add(entry)
+        session.add(ConversationEntry(conversation=Conversation(conversation_id=str(pruned_id), attack_result_id=None)))
+        session.commit()
+
+    await run_memory_session_async(memory=sqlite_instance, operation=persist_legacy_entries)
+    persisted_owner = await run_memory_session_async(
+        memory=sqlite_instance,
+        operation=lambda session: session.execute(
+            select(ConversationEntry.attack_result_id).where(ConversationEntry.conversation_id == str(pruned_id))
+        ).one(),
+    )
+    assert persisted_owner.attack_result_id is None
+
+    unfiltered, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(limit=1)
+    assert [record.scenario_result_id for record in unfiltered] == [str(scenarios[2].id)]
+    assert has_more
+    records, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(reference_id=pruned_id, limit=1)
+    assert [record.scenario_result_id for record in records] == [str(scenarios[0].id)]
+    assert not has_more
+    unknown, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(reference_id=uuid.uuid4(), limit=1)
+    assert unknown == []
+    assert not has_more
 
 
 async def test_history_creation_order_is_stable_when_scenario_entry_is_rebuilt(

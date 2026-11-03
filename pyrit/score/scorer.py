@@ -62,7 +62,89 @@ logger = logging.getLogger(__name__)
 
 #: Release in which the message-shaped ``score_async`` parameters are removed.
 LEGACY_SCORE_ASYNC_REMOVED_IN = "2.0.0"
+SnapshotParticipation = dict[str, Any]
 ConditionT = TypeVar("ConditionT", bound=Condition)
+
+
+def _read_snapshot_participation(score: Score) -> SnapshotParticipation | None:
+    """
+    Read the private same-input child participation tree on a wrapper result.
+
+    Returns:
+        The validated child tree, or None when absent or invalid.
+    """
+    raw: Any = score._snapshot_participation
+    return raw if _is_snapshot_participation(raw) else None
+
+
+def _is_snapshot_participation(value: Any) -> bool:
+    """
+    Validate persisted provenance before allowing it to skip a child freshness check.
+
+    Returns:
+        Whether the value is a canonical participation tree.
+    """
+    return isinstance(value, dict) and all(
+        isinstance(index, str)
+        and index.isascii()
+        and index.isdecimal()
+        and (index == "0" or not index.startswith("0"))
+        and (child is None or _is_snapshot_participation(child))
+        for index, child in value.items()
+    )
+
+
+def _participates_in_snapshot(
+    *,
+    score: Score,
+    child_index: int,
+    participation_by_score: dict[str, SnapshotParticipation | None],
+) -> bool:
+    """
+    Include unknown legacy branches conservatively.
+
+    Returns:
+        Whether the branch contributed or its participation is unknown.
+    """
+    participation = participation_by_score.get(str(score.id))
+    return participation is None or str(child_index) in participation
+
+
+def _child_snapshot_participation(
+    *,
+    score: Score,
+    child_index: int,
+    participation_by_score: dict[str, SnapshotParticipation | None],
+) -> SnapshotParticipation | None:
+    """Return one child's node-scoped participation tree when known."""
+    participation = participation_by_score.get(str(score.id))
+    return participation.get(str(child_index)) if participation is not None else None
+
+
+def _validated_snapshot_participation(
+    *,
+    score: Score,
+    child_count: int,
+    participation_by_score: dict[str, SnapshotParticipation | None],
+) -> SnapshotParticipation | None:
+    """
+    Treat empty or out-of-range participation as unknown.
+
+    Returns:
+        The validated tree, or None when it cannot identify participating branches.
+    """
+    participation = participation_by_score.get(str(score.id))
+    valid_indices = {str(index) for index in range(child_count)}
+    if not participation or any(index not in valid_indices for index in participation):
+        return None
+    return participation
+
+
+def _set_snapshot_participation(*, score: Score, child_scores: dict[int, Score]) -> None:
+    """Record the same-input branches that actually contributed scores."""
+    score._snapshot_participation = {
+        str(index): _read_snapshot_participation(child) for index, child in sorted(child_scores.items())
+    }
 
 
 class LegacyScorerHookError(TypeError):
@@ -920,7 +1002,95 @@ class Scorer(Identifiable, abc.ABC):
         Returns:
             Matching scores in newest-first order, including undetermined results.
         """
-        return self.find_matching_scores(scores=scores, scorable=scorable, expectation=expectation)
+        prepared = self.prepare_expectation(expectation=expectation)
+        candidates = self.find_matching_scores(scores=scores, scorable=scorable, expectation=prepared)
+        if not candidates:
+            return []
+        return await self._filter_matching_scores_by_snapshot_async(
+            scores=candidates,
+            scorable=scorable,
+            expectation=prepared,
+            used_observation_ids={str(score.id): set() for score in candidates},
+            participation_by_score={str(score.id): _read_snapshot_participation(score) for score in candidates},
+        )
+
+    async def _filter_matching_scores_by_snapshot_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
+    ) -> list[Score]:
+        """
+        Filter root identity matches by evidence freshness.
+
+        Snapshot-free leaves retain the root match; same-input wrappers recurse.
+
+        Returns:
+            Candidates whose required snapshots remain current.
+        """
+        return list(scores)
+
+    async def _filter_matching_scores_by_children_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
+    ) -> list[Score]:
+        """
+        Check every participating same-input child's freshness contract.
+
+        Linked observations are consumed per root score so one snapshot cannot
+        stand in for multiple participating conversation branches.
+
+        Returns:
+            Root candidates with current evidence for every participating child.
+        """
+        candidates: list[Score] = list(scores)
+        child_expectations = self._get_child_expectations(expectation=expectation)
+        participation_by_score = {
+            str(score.id): _validated_snapshot_participation(
+                score=score,
+                child_count=len(child_expectations),
+                participation_by_score=participation_by_score,
+            )
+            for score in scores
+        }
+        for child_index, (child, child_expectation) in enumerate(child_expectations):
+            participating_scores = [
+                score
+                for score in candidates
+                if _participates_in_snapshot(
+                    score=score, child_index=child_index, participation_by_score=participation_by_score
+                )
+            ]
+            if not participating_scores:
+                continue
+            fresh_scores = await child._filter_matching_scores_by_snapshot_async(
+                scores=participating_scores,
+                scorable=scorable,
+                expectation=child_expectation,
+                used_observation_ids=used_observation_ids,
+                participation_by_score={
+                    str(score.id): _child_snapshot_participation(
+                        score=score, child_index=child_index, participation_by_score=participation_by_score
+                    )
+                    for score in participating_scores
+                },
+            )
+            fresh_ids = {str(score.id) for score in fresh_scores}
+            participating_ids = {str(score.id) for score in participating_scores}
+            candidates = [
+                score for score in candidates if str(score.id) not in participating_ids or str(score.id) in fresh_ids
+            ]
+            if not candidates:
+                return []
+        return candidates
 
     def find_matching_scores(
         self,
