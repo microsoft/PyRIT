@@ -71,7 +71,7 @@ class AudioFrequencyConverter(Converter):
             ConverterResult: The result containing the audio file path.
 
         Raises:
-            ValueError: If the input type is not supported or the shift is at/above Nyquist.
+            ValueError: If the input type is not supported or the shift cannot fit below Nyquist.
             Exception: If there is an error during the conversion process.
         """
         if not self.input_supported(input_type):
@@ -98,6 +98,21 @@ class AudioFrequencyConverter(Converter):
             midpoint = 128 if data.dtype == np.uint8 else 0
             centered_data = data.astype(np.float64) - midpoint
             analytic_data = hilbert(centered_data, axis=0)
+
+            # Keep the translated spectrum inside the representable positive-frequency
+            # range. A carrier-only Nyquist check is insufficient: input frequencies
+            # above Nyquist - shift would still fold back into the audible band.
+            frequencies = np.fft.fftfreq(len(data), d=1 / sample_rate)
+            spectrum = np.fft.fft(analytic_data, axis=0)
+            if self._shift_value >= 0:
+                max_input_frequency = nyquist_frequency - self._shift_value
+                valid_frequencies = (frequencies >= 0) & (frequencies <= max_input_frequency)
+            else:
+                min_input_frequency = abs(self._shift_value)
+                valid_frequencies = (frequencies >= min_input_frequency) & (frequencies <= nyquist_frequency)
+            spectrum[~valid_frequencies] = 0
+            analytic_data = np.fft.ifft(spectrum, axis=0)
+
             phase = np.exp(1j * 2 * np.pi * self._shift_value * np.arange(len(data)) / sample_rate)
             if data.ndim > 1:
                 phase = phase[:, np.newaxis]
