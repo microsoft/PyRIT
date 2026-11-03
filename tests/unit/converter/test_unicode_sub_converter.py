@@ -28,6 +28,36 @@ def test_unicode_sub_rejects_invalid_start_value(start_value):
         UnicodeSubstitutionConverter(start_value=start_value)
 
 
+@pytest.mark.parametrize(
+    ("start_value", "prompt"),
+    [
+        (0x10FFFF, "a"),
+        (0xD7FF, "a"),
+        (0xD800, "\x00"),
+        (0xE0000, "\U00030000"),
+    ],
+)
+async def test_unicode_sub_rejects_invalid_scalar_output_async(start_value, prompt):
+    converter = UnicodeSubstitutionConverter(start_value=start_value)
+    with pytest.raises(ValueError, match="not a valid Unicode scalar value"):
+        await converter.convert_async(prompt=prompt, input_type="text")
+
+
+@pytest.mark.parametrize(
+    ("start_value", "prompt"),
+    [
+        (0x10FFFF, "\x00"),
+        (0xD7FF - ord("a"), "a"),
+        (0xE000 - ord("a"), "a"),
+    ],
+)
+async def test_unicode_sub_accepts_scalar_boundaries_async(start_value, prompt):
+    converter = UnicodeSubstitutionConverter(start_value=start_value)
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == chr(start_value + ord(prompt))
+    result.output_text.encode("utf-8")
+
+
 async def test_unicode_sub_empty():
     converter = UnicodeSubstitutionConverter()
     result = await converter.convert_async(prompt="", input_type="text")
