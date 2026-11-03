@@ -7,6 +7,8 @@ import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
+import av
+import numpy as np
 import pytest
 from unit.mocks import get_mock_scorer_identifier
 
@@ -18,7 +20,7 @@ from pyrit.score import (
     SystemPromptExtractionScorer,
     create_conversation_scorer,
 )
-from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
+from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper, _audio_to_wav
 from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
@@ -27,6 +29,11 @@ from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.score.scorer import Scorer
+
+try:
+    import cv2
+except ModuleNotFoundError:  # OpenCV is an optional extra.
+    cv2 = None
 
 
 class MockTextTrueFalseScorer(MessageTrueFalseScorer):
@@ -442,10 +449,6 @@ class TestPyAVAudioConversion:
 
     def test_audio_to_wav_removes_temp_file_when_conversion_fails(self, tmp_path):
         """A failed conversion must not leave its temporary WAV behind."""
-        import av
-
-        from pyrit.score.audio_transcript_scorer import _audio_to_wav
-
         not_audio = tmp_path / "not_audio.mp4"
         not_audio.write_bytes(b"this is not an audio or video container")
         temp_dir = tmp_path / "temp"
@@ -457,11 +460,9 @@ class TestPyAVAudioConversion:
 
         assert list(temp_dir.iterdir()) == []
 
+    @pytest.mark.skipif(cv2 is None, reason="opencv is not installed")
     def test_extract_audio_from_video_without_audio_leaves_no_temp_file(self, tmp_path):
         """A video with no audio track returns None and leaves no temporary WAV behind."""
-        cv2 = pytest.importorskip("cv2")
-        import numpy as np
-
         video_path = tmp_path / "silent.mp4"
         writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 20, (64, 64))
         for _ in range(20):
