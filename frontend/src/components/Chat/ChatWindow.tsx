@@ -36,6 +36,7 @@ import ConverterPanel from './ConverterPanel'
 import TargetBadge from './TargetBadge'
 import ChatTargetPicker from './ChatTargetPicker'
 import { generateClientId } from '@/utils/clientId'
+import FileDropZone from '@/components/Media/FileDropZone'
 import HelpField from '@/components/HelpField'
 import ObjectiveHeader from './ObjectiveHeader'
 import type { ApplyScorerStatus, RegisteredComponentReference, ScoringFailure, ManualContinuation, ScorerInstance } from '@/types'
@@ -2456,7 +2457,10 @@ export default function ChatWindow({
           controller={converters}
         />
       )}
-      <div className={styles.chatArea} data-testid="chat-area">
+      <FileDropZone className={styles.chatArea} testId="chat-area"
+        disabled={inputDisabledReasons.length > 0}
+        disabledReason={inputDisabledReasons.join(' ')}
+        onFiles={(files: File[]) => inputBoxRef.current?.addFiles(files)}>
         {scenarioResultId && (
           <div className={styles.breadcrumbBar}>
             <Breadcrumb aria-label="Attack provenance" size="small">
@@ -2643,6 +2647,7 @@ export default function ChatWindow({
         )}
         <div hidden={editDraft !== null}>
         <ChatInputArea
+          fileDropEnabled={false}
           ref={inputBoxRef}
           undoLastSend={showUndoLastSend ? {
             disabledReason: undoDisabledReason,
@@ -2697,7 +2702,7 @@ export default function ChatWindow({
           onClearMediaConversion={converters.clear}
         />
         </div>
-      </div>
+      </FileDropZone>
       <Drawer
         as="aside"
         {...restoreFocusSourceAttributes}
