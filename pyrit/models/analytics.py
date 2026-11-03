@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
+from decimal import MAX_EMAX, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal, localcontext
 from enum import Enum
 from math import isclose, isfinite
 from typing import Annotated, Any, ClassVar, Self
@@ -20,6 +20,16 @@ from pyrit.models.results.attack_result import AttackOutcome
 
 _OutcomeCount = Annotated[int, Field(strict=True, ge=0)]
 _OutcomeRate = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
+_WILSON_DECIMAL_CONTEXT = Context(
+    prec=50,
+    rounding=ROUND_HALF_EVEN,
+    Emin=MIN_EMIN,
+    Emax=MAX_EMAX,
+    capitals=1,
+    clamp=0,
+    flags=[],
+    traps=[],
+)
 _WILSON_Z_95 = Decimal("1.959963984540054")
 
 
@@ -194,10 +204,7 @@ class AttackAnalyticsStatistics(AttackStats):
             or not 0 <= lower <= upper <= 1
         ):
             raise ValueError("success_rate confidence interval must agree with its outcome counts.")
-        with localcontext() as ctx:
-            ctx.prec = 50
-            ctx.Emin = MIN_EMIN
-            ctx.Emax = MAX_EMAX
+        with localcontext(_WILSON_DECIMAL_CONTEXT):
             n = Decimal(denominator)
             p = Decimal(numerator) / n
             q = Decimal(denominator - numerator) / n

@@ -4,6 +4,7 @@
 import json
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
+from decimal import ROUND_CEILING, FloatOperation, Inexact, Rounded, Subnormal, localcontext
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -172,6 +173,15 @@ def test_shared_statistics_accept_legacy_payload_without_confidence_interval_and
         TypeAdapter(OutcomeStatistics).validate_python(
             {**asdict(subnormal_rate), "success_rate_ci_lower": 1e-322, "success_rate_ci_upper": 1e-322}
         )
+
+    payload = asdict(statistics)
+    with localcontext() as ctx:
+        ctx.rounding = ROUND_CEILING
+        ctx.traps[Inexact] = True
+        ctx.traps[Rounded] = True
+        ctx.traps[Subnormal] = True
+        ctx.traps[FloatOperation] = True
+        assert TypeAdapter(OutcomeStatistics).validate_python(payload) == statistics
 
 
 def test_reembedding_mutated_outcomes_revalidates_the_counts() -> None:

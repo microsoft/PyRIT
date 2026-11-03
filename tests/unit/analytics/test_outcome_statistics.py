@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from dataclasses import asdict
+from decimal import ROUND_CEILING, FloatOperation, Inexact, Rounded, Subnormal, localcontext
 from itertools import product
 
 import pytest
@@ -111,6 +112,18 @@ def test_skewed_large_integer_counts_do_not_underflow_wilson_interval() -> None:
     )
     assert subnormal_stats.success_rate_ci_lower == 8.4e-323
     assert subnormal_stats.success_rate_ci_upper == 1.235e-322
+
+
+def test_wilson_interval_ignores_caller_decimal_traps_and_rounding() -> None:
+    expected = compute_outcome_statistics({"success": 1, "failure": 1})
+    with localcontext() as ctx:
+        ctx.rounding = ROUND_CEILING
+        ctx.traps[Inexact] = True
+        ctx.traps[Rounded] = True
+        ctx.traps[Subnormal] = True
+        ctx.traps[FloatOperation] = True
+        statistics = compute_outcome_statistics({"success": 1, "failure": 1})
+    assert statistics == expected
 
 
 @pytest.mark.parametrize(
