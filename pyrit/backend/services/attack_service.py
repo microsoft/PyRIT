@@ -35,6 +35,7 @@ from pyrit.backend.models.attacks import (
     AddMessageResponse,
     AttackConversationsResponse,
     AttackListResponse,
+    AttackMetadata,
     AttackSummary,
     ConversationMessagesResponse,
     ConversationSummary,
@@ -368,7 +369,67 @@ class AttackService:
         if not results:
             return None
 
+        return await self._summarize_attack_async(ar=results[0])
+
+    async def get_attack_metadata_async(
+        self, *, attack_result_id: str, conversation_id: str | None = None
+    ) -> AttackMetadata | None:
+        """
+        Read Chat metadata with a reference count and independent selected membership.
+
+        The stored SDK result and reference JSON are still materialized by memory.
+        Only the count and selected membership cross the metadata DTO boundary.
+
+        Returns:
+            AttackMetadata | None: Metadata without reference arrays, or None for an absent attack.
+        """
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
+        if not results:
+            return None
         ar = results[0]
+        references = await self._memory.get_attack_conversation_page_async(attack_result_id=attack_result_id, limit=1)
+        if references is None:
+            return None
+        selected_id = conversation_id if conversation_id is not None else ar.conversation_id
+        selected_valid = bool(selected_id) and selected_id == references.main_conversation_id
+        if not selected_valid:
+            selected = await self._memory.get_attack_conversation_page_async(
+                attack_result_id=attack_result_id, conversation_id=selected_id, limit=1
+            )
+            if selected is None:
+                return None
+            selected_valid = bool(selected.conversations)
+        summary = await self._summarize_attack_async(
+            ar=ar.model_copy(update={"related_conversations": set(), "last_response": None})
+        )
+        return AttackMetadata(
+            attack_result_id=summary.attack_result_id,
+            conversation_id=summary.conversation_id,
+            objective=summary.objective,
+            labels=summary.labels,
+            operator=summary.operator,
+            target=summary.target,
+            target_unbound=summary.target_unbound,
+            outcome=summary.outcome,
+            automated_score=summary.automated_score,
+            human_score=summary.human_score,
+            chat_scorer=summary.chat_scorer,
+            chat_scorer_inherited=summary.chat_scorer_inherited,
+            execution_read_only=summary.execution_read_only,
+            manual_continuation=summary.manual_continuation,
+            last_response_message_piece_id=str(ar.last_response.id) if ar.last_response is not None else None,
+            related_conversation_count=references.total_count - int(bool(references.main_conversation_id)),
+            selected_conversation_id=selected_id,
+            selected_conversation_valid=selected_valid,
+        )
+
+    async def _summarize_attack_async(self, *, ar: AttackResult) -> AttackSummary:
+        """
+        Map one loaded result with the shared presentation and scoring policy.
+
+        Returns:
+            AttackSummary: The presentation view of the supplied result.
+        """
         stats_map = await self._memory.get_conversation_stats_async(conversation_ids=[ar.conversation_id])
         stats = stats_map.get(ar.conversation_id, ConversationStats(message_count=0))
         operation_names = await self._get_operation_names_async(results=[ar])

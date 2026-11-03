@@ -785,6 +785,41 @@ describe("api service", () => {
       expect(result.attack_type).toBe("ManualAttack");
     });
 
+    it.each([undefined, "off-page/conversation"])(
+      "should request reference-free initial metadata with selected conversation %s",
+      async (conversationId: string | undefined) => {
+        const data = {
+          attack_result_id: "attack/id", conversation_id: "main", objective: "Saved objective",
+          labels: {}, outcome: "undetermined", execution_read_only: true,
+          last_response_message_piece_id: "last-response", related_conversation_count: 700,
+          selected_conversation_id: conversationId ?? "main", selected_conversation_valid: true,
+        };
+        (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+        expect(await attacksApi.getAttackMetadata("attack/id", conversationId)).toEqual(data);
+        if (conversationId === undefined) {
+          expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/metadata");
+        } else {
+          expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/metadata", {
+            params: { conversation_id: conversationId },
+          });
+        }
+        expect(apiClient.get).toHaveBeenCalledTimes(1);
+        expect(data).not.toHaveProperty("related_conversations");
+        expect(data).not.toHaveProperty("related_conversation_ids");
+      },
+    );
+
+    it("should propagate metadata errors without fetching the legacy full summary", async () => {
+      const error = new Error("Metadata unavailable");
+      (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
+      await expect(attacksApi.getAttackMetadata("attack", "selected")).rejects.toBe(error);
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack/metadata", {
+        params: { conversation_id: "selected" },
+      });
+    });
+
     it("should get attack messages", async () => {
       const mockResponse = {
         data: {

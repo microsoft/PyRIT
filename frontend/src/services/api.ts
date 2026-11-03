@@ -33,6 +33,7 @@ import type {
   LabelOptionsResponse,
   CreateAttackResponse,
   AttackSummary,
+  AttackMetadata,
   AttackListResponse,
   DatasetListResponse,
   SeedExampleDetailResponse,
@@ -486,6 +487,14 @@ export const attacksApi = {
 
   getAttack: async (attackResultId: string): Promise<AttackSummary> => {
     const response = await apiClient.get(`/attacks/${encodeURIComponent(attackResultId)}`)
+    return response.data
+  },
+
+  getAttackMetadata: async (attackResultId: string, conversationId?: string): Promise<AttackMetadata> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/metadata`
+    const response = conversationId === undefined
+      ? await apiClient.get(url)
+      : await apiClient.get(url, { params: { conversation_id: conversationId } })
     return response.data
   },
 

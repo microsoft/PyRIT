@@ -77,7 +77,7 @@ export default function FindingEvidenceDialog({
   }
 
   useEffect(() => {
-    if (!attackResultId) return
+    if (!open || !attackResultId) return
     let ignore = false
     const resolve = async (): Promise<void> => {
       try {
@@ -92,7 +92,7 @@ export default function FindingEvidenceDialog({
     }
     void resolve()
     return () => { ignore = true }
-  }, [attackResultId, defaultOperationId, viewKey])
+  }, [open, attackResultId, defaultOperationId, viewKey])
 
   useEffect(() => {
     if (!open) return

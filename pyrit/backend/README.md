@@ -49,6 +49,15 @@ Saving from the scanner creates a copy through `POST /api/attacks/save-conversat
 it does not change the source or send to a target.
 
 For on-demand saved-result browsing, use
+`GET /api/attacks/{attack_result_id}/metadata?conversation_id={conversation_id}`
+for initial Chat metadata. It returns `related_conversation_count` (pruned
+references, excluding main) and `selected_conversation_valid`, independently of
+reference paging. An omitted conversation ID selects main. This response omits
+both complete reference arrays, transcript bodies, and result hierarchies; the
+stored SDK result and reference JSON are still materialized server-side.
+`GET /api/attacks/{attack_result_id}` keeps its full legacy summary contract.
+
+Use
 `GET /api/attacks/{attack_result_id}/conversations?limit=50` to page main and pruned
 references in saved-reference order. This reads counts
 and previews, not conversation bodies. The limit is 1-200; follow
