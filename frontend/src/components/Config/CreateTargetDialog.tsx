@@ -581,6 +581,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
 
     const metadataParams = buildParametersFromForm(metadataDrivenParameters, parameterValues)
     if (!metadataParams.ok) {
+      setHttpRequestError(null)
       setError(metadataParams.error)
       return
     }

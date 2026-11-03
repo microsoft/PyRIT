@@ -291,6 +291,13 @@ const TARGET_TYPES: TargetTypeListResponse = {
           default: "True",
           description: "Whether to use TLS.",
         },
+        {
+          name: "max_requests_per_minute",
+          type_name: "int",
+          required: false,
+          default: null,
+          description: "Maximum requests per minute.",
+        },
       ],
       supported_auth_modes: ["api_key"],
       description: "Sends prompts through a raw HTTP request template.",
@@ -964,6 +971,52 @@ describe("CreateTargetDialog", () => {
       expect(error).toHaveFocus();
       expect(requestField).not.toHaveAttribute("aria-invalid", "true");
     });
+  });
+
+  it("announces metadata validation errors after a prior HTTP request error", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockRejectedValueOnce(Object.assign(
+      new Error("Invalid HTTP request line"),
+      {
+        isAxiosError: true,
+        response: {
+          status: 400,
+          data: { detail: "Invalid HTTP request line" },
+        },
+      },
+    ));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("HTTPTarget");
+
+    const requestField = screen.getByLabelText(/Http Request/) as HTMLTextAreaElement;
+    fireEvent.change(requestField, { target: { value: "not an HTTP request" } });
+    const createButton = screen.getByRole("button", { name: "Create Target" });
+    await user.click(createButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent("Invalid HTTP request line");
+      expect(requestField).toHaveFocus();
+    });
+
+    const maxRequestsPerMinute = screen.getByLabelText(/Max Requests Per Minute/i);
+    fireEvent.change(maxRequestsPerMinute, { target: { value: "1.5" } });
+    await user.click(createButton);
+
+    await waitFor(() => {
+      const error = screen.getByRole("alert");
+      expect(error).toHaveTextContent("max_requests_per_minute must be an integer.");
+      expect(error).toHaveFocus();
+      expect(requestField).not.toHaveFocus();
+    });
+
+    expect(requestField).toHaveValue("not an HTTP request");
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledTimes(1);
   });
 
   it("should include API key in params when provided", async () => {
