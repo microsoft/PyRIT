@@ -27,13 +27,18 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.score import (
+    FileWriteScorer,
     LegacyScorerHookError,
     MessageTrueFalseScorer,
+    OtelToolCallScorer,
     ProgramExecutionScorer,
     Scorer,
     ScorerPromptValidator,
     SelfAskGeneralFloatScaleScorer,
     SelfAskScaleScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
 from pyrit.score.float_scale.decision_scorer import DecisionScorer
@@ -211,6 +216,21 @@ class TestScorableTypeDeclarations:
             {MessageScorable, ContentScorable, ContentEntryScorable, ProgramExecutionScorable}
         )
         assert scorer.get_condition_types() == frozenset({ProgramBehaves})
+
+    def test_leaf_types_report_each_leaf_of_a_wrapper_separately(self) -> None:
+        file_scorer = FileWriteScorer(source=MagicMock(spec=ObservationSource))
+        trace_scorer = OtelToolCallScorer(source=MagicMock(spec=ObservationSource))
+        composite = TrueFalseCompositeScorer(
+            scorers=[file_scorer, TrueFalseInverterScorer(scorer=trace_scorer)],
+            aggregator=TrueFalseScoreAggregator.AND,
+        )
+
+        assert composite.get_supported_scorable_types() == frozenset({MessageScorable})
+        assert composite.get_leaf_scorable_types() == (
+            file_scorer.get_supported_scorable_types(),
+            trace_scorer.get_supported_scorable_types(),
+        )
+        assert file_scorer.get_leaf_scorable_types() == (file_scorer.get_supported_scorable_types(),)
 
 
 class TestNoAmbientExpectation:

@@ -220,6 +220,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         # Execute with retries
         response = None
         score = None
+        delivered_without_response = False
 
         # Attack execution steps:
         # 1) Construct the seed prompt(s) that will be injected into the conversation
@@ -234,6 +235,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         for attempt in range(self._max_attempts_on_failure + 1):
             self._logger.debug(f"Attempt {attempt + 1}/{self._max_attempts_on_failure + 1}")
             score = None
+            delivered_without_response = False
 
             # Prepare a fresh message for each attempt to avoid duplicate ID errors in database
             message = self._get_message(context)
@@ -248,10 +250,22 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 self._logger.warning(f"No response received on attempt {attempt + 1} (likely filtered)")
                 continue  # Retry if no response (filtered or error)
 
+            # A write-only target returns the delivered request instead of a response. The request is
+            # never judged as response text, but scorers that read side-effect evidence (e.g., a
+            # written file) still judge what the turn did.
+            delivered_without_response = PromptNormalizer.is_write_only_delivery(response)
+
             # Score the response including auxiliary and objective scoring
             score = await self._evaluate_response_async(
-                response=response, objective=context.objective, expectation=context.expectation
+                response=response,
+                objective=context.objective,
+                expectation=context.expectation,
+                side_effect_evidence_only=delivered_without_response,
             )
+
+            if delivered_without_response and score is None:
+                # Nothing judged the turn, and retrying would only deliver the request again.
+                break
 
             # If there is no objective, we have a response but can't determine success
             if not self._objective_scorer:
@@ -272,11 +286,14 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 await self._setup_async(context=context)  # Reset conversation for next attempt
 
         # Determine the outcome
-        outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
+        if delivered_without_response and score is None:
+            outcome, outcome_reason = AttackOutcome.UNDETERMINED, "Objective target returned no response to score"
+        else:
+            outcome, outcome_reason = self._determine_attack_outcome(response=response, score=score, context=context)
 
         return self._create_attack_result(
             context=context,
-            response=response,
+            response=None if delivered_without_response else response,
             score=score,
             outcome=outcome,
             outcome_reason=outcome_reason,
@@ -417,6 +434,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
         response: Message,
         objective: str,
         expectation: ScoringExpectation,
+        side_effect_evidence_only: bool = False,
     ) -> Score | None:
         """
         Evaluate the response against the objective using the configured scorers.
@@ -428,6 +446,8 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
             response (Message): The response from the model.
             objective (str): The natural-language description of the attack's objective.
             expectation (ScoringExpectation): The effective scoring question.
+            side_effect_evidence_only (bool): Run only scorers that judge side-effect evidence, for a
+                delivered request with no target response. Defaults to False.
 
         Returns:
             Score | None: The score from the objective scorer if configured, or None if
@@ -444,6 +464,7 @@ class PromptSendingAttack(SingleTurnAttackStrategy):
                 objective_scorer=self._objective_scorer,
                 auxiliary_scorers=self._auxiliary_scorers,
                 expectation=expectation,
+                side_effect_evidence_only=side_effect_evidence_only,
             )
 
         if not self._objective_scorer:

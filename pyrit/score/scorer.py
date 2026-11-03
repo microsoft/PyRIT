@@ -344,6 +344,22 @@ class Scorer(Identifiable, abc.ABC):
             .intersection(*(child.get_supported_scorable_types() for child in children[1:]))
         )
 
+    def get_leaf_scorable_types(self) -> tuple[frozenset[type[Scorable]], ...]:
+        """
+        Describe the evidence each leaf reads, without scoring or acquiring evidence.
+
+        Unlike ``get_supported_scorable_types``, a wrapper without its own evidence adapter
+        does not intersect its children: it reports every leaf separately, so a composite of
+        leaves that read different evidence still shows what each one reads.
+
+        Returns:
+            The supported evidence types of each leaf, in child order.
+        """
+        children = self._get_child_scorers()
+        if self.SUPPORTED_SCORABLE_TYPES or not children:
+            return (self.get_supported_scorable_types(),)
+        return tuple(types for child in children for types in child.get_leaf_scorable_types())
+
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
         """Return the wrapped scorers, or an empty tuple for a leaf."""
         return ()

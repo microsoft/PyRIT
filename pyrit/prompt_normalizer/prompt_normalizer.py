@@ -50,6 +50,10 @@ def _is_write_only_response(responses: object) -> bool:
     return isinstance(responses, list) and len(responses) == 0
 
 
+class _WriteOnlyDelivery(Message[MessagePiece]):
+    """The sent request, returned in place of a response when a write-only target produces none."""
+
+
 class PromptNormalizer:
     """
     Handles normalization and processing of prompts before they are sent to targets.
@@ -93,6 +97,23 @@ class PromptNormalizer:
         self._converter_guard = converter_guard
         self.id = str(uuid4())
 
+    @staticmethod
+    def is_write_only_delivery(message: Message) -> bool:
+        """
+        Check whether ``send_prompt_async`` returned the sent request instead of a target response.
+
+        Write-only targets (e.g., TextTarget) deliver the request and return an empty response list,
+        so the normalizer hands the request back. The normalizer marks that case explicitly, so the
+        check does not depend on the request's role.
+
+        Args:
+            message (Message): The message returned by ``send_prompt_async``.
+
+        Returns:
+            bool: True if the message is the delivered request rather than a target response.
+        """
+        return isinstance(message, _WriteOnlyDelivery)
+
     async def send_prompt_async(
         self,
         *,
@@ -120,7 +141,9 @@ class PromptNormalizer:
                 history selection and send lifecycle state.
 
         Returns:
-            Message: The response received from the target.
+            Message: The response received from the target. For a write-only target that returns
+                no response, this is the sent request; check it with ``is_write_only_delivery``
+                before treating it as a response.
 
         Raises:
             Exception: If an error occurs during the request processing.
@@ -207,9 +230,9 @@ class PromptNormalizer:
         # handling empty responses message list and None responses
         if not responses or not any(responses):
             # An empty list is valid for write-only targets (e.g., TextTarget)
-            # that don't produce responses. Return the request as-is.
+            # that don't produce responses. Return the request, marked as a delivery.
             if _is_write_only_response(responses):
-                return request
+                return _WriteOnlyDelivery(message_pieces=request.message_pieces)
             empty_response = construct_response_from_request(
                 request=request.message_pieces[0],
                 response_text_pieces=[""],

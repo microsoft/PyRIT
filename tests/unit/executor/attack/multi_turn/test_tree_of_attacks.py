@@ -30,6 +30,7 @@ from pyrit.executor.attack.multi_turn.tree_of_attacks import (
     _TAPAttackConfiguration,
     _TreeOfAttacksNode,
     _TreeOfAttacksNodeExecutor,
+    _WriteOnlyTargetError,
 )
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -45,6 +46,7 @@ from pyrit.models import (
     ScoringExpectation,
     SeedPrompt,
 )
+from pyrit.prompt_normalizer.prompt_normalizer import _WriteOnlyDelivery
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.score import (
     FloatScaleThresholdScorer,
@@ -146,6 +148,7 @@ class MockNodeFactory:
         node.objective_target_conversation_id = config.objective_target_conversation_id
         node.adversarial_chat_conversation_id = config.adversarial_chat_conversation_id
         node.error_message = None
+        node.delivered_without_response = False
 
         node.send_prompt_async = AsyncMock(return_value=None)
 
@@ -2361,6 +2364,27 @@ class TestTreeOfAttacksNode:
 
         assert node.objective_target_conversation_id == original_conv_id
 
+    async def test_node_write_only_delivery_is_recorded_not_scored(self, node_components):
+        """A request handed back for a write-only target is recorded on the node instead of scored."""
+        node = _TreeOfAttacksNode(**node_components)
+        delivered_request = _WriteOnlyDelivery(
+            message_pieces=Message.from_prompt(prompt="test prompt", role="user").message_pieces
+        )
+        node._prompt_normalizer.send_prompt_async = AsyncMock(return_value=delivered_request)
+
+        with (
+            patch.object(node, "_generate_adversarial_prompt_async", new_callable=AsyncMock, return_value="prompt"),
+            patch.object(node, "_score_response_async", new_callable=AsyncMock) as mock_score,
+        ):
+            await node.send_prompt_async(objective="test objective")
+
+        mock_score.assert_not_awaited()
+        assert node.delivered_without_response is True
+        assert node.error_message == "The objective target returned no response, so this branch has nothing to score."
+        assert node.completed is False
+        assert node.last_response is None
+        assert node.objective_score is None
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTreeOfAttacksErrorHandling:
@@ -2984,6 +3008,7 @@ def _make_node_with_behavior(*, behavior: _ScenarioNodeBehavior, node_id: str) -
         node.off_topic = False
         node.objective_score = None
         node.error_message = None
+        node.delivered_without_response = False
         if b.json_err:
             node.error_message = "JSON parsing error"
             return
@@ -3021,6 +3046,7 @@ def _make_node_with_behavior(*, behavior: _ScenarioNodeBehavior, node_id: str) -
     node.objective_score = None
     node.auxiliary_scores = {}
     node.error_message = None
+    node.delivered_without_response = False
     node.last_prompt_sent = None
     node.last_response = None
     node.objective_target_conversation_id = str(uuid.uuid4())
@@ -3496,6 +3522,21 @@ class TestModalityRouterIntegration:
         sent = captured_message["message"]
         assert sent is not None
         assert sent.get_value() == "concrete seed prompt"
+
+    async def test_node_send_initial_prompt_rejects_write_only_delivery(self, node_components):
+        """The initial-prompt path rejects a delivered request returned in place of a response."""
+        node = _TreeOfAttacksNode(**node_components)
+        node._objective = "test"
+        node._adversarial_chat_system_seed_prompt.response_json_schema = None
+        node._initial_prompt = Message.from_prompt(prompt="concrete seed prompt", role="user")
+        node._prompt_normalizer.send_prompt_async = AsyncMock(
+            return_value=_WriteOnlyDelivery(message_pieces=node._initial_prompt.message_pieces)
+        )
+
+        with pytest.raises(_WriteOnlyTargetError, match="returned no response"):
+            await node._send_initial_prompt_to_target_async()
+
+        assert node.last_response is None
 
     def test_validate_context_raises_when_edit_only_target_has_no_seed(self, attack_builder):
         """Edit-only objective without seed in next_message fails validation early."""

@@ -671,6 +671,12 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         if not response:
             raise ValueError("No response received from objective target")
 
+        if PromptNormalizer.is_write_only_delivery(response):
+            raise ValueError(
+                "The objective target returned no response. Crescendo needs a target response "
+                "for each turn, so it cannot run against a write-only target."
+            )
+
         return response
 
     async def _check_refusal_async(self, context: CrescendoAttackContext, objective: str) -> Score:
