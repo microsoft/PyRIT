@@ -58,6 +58,7 @@ def test_submission_returns_accepted_handle(
         "attack_result_id": "attack",
         "conversation_id": "conversation",
         "request_turn_number": None,
+        "target_invoked": False,
         "state": "queued",
         "error": None,
         "failure_stage": None,
@@ -134,8 +135,14 @@ def test_admission_errors(
 
 
 @pytest.mark.parametrize("wait_ms", [0, 1000])
-def test_status_read_does_not_submit(*, client: TestClient, sender: MagicMock, wait_ms: int) -> None:
-    assert client.get(f"/api/attacks/attack/message-sends/send?wait_ms={wait_ms}").status_code == 200
+@pytest.mark.parametrize("target_invoked", [False, True])
+def test_status_read_does_not_submit(
+    *, client: TestClient, sender: MagicMock, wait_ms: int, target_invoked: bool
+) -> None:
+    sender.get_status_async.return_value.target_invoked = target_invoked
+    response = client.get(f"/api/attacks/attack/message-sends/send?wait_ms={wait_ms}")
+    assert response.status_code == 200
+    assert response.json()["target_invoked"] is target_invoked
     sender.get_status_async.assert_awaited_once_with(attack_result_id="attack", send_id="send", wait_ms=wait_ms)
     sender.submit_async.assert_not_awaited()
 

@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import {
@@ -12,11 +12,14 @@ import {
   Popover,
   PopoverSurface,
   PopoverTrigger,
+  PositioningConfigurationProvider,
   Radio,
   RadioGroup,
+  Spinner,
   Text,
   Textarea,
   mergeClasses,
+  type PositioningConfigurationFn,
 } from '@fluentui/react-components'
 import {
   AddRegular,
@@ -24,15 +27,28 @@ import {
   ChevronUpRegular,
   InfoRegular,
   LinkRegular,
+  SparkleRegular,
 } from '@fluentui/react-icons'
 
 import OutcomeBadge from '@/components/OutcomeBadge'
-import type { AttackOutcome, BackendScore, RegisteredComponentReference, ScoringFailure, ScorerInstance } from '@/types'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { NARROW_SCREEN_QUERY } from '@/styles/touchTargets'
+import type {
+  ApplyScorerStatus,
+  AttackOutcome,
+  BackendScore,
+  RegisteredComponentReference,
+  ScoringFailure,
+  ScorerInstance,
+} from '@/types'
 import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import { toApiError } from '@/services/errors'
 
 import { useObjectiveHeaderStyles } from './ObjectiveHeader.styles'
 import ChatScorerPicker from './ChatScorerPicker'
+
+const OBJECTIVE_HELP = 'The behavior you are testing for. An objective gives the scorer a goal; it is not automatically sent as a user message.'
 
 interface ObjectiveHeaderProps {
   objective: string
@@ -59,12 +75,26 @@ interface ObjectiveHeaderProps {
   scorersError?: string | null
   canUpdateScorer?: boolean
   onUpdateScorer?: (reference: RegisteredComponentReference | null) => Promise<void>
+  canApplyScorer?: boolean
+  onApplyScorer?: () => Promise<void>
+  /** True while the selected scorer is applied to this conversation's latest response. */
+  applyingScorer?: boolean
+  applyStatus?: ApplyScorerStatus | null
 }
 
 function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'undetermined' {
   if (!score?.score_value) return 'undetermined'
   return score.score_value.toLowerCase() === 'true' ? 'success' : 'failure'
 }
+
+const RESULT_POPOVER_POSITIONING = {
+  autoSize: 'height',
+  align: 'start',
+  strategy: 'fixed',
+  // Resizing can move the trigger out of view; keep the details inside the viewport.
+  unstable_disableTether: 'all',
+  overflowBoundaryPadding: 16,
+} as const
 
 function scoreLabel(score?: BackendScore | null): string {
   const verdict = scoreVerdict(score)
@@ -94,8 +124,18 @@ export default function ObjectiveHeader({
   scorersError,
   canUpdateScorer = false,
   onUpdateScorer,
+  canApplyScorer = false,
+  onApplyScorer,
+  applyingScorer = false,
+  applyStatus = null,
 }: ObjectiveHeaderProps) {
   const styles = useObjectiveHeaderStyles()
+  const isNarrow = useMediaQuery(NARROW_SCREEN_QUERY)
+  const configurePositioning = useCallback<PositioningConfigurationFn>(({ options }) => ({
+    ...options,
+    // Keep the editor on screen when its anchor leaves a narrow viewport.
+    unstable_disableTether: isNarrow ? 'all' : options.unstable_disableTether,
+  }), [isNarrow])
   const [resultOpen, setResultOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
@@ -112,6 +152,8 @@ export default function ObjectiveHeader({
   const [rationale, setRationale] = useState(
     humanScore?.score_rationale ?? automatedScore?.score_rationale ?? '',
   )
+  const [rationaleEdited, setRationaleEdited] = useState(false)
+  const effectiveRationale = rationaleEdited ? rationale : humanScore?.score_rationale ?? automatedScore?.score_rationale ?? ''
   const [isUpdatingResult, setIsUpdatingResult] = useState(false)
   const [resultError, setResultError] = useState('')
   const [showAutomatedDetails, setShowAutomatedDetails] = useState(false)
@@ -174,7 +216,7 @@ export default function ObjectiveHeader({
     setIsUpdatingResult(true)
     setResultError('')
     try {
-      await onUpdateHumanScore(humanVerdict === 'success', rationale)
+      await onUpdateHumanScore(humanVerdict === 'success', effectiveRationale)
       setResultOpen(false)
     } catch {
       setResultError('Unable to update the attack result.')
@@ -209,25 +251,35 @@ export default function ObjectiveHeader({
       setIsUpdatingResult(false)
     }
   }
+  const handleApplyScorer = async (): Promise<void> => {
+    if (!onApplyScorer || !canApplyScorer || applyingScorer) return
+    setResultError('')
+    await onApplyScorer()
+    setShowAutomatedDetails(true)
+  }
   const scoringFailed = scoringFailure != null
   const resultControl = (outcome || objective.trim()) && (
     <div className={styles.outcomeSection}>
       <Badge className={styles.label} appearance="tint" color="brand" size="small">
-        Objective Achieved Outcome
+        <ContextualHelpLabel term="Objective Achieved Outcome">
+          Whether the objective was met. Automated and human judgments are recorded separately; open the outcome details to review them.
+        </ContextualHelpLabel>
       </Badge>
+      <PositioningConfigurationProvider value={configurePositioning}>
       <Popover
         withArrow
         open={resultOpen}
-        positioning={{ autoSize: 'height' }}
+        positioning={RESULT_POPOVER_POSITIONING}
         onOpenChange={(_event, data) => {
           setResultOpen(data.open)
           if (data.open) {
             const currentHumanVerdict = scoreVerdict(humanScore ?? automatedScore)
             setHumanVerdict(currentHumanVerdict === 'failure' ? 'failure' : 'success')
             setRationale(humanScore?.score_rationale ?? automatedScore?.score_rationale ?? '')
+            setRationaleEdited(false)
             setResultError('')
-            setShowAutomatedDetails(false)
-            setShowScorerPicker(false)
+            setShowAutomatedDetails(applyStatus !== null)
+            setShowScorerPicker(applyStatus !== null || applyingScorer)
           }
         }}
       >
@@ -269,9 +321,19 @@ export default function ObjectiveHeader({
             <div className={styles.scorerSelection} role="region" aria-label="Automated scorer selection">
               <ChatScorerPicker value={chatScorer} scorers={scorers} inherited={chatScorerInherited}
                 loading={scorersLoading} error={scorersError}
-                disabled={!canUpdateScorer || isUpdatingResult}
+                disabled={!canUpdateScorer || isUpdatingResult || applyingScorer}
                 onChange={(reference: RegisteredComponentReference | null) => { void handleScorerChange(reference) }} />
-              <Text size={200}>Scores future responses in all conversations in this attack.</Text>
+              {chatScorer && onApplyScorer && <>
+                <Text size={200}>Applies only to the latest saved response in this conversation. Existing valid results are kept.</Text>
+                <Button appearance="primary" icon={applyingScorer ? <Spinner size="tiny" /> : <SparkleRegular />}
+                  disabled={!canApplyScorer || isUpdatingResult || applyingScorer}
+                  onClick={() => { void handleApplyScorer() }}>
+                  {applyingScorer ? 'Scoring latest response...' : 'Apply scorer'}
+                </Button>
+              </>}
+              {applyStatus && <MessageBar intent={applyStatus.intent} role={applyStatus.intent === 'error' ? 'alert' : 'status'}>
+                <MessageBarBody>{applyStatus.message}</MessageBarBody>
+              </MessageBar>}
             </div>
           )}
           <div className={styles.resultScoreRow} role="group" aria-label="Automated score">
@@ -295,7 +357,7 @@ export default function ObjectiveHeader({
               </Button>
             ) : (
               <Text className={styles.scoreValueText}>
-                {chatScorer && !missingObjective ? 'This will be generated on the next turn' : 'Not set'}
+                {chatScorer && !missingObjective ? 'Not scored' : 'Not set'}
               </Text>
             )}
           </div>
@@ -344,7 +406,7 @@ export default function ObjectiveHeader({
             layout="horizontal"
             value={humanVerdict}
             onChange={(_event, data) => setHumanVerdict(data.value as 'success' | 'failure')}
-            disabled={!canUpdateOutcome}
+            disabled={!canUpdateOutcome || applyingScorer}
             aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
           >
             <Radio value="success" label="Success" />
@@ -353,10 +415,10 @@ export default function ObjectiveHeader({
           <Field label="Rationale">
             <Textarea
               rows={5}
-              value={rationale}
-              onChange={(_event, data) => setRationale(data.value)}
+              value={effectiveRationale}
+              onChange={(_event, data) => { setRationale(data.value); setRationaleEdited(true) }}
               resize="vertical"
-              disabled={!canUpdateOutcome}
+              disabled={!canUpdateOutcome || applyingScorer}
               aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
             />
           </Field>
@@ -378,7 +440,7 @@ export default function ObjectiveHeader({
                 appearance="secondary"
                 className={styles.resultAction}
                 onClick={handleRemoveResult}
-                disabled={!canRemoveHumanScore || isUpdatingResult}
+                disabled={!canRemoveHumanScore || isUpdatingResult || applyingScorer}
               >
                 Remove
               </Button>
@@ -387,7 +449,7 @@ export default function ObjectiveHeader({
               appearance="primary"
               className={styles.resultAction}
               onClick={handleUpdateResult}
-              disabled={!canUpdateOutcome || isUpdatingResult}
+              disabled={!canUpdateOutcome || isUpdatingResult || applyingScorer}
               aria-describedby={missingObjective ? humanScoreDisabledReasonId : undefined}
             >
               {isUpdatingResult ? 'Saving...' : 'Add'}
@@ -395,6 +457,7 @@ export default function ObjectiveHeader({
           </div>
         </PopoverSurface>
       </Popover>
+      </PositioningConfigurationProvider>
     </div>
   )
 
@@ -406,7 +469,7 @@ export default function ObjectiveHeader({
         {canShowObjective && (
           <div className={mergeClasses(styles.headerSection, styles.emptyHeaderSection)}>
             <Badge className={styles.label} appearance="tint" color="brand" size="small">
-              Objective
+              <ContextualHelpLabel term="Objective">{OBJECTIVE_HELP}</ContextualHelpLabel>
             </Badge>
             {isEditing ? (
               <>
@@ -451,7 +514,7 @@ export default function ObjectiveHeader({
     <div className={styles.root} data-testid="objective-header" data-conversation-editor-controls>
       <div className={styles.headerSection}>
         <Badge className={styles.label} appearance="tint" color="brand" size="small">
-          Objective
+          <ContextualHelpLabel term="Objective">{OBJECTIVE_HELP}</ContextualHelpLabel>
         </Badge>
         <ObjectiveContent
           type={canAdd && onAdd ? 'button' : undefined}

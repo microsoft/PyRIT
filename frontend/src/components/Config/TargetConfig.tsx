@@ -7,6 +7,7 @@ import {
   Spinner,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useRuntime } from '@/hooks/useRuntime'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
@@ -16,17 +17,13 @@ import TargetTable from './TargetTable'
 import { useTargetConfigStyles } from './TargetConfig.styles'
 
 interface TargetConfigProps {
-  defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
-  onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
   onTargetsLoaded?: (targets: TargetInstance[]) => void
 }
 
 export default function TargetConfig({
-  defaultObjectiveTarget,
   defaultAdversarialTarget,
-  onSetDefaultObjectiveTarget,
   onSetDefaultAdversarialTarget,
   onTargetsLoaded,
 }: TargetConfigProps) {
@@ -89,9 +86,13 @@ export default function TargetConfig({
     <div className={styles.root} data-testid="target-config">
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <Text as="h1" size={600} weight="semibold">Target Registry</Text>
+          <Text as="h1" aria-label="Target Registry" size={600} weight="semibold">
+            <ContextualHelpLabel term="Target Registry" labelProps={{ weight: 'semibold' }}>
+              Named model or endpoint connections that send prompts and return responses. Targets can be used by attacks, scorers, and converters.
+            </ContextualHelpLabel>
+          </Text>
           <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
-            Manage targets and choose defaults for new chats and scanner runs. Existing chats and runs are unchanged.
+            Manage targets and choose an adversarial default. Existing chats and runs are unchanged.
           </Text>
         </div>
         <div className={styles.headerActions}>
@@ -159,9 +160,7 @@ export default function TargetConfig({
       {!loading && !error && targets.length > 0 && (
         <TargetTable
           targets={targets}
-          defaultObjectiveTarget={defaultObjectiveTarget}
           defaultAdversarialTarget={defaultAdversarialTarget}
-          onSetDefaultObjectiveTarget={onSetDefaultObjectiveTarget}
           onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
         />
       )}
