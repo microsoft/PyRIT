@@ -2,17 +2,27 @@
 # Licensed under the MIT license.
 
 from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from pyrit.models import Message, MessagePiece
+from pyrit.models import (
+    ContentScorable,
+    Message,
+    MessagePiece,
+    ObjectiveTargetEvaluationIdentifier,
+    ScorerEvaluationIdentifier,
+    ScoringExpectation,
+)
+from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
 from pyrit.prompt_target.http_target.http_target_callback_functions import (
     get_http_target_json_response_callback_function,
     get_http_target_regex_matching_callback_function,
 )
+from pyrit.score import NonReplayableObservationError, SelfAskTrueFalseScorer
 
 
 @pytest.fixture
@@ -108,6 +118,106 @@ def test_identifier_ignores_credential_headers(auth: str):
         with_secret.get_identifier().hash == _judge_target(auth="Authorization: Bearer secret-1").get_identifier().hash
     )
     assert "secret" not in str(with_secret.get_identifier().params)
+
+
+_POLICY_REQUEST = "POST /judge HTTP/1.1\nHost: {host}\nContent-Type: text/plain\n\npolicy={policy}\n{{PROMPT}}"
+_JUDGMENT = '{"score_value": "true", "description": "matched", "rationale": "reason"}'
+# An HTTP judge endpoint that accepts a system prompt and conversation history, as a scorer requires.
+_JUDGE_CONFIGURATION = TargetConfiguration(
+    capabilities=TargetCapabilities(supports_multi_turn=True, supports_system_prompt=True)
+)
+
+
+def _target_eval_hash(target: HTTPTarget) -> str:
+    return ObjectiveTargetEvaluationIdentifier(target.get_identifier()).eval_hash
+
+
+def _judge(*, host: str = "example.com", policy: str = "A", **options: Any) -> HTTPTarget:
+    return HTTPTarget(
+        http_request=_POLICY_REQUEST.format(host=host, policy=policy),
+        custom_configuration=_JUDGE_CONFIGURATION,
+        **options,
+    )
+
+
+def _scorer_eval_hash(target: HTTPTarget) -> str:
+    return ScorerEvaluationIdentifier(SelfAskTrueFalseScorer(chat_target=target).get_identifier()).eval_hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_eval_hashes_change_with_the_request_policy():
+    policy_a = _judge(policy="A")
+    policy_b = _judge(policy="B")
+
+    assert _target_eval_hash(policy_a) != _target_eval_hash(policy_b)
+    assert _scorer_eval_hash(policy_a) != _scorer_eval_hash(policy_b)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_eval_hashes_match_across_deployments_of_the_same_request():
+    east = _judge(host="east.example.com")
+    west = _judge(host="west.example.com")
+
+    assert east.get_identifier().hash != west.get_identifier().hash
+    assert _target_eval_hash(east) == _target_eval_hash(west)
+    assert _scorer_eval_hash(east) == _scorer_eval_hash(west)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("client_option", ["client", "headers"])
+def test_identifier_includes_client_headers(client_option: str):
+    def build(policy: str) -> HTTPTarget:
+        headers = {"X-Policy": policy}
+        options = {"client": httpx.AsyncClient(headers=headers)} if client_option == "client" else {"headers": headers}
+        return HTTPTarget(http_request=_POLICY_REQUEST.format(host="example.com", policy="A"), **options)
+
+    policy_a, policy_b = build("A"), build("B")
+
+    assert policy_a.get_identifier().hash != policy_b.get_identifier().hash
+    assert _target_eval_hash(policy_a) != _target_eval_hash(policy_b)
+    assert policy_a.get_identifier().hash == build("A").get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identifier_ignores_client_defaults_and_credentials():
+    request = _POLICY_REQUEST.format(host="example.com", policy="A")
+    plain = HTTPTarget(http_request=request)
+    with_client = HTTPTarget(http_request=request, client=httpx.AsyncClient(headers={"X-API-Key": "secret-1"}))
+    with_kwargs = HTTPTarget(http_request=request, headers={"Authorization": "Bearer secret-2"})
+
+    assert with_client.get_identifier().hash == plain.get_identifier().hash
+    assert with_kwargs.get_identifier().hash == plain.get_identifier().hash
+
+
+def _policy_judge(*, policy: str, requests: list[httpx.Request]) -> SelfAskTrueFalseScorer:
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text=_JUDGMENT)
+
+    client = httpx.AsyncClient(headers={"X-Policy": policy}, transport=httpx.MockTransport(respond))
+    return SelfAskTrueFalseScorer(chat_target=_judge(client=client))
+
+
+async def test_judgment_from_one_client_policy_does_not_replay_for_another_async(sqlite_instance):
+    policy_a_requests: list[httpx.Request] = []
+    policy_b_requests: list[httpx.Request] = []
+    expectation = ScoringExpectation(objective="Judge this response")
+    score = (
+        await _policy_judge(policy="A", requests=policy_a_requests).score_async(
+            scorable=ContentScorable(value="candidate response"),
+            expectation=expectation,
+        )
+    )[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+
+    with pytest.raises(NonReplayableObservationError, match="scorer configuration"):
+        await _policy_judge(policy="B", requests=policy_b_requests).score_observation_async(
+            observation=observation,
+            expectation=expectation,
+        )
+
+    assert [request.headers["x-policy"] for request in policy_a_requests] == ["A"]
+    assert policy_b_requests == []
 
 
 @patch("httpx.AsyncClient.request")

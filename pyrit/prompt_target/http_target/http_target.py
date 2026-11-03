@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 
+import functools
 import hashlib
 import json
 import logging
@@ -27,6 +28,18 @@ logger = logging.getLogger(__name__)
 
 
 RequestBody = dict[str, Any] | str
+
+
+@functools.cache
+def _httpx_default_headers() -> dict[str, str]:
+    """
+    Get the headers httpx adds to every client, so identity can tell them apart from configured ones.
+
+    Returns:
+        dict[str, str]: The default client headers, keyed by lower-case name.
+    """
+    with httpx.Client(transport=httpx.BaseTransport(), trust_env=False) as client:
+        return dict(client.headers.items())
 
 
 class HTTPTarget(PromptTarget):
@@ -125,28 +138,42 @@ class HTTPTarget(PromptTarget):
                 "prompt_regex_string": self.prompt_regex_string,
                 "callback_function": getattr(self.callback_function, "__name__", None),
                 "follow_redirects": self.follow_redirects,
-                "http_request_template_hash": self._http_request_template_hash(),
+                "http_request_fingerprint": self._http_request_fingerprint(),
             },
         )
 
-    def _http_request_template_hash(self) -> str:
+    def _http_request_fingerprint(self) -> str:
         """
-        Hash the request template that shapes every send, without its credential headers.
+        Hash what every send asks the endpoint, without its destination or credentials.
 
-        The method, path, non-credential headers and body all change what the endpoint is asked, so
-        they belong to the target's identity. Credential header lines are left out so a secret never
-        reaches the identifier and rotating it does not change the identity.
+        The method, body and effective headers change how the endpoint responds, so they belong to
+        the target's identity and to its evaluation identity. Headers set on an injected client or
+        passed as ``headers`` in the client kwargs are merged under the template headers, the same
+        way a send combines them. Unchanged httpx defaults and the host are left out, and so is the
+        URL, which ``endpoint`` already covers, so the same request on another deployment keeps its
+        evaluation identity. Credential headers are left out so a secret never reaches the
+        identifier and rotating it does not change the identity.
 
         Returns:
-            str: The first 16 hex characters of the SHA-256 of the canonical template.
+            str: The first 16 hex characters of the SHA-256 of the canonical request.
         """
-        head, *rest = re.split(r"\r?\n\r?\n", self.http_request, maxsplit=1)
-        body = rest[0] if rest else ""
-        request_line, *header_lines = head.replace("\r\n", "\n").strip().split("\n")
-        kept_headers = [
-            line for line in header_lines if line.split(":", 1)[0].strip().lower() not in self._CREDENTIAL_HEADERS
-        ]
-        canonical = "\n".join([request_line, *kept_headers]) + "\n\n" + body
+        template_headers, body, _, method, _ = self.parse_raw_http_request(self.http_request)
+        headers = {} if self._client else dict(httpx.Headers(self.httpx_client_kwargs.get("headers")).items())
+        headers.update(template_headers)
+        default_headers = _httpx_default_headers()
+        kept_headers = {
+            name: value
+            for name, value in headers.items()
+            if name != "host" and name not in self._CREDENTIAL_HEADERS and default_headers.get(name) != value
+        }
+        canonical = json.dumps(
+            {
+                "method": method,
+                "headers": kept_headers,
+                "body": body if isinstance(body, str) else json.dumps(body, sort_keys=True),
+            },
+            sort_keys=True,
+        )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
     @classmethod

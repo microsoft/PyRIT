@@ -50,6 +50,11 @@ class TargetIdentifier(ComponentIdentifier):
     top_p: Annotated[float | None, Evaluate.Include()] = None
     #: Maximum requests per minute.
     max_requests_per_minute: Annotated[int | None, Evaluate.Exclude()] = None
+    #: Hash of the request a raw HTTP target sends (method, non-credential headers and body),
+    #: without its destination. Two such targets with different request policies, such as
+    #: different judge instructions, do not behave the same, so the hash is part of evaluation.
+    #: It is computed by the target, never a constructor argument.
+    http_request_fingerprint: Annotated[str | None, Evaluate.Include(), Param.Exclude()] = None
     #: Inner targets of a multi-target (e.g., ``RoundRobinTarget``), typed
     #: recursively. An included constructor parameter (the ctor arg is also
     #: ``targets``, a list) resolved by name from the target registry.
