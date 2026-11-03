@@ -22,7 +22,6 @@ import ScenarioDatasetTable from '@/components/Scenarios/ScenarioDatasetTable'
 import ScenarioTechniqueSelector from '@/components/Scenarios/ScenarioTechniqueSelector'
 import { scenarioDatasetDefaults, scenarioDatasetOptions } from '@/components/Scenarios/datasetPresentation'
 import {
-  buildScenarioConfig,
   dynamicScenarioParameters,
   initialScenarioConfigState,
   uniqueTechniqueOptions,
@@ -44,6 +43,7 @@ import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetEditorStyles } from './ScenarioPresetEditor.styles'
 import { PRESETS_ROUTE } from './presetRoutes'
 import {
+  buildPresetScenarioConfig,
   configToPreset,
   presetToConfigState,
   uneditableScenarioParams,
@@ -195,14 +195,8 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
   )
   const techniqueIssues = loaded?.issues.filter((issue) => issue.field === 'techniques') ?? []
   const builtConfig = useMemo(
-    () => (config ? buildScenarioConfig({
-      techniques: config.techniques,
-      dynamicParameters,
-      scenarioParamValues: config.scenarioParamValues,
-      datasets: config.datasets,
-      includeBaseline: config.includeBaseline,
-    }) : null),
-    [config, dynamicParameters],
+    () => (scenario && config ? buildPresetScenarioConfig(scenario, config, loaded?.preset ?? null) : null),
+    [config, loaded, scenario],
   )
   const scenarioName = scenario?.scenario_name
   const projectionRequest = !scenarioLoading && builtConfig?.ok ? builtConfig.config : null

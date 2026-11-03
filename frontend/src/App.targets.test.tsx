@@ -6,13 +6,14 @@ import { MemoryRouter } from 'react-router'
 
 import { attacksApi, targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { AttackSummary, ConversationMessagesResponse } from '@/types'
+import type { AttackSummary, ConversationMessagesResponse, RegisteredComponentReference, ScorerInstance } from '@/types'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
 
 const mockGetActiveAccount = jest.fn()
 const mockMsalInstance = { getActiveAccount: mockGetActiveAccount }
+let mockScorers: ScorerInstance[] = []
 
 jest.mock('@azure/msal-react', () => ({
   useMsal: () => ({ instance: mockMsalInstance, accounts: [] }),
@@ -24,15 +25,19 @@ jest.mock('@/hooks/useTour', () => ({
   useTour: () => ({ startTour: jest.fn(), tourProps: {} }),
 }))
 jest.mock('react-joyride', () => ({ Joyride: () => null }))
+jest.mock('@/hooks/useScorerRegistry', () => ({
+  useScorerRegistry: () => ({ scorers: mockScorers, loading: false, error: null, refresh: jest.fn() }),
+}))
 jest.mock('@/components/Layout/MainLayout', () => {
   const { Link } = jest.requireActual<typeof import('react-router')>('react-router')
   return {
     __esModule: true,
-    default: ({ children }: { children: ReactNode }) => (
+    default: ({ children, featureNavigation }: { children: ReactNode; featureNavigation?: ReactNode }) => (
       <>
-        <Link to="/chat">Open new chat</Link>
-        <Link to="/attacks/saved-attack">Open saved chat</Link>
+        <Link to="/attack/chat">Open new chat</Link>
+        <Link to="/attack/chat/saved-attack">Open saved chat</Link>
         <Link to="/registry/targets">Open registry</Link>
+        {featureNavigation}
         {children}
       </>
     ),
@@ -98,7 +103,7 @@ const savedMessages: ConversationMessagesResponse = {
 function TestWrapper({ children }: { children: ReactNode }) {
   return (
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={['/chat']}>{children}</MemoryRouter>
+      <MemoryRouter initialEntries={['/attack/chat']}>{children}</MemoryRouter>
     </FluentProvider>
   )
 }
@@ -106,7 +111,7 @@ function TestWrapper({ children }: { children: ReactNode }) {
 function saveDefault(account: string, target: typeof targetA): void {
   writeUserPreferences(`tenant:${account}`, {
     ...DEFAULT_USER_PREFERENCES,
-    targets: {
+    lastUsedTargets: {
       objective: { registryName: target.target_registry_name, identifierHash: target.identifier.hash },
       adversarial: null,
     },
@@ -117,6 +122,7 @@ describe('App target selection with the chat composer', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     window.localStorage.clear()
+    mockScorers = []
     mockGetActiveAccount.mockReturnValue({
       homeAccountId: 'alice', tenantId: 'tenant', username: 'alice@example.test',
     })
@@ -135,13 +141,14 @@ describe('App target selection with the chat composer', () => {
     })
   })
 
-  it('appends to saved target B in the same conversation without replacing default A', async () => {
+  it('keeps saved target B and remembers it only after sending, not when viewing history', async () => {
     const user = userEvent.setup()
     saveDefault('alice', targetA)
     render(<App />, { wrapper: TestWrapper })
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
     await user.click(screen.getByRole('link', { name: 'Open saved chat' }))
     expect(await screen.findByText('Saved reply from target B')).toBeInTheDocument()
+    expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective?.registryName).toBe('target-a')
     const prompt = screen.getByPlaceholderText('Type prompt here')
     await waitFor(() => expect(prompt).toBeEnabled())
     await user.type(prompt, 'Continue this chat')
@@ -156,9 +163,9 @@ describe('App target selection with the chat composer', () => {
     ))
     expect(attacksApi.createAttack).not.toHaveBeenCalled()
     expect(screen.queryByRole('combobox', { name: 'Chat target' })).not.toBeInTheDocument()
-    expect(readUserPreferences('tenant:alice').targets.objective?.registryName).toBe('target-a')
+    await waitFor(() => expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective?.registryName).toBe('target-b'))
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
   })
 
   it('selects a new-chat target from the badge without changing the default', async () => {
@@ -170,7 +177,7 @@ describe('App target selection with the chat composer', () => {
     expect(selector).toHaveValue('target-b')
     expect(screen.getByTestId('target-badge')).toHaveAccessibleName('Active target: target-b')
     expect(screen.queryByRole('button', { name: 'Refresh targets' })).not.toBeInTheDocument()
-    expect(readUserPreferences('tenant:alice').targets.objective).toBeNull()
+    expect(readUserPreferences('tenant:alice').lastUsedTargets).toBeUndefined()
   })
 
   it('clears the draft and loads the next account defaults when the signed-in account changes', async () => {
@@ -186,7 +193,7 @@ describe('App target selection with the chat composer', () => {
     rerender(<App />)
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
-    expect(readUserPreferences('tenant:alice').targets.objective?.registryName).toBe('target-a')
+    expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective?.registryName).toBe('target-a')
   })
 
   it('keeps the draft and sends to its selected target after navigating to Chat again', async () => {
@@ -211,7 +218,7 @@ describe('App target selection with the chat composer', () => {
     ))
   })
 
-  it('applies a cross-tab default change only to the next draft', async () => {
+  it('keeps the unsent draft and applies cross-tab last use only to a new attack', async () => {
     const user = userEvent.setup()
     saveDefault('alice', targetA)
     render(<App />, { wrapper: TestWrapper })
@@ -227,6 +234,9 @@ describe('App target selection with the chat composer', () => {
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Prompt for A')
     await user.click(screen.getByRole('link', { name: 'Open registry' }))
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Prompt for A')
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
@@ -238,23 +248,88 @@ describe('App target selection with the chat composer', () => {
     await user.click(screen.getByRole('link', { name: 'Open saved chat' }))
     await screen.findByText('Saved reply from target B')
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Do not carry this into A')
-    await user.click(screen.getByRole('button', { name: 'New Attack' }))
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
   it('recovers the app registry after the registry page completes a successful full load', async () => {
     const user = userEvent.setup()
+    saveDefault('alice', targetA)
     jest.mocked(targetsApi.listTargets).mockRejectedValueOnce(new Error('Initial registry failed'))
     render(<App />, { wrapper: TestWrapper })
     await screen.findByText('Targets unavailable', { selector: 'span' })
     await user.click(screen.getByRole('link', { name: 'Open registry' }))
-    const objective = await screen.findByRole('combobox', { name: 'Default objective target' })
-    await user.selectOptions(objective, 'target-a')
+    await screen.findByRole('combobox', { name: 'Default adversarial target' })
+    expect(screen.queryByRole('combobox', { name: 'Default objective target' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
     expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled()
     expect(screen.queryByText('Targets unavailable')).not.toBeInTheDocument()
     expect(targetsApi.listTargets).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not initialize a new chat with an unregistered automatic last-use alias', async () => {
+    const user = userEvent.setup()
+    mockScorers = [{
+      scorer_registry_name: 'registered',
+      identifier: {
+        class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: 'same-hash', scorer_type: 'true_false',
+      },
+    }]
+    writeUserPreferences('tenant:alice', {
+      ...DEFAULT_USER_PREFERENCES,
+      lastUsedChatScorer: { registry_name: 'SelfAskTrueFalseScorer::alias', identifier_hash: 'same-hash' },
+    })
+    render(<App />, { wrapper: TestWrapper })
+    await user.click(await screen.findByRole('button', { name: 'Add objective', exact: true }))
+    await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Check the policy')
+    await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
+    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
+    expect(screen.getByRole('combobox', { name: 'Chat scorer', exact: true })).toHaveValue('')
+    expect(screen.queryByText(/saved scorer is unavailable/i)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    { name: 'missing', reference: { registry_name: 'missing', identifier_hash: 'old-hash' } },
+    { name: 'changed', reference: { registry_name: 'registered', identifier_hash: 'old-hash' } },
+  ])('preserves a $name configured override and its feedback instead of substituting last use', async ({
+    reference,
+  }: { reference: RegisteredComponentReference }) => {
+    const user = userEvent.setup()
+    const lastUsed = { registry_name: 'registered', identifier_hash: 'same-hash' }
+    mockScorers = [{
+      scorer_registry_name: 'registered',
+      identifier: {
+        class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: 'same-hash', scorer_type: 'true_false',
+      },
+    }]
+    writeUserPreferences('tenant:alice', {
+      ...DEFAULT_USER_PREFERENCES, chatScorer: reference, lastUsedChatScorer: lastUsed,
+    })
+    jest.mocked(attacksApi.createAttack).mockRejectedValueOnce({
+      isAxiosError: true, response: { status: 409, data: { detail: 'Configured scorer is unavailable.' } },
+    })
+    render(<App />, { wrapper: TestWrapper })
+    const target = screen.getByRole('combobox', { name: 'Chat target', exact: true })
+    await waitFor(() => expect(target).toBeEnabled())
+    await user.selectOptions(target, 'target-a')
+    await user.click(screen.getByRole('button', { name: 'Add objective', exact: true }))
+    await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Check the policy')
+    await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
+    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
+    expect(screen.getByRole('combobox', { name: 'Chat scorer', exact: true })).toHaveValue('unavailable')
+    expect(screen.getByText(/The saved scorer is unavailable or its configuration changed/)).toBeVisible()
+    await user.keyboard('{Escape}')
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Use the configured scorer')
+    await user.click(screen.getByRole('button', { name: 'Send message', exact: true }))
+    expect(await screen.findByText(/Configured scorer is unavailable\./)).toBeVisible()
+    expect(attacksApi.createAttack).toHaveBeenCalledWith(expect.objectContaining({ chat_scorer: reference }))
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+    expect(readUserPreferences('tenant:alice').chatScorer).toEqual(reference)
+    expect(readUserPreferences('tenant:alice').lastUsedChatScorer).toEqual(lastUsed)
   })
 })

@@ -13,7 +13,7 @@ export interface TourStep extends Step {
 
 /** Controls which guidance the tour shows for state-dependent steps. */
 export interface TourContext {
-  /** Whether a default objective target is set for this browser. */
+  /** Whether a last-used objective target is available for this browser. */
   readonly hasActiveTarget: boolean
   /** Whether the Configuration nav button is rendered for this user. */
   readonly canManageConfiguration: boolean
@@ -28,8 +28,8 @@ export function createTourSteps({
     {
       target: '[data-tour="sidebar-nav"]',
       content:
-        'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Technique.execute opens Chat, ' +
-        'History tracks past attacks and scanner runs, Scanner launches full test campaigns, and Registry is where you manage ' +
+        'Ahoy! Welcome to Co-PyRIT! This is your main navigation panel. Home is your dashboard, Attacks opens Chat, ' +
+        'Scanner launches full test campaigns, and Registry is where you manage ' +
         'targets and converters.' +
         (canManageConfiguration
           ? ' Configuration holds environment settings for your deployment.'
@@ -51,10 +51,10 @@ export function createTourSteps({
     {
       target: '[data-tour="target-card"]',
       content: hasActiveTarget
-        ? 'This card shows your default objective target for new chats and scanner runs. Use Manage targets ' +
-          'to change your objective or adversarial defaults in the Target Registry.'
+        ? 'This card shows your last-used objective target for new chats and scanner runs. Use Manage targets ' +
+          'to register targets or change your adversarial default in the Target Registry.'
         : 'Targets are the AI endpoints you test. Select a target from the Chat dropdown, or use the Target Registry ' +
-          'to save objective and adversarial defaults for your account in this browser.',
+          'to register targets and set an adversarial default for your account in this browser.',
       placement: 'bottom',
       skipBeacon: true,
       viewRequired: 'home',
@@ -82,19 +82,18 @@ export function createTourSteps({
       viewRequired: 'scenarios',
     },
     {
-      target: '[data-tour="history-tabs"]',
+      target: '[data-tour="feature-tabs"]',
       content:
-        'Every run is logged here. The Attacks tab lists individual conversations and the Scanner tab lists ' +
-        'scenario runs. Each tab has its own filters, such as outcome, converter type, or labels, so you can ' +
-        'find exactly what you need!',
+        'Attacks and Scanner each have a History tab. Use Chat to return to your current conversation, ' +
+        'or New attack to start a new one. Scanner history lists scenario runs and accepts an ID search.',
       placement: 'bottom',
       skipBeacon: true,
-      viewRequired: 'history',
+      viewRequired: 'chat',
     },
     {
       target: '[data-tour="registry-tabs"]',
       content:
-        'The Registry is your home base. Register targets and set your objective and adversarial defaults under ' +
+        'The Registry is your home base. Register targets and set your adversarial default under ' +
         'Targets, and browse the converters you can apply to prompts under Converters.',
       placement: 'bottom',
       skipBeacon: true,

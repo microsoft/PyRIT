@@ -4,10 +4,10 @@
 """Bounded admission and execution shared by manual messages in one backend process."""
 
 import asyncio
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 from contextlib import asynccontextmanager, contextmanager
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
@@ -19,6 +19,29 @@ class ManualSendConflictError(ValueError):
 
 class ManualSendQueueFullError(ValueError):
     """The bounded manual-message admission budget is exhausted."""
+
+
+async def complete_owned_write_async(write: Callable[[], Coroutine[Any, Any, None]]) -> None:
+    """
+    Keep ownership until a write finishes, even when the caller cancels.
+
+    Raises:
+        asyncio.CancelledError: After the write finishes, when the caller was cancelled.
+    """
+    worker = asyncio.create_task(write())
+    cancelled = False
+    while not worker.done():
+        try:
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            if not cancelled:
+                raise
+            break
+    if cancelled:
+        raise asyncio.CancelledError from (None if worker.cancelled() else worker.exception())
+    worker.result()
 
 
 class ManualSendScheduler:

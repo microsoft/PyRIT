@@ -5,7 +5,7 @@ export const useMainLayoutStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100vh',
+    height: '100dvh',
     width: '100vw',
     overflow: 'hidden',
   },
@@ -100,15 +100,26 @@ export const useMainLayoutStyles = makeStyles({
     display: 'flex',
     flex: 1,
     minWidth: 0,
+    minHeight: 0,
     overflow: 'hidden',
   },
   sidebar: {
-    width: '60px',
+    width: '64px',
     flexShrink: 0,
     backgroundColor: tokens.colorNeutralBackground3,
     borderRight: `1px solid ${tokens.colorNeutralStroke1}`,
     display: 'flex',
     flexDirection: 'column',
+  },
+  sidebarExpanded: {
+    width: '224px',
+  },
+  navigationDrawer: {
+    width: 'min(280px, calc(100vw - 48px))',
+    backgroundColor: tokens.colorNeutralBackground3,
+  },
+  drawerBody: {
+    padding: 0,
   },
   main: {
     position: 'relative',

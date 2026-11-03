@@ -49,22 +49,18 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await expect(page.getByText("Named configurations of existing attack techniques", { exact: true })).toBeVisible();
   await expect(page.getByText(/Runtime only|No attack runs when you add a technique/)).toHaveCount(0);
   await expect(page.getByRole("table", { name: "Registered techniques" })).toBeVisible();
-  const builtinCalls = {
-    crescendo_simulated: "AttackTechniqueFactory.with_simulated_conversation(\n" +
-      "    name='crescendo_simulated',\n" +
-      "    description='Escalates gradually over a simulated conversation toward the objective.',\n" +
-      "    technique_tags=['single_turn'],\n)",
-    tap: "AttackTechniqueFactory(\n" +
-      "    name='tap',\n" +
-      "    attack_class=TreeOfAttacksWithPruningAttack,\n" +
-      "    description='Explores a tree of adversarial prompts, pruning weak branches to refine the attack.',\n" +
-      "    technique_tags=['multi_turn'],\n)",
-  };
-  for (const [builtinName, statement] of Object.entries(builtinCalls)) {
-    await page.getByRole("button", { name: `Details for ${builtinName}` }).click();
-    await expect(page.getByLabel("Technique creation call", { exact: true })).toHaveText(statement);
-    await expect(page.getByRole("heading", { name: "Configuration" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Close", exact: true }).click();
+  for (const builtinName of ["crescendo_simulated", "tap"]) {
+    const response = await request.get(`/api/techniques/${builtinName}`, { headers });
+    expect(response.ok(), await response.text()).toBe(true);
+    const builtin = await response.json();
+    const toggle = page.getByRole("button", { name: `Identity for ${builtinName}`, exact: true });
+    await toggle.click();
+    const identity = page.getByRole("region", { name: `Identity for ${builtinName}`, exact: true });
+    await expect(identity).toBeVisible();
+    expect(JSON.parse(await identity.innerText())).toEqual(builtin.identifier);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await toggle.press("Enter");
+    await expect(identity).toHaveCount(0);
   }
   await page.getByRole("button", { name: "New technique" }).click();
   await page.getByRole("textbox", { name: "Registry name" }).fill(name);
@@ -92,17 +88,17 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   expect(body).not.toHaveProperty("seed_technique");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("textbox", { name: "Search techniques" }).fill(name);
-  await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
-  await page.getByRole("button", { name: `Details for ${name}` }).click();
-  const creationCall = page.getByLabel("Technique creation call", { exact: true });
-  await expect(creationCall).toHaveText(createdTechnique.creation_statement);
-  await expect(creationCall).toContainText("AttackTechniqueFactory(");
-  await expect(creationCall).toContainText("'max_attempts_on_failure': 0");
-  expect(createdTechnique).not.toHaveProperty("evaluation_identifier");
-  expect(createdTechnique).not.toHaveProperty("configuration");
-  await expect(page.getByRole("heading", { name: "Configuration" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(page.getByRole("button", { name: `Details for ${name}` })).toBeFocused();
+  const identityToggle = page.getByRole("button", { name: `Identity for ${name}`, exact: true });
+  await expect(identityToggle).toBeVisible();
+  await identityToggle.click();
+  const identity = page.getByRole("region", { name: `Identity for ${name}`, exact: true });
+  await expect(identity).toBeVisible();
+  expect(JSON.parse(await identity.innerText())).toEqual(createdTechnique.identifier);
+  expect(createdTechnique.identifier.kwargs).toMatchObject({ max_attempts_on_failure: 0 });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await identityToggle.press("Space");
+  await expect(identity).toHaveCount(0);
+  await expect(identityToggle).toBeFocused();
   expect(detailRequests).toEqual([]);
 
   let finishCreate: (() => void) | undefined;
@@ -132,14 +128,14 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   const staleResponse = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
   finishCreate?.();
   await staleResponse;
-  await expect(page.getByRole("cell", { name: "old_runtime_response", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Identity for old_runtime_response", exact: true })).toHaveCount(0);
 
   const current = await request.get("/api/scenarios/catalog/airt.rapid_response", { headers });
   expect(current.ok(), await current.text()).toBe(true);
   const after = await current.json();
   expect(after.all_techniques).toContain(name);
   expect(after.default_techniques).toEqual(before.default_techniques);
-  await page.goto("/scanner/airt.rapid_response");
+  await page.goto("/scanner/launch/airt.rapid_response");
   const checkbox = page.getByRole("checkbox", { name, exact: true });
   await expect(checkbox).toBeVisible();
   await checkbox.check();
