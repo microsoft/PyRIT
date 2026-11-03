@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("@seeded saves sidebar expansion and keeps narrow navigation separate", async ({ page }) => {
-  await page.goto("/chat");
+  await page.goto("/attack/chat");
   const draft = page.getByRole("textbox", { name: "Type prompt here", exact: true });
   await draft.fill("Keep this draft when the sidebar changes.");
   await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
@@ -27,7 +27,7 @@ test("@seeded saves sidebar expansion and keeps narrow navigation separate", asy
   await opener.click();
   await navigation.getByRole("button", { name: "Scanner", exact: true }).click();
   await expect(navigation).not.toBeVisible();
-  await expect(page).toHaveURL(/\/scanner$/);
+  await expect(page).toHaveURL(/\/scanner\/launch$/);
   await expect(page.getByRole("button", { name: "Scanner", exact: true })).toHaveAttribute("aria-current", "page");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 

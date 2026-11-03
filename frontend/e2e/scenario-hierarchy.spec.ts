@@ -80,10 +80,10 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   await expect(chatLink).toHaveAttribute('href', new RegExp(`\\?scenarioResultId=${scenarioResultId}$`))
   await chatLink.click()
 
-  await expect(page).toHaveURL(new RegExp(`/attacks/[^/]+/conversations/[^/?]+\\?scenarioResultId=${scenarioResultId}$`))
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/[^/]+/conversations/[^/?]+\\?scenarioResultId=${scenarioResultId}$`))
   await expect(page.getByText('Synthetic request for Step 5. No external model was called.', { exact: true })).toBeVisible()
   await expect(page.getByText('Stored example response for Step 5. This is offline sample data.', { exact: true })).toBeVisible()
-  const breadcrumb = page.getByRole('link', { name: `Return to scenario run ${scenarioResultId}` })
+  const breadcrumb = page.getByRole('link', { name: 'Back to scan', exact: true })
   await expect(breadcrumb).toHaveAttribute('href', run)
 
   await page.reload()
@@ -100,7 +100,7 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   await single.focus()
   await page.keyboard.press('Enter')
   await expect(page.getByText('Stored example response for Single-turn attempt. This is offline sample data.', { exact: true })).toBeVisible()
-  await page.getByRole('link', { name: `Return to scenario run ${scenarioResultId}` }).click()
+  await page.getByRole('link', { name: 'Back to scan', exact: true }).click()
   await expect(page).toHaveURL(run)
 })
 
