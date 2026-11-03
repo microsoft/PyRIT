@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+import sys
 from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -35,6 +36,12 @@ def _blob_client(*, names: list[str]) -> MagicMock:
     client.__enter__.return_value = client
     client.list_blobs.return_value = [SimpleNamespace(name=name) for name in names]
     return client
+
+
+def _count_open_files() -> int | None:
+    # Linux lists this process's open files here; elsewhere the count is skipped.
+    descriptors = Path("/proc/self/fd")
+    return len(list(descriptors.iterdir())) if descriptors.is_dir() else None
 
 
 @contextmanager
@@ -133,24 +140,56 @@ class TestLocalListingWithIssues:
 
         assert listing == DocumentListing(documents={"kept": b"kept"})
 
-    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Named pipes need os.mkfifo")
+    @pytest.mark.parametrize("replacement", ["pipe", "folder", "dangling link"])
     @pytest.mark.timeout(60)
-    def test_reports_a_pipe_put_in_place_of_a_listed_document_without_blocking(self, tmp_path: Path) -> None:
+    def test_reports_a_non_file_put_in_place_of_a_listed_document_without_reading_it(
+        self, tmp_path: Path, replacement: str
+    ) -> None:
+        if replacement == "pipe" and not hasattr(os, "mkfifo"):
+            pytest.skip("Named pipes need os.mkfifo")
+        if replacement == "folder" and sys.platform == "win32":
+            pytest.skip("Windows can't open a folder as a file")
+        if replacement == "dangling link" and sys.platform == "win32":
+            pytest.skip("Creating symbolic links may not be permitted on Windows")
         (tmp_path / "kept.json").write_bytes(b"kept")
         swapped = tmp_path / "swapped.json"
         swapped.write_bytes(b"replaced")
 
-        def replace_with_pipe() -> None:
+        def replace() -> None:
             swapped.unlink()
-            os.mkfifo(swapped)
+            if replacement == "pipe":
+                os.mkfifo(swapped)
+            elif replacement == "folder":
+                swapped.mkdir()
+            else:
+                swapped.symlink_to(tmp_path / "missing_target.json")
 
-        with _change_after_listing(change=replace_with_pipe, cache_types=True):
+        open_files = _count_open_files()
+        with _change_after_listing(change=replace, cache_types=True):
             listing = _local_storage(tmp_path)._list_documents_with_issues()
 
         assert listing == DocumentListing(
             documents={"kept": b"kept"},
             unreadable=(UnreadableDocument(name="swapped", message="Not a regular file"),),
         )
+        assert _count_open_files() == open_files
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Named pipes need os.mkfifo")
+    def test_checks_the_opened_file_rather_than_the_path(self, tmp_path: Path) -> None:
+        document = tmp_path / "document.json"
+        document.write_bytes(b"original")
+        real_open = os.open
+
+        def open_then_replace(path: str, flags: int, *args: int) -> int:
+            descriptor = real_open(path, flags, *args)
+            os.unlink(path)
+            os.mkfifo(path)
+            return descriptor
+
+        with patch("pyrit.registry.file_document_storage.os.open", side_effect=open_then_replace):
+            listing = _local_storage(tmp_path)._list_documents_with_issues()
+
+        assert listing == DocumentListing(documents={"document": b"original"})
 
     def test_reports_entries_that_are_not_regular_files_without_reading_them(self, tmp_path: Path) -> None:
         (tmp_path / "folder.json").mkdir()
@@ -167,6 +206,25 @@ class TestLocalListingWithIssues:
             UnreadableDocument(name="folder", message="Not a regular file"),
         )
         read.assert_not_called()
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="The null device is a POSIX character device here")
+    def test_reads_only_regular_files(self) -> None:
+        assert _read_regular_file(os.devnull) is None
+
+    def test_reports_an_entry_that_cannot_be_checked_after_listing(self, tmp_path: Path) -> None:
+        deleted = tmp_path / "deleted.json"
+        deleted.write_bytes(b"gone")
+
+        with (
+            _change_after_listing(change=deleted.unlink, cache_types=True),
+            patch(
+                "pyrit.registry.file_document_storage.os.lstat",
+                side_effect=PermissionError(13, "Permission denied"),
+            ),
+        ):
+            listing = _local_storage(tmp_path)._list_documents_with_issues()
+
+        assert listing == DocumentListing(unreadable=(UnreadableDocument(name="deleted", message="Permission denied"),))
 
     def test_reports_a_link_loop_and_keeps_the_others(self, tmp_path: Path) -> None:
         (tmp_path / "good.json").write_bytes(b"ok")
