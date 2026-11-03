@@ -470,7 +470,7 @@ async function activateMockTarget(page: Page) {
   await objectiveDefault.selectOption({ index: 1 });
 
   await page.getByRole("button", { name: "Attacks", exact: true }).click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole("button", { name: "New attack", exact: true })).toBeVisible({ timeout: 5000 });
 }
 
 /** Open converter panel and add a registered converter to the active pipeline. */
@@ -1097,7 +1097,8 @@ test.describe("Converter Panel", () => {
     await expect(page.getByText(/Mock response for:/)).toBeVisible({ timeout: 15000 });
 
     // Navigate to History view
-    await page.getByRole("button", { name: "History", exact: true }).click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await page.getByRole("tab", { name: "History", exact: true }).click();
 
     // Converter badge should appear in the attack table
     await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });
@@ -1161,7 +1162,8 @@ test.describe("Converter Panel", () => {
 
   test("should show converter type in history filter options", async ({ page }) => {
     // Navigate to History view
-    await page.getByRole("button", { name: "History", exact: true }).click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await page.getByRole("tab", { name: "History", exact: true }).click();
 
     // The converter badge should be visible in the attack table
     await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });

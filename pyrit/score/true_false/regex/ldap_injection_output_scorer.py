@@ -4,7 +4,7 @@
 import re
 from urllib.parse import unquote
 
-from pyrit.models import MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer, _ConfigurableRegexScorerMixin
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc, TrueFalseScoreAggregator
 
@@ -95,6 +95,18 @@ class LDAPInjectionOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         """
         self._use_default_patterns = patterns is None
         super().__init__(patterns=patterns, score_aggregator=score_aggregator)
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Include URL-filter decoding alongside the regex configuration.
+
+        Returns:
+            ComponentIdentifier: The scorer identity including its decoding policy.
+        """
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(
+            params={**base_identifier.params, "decode_url_filters": self._use_default_patterns}
+        )
 
     async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
         """

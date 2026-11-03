@@ -311,7 +311,7 @@ test.describe("Chat processing recovery @seeded", () => {
           await route.continue();
         });
         try {
-          await page.goto(`/attacks/${attackId}`);
+          await page.goto(`/attack/chat/${attackId}`);
           await expect.poll(() => metadataStarted).toBe(true);
           await expect(page.getByText("Loading conversation...", { exact: true })).toBeVisible();
           const toggle = page.getByTestId("toggle-panel-btn");
