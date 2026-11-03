@@ -97,6 +97,10 @@ autoplay. Reopening waits for a fresh display URL, with Show disabled while the
 request is pending. If refreshing fails, the preview stays closed and shows a
 message so you can try again. Hiding a preview stops playback.
 Filters, page size, and the open example stay in the address bar.
+The visible example page and open detail also check for stored changes each minute,
+using the same filters and page cursor. Transient background errors keep the
+previously loaded content visible with an error message until a check succeeds.
+Deleted examples and invalid page cursors still show their explicit recovery state.
 **Back to datasets** returns to the catalog search, facets, and sort you came
 from. A direct link without that return state goes to `/datasets`.
 On narrow screens, scroll the example table horizontally to read its columns.
