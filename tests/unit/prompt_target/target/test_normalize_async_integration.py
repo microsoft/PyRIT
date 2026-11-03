@@ -209,6 +209,42 @@ async def test_openai_chat_target_memory_not_mutated():
     assert memory_conversation[0].get_piece().api_role == "system"
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_openai_chat_target_raises_for_unsupported_system_prompt_under_raise_policy():
+    """A system message the target cannot accept must not reach the provider under RAISE."""
+    target = OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://mock.azure.com/",
+        api_key="mock-api-key",
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True,
+                supports_editable_history=True,
+                supports_system_prompt=False,
+                input_modalities=frozenset({frozenset(["text"])}),
+            ),
+            policy=CapabilityHandlingPolicy(
+                behaviors={
+                    CapabilityName.MULTI_TURN: UnsupportedCapabilityBehavior.RAISE,
+                    CapabilityName.SYSTEM_PROMPT: UnsupportedCapabilityBehavior.RAISE,
+                }
+            ),
+        ),
+    )
+
+    mock_memory = MagicMock(spec=MemoryInterface)
+    mock_memory.get_conversation_messages_async = AsyncMock(
+        return_value=[_make_message(role="system", content="Policy")]
+    )
+    target._memory = mock_memory
+    target._async_client.chat.completions.create = AsyncMock(return_value=_create_mock_chat_completion())
+
+    with pytest.raises(ValueError, match="does not support system prompts"):
+        await target.send_prompt_async(message=_make_message(role="user", content="Question"))
+
+    target._async_client.chat.completions.create.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # OpenAIResponseTarget — normalize_async is called
 # ---------------------------------------------------------------------------

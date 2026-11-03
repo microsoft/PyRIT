@@ -369,7 +369,7 @@ class PromptTarget(Identifiable):
 
         Called after the normalization pipeline has run. Validates the last
         message (the current request) for piece count, data types, and checks
-        whether the full conversation violates multi-turn constraints.
+        whether the full conversation violates multi-turn or system prompt constraints.
 
         Args:
             normalized_conversation: The normalized conversation to validate.
@@ -414,6 +414,14 @@ class PromptTarget(Identifiable):
 
         if not self.configuration.includes(capability=CapabilityName.MULTI_TURN) and len(normalized_conversation) > 1:
             raise ValueError(f"This target only supports a single turn conversation. {custom_configuration_message}")
+
+        if not self.configuration.includes(capability=CapabilityName.SYSTEM_PROMPT) and any(
+            piece.api_role == "system" for turn in normalized_conversation for piece in turn.message_pieces
+        ):
+            raise ValueError(
+                "This target does not support system prompts and no normalizer adapted the system message. "
+                f"{custom_configuration_message}"
+            )
 
     @staticmethod
     def _get_web_search_config(message: Message) -> WebSearchConfig:
