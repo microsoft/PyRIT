@@ -7384,10 +7384,7 @@ class MemoryInterface(abc.ABC):
             else:
                 run_groups[canonical_gid] = counts
             if canonical_gid != raw_gid:
-                if raw_gid in run_groups:
-                    run_groups[raw_gid] = combine_execution_counts([run_groups[raw_gid], counts])
-                else:
-                    run_groups[raw_gid] = counts
+                run_groups[raw_gid] = counts
 
         names_by_run: dict[str, list[str]] = {}
         for scenario_result_id, atomic_attack_name in name_rows:
