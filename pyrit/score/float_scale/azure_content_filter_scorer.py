@@ -21,7 +21,7 @@ from azure.core.credentials import AzureKeyCredential
 from pyrit.auth import AsyncTokenProviderCredential, ensure_async_token_provider, get_azure_async_token_provider
 from pyrit.common import default_values
 from pyrit.memory import DataTypeSerializer, data_serializer_factory
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.models.harm_category import HarmCategory
 from pyrit.score.float_scale.float_scale_score_aggregator import (
     FloatScaleScorerByCategory,
@@ -231,7 +231,9 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
             max_concurrency=max_concurrency,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Evaluate the input text or image using the Azure Content Filter API.
 
@@ -241,8 +243,7 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
                 In case of an image, the image size must be less than 2048 x 2048 pixels,
                 but more than 50x50 pixels. The data size should not exceed 4 MB. Image must be
                 of type JPEG, PNG, GIF, BMP, TIFF, or WEBP.
-            objective (str | None): The objective for scoring context. Currently not supported for this scorer.
-                Defaults to None.
+            expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
 
         Returns:
             list[Score]: A list of Score objects with score values mapping to severity utilizing the
@@ -255,6 +256,7 @@ class AzureContentFilterScorer(MessageFloatScaleScorer):
         Raises:
             ValueError: If converted_value_data_type is not "text" or "image_path" or image isn't in supported format.
         """
+        objective = expectation.objective if expectation else None
         filter_results: list[tuple[AnalyzeTextResult | AnalyzeImageResult, float]] = []
 
         if message_piece.converted_value_data_type == "text":
