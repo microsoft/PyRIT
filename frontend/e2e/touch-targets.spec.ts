@@ -1,9 +1,10 @@
-import { expect, test, type Locator, type Page } from "./_fixtures";
+import { expect, test, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
 import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
+import type { ConversationMessagesResponse } from "../src/types";
 
 const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
@@ -362,7 +363,15 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
                 },
               },
             ))
-          : jsonResponse({ messages: MESSAGES })
+          : jsonResponse({
+              conversation_id: "mobile-conversation-001",
+              messages: MESSAGES,
+              automated_score: MESSAGES[1].message_pieces[0].scores[1],
+              latest_response_id: "mobile-assistant-piece",
+              outcome: "success",
+              scoring_failure: null,
+              target_response_status: null,
+            } satisfies ConversationMessagesResponse)
       );
       return;
     }
@@ -459,8 +468,15 @@ async function expectMinimumTouchTarget(locator: Locator): Promise<void> {
   if (!box) {
     throw new Error("Expected a visible touch target");
   }
-  expect(Math.round(box.width)).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
-  expect(Math.round(box.height)).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
+  const control = await locator.evaluate((element) => ({
+    name: element.getAttribute("aria-label") ?? element.getAttribute("data-testid") ?? element.textContent?.trim(),
+    tag: element.tagName,
+    coarsePointer: window.matchMedia("(pointer: coarse)").matches,
+    minWidth: getComputedStyle(element).minWidth,
+    minHeight: getComputedStyle(element).minHeight,
+  }));
+  expect(Math.round(box.width), `${JSON.stringify(control)} width`).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
+  expect(Math.round(box.height), `${JSON.stringify(control)} height`).toBeGreaterThanOrEqual(MINIMUM_TOUCH_TARGET_SIZE);
 }
 
 async function expectMinimumTouchTargets(locator: Locator): Promise<void> {
@@ -490,32 +506,30 @@ test.beforeEach(async ({ page }) => {
 test.describe("Mobile touch targets", () => {
   test.use({ viewport: MOBILE_VIEWPORT, hasTouch: true });
 
-  test("keeps the empty-chat objective editor usable on a narrow screen", async ({
-    page,
-  }) => {
-    await page.setViewportSize({ width: 320, height: 568 });
-    await page.goto("/");
-    await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
-    await page.getByRole("button", { name: "Technique.execute", exact: true }).click();
+  for (const width of [320, 390]) {
+    test(`keeps the empty-chat objective editor usable on a narrow screen (${width}px)`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 568 });
+      await selectChatTarget(page);
 
-    await page.getByRole("button", { name: "Add objective" }).click();
-    const objectiveInput = page.getByRole("textbox", {
-      name: "Attack objective",
+      await page.getByRole("button", { name: "Add objective" }).click();
+      const objectiveInput = page.getByRole("textbox", {
+        name: "Attack objective",
+      });
+      await expectMinimumTouchTarget(objectiveInput);
+      await objectiveInput.fill(
+        "Evaluate whether the response satisfies this mobile attack objective"
+      );
+      await expectMinimumTouchTarget(
+        page.getByRole("button", { name: "Save" })
+      );
+      await expectMinimumTouchTarget(
+        page.getByRole("button", { name: "Cancel" })
+      );
+      await expectNoDocumentOverflow(page);
     });
-    await expectMinimumTouchTarget(objectiveInput);
-    await objectiveInput.fill(
-      "Evaluate whether the response satisfies this mobile attack objective"
-    );
-    await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Save" })
-    );
-    await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Cancel" })
-    );
-    await expectNoDocumentOverflow(page);
-  });
+  }
 
   test("keeps Home, Registry, and History controls at least 44px", async ({
     page,
@@ -524,14 +538,7 @@ test.describe("Mobile touch targets", () => {
     await expect(page.getByTestId("home-view")).toBeVisible();
 
     await expectMinimumTouchTargets(
-      page.getByTestId("home-view").locator(
-        [
-          '[data-testid="labels-icon-btn"]',
-          '[data-testid="home-configure-target-btn"]',
-          '[data-testid="home-view-all-history-btn"]',
-          '[data-testid="home-open-attack-home-attack-001"]',
-        ].join(",")
-      )
+      page.getByTestId("home-view").locator("button")
     );
     await expectMinimumTouchTarget(
       page.getByRole("button", { name: "Home", exact: true })
@@ -543,9 +550,7 @@ test.describe("Mobile touch targets", () => {
       .click();
     await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
 
-    await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Refresh", exact: true })
-    );
+    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
     await expectMinimumTouchTarget(
       page.getByRole("button", { name: "New Target", exact: true })
     );
@@ -578,12 +583,12 @@ test.describe("Mobile touch targets", () => {
     await expectMinimumTouchTarget(page.getByRole("button", { name: "Reset all filters", exact: true }));
     await expectNoDocumentOverflow(page);
 
-    await page.goto("/history");
+    await page.goto("/attack/history");
     await expect(
       page.getByTestId("open-attack-home-attack-001")
     ).toBeVisible();
 
-    await expectMinimumTouchTarget(page.getByTestId("refresh-btn"));
+    await expect(page.getByTestId("refresh-btn")).toHaveCount(0);
     await expectMinimumTouchTargets(
       page.locator(
         [
@@ -608,14 +613,36 @@ test.describe("Mobile touch targets", () => {
     await expectNoDocumentOverflow(page);
   });
 
-  test("keeps the Initializer selector at least 44px", async ({ page }) => {
-    await page.goto("/config");
-    await page.getByRole("tab", { name: "Initializers", exact: true }).click();
+  test.describe("Initializer selector", () => {
+    test.use({ isMobile: true });
 
-    await expectMinimumTouchTarget(
-      page.getByRole("button", { name: "Browse available initializers" })
-    );
-    await expectNoDocumentOverflow(page);
+    test("keeps the Initializer selector at least 44px and inside the content", async ({ page }) => {
+      for (const width of [320, 390]) {
+        await page.setViewportSize({ width, height: MOBILE_VIEWPORT.height });
+        await page.goto("/config");
+        await page.getByRole("tab", { name: "Initializers", exact: true }).click();
+        await expect(page.getByRole("heading", { name: "Configured initializers", exact: true })).toBeVisible();
+        const selector = page.getByRole("button", { name: "Browse available initializers", exact: true });
+        await expect(selector).toBeEnabled();
+        expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+        await expectMinimumTouchTarget(selector);
+        const bounds = await selector.boundingBox();
+        const content = await page.getByTestId("initializers").evaluate((element) => {
+          const parent = element.parentElement;
+          if (!parent) throw new Error("Missing Configuration container");
+          const box = parent.getBoundingClientRect();
+          const style = getComputedStyle(parent);
+          return {
+            left: box.left + parseFloat(style.paddingLeft),
+            right: box.right - parseFloat(style.paddingRight),
+          };
+        });
+        if (!bounds) throw new Error("Expected a visible Initializer selector");
+        expect(bounds.x).toBeGreaterThanOrEqual(content.left);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(content.right);
+        await expectNoDocumentOverflow(page);
+      }
+    });
   });
 
   test("keeps Chat message, input, and conversation controls at least 44px", async ({
@@ -627,7 +654,7 @@ test.describe("Mobile touch targets", () => {
     // the create-attack flow seeds the objective as "" client-side and never
     // loads the long mocked objective, so the disclosure toggle would never
     // render and this test would silently skip checking it.
-    await page.goto("/attacks/mobile-attack-001");
+    await page.goto("/attack/chat/mobile-attack-001");
     await expect(
       page.getByText("Deterministic assistant response for touch-target tests.")
     ).toBeVisible();
@@ -637,7 +664,7 @@ test.describe("Mobile touch targets", () => {
 
     await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("gpt-4o-mobile", { exact: true })).toBeVisible();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true }).selectOption({ index: 1 });
+    await expect(page.getByRole("combobox", { name: "Default objective target", exact: true })).toHaveCount(0);
     await page.goBack();
     await expect(
       page.getByTestId("toggle-objective-header-btn")
@@ -702,13 +729,13 @@ test.describe("Mobile touch targets", () => {
     await scoreStack.press("Tab");
     await expect(page.getByRole("tooltip")).toHaveCount(0);
 
+    await expectMinimumTouchTarget(page.getByRole("button", { name: "New attack", exact: true }));
     await expectMinimumTouchTargets(
       page.locator(
         [
           '[data-testid="labels-icon-btn"]',
           '[data-testid="export-conversation-btn"]',
           '[data-testid="toggle-panel-btn"]',
-          '[data-testid="new-attack-btn"]',
           '[aria-label="Attach files"]',
           '[data-testid="toggle-converter-panel-btn"]',
           '[data-testid="undo-last-send-btn"]',
@@ -737,7 +764,7 @@ test.describe("Mobile touch targets", () => {
     const outcomeButton = page.getByRole("button", {
       name: /Objective achieved outcome:/,
     });
-    await outcomeButton.click();
+    await outcomeButton.tap();
     await expect(page.getByRole("group", { name: "Automated score", exact: true })).toContainText("Failure");
     await expect(page.getByText("Overridden by the human score.", { exact: true })).toBeVisible();
     await expect(page.getByText("Human scores always override automated scores", { exact: true })).toHaveCount(0);
@@ -750,24 +777,33 @@ test.describe("Mobile touch targets", () => {
       expect(positions[0]).not.toBeUndefined();
       expect(new Set(positions).size).toBe(1);
     }).toPass();
-    await page.setViewportSize({ width: 320, height: 568 });
-
-    const resultDetails = page.getByText("Attack Result Details").locator("..");
-    await expect(resultDetails).toBeVisible();
-    await expect(async () => {
-      const popoverBounds = await resultDetails.boundingBox();
-      if (!popoverBounds) {
-        throw new Error("Expected attack result details bounds");
+    const resultDetails = page.getByRole("group").filter({
+      has: page.getByText("Attack Result Details", { exact: true }),
+    });
+    for (const width of [320, 390]) {
+      await page.setViewportSize({ width, height: 568 });
+      await expect(resultDetails).toBeVisible();
+      await expect(async () => {
+        const popoverBounds = await resultDetails.boundingBox();
+        if (!popoverBounds) {
+          throw new Error("Expected attack result details bounds");
+        }
+        expect(popoverBounds.y).toBeGreaterThanOrEqual(0);
+        expect(popoverBounds.y + popoverBounds.height, `Result details at ${width}px`).toBeLessThanOrEqual(568);
+      }).toPass();
+      for (const name of resultActions) {
+        await expectMinimumTouchTarget(page.getByRole("button", { name, exact: true }));
       }
-      expect(popoverBounds.y).toBeGreaterThanOrEqual(0);
-      expect(popoverBounds.y + popoverBounds.height).toBeLessThanOrEqual(568);
-    }).toPass();
-    for (const name of resultActions) {
-      await expectMinimumTouchTarget(page.getByRole("button", { name, exact: true }));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: /^Automated scorer:/ }));
+      await expectNoDocumentOverflow(page);
     }
-    await expectMinimumTouchTarget(page.getByRole("button", { name: /^Automated scorer:/ }));
-    await expectNoDocumentOverflow(page);
     await page.keyboard.press("Escape");
+    await expect(resultDetails).toBeHidden();
+    await expect(outcomeButton).toBeFocused();
+    await outcomeButton.press("Enter");
+    await expect(resultDetails).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(resultDetails).toBeHidden();
     await page.setViewportSize({ width: 320, height: MOBILE_VIEWPORT.height });
 
     await page.getByTestId("toggle-panel-btn").click();
@@ -807,8 +843,10 @@ test.describe("Mobile touch targets", () => {
     // Scope to the tooltip: the views the tour visits have their own
     // "Next" controls, such as History's pagination.
     const tooltip = page.getByTestId("tour-tooltip-card");
+    const floater = page.locator(".react-joyride__floater").filter({ has: tooltip });
 
     await expect(page.getByText(`1 of ${TOUR_STEP_COUNT}`)).toBeVisible();
+    await expect(floater).toHaveCSS("opacity", "1");
     await expectMinimumTouchTargets(
       tooltip.getByRole("button", {
         name: /^(Close|Skip tour|Next)$/,
@@ -818,10 +856,11 @@ test.describe("Mobile touch targets", () => {
     for (let step = 2; step < TOUR_STEP_COUNT; step += 1) {
       await tooltip
         .getByRole("button", { name: "Next", exact: true })
-        .click({ force: true });
+        .click();
       await expect(
         page.getByText(`${step} of ${TOUR_STEP_COUNT}`)
       ).toBeVisible();
+      await expect(floater).toHaveCSS("opacity", "1");
       await expectMinimumTouchTargets(
         tooltip.getByRole("button", {
           name: /^(Close|Skip tour|Back|Next)$/,
@@ -831,10 +870,11 @@ test.describe("Mobile touch targets", () => {
 
     await tooltip
       .getByRole("button", { name: "Next", exact: true })
-      .click({ force: true });
+      .click();
     await expect(
       page.getByText(`${TOUR_STEP_COUNT} of ${TOUR_STEP_COUNT}`)
     ).toBeVisible();
+    await expect(floater).toHaveCSS("opacity", "1");
     await expectMinimumTouchTarget(
       tooltip.getByRole("button", { name: "Back", exact: true })
     );

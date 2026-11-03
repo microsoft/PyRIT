@@ -261,11 +261,15 @@ async def test_xss_javascript_uri_near_miss_does_not_backtrack(
 ) -> None:
     # Keep inputs bounded so regressing to overlapping repeated alternatives cannot hang the suite.
     text = template.format(run="\t" * length)
+    scorer = XSSOutputScorer()
     start = perf_counter()
-    score = (await XSSOutputScorer().score_text_async(text=text))[0]
+    matched = [name for name, pattern in scorer._compiled.items() if pattern.search(text)]
     elapsed = perf_counter() - start
-    assert score.get_value() is False
+    assert not matched
     assert elapsed < 0.5, f"JavaScript URI near miss took {elapsed:.3f}s"
+
+    score = (await scorer.score_text_async(text=text))[0]
+    assert score.get_value() is False
 
 
 async def test_xss_custom_patterns_do_not_decode_javascript_uri(patch_central_database: MagicMock) -> None:

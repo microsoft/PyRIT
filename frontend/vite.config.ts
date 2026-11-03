@@ -125,7 +125,9 @@ export default defineConfig({
     ],
     // Vite 8 uses Rolldown for dependency pre-bundling
     rolldownOptions: {
-      target: 'esnext',
+      transform: {
+        target: 'esnext',
+      },
     },
     exclude: [],
   },
