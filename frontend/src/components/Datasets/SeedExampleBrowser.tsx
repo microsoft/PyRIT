@@ -325,6 +325,7 @@ export function SeedExampleBrowserView({
                 messages: outcome.messages,
                 objective: outcome.objective,
                 systemPrompt: outcome.systemPrompt,
+                composerDraft: outcome.composerDraft,
               },
             }
           : {}),

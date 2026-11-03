@@ -98,6 +98,12 @@ export interface ChatConverterSnapshot {
   applied: Record<string, PieceConversion>
 }
 
+export interface PendingComposerDraft {
+  text: string
+  attachments?: MessageAttachment[]
+  textMetadata?: Record<string, unknown>
+}
+
 export interface ConversationEditState {
   messages: ConversationDraftMessage[]
   objective?: string
@@ -106,6 +112,8 @@ export interface ConversationEditState {
   sourceAttackId?: string | null
   temperature?: string
   target?: TargetReference | null
+  pendingComposerDraft?: PendingComposerDraft
+  unsavedImport?: boolean
 }
 
 export interface ChatDraftContent {
@@ -134,6 +142,7 @@ export interface PendingImportConversation {
   messages: ConversationDraftMessage[]
   objective?: string
   systemPrompt?: string
+  composerDraft?: PendingComposerDraft
 }
 
 export interface PendingImportPayload {
@@ -1018,6 +1027,7 @@ export interface ConversationSaveInput {
   baselineMessages?: ConversationDraftMessage[]
   temperature?: string
   unsavedImport?: boolean
+  pendingComposerDraft?: PendingComposerDraft
 }
 
 export interface NewAttackContext {

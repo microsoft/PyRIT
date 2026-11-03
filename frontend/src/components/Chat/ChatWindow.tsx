@@ -56,6 +56,8 @@ import {
   canApplyPendingImport,
   hasChatDraftState,
   isChatDraftDirty,
+  computeAttachmentSignature,
+  stableMetadataString,
 } from '@/utils/chatDraft'
 import { resolveTargetReference, targetReference } from '@/utils/targetIdentity'
 import type { PieceConversion } from './converterTypes'
@@ -499,6 +501,29 @@ export default function ChatWindow({
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([])
+
+  const composerRevisionRef = useRef(0)
+  const discardDraftOnUnmountRef = useRef(false)
+  const lastTextRef = useRef(chatInputText)
+  const lastAttachmentsSignatureRef = useRef(computeAttachmentSignature(draftAttachments))
+
+  const handleComposerInputChange = useCallback((text: string): void => {
+    discardDraftOnUnmountRef.current = false
+    if (lastTextRef.current !== text) {
+      lastTextRef.current = text
+      composerRevisionRef.current += 1
+    }
+    setChatInputText(text)
+  }, [])
+  const handleComposerAttachmentsChange = useCallback((attachments: MessageAttachment[]): void => {
+    discardDraftOnUnmountRef.current = false
+    const nextSignature = computeAttachmentSignature(attachments)
+    if (lastAttachmentsSignatureRef.current !== nextSignature) {
+      lastAttachmentsSignatureRef.current = nextSignature
+      composerRevisionRef.current += 1
+    }
+    setDraftAttachments(attachments)
+  }, [])
   const converters = useChatConverters(chatInputText, draftAttachments)
   const convertersRef = useRef(converters)
   useLayoutEffect(() => { convertersRef.current = converters }, [converters])
@@ -510,8 +535,18 @@ export default function ChatWindow({
   const handoffRestoredRef = useRef<number | null>(null)
   const importInFlightRef = useRef<string | null>(null)
   const importFailedRef = useRef<string | null>(null)
+  const currentAttackIdRef = useRef(draftAttackId)
+  const currentConversationIdRef = useRef(draftConversationId)
+  const pendingImportRef = useRef(draftHandoff.pendingImport)
+  const activeSequenceRef = useRef(draftHandoff.activeSequence)
+  const isActiveDraftDirtyRef = useRef(false)
+  useLayoutEffect(() => {
+    currentAttackIdRef.current = draftAttackId
+    currentConversationIdRef.current = draftConversationId
+    pendingImportRef.current = draftHandoff.pendingImport
+    activeSequenceRef.current = draftHandoff.activeSequence
+  }, [draftAttackId, draftConversationId, draftHandoff.pendingImport, draftHandoff.activeSequence])
   const ownsDraftRef = useRef(false)
-  const discardDraftOnUnmountRef = useRef(false)
   const preserveOnUnmountRef = useRef<(() => void) | null>(null)
   useEffect(() => () => { preserveOnUnmountRef.current?.() }, [])
   const [recoverableSends, setRecoverableSends] = useState<Record<string, RecoverableSendDraft>>({})
@@ -731,12 +766,15 @@ export default function ChatWindow({
             sourceAttackId: editDraft.sourceAttackId,
             temperature: editDraft.temperature,
             target: editDraft.target ? targetReference(editDraft.target) : null,
+            pendingComposerDraft: editDraft.pendingComposerDraft,
+            unsavedImport: editDraft.unsavedImport,
           },
         }
       : {}),
   }
   const isActiveDraftDirty = isChatDraftDirty(activeDraft)
   useLayoutEffect(() => {
+    isActiveDraftDirtyRef.current = isActiveDraftDirty
     if (isDraftDestinationReady || isActiveDraftDirty) ownsDraftRef.current = true
     const savedDraft = { ...activeDraft, textMetadata: inputBoxRef.current?.getTextMetadata() }
     const isWaitingForRestore = matchingPreservedDraft !== null
@@ -746,7 +784,9 @@ export default function ChatWindow({
     const hasEditedContent = isActiveDraftDirty
       || Object.values(activeDraft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
     preserveOnUnmountRef.current = (): void => {
-      if (discardDraftOnUnmountRef.current || !ownsDraftRef.current || isWaitingForRestore
+      const shouldDiscard = discardDraftOnUnmountRef.current
+      discardDraftOnUnmountRef.current = false
+      if (shouldDiscard || !ownsDraftRef.current || isWaitingForRestore
         || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
       draftHandoff.preserveDraft({
         originatingAttackId: draftAttackId,
@@ -760,6 +800,8 @@ export default function ChatWindow({
 
   const restoreComposerDraft = useCallback((draft: ChatDraftContent): MessageAttachment[] => {
     const attachments = draft.attachments.map(withDraftIdentity)
+    lastTextRef.current = draft.text
+    lastAttachmentsSignatureRef.current = computeAttachmentSignature(attachments)
     setChatInputText(draft.text)
     setDraftAttachments(attachments)
     if (draft.systemPrompt !== undefined) setSystemPrompt(draft.systemPrompt)
@@ -876,6 +918,8 @@ export default function ChatWindow({
           target: editorTarget,
           temperature: consumed.conversation.temperature ?? '',
           labels,
+          pendingComposerDraft: consumed.conversation.pendingComposerDraft,
+          unsavedImport: consumed.conversation.unsavedImport,
         })
       }
     } else {
@@ -883,7 +927,17 @@ export default function ChatWindow({
       if (importInFlightRef.current === pending.id || importFailedRef.current === pending.id) return
 
       const executeImportHandoff = async (): Promise<void> => {
-        importInFlightRef.current = pending.id
+        const snapshotPendingId = pending.id
+        const snapshotTargetAttackId = draftAttackId
+        const snapshotTargetConversationId = draftConversationId
+        const snapshotDestinationType = pending.destinationType
+        const snapshotSequence = pending.sequence
+        const snapshotComposerRevision = composerRevisionRef.current
+        const snapshotConverterEditRevision = convertersRef.current.editRevision
+        const snapshotTextMetadata = stableMetadataString(inputBoxRef.current?.getTextMetadata())
+        const snapshotReplaceDirty = pending.replaceDirty === true
+
+        importInFlightRef.current = snapshotPendingId
         let existingTurns: ConversationDraftMessage[] = []
         if (pending.conversation && pending.destinationType === 'current_conversation' && draftConversationId && draftAttackId) {
           let backendMsgs = loadedBackendMessagesRef.current.get(draftConversationId)
@@ -896,22 +950,74 @@ export default function ChatWindow({
               }
             } catch (err) {
               importInFlightRef.current = null
-              importFailedRef.current = pending.id
+              importFailedRef.current = snapshotPendingId
               setEditorError(toApiError(err).detail || 'Failed to load conversation history. Preserved pending import.')
               return
             }
           }
+        }
+
+        // Validate state before proceeding to consume the import
+        const currentPending = pendingImportRef.current
+        if (!currentPending || currentPending.id !== snapshotPendingId) {
+          importInFlightRef.current = null
+          return
+        }
+        if (currentPending.sequence !== snapshotSequence) {
+          importInFlightRef.current = null
+          return
+        }
+        if (currentPending.destinationType !== snapshotDestinationType) {
+          importInFlightRef.current = null
+          return
+        }
+        if (
+          currentAttackIdRef.current !== snapshotTargetAttackId ||
+          currentConversationIdRef.current !== snapshotTargetConversationId
+        ) {
+          importInFlightRef.current = null
+          return
+        }
+        if (
+          composerRevisionRef.current !== snapshotComposerRevision ||
+          convertersRef.current.editRevision !== snapshotConverterEditRevision ||
+          stableMetadataString(inputBoxRef.current?.getTextMetadata()) !== snapshotTextMetadata
+        ) {
+          importInFlightRef.current = null
+          return
+        }
+        if (isActiveDraftDirtyRef.current && !snapshotReplaceDirty) {
+          importInFlightRef.current = null
+          return
+        }
+        if (
+          !canApplyPendingImport(currentPending, currentAttackIdRef.current, currentConversationIdRef.current) ||
+          currentPending.sequence < activeSequenceRef.current
+        ) {
+          importInFlightRef.current = null
+          return
+        }
+        if (importInFlightRef.current !== snapshotPendingId || importFailedRef.current === snapshotPendingId) {
+          return
+        }
+
+        if (pending.conversation && pending.destinationType === 'current_conversation' && draftConversationId && draftAttackId) {
+          const backendMsgs = loadedBackendMessagesRef.current.get(draftConversationId) ?? []
           try {
             existingTurns = toConversationDraft(backendMsgs)
           } catch (err) {
             importInFlightRef.current = null
-            importFailedRef.current = pending.id
+            importFailedRef.current = snapshotPendingId
             setEditorError(toApiError(err).detail || 'Failed to parse conversation history. Preserved pending import.')
             return
           }
         }
 
-        const consumed = draftHandoff.consumePendingImport(pending.id, draftAttackId, draftConversationId)
+        const consumed = draftHandoff.consumePendingImport(
+          snapshotPendingId,
+          currentAttackIdRef.current,
+          currentConversationIdRef.current,
+        )
         importInFlightRef.current = null
         if (!consumed) return
         importFailedRef.current = null
@@ -921,15 +1027,31 @@ export default function ChatWindow({
         converters.clearAll()
         if (consumed.conversation) {
           const allMessages = [...existingTurns, ...consumed.conversation.messages]
+          const isNewAttack = !currentAttackIdRef.current
+          const initialObjective = isNewAttack
+            ? (consumed.conversation.objective ?? currentObjective)
+            : currentObjective
+          const objective = consumed.conversation.objective ?? currentObjective
+          const pendingComposerDraft = consumed.conversation.composerDraft ?? (
+            consumed.content.text || (consumed.content.attachments && consumed.content.attachments.length > 0)
+              ? {
+                  text: consumed.content.text,
+                  attachments: consumed.content.attachments ?? [],
+                  textMetadata: consumed.content.textMetadata,
+                }
+              : undefined
+          )
+
           editor.begin({
             messages: allMessages,
-            objective: consumed.conversation.objective ?? currentObjective,
-            initialObjective: consumed.conversation.objective ?? currentObjective,
-            sourceConversationId: draftConversationId ?? null,
-            sourceAttackId: draftAttackId,
+            objective,
+            initialObjective,
+            sourceConversationId: currentConversationIdRef.current ?? null,
+            sourceAttackId: currentAttackIdRef.current,
             target: activeTarget,
             unsavedImport: true,
             labels,
+            pendingComposerDraft,
           })
           if (consumed.conversation.systemPrompt) {
             if (systemPrompt && systemPrompt.trim() !== consumed.conversation.systemPrompt.trim()) {
@@ -1286,6 +1408,8 @@ export default function ChatWindow({
     if (isCurrentSend(operation) && isViewingSend(operation) && outcome.clearDraft
       && inputBoxRef.current
       && inputBoxRef.current?.getDraftRevision() === operation.draftRevision) {
+      lastTextRef.current = ''
+      lastAttachmentsSignatureRef.current = ''
       inputBoxRef.current.restoreDraft('', [])
       setChatInputText('')
       setDraftAttachments([])
@@ -1300,6 +1424,8 @@ export default function ChatWindow({
     if (!operation || !isCurrentSend(operation) || !isViewingSend(operation)) return
     const sameGeneration = operation.converterGeneration === runtime.generation
     const attachments = operation.attachments.map(withDraftIdentity)
+    lastTextRef.current = operation.originalValue
+    lastAttachmentsSignatureRef.current = computeAttachmentSignature(attachments)
     setChatInputText(operation.originalValue)
     setDraftAttachments(attachments)
     inputBoxRef.current?.restoreDraft(operation.originalValue, attachments, operation.textMetadata)
@@ -1668,6 +1794,8 @@ export default function ChatWindow({
   const restoreRecoverableDraft = useCallback((): void => {
     if (!recoverableSend) { return }
     const attachments = recoverableSend.attachments.map(withDraftIdentity)
+    lastTextRef.current = recoverableSend.originalValue
+    lastAttachmentsSignatureRef.current = computeAttachmentSignature(attachments)
     setChatInputText(recoverableSend.originalValue)
     setDraftAttachments(attachments)
     restoreConversions(
@@ -1872,6 +2000,8 @@ export default function ChatWindow({
     const text = prompt?.text ?? ''
     const attachments = prompt?.attachments.map((attachment: MessageAttachment) => attachment.file
       ? { ...attachment, url: URL.createObjectURL(attachment.file) } : attachment) ?? []
+    lastTextRef.current = text
+    lastAttachmentsSignatureRef.current = computeAttachmentSignature(attachments)
     setChatInputText(text)
     setDraftAttachments(attachments)
     if (prompt && snapshot.generation === launchStateRef.current.generation) {
@@ -1894,11 +2024,26 @@ export default function ChatWindow({
       return Promise.resolve(false)
     }
     setEditorError(null)
-    const lastMessage = editDraft.messages[editDraft.messages.length - 1]
     const snapshot = editorRef.current?.getConverters() ?? converters.snapshot()
-    const pendingPrompt = lastMessage?.role === 'user'
-      ? draftMessageToComposer(lastMessage, snapshot) : undefined
-    const history = pendingPrompt ? editDraft.messages.slice(0, -1) : editDraft.messages
+    let pendingPrompt: ReturnType<typeof draftMessageToComposer> | undefined
+    let history: ConversationDraftMessage[]
+    if (editDraft.pendingComposerDraft) {
+      pendingPrompt = {
+        text: editDraft.pendingComposerDraft.text,
+        attachments: editDraft.pendingComposerDraft.attachments ?? [],
+        textMetadata: editDraft.pendingComposerDraft.textMetadata,
+        converters: snapshot,
+      }
+      history = editDraft.messages
+    } else if (editDraft.unsavedImport) {
+      pendingPrompt = undefined
+      history = editDraft.messages
+    } else {
+      const lastMessage = editDraft.messages[editDraft.messages.length - 1]
+      pendingPrompt = lastMessage?.role === 'user'
+        ? draftMessageToComposer(lastMessage, snapshot) : undefined
+      history = pendingPrompt ? editDraft.messages.slice(0, -1) : editDraft.messages
+    }
     return editor.save(destination, (response: AddMessageResponse, target?: TargetInstance | null) => {
       handleEditorSaved(response, target)
       restoreEditorPrompt(pendingPrompt, snapshot)
@@ -1912,9 +2057,21 @@ export default function ChatWindow({
     }
     if (!editor.dirty) {
       const snapshot = editorRef.current?.getConverters() ?? converters.snapshot()
-      const lastMessage = editDraft?.messages[editDraft.messages.length - 1]
-      const prompt = (chatInputText || draftAttachments.length || activePieceConversions.text) && lastMessage?.role === 'user'
-        ? draftMessageToComposer(lastMessage, snapshot) : undefined
+      let prompt: ReturnType<typeof draftMessageToComposer> | undefined
+      if (editDraft?.unsavedImport) {
+        prompt = undefined
+      } else if (editDraft?.pendingComposerDraft) {
+        prompt = {
+          text: editDraft.pendingComposerDraft.text,
+          attachments: editDraft.pendingComposerDraft.attachments ?? [],
+          textMetadata: editDraft.pendingComposerDraft.textMetadata,
+          converters: snapshot,
+        }
+      } else {
+        const lastMessage = editDraft?.messages[editDraft.messages.length - 1]
+        prompt = (chatInputText || draftAttachments.length || activePieceConversions.text) && lastMessage?.role === 'user'
+          ? draftMessageToComposer(lastMessage, snapshot) : undefined
+      }
       editor.discard()
       restoreEditorPrompt(prompt, snapshot)
       return Promise.resolve(true)
@@ -2531,8 +2688,25 @@ export default function ChatWindow({
           onSaved={handleEditorSaved}
           onSave={handleSaveEditor}
           onExit={handleExitEditor}
+          onDiscard={(navigatingAway) => {
+            if (navigatingAway) {
+              discardDraftOnUnmountRef.current = true
+              draftHandoff.clearPreservedDraft()
+            } else {
+              discardDraftOnUnmountRef.current = false
+            }
+            if (editDraft?.unsavedImport) {
+              lastTextRef.current = ''
+              lastAttachmentsSignatureRef.current = ''
+              setChatInputText('')
+              setDraftAttachments([])
+              inputBoxRef.current?.restoreDraft('', [])
+              draftHandoff.clearPreservedDraft()
+            }
+          }}
           saveDestination={attackResultId ? 'same_attack' : 'new_attack'}
           saveLabel="Save"
+          blockNavigation={!editDraft?.unsavedImport}
         />}
         {editDraft === null && conversationLoadIssue?.conversationId === viewedConversationId && (
           <MessageBar intent={conversationLoadIssue.unavailable ? 'warning' : 'error'}>
@@ -2631,8 +2805,8 @@ export default function ChatWindow({
           onConfigureTarget={() => onNavigate?.('registry')}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
-          onInputChange={setChatInputText}
-          onAttachmentsChange={setDraftAttachments}
+          onInputChange={handleComposerInputChange}
+          onAttachmentsChange={handleComposerAttachmentsChange}
           convertedValue={activePieceConversions['text']?.convertedDataType === 'text' ? (activePieceConversions['text']?.convertedValue ?? null) : null}
           originalValue={activePieceConversions['text']?.originalValue ?? null}
           onClearConversion={() => converters.clear('text')}

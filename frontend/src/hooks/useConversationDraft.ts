@@ -4,7 +4,7 @@ import { toApiError } from '@/services/errors'
 import { buildTemperatureTarget } from '@/services/targetRegistry'
 import type {
   AddMessageResponse, ConversationDraftMessage, ConversationDraftPiece, ConversationSaveInput,
-  MessageAttachment, NewAttackContext, PieceConversionUpdates, SaveConversationRequest, TargetInstance,
+  MessageAttachment, NewAttackContext, PendingComposerDraft, PieceConversionUpdates, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import {
@@ -26,6 +26,7 @@ interface DraftState extends ConversationSaveInput {
   baselineTarget: string | undefined
   temperature: string
   unsavedImport?: boolean
+  pendingComposerDraft?: PendingComposerDraft
 }
 
 export function useConversationDraft(
