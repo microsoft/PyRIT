@@ -128,6 +128,10 @@ def test_scenario_counts_reject_contradictory_outcomes(changes: dict[str, int], 
         {"outcome_shares": {AttackOutcome.SUCCESS: 1.0}},
         {"success_rate": float("nan")},
         {"success_rate_all": float("inf")},
+        {"success_rate_ci_lower": None},
+        {"success_rate_ci_upper": None},
+        {"success_rate_ci_lower": 0.4, "success_rate_ci_upper": 0.6},
+        {"success_rate_ci_lower": 0.8, "success_rate_ci_upper": 0.2},
     ],
 )
 def test_shared_statistics_reject_inconsistent_counts_and_rates(changes: dict[str, object]) -> None:
@@ -136,6 +140,22 @@ def test_shared_statistics_reject_inconsistent_counts_and_rates(changes: dict[st
         replace(statistics, **changes)
     with pytest.raises(ValidationError):
         TypeAdapter(OutcomeStatistics).validate_python({**asdict(statistics), **changes})
+
+
+def test_shared_statistics_accept_legacy_payload_without_confidence_interval_and_reject_empty_decided_ci() -> None:
+    statistics = compute_outcome_statistics({"success": 1, "failure": 1, "error": 2})
+    legacy_payload = asdict(statistics)
+    legacy_payload.pop("success_rate_ci_lower")
+    legacy_payload.pop("success_rate_ci_upper")
+    restored = TypeAdapter(OutcomeStatistics).validate_python(legacy_payload)
+    assert restored.success_rate_ci_lower is None
+    assert restored.success_rate_ci_upper is None
+
+    empty_decided = compute_outcome_statistics({"error": 2})
+    with pytest.raises(ValidationError):
+        TypeAdapter(OutcomeStatistics).validate_python(
+            {**asdict(empty_decided), "success_rate_ci_lower": 0.0, "success_rate_ci_upper": 1.0}
+        )
 
 
 def test_reembedding_mutated_outcomes_revalidates_the_counts() -> None:

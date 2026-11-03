@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from math import sqrt
 from typing import TYPE_CHECKING
 
 from pyrit.models import AttackOutcome, OutcomeStatistics
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
 
     from pyrit.models import AttackStats
 
+_WILSON_Z_95 = 1.959963984540054
+
 
 def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome, int]) -> OutcomeStatistics:
     """
@@ -22,15 +25,17 @@ def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome
 
     This function neither queries memory nor chooses result IDs, retries, roles,
     or scenario units. ``success_rate_decided`` (also ``success_rate``) uses success + failure; ``success_rate_all``
-    uses every outcome. Both are proportions, not rounded percentages.
+    uses every outcome. ``success_rate_ci_lower`` and ``success_rate_ci_upper`` give the 95% Wilson
+    score confidence interval for the decided rate. All are proportions, not rounded percentages.
 
     Args:
         counts (Mapping[str, int] | Mapping[AttackOutcome, int]): Nonnegative saved-outcome
             counts. Omitted outcomes mean zero observations.
 
     Returns:
-        OutcomeStatistics: Counts, both denominator policies, and whole-population shares.
-            Empty denominators produce None; empty outcome shares are zero.
+        OutcomeStatistics: Counts, both denominator policies, 95% Wilson confidence interval bounds
+            for the decided rate, and whole-population shares. Empty denominators produce None; empty
+            outcome shares are zero.
 
     Raises:
         ValueError: If an outcome is unsupported or a count is not a nonnegative integer.
@@ -42,6 +47,7 @@ def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome
     errors = values.get(AttackOutcome.ERROR, 0)
     decided = successes + failures
     total = decided + undetermined + errors
+    ci_lower, ci_upper = _wilson_ci(successes=successes, total=decided)
     return OutcomeStatistics(
         successes=successes,
         failures=failures,
@@ -51,6 +57,8 @@ def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome
         total_results=total,
         success_rate=_rate(successes=successes, total=decided),
         success_rate_all=_rate(successes=successes, total=total),
+        success_rate_ci_lower=ci_lower,
+        success_rate_ci_upper=ci_upper,
         decided_share=_rate(successes=decided, total=total),
         outcome_shares={
             outcome: _rate(successes=values.get(outcome, 0), total=total) or 0.0 for outcome in AttackOutcome
@@ -122,3 +130,17 @@ def _validated_counts(counts: Mapping[str, int] | Mapping[AttackOutcome, int]) -
 
 def _rate(*, successes: int, total: int) -> float | None:
     return successes / total if total else None
+
+
+def _wilson_ci(*, successes: int, total: int) -> tuple[float | None, float | None]:
+    if not total:
+        return None, None
+    p = successes / total
+    inv_n = 1 / total
+    z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) * inv_n
+    denom = 1.0 + z2_inv_n
+    center = (p + 0.5 * z2_inv_n) / denom
+    half_width = _WILSON_Z_95 * sqrt(max(0.0, (p * (1.0 - p) + 0.25 * z2_inv_n) * inv_n)) / denom
+    lower = 0.0 if successes == 0 else float(max(0.0, center - half_width))
+    upper = 1.0 if successes == total else float(min(1.0, center + half_width))
+    return lower, upper

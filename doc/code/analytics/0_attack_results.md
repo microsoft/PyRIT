@@ -20,6 +20,7 @@ policies together:
 | Field | Denominator | Meaning |
 |---|---|---|
 | `success_rate_decided` | Successes + failures | Success among decided outcomes, the existing ASR default. |
+| `success_rate_ci_lower`, `success_rate_ci_upper` | Successes + failures | 95% Wilson score confidence interval bounds for the observed decided-outcome rate (`None` when `total_decided == 0`). |
 | `success_rate_all` | All four outcomes | Success among every selected result, including errors and undetermined outcomes. |
 
 `success_rate` remains the compatible stored field; `success_rate_decided` is its

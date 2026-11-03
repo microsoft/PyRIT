@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from math import isclose, isfinite
+from math import isclose, isfinite, sqrt
 from typing import Annotated, Any, ClassVar, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
@@ -19,6 +19,7 @@ from pyrit.models.results.attack_result import AttackOutcome
 
 _OutcomeCount = Annotated[int, Field(strict=True, ge=0)]
 _OutcomeRate = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
+_WILSON_Z_95 = 1.959963984540054
 
 
 @dataclass
@@ -45,6 +46,9 @@ class AttackAnalyticsStatistics(AttackStats):
 
     ``success_rate_decided`` (also available as ``success_rate``) uses successes /
     decided results; errors and undetermined outcomes do not enter that denominator.
+    ``success_rate_ci_lower`` and ``success_rate_ci_upper`` give the 95% Wilson score
+    confidence interval for ``success_rate_decided`` (``None`` when ``total_decided == 0``
+    or when omitted on older payloads).
     ``success_rate_all`` instead includes
     every outcome in its denominator, as do ``decided_share`` and ``outcome_shares``.
     Rates with no applicable denominator are ``None``; shares for an empty cohort
@@ -54,7 +58,8 @@ class AttackAnalyticsStatistics(AttackStats):
     ``total_results`` can therefore describe distinct saved IDs or latest scenario
     units. The model does not select attempts or infer a counting policy.
     Construction and explicit revalidation reject contradictory supplied values.
-    The nullable all-outcome rate preserves older payloads that omit that field.
+    The nullable all-outcome rate and confidence-interval bounds preserve older
+    payloads that omit those fields.
     """
 
     success_rate: _OutcomeRate | None
@@ -67,6 +72,8 @@ class AttackAnalyticsStatistics(AttackStats):
     decided_share: _OutcomeRate | None
     outcome_shares: dict[AttackOutcome, _OutcomeRate]
     success_rate_all: _OutcomeRate | None = field(default=None, kw_only=True)
+    success_rate_ci_lower: _OutcomeRate | None = field(default=None, kw_only=True)
+    success_rate_ci_upper: _OutcomeRate | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         """Validate the supplied statistics without recalculating or replacing fields."""
@@ -104,6 +111,12 @@ class AttackAnalyticsStatistics(AttackStats):
             raise ValueError("total_results must equal the sum of all outcome counts.")
         self._validate_rate(
             name="success_rate", value=self.success_rate, numerator=self.successes, denominator=self.total_decided
+        )
+        self._validate_wilson_ci(
+            lower=self.success_rate_ci_lower,
+            upper=self.success_rate_ci_upper,
+            numerator=self.successes,
+            denominator=self.total_decided,
         )
         self._validate_rate(
             name="decided_share", value=self.decided_share, numerator=self.total_decided, denominator=self.total_results
@@ -162,6 +175,37 @@ class AttackAnalyticsStatistics(AttackStats):
             or (denominator > 0 and not isclose(value, numerator / denominator, rel_tol=1e-12, abs_tol=0.0))
         ):
             raise ValueError(f"{name} must agree with its outcome counts.")
+
+    @staticmethod
+    def _validate_wilson_ci(*, lower: float | None, upper: float | None, numerator: int, denominator: int) -> None:
+        if lower is None and upper is None:
+            return
+        if (
+            denominator == 0
+            or lower is None
+            or upper is None
+            or isinstance(lower, bool)
+            or isinstance(upper, bool)
+            or not isinstance(lower, (int, float))
+            or not isinstance(upper, (int, float))
+            or not isfinite(lower)
+            or not isfinite(upper)
+            or not 0 <= lower <= upper <= 1
+        ):
+            raise ValueError("success_rate confidence interval must agree with its outcome counts.")
+        p = numerator / denominator
+        inv_n = 1 / denominator
+        z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) * inv_n
+        denom = 1.0 + z2_inv_n
+        center = (p + 0.5 * z2_inv_n) / denom
+        half_width = _WILSON_Z_95 * sqrt(max(0.0, (p * (1.0 - p) + 0.25 * z2_inv_n) * inv_n)) / denom
+        expected_lower = 0.0 if numerator == 0 else max(0.0, center - half_width)
+        expected_upper = 1.0 if numerator == denominator else min(1.0, center + half_width)
+        if not (
+            isclose(lower, expected_lower, rel_tol=1e-12, abs_tol=1e-12)
+            and isclose(upper, expected_upper, rel_tol=1e-12, abs_tol=1e-12)
+        ):
+            raise ValueError("success_rate confidence interval must agree with its outcome counts.")
 
 
 # Preserve the existing class/constructor identity while sharing it beyond attack reports.

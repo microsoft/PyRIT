@@ -5,6 +5,7 @@ from dataclasses import asdict
 from itertools import product
 
 import pytest
+from scipy.stats import binomtest
 
 from pyrit.analytics import combine_outcome_statistics, compute_outcome_statistics
 from pyrit.analytics.outcome_statistics import success_percentage
@@ -31,6 +32,20 @@ def test_both_denominators_use_the_same_selected_outcome_counts(
     assert statistics.success_rate_all == (successes / total if total else None)
     assert statistics.decided_share == (decided / total if total else None)
     assert statistics.outcome_shares == {outcome: count / total if total else 0.0 for outcome, count in counts.items()}
+    if decided == 0:
+        assert statistics.success_rate_ci_lower is None
+        assert statistics.success_rate_ci_upper is None
+    else:
+        expected_ci = binomtest(successes, decided).proportion_ci(confidence_level=0.95, method="wilson")
+        assert statistics.success_rate_ci_lower == pytest.approx(expected_ci.low, rel=1e-12, abs=1e-12)
+        assert statistics.success_rate_ci_upper == pytest.approx(expected_ci.high, rel=1e-12, abs=1e-12)
+        assert (
+            0.0
+            <= statistics.success_rate_ci_lower
+            <= statistics.success_rate
+            <= statistics.success_rate_ci_upper
+            <= 1.0
+        )
     assert isinstance(statistics, OutcomeStatistics)
     assert isinstance(statistics, AttackStats)
 
@@ -57,6 +72,8 @@ def test_empty_population_rates_are_unavailable_not_zero() -> None:
     statistics = compute_outcome_statistics({})
     assert statistics.success_rate is None
     assert statistics.success_rate_all is None
+    assert statistics.success_rate_ci_lower is None
+    assert statistics.success_rate_ci_upper is None
     assert statistics.decided_share is None
     assert statistics.total_results == 0
     assert set(statistics.outcome_shares.values()) == {0.0}
@@ -69,6 +86,31 @@ def test_large_integer_counts_validate_without_float_overflow() -> None:
     assert statistics.total_results == 4 * count
     assert statistics.success_rate_decided == 0.5
     assert statistics.success_rate_all == 0.25
+    assert statistics.success_rate_ci_lower == 0.5
+    assert statistics.success_rate_ci_upper == 0.5
+
+
+@pytest.mark.parametrize(
+    ("successes", "failures", "expected_lower", "expected_upper"),
+    [
+        (0, 50, 0.0, 0.07134759913335872),
+        (25, 25, 0.3664451431682858, 0.6335548568317142),
+        (50, 0, 0.9286524008666414, 1.0),
+    ],
+)
+def test_wilson_confidence_interval_boundaries_and_interior(
+    successes: int, failures: int, expected_lower: float, expected_upper: float
+) -> None:
+    statistics = compute_outcome_statistics({"success": successes, "failure": failures, "undetermined": 5, "error": 3})
+    scipy_ci = binomtest(successes, successes + failures).proportion_ci(confidence_level=0.95, method="wilson")
+    assert statistics.success_rate_ci_lower == pytest.approx(expected_lower, rel=1e-12, abs=1e-12)
+    assert statistics.success_rate_ci_upper == pytest.approx(expected_upper, rel=1e-12, abs=1e-12)
+    assert statistics.success_rate_ci_lower == pytest.approx(scipy_ci.low, rel=1e-12, abs=1e-12)
+    assert statistics.success_rate_ci_upper == pytest.approx(scipy_ci.high, rel=1e-12, abs=1e-12)
+    if successes == 0:
+        assert statistics.success_rate_ci_lower == 0.0
+    if failures == 0:
+        assert statistics.success_rate_ci_upper == 1.0
 
 
 @pytest.mark.parametrize("counts", [{"unexpected": 1}, {"success": -1}, {"success": True}, {"error": 1.5}])
