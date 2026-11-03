@@ -8,12 +8,25 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_TEXT_LENGTH
 
 _Identifier = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
 _TechniqueTag = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
+
+
+def _escape_invalid_text(value: str) -> str:
+    """
+    Escape characters that can't be written as UTF-8, such as bytes from a file name that isn't UTF-8.
+
+    Returns:
+        str: The text, safe to send in a JSON response.
+    """
+    return value.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
+_DisplayText = Annotated[str, AfterValidator(_escape_invalid_text)]
 
 
 class RegistryRecipeKind(str, Enum):
@@ -128,7 +141,7 @@ class RestoreFailure(BaseModel):
     kind: RegistryRecipeKind
     name: str | None = Field(None, description="Entry name; None when the whole folder couldn't be read")
     reason: RestoreFailureReason
-    message: str = Field(..., description="Why, in words safe to show users")
+    message: _DisplayText = Field(..., description="Why, in words safe to show users")
     version: str | None = Field(None, description="Version of the stored document, when it could be read")
     dependency: SavedEntryRef | None = Field(None, description="The entry this one needed that is missing or failed")
 
@@ -139,5 +152,5 @@ class IgnoredRecipeFile(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: RegistryRecipeKind
-    file_name: str
-    message: str
+    file_name: _DisplayText
+    message: _DisplayText
