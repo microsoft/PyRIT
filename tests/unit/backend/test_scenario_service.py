@@ -166,7 +166,7 @@ def test_catalog_lists_only_external_scenario_parameters() -> None:
 
 def test_catalog_does_not_invent_an_unconfigured_baseline_identity() -> None:
     summary = _metadata_to_registered_scenario(metadata=_make_scenario_metadata())
-    assert summary.baseline_identifier is None
+    assert "baseline_identifier" not in summary.model_dump()
 
 
 @pytest.mark.usefixtures("patch_central_database")

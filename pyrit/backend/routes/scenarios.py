@@ -13,6 +13,7 @@ Route structure:
 """
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
@@ -320,11 +321,14 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
     reference_id: uuid.UUID | None = Query(
         None, description="Exact conversation, attack, finding, or scenario result ID"
     ),
+    sort_by: Literal["created_at", "activity"] = Query(
+        "created_at", description="Sort by creation time or scenario activity time."
+    ),
     limit: int = Query(100, ge=1, le=100, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Opaque descending history cursor"),
 ) -> ScenarioRunListResponse:
     """
-    List tracked scenario runs (most recent first).
+    List tracked scenario runs in descending creation or activity order.
 
     Args:
         scenario_names: Registered or persisted scenario names to match.
@@ -332,11 +336,12 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         label: Repeated key:value label filters.
         operation_id: Saved Operation IDs to match.
         reference_id: Exact conversation, attack, finding, or scenario result ID.
+        sort_by: ``created_at`` (default) or scenario ``activity`` timestamp.
         limit: Maximum number of runs to return.
         cursor: Opaque cursor from the previous page.
 
     Returns:
-        ScenarioRunListResponse: Runs, most recent first.
+        ScenarioRunListResponse: Runs in descending order by the selected timestamp.
     """
     service = get_scenario_run_service()
     return await service.list_runs_async(
@@ -345,6 +350,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         labels=parse_label_query_params(label),
         operation_ids=operation_id,
         reference_id=reference_id,
+        sort_by=sort_by,
         limit=limit,
         cursor=cursor,
     )

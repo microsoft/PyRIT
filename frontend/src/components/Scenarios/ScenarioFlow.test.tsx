@@ -25,6 +25,7 @@ jest.mock('@/services/api', () => ({
   scenariosApi: {
     cancelRun: jest.fn(),
     estimateRun: jest.fn(),
+    getRunHierarchy: jest.fn(() => new Promise(() => {})),
     getScenario: jest.fn(),
     listCatalog: jest.fn(),
     startRun: jest.fn(),
@@ -216,7 +217,7 @@ describe('Scenario catalog-to-run integration', () => {
     renderFlow()
 
     await user.click(await screen.findByRole('link', { name: SCENARIO_NAME }))
-    expect(await screen.findByRole('heading', { name: SCENARIO_NAME })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 2, name: SCENARIO_NAME })).toBeInTheDocument()
 
     const expectedEstimateRequest = {
       target_name: TARGET.target_registry_name,
@@ -249,7 +250,7 @@ describe('Scenario catalog-to-run integration', () => {
     expect(screen.getByLabelText('Current route')).toHaveTextContent(
       `/scanner/history/${RUN_ID}`,
     )
-    expect(await screen.findByRole('heading', { name: SCENARIO_NAME })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: SCENARIO_NAME })).toBeInTheDocument()
     expect(mockListTargets).not.toHaveBeenCalled()
   })
 })

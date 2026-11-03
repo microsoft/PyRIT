@@ -64,7 +64,7 @@ it('shows persisted scan messages read-only and uses the scoped conversation API
   expect(screen.getByRole('button', { name: 'Cancel scan' })).toBeInTheDocument()
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   const options = (useConversationMessages as jest.Mock).mock.calls[0][0]
-  await options.readConversation('attempt', 'conversation')
+  await options.readConversationById('conversation')
   expect(scenariosApi.getRunConversation).toHaveBeenCalledWith(RUN_ID, 'conversation')
   expect(options.pollIntervalMs).toBe(2500)
 })
@@ -75,9 +75,14 @@ it('never offers scan cancellation for an unrelated or unverified conversation',
       run: { scenario_result_id: RUN_ID, status: 'IN_PROGRESS' } },
     retry: jest.fn(), applyRunSummary,
   })
+  ;(useConversationMessages as jest.Mock).mockReturnValue({
+    messages: [], loadedConversationId: 'conversation',
+    conversationLoadIssue: { conversationId: 'conversation', unavailable: true, detail: 'Not owned by this scan' },
+    loadConversation,
+  })
   render(<Wrapper />)
   expect(screen.queryByRole('button', { name: 'Cancel scan' })).not.toBeInTheDocument()
-  expect(screen.getByText('This conversation is not part of this scan.')).toBeInTheDocument()
+  expect(screen.getByText('Not owned by this scan')).toBeInTheDocument()
 })
 
 it('cancels the owning scan only after explicit confirmation', async () => {

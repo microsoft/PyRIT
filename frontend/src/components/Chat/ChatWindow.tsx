@@ -3,6 +3,9 @@ import type { ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Button,
+  Breadcrumb,
+  BreadcrumbDivider,
+  BreadcrumbItem,
   Input,
   Drawer,
   Menu,
@@ -107,6 +110,7 @@ import type {
   MessageSendConversation,
   MessageSendRequest,
   MessageSendStatus,
+  MessageSendObservation,
   MultiSendOptions,
   NewAttackContext,
   TargetInstance,
@@ -143,7 +147,6 @@ interface RecoverableSendDraft {
   source: 'live' | 'persisted'
   converterGeneration?: string
   pipelines?: Record<string, ConverterPipelineStage[]>
-  missingConverterSelections: boolean
 }
 
 interface PendingSend {
@@ -160,13 +163,14 @@ interface PendingSend {
   readonly converterGeneration: string
   readonly target: TargetReference
   readonly chatScorerExplicit: boolean
+  chatScorerChoice?: RegisteredComponentReference | null
+  observation?: MessageSendObservation
   readonly converterSnapshot?: ChatConverterSnapshot
   readonly pipelines?: Record<string, ConverterPipelineStage[]>
   attackResultId: string | null
   conversationId: string
   needsRefresh: boolean
   responseReadId?: number
-  rememberedUse?: boolean
   progress?: MessageSendStatus
   repeatGroup?: RepeatSendGroup
 }
@@ -181,6 +185,20 @@ interface UndoableSend {
   attachments: MessageAttachment[]
   converters: ChatConverterSnapshot
   history: Array<Pick<BackendMessage, 'role'>>
+}
+
+function preparePromptRestore(
+  saved: ChatConverterSnapshot | undefined, current: ChatConverterSnapshot,
+): { snapshot: ChatConverterSnapshot; pipelineChanged: boolean } {
+  const pipelineChanged = saved
+    ? JSON.stringify(current.pipelines) !== JSON.stringify(saved.pipelines)
+    : Object.values(current.pipelines).some((stages: ConverterPipelineStage[]) => stages.length > 0)
+  return {
+    pipelineChanged,
+    snapshot: saved && !pipelineChanged ? saved : {
+      ...current, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
+    },
+  }
 }
 
 interface RepeatSendGroup {
@@ -302,7 +320,6 @@ function getPersistedProcessingRecovery(
     attachments: (originalDraft.attachments ?? []).map((attachment) => ({ ...attachment })),
     conversions: {},
     source: 'persisted',
-    missingConverterSelections: failedRequest.message_pieces.some((piece) => Boolean(piece.converter_identifiers?.length)),
   }
 }
 
@@ -337,6 +354,7 @@ interface ChatWindowProps {
   operationId?: string | null
   /** False while the current generation's server defaults or Operation selection are not ready; launching is gated. */
   defaultsReady?: boolean
+  scorerDefaultsReady?: boolean
   /** Why new attacks are unavailable when the defaults have loaded but the Operation selection is not ready. */
   newActivityBlockedReason?: string
   onNavigate?: (view: ViewName) => void
@@ -395,6 +413,7 @@ export default function ChatWindow({
   labels,
   operationId = null,
   defaultsReady = false,
+  scorerDefaultsReady = true,
   newActivityBlockedReason,
   onNavigate,
   attackOperator,
@@ -434,12 +453,20 @@ export default function ChatWindow({
     setTemperature('')
   }
   const [conversationScoring, setConversationScoring] = useState<ConversationScoring | null>(null)
+  const scoringRevisionRef = useRef(0)
+  const [scoringRevision, setScoringRevision] = useState(0)
   const applyingScorer = useRef(false)
   const [applyingConversationId, setApplyingConversationId] = useState<string | null>(null)
   const isApplyingScorer = applyingConversationId !== null
   const [applyStatus, setApplyStatus] = useState<ConversationApplyStatus | null>(null)
   const [draftScorer, setDraftScorer] = useState<RegisteredComponentReference | null | undefined>(undefined)
   const selectedScorer = attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer ?? null : draftScorer
+  const scoringAttackRef = useRef(attackResultId)
+  const scoringSelectionRef = useRef(JSON.stringify([attackResultId, objective, selectedScorer?.identifier_hash]))
+  const [installedScoringSelection, setInstalledScoringSelection] = useState(
+    JSON.stringify([attackResultId, objective, selectedScorer?.identifier_hash]),
+  )
+  const scorerSelectionReady = scorerDefaultsReady || draftScorer !== undefined
   const [scoringNotice, setScoringNotice] = useState<{ id: string; message: string; conversationId: string } | null>(null)
   const [scoringConversations, setScoringConversations] = useState<Set<string>>(new Set())
   const scoringNoticeId = scoringNotice?.id
@@ -452,7 +479,7 @@ export default function ChatWindow({
   }, [scoringNoticeId])
   const runtime = useRuntime()
   const newAttackContext: NewAttackContext = {
-    generation: runtime.generation, ready: runtime.ready && defaultsReady, labels, operationId,
+    generation: runtime.generation, ready: runtime.ready && defaultsReady && scorerSelectionReady, labels, operationId,
     chatScorer: executionReadOnly ? undefined
       : attackResultId || draftScorer === undefined ? defaultChatScorer : draftScorer,
     chatScorerExplicit: !attackResultId && draftScorer !== undefined,
@@ -491,16 +518,15 @@ export default function ChatWindow({
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const isNarrowScreen = useMediaQuery(NARROW_SCREEN_QUERY)
   const [isConverterPanelOpen, setIsConverterPanelOpen] = useState(false)
-  const launchStateRef = useRef({ generation: runtime.generation, ready: runtime.ready, defaultsReady })
+  const launchStateRef = useRef({ generation: runtime.generation, ready: runtime.ready, defaultsReady, scorerSelectionReady })
   useLayoutEffect(() => {
-    launchStateRef.current = { generation: runtime.generation, ready: runtime.ready, defaultsReady }
-  }, [runtime.generation, runtime.ready, defaultsReady])
+    launchStateRef.current = { generation: runtime.generation, ready: runtime.ready, defaultsReady, scorerSelectionReady }
+  }, [runtime.generation, runtime.ready, defaultsReady, scorerSelectionReady])
   // Conversation-wide preference for rendering message text as Markdown.
-  const { preferences, updatePreferences, rememberUse } = useUserPreferences()
+  const { preferences, updatePreferences, rememberUse, observeChatSend } = useUserPreferences()
   const globalMarkdown = preferences.chatMarkdown
   const location = useLocation()
   const viewedConversationId = activeConversationId ?? conversationId
-  const viewedScoring = conversationScoring?.conversationId === viewedConversationId ? conversationScoring : null
   const draftAttackId = draftContext ? draftContext.originatingAttackId : attackResultId
   const draftConversationId = draftContext ? draftContext.originatingConversationId : viewedConversationId
   const draftHandoff = useChatDraftHandoff()
@@ -516,6 +542,8 @@ export default function ChatWindow({
   const [systemPrompt, setSystemPrompt] = useState('')
   const [draftAttachments, setDraftAttachments] = useState<MessageAttachment[]>([])
   const converters = useChatConverters(chatInputText, draftAttachments)
+  const convertersRef = useRef(converters)
+  useLayoutEffect(() => { convertersRef.current = converters }, [converters])
   const { applied: activePieceConversions, restore: restoreConversions } = converters
   const [undoableSend, setUndoableSend] = useState<UndoableSend | null>(null)
   const [isUndoingSend, setIsUndoingSend] = useState(false)
@@ -527,7 +555,6 @@ export default function ChatWindow({
   useEffect(() => () => { preserveOnUnmountRef.current?.() }, [])
   const [recoverableSends, setRecoverableSends] = useState<Record<string, RecoverableSendDraft>>({})
   const [isRecoveringProcessingError, setIsRecoveringProcessingError] = useState(false)
-  const [recoveredDraftWarningConversationId, setRecoveredDraftWarningConversationId] = useState<string | null>(null)
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
   const recoveryInFlightRef = useRef(false)
@@ -636,8 +663,6 @@ export default function ChatWindow({
     savedRecovery?.converterGeneration !== undefined && savedRecovery.converterGeneration !== runtime.generation
       ? {
           ...savedRecovery, conversions: {}, pipelines: undefined, source: 'persisted',
-          missingConverterSelections: savedRecovery.missingConverterSelections
-            || Object.keys(savedRecovery.conversions).length > 0 || Boolean(Object.keys(savedRecovery.pipelines ?? {}).length),
         }
       : savedRecovery
   ), [savedRecovery, runtime.generation])
@@ -734,6 +759,29 @@ export default function ChatWindow({
     onAttackChange,
     onObjectiveChange,
   })
+  const scoringSelection = JSON.stringify([attackResultId, currentObjective, selectedScorer?.identifier_hash])
+  const invalidateScoringSelection = useCallback((selection: string): void => {
+    if (scoringSelectionRef.current === selection) return
+    const attackChanged = scoringAttackRef.current !== attackResultId
+    scoringAttackRef.current = attackResultId
+    scoringSelectionRef.current = selection
+    setInstalledScoringSelection(selection)
+    scoringRevisionRef.current += 1
+    setScoringRevision(scoringRevisionRef.current)
+    setConversationScoring((current) => (
+      attackChanged && current?.conversationId === viewedConversationId ? current : null
+    ))
+    setApplyStatus(null)
+    // A first send can own this conversation's read before its created route commits.
+    if (!attackChanged && viewedConversationId) invalidateConversationLoads(viewedConversationId)
+  }, [attackResultId, viewedConversationId, invalidateConversationLoads])
+  useLayoutEffect(() => {
+    invalidateScoringSelection(scoringSelection)
+  }, [scoringSelection, invalidateScoringSelection])
+  const selectionIsCurrent = installedScoringSelection === scoringSelection
+  const viewedScoring = selectionIsCurrent && conversationScoring?.conversationId === viewedConversationId
+    ? conversationScoring : null
+  const scoringInvalidated = scoringRevision !== 0 || !selectionIsCurrent
   const activeDraft: ChatDraftContent = {
     text: chatInputText,
     attachments: draftAttachments,
@@ -877,7 +925,7 @@ export default function ChatWindow({
     const previousId = getViewedConversationId()
     if (editing && !await editing.finishEditing()) return
     if (editing && convId === previousId) return
-    requestForcedLoad()
+    if (convId !== activeConversationId) requestForcedLoad()
     onSelectConversation(convId)
     if (isNarrowScreen) {
       setIsPanelOpen(false)
@@ -894,7 +942,7 @@ export default function ChatWindow({
   const checkSendPreparation = (operation: PendingSend, requireDefaults: boolean): void => {
     const current = launchStateRef.current
     if (current.generation !== operation.converterGeneration || !current.ready
-      || (requireDefaults && !current.defaultsReady)) {
+      || (requireDefaults && (!current.defaultsReady || !current.scorerSelectionReady))) {
       throw new Error('Runtime or default labels changed while preparing this message. Your draft is preserved. Retry after default labels finish loading.')
     }
   }
@@ -959,14 +1007,6 @@ export default function ChatWindow({
   ): ChatSendOutcome => {
     const effectiveConvId = operation.conversationId
     const targetResponseStatus = response.messages.target_response_status
-    if (!operation.rememberedUse && operation.progress?.request_turn_number != null
-      && operation.progress.failure_stage !== 'preparation') {
-      const usedScorer = !response.attack.chat_scorer_inherited
-        && (response.attack.objective?.trim() || operation.chatScorerExplicit)
-        ? resolveChatScorerReference(response.attack.chat_scorer ?? null, availableScorers) : undefined
-      rememberUse({ objective: operation.target }, usedScorer)
-      operation.rememberedUse = true
-    }
     const recovery = operation.progress
       && !['interrupted', 'finalization'].includes(operation.progress.failure_stage ?? '')
       ? getPersistedProcessingRecovery(effectiveConvId, response.messages)
@@ -990,7 +1030,6 @@ export default function ChatWindow({
       converterGeneration: operation.converterGeneration,
       pipelines: operation.pipelines,
       source: 'live',
-      missingConverterSelections: false,
     } : recovery
     if (isLatestRead) {
       loadedUserPieceIdsRef.current.set(effectiveConvId, userPieceIds(response.messages))
@@ -1088,9 +1127,9 @@ export default function ChatWindow({
     const { attackResultId: sendAttackId, progress: previousProgress } = operation
     if (!sendAttackId || !previousProgress) throw new Error('The send has no progress handle.')
     const group = operation.repeatGroup
-    const read = (): Promise<MessageSendStatus> => attacksApi.getMessageSend(
-      sendAttackId, previousProgress.send_id, operation.controller.signal,
-    )
+    const read = (): Promise<MessageSendStatus> => operation.observation
+      ? operation.observation.readProgress(operation.needsRefresh)
+      : attacksApi.getMessageSend(sendAttackId, previousProgress.send_id, operation.controller.signal)
     if (!group) return read()
     // Every conversation uses the same in-flight GET, but settles its own evidence reads and ownership.
     group.read ??= read().then((progress: MessageSendStatus) => {
@@ -1133,7 +1172,7 @@ export default function ChatWindow({
       }
       operation.responseReadId = claimConversationRead(operation.conversationId)
       const [attack, conversation] = await Promise.all([
-        attacksApi.getAttack(operation.attackResultId),
+        operation.observation?.readAttack(operation.needsRefresh) ?? attacksApi.getAttack(operation.attackResultId),
         attacksApi.getMessages(operation.attackResultId, operation.conversationId),
       ])
       if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
@@ -1214,7 +1253,7 @@ export default function ChatWindow({
     )
     if (!sameGeneration) setSendIssue(operation.conversationId, {
       ...sendIssue,
-      description: 'Prompt restored. Converter choices could not be restored after the runtime changed; review them before sending.',
+      description: 'Prompt restored after the runtime changed. Review converters before sending.',
     })
   }
 
@@ -1226,7 +1265,7 @@ export default function ChatWindow({
   ): Promise<ChatSendOutcome> => {
     if (
       !runtime.ready
-      || (!attackResultId && !defaultsReady)
+      || (!attackResultId && (!defaultsReady || !scorerSelectionReady))
       || !activeTarget
       || editDraft !== null
       || isLoadingAttack
@@ -1276,6 +1315,7 @@ export default function ChatWindow({
       converterGeneration: runtime.generation,
       target: targetReference(activeTarget),
       chatScorerExplicit: draftScorer !== undefined,
+      chatScorerChoice: attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer : draftScorer,
       converterSnapshot: count === 1 ? converters.snapshot() : undefined,
       pipelines,
       attackResultId,
@@ -1378,6 +1418,7 @@ export default function ChatWindow({
               ? { chat_scorer: defaultChatScorer } : {}),
         }
         const createResponse = await attacksApi.createAttack(createRequest)
+        operation.chatScorerChoice = createRequest.chat_scorer
         if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
         currentAttackResultId = createResponse.attack_result_id
         currentConversationId = createResponse.conversation_id
@@ -1441,7 +1482,12 @@ export default function ChatWindow({
       }
       checkSendPreparation(operation, false)
       submissionAttempted = true
-      operation.progress = await attacksApi.submitMessageSend(currentAttackResultId, addMessageRequest)
+      const acceptance = attacksApi.submitMessageSend(currentAttackResultId, addMessageRequest)
+      operation.observation = observeChatSend(
+        currentAttackResultId, acceptance, operation.target,
+        operation.chatScorerChoice, operation.chatScorerExplicit, availableScorers,
+      )
+      operation.progress = await acceptance
       if (!isCurrentSend(operation)) { return { status: 'non_retryable_failure', clearDraft: false } }
       if (count > 1) {
         const group: RepeatSendGroup = {
@@ -1573,7 +1619,7 @@ export default function ChatWindow({
     [createAndSelectConversation],
   )
 
-  const restoreRecoverableDraft = useCallback((destinationConversationId: string): void => {
+  const restoreRecoverableDraft = useCallback((): void => {
     if (!recoverableSend) { return }
     const attachments = recoverableSend.attachments.map(withDraftIdentity)
     setChatInputText(recoverableSend.originalValue)
@@ -1587,7 +1633,6 @@ export default function ChatWindow({
       recoverableSend.textMetadata,
     )
     inputBoxRef.current?.focus()
-    setRecoveredDraftWarningConversationId(recoverableSend.missingConverterSelections ? destinationConversationId : null)
   }, [restoreConversions, recoverableSend])
 
   const handleRecoverProcessingError = useCallback(async (): Promise<void> => {
@@ -1635,7 +1680,7 @@ export default function ChatWindow({
 
       onSelectConversation(response.conversation_id)
       setIsPanelOpen(!isNarrowScreen)
-      restoreRecoverableDraft(response.conversation_id)
+      restoreRecoverableDraft()
     } catch (err) {
       if (getViewedConversationId() === sourceConversationId) {
         appendConversationCreationError(err)
@@ -1703,8 +1748,10 @@ export default function ChatWindow({
       setEditorObjective(newObjective)
       return
     }
+    const revision = navigationRevisionRef.current
     await changeObjective(newObjective, expectedObjective)
-    setApplyStatus(null)
+    if (navigationRevisionRef.current !== revision) return
+    invalidateScoringSelection(JSON.stringify([attackResultId, newObjective, selectedScorer?.identifier_hash]))
     if (
       attackResultId && viewedConversationId && !isSendInFlight(viewedConversationId)
       && getViewedConversationId() === viewedConversationId
@@ -1713,7 +1760,7 @@ export default function ChatWindow({
     }
   }, [
     attackResultId, changeObjective, editDraft, setEditorObjective, executionReadOnly,
-    viewedConversationId, getViewedConversationId, isSendInFlight, loadConversation,
+    viewedConversationId, getViewedConversationId, isSendInFlight, loadConversation, invalidateScoringSelection, selectedScorer,
   ])
 
   const handleScorerUpdate = async (reference: RegisteredComponentReference | null): Promise<void> => {
@@ -1722,7 +1769,7 @@ export default function ChatWindow({
     const revision = navigationRevisionRef.current
     const updated = await attacksApi.updateAttack(attackResultId, { chat_scorer: reference })
     if (navigationRevisionRef.current !== revision) return
-    setApplyStatus(null)
+    invalidateScoringSelection(JSON.stringify([attackResultId, currentObjective, reference?.identifier_hash]))
     onAttackChange?.(updated)
     if (viewedConversationId && getViewedConversationId() === viewedConversationId) {
       await loadConversation(attackResultId, viewedConversationId)
@@ -1736,6 +1783,7 @@ export default function ChatWindow({
     const objective = currentObjective
     if (!attackResultId || !conversationId || !scorer || !responseId || applyingScorer.current) return
     const revision = navigationRevisionRef.current
+    const scoringRevision = scoringRevisionRef.current
     applyingScorer.current = true
     setApplyingConversationId(conversationId)
     setApplyStatus(null)
@@ -1755,14 +1803,14 @@ export default function ChatWindow({
       status = { intent: 'error', message: toApiError(cause).detail }
     }
     try {
-      if (navigationRevisionRef.current !== revision) return
+      if (navigationRevisionRef.current !== revision || scoringRevisionRef.current !== scoringRevision) return
       setApplyStatus({ ...status, conversationId, responseId, scorerHash: scorer.identifier_hash, objective })
       if (getViewedConversationId() !== conversationId) return
       const [updated] = await Promise.all([
         attacksApi.getAttack(attackResultId),
         loadConversation(attackResultId, conversationId),
       ])
-      if (navigationRevisionRef.current === revision) onAttackChange?.(updated)
+      if (navigationRevisionRef.current === revision && scoringRevisionRef.current === scoringRevision) onAttackChange?.(updated)
     } catch (cause: unknown) {
       console.error('Failed to refresh the attack after applying the scorer:', cause)
     } finally {
@@ -1787,7 +1835,10 @@ export default function ChatWindow({
       if (chatInputText || draftAttachments.length || activePieceConversions.text) {
         const pieces: ConversationDraftPiece[] = [
           ...(chatInputText || activePieceConversions.text
-            ? [{ ...newDraftPiece(), draftId: 'text', original_value: chatInputText }] : []),
+            ? [{
+              ...newDraftPiece(), draftId: 'text', original_value: chatInputText,
+              prompt_metadata: inputBoxRef.current?.getTextMetadata(),
+            }] : []),
           ...draftAttachments.map(attachmentDraft),
         ].map((piece: ConversationDraftPiece) => {
           const conversion = activePieceConversions[piece.draftId]
@@ -1818,7 +1869,9 @@ export default function ChatWindow({
   const handleEditorSaved = (response: AddMessageResponse, savedTarget?: TargetInstance | null): void => {
     editor.discard()
     setEditorNotice('Conversation saved.')
-    setMessages(backendMessagesToFrontend(response.messages.messages))
+    setMessages(handleConversationLoaded(
+      response.messages.conversation_id, response.messages, backendMessagesToFrontend(response.messages.messages),
+    ))
     markConversationLoaded(response.messages.conversation_id)
     if (response.attack.attack_result_id === attackResultId) {
       onSelectConversation(response.messages.conversation_id)
@@ -1901,14 +1954,8 @@ export default function ChatWindow({
     ) || Object.keys(converters.applied).length) {
       return 'Clear the current prompt and conversion edits before restoring a sent prompt.'
     }
-    if (snapshot
-      ? JSON.stringify(converters.pipelines) !== JSON.stringify(snapshot.pipelines)
-      : Object.values(converters.pipelines).some((stages: ConverterPipelineStage[]) => stages.length > 0)) {
-      return snapshot
-        ? 'The converter pipeline changed after sending. Restore is unavailable for this prompt.'
-        : 'Clear the current converter pipeline before restoring a stored prompt.'
-    }
-    if (snapshot && Object.keys(snapshot.errors).length > 0) {
+    const { pipelineChanged } = preparePromptRestore(snapshot, converters.snapshot())
+    if (snapshot && Object.keys(snapshot.errors).length > 0 && !pipelineChanged) {
       return 'The previous conversion was incomplete. Restore is unavailable for this prompt.'
     }
     return undefined
@@ -1925,7 +1972,7 @@ export default function ChatWindow({
   ): Promise<void> => {
     if (!attackResultId || !viewedConversationId || copyingRef.current || isSending || isLoadingEdit) return
     if (destination === 'same_attack' && isMutationLocked) return
-    if (destination !== 'same_attack' && (!runtime.ready || !defaultsReady)) return
+    if (destination !== 'same_attack' && (!runtime.ready || !defaultsReady || !scorerSelectionReady)) return
     if (destination === 'same_attack' && recoverableSend
       && messageIndex === recoverableSend.failedRequestMessageIndex) {
       await handleRecoverProcessingError()
@@ -1934,6 +1981,7 @@ export default function ChatWindow({
     const sourceId = viewedConversationId
     const draftRevision = inputBoxRef.current?.getDraftRevision()
     const navigationRevision = navigationRevisionRef.current
+    const branchConverterSnapshot = converters.snapshot()
     const selectedPieceIds = messages[messageIndex]?.displayPieces?.map((piece: MessageDisplayPiece) => piece.pieceId) ?? []
     const restoresFirstPrompt = destination === 'same_attack' && activeTarget
       && canBranchFirstPrompt(activeTarget, messages, messageIndex)
@@ -1942,6 +1990,8 @@ export default function ChatWindow({
       && navigationRevisionRef.current === navigationRevision
       && inputBoxRef.current?.getDraftRevision() === draftRevision
       && launchStateRef.current.generation === runtime.generation && launchStateRef.current.ready
+      && !convertersRef.current.isConverting
+      && JSON.stringify(convertersRef.current.snapshot()) === JSON.stringify(branchConverterSnapshot)
     copyingRef.current = true
     setIsLoadingEdit(true)
     setEditorError(null)
@@ -1951,6 +2001,7 @@ export default function ChatWindow({
       if (destination !== 'same_attack' && (
         launchStateRef.current.generation !== runtime.generation
         || !launchStateRef.current.ready || !launchStateRef.current.defaultsReady
+        || !launchStateRef.current.scorerSelectionReady
       )) {
         throw new Error('Runtime or default labels changed while loading this conversation. Retry after default labels finish loading.')
       }
@@ -1961,7 +2012,6 @@ export default function ChatWindow({
       let copiedMessages = toConversationDraft(sourceMessages)
       let restoredPrompt: ReturnType<typeof draftMessageToComposer> | undefined
       let promptSnapshot: ChatConverterSnapshot | undefined
-      let missingConverterSelections = false
       if (restoresFirstPrompt && activeTarget) {
         const selected = source.messages[messageIndex]
         if (!canBranchFirstPrompt(activeTarget, source.messages, messageIndex)
@@ -1973,13 +2023,18 @@ export default function ChatWindow({
           && firstPromptSend.historySignature === conversationPieceSignature(source) ? firstPromptSend : undefined
         const restoreError = promptRestoreDisabledReason(saved?.converters)
         if (restoreError) throw new Error(restoreError)
-        promptSnapshot = saved?.converters ?? {
-          generation: runtime.generation, pipelines: {}, workingInputs: {}, stageResults: {}, errors: {}, applied: {},
-        }
+        const restoration = preparePromptRestore(saved?.converters, branchConverterSnapshot)
+        promptSnapshot = restoration.snapshot
+        const promptMessage = copiedMessages[copiedMessages.length - 1]
         restoredPrompt = saved ? {
-          text: saved.originalValue, attachments: saved.attachments, textMetadata: saved.textMetadata, converters: saved.converters,
-        } : draftMessageToComposer(copiedMessages[copiedMessages.length - 1], promptSnapshot)
-        missingConverterSelections = !saved && selected.message_pieces.some((piece: BackendMessagePiece) => Boolean(piece.converter_identifiers?.length))
+          text: saved.originalValue, attachments: saved.attachments, textMetadata: saved.textMetadata, converters: promptSnapshot,
+        } : draftMessageToComposer(restoration.pipelineChanged ? {
+          ...promptMessage,
+          pieces: promptMessage.pieces.map((piece: ConversationDraftPiece) => ({
+            ...piece, converted_value: undefined, converted_value_data_type: undefined,
+            applied_converter_ids: undefined, applied_converter_provenance: undefined,
+          })),
+        } : promptMessage, promptSnapshot)
         copiedMessages = copiedMessages.slice(0, -1)
       }
       if (isFailedPrompt && activeTarget
@@ -2007,7 +2062,7 @@ export default function ChatWindow({
         })
         if (getViewedConversationId() !== sourceId || inputBoxRef.current?.getDraftRevision() !== draftRevision) return
         onConversationCreated(response.attack_result_id, response.conversation_id, objective, target)
-        restoreRecoverableDraft(response.conversation_id)
+        restoreRecoverableDraft()
         setIsPanelOpen(true)
         setPanelRefreshKey((key: number) => key + 1)
         return
@@ -2035,18 +2090,19 @@ export default function ChatWindow({
       if (isFailedPrompt && inputBoxRef.current?.getDraftRevision() !== draftRevision) return
       if (destination === 'same_attack') {
         if (restoredPrompt) {
-          setMessages(backendMessagesToFrontend(response.messages.messages))
+          setMessages(handleConversationLoaded(
+            response.messages.conversation_id, response.messages, backendMessagesToFrontend(response.messages.messages),
+          ))
           markConversationLoaded(response.messages.conversation_id)
         }
         onSelectConversation(response.messages.conversation_id)
       }
       else onConversationCreated(response.attack.attack_result_id, response.messages.conversation_id, response.attack.objective, target)
       onAttackChange?.(response.attack)
-      if (isFailedPrompt) restoreRecoverableDraft(response.messages.conversation_id)
+      if (isFailedPrompt) restoreRecoverableDraft()
       if (restoredPrompt && promptSnapshot) {
         restoreEditorPrompt(restoredPrompt, promptSnapshot)
         setUndoableSend(null)
-        setRecoveredDraftWarningConversationId(missingConverterSelections ? response.messages.conversation_id : null)
       }
       setIsPanelOpen(true)
     } catch (error) {
@@ -2070,6 +2126,7 @@ export default function ChatWindow({
     : undefined
   const newAttackDisabledReason = !runtime.ready || !defaultsReady
     ? newActivityBlockedReason ?? 'Default labels are not ready. Retry after default labels finish loading.'
+    : !scorerSelectionReady ? 'The remembered chat scorer is loading. Wait for it to load.'
     : undefined
   const editorDataTypes = draftDataTypes(editDraft?.messages ?? [])
   const temperatureTarget = editDraft !== null ? editorTarget : activeTarget
@@ -2120,6 +2177,16 @@ export default function ChatWindow({
     if (undoDisabledReason || !undoableSend || undoInFlight.current) return
     const saved = undoableSend
     const revision = inputBoxRef.current?.getDraftRevision()
+    const navigationRevision = navigationRevisionRef.current
+    const converterSnapshot = converters.snapshot()
+    const { snapshot: restoredConverters } = preparePromptRestore(saved.converters, converterSnapshot)
+    const draftUnchanged = (): boolean => viewedAttackRef.current === saved.attackResultId
+      && getViewedConversationId() === saved.conversationId
+      && navigationRevisionRef.current === navigationRevision
+      && inputBoxRef.current?.getDraftRevision() === revision
+      && launchStateRef.current.generation === saved.converters.generation && launchStateRef.current.ready
+      && !convertersRef.current.isConverting
+      && JSON.stringify(convertersRef.current.snapshot()) === JSON.stringify(converterSnapshot)
     let branchAttempted = false
     undoInFlight.current = true
     setIsUndoingSend(true)
@@ -2132,10 +2199,7 @@ export default function ChatWindow({
         setUndoableSend(null)
         throw new Error('The conversation changed after this send. Undo is no longer available.')
       }
-      const draftUnchanged = (): boolean => viewedAttackRef.current === saved.attackResultId
-        && getViewedConversationId() === saved.conversationId
-        && inputBoxRef.current?.getDraftRevision() === revision
-      if (!draftUnchanged() || launchStateRef.current.generation !== saved.converters.generation) {
+      if (!draftUnchanged()) {
         throw new Error('The view, prompt, or runtime changed. Your current draft was not replaced.')
       }
       branchAttempted = true
@@ -2147,19 +2211,18 @@ export default function ChatWindow({
         attacksApi.getAttack(saved.attackResultId),
       ])
       setUndoableSend(null)
-      if (!draftUnchanged() || launchStateRef.current.generation !== saved.converters.generation) {
+      if (!draftUnchanged()) {
         setEditorNotice(`Undo created conversation ${branch.conversation_id} without replacing your current draft.`)
         return
       }
-      setMessages(backendMessagesToFrontend(history.messages))
+      setMessages(handleConversationLoaded(branch.conversation_id, history, backendMessagesToFrontend(history.messages)))
       markConversationLoaded(branch.conversation_id)
       onSelectConversation(branch.conversation_id)
       onAttackChange?.(attack)
-      setChatInputText(saved.originalValue)
-      setDraftAttachments(saved.attachments)
-      inputBoxRef.current?.restoreDraft(saved.originalValue, saved.attachments, saved.textMetadata)
-      converters.restoreSnapshot(saved.converters, saved.originalValue, saved.attachments)
-      inputBoxRef.current?.focus()
+      restoreEditorPrompt({
+        text: saved.originalValue, attachments: saved.attachments, textMetadata: saved.textMetadata,
+        converters: restoredConverters,
+      }, restoredConverters)
       setEditorNotice('Last send undone. The original sent conversation remains in history.')
     } catch (error) {
       if (branchAttempted) setUndoableSend(null)
@@ -2199,6 +2262,8 @@ export default function ChatWindow({
     ...(!activeTarget ? ['Select a target to send a message.'] : []),
     ...(!attackResultId && !defaultsReady
       ? [newActivityBlockedReason ?? 'Default labels are not ready. Wait for them to load.'] : []),
+    ...(!attackResultId && !scorerSelectionReady
+      ? ['The remembered chat scorer is loading. Wait for it to load.'] : []),
     ...(editDraft !== null ? ['Finish editing the conversation before sending.'] : []),
     ...(isLoadingMessages || awaitingConversationLoad ? ['The conversation is loading. Wait for it to finish.'] : []),
     ...(sendIssue?.blocking ? [sendIssue.description] : []),
@@ -2295,7 +2360,7 @@ export default function ChatWindow({
           <Link
             className={styles.breadcrumbLink}
             to={scenarioRunRoutePath(scenarioResultId)}
-            state={{ fromScenarioHistory: true }}
+            state={location.state ?? { fromScenarioHistory: true }}
             onClick={(event: React.MouseEvent<HTMLAnchorElement>) => {
               if (onReturnToScan && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
                 event.preventDefault()
@@ -2396,6 +2461,26 @@ export default function ChatWindow({
         disabled={inputDisabledReasons.length > 0}
         disabledReason={inputDisabledReasons.join(' ')}
         onFiles={(files: File[]) => inputBoxRef.current?.addFiles(files)}>
+        {scenarioResultId && (
+          <div className={styles.breadcrumbBar}>
+            <Breadcrumb aria-label="Attack provenance" size="small">
+              <BreadcrumbItem>
+                <Text size={200}>Scanner History</Text>
+              </BreadcrumbItem>
+              <BreadcrumbDivider />
+              <BreadcrumbItem>
+                <Link
+                  className={styles.breadcrumbLink}
+                  to={scenarioRunRoutePath(scenarioResultId)}
+                  state={location.state}
+                  aria-label={`Return to scenario run ${scenarioResultId}`}
+                >
+                  Scenario run {scenarioResultId.slice(0, 8)}
+                </Link>
+              </BreadcrumbItem>
+            </Breadcrumb>
+          </div>
+        )}
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         {executionReadOnly && <MessageBar intent="info">
           <MessageBarBody>
@@ -2419,8 +2504,8 @@ export default function ChatWindow({
           key={`${attackResultId ?? 'new'}-${viewedConversationId ?? 'new'}-${editDraft === null ? 'saved' : 'draft'}`}
           objective={editDraft === null ? currentObjective : editorObjective}
           draftMode={editDraft !== null}
-          outcome={humanScore ? outcome : viewedScoring?.outcome ?? outcome}
-          automatedScore={viewedScoring ? viewedScoring.score : automatedScore}
+          outcome={humanScore ? outcome : viewedScoring?.outcome ?? (scoringInvalidated ? 'undetermined' : outcome)}
+          automatedScore={viewedScoring ? viewedScoring.score : scoringInvalidated ? null : automatedScore}
           chatScorer={selectedScorer}
           chatScorerInherited={Boolean(attackResultId) && chatScorerInherited}
           scoringFailure={editDraft !== null ? null : viewedScoring?.failure ?? null}
@@ -2561,11 +2646,6 @@ export default function ChatWindow({
           </MessageBar>
         )}
         <div hidden={editDraft !== null}>
-        {Boolean(recoveredDraftWarningConversationId) && recoveredDraftWarningConversationId === viewedConversationId && (
-          <MessageBar intent="warning">
-            <MessageBarBody>Converter choices could not be restored. Select and apply converters again before sending.</MessageBarBody>
-          </MessageBar>
-        )}
         <ChatInputArea
           fileDropEnabled={false}
           ref={inputBoxRef}
@@ -2602,10 +2682,7 @@ export default function ChatWindow({
           convertedValue={activePieceConversions['text']?.convertedDataType === 'text' ? (activePieceConversions['text']?.convertedValue ?? null) : null}
           originalValue={activePieceConversions['text']?.originalValue ?? null}
           onClearConversion={() => converters.clear('text')}
-          onClearAllConversions={() => {
-            converters.clearAll()
-            setRecoveredDraftWarningConversationId(null)
-          }}
+          onClearAllConversions={converters.clearAll}
           onConvertedValueChange={(val: string) => converters.editConvertedValue('text', val)}
           convertedFileChip={(() => {
             const tc = activePieceConversions['text']

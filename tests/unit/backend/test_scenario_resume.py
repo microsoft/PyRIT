@@ -7,9 +7,9 @@ import asyncio
 import pathlib
 import threading
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
 from typing import Any, ClassVar
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -31,6 +31,7 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     ManyShotJailbreakAttack,
     PromptSendingAttack,
+    RedTeamingAttack,
     SequentialAttack,
     SequentialChildAttack,
 )
@@ -277,11 +278,11 @@ async def test_real_scenario_live_retry_observation_and_terminal_ownership_async
             final = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
             assert final is not None and not final.active_conversations
             assert final.run.status == (ScenarioRunState.CANCELLED if cancel else ScenarioRunState.COMPLETED)
+            interrupted_references = {active.attack_result_id, *conversations}
             if cancel:
                 assert final.summary.overall.model_dump(mode="json") == before_counts
                 assert await service._memory.get_attack_results_async(scenario_result_id=run_id) == before_results
                 assert {record.conversation_id for record in final.recorded_conversations} == set(conversations)
-                interrupted_references = {active.attack_result_id, *conversations}
                 for reference_id in interrupted_references:
                     history = await service.list_runs_async(reference_id=uuid.UUID(reference_id))
                     assert [item.scenario_result_id for item in history.items] == [run_id]
@@ -461,10 +462,11 @@ async def test_provenance_publication_drains_repeated_cancel_before_scheduler_ha
         await asyncio.wait_for(entered.wait(), TEST_WATCHDOG_SECONDS)
         with patch.object(service._memory, "update_scenario_metadata_fields_async", side_effect=update_async):
             first = asyncio.create_task(service.cancel_run_async(scenario_result_id=run_id))
-            second = None
+            cancellation_tasks = [first]
             try:
                 await asyncio.wait_for(publication_started.wait(), TEST_WATCHDOG_SECONDS)
                 second = asyncio.create_task(service.cancel_run_async(scenario_result_id=run_id))
+                cancellation_tasks.append(second)
                 await asyncio.sleep(0)
                 assert not first.done() and not second.done()
                 assert service.get_queue_snapshot().active.scenario_result_id == run_id
@@ -479,7 +481,7 @@ async def test_provenance_publication_drains_repeated_cancel_before_scheduler_ha
                     assert "Could not preserve interrupted conversations" in caplog.text
             finally:
                 release.set()
-                await asyncio.gather(first, *([second] if second is not None else []), return_exceptions=True)
+                await asyncio.gather(*cancellation_tasks, return_exceptions=True)
 
 
 async def test_real_matrix_launch_keeps_heartbeat_alive_during_disk_reads_async(
@@ -1230,26 +1232,36 @@ async def test_rerun_rejects_changed_target_instead_of_using_current_defaults_as
             await service.get_launch_configuration_async(str(stored.id))
 
 
+@pytest.fixture
+def selected_adversarial_factory(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> Iterator[None]:
+    techniques = AttackTechniqueRegistry()
+    techniques.register_from_factories([AttackTechniqueFactory(name="direct", attack_class=RedTeamingAttack)])
+    with patch.object(AttackTechniqueRegistry, "get_registry_singleton", return_value=techniques):
+        yield None
+
+
 @pytest.mark.parametrize("implicit", [False, True])
 async def test_rerun_pins_selected_adversarial_identity_and_rejects_replacement_async(
-    *, resume_environment: tuple[ScenarioRunService, MockPromptTarget], implicit: bool
+    *,
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+    selected_adversarial_factory: None,
+    implicit: bool,
 ) -> None:
     service, _ = resume_environment
     registry = TargetRegistry.get_registry_singleton()
     adversarial = MockPromptTarget()
     registry_name = "adversarial_chat" if implicit else "saved-adversarial"
     registry.instances.register(adversarial, name=registry_name)
-    with patch.object(
-        _OfflineResumeScenario, "uses_default_adversarial_target", new_callable=PropertyMock, return_value=True
-    ):
-        response = await service.start_run_async(
-            request=RunScenarioRequest(
-                scenario_name=_SCENARIO_NAME,
-                target_name=_TARGET_NAME,
-                adversarial_target_name=None if implicit else registry_name,
-                include_baseline=False,
-            )
+    response = await service.start_run_async(
+        request=RunScenarioRequest(
+            scenario_name=_SCENARIO_NAME,
+            target_name=_TARGET_NAME,
+            adversarial_target_name=None if implicit else registry_name,
+            include_baseline=False,
         )
+    )
     await _wait_for_run_completion_async(service=service, scenario_result_id=response.scenario_result_id)
     stored = await service._memory.get_scenario_result_header_async(scenario_result_id=response.scenario_result_id)
     assert stored is not None
@@ -1270,6 +1282,7 @@ async def test_rerun_pins_selected_adversarial_identity_and_rejects_replacement_
 
 async def test_rerun_rejects_unverifiable_old_adversarial_selection_async(
     resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+    selected_adversarial_factory: None,
 ) -> None:
     service, target = resume_environment
     stored = await _create_failed_run_async(target=target, legacy=False)

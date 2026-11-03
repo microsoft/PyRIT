@@ -72,6 +72,7 @@ import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { generateClientId } from './utils/clientId'
 import { resolveChatScorerReference } from '@/utils/scorerPresentation'
+import { getOperationWarning } from '@/utils/operationWarnings'
 import { useTour } from './hooks/useTour'
 import { ChatDraftProvider, useChatDraftHandoff } from './hooks/useChatDraftHandoff'
 import {
@@ -140,6 +141,16 @@ function viewFromPath(pathname: string): ViewName {
 function LegacyPresetEditorRedirect() {
   const { presetName } = useParams<{ presetName: string }>()
   return <Navigate replace to={presetEditorRoutePath(routerPathParamValue(presetName))} />
+}
+
+function LegacyAttackRedirect() {
+  const { attackId, conversationId } = useParams<{ attackId: string; conversationId?: string }>()
+  const location = useLocation()
+  const path = conversationId === undefined
+    ? attackRoutePath(routerPathParamValue(attackId))
+    : attackConversationRoutePath(routerPathParamValue(attackId), routerPathParamValue(conversationId))
+
+  return <Navigate replace to={`${path}${location.search}${location.hash}`} />
 }
 
 /** Status of the in-flight attack load for an /attack/chat/:id route. */
@@ -211,6 +222,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
   const defaultChatScorer = preferences.chatScorer !== undefined ? preferences.chatScorer
     : resolveChatScorerReference(preferences.lastUsedChatScorer, scorerRegistry.scorers)
+  const scorerDefaultsReady = preferences.chatScorer !== undefined
+    || preferences.lastUsedChatScorer == null || !scorerRegistry.loading
   const targetDefaults = useTargetPreferences(registry.targets)
   const draftHandoff = useChatDraftHandoff()
   const { clearPreservedDraft, dismissPendingImport } = draftHandoff
@@ -296,9 +309,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const operation = useOperationSelection(operationSelection, generation)
   const operationReady = operation.state.status === 'empty' || operation.state.status === 'resolved'
   const operationId = operation.state.status === 'resolved' ? operation.state.operation.id : null
-  const newActivityReady = defaultsReady && operationReady && (!rerun.active || Boolean(rerun.request))
+  const newActivityReady = defaultsReady && operationReady && !registry.loading && !registry.error
+    && (!rerun.active || Boolean(rerun.request))
   const operationBlockedReason = defaultsReady && !operationReady && operation.state.status !== 'loading'
-    ? 'Choose a saved Operation, register, or clear this one to start new attacks and scans.'
+    ? getOperationWarning(operation.state)
     : undefined
   const { remember: rememberOperation } = operation
   const handleOperationChange = useCallback((selected: Operation | null) => {
@@ -580,10 +594,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
         routeConversationId === readyAttack.mainConversationId ||
         readyAttack.relatedConversationIds.includes(routeConversationId)
       if (!isKnown && !findingEvidenceId) {
-        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true })
+        navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true, state: location.state })
       }
     }
-  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId])
+  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId, location.state])
 
   const handleNavigate = useCallback((view: ViewName) => {
     if (view === 'analytics') {
@@ -722,8 +736,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
 
   const handleSelectConversation = useCallback((convId: string) => {
     if (!routeAttackId) return
-    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId))
-  }, [routeAttackId, navigate, scenarioResultId])
+    navigate(attackConversationRoutePath(routeAttackId, convId, scenarioResultId), { state: location.state })
+  }, [routeAttackId, navigate, scenarioResultId, location.state])
 
   const handleOpenAttack = useCallback((openAttackResultId: string) => {
     navigate(attackRoutePath(openAttackResultId))
@@ -778,6 +792,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       labels={globalLabels}
       operationId={operationId}
       defaultsReady={newActivityReady}
+      scorerDefaultsReady={scorerDefaultsReady}
       newActivityBlockedReason={operationBlockedReason}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
@@ -803,7 +818,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       onReturnToScan={() => {
         if (scenarioResultId) {
           navigate(scenarioRunRoutePath(scenarioResultId), {
-            state: { fromScenarioHistory: true, scenarioHistorySearch: lastScenarioHistorySearch.current },
+            state: location.state ?? {
+              fromScenarioHistory: true, scenarioHistorySearch: lastScenarioHistorySearch.current,
+            },
           })
         }
       }}
@@ -872,11 +889,6 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 </MessageBarBody>
               </MessageBar>
             )}
-            {operationBlockedReason && (
-              <MessageBar intent="warning">
-                <MessageBarBody>{operationBlockedReason}</MessageBarBody>
-              </MessageBar>
-            )}
             {preferenceError && (
               <MessageBar intent="warning">
                 <MessageBarBody>{preferenceError}</MessageBarBody>
@@ -919,6 +931,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               <Route
                 path="/attack/chat/:attackId/conversations/:conversationId"
                 element={chatElement}
+              />
+              <Route path="/attacks/:attackId" element={<LegacyAttackRedirect />} />
+              <Route
+                path="/attacks/:attackId/conversations/:conversationId"
+                element={<LegacyAttackRedirect />}
               />
               <Route path="/registry" element={<RegistryLayout />}>
                 <Route index element={<Navigate to="/registry/targets" replace />} />

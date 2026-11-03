@@ -4,6 +4,7 @@ import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
 import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
+import type { ConversationMessagesResponse } from "../src/types";
 
 const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
@@ -365,11 +366,12 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
           : jsonResponse({
               conversation_id: "mobile-conversation-001",
               messages: MESSAGES,
-              target_response_status: null,
               automated_score: MESSAGES[1].message_pieces[0].scores[1],
               latest_response_id: "mobile-assistant-piece",
               outcome: "success",
-            })
+              scoring_failure: null,
+              target_response_status: null,
+            } satisfies ConversationMessagesResponse)
       );
       return;
     }
@@ -841,8 +843,10 @@ test.describe("Mobile touch targets", () => {
     // Scope to the tooltip: the views the tour visits have their own
     // "Next" controls, such as History's pagination.
     const tooltip = page.getByTestId("tour-tooltip-card");
+    const floater = page.locator(".react-joyride__floater").filter({ has: tooltip });
 
     await expect(page.getByText(`1 of ${TOUR_STEP_COUNT}`)).toBeVisible();
+    await expect(floater).toHaveCSS("opacity", "1");
     await expectMinimumTouchTargets(
       tooltip.getByRole("button", {
         name: /^(Close|Skip tour|Next)$/,
@@ -852,10 +856,11 @@ test.describe("Mobile touch targets", () => {
     for (let step = 2; step < TOUR_STEP_COUNT; step += 1) {
       await tooltip
         .getByRole("button", { name: "Next", exact: true })
-        .click({ force: true });
+        .click();
       await expect(
         page.getByText(`${step} of ${TOUR_STEP_COUNT}`)
       ).toBeVisible();
+      await expect(floater).toHaveCSS("opacity", "1");
       await expectMinimumTouchTargets(
         tooltip.getByRole("button", {
           name: /^(Close|Skip tour|Back|Next)$/,
@@ -865,10 +870,11 @@ test.describe("Mobile touch targets", () => {
 
     await tooltip
       .getByRole("button", { name: "Next", exact: true })
-      .click({ force: true });
+      .click();
     await expect(
       page.getByText(`${TOUR_STEP_COUNT} of ${TOUR_STEP_COUNT}`)
     ).toBeVisible();
+    await expect(floater).toHaveCSS("opacity", "1");
     await expectMinimumTouchTarget(
       tooltip.getByRole("button", { name: "Back", exact: true })
     );

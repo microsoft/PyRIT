@@ -3,7 +3,7 @@ import { act, renderHook } from '@testing-library/react'
 import { analyticsApi } from '@/services/api'
 import { deferred } from '@/test-utils/deferred'
 import { makeAnalyticsReport, makeAnalyticsResults, makeAnalyticsRow } from '@/test-utils/analyticsFixtures'
-import type { AttackAnalyticsQuery, AttackAnalyticsReport } from '@/types'
+import type { AttackAnalyticsQuery, AttackAnalyticsReport, AttackAnalyticsResults } from '@/types'
 import { ANALYTICS_DEBOUNCE_MS, DEFAULT_ANALYTICS_VIEW, analyticsQuery } from '@/utils/attackAnalytics'
 
 import { useAttackAnalytics } from './useAttackAnalytics'
@@ -41,6 +41,53 @@ describe('useAttackAnalytics', () => {
   })
 
   afterEach(() => { jest.useRealTimers() })
+
+  it('should not revive an aborted results request after group navigation and a quiet refresh', async () => {
+    const pending = deferred<AttackAnalyticsResults>()
+    mockResults.mockReturnValueOnce(pending.promise)
+    const { result, rerender } = renderAnalytics()
+    await advance()
+    await act(async () => { result.current.nextPage() })
+    expect(result.current.resultsLoading).toBe(true)
+    const abandonedSignal = mockResults.mock.calls[0][1]
+    rerender({ query: { ...QUERY, group_offset: 15 } })
+    await advance()
+    expect(abandonedSignal?.aborted).toBe(true)
+    expect(result.current.resultsLoading).toBe(false)
+    await advance(AUTO_REFRESH_INTERVAL_MS)
+    await advance()
+    expect(result.current.resultsLoading).toBe(false)
+    await act(async () => { result.current.nextPage() })
+    expect(mockResults).toHaveBeenCalledTimes(2)
+    await act(async () => { pending.resolve(makeAnalyticsResults()) })
+    expect(result.current.resultsLoading).toBe(false)
+  })
+
+  it('should quietly refresh the displayed cursor instead of a failed next-page cursor', async () => {
+    mockQuery.mockResolvedValue(makeAnalyticsReport({
+      results: makeAnalyticsResults({ has_more: true, next_cursor: 'page-two' }),
+    }))
+    mockResults.mockResolvedValueOnce(makeAnalyticsResults({
+      items: [makeAnalyticsRow({ objective_preview: 'Displayed page two' })],
+      has_more: true, next_cursor: 'page-three',
+    })).mockRejectedValueOnce(new Error('Page three failed'))
+    const { result } = renderAnalytics()
+    await advance()
+    await act(async () => { result.current.nextPage() })
+    expect(result.current.page).toBe(1)
+    await act(async () => { result.current.nextPage() })
+    expect(result.current.resultsError).toBe('Page three failed')
+    mockResults.mockImplementation(async ({ cursor }) => makeAnalyticsResults({
+      items: [makeAnalyticsRow({ objective_preview: cursor === 'page-two' ? 'Refreshed page two' : 'Wrong page three' })],
+    }))
+    await advance(AUTO_REFRESH_INTERVAL_MS)
+    await advance()
+    expect(mockResults).toHaveBeenLastCalledWith({
+      filters: makeAnalyticsReport().filters, cursor: 'page-two', limit: 25,
+    }, expect.any(AbortSignal))
+    expect(result.current.page).toBe(1)
+    expect(result.current.results?.items[0].objective_preview).toBe('Refreshed page two')
+  })
 
   it('should stop reads during runtime replacement and never revive old results after recovery', async () => {
     let complete: ((report: AttackAnalyticsReport) => void) | undefined

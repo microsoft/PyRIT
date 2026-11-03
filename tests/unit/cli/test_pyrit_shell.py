@@ -7,13 +7,14 @@ Unit tests for the pyrit_shell CLI module (thin REST client).
 
 import asyncio
 from datetime import UTC
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 
-from pyrit.cli import pyrit_shell
+from pyrit.cli import _config_reader, pyrit_shell
 from pyrit.models import Parameter
 from unit.mocks import make_scenario_result
 
@@ -384,6 +385,38 @@ class TestShellRunAsyncTimeout:
 class TestShellMain:
     """Tests for the shell main() entry point."""
 
+    @pytest.mark.parametrize("has_default_config", [False, True])
+    def test_main_missing_config_is_hard_error(
+        self, *, tmp_path: Path, capsys: pytest.CaptureFixture[str], has_default_config: bool
+    ) -> None:
+        default = tmp_path / "default.yaml"
+        if has_default_config:
+            default.write_text("server:\n  url: http://default:9000\n", encoding="utf-8")
+        missing = tmp_path / "missing.yaml"
+        with (
+            patch.object(_config_reader, "_DEFAULT_CONFIG_FILE", default),
+            patch.object(pyrit_shell.banner, "play_animation", return_value="") as mock_banner,
+            patch.object(pyrit_shell, "PyRITShell", autospec=True) as mock_shell_class,
+            patch(
+                "sys.argv",
+                [
+                    "pyrit_shell",
+                    "--config-file",
+                    str(missing),
+                    "--server-url",
+                    "http://127.0.0.1:8000",
+                    "--auth-mode",
+                    "none",
+                    "--start-server",
+                ],
+            ),
+        ):
+            assert pyrit_shell.main() == 1
+
+        assert f"Config file {missing} does not exist." in capsys.readouterr().err
+        mock_banner.assert_not_called()
+        mock_shell_class.assert_not_called()
+
     def test_main_parses_server_url(self):
         with (
             patch("pyrit.cli._banner.play_animation", return_value=""),
@@ -445,6 +478,7 @@ class TestShellMain:
             assert "boom" in captured.out
 
     def test_main_log_level_and_config_file(self, tmp_path):
+        (tmp_path / "conf.yaml").write_text("", encoding="utf-8")
         with (
             patch("pyrit.cli._banner.play_animation", return_value=""),
             patch("pyrit.cli.pyrit_shell.PyRITShell") as mock_shell_class,

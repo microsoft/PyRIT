@@ -43,8 +43,12 @@ For single-turn targets or targets that cannot replay the first prompt as histor
 without copying the response. After a successful single send, **Undo last send**
 also restores the prompt in a new conversation, if the target can replay the
 preceding history. Both actions restore the saved prompt and converter results
-for text, image, audio, video, and mixed responses. They do not overwrite new
-prompt edits or changed converter pipelines.
+for text, image, audio, video, and mixed responses when the converter pipeline
+has not changed. If you change the pipeline, both actions keep your
+current converters and temporary settings, restore the original prompt, and
+discard the old conversion results. You can then convert the prompt again.
+Neither action overwrites new prompt or working-input edits, sends a prompt,
+or runs a converter.
 When you save an edited conversation, its final user turn moves to the prompt
 box instead of saved history. Text and attachments retain their metadata,
 including text-only video remix IDs. You can enter and edit prompts without a target.
@@ -110,6 +114,10 @@ autoplay. Reopening waits for a fresh display URL, with Show disabled while the
 request is pending. If refreshing fails, the preview stays closed and shows a
 message so you can try again. Hiding a preview stops playback.
 Filters, page size, and the open example stay in the address bar.
+The visible example page and open detail also check for stored changes each minute,
+using the same filters and page cursor. Transient background errors keep the
+previously loaded content visible with an error message until a check succeeds.
+Deleted examples and invalid page cursors still show their explicit recovery state.
 **Back to datasets** returns to the catalog search, facets, and sort you came
 from. A direct link without that return state goes to `/datasets`.
 On narrow screens, scroll the example table horizontally to read its columns.

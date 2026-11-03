@@ -106,6 +106,18 @@ it('retains the transcript and stopped state after Cancel and reload without add
   expect(scenariosApi.getRunConversation).toHaveBeenLastCalledWith(RUN_ID, 'conversation')
 })
 
+it('loads an earlier conversation by scoped identity before progress publishes its attack ID', async () => {
+  const initialProgress = progress('IN_PROGRESS')
+  initialProgress.active_conversations = []
+  initialProgress.results = []
+  initialProgress.recorded_conversations = []
+  jest.mocked(scenariosApi.getRunProgress).mockResolvedValue(initialProgress)
+  render(<Wrapper />)
+  expect(await screen.findByText('A saved prompt')).toBeInTheDocument()
+  expect(scenariosApi.getRunConversation).toHaveBeenCalledWith(RUN_ID, 'conversation')
+  expect(screen.queryByText('This conversation is not part of this scan.')).not.toBeInTheDocument()
+})
+
 it('moves a live conversation to the canonical completed chat after the progress poll', async () => {
   render(<Wrapper />)
   await screen.findByText('A saved prompt')

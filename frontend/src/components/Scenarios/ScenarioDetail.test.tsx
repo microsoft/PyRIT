@@ -1701,6 +1701,19 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(false)
   })
 
+  it('explains baseline identity locally without changing its selection', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+
+    await user.click(screen.getByRole('button', { name: 'Identity for baseline' }))
+
+    expect(screen.getByRole('region', { name: 'Identity for baseline' }))
+      .toHaveTextContent('Baseline identity is available after launch.')
+    expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).toBeChecked()
+    expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
   it('includes the baseline when a shared tag selects or clears its members', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/launch/foundry.red_team_agent')
@@ -1802,7 +1815,7 @@ describe('ScenarioDetail', () => {
     expect(request.max_retries).toBe(0)
   })
 
-  it('shows the combined configured dataset size without submitting it as an override', async () => {
+  it('shows the combined configured dataset selection limit without submitting it as an override', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValueOnce(
       makeScenario({
@@ -1853,14 +1866,21 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByText('Advanced options')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 8')
     const estimate = screen.getByTestId('run-estimate')
-    expect(within(estimate).getByText('Dataset size')).toBeInTheDocument()
+    expect(within(estimate).getByText('Dataset selection limit')).toBeInTheDocument()
     expect(within(estimate).getByText('8')).toBeInTheDocument()
     expect(within(estimate).getByText('Number techniques')).toBeInTheDocument()
     expect(within(estimate).getByText('2')).toBeInTheDocument()
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
 
-    await confirmRunPreview(user)
+    await user.hover(within(estimate).getByText('Dataset selection limit'))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'The configured maximum number of examples to select. The actual selection may be smaller after filtering or because fewer examples are available.',
+    )
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText(/dataset selection limit: 8/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
   })
@@ -1912,6 +1932,8 @@ describe('ScenarioDetail', () => {
     await screen.findByRole('table', { name: 'Selected datasets' })
     expect(screen.queryByRole('textbox', { name: 'Maximum objectives' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('Dataset selection limit')).toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('Not applicable')).toBeInTheDocument()
   })
 
   it('keeps scenario defaults when the dataset-limit field is cleared', async () => {
@@ -1944,7 +1966,11 @@ describe('ScenarioDetail', () => {
     await user.click(screen.getByRole('checkbox', { name: 'All available for Maximum objectives' }))
     await user.keyboard('{Escape}')
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('datasets.max_total', 'all'))
-    await confirmRunPreview(user)
+    expect(within(screen.getByTestId('run-estimate')).getByText('No total limit')).toBeInTheDocument()
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText(/dataset selection limit: No total limit/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).toHaveProperty('datasets.max_total', 'all')
   })
@@ -2073,7 +2099,8 @@ describe('ScenarioDetail', () => {
   })
 
   it.each(['user', 'unknown'])('warns before replacing %s data and confirms through Run preview', async (origin) => {
-    const user = userEvent.setup()
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
     jest.mocked(datasetsApi.listDatasets).mockResolvedValueOnce({ items: [{
       name: 'harmbench', selection_key: 'dataset:named:harmbench', loaded: true, provider_available: true,
       logical_examples: 8, origins: [origin], modalities: ['text'], harm_categories: [], has_unlabeled_harm_categories: false,
@@ -2085,7 +2112,9 @@ describe('ScenarioDetail', () => {
       },
     })
     renderDetail('/scanner/launch/foundry.red_team_agent')
+    await flushRenderedPromises()
     await user.click(await screen.findByRole('radio', { name: 'Refresh' }))
+    await advanceTimers(300)
     await user.click(screen.getByRole('button', { name: 'Launch scan' }))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
     await waitFor(() => expect(within(preview).getByRole('button', { name: 'Launch scan' })).toBeEnabled())
@@ -2094,7 +2123,7 @@ describe('ScenarioDetail', () => {
     expect(within(preview).getByRole('alert')).toHaveTextContent('prevent older runs from resuming')
     await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
     expect(mockStartRun).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Launch scan' }))
+    await user.click(await screen.findByRole('button', { name: 'Launch scan' }))
     const confirmed = await screen.findByRole('dialog', { name: 'Run preview' })
     await user.click(within(confirmed).getByRole('button', { name: 'Launch scan' }))
     expect(mockStartRun).toHaveBeenCalledTimes(1)

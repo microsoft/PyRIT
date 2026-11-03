@@ -147,7 +147,7 @@ export default function ConverterRegistry() {
     target?.focus()
   }, [focusRestore])
 
-  const loadConverters = useCallback(async () => {
+  const loadConverters = useCallback(async (pruneRemovedFilters: boolean = false) => {
     if (!mounted.current) return
     const epoch = {}
     listEpoch.current = epoch
@@ -157,6 +157,19 @@ export default function ConverterRegistry() {
       setConverters(response.items)
       if (response.items.length > 0) setHasShownConverters(true)
       setError(null)
+      // Explicit removal clears obsolete facets; background snapshots preserve the user's view.
+      if (pruneRemovedFilters) {
+        setTypeFilter((current) => (
+          current && response.items.some((converter) => converter.identifier.class_name === current)
+            ? current
+            : ''
+        ))
+        setOutputFilter((current) => (
+          current && response.items.some((converter) => converter.identifier.supported_output_types?.includes(current))
+            ? current
+            : ''
+        ))
+      }
     } catch (err) {
       if (epoch === listEpoch.current) setError(toApiError(err).detail)
     } finally {
@@ -211,7 +224,7 @@ export default function ConverterRegistry() {
       // one on screen.
       dismissRemoveDialog()
       restoreFocus(newConverterRef.current)
-      await loadConverters()
+      await loadConverters(true)
     } catch (err) {
       setError(toApiError(err).detail)
     } finally {

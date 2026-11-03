@@ -75,7 +75,21 @@ and transcript reads, including hierarchy node expansion.
 ### Scenario result hierarchy
 
 These read-only APIs provide the backend foundation for compound-attack browsing.
-The hierarchy GUI is separate work; the current scanner still shows flat executions.
+The Scenario run page integrates them into its existing "Atomic attack groups"
+tables, rather than displaying a second results section. Group summaries retain
+their server-derived totals while result rows expand into ordered saved children.
+Completion and success count logical execution units. The execution count uses
+the backend's raw producer attempt counts; neither is inferred from rendered
+rows. Missing or duplicate child references remain visible as saved positions,
+not additional results.
+Available flat execution rows remain usable while relationships load or if the
+hierarchy request fails, with an explicit loading/error notice.
+
+Clicking a result with a main conversation opens the existing chat view and
+preserves scenario-run provenance for its return breadcrumb. Conversationless
+compound results expand their children instead. A separate Details action reuses
+the existing metadata dialog. Hierarchy requests do not load transcript bodies;
+new bounded conversation-evidence rendering remains separate follow-up work.
 
 `GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
 bounded tree preview grouped by atomic attack group. Roots are saved results with
@@ -227,6 +241,10 @@ and no stage guarantees that retrying delivery is safe. Stored target errors and
 Terminal states are published only after finalization and ownership release. Progress also
 includes the `request_turn_number` assigned during preparation, so clients can distinguish
 this send's response from a later turn written by another client.
+Each conversation receipt also retains `target_invoked`, set only at the target
+invocation boundary. It remains false during preparation and retains its value
+after interruption. An allocated request turn alone is not evidence of target use,
+and an invocation does not guarantee successful delivery.
 
 The optional `wait_ms` query parameter (0-1000) waits for completion, returning immediately
 if the operation settles. Cancelling this read, disconnecting, or navigating away does not

@@ -40,6 +40,7 @@ interface ResultsState {
   readonly page: number
   readonly requestedPage: number
   readonly cursor: string | null
+  readonly displayedCursor: string | null
   readonly loading: boolean
   readonly error: string | null
   readonly invalidCursor: boolean
@@ -73,6 +74,9 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
   // revisiting A must not revive a cancelled/older A request or its result page.
   const request = useMemo(() => ({ scopeKey, key: requestKey, quiet: quietKey === requestKey }),
     [scopeKey, requestKey, quietKey])
+  if (resultState && resultState.request !== request && !request.quiet) {
+    setResultState(null)
+  }
   const report = settled?.request.scopeKey === scopeKey ? settled.report : null
   const loading = enabledQuery !== null && settled?.request !== request
   const error = settled && (settled.request === request
@@ -104,13 +108,14 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
             const previous = captureResults()
             const refreshedResults = previous && previous.page > 0
               ? await analyticsApi.results(
-                { filters: response.filters, cursor: previous.cursor, limit: ANALYTICS_PAGE_SIZE }, controller.signal,
+                { filters: response.filters, cursor: previous.displayedCursor, limit: ANALYTICS_PAGE_SIZE }, controller.signal,
               ) : response.results
             if (controller.signal.aborted) return
             if (captureResults() === previous) {
               setResultState({
                 request, results: refreshedResults, page: previous?.page ?? 0,
-                requestedPage: previous?.page ?? 0, cursor: previous?.cursor ?? null,
+                requestedPage: previous?.page ?? 0, cursor: previous?.displayedCursor ?? null,
+                displayedCursor: previous?.displayedCursor ?? null,
                 loading: false, error: null, invalidCursor: false,
               })
             }
@@ -155,7 +160,8 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
     // Keep the displayed page until success; retry uses the requested cursor/page,
     // not the displayed page's next cursor (which could be a different request).
     const requestState: ResultsState = {
-      request, results, page, requestedPage, cursor, loading: true, error: null, invalidCursor: false,
+      request, results, page, requestedPage, cursor, displayedCursor: currentResults?.displayedCursor ?? null,
+      loading: true, error: null, invalidCursor: false,
     }
     setResultState(requestState)
     try {
@@ -166,7 +172,7 @@ export function useAttackAnalytics(query: AttackAnalyticsQuery | null) {
         controller.signal,
       )
       if (controller.signal.aborted) return
-      setResultState({ ...requestState, results: response, page: requestedPage, loading: false })
+      setResultState({ ...requestState, results: response, page: requestedPage, displayedCursor: cursor, loading: false })
     } catch (reason: unknown) {
       if (controller.signal.aborted) return
       const failure = toApiError(reason)

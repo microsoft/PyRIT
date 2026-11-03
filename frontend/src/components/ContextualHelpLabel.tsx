@@ -6,6 +6,8 @@ import {
 
 import { useContextualHelpLabelStyles } from './ContextualHelpLabel.styles'
 
+const EDITOR_HELP_CONTROLS = { 'data-conversation-editor-controls': true }
+
 interface ContextualHelpLabelProps {
   readonly term: string
   readonly children: ReactNode
@@ -26,7 +28,7 @@ export default function ContextualHelpLabel({ term, children, labelProps }: Cont
           setHoverVisible(false)
         }
       } }}
-      info={{ children, className: styles.content, onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+      info={{ ...EDITOR_HELP_CONTROLS, children, className: styles.content, onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
         // Dismiss help without also dismissing an enclosing editor.
         if (event.key === 'Escape') event.stopPropagation()
       } }}
@@ -41,7 +43,7 @@ export default function ContextualHelpLabel({ term, children, labelProps }: Cont
       }}
       label={{ children: (_: unknown, props: LabelProps) => (
         <Tooltip relationship="description" withArrow visible={hoverVisible && !infoOpen}
-          content={{ children, className: styles.content }}
+          content={{ ...EDITOR_HELP_CONTROLS, children, className: styles.content }}
           onVisibleChange={(_: unknown, data: { visible: boolean }) => {
             setHoverVisible(!infoOpen && data.visible)
           }}>
