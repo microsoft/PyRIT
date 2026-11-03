@@ -6,7 +6,7 @@
 import asyncio
 import json
 import os
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +30,9 @@ from pyrit.backend.services.scenario_run_service import ScenarioRunService, _Pre
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
 from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.registry.components.converter_registry import ConverterRegistry
+from pyrit.registry.components.target_registry import TargetRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.scenario import Scenario
 from pyrit.setup.configuration_loader import ConfigurationLoader
@@ -929,14 +932,79 @@ def _save_recipe(root: Path, *, kind: str, name: str, document: dict[str, object
     return path
 
 
-async def _start_with_recipes_async(runtime: RuntimeLifecycle, *, recipes: Path) -> None:
+async def _start_with_recipes_async(
+    runtime: RuntimeLifecycle, *, recipes: Path, initialize: Callable[..., object] | None = None
+) -> None:
     config = await runtime._load_async()
     config.registry_recipes_source = str(recipes)
     with (
-        patch.object(config, "initialize_pyrit_async", AsyncMock()),
+        patch.object(config, "initialize_pyrit_async", AsyncMock(side_effect=initialize)),
         patch.object(lifecycle_module, "get_scenario_run_service", return_value=MagicMock(spec=ScenarioRunService)),
     ):
         await runtime.startup_async()
+
+
+@pytest.fixture
+def startup_chat() -> Generator[OpenAIChatTarget, None, None]:
+    TargetRegistry.reset_registry_singleton()
+    ConverterRegistry.reset_registry_singleton()
+    yield OpenAIChatTarget(
+        endpoint="https://startup.openai.azure.com/openai/v1", model_name="gpt-4o", auth_mode="identity"
+    )
+    TargetRegistry.reset_registry_singleton()
+    ConverterRegistry.reset_registry_singleton()
+
+
+def _save_converter_using_startup_chat(recipes: Path) -> None:
+    _save_recipe(
+        recipes,
+        kind="converters",
+        name="formal",
+        document={
+            "class_module": "pyrit.converter.tone_converter",
+            "class_name": "ToneConverter",
+            "params": {"converter_target": "startup_chat", "tone": "formal"},
+        },
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_startup_restores_an_entry_that_uses_a_startup_target_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_converter_using_startup_chat(recipes)
+    targets = TargetRegistry.get_registry_singleton()
+
+    await _start_with_recipes_async(
+        runtime, recipes=recipes, initialize=lambda **_: targets.instances.register(startup_chat, name="startup_chat")
+    )
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    converter = ConverterRegistry.get_registry_singleton().instances.get("formal")
+    assert converter is not None
+    assert converter._converter_target is startup_chat
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_apply_restores_an_entry_that_uses_a_startup_target_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_converter_using_startup_chat(recipes)
+    targets = TargetRegistry.get_registry_singleton()
+    config = await runtime._load_async()
+    config.registry_recipes_source = str(recipes)
+    config.apply_prepared_reinitialization_async.side_effect = lambda **_: targets.instances.register(
+        startup_chat, name="startup_chat"
+    )
+
+    await apply_async(runtime)
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    converter = ConverterRegistry.get_registry_singleton().instances.get("formal")
+    assert converter is not None
+    assert converter._converter_target is startup_chat
 
 
 async def test_startup_with_an_unrestorable_entry_is_not_ready_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
