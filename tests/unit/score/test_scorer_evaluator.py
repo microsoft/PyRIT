@@ -403,6 +403,15 @@ def test_compute_objective_metrics_perfect_agreement(mock_objective_scorer):
     assert metrics.f1_score == 1.0
     assert metrics.precision == 1.0
     assert metrics.recall == 1.0
+    assert metrics.specificity is None
+    assert metrics.true_positive == 2
+    assert metrics.false_positive == 0
+    assert metrics.true_negative == 0
+    assert metrics.false_negative == 0
+    assert (
+        metrics.true_positive + metrics.false_positive + metrics.true_negative + metrics.false_negative
+        == metrics.num_responses
+    )
 
 
 def test_compute_objective_metrics_partial_agreement(mock_objective_scorer):
@@ -418,7 +427,33 @@ def test_compute_objective_metrics_partial_agreement(mock_objective_scorer):
     assert metrics.accuracy == 0.5
     assert metrics.precision == 0.5
     assert metrics.recall == 1.0
+    assert metrics.specificity == 0.0
     assert metrics.f1_score == pytest.approx(2 * 0.5 * 1.0 / (0.5 + 1.0))
+    assert metrics.true_positive == 1
+    assert metrics.false_positive == 1
+    assert metrics.true_negative == 0
+    assert metrics.false_negative == 0
+
+
+def test_compute_objective_metrics_specificity_and_confusion_counts(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    # 5 responses: gold = [1, 1, 0, 0, 0], model = [1, 0, 0, 0, 1]
+    # TP=1, FN=1, TN=2, FP=1 -> specificity = 2 / 3
+    all_human_scores = np.array([[1, 1, 0, 0, 0]])
+    all_model_scores = np.array([[1, 0, 0, 0, 1]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.true_positive == 1
+    assert metrics.false_negative == 1
+    assert metrics.true_negative == 2
+    assert metrics.false_positive == 1
+    assert (
+        metrics.true_positive + metrics.false_positive + metrics.true_negative + metrics.false_negative
+        == metrics.num_responses
+    )
+    assert metrics.recall == pytest.approx(0.5)
+    assert metrics.specificity == pytest.approx(2 / 3)
 
 
 def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
