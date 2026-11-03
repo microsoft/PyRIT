@@ -358,7 +358,7 @@ class MessageScorer(Scorer):
                 for cls in type(self).__mro__
                 if "_score_piece_async" in cls.__dict__ or "_score_piece_with_expectation_async" in cls.__dict__
             )
-            if "_score_piece_with_expectation_async" not in hook_owner.__dict__:
+            if "_score_piece_async" in hook_owner.__dict__:
                 raise LegacyScorerHookError(
                     f"{type(self).__name__} overrides _score_piece_async below an expectation-aware scorer. "
                     "Move the custom policy to _score_piece_with_expectation_async."
@@ -1397,8 +1397,15 @@ class MessageScorer(Scorer):
         typed criteria.
 
         Raises:
-            NotImplementedError: If the leaf implements neither piece hook.
+            NotImplementedError: If the leaf implements neither piece hook, or only the typed one.
         """
+        mro = type(self).__mro__
+        own_bases = mro[: mro.index(MessageScorer)] if MessageScorer in mro else ()
+        if any("_score_piece_with_expectation_async" in cls.__dict__ for cls in own_bases):
+            raise NotImplementedError(
+                f"{type(self).__name__} implements _score_piece_with_expectation_async, not the objective-only "
+                "_score_piece_async. Call _score_piece_with_expectation_async(message_piece, expectation=...)."
+            )
         raise NotImplementedError(f"{type(self).__name__} implements no piece scoring hook.")
 
     def _build_scoring_message(self, *, message: Message) -> Message | None:
