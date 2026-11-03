@@ -121,6 +121,28 @@ class RawAnalyticsFacets:
     computed_at: datetime
 
 
+_SQLITE_ERROR_NAMES: dict[int, str] = {
+    getattr(sqlite3, name): name
+    for name in sorted(dir(sqlite3))
+    if name.startswith("SQLITE_") and isinstance(getattr(sqlite3, name), int)
+}
+
+
+def _note_sqlite_error(error: OperationalError) -> None:
+    """Attach the structured SQLite result-code name to a propagated error.
+
+    Python's ``sqlite3`` exposes the numeric result code on exceptions but not
+    its name, and a stale snapshot (``SQLITE_BUSY_SNAPSHOT``) reads the same
+    "database is locked" text as a plain lock. The note makes the distinction
+    visible in the formatted traceback without changing the exception type,
+    message, or the retry decision.
+    """
+    code = getattr(error.orig, "sqlite_errorcode", None)
+    name = _SQLITE_ERROR_NAMES.get(code) if isinstance(code, int) else None
+    if name is not None:
+        error.add_note(f"sqlite result code {code} ({name})")
+
+
 class AttackAnalyticsReader:
     """
     Read metadata without hydrating AttackResult object graphs or caching reports.
@@ -444,6 +466,7 @@ class AttackAnalyticsReader:
                 return result
             except OperationalError as error:
                 if getattr(error.orig, "sqlite_errorcode", None) != sqlite3.SQLITE_BUSY:
+                    _note_sqlite_error(error)
                     raise
                 control.check()
                 await asyncio.sleep(min(cls.SQLITE_BUSY_RETRY_DELAY, control.remaining))
@@ -584,6 +607,7 @@ class AttackAnalyticsReader:
             except OperationalError as error:
                 if control.expired:
                     raise AnalyticsTimeoutException from error
+                _note_sqlite_error(error)
                 raise
             finally:
                 event.remove(sync_connection, "before_execute", before_statement)

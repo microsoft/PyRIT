@@ -1217,6 +1217,47 @@ async def test_odbc_timeout_is_applied_before_each_cursor_is_created() -> None:
         await engine.dispose()
 
 
+class _SqliteCodeOrigin(Exception):
+    """Minimal error.orig stand-in carrying a numeric sqlite result code."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(f"sqlite result code {code}")
+        self.sqlite_errorcode = code
+
+
+async def test_non_busy_sqlite_error_is_re_raised_with_its_result_code_name() -> None:
+    async def operation():
+        raise OperationalError("SELECT", {}, _SqliteCodeOrigin(sqlite3.SQLITE_BUSY_SNAPSHOT))
+
+    with pytest.raises(OperationalError) as exc_info:
+        await AttackAnalyticsReader._retry_sqlite_busy_async(operation=operation, control=control())
+    notes = "".join(getattr(exc_info.value, "__notes__", []))
+    assert "sqlite result code 517 (SQLITE_BUSY_SNAPSHOT)" in notes
+
+
+async def test_non_sqlite_operational_error_is_re_raised_without_a_sqlite_note() -> None:
+    async def operation():
+        raise OperationalError("SELECT", {}, RuntimeError("driver closed"))
+
+    with pytest.raises(OperationalError, match="driver closed") as exc_info:
+        await AttackAnalyticsReader._retry_sqlite_busy_async(operation=operation, control=control())
+    assert not [n for n in getattr(exc_info.value, "__notes__", []) if "sqlite result code" in n]
+
+
+async def test_plain_busy_still_retries_to_success() -> None:
+    calls = {"count": 0}
+
+    async def operation():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise OperationalError("SELECT", {}, _SqliteCodeOrigin(sqlite3.SQLITE_BUSY))
+        return "ok"
+
+    result = await AttackAnalyticsReader._retry_sqlite_busy_async(operation=operation, control=control())
+    assert result == "ok"
+    assert calls["count"] == 2
+
+
 async def test_invalidated_sqlite_connection_preserves_the_original_error(sqlite_instance: SQLiteMemory) -> None:
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     with pytest.raises(OperationalError, match="lost connection"):
