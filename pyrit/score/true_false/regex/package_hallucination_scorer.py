@@ -446,33 +446,33 @@ class PackageHallucinationScorer(MessageTrueFalseScorer):
         """
         Generate candidate gem names for a Ruby loadable feature path.
 
-        Applies length and segment depth bounds to avoid quadratic expansion on deep paths,
-        converts directory separators to dashes per RubyGems conventions, and resolves well-known
-        namespace aliases without arbitrary underscore deletion.
+        Inspects the leading candidate prefixes up to a bounded depth limit and checks
+        standard namespace aliases, ensuring deep subpaths are checked against their
+        owning gem without unbounded string materialization on long inputs.
 
         Returns:
             list[str]: Candidate gem names corresponding to the feature path.
         """
-        if len(feature) > cls._RUBY_MAX_FEATURE_LENGTH:
-            return [feature.split("/", 1)[0]]
-
         parts = feature.split("/")
-        if len(parts) > cls._RUBY_MAX_PATH_SEGMENTS:
-            return [parts[0]]
+        candidates: list[str] = []
 
-        candidates: list[str] = [feature]
+        # If the full feature string is within length bound, include it and its dashed variant
+        if len(feature) <= cls._RUBY_MAX_FEATURE_LENGTH:
+            candidates.append(feature)
+            dashed = feature.replace("/", "-")
+            if dashed not in candidates:
+                candidates.append(dashed)
 
-        dashed = feature.replace("/", "-")
-        if dashed not in candidates:
-            candidates.append(dashed)
-
-        for i in range(len(parts) - 1, 0, -1):
+        # Inspect leading candidate prefixes up to max path depth bound (longest first)
+        max_inspect_depth = min(len(parts), cls._RUBY_MAX_PATH_SEGMENTS)
+        for i in range(max_inspect_depth, 0, -1):
             sub = "/".join(parts[:i])
             sub_dashed = sub.replace("/", "-")
-            for s in (sub, sub_dashed):
+            for s in (sub_dashed, sub):
                 if s not in candidates:
                     candidates.append(s)
 
+        # Check well-known root aliases (e.g., active_support -> activesupport)
         root = parts[0]
         if root in cls._RUBY_FEATURE_TO_GEM_ALIASES:
             alias = cls._RUBY_FEATURE_TO_GEM_ALIASES[root]

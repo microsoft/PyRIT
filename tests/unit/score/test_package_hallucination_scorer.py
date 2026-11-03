@@ -575,6 +575,15 @@ class TestPackageHallucinationScorerScoring:
         assert score.get_value() is True
         assert score.score_metadata["hallucinated_packages"] == "j_s_o_n, review_ghost"
 
+    async def test_ruby_scores_deep_subpath_owning_gem_correctly_async(self):
+        """Deep subpaths with 6+ segments resolve to their owning gem if registered."""
+        code = "require 'google/cloud/spanner/v1/spanner/client'\n"
+        scorer = PackageHallucinationScorer(known_packages={"google-cloud-spanner-v1"}, ecosystem=PackageEcosystem.RUBY)
+        message = _assistant_piece(code).to_message()
+        score = (await scorer.score_message_async(message=message))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
     async def test_default_category(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
         score = (await scorer._score_piece_async(_assistant_piece("import fakepkg\n")))[0]
