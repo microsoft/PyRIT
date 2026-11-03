@@ -10,6 +10,7 @@ import pytest
 from scipy.io import wavfile
 
 from pyrit.converter.audio_speed_converter import AudioSpeedConverter
+from pyrit.memory import SQLiteMemory
 from pyrit.registry import ConverterRegistry
 
 
@@ -168,7 +169,7 @@ def test_speed_identifier_is_stable_for_equal_settings() -> None:
     )
 
 
-async def test_speed_up_shifts_pitch_by_speed_factor(sqlite_instance):
+async def test_speed_up_shifts_pitch_by_speed_factor_async(sqlite_instance: SQLiteMemory) -> None:
     """Resampling shifts pitch with speed, as the docstring now says: 2x turns a 440 Hz tone into about 880 Hz."""
     sample_rate = 16000
     t = np.arange(sample_rate) / sample_rate
@@ -191,7 +192,7 @@ async def test_speed_up_shifts_pitch_by_speed_factor(sqlite_instance):
         os.remove(result.output_text)
 
 
-async def test_speed_factor_too_large_for_input_raises(sqlite_instance):
+async def test_speed_factor_too_large_for_input_raises_async(sqlite_instance: SQLiteMemory) -> None:
     """A speed factor that would leave zero samples should raise instead of writing empty audio."""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav_file:
         original_wav_path = temp_wav_file.name
