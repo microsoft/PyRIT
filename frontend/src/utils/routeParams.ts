@@ -36,18 +36,12 @@ export function attackRoutePath(
   scenarioResultId?: string | null,
 ): string {
   return appendScenarioRunProvenance(
-    `/attacks/${encodeURIComponent(attackResultId)}`,
+    `/attack/chat/${encodeURIComponent(attackResultId)}`,
     scenarioResultId,
   )
 }
 
-/**
- * Builds an attack-conversation route with optional bounded scenario-run provenance.
- *
- * Exported findings documents link to this route (`_conversation_link` in
- * `pyrit/backend/services/finding_export.py`), so keep its old shape working if it changes. Both
- * builders are tested against `attackConversationRoute.cases.json`.
- */
+/** Builds an attack-conversation route with optional bounded scenario-run provenance. */
 export function attackConversationRoutePath(
   attackResultId: string,
   conversationId: string,
@@ -55,7 +49,7 @@ export function attackConversationRoutePath(
   findingEvidenceId?: string | null,
 ): string {
   const path = appendScenarioRunProvenance(
-    `/attacks/${encodeURIComponent(attackResultId)}/conversations/${encodeURIComponent(conversationId)}`,
+    `/attack/chat/${encodeURIComponent(attackResultId)}/conversations/${encodeURIComponent(conversationId)}`,
     scenarioResultId,
   )
   if (!findingEvidenceId || !UUID_PATTERN.test(findingEvidenceId)) return path
@@ -64,7 +58,7 @@ export function attackConversationRoutePath(
 
 /** Builds the route for one scenario run. Callers must pass a trusted persisted ID. */
 export function scenarioRunRoutePath(scenarioResultId: string): string {
-  return `/scanner-history/${encodeURIComponent(scenarioResultId)}`
+  return `/scanner/history/${encodeURIComponent(scenarioResultId)}`
 }
 
 /** Builds the route for one attack result within a scenario run. */
@@ -160,5 +154,5 @@ export function isDatasetsPath(pathOrUrl: string): boolean {
 export function isChatPath(pathOrUrl: string): boolean {
   if (!pathOrUrl) return false
   const cleanPath = pathOrUrl.split('?')[0].split('#')[0]
-  return cleanPath === '/chat' || cleanPath.startsWith('/attacks/')
+  return cleanPath === '/attack/chat' || cleanPath.startsWith('/attack/chat/')
 }
