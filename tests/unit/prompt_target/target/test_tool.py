@@ -452,6 +452,24 @@ async def test_mismatched_arguments_reach_model_as_tool_error(*, arguments: str,
     assert executed == []
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("strict", [False, True])
+async def test_value_error_raised_by_tool_function_propagates(*, strict: bool) -> None:
+    async def lookup_async(*, key: str) -> str:
+        raise ValueError(f"no entry for {key}")
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://example.invalid",
+        api_key="not-a-key",
+        tools=[FunctionTool(function=lookup_async)],
+        fail_on_missing_function=strict,
+    )
+
+    with pytest.raises(ValueError, match="no entry for missing"):
+        await target._execute_call_section_async({"name": "lookup_async", "arguments": '{"key": "missing"}'})
+
+
 async def test_collect_tools_async_preserves_direct_and_provider_order() -> None:
     async def subtract(*, x: int, y: int) -> int:  # pyrit-async-suffix-exempt
         return x - y
