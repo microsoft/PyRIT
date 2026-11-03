@@ -28,11 +28,12 @@ jest.mock('@/components/Layout/MainLayout', () => {
   const { Link } = jest.requireActual<typeof import('react-router')>('react-router')
   return {
     __esModule: true,
-    default: ({ children }: { children: ReactNode }) => (
+    default: ({ children, featureNavigation }: { children: ReactNode; featureNavigation?: ReactNode }) => (
       <>
-        <Link to="/chat">Open new chat</Link>
-        <Link to="/attacks/saved-attack">Open saved chat</Link>
+        <Link to="/attack/chat">Open new chat</Link>
+        <Link to="/attack/chat/saved-attack">Open saved chat</Link>
         <Link to="/registry/targets">Open registry</Link>
+        {featureNavigation}
         {children}
       </>
     ),
@@ -98,7 +99,7 @@ const savedMessages: ConversationMessagesResponse = {
 function TestWrapper({ children }: { children: ReactNode }) {
   return (
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={['/chat']}>{children}</MemoryRouter>
+      <MemoryRouter initialEntries={['/attack/chat']}>{children}</MemoryRouter>
     </FluentProvider>
   )
 }
@@ -227,6 +228,9 @@ describe('App target selection with the chat composer', () => {
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Prompt for A')
     await user.click(screen.getByRole('link', { name: 'Open registry' }))
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
+    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a')
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Prompt for A')
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
@@ -238,7 +242,7 @@ describe('App target selection with the chat composer', () => {
     await user.click(screen.getByRole('link', { name: 'Open saved chat' }))
     await screen.findByText('Saved reply from target B')
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Do not carry this into A')
-    await user.click(screen.getByRole('button', { name: 'New Attack' }))
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
@@ -252,6 +256,7 @@ describe('App target selection with the chat composer', () => {
     const objective = await screen.findByRole('combobox', { name: 'Default objective target' })
     await user.selectOptions(objective, 'target-a')
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
     expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled()
     expect(screen.queryByText('Targets unavailable')).not.toBeInTheDocument()

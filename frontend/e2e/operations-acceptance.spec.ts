@@ -41,7 +41,7 @@ async function ensureCatalogTargets(request: APIRequestContext): Promise<void> {
 }
 
 async function sendChat(page: Page, request: APIRequestContext, text: string): Promise<AttackSummary> {
-  await page.goto('/chat')
+  await page.goto('/attack/chat')
   await page.getByRole('combobox', { name: 'Chat target', exact: true }).selectOption('browser_offline')
   await page.getByRole('textbox', { name: 'Type prompt here', exact: true }).fill(text)
   const created = page.waitForResponse(response =>
@@ -62,7 +62,7 @@ for (const width of [1280, 390]) {
     const before = await (await request.get('/api/operations')).json()
     const version = await (await request.get('/api/version')).json()
     expect(version.default_operation).toBe(PROPOSED_NAME)
-    await page.goto('/chat')
+    await page.goto('/attack/chat')
     await waitForAppReady(page)
     const bar = page.getByRole('region', { name: 'Default Labels' })
     await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveValue(PROPOSED_NAME)
@@ -96,7 +96,7 @@ for (const width of [1280, 390]) {
     const directory = await (await request.get('/api/operations')).json()
     const existing: Operation | undefined = directory.items.find((item: Operation) => item.name === PROPOSED_NAME)
     const operation = existing ?? await createOperation(request, PROPOSED_NAME)
-    await page.goto('/chat')
+    await page.goto('/attack/chat')
     await waitForAppReady(page)
     const bar = page.getByRole('region', { name: 'Default Labels' })
     await expect(bar.getByRole('combobox', { name: 'Operation', exact: true })).toHaveAccessibleDescription('Not registered')
@@ -139,7 +139,7 @@ for (const width of [1280, 390]) {
       }
       localStorage.setItem('pyrit.userPreferences.v1.local', JSON.stringify(preferences))
     }, newName)
-    await page.goto('/chat')
+    await page.goto('/attack/chat')
     await waitForAppReady(page)
     const bar = page.getByRole('region', { name: 'Default Labels' })
     const dialog = page.getByRole('dialog')
@@ -175,7 +175,7 @@ test('persists selected IDs for chat and scanner history, and clear survives rel
   expect(chat.operation_id).toBe(operation.id)
 
   await ensureCatalogTargets(request)
-  await page.goto('/scanner/browser_offline')
+  await page.goto('/scanner/launch/browser_offline')
   await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption('browser_offline')
   await page.getByTestId('launch-scenario-btn').click()
   const started = page.waitForResponse(response =>
@@ -197,10 +197,11 @@ test('persists selected IDs for chat and scanner history, and clear survives rel
   expect(scopedAttacks.items.every((item: AttackSummary) => item.operation_id === operation.id)).toBeTruthy()
 
   await page.goto(`/operations/${operation.id}`)
-  await page.getByRole('link', { name: 'All execution history', exact: true }).click()
+  await page.getByRole('link', { name: 'Attack history', exact: true }).click()
   expect(new URL(page.url()).searchParams.getAll('operation_id')).toEqual([operation.id])
   await expect(page.getByTestId(`attack-row-${chat.attack_result_id}`)).toBeVisible()
-  await page.getByRole('tab', { name: 'Scanner', exact: true }).click()
+  await page.goto(`/operations/${operation.id}`)
+  await page.getByRole('link', { name: 'Scanner history', exact: true }).click()
   expect(new URL(page.url()).searchParams.getAll('operation_id')).toEqual([operation.id])
   await expect(page.getByTestId(`scenario-history-row-${run.scenario_result_id}`)).toBeVisible()
 
@@ -232,7 +233,7 @@ test('links cross-Operation and unassigned evidence without rewriting source att
     })
     expect(response.status()).toBe(201)
     const source: AttackSummary = await response.json()
-    await page.goto(`/attacks/${source.attack_result_id}/conversations/${source.conversation_id}`)
+    await page.goto(`/attack/chat/${source.attack_result_id}/conversations/${source.conversation_id}`)
     await page.getByTestId('objective-outcome-button').click()
     await page.getByRole('button', { name: 'Add as finding' }).click()
     const dialog = page.getByRole('dialog')
@@ -269,7 +270,7 @@ test('keeps legacy name-only activity in paginated general history, outside ID-s
     })
     expect(newer.status()).toBe(201)
   }
-  await page.goto('/history/attacks')
+  await page.goto('/attack/history')
   await expect(page.getByRole('table')).toBeVisible()
   const legacyRow = page.getByTestId(`attack-row-${LEGACY_ATTACK_ID}`)
   const next = page.getByRole('button', { name: 'Next', exact: true })
@@ -285,7 +286,7 @@ test('keeps legacy name-only activity in paginated general history, outside ID-s
     await expect(page.getByRole('progressbar', { name: 'Loading attacks...' })).toHaveCount(0)
   }
   await expect(legacyRow).toBeVisible()
-  await page.goto(`/history/attacks?operation_id=${operation.id}`)
+  await page.goto(`/attack/history?operation_id=${operation.id}`)
   await expect(page.getByRole('combobox', { name: 'All operations' })).toHaveValue(PROPOSED_NAME)
   await expect(page.getByRole('progressbar', { name: 'Loading attacks...' })).toHaveCount(0)
   await expect(page.getByTestId(`attack-row-${LEGACY_ATTACK_ID}`)).toHaveCount(0)
