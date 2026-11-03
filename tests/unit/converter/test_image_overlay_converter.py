@@ -189,6 +189,34 @@ def test_composite_images_preserves_rgba_overlay_alpha():
     assert 100 < r < 200
 
 
+def test_composite_images_translucent_overlay_uses_source_over_pixels():
+    converter = ImageOverlayConverter(base_image="base.png", opacity=1.0)
+    base = Image.new("RGBA", (10, 10), color=(0, 0, 0, 255))
+    overlay = Image.new("RGBA", (4, 4), color=(255, 255, 255, 128))
+
+    result = converter._composite_images(base=base, overlay=overlay)
+
+    # Source-over of 50% white on opaque black: color ~128, alpha stays opaque.
+    r, g, b, a = result.getpixel((1, 1))
+    assert abs(r - 128) <= 1
+    assert abs(g - 128) <= 1
+    assert abs(b - 128) <= 1
+    assert a == 255
+    # Pixels outside the overlay are untouched.
+    assert result.getpixel((8, 8)) == (0, 0, 0, 255)
+
+
+def test_composite_images_partially_outside_base_is_clipped():
+    converter = ImageOverlayConverter(base_image="base.png", position=(-2, -2))
+    base = Image.new("RGBA", (10, 10), color=(0, 0, 0, 255))
+    overlay = Image.new("RGBA", (4, 4), color=(255, 0, 0, 255))
+
+    result = converter._composite_images(base=base, overlay=overlay)
+
+    assert result.getpixel((1, 1)) == (255, 0, 0, 255)
+    assert result.getpixel((3, 3)) == (0, 0, 0, 255)
+
+
 def test_composite_images_warns_when_overlay_out_of_bounds(caplog):
     import logging
 
