@@ -5069,15 +5069,16 @@ class MemoryInterface(abc.ABC):
                     stored_standalone_pairs.add((seed.value_sha256, dataset, standalone_key))
                 else:
                     stored_standalone_hashes.add((seed.value_sha256, standalone_key))
-        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in retained_group_ids]
+        # Any incoming seed may be a copy of a stored row, not only retained group members, so look
+        # up every seed ID before inserting. A copy keeps its caller-visible ID, but it must not
+        # reuse the stored primary key when its execution identity changed.
+        seed_ids = [seed.id for seed in seeds if seed.id is not None]
         stored_groups = (
             {
                 entry.id: entry.prompt_group_id
-                for entry in self._execute_batched_query(
-                    SeedEntry, batch_column=SeedEntry.id, batch_values=retained_seed_ids
-                )
+                for entry in self._execute_batched_query(SeedEntry, batch_column=SeedEntry.id, batch_values=seed_ids)
             }
-            if retained_seed_ids
+            if seed_ids
             else {}
         )
 
@@ -5109,7 +5110,11 @@ class MemoryInterface(abc.ABC):
                     continue
             elif (prompt.value_sha256, standalone_key) in stored_standalone_hashes:
                 continue
-            entries.append(SeedEntry(entry=prompt))
+            entry = SeedEntry(entry=prompt)
+            if prompt.id in stored_groups:
+                entry.id = uuid.uuid4()
+                copied_seed_ids.append((prompt, entry.id))
+            entries.append(entry)
 
         self._insert_entries(entries=entries)
         for prompt, new_id in copied_seed_ids:

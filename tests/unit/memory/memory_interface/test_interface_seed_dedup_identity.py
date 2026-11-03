@@ -6,6 +6,8 @@
 import json
 from typing import Any
 
+import pytest
+
 from pyrit.memory import MemoryInterface
 from pyrit.models import Seed, SeedGroup, SeedObjective, SeedPrompt
 
@@ -112,3 +114,41 @@ async def test_add_standalone_seeds_keep_distinct_schemas_and_roles(sqlite_insta
         await _add(sqlite_instance, SeedPrompt(value="v", dataset_name=DATASET, data_type="text", **extra))
 
     assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == 3
+
+
+async def test_copying_stored_seed_into_singleton_group_gets_new_id(sqlite_instance: MemoryInterface) -> None:
+    """A stored seed copied into a new singleton group with a different schema must not reuse its ID."""
+    await _add(sqlite_instance, SeedPrompt(value="copied value", dataset_name=DATASET, data_type="text"))
+    stored = (await sqlite_instance.get_seeds_async(dataset_name=DATASET))[0]
+    original_id = stored.id
+
+    # The new schema is execution-distinct, so the copy must be inserted as a new row; reusing the
+    # stored seed ID would violate the primary key and roll back the whole batch.
+    stored.response_json_schema = SCHEMA_ALPHA
+    await _add(sqlite_instance, *SeedGroup(seeds=[stored]).seeds)
+
+    rows = await sqlite_instance.get_seeds_async(dataset_name=DATASET)
+    assert len(rows) == 2
+    assert {seed.id for seed in rows} == {original_id, stored.id}
+    assert stored.id != original_id
+
+
+@pytest.mark.parametrize("standalone_first", [True, False])
+async def test_dedup_is_order_independent_across_shapes(
+    sqlite_instance: MemoryInterface, standalone_first: bool
+) -> None:
+    """A metadata-only edit dedupes the same whether the standalone or singleton seed arrives first."""
+
+    def prompt(harm: str) -> SeedPrompt:
+        return SeedPrompt(value="order value", dataset_name=DATASET, data_type="text", harm_categories=[harm])
+
+    standalone = prompt("a")
+    grouped = SeedGroup(seeds=[prompt("b")]).seeds
+    if standalone_first:
+        await _add(sqlite_instance, standalone)
+        await _add(sqlite_instance, *grouped)
+    else:
+        await _add(sqlite_instance, *grouped)
+        await _add(sqlite_instance, standalone)
+
+    assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == 1
