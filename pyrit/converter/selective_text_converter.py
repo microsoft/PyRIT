@@ -297,6 +297,9 @@ class SelectiveTextConverter(Converter):
 
         Returns:
             ConverterResult: The result containing the converted output and its type.
+
+        Raises:
+            ValueError: If the sub-converter does not return text output.
         """
         words = prompt.split(self._word_separator)
 
@@ -333,6 +336,9 @@ class SelectiveTextConverter(Converter):
 
         Returns:
             ConverterResult: The result containing the converted output and its type.
+
+        Raises:
+            ValueError: If the sub-converter does not return text output.
         """
         start_idx, end_idx = self._selection_strategy.select_range(text=prompt)
 
