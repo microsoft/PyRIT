@@ -4,7 +4,7 @@
 
 from pyrit.common.text_matching import ExactTextMatching, TextMatching
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_score_aggregator import (
     TrueFalseAggregatorFunc,
@@ -68,19 +68,21 @@ class DecodingScorer(MessageTrueFalseScorer):
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score the given request piece based on text matching strategy.
 
         Args:
             message_piece (MessagePiece): The message piece to score.
-            objective (str | None): The objective to evaluate against. Defaults to None.
-                Currently not used for this scorer.
+            expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
 
         Returns:
             list[Score]: A list containing a single Score object with a boolean value indicating
                 whether any of the user piece values match the response.
         """
+        objective = expectation.objective if expectation else None
         memory = CentralMemory.get_memory_instance()
         user_request = await memory.get_request_from_response_async(response=message_piece.to_message())
 

@@ -29,6 +29,8 @@ import ScenarioHistory from './components/History/ScenarioHistory'
 import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
 import ScenarioDetail from './components/Scenarios/ScenarioDetail'
 import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
+import ScenarioConversationPage from './components/Scenarios/ScenarioConversationPage'
+import ScenarioQueuePage from './components/Scenarios/ScenarioQueuePage'
 import ScenarioPresetEditor from './components/ScenarioPresets/ScenarioPresetEditor'
 import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
 import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor'
@@ -44,6 +46,7 @@ import { useAuthConfig } from './auth/AuthConfigContext'
 import { useTargetPreferences } from './hooks/useTargetPreferences'
 import { useTargetRegistry } from './hooks/useTargetRegistry'
 import { useOperationSelection } from './hooks/useOperationSelection'
+import { useScenarioLaunchSeed } from './hooks/useScenarioLaunchSeed'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
 import { filtersFromSearchParams, filtersToSearchParams } from './components/History/historyFilters'
@@ -54,7 +57,7 @@ import {
 import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type {
-  AttackOutcome, AttackSummary, BackendScore, Operation, TargetInfo, TargetInstance, TargetPreferences, TargetReference,
+  AttackOutcome, AttackSummary, BackendScore, Operation, TargetInfo, TargetInstance, TargetReference,
   UserPreferences,
 } from './types'
 import {
@@ -68,6 +71,7 @@ import {
 import { attacksApi, authApi, versionApi } from './services/api'
 import { toApiError } from './services/errors'
 import { generateClientId } from './utils/clientId'
+import { resolveChatScorerReference } from '@/utils/scorerPresentation'
 import { getOperationWarning } from '@/utils/operationWarnings'
 import { useTour } from './hooks/useTour'
 import { ChatDraftProvider, useChatDraftHandoff } from './hooks/useChatDraftHandoff'
@@ -216,6 +220,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const registry = useTargetRegistry()
   const scorerRegistry = useScorerRegistry()
   const { preferences, updatePreferences, error: preferenceError } = useUserPreferences()
+  const defaultChatScorer = preferences.chatScorer !== undefined ? preferences.chatScorer
+    : resolveChatScorerReference(preferences.lastUsedChatScorer, scorerRegistry.scorers)
+  const scorerDefaultsReady = preferences.chatScorer !== undefined
+    || preferences.lastUsedChatScorer == null || !scorerRegistry.loading
   const targetDefaults = useTargetPreferences(registry.targets)
   const draftHandoff = useChatDraftHandoff()
   const { clearPreservedDraft, dismissPendingImport } = draftHandoff
@@ -223,14 +231,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     pathname: string
     key: number
     target: TargetReference | null
-  }>({ pathname: location.pathname, key: 0, target: targetDefaults.preferences.objective })
+  }>({ pathname: location.pathname, key: 0, target: targetDefaults.objectiveReference })
   if (draftSession.pathname !== location.pathname) {
     const isReturningToUnsavedChatWithPreservedDraft =
       location.pathname === VIEW_PATHS.chat &&
       draftHandoff.preservedDraft?.originatingAttackId === null
     const nextTarget = isReturningToUnsavedChatWithPreservedDraft && draftHandoff.preservedDraft?.draft.target !== undefined
       ? draftHandoff.preservedDraft.draft.target
-      : targetDefaults.preferences.objective
+      : targetDefaults.objectiveReference
     setDraftSession({
       pathname: location.pathname,
       key: draftSession.key + (location.pathname === VIEW_PATHS.chat && !isReturningToUnsavedChatWithPreservedDraft ? 1 : 0),
@@ -239,7 +247,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   }
   const draftTarget = !registry.loading && !registry.error && draftSession.target
     ? resolveTargetReference(draftSession.target, registry.targets) : null
-  const setDefaultTarget = (role: keyof TargetPreferences, target: TargetInstance | null): void => {
+  const setDefaultTarget = (role: 'adversarial', target: TargetInstance | null): void => {
     if (target) registry.rememberTarget(target)
     targetDefaults.setDefault(role, target)
   }
@@ -286,22 +294,41 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     }).filter((entry): entry is [string, string] => entry[1] !== null),
   ), [defaultLabels, preferences.labels, operatorAlias])
 
-  const operationSelection = preferences.operation !== undefined ? preferences.operation
+  const rerunValues = matchPath('/scanner/launch/:scenarioName', location.pathname)
+    ? new URLSearchParams(location.search).getAll('rerun') : []
+  const rerunId = rerunValues.length ? rerunValues.length === 1 ? rerunValues[0] : '' : null
+  const rerun = useScenarioLaunchSeed(rerunId, generation, ready)
+  const { updateAttribution: updateRerunAttribution } = rerun
+  const launchLabels = useMemo<Record<string, string>>(() => rerun.active
+    ? { ...(rerun.request?.labels ?? {}), ...(operatorAlias ? { operator: operatorAlias } : {}) }
+    : globalLabels, [rerun.active, rerun.request?.labels, operatorAlias, globalLabels])
+  const operationSelection = rerun.active
+    ? rerun.request?.operation_id ? { id: rerun.request.operation_id } : null
+    : preferences.operation !== undefined ? preferences.operation
     : defaultsCurrent && serverDefaults?.operation ? { name: serverDefaults.operation } : null
   const operation = useOperationSelection(operationSelection, generation)
   const operationReady = operation.state.status === 'empty' || operation.state.status === 'resolved'
   const operationId = operation.state.status === 'resolved' ? operation.state.operation.id : null
-  const newActivityReady = defaultsReady && operationReady
+  const newActivityReady = defaultsReady && operationReady && !registry.loading && !registry.error
+    && (!rerun.active || Boolean(rerun.request))
   const operationBlockedReason = defaultsReady && !operationReady && operation.state.status !== 'loading'
     ? getOperationWarning(operation.state)
     : undefined
   const { remember: rememberOperation } = operation
   const handleOperationChange = useCallback((selected: Operation | null) => {
     if (selected) rememberOperation(selected)
+    if (rerun.active) {
+      updateRerunAttribution({ operation_id: selected?.id ?? null })
+      return
+    }
     updatePreferences((current: UserPreferences) => ({ ...current, operation: selected ? { id: selected.id } : null }))
-  }, [rememberOperation, updatePreferences])
+  }, [rememberOperation, rerun.active, updateRerunAttribution, updatePreferences])
 
   const handleGlobalLabelsChange = useCallback((labels: Record<string, string>) => {
+    if (rerun.active) {
+      updateRerunAttribution({ labels })
+      return
+    }
     const changedKeys = Object.keys({ ...globalLabels, ...labels })
       .filter((key: string) => !(operatorAlias && key === 'operator') && labels[key] !== globalLabels[key])
     updatePreferences((current: UserPreferences) => {
@@ -315,7 +342,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       }
       return { ...current, labels: overrides }
     })
-  }, [defaultLabels, globalLabels, operatorAlias, updatePreferences])
+  }, [defaultLabels, globalLabels, operatorAlias, rerun.active, updateRerunAttribution, updatePreferences])
 
   // History filters live in the URL query string so they are shareable and
   // survive refresh. The breadcrumb ref remembers the last /history query so
@@ -620,9 +647,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     setDraftSession((current) => ({
       ...current,
       key: current.key + 1,
-      target: targetDefaults.preferences.objective,
+      target: targetDefaults.objectiveReference,
     }))
-  }, [location, clearPreservedDraft, dismissPendingImport, targetDefaults.preferences.objective])
+  }, [location, clearPreservedDraft, dismissPendingImport, targetDefaults.objectiveReference])
 
   const handleConversationCreated = useCallback((
     arId: string,
@@ -765,6 +792,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       labels={globalLabels}
       operationId={operationId}
       defaultsReady={newActivityReady}
+      scorerDefaultsReady={scorerDefaultsReady}
       newActivityBlockedReason={operationBlockedReason}
       onNavigate={handleNavigate}
       attackOperator={readyAttack ? readyAttack.operator : null}
@@ -781,7 +809,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       chatScorerInherited={readyAttack?.chatScorerInherited}
       executionReadOnly={readyAttack?.executionReadOnly}
       manualContinuation={readyAttack?.manualContinuation}
-      defaultChatScorer={preferences.chatScorer ?? null}
+      defaultChatScorer={defaultChatScorer}
       availableScorers={scorerRegistry.scorers}
       scorersLoading={scorerRegistry.loading}
       scorersError={scorerRegistry.error}
@@ -790,7 +818,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       onReturnToScan={() => {
         if (scenarioResultId) {
           navigate(scenarioRunRoutePath(scenarioResultId), {
-            state: location.state ?? { fromScenarioHistory: true, scenarioHistorySearch: lastScenarioHistorySearch.current },
+            state: location.state ?? {
+              fromScenarioHistory: true, scenarioHistorySearch: lastScenarioHistorySearch.current,
+            },
           })
         }
       }}
@@ -820,7 +850,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
             onOpenFeedback={() => setFeedbackOpen(true)}
             canManageConfiguration={canManageConfiguration}
             onStartTour={startTour}
-            labels={globalLabels}
+            labels={launchLabels}
+            labelsBusy={rerun.active && !rerun.request}
             onLabelsChange={handleGlobalLabelsChange}
             operation={operation.state}
             onOperationChange={handleOperationChange}
@@ -863,21 +894,16 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 <MessageBarBody>{preferenceError}</MessageBarBody>
               </MessageBar>
             )}
-            {!registry.loading && !registry.error && (
-              (['objective', 'adversarial'] as const).map((role) => (
-                targetDefaults.preferences[role]
-                && !(role === 'objective' ? targetDefaults.objectiveTarget : targetDefaults.adversarialTarget)
-                ? (
-                  <MessageBar key={role} intent="warning">
-                    <MessageBarBody>
-                      The saved default {role} target is unavailable or has changed. Select a new default in the registry.
-                      <Button appearance="subtle" onClick={() => setDefaultTarget(role, null)}>
-                        Clear {role} default
-                      </Button>
-                    </MessageBarBody>
-                  </MessageBar>
-                ) : null
-              ))
+            {!registry.loading && !registry.error && targetDefaults.preferences.adversarial
+              && !targetDefaults.adversarialTarget && (
+              <MessageBar intent="warning">
+                <MessageBarBody>
+                  The saved default adversarial target is unavailable or has changed. Select a new default in the registry.
+                  <Button appearance="subtle" onClick={() => setDefaultTarget('adversarial', null)}>
+                    Clear adversarial default
+                  </Button>
+                </MessageBarBody>
+              </MessageBar>
             )}
             <Routes>
               <Route
@@ -914,9 +940,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   path="targets"
                   element={
                     <TargetConfig
-                      defaultObjectiveTarget={targetDefaults.objectiveTarget}
                       defaultAdversarialTarget={targetDefaults.adversarialTarget}
-                      onSetDefaultObjectiveTarget={(target: TargetInstance | null) => setDefaultTarget('objective', target)}
                       onSetDefaultAdversarialTarget={(target: TargetInstance | null) => setDefaultTarget('adversarial', target)}
                       onTargetsLoaded={registry.synchronizeTargets}
                     />
@@ -940,7 +964,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                   <ScenarioCatalog
                     targets={registry.targets}
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
-                    defaultAdversarialTarget={targetDefaults.adversarialTarget}
+                    defaultAdversarialTarget={targetDefaults.scanAdversarialTarget}
                     labels={globalLabels}
                     operationId={operationId}
                     defaultsReady={newActivityReady}
@@ -963,20 +987,26 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                         <Button onClick={registry.refresh}>Retry targets</Button>
                       </MessageBarBody>
                     </MessageBar>
-                  ) : <ScenarioDetail
+                  ) : rerun.error ? <MessageBar intent="error"><MessageBarBody>
+                    {rerun.error} <Button onClick={rerun.retry}>Retry saved configuration</Button>
+                  </MessageBarBody></MessageBar> : rerun.loading ? <Spinner label="Loading saved configuration..." /> : <ScenarioDetail
                     scorers={scorerRegistry.scorers}
                     scorersLoading={scorerRegistry.loading}
                     scorersError={scorerRegistry.error}
                     targets={registry.targets}
                     defaultObjectiveTarget={targetDefaults.objectiveTarget}
-                    defaultAdversarialTarget={targetDefaults.adversarialTarget}
-                    labels={globalLabels}
+                    defaultAdversarialTarget={targetDefaults.scanAdversarialTarget}
+                    labels={launchLabels}
+                    initialRun={rerun.initialRequest}
+                    sourceRunId={rerunId ?? undefined}
                     operationId={operationId}
                     defaultsReady={newActivityReady}
                     onNavigate={handleNavigate}
                   />
                 }
               />
+              <Route path="/scanner/queue" element={<ScenarioQueuePage />} />
+              <Route path="/scanner/history/:scenarioResultId/conversations/:conversationId" element={<ScenarioConversationPage />} />
               <Route path="/scanner/history/:scenarioResultId/:attackResultId" element={<ScenarioRunPage />} />
               <Route path="/scanner/history/:scenarioResultId" element={<ScenarioRunPage />} />
               <Route path="/config" element={<Configuration />} />

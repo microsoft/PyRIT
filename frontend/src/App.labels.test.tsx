@@ -361,7 +361,7 @@ describe('Shared new run labels', () => {
   it('leaves saved scenario attribution unchanged when future launch labels change', async () => {
     const user = userEvent.setup()
     renderApp('/scanner/history/saved_run')
-    const saved = screen.getByRole('region', { name: 'Run configuration' })
+    const saved = screen.getByRole('region', { name: 'Scan summary' })
     await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'future_op')
     expect(saved).toHaveTextContent('original_user')
@@ -419,6 +419,7 @@ describe('Shared new run labels', () => {
     await user.click(panelToggle)
     expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
     await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    expect(await screen.findByRole('button', { name: 'New attack', exact: true })).toBeEnabled()
     expect(await screen.findByRole('combobox', { name: 'Chat target' })).toBeEnabled()
     expect(screen.queryByTestId('operator-locked-banner')).not.toBeInTheDocument()
     expect(within(currentLabels()).getByRole('combobox', { name: 'Operation' })).toHaveValue('future_op')
@@ -543,7 +544,7 @@ describe('Shared new run labels', () => {
       expect(scenariosApi.startRun).toHaveBeenCalledWith(expect.objectContaining({
         labels: DEFAULT_LABELS, operation_id: operationId('config_op_v2'),
       }))
-      const saved = await screen.findByRole('region', { name: 'Run configuration' })
+      const saved = await screen.findByRole('region', { name: 'Scan summary' })
       expect(saved).toHaveTextContent('original_op')
       expect(saved).not.toHaveTextContent('config_op_v2')
     })
