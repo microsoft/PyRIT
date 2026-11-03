@@ -958,6 +958,30 @@ async def test_startup_with_an_unrestorable_entry_is_not_ready_async(runtime: Ru
     assert failure["version"]
 
 
+async def test_status_reports_a_reference_name_that_is_not_valid_text_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(
+        recipes,
+        kind="targets",
+        name="pool",
+        document={
+            "class_module": "pyrit.prompt_target.round_robin_target",
+            "class_name": "RoundRobinTarget",
+            "params": {"targets": ["missing\udcff"]},
+        },
+    )
+
+    await _start_with_recipes_async(runtime, recipes=recipes)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        status = await client.get("/api/config/runtime")
+    assert status.status_code == 200
+    (failure,) = status.json()["restore_failures"]
+    assert (failure["reason"], failure["dependency"]["name"]) == ("missing_dependency", "missing\\udcff")
+
+
 async def test_startup_lists_ignored_files_without_blocking_readiness_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
