@@ -1,4 +1,4 @@
-import { test as base } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 import { mockVersion } from "./_compatibility";
 
 export * from "@playwright/test";
@@ -19,3 +19,10 @@ export const test = base.extend<{ mockStartup: void }>({
     await use();
   }, { auto: true }],
 });
+
+export async function selectChatTarget(page: Page, registryName?: string): Promise<void> {
+  await page.goto("/attack/chat");
+  const picker = page.getByRole("combobox", { name: "Chat target", exact: true });
+  await expect(picker).toBeEnabled();
+  await picker.selectOption(registryName ?? { index: 1 });
+}

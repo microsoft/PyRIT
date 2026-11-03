@@ -5,6 +5,8 @@ import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
+  ApplyChatScorerRequest,
+  ApplyChatScorerResponse,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -68,7 +70,6 @@ import type {
   ScenarioRunProgress,
   ScenarioHierarchyNode,
   ScenarioHierarchyProjection,
-  PairedOutcomeStatistics,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -474,6 +475,9 @@ export const initializersApi = {
 }
 
 export const attacksApi = {
+  applyScorer: async (attackResultId: string, request: ApplyChatScorerRequest): Promise<ApplyChatScorerResponse> => {
+    return (await apiClient.post(`/attacks/${encodeURIComponent(attackResultId)}/apply-scorer`, request)).data
+  },
   saveConversation: async (request: SaveConversationRequest): Promise<AddMessageResponse> => {
     const response = await apiClient.post('/attacks/save-conversation', request)
     return response.data
@@ -704,6 +708,7 @@ export const scenariosApi = {
     run_statuses?: ScenarioRunState[]
     label?: string[]
     operation_id?: string[]
+    reference_id?: string
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,
@@ -725,6 +730,14 @@ export const scenariosApi = {
     )
     return response.data
   },
+
+  getLaunchConfiguration: async (scenarioResultId: string, signal?: AbortSignal): Promise<RunScenarioRequest> =>
+    (await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/launch-configuration`, { signal })).data,
+
+  getRunConversation: async (scenarioResultId: string, conversationId: string): Promise<ConversationMessagesResponse> =>
+    (await apiClient.get(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`,
+    )).data,
 
   /** Loads one page of hierarchy roots. `cursor` continues roots only, never a node's children. */
   getRunHierarchy: async (
@@ -748,18 +761,6 @@ export const scenariosApi = {
   ): Promise<ScenarioHierarchyNode> => {
     const response = await apiClient.get<ScenarioHierarchyNode>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
-      { params, signal },
-    )
-    return response.data
-  },
-
-  getPairedOutcomes: async (
-    scenarioResultId: string,
-    params: { baseline_group_id: string; attack_group_id: string },
-    signal?: AbortSignal,
-  ): Promise<PairedOutcomeStatistics> => {
-    const response = await apiClient.get<PairedOutcomeStatistics>(
-      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
       { params, signal },
     )
     return response.data

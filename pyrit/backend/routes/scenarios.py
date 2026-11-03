@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.analytics import PairedOutcomeStatistics, compute_paired_outcome_statistics
+from pyrit.backend.models.attacks import ConversationMessagesResponse
 from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.models.scenarios import (
@@ -48,6 +49,44 @@ from pyrit.models.catalog import (
 )
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+
+
+@router.get("/runs/{scenario_result_id}/launch-configuration", response_model=RunScenarioRequest)
+async def get_launch_configuration_async(scenario_result_id: IdentifierStr) -> RunScenarioRequest:
+    """
+    Read the saved configuration for a new launch without starting a run.
+
+    Returns:
+        RunScenarioRequest: Saved settings without an original result ID.
+    """
+    try:
+        request = await get_scenario_run_service().get_launch_configuration_async(scenario_result_id)
+    except (ScenarioRunConflictError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if request is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    return request
+
+
+@router.get(
+    "/runs/{scenario_result_id}/conversations/{conversation_id}",
+    response_model=ConversationMessagesResponse,
+)
+async def get_scan_conversation_async(
+    *, scenario_result_id: IdentifierStr, conversation_id: IdentifierStr
+) -> ConversationMessagesResponse:
+    """
+    Read a saved conversation owned by this scan, including an in-flight attempt.
+
+    Returns:
+        ConversationMessagesResponse: Saved messages and the existing conversation score projection.
+    """
+    response = await get_scenario_run_service().get_conversation_async(
+        scenario_result_id=scenario_result_id, conversation_id=conversation_id
+    )
+    if response is None:
+        raise HTTPException(status_code=404, detail="Conversation does not belong to this scan")
+    return response
 
 
 # ============================================================================
@@ -278,6 +317,9 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         max_length=MAX_ITEMS,
         description="Saved Operation IDs; repeated values are OR-matched. Legacy name-only runs never match.",
     ),
+    reference_id: uuid.UUID | None = Query(
+        None, description="Exact conversation, attack, finding, or scenario result ID"
+    ),
     limit: int = Query(100, ge=1, le=100, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Opaque descending history cursor"),
 ) -> ScenarioRunListResponse:
@@ -289,6 +331,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         run_statuses: Run states to match.
         label: Repeated key:value label filters.
         operation_id: Saved Operation IDs to match.
+        reference_id: Exact conversation, attack, finding, or scenario result ID.
         limit: Maximum number of runs to return.
         cursor: Opaque cursor from the previous page.
 
@@ -301,6 +344,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         statuses=run_statuses,
         labels=parse_label_query_params(label),
         operation_ids=operation_id,
+        reference_id=reference_id,
         limit=limit,
         cursor=cursor,
     )
