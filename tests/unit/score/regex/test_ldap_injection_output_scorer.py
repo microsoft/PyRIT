@@ -7,7 +7,9 @@ import pytest
 
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.score import LDAPInjectionOutputScorer
+from pyrit.models import ScorerEvaluationIdentifier
+from pyrit.score import LDAPInjectionOutputScorer, TrueFalseScoreAggregator
+from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 
 
 @pytest.mark.parametrize(
@@ -265,6 +267,50 @@ async def test_ldap_url_custom_patterns_do_not_decode_async(*, copy_defaults: bo
     assert (await scorer.score_text_async(text))[0].get_value() is False
     if not copy_defaults:
         assert (await scorer.score_text_async("LOCAL_MARKER"))[0].get_value() is True
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("aggregator", [TrueFalseScoreAggregator.OR, TrueFalseScoreAggregator.AND])
+async def test_ldap_url_decoding_policy_has_distinct_persisted_identity_async(
+    *, aggregator: TrueFalseAggregatorFunc, sqlite_instance: SQLiteMemory
+) -> None:
+    default_patterns = LDAPInjectionOutputScorer._DEFAULT_PATTERNS
+    assert default_patterns is not None
+    default = LDAPInjectionOutputScorer(score_aggregator=aggregator)
+    copied = LDAPInjectionOutputScorer(patterns=dict(default_patterns), score_aggregator=aggregator)
+    text = "ldap://example.com/???%2a%29%28%75id%3d%2a%29"
+
+    default_score = (await default.score_text_async(text))[0]
+    copied_score = (await copied.score_text_async(text))[0]
+    assert default_score.get_value() is True
+    assert copied_score.get_value() is False
+    default_identifier = default.get_identifier()
+    copied_identifier = copied.get_identifier()
+    assert default_identifier.hash != copied_identifier.hash
+    assert default_identifier.eval_hash != copied_identifier.eval_hash
+    assert default_identifier.params["decode_url_filters"] is True
+    assert copied_identifier.params["decode_url_filters"] is False
+
+    for scorer, repeated, score in (
+        (default, LDAPInjectionOutputScorer(score_aggregator=aggregator), default_score),
+        (
+            copied,
+            LDAPInjectionOutputScorer(patterns=dict(default_patterns), score_aggregator=aggregator),
+            copied_score,
+        ),
+    ):
+        identifier = scorer.get_identifier()
+        assert identifier.hash == repeated.get_identifier().hash
+        assert identifier.eval_hash == repeated.get_identifier().eval_hash
+        assert identifier.eval_hash == ScorerEvaluationIdentifier(identifier).eval_hash
+        assert identifier.params["score_aggregator"] == aggregator.__name__
+        assert "patterns_digest" not in identifier.params
+        stored = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
+        assert len(stored) == 1
+        assert stored[0].get_value() == score.get_value()
+        assert stored[0].scorer_class_identifier == identifier
+        assert stored[0].scorer_class_identifier.hash == identifier.hash
+        assert stored[0].scorer_class_identifier.eval_hash == identifier.eval_hash
 
 
 @pytest.mark.usefixtures("patch_central_database")

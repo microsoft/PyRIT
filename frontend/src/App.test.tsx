@@ -203,7 +203,6 @@ jest.mock("./components/Chat/ChatWindow", () => {
     labels,
     scenarioResultId,
     isLoadingAttack,
-    onNewAttack,
   }: {
     activeTarget: unknown;
     draftContext?: Pick<import("./types").ChatDraftContextState, "originatingAttackId" | "originatingConversationId">;
@@ -220,7 +219,6 @@ jest.mock("./components/Chat/ChatWindow", () => {
     labels: Record<string, string>;
     scenarioResultId?: string | null;
     isLoadingAttack?: boolean;
-    onNewAttack?: () => void;
   }) => {
     const location = useLocation();
     const draftHandoff = useChatDraftHandoff();
@@ -307,9 +305,6 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="route-location" data-navigation-state={JSON.stringify(location.state)}>
           {`${location.pathname}${location.search}`}
         </span>
-        <button onClick={onNewAttack} data-testid="new-attack">
-          New Attack
-        </button>
         <button
           onClick={() => onConversationCreated("ar-123", "conv-123")}
           data-testid="set-conversation"

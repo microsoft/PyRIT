@@ -2,9 +2,6 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } fr
 import type { ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Breadcrumb,
-  BreadcrumbDivider,
-  BreadcrumbItem,
   Button,
   Field,
   Input,
@@ -2303,26 +2300,6 @@ export default function ChatWindow({
         />
       )}
       <div className={styles.chatArea} data-testid="chat-area">
-        {scenarioResultId && (
-          <div className={styles.breadcrumbBar}>
-            <Breadcrumb aria-label="Attack provenance" size="small">
-              <BreadcrumbItem>
-                <Text size={200}>Scanner History</Text>
-              </BreadcrumbItem>
-              <BreadcrumbDivider />
-              <BreadcrumbItem>
-                <Link
-                  className={styles.breadcrumbLink}
-                  to={scenarioRunRoutePath(scenarioResultId)}
-                  state={location.state}
-                  aria-label={`Return to scenario run ${scenarioResultId}`}
-                >
-                  Scenario run {scenarioResultId.slice(0, 8)}
-                </Link>
-              </BreadcrumbItem>
-            </Breadcrumb>
-          </div>
-        )}
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         {executionReadOnly && <MessageBar intent="info">
           <MessageBarBody>
