@@ -113,7 +113,9 @@ describe('CustomInitializerFiles', () => {
     })
 
     // Dialog should be closed because registration succeeded
-    expect(screen.queryByRole('dialog', { name: 'Add custom initializer' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Add custom initializer' })).not.toBeInTheDocument()
+    })
 
     // Warning message should indicate registration succeeded but refresh failed
     expect(
@@ -123,7 +125,7 @@ describe('CustomInitializerFiles', () => {
     ).toBeInTheDocument()
 
     // A Retry refresh button is available
-    const retryButton = screen.getByRole('button', { name: 'Retry refresh' })
+    const retryButton = await screen.findByRole('button', { name: 'Retry refresh' })
     expect(retryButton).toBeInTheDocument()
 
     // Clicking retry calls listCustom again WITHOUT repeating register POST
