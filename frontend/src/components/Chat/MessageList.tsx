@@ -444,12 +444,22 @@ export default function MessageList({
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const copyMenuId = useId()
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({})
 
-  const handleDownload = async (att: MessageAttachment) => {
+  const handleDownload = async (att: MessageAttachment, downloadKey: string) => {
+    setDownloadErrors((current) => {
+      const next = { ...current }
+      delete next[downloadKey]
+      return next
+    })
+
     try {
       // Convert the URL (data URI or same-origin) to a Blob, then create
       // an object URL so the browser reliably triggers a file download.
       const resp = await fetch(att.url)
+      if (!resp.ok) {
+        throw new Error(`Media download failed with HTTP ${resp.status}`)
+      }
       const blob = await resp.blob()
       const objectUrl = URL.createObjectURL(blob)
       const link = document.createElement('a')
@@ -460,8 +470,8 @@ export default function MessageList({
       document.body.removeChild(link)
       URL.revokeObjectURL(objectUrl)
     } catch {
-      // Fallback: open in a new tab rather than navigating away
-      window.open(att.url, '_blank')
+      // Keep the download action available so the user can retry.
+      setDownloadErrors((current) => ({ ...current, [downloadKey]: 'Download failed. Please try again.' }))
     }
   }
 
@@ -707,18 +717,24 @@ export default function MessageList({
                   )}
 
                   {/* Download: non-text media only */}
-                  {!isUser && message.attachments && message.attachments.filter(a => a.type !== 'file' && a.url).map((att, ai) => (
-                    <Tooltip key={ai} content={`Download ${att.name}`} relationship="label">
-                      <Button
-                        appearance="subtle"
-                        size="small"
-                        icon={<ArrowDownloadRegular />}
-                        onClick={() => handleDownload(att)}
-                        data-testid={`download-btn-${index}-${ai}`}
-                        className={styles.messageActionButton}
-                      />
-                    </Tooltip>
-                  ))}
+                  {!isUser && message.attachments && message.attachments.filter(a => a.type !== 'file' && a.url).map((att, ai) => {
+                    const downloadKey = `${index}-${ai}`
+                    return (
+                      <div key={downloadKey}>
+                        <Tooltip content={`Download ${att.name}`} relationship="label">
+                          <Button
+                            appearance="subtle"
+                            size="small"
+                            icon={<ArrowDownloadRegular />}
+                            onClick={() => handleDownload(att, downloadKey)}
+                            data-testid={`download-btn-${index}-${ai}`}
+                            className={styles.messageActionButton}
+                          />
+                        </Tooltip>
+                        {downloadErrors[downloadKey] && <div role="alert">{downloadErrors[downloadKey]}</div>}
+                      </div>
+                    )
+                  })}
 
                 </div>
               )}
