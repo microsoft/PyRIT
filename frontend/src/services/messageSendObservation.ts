@@ -6,9 +6,17 @@ function finished(progress: MessageSendStatus): boolean {
 }
 
 function confirmed(progress: MessageSendStatus): boolean {
-  return (progress.conversations ?? [progress]).some((conversation: MessageSendConversation) => (
-    conversation.request_turn_number != null && conversation.failure_stage !== 'preparation'
-  ))
+  const conversations = progress.conversations?.length ? progress.conversations : [progress]
+  return conversations.some((conversation: MessageSendConversation) => {
+    // Older receipts have no invocation flag; interruption alone cannot prove dispatch.
+    const invoked = conversation.target_invoked ?? (
+      ['sending', 'finalizing', 'completed'].includes(conversation.state)
+      || ['sending', 'finalization'].includes(conversation.failure_stage ?? '')
+    )
+    return invoked && conversation.request_turn_number != null
+      && !['queued', 'preparing'].includes(conversation.state)
+      && conversation.failure_stage !== 'preparation'
+  })
 }
 
 /** Share account-owned receipt reads with the abortable chat view. */
@@ -32,7 +40,6 @@ export function observeMessageSend(
   }).finally(() => { pending = undefined })
   let attackRead: Promise<AttackSummary> | undefined
   let attackRevision = -1
-  let attackReadSucceeded = false
   const pollProgress = (): Promise<MessageSendStatus> => {
     if (pending) return pending
     if (progressFailure) return Promise.reject(progressFailure.cause)
@@ -63,13 +70,13 @@ export function observeMessageSend(
       })
     },
     readAttack: (refresh: boolean = false): Promise<AttackSummary> => {
-      if (refresh || (attackReadSucceeded && attackRevision < progressRevision)) attackRead = undefined
+      if (refresh || attackRevision < progressRevision) attackRead = undefined
       if (!attackRead) {
-        attackReadSucceeded = false
         attackRevision = progressRevision
       }
+      const readRevision = attackRevision
       attackRead ??= attacksApi.getAttack(attackId).then((attack: AttackSummary) => {
-        attackReadSucceeded = true
+        if (readRevision < progressRevision) return observation.readAttack()
         if (!remembered && latest && confirmed(latest)) {
           onConfirmed(latest, attack)
           remembered = true

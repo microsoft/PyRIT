@@ -460,6 +460,7 @@ export default function ChatWindow({
   const [applyStatus, setApplyStatus] = useState<ConversationApplyStatus | null>(null)
   const [draftScorer, setDraftScorer] = useState<RegisteredComponentReference | null | undefined>(undefined)
   const selectedScorer = attackResultId ? chatScorer : draftScorer === undefined ? defaultChatScorer ?? null : draftScorer
+  const scoringAttackRef = useRef(attackResultId)
   const scoringSelectionRef = useRef(JSON.stringify([attackResultId, objective, selectedScorer?.identifier_hash]))
   const [installedScoringSelection, setInstalledScoringSelection] = useState(
     JSON.stringify([attackResultId, objective, selectedScorer?.identifier_hash]),
@@ -760,14 +761,19 @@ export default function ChatWindow({
   const scoringSelection = JSON.stringify([attackResultId, currentObjective, selectedScorer?.identifier_hash])
   const invalidateScoringSelection = useCallback((selection: string): void => {
     if (scoringSelectionRef.current === selection) return
+    const attackChanged = scoringAttackRef.current !== attackResultId
+    scoringAttackRef.current = attackResultId
     scoringSelectionRef.current = selection
     setInstalledScoringSelection(selection)
     scoringRevisionRef.current += 1
     setScoringRevision(scoringRevisionRef.current)
-    setConversationScoring(null)
+    setConversationScoring((current) => (
+      attackChanged && current?.conversationId === viewedConversationId ? current : null
+    ))
     setApplyStatus(null)
-    if (viewedConversationId) invalidateConversationLoads(viewedConversationId)
-  }, [viewedConversationId, invalidateConversationLoads])
+    // A first send can own this conversation's read before its created route commits.
+    if (!attackChanged && viewedConversationId) invalidateConversationLoads(viewedConversationId)
+  }, [attackResultId, viewedConversationId, invalidateConversationLoads])
   useLayoutEffect(() => {
     invalidateScoringSelection(scoringSelection)
   }, [scoringSelection, invalidateScoringSelection])

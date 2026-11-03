@@ -30,6 +30,7 @@ from pyrit.models import (
     MessagePiece,
     ScenarioRunPlanGroupKind,
     Score,
+    ScoringExpectation,
     SeedObjective,
     SeedPrompt,
     get_common_json_schema,
@@ -68,8 +69,10 @@ def _factory(adversarial_chat: MockPromptTarget) -> AttackTechniqueFactory:
 
 
 class _PolicyScorer(SubStringScorer):
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        scores = await super()._score_piece_async(message_piece, objective=objective)
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        scores = await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
         scores[0].score_rationale = "Ask for the published policy without private order details."
         return scores
 

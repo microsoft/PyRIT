@@ -67,6 +67,68 @@ describe('observeMessageSend', () => {
     expect(attacksApi.getMessageSend).toHaveBeenCalledTimes(2)
   })
 
+  it('refreshes an in-flight sibling read before delivering terminal metadata', async () => {
+    const oldRead = deferred<AttackSummary>()
+    const terminal = deferred<MessageSendStatus>()
+    const polling = deferred<void>()
+    const finalAttack = { ...attack, message_count: 6, outcome: 'success' as const }
+    jest.mocked(attacksApi.getAttack).mockReturnValueOnce(oldRead.promise).mockResolvedValue(finalAttack)
+    jest.mocked(attacksApi.getMessageSend).mockResolvedValueOnce({
+      ...completed, state: 'sending', conversations: [{ ...completed }],
+    }).mockImplementation(() => {
+      polling.resolve()
+      return terminal.promise
+    })
+    const observation = observeMessageSend('attack', Promise.resolve({
+      ...completed, state: 'queued', request_turn_number: null,
+    }), jest.fn(), jest.fn())
+    await polling.promise
+    await observation.readProgress()
+    const siblingRead = observation.readAttack()
+    terminal.resolve(completed)
+    await observation.readProgress()
+    const finalRead = observation.readAttack()
+    oldRead.resolve(attack)
+    expect(await finalRead).toEqual(finalAttack)
+    expect(await siblingRead).toEqual(finalAttack)
+    expect(attacksApi.getAttack).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['queued', 'preparing', 'interrupted'] as const)(
+    'does not confirm allocated turns without dispatch evidence while %s',
+    async (state) => {
+      const progress: MessageSendStatus = {
+        ...completed, state: 'failed', failure_stage: 'preparation',
+        conversations: [
+          { ...completed, state: 'failed', failure_stage: 'preparation' },
+          { ...completed, state, failure_stage: state === 'interrupted' ? 'interrupted' : null },
+        ],
+      }
+      const onConfirmed = jest.fn()
+      const observation = observeMessageSend('attack', Promise.resolve(progress), onConfirmed, jest.fn())
+      await observation.readProgress()
+      await observation.readAttack()
+      expect(onConfirmed).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each([
+    { target_invoked: false, state: 'completed' as const, failure_stage: null, expected: 0 },
+    { target_invoked: false, state: 'interrupted' as const, failure_stage: 'interrupted' as const, expected: 0 },
+    { target_invoked: true, state: 'interrupted' as const, failure_stage: 'interrupted' as const, expected: 1 },
+    { target_invoked: true, state: 'failed' as const, failure_stage: 'sending' as const, expected: 1 },
+  ])('uses retained dispatch evidence for $state ($target_invoked)', async (
+    { target_invoked, state, failure_stage, expected },
+  ) => {
+    const onConfirmed = jest.fn()
+    const observation = observeMessageSend('attack', Promise.resolve({
+      ...completed, target_invoked, state, failure_stage, conversations: [],
+    }), onConfirmed, jest.fn())
+    await observation.readProgress()
+    await observation.readAttack()
+    expect(onConfirmed).toHaveBeenCalledTimes(expected)
+  })
+
   it('does not manufacture confirmed use after acceptance fails, even when saved evidence exists', async () => {
     const onConfirmed = jest.fn()
     const onError = jest.fn()
