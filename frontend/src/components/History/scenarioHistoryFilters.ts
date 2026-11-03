@@ -7,6 +7,7 @@ export interface ScenarioHistoryFilters {
   operationId: string[]
   otherLabels: string[]
   labelSearchText: string
+  referenceId: string
 }
 
 export const DEFAULT_SCENARIO_HISTORY_FILTERS: ScenarioHistoryFilters = {
@@ -16,6 +17,7 @@ export const DEFAULT_SCENARIO_HISTORY_FILTERS: ScenarioHistoryFilters = {
   operationId: [],
   otherLabels: [],
   labelSearchText: '',
+  referenceId: '',
 }
 
 export const SCENARIO_RUN_STATES: readonly ScenarioRunState[] = [
@@ -41,6 +43,7 @@ export function scenarioHistoryFiltersFromSearchParams(
     operationId: params.getAll('operation_id'),
     otherLabels: params.getAll('label'),
     labelSearchText: params.get('labelSearch') ?? '',
+    referenceId: params.get('id') ?? '',
   }
 }
 
@@ -54,5 +57,6 @@ export function scenarioHistoryFiltersToSearchParams(
   for (const operationId of filters.operationId) params.append('operation_id', operationId)
   for (const label of filters.otherLabels) params.append('label', label)
   if (filters.labelSearchText) params.set('labelSearch', filters.labelSearchText)
+  if (filters.referenceId) params.set('id', filters.referenceId)
   return params
 }

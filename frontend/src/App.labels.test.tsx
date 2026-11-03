@@ -66,6 +66,7 @@ jest.mock('@/services/api', () => ({
   scenariosApi: {
     listCatalog: jest.fn(),
     getScenario: jest.fn(),
+    getRunHierarchy: jest.fn(),
     estimateRun: jest.fn(),
     startRun: jest.fn(),
     cancelRun: jest.fn(),
@@ -114,7 +115,7 @@ const SAVED_OPERATIONS = {
     'signed_in_op', 'early_choice', 'future_op', 'user_op',
   ].map(name => ({ id: `operation-${name}`, name, created_at: '2026-10-07T16:00:00Z' })),
 }
-const SCENARIO_PATH = '/scanner/test.scenario'
+const SCENARIO_PATH = '/scanner/launch/test.scenario'
 const operationId = (name: string): string => `operation-${name}`
 
 function renderApp(path = SCENARIO_PATH) {
@@ -183,6 +184,17 @@ describe('Shared new run labels', () => {
       attack_result_id: 'old_attack', main_conversation_id: 'old_conversation', conversations: [],
     })
     jest.mocked(scenariosApi.getScenario).mockResolvedValue(SCENARIO)
+    jest.mocked(scenariosApi.getRunHierarchy).mockResolvedValue({
+      scenario_result_id: 'saved_run', scenario_name: 'SavedScenario', scenario_version: 1,
+      status: 'COMPLETED', groups: [],
+      overall_counts: { completed: 0, planned: 0, succeeded: 0, success_percentage: 0, errors: 0, retries: 0 },
+      diagnostics: {
+        failed_attacks: [], failed_attacks_count: 0, failed_attacks_truncated: false,
+        attack_retries: [], attack_retries_count: 0, attack_retries_truncated: false,
+        total_retries: 0, rootless_result_ids: [], rootless_results_count: 0, rootless_results_truncated: false,
+      },
+      has_more: false, truncated: false,
+    })
     jest.mocked(scenariosApi.listCatalog).mockResolvedValue({
       items: [SCENARIO], pagination: { limit: 200, has_more: false },
     })
@@ -245,7 +257,7 @@ describe('Shared new run labels', () => {
     await chooseOperation(user, 'remembered_op')
     const bar = currentLabels()
 
-    for (const destination of ['Home', 'Technique.execute', 'Scanner']) {
+    for (const destination of ['Home', 'Attacks', 'Scanner']) {
       await user.click(screen.getByRole('button', { name: destination, exact: true }))
       expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
       expect(currentLabels()).toBe(bar)
@@ -297,7 +309,7 @@ describe('Shared new run labels', () => {
       items: [{ ...TARGET, supports_temperature_override: true }],
       pagination: { limit: 200, has_more: false },
     })
-    renderApp('/chat')
+    renderApp('/attack/chat')
     const toolbar = screen.getByRole('group', { name: 'Chat controls' })
     expect(currentLabels()).not.toContainElement(toolbar)
     expect(currentLabels().compareDocumentPosition(toolbar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -317,7 +329,8 @@ describe('Shared new run labels', () => {
       .not.toBeInTheDocument()
     expect(within(actions).getByRole('button', { name: 'Export conversation' })).toBeDisabled()
     expect(within(actions).getByRole('button', { name: 'Toggle conversations panel' })).toBeDisabled()
-    expect(within(actions).getByRole('button', { name: 'New Attack' })).toBeDisabled()
+    expect(within(actions).queryByRole('button', { name: 'New attack', exact: true })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New attack', exact: true })).toBeEnabled()
     const markdown = within(actions).getByRole('switch')
     await user.click(markdown)
     expect(readUserPreferences('local').chatMarkdown).toBe(true)
@@ -327,7 +340,7 @@ describe('Shared new run labels', () => {
     expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Scanner', exact: true }))
     expect(screen.queryByRole('group', { name: 'Chat controls' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Technique.execute', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Attacks', exact: true }))
     expect(screen.getAllByRole('group', { name: 'Chat controls' })).toHaveLength(1)
     expect(within(screen.getByRole('group', { name: 'Conversation actions' })).getByRole('switch')).toBeChecked()
   })
@@ -347,7 +360,7 @@ describe('Shared new run labels', () => {
 
   it('leaves saved scenario attribution unchanged when future launch labels change', async () => {
     const user = userEvent.setup()
-    renderApp('/scanner-history/saved_run')
+    renderApp('/scanner/history/saved_run')
     const saved = screen.getByRole('region', { name: 'Run configuration' })
     await screen.findByRole('combobox', { name: 'Operation' })
     await chooseOperation(user, 'future_op')
@@ -356,6 +369,7 @@ describe('Shared new run labels', () => {
     expect(saved).toHaveTextContent('original_team')
     expect(saved).not.toHaveTextContent('future_op')
     expect(within(saved).queryByRole('button', { name: /^Edit / })).not.toBeInTheDocument()
+    expect(scenariosApi.getRunHierarchy).toHaveBeenCalledTimes(1)
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
     expect(scenariosApi.cancelRun).not.toHaveBeenCalled()
   })
@@ -381,7 +395,7 @@ describe('Shared new run labels', () => {
       target: { target_type: 'OpenAIChatTarget', target_registry_name: 'test_target', identifier_hash: 'test_hash' },
       created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     })
-    renderApp('/attacks/old_attack')
+    renderApp('/attack/chat/old_attack')
     expect(await screen.findByTestId('operator-locked-banner')).toBeInTheDocument()
     await chooseOperation(user, 'future_op')
     expect(screen.getByTestId('operator-locked-banner')).toBeInTheDocument()
@@ -404,8 +418,8 @@ describe('Shared new run labels', () => {
     expect(panelToggle).toHaveAttribute('aria-expanded', 'true')
     await user.click(panelToggle)
     expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
-    await user.click(within(toolbar).getByRole('button', { name: 'New Attack' }))
-    expect(await screen.findByRole('button', { name: 'New Attack' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    expect(await screen.findByRole('combobox', { name: 'Chat target' })).toBeEnabled()
     expect(screen.queryByTestId('operator-locked-banner')).not.toBeInTheDocument()
     expect(within(currentLabels()).getByRole('combobox', { name: 'Operation' })).toHaveValue('future_op')
   })

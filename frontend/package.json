@@ -17,6 +17,7 @@
     "test:coverage": "jest --coverage",
     "test:e2e": "playwright test",
     "test:e2e:paired-outcomes": "npm run build && playwright test --config playwright.paired-outcomes.config.ts",
+    "test:e2e:scenario-hierarchy": "npm run build && playwright test --config playwright.scenario-hierarchy.config.ts",
     "test:e2e:analytics": "npm run build && playwright test --config playwright.analytics.config.ts",
     "test:e2e:seeded": "playwright test --project seeded",
     "test:e2e:live": "E2E_LIVE_MODE=true playwright test --project live",
@@ -72,7 +73,7 @@
   "overrides": {
     "rollup": "4.59.0",
     "@tootallnate/once": "3.0.1",
-    "follow-redirects": "1.16.0",
+    "follow-redirects": "1.16.2",
     "js-yaml": "4.3.2",
     "postcss": "8.5.23",
     "ws": "8.21.0"
