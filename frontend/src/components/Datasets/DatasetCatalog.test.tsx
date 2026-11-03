@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
@@ -11,6 +11,9 @@ import { DATASET_DETAIL_PATH, datasetDetailPath } from '@/utils/routeParams'
 
 import DatasetCatalog from './DatasetCatalog'
 import DatasetSelection from './DatasetSelection'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 let mockGet: jest.SpyInstance
 
@@ -217,16 +220,15 @@ describe('DatasetCatalog', () => {
     expect(screen.queryByRole('button', { name: /load|download/i })).not.toBeInTheDocument()
   })
 
-  it('shows an error and retries the catalog request', async () => {
-    const user = userEvent.setup()
+  it('shows the error text and recovers on the next automatic catalog check', async () => {
     mockGet.mockRejectedValueOnce(new Error('Catalog unavailable'))
     render(<Harness initialPath="/datasets" />)
 
     expect(await screen.findByText('Catalog unavailable')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toHaveFocus())
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 
     mockGet.mockResolvedValueOnce({ data: { items: [LOADED] } })
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await advanceAutoRefresh()
 
     expect(await screen.findByRole('link', { name: 'harmbench' })).toBeInTheDocument()
     expect(mockGet).toHaveBeenCalledTimes(2)

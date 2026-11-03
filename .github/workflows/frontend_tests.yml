@@ -82,10 +82,6 @@ jobs:
             config: playwright.analytics.config.ts
             shard: 1
             total: 1
-          - project: paired-outcomes
-            config: playwright.paired-outcomes.config.ts
-            shard: 1
-            total: 1
           - project: scenario-hierarchy
             config: playwright.scenario-hierarchy.config.ts
             shard: 1
@@ -135,7 +131,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Build the isolated fixture frontend
-        if: matrix.project == 'analytics' || matrix.project == 'paired-outcomes' || matrix.project == 'scenario-hierarchy'
+        if: matrix.project == 'analytics' || matrix.project == 'scenario-hierarchy'
         run: npm run build
 
       - name: Run E2E shard (no credentials needed)

@@ -13,6 +13,15 @@ Your choice is saved in this browser. System follows the operating system's
 light/dark preference. High-contrast mode overrides every palette and hides
 decorations without forgetting the selected preset.
 
+## Contextual help
+
+Hover over a term or field label to read its explanation. Its information
+button also opens the help with a click, tap, or Enter/Space. Press Escape
+to dismiss it. Label clicks still focus the field. Field descriptions remain
+available to assistive technology while the help is closed. Required markers,
+validation errors, input-format guidance, and unavailable-estimate reasons
+stay visible.
+
 ## Conversation selection
 
 Opening a saved attack with related conversations automatically opens the
@@ -74,7 +83,7 @@ journey discards the handoff; refreshing the browser does not retain it.
 The **Datasets** page shows summaries of datasets already loaded into the backend's
 memory. When memory is empty, **Learn how to load datasets into memory** opens the
 [dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
-Use the same memory as the backend, then select **Refresh** in the catalog.
+Use the same memory as the backend. The visible catalog checks for changes each minute.
 The catalog does not download providers or prefetch individual examples.
 
 Open a dataset to inspect its stored examples. Search matches text prompts and
@@ -88,10 +97,24 @@ autoplay. Reopening waits for a fresh display URL, with Show disabled while the
 request is pending. If refreshing fails, the preview stays closed and shows a
 message so you can try again. Hiding a preview stops playback.
 Filters, page size, and the open example stay in the address bar.
+The visible example page and open detail also check for stored changes each minute,
+using the same filters and page cursor. Transient background errors keep the
+previously loaded content visible with an error message until a check succeeds.
+Deleted examples and invalid page cursors still show their explicit recovery state.
 **Back to datasets** returns to the catalog search, facets, and sort you came
 from. A direct link without that return state goes to `/datasets`.
 On narrow screens, scroll the example table horizontally to read its columns.
 Expanded details stack each label above its stored value.
+
+## Automatic data updates
+
+Home, registries, history, analytics, catalogs, and configuration data update every
+60 seconds while their view is visible, and after relevant actions. Updates do not
+reload the page or reset filters, selection, expanded details, or drafts. Dirty
+configuration and environment files are not replaced by background reads. Successful
+checks show no status message; failed checks show the error text. Active scan and
+chat progress keep their faster polling. Runtime initialization and dataset loading
+remain explicit actions.
 
 ## Resuming a scenario run
 
@@ -268,7 +291,6 @@ npm run test:coverage # Run with coverage report (85%+ threshold)
 # End-to-End Tests (Playwright)
 npm run test:e2e          # Run headless (default local setup uses dev.py)
 npm run test:e2e:headed   # Run with visible browser windows (requires display)
-npm run test:e2e:paired-outcomes # Real SQLite/API paired-outcome acceptance tests
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 

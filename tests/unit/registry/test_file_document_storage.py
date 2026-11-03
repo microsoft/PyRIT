@@ -1,7 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from collections.abc import Iterator
+import os
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -10,7 +12,12 @@ import pytest
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError, ServiceRequestError
 from azure.storage.blob import ContainerClient, StorageErrorCode
 
-from pyrit.registry.file_document_storage import DocumentListing, FileDocumentStorage, UnreadableDocument
+from pyrit.registry.file_document_storage import (
+    DocumentListing,
+    FileDocumentStorage,
+    UnreadableDocument,
+    _read_regular_file,
+)
 
 _SAS_SOURCE = "https://account.blob.core.windows.net/documents/saved?sp=rl&sig=secret-signature"
 
@@ -30,18 +37,46 @@ def _blob_client(*, names: list[str]) -> MagicMock:
     return client
 
 
+@contextmanager
+def _change_after_listing(*, change: Callable[[], None], cache_types: bool = False) -> Generator[None, None, None]:
+    # Runs `change` after the folder is listed and before its entries are read. With `cache_types`,
+    # each entry's type is looked up first, so it is out of date once `change` runs.
+    real_scandir = os.scandir
+
+    @contextmanager
+    def scandir(path: Path) -> Generator[Iterator[os.DirEntry[str]], None, None]:
+        with real_scandir(path) as entries:
+            listed = list(entries)
+        if cache_types:
+            for entry in listed:
+                entry.is_file()
+        yield iter(listed)
+        change()
+
+    with patch("pyrit.registry.file_document_storage.os.scandir", side_effect=scandir):
+        yield
+
+
 class TestLocalListingWithIssues:
     def test_reports_unreadable_document_and_keeps_the_others(self, tmp_path: Path) -> None:
         (tmp_path / "first.json").write_bytes(b"one")
         (tmp_path / "second.json").write_bytes(b"two")
         original_read_bytes = Path.read_bytes
 
+        def read(path: str) -> bytes | None:
+            if Path(path).name == "second.json":
+                raise PermissionError(13, "Permission denied", path)
+            return _read_regular_file(path)
+
         def read_bytes(path: Path) -> bytes:
             if path.name == "second.json":
                 raise PermissionError(13, "Permission denied", str(path))
             return original_read_bytes(path)
 
-        with patch.object(Path, "read_bytes", autospec=True, side_effect=read_bytes):
+        with (
+            patch("pyrit.registry.file_document_storage._read_regular_file", side_effect=read),
+            patch.object(Path, "read_bytes", autospec=True, side_effect=read_bytes),
+        ):
             listing = _local_storage(tmp_path)._list_documents_with_issues()
             legacy = _local_storage(tmp_path)._list_documents()
 
@@ -58,13 +93,12 @@ class TestLocalListingWithIssues:
         (tmp_path / "nested").mkdir()
         (tmp_path / "nested" / "inner.json").write_bytes(b"not a direct child")
         read_names: list[str] = []
-        original_read_bytes = Path.read_bytes
 
-        def read_bytes(path: Path) -> bytes:
-            read_names.append(path.name)
-            return original_read_bytes(path)
+        def read(path: str) -> bytes | None:
+            read_names.append(Path(path).name)
+            return _read_regular_file(path)
 
-        with patch.object(Path, "read_bytes", autospec=True, side_effect=read_bytes):
+        with patch("pyrit.registry.file_document_storage._read_regular_file", side_effect=read):
             listing = _local_storage(tmp_path)._list_documents_with_issues()
 
         assert listing.documents == {"valid_name": b"ok"}
@@ -75,19 +109,48 @@ class TestLocalListingWithIssues:
         assert _local_storage(tmp_path)._list_documents() == listing.documents
 
     def test_skips_a_document_deleted_after_listing(self, tmp_path: Path) -> None:
+        (tmp_path / "kept.json").write_bytes(b"{}\r\n")
+        (tmp_path / "empty.json").write_bytes(b"")
+        deleted = tmp_path / "deleted.json"
+        deleted.write_bytes(b"gone")
+
+        with _change_after_listing(change=deleted.unlink, cache_types=True):
+            listing = _local_storage(tmp_path)._list_documents_with_issues()
+
+        assert listing == DocumentListing(documents={"empty": b"", "kept": b"{}\r\n"})
+
+    def test_skips_a_link_deleted_after_listing(self, tmp_path: Path) -> None:
         (tmp_path / "kept.json").write_bytes(b"kept")
-        (tmp_path / "deleted.json").write_bytes(b"gone")
-        original_read_bytes = Path.read_bytes
+        (tmp_path / "target.txt").write_bytes(b"linked")
+        link = tmp_path / "linked.json"
+        try:
+            link.symlink_to(tmp_path / "target.txt")
+        except OSError:
+            pytest.skip("Creating symbolic links isn't permitted here")
 
-        def read_bytes(path: Path) -> bytes:
-            if path.name == "deleted.json":
-                raise FileNotFoundError(2, "No such file or directory", str(path))
-            return original_read_bytes(path)
-
-        with patch.object(Path, "read_bytes", autospec=True, side_effect=read_bytes):
+        with _change_after_listing(change=link.unlink):
             listing = _local_storage(tmp_path)._list_documents_with_issues()
 
         assert listing == DocumentListing(documents={"kept": b"kept"})
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Named pipes need os.mkfifo")
+    @pytest.mark.timeout(60)
+    def test_reports_a_pipe_put_in_place_of_a_listed_document_without_blocking(self, tmp_path: Path) -> None:
+        (tmp_path / "kept.json").write_bytes(b"kept")
+        swapped = tmp_path / "swapped.json"
+        swapped.write_bytes(b"replaced")
+
+        def replace_with_pipe() -> None:
+            swapped.unlink()
+            os.mkfifo(swapped)
+
+        with _change_after_listing(change=replace_with_pipe, cache_types=True):
+            listing = _local_storage(tmp_path)._list_documents_with_issues()
+
+        assert listing == DocumentListing(
+            documents={"kept": b"kept"},
+            unreadable=(UnreadableDocument(name="swapped", message="Not a regular file"),),
+        )
 
     def test_reports_entries_that_are_not_regular_files_without_reading_them(self, tmp_path: Path) -> None:
         (tmp_path / "folder.json").mkdir()
@@ -96,14 +159,14 @@ class TestLocalListingWithIssues:
         except OSError:
             pytest.skip("Creating symbolic links isn't permitted here")
 
-        with patch.object(Path, "read_bytes", autospec=True) as read_bytes:
+        with patch("pyrit.registry.file_document_storage._read_regular_file") as read:
             listing = _local_storage(tmp_path)._list_documents_with_issues()
 
         assert listing.unreadable == (
             UnreadableDocument(name="broken_link", message="Not a regular file"),
             UnreadableDocument(name="folder", message="Not a regular file"),
         )
-        read_bytes.assert_not_called()
+        read.assert_not_called()
 
     def test_reports_a_link_loop_and_keeps_the_others(self, tmp_path: Path) -> None:
         (tmp_path / "good.json").write_bytes(b"ok")

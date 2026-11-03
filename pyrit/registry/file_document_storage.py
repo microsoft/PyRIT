@@ -16,6 +16,7 @@ import fnmatch
 import hashlib
 import logging
 import os
+import stat
 import sys
 import tempfile
 import time
@@ -107,6 +108,27 @@ else:
         """Release the exclusive lock held on an open descriptor."""
         with suppress(OSError):
             fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+
+# Opening without blocking keeps a pipe from hanging the read; it changes nothing for a regular
+# file. Windows has no O_NONBLOCK and needs O_BINARY so the bytes aren't translated.
+_READ_FLAGS = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+
+
+def _read_regular_file(path: str) -> bytes | None:
+    """
+    Read a file only if what was opened is a regular file.
+
+    The opened file is checked rather than the path, so the check still holds if the path
+    was replaced after it was listed.
+
+    Returns:
+        bytes | None: The content, or None if the path names something other than a regular file.
+    """
+    with open(os.open(path, _READ_FLAGS), "rb") as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            return None
+        return file.read()
 
 
 class DocumentConflictError(ValueError):
@@ -279,19 +301,26 @@ class FileDocumentStorage:
         """
         Read one listed local document.
 
+        The directory can change after it is listed, so what is opened is checked again: an entry
+        deleted in between is skipped, whether or not it was a link, and anything that isn't a regular
+        file is reported without being read.
+
         Returns:
             bytes | UnreadableDocument | None: The content, why it can't be read, or None if it was
                 deleted after the directory was listed.
         """
         try:
-            if not entry.is_file():
-                # A broken link, a folder, or a pipe, which would block if read.
-                return UnreadableDocument(name=name, message="Not a regular file")
-            return Path(entry.path).read_bytes()
+            content = _read_regular_file(entry.path) if entry.is_file() else None
         except FileNotFoundError:
-            return None
+            content = None
         except OSError as error:
             return UnreadableDocument(name=name, message=self._describe_read_error(error))
+        if content is not None:
+            return content
+        if not os.path.lexists(entry.path):
+            return None
+        # A broken link, a folder, or a pipe, which would block if read.
+        return UnreadableDocument(name=name, message="Not a regular file")
 
     def _list_blob_documents_with_issues(self) -> DocumentListing:
         """

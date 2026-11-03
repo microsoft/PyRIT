@@ -7,6 +7,9 @@ import { makeTarget } from '@/test-utils/targetFixtures'
 import type { Parameter, TechniqueInstance, TechniqueListResponse, TechniqueTypeResponse } from '@/types'
 
 import TechniqueRegistry from './TechniqueRegistry'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 let mockRuntime = { generation: 1, ready: true }
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: () => mockRuntime }))
@@ -23,6 +26,8 @@ const converters = jest.mocked(convertersApi)
 function technique(name: string, attackType = 'PromptSendingAttack', tags = ['basic']): TechniqueInstance {
   return { name, attack_type: attackType, tags, description: `${name} description`,
     uses_adversarial: false, uses_default_adversarial_target: false,
+    identifier: { class_name: 'AttackTechniqueFactory', class_module: 'pyrit.scenario', hash: name,
+      name, attack_class: attackType },
     creation_statement: `AttackTechniqueFactory(\n    name="${name}",\n    attack_class=${attackType},\n)` }
 }
 
@@ -79,7 +84,7 @@ describe('TechniqueRegistry', () => {
     ] })
   })
 
-  it('loads, filters, inspects creation calls, and refreshes the list', async () => {
+  it('loads, filters, expands identity JSON, and refreshes the list', async () => {
     const user = userEvent.setup()
     render(tree())
     expect(screen.getByText('Named configurations of existing attack techniques')).toBeInTheDocument()
@@ -93,29 +98,28 @@ describe('TechniqueRegistry', () => {
     expect(screen.queryByText('first description')).not.toBeInTheDocument()
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by attack type' }), '')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by tag' }), 'basic')
-    await user.click(screen.getByRole('button', { name: 'Details for first' }))
-    const dialog = within(screen.getByRole('dialog'))
-    expect(dialog.getByLabelText('Technique creation call').textContent).toBe(technique('first').creation_statement)
-    expect(dialog.queryByRole('heading', { name: 'Configuration' })).not.toBeInTheDocument()
-    expect(dialog.queryByText(/safe display settings|This identifies the registered factory/)).not.toBeInTheDocument()
-    expect(dialog.queryByLabelText('Technique configuration')).not.toBeInTheDocument()
-    expect(dialog.queryByLabelText('Factory evaluation identifier')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Close' }))
+    await user.click(screen.getByRole('button', { name: 'Identity for first' }))
+    const details = screen.getByRole('region', { name: 'Identity for first' })
+    expect(JSON.parse(details.textContent ?? '')).toEqual(technique('first').identifier)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(within(details).queryByRole('button')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Identity for first' }))
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Filter by tag' }), '')
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advanceAutoRefresh()
     await waitFor(() => expect(techniques.listTechniques).toHaveBeenCalledTimes(2))
   })
 
-  it('shows helper construction without identifiers or expanded conversation data', async () => {
+  it('shows the supplied identity instead of a creation statement', async () => {
     const item = technique('simulated')
     item.creation_statement = 'AttackTechniqueFactory.with_simulated_conversation(\n    name="simulated",\n    num_turns=2,\n)'
     techniques.listTechniques.mockResolvedValue(techniquePage([item]))
     const user = userEvent.setup()
     render(tree())
-    await user.click(await screen.findByRole('button', { name: 'Details for simulated' }))
-    const dialog = within(screen.getByRole('dialog'))
-    expect(dialog.getByLabelText('Technique creation call').textContent).toBe(item.creation_statement)
-    expect(dialog.queryByText(/eval_hash|value_sha256|seed_technique|Configuration/)).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: 'Identity for simulated' }))
+    expect(JSON.parse(screen.getByRole('region', { name: 'Identity for simulated' }).textContent ?? ''))
+      .toEqual(item.identifier)
+    expect(screen.queryByText(item.creation_statement)).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('shows empty and no-match states', async () => {
@@ -123,18 +127,18 @@ describe('TechniqueRegistry', () => {
     const user = userEvent.setup()
     render(tree())
     await screen.findByText(/No techniques registered/)
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advanceAutoRefresh()
     await screen.findByRole('table')
     await user.type(screen.getByRole('textbox', { name: 'Search techniques' }), 'missing')
     expect(screen.getByText('No techniques match these filters.')).toBeInTheDocument()
   })
 
-  it('reports list errors with retry', async () => {
+  it('reports list errors and recovers on the next automatic check', async () => {
     techniques.listTechniques.mockRejectedValueOnce(new Error('List unavailable'))
-    const user = userEvent.setup()
     render(tree())
     await screen.findByText('List unavailable')
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
     await screen.findByRole('table')
   })
 
@@ -152,9 +156,9 @@ describe('TechniqueRegistry', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filter by tag' }), 'later_tag')
     expect(screen.queryByText('first description')).not.toBeInTheDocument()
     await user.type(screen.getByRole('textbox', { name: 'Search techniques' }), 'later')
-    await user.click(screen.getByRole('button', { name: 'Details for later' }))
-    expect(within(screen.getByRole('dialog')).getByLabelText('Technique creation call').textContent)
-      .toBe(technique('later', 'RedTeamingAttack', ['later_tag']).creation_statement)
+    await user.click(screen.getByRole('button', { name: 'Identity for later' }))
+    expect(JSON.parse(screen.getByRole('region', { name: 'Identity for later' }).textContent ?? ''))
+      .toEqual(technique('later', 'RedTeamingAttack', ['later_tag']).identifier)
   })
 
   it('reports a later page failure instead of showing an incomplete catalog', async () => {
@@ -164,11 +168,10 @@ describe('TechniqueRegistry', () => {
         pagination: { limit: 200, has_more: true, next_cursor: 'first' },
       })
       .mockRejectedValueOnce(new Error('Next page unavailable'))
-    const user = userEvent.setup()
     render(tree())
     await screen.findByText('Next page unavailable')
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await advanceAutoRefresh()
     await screen.findByRole('table')
     expect(techniques.listTechniques).toHaveBeenLastCalledWith(200, undefined)
   })
@@ -344,7 +347,7 @@ describe('TechniqueRegistry', () => {
     expect(techniques.listTechniques).toHaveBeenCalledTimes(1)
     let completeList: ((value: TechniqueListResponse) => void) | undefined
     techniques.listTechniques.mockReturnValueOnce(new Promise((resolve) => { completeList = resolve }))
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advanceAutoRefresh()
     mockRuntime = { generation: 2, ready: true }
     rerender(tree())
     await waitFor(() => expect(screen.getByText('New technique', { selector: 'button' })).toHaveFocus())

@@ -393,8 +393,17 @@ class RegistryRecipeRestorer:
             if isinstance(recipe, TechniqueRecipe):
                 self._build_technique(name=stored.ref.name, recipe=recipe)
             else:
-                self._get_registry(stored.ref.kind).create_named_instance(
-                    name=stored.ref.name, type_name=recipe.class_name, params=recipe.params, external_input=True
+                registry = self._get_registry(stored.ref.kind)
+                # As in the API, a target may let callers set some path parameters, such as a working folder.
+                allowed_path_params = getattr(
+                    registry.get_class(recipe.class_name), "caller_path_parameters", frozenset()
+                )
+                registry.create_named_instance(
+                    name=stored.ref.name,
+                    type_name=recipe.class_name,
+                    params=recipe.params,
+                    external_input=True,
+                    allowed_path_params=allowed_path_params,
                 )
         except _RecipeRejectedError as rejection:
             return self._failure(stored=stored, reason=rejection.reason, message=str(rejection))

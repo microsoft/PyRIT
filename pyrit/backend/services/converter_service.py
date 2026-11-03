@@ -251,7 +251,7 @@ class ConverterService:
             converter_type=request.type,
             params=request.source.params if request.source else request.params,
         )
-        # Every upload parameter now holds a stored upload or an accepted blob URL.
+        # Every upload parameter holds a stored upload or an accepted blob URL.
         upload_names = frozenset(self._upload_params(converter_type=request.type))
         try:
             # Uploads may have yielded to another request that took the name.
