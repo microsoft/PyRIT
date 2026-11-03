@@ -510,7 +510,8 @@ class RegistryRecipeRestorer:
         Constructor errors can quote a server setting, such as an endpoint with a SAS token. The text
         is cut at the first ``?`` or ``#``, where a URL's query or fragment starts. A user name and
         password can't be told apart reliably, so text with an ``@`` isn't shown at all. Look-alike
-        characters, such as a full-width ``＠``, count as the characters they look like.
+        characters, such as a full-width ``＠``, count as the characters they look like, and the text
+        that is shown keeps its original characters.
 
         Returns:
             str: The error's type and its text, noting when the rest of the text or all of it is hidden.
@@ -519,15 +520,28 @@ class RegistryRecipeRestorer:
         hidden = "because it may include a credential"
         try:
             # A plain str, so no string method a subclass overrides runs on the text below.
-            text = unicodedata.normalize("NFKC", str.__str__(str(error)))
+            text = str.__str__(str(error))
+            folded = unicodedata.normalize("NFKC", text)
         except Exception:
             return name
-        if "@" in text:
+        if "@" in folded:
             return f"{name} (message hidden {hidden})"
-        cut = text.split("?", 1)[0].split("#", 1)[0]
-        if cut == text:
+        if "?" not in folded and "#" not in folded:
             return f"{name}: {text}" if text else name
+        cut_at = next((index for index, char in enumerate(text) if _may_start_query(char)), 0)
+        cut = text[:cut_at]
         return f"{name}: {cut} (rest hidden {hidden})" if cut.strip() else f"{name} (message hidden {hidden})"
+
+
+def _may_start_query(char: str) -> bool:
+    """
+    Return whether a character is, or looks like, a ``?`` or ``#``.
+
+    Returns:
+        bool: True if the character could start a URL's query or fragment.
+    """
+    folded = unicodedata.normalize("NFKC", char)
+    return "?" in folded or "#" in folded
 
 
 class _RecipeRejectedError(Exception):
