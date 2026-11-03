@@ -2067,6 +2067,52 @@ describe("MessageList", () => {
   });
 
   describe("download handler", () => {
+    it("does not download HTTP error bodies and lets the user retry", async () => {
+      const user = userEvent.setup();
+      const mockBlob = new Blob(["image"], { type: "image/png" });
+      const mockObjectUrl = "blob:http://localhost/retry";
+      global.fetch = jest.fn()
+        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({ ok: true, status: 200, blob: () => Promise.resolve(mockBlob) });
+      global.URL.createObjectURL = jest.fn().mockReturnValue(mockObjectUrl);
+      global.URL.revokeObjectURL = jest.fn();
+      const clickSpy = jest.fn();
+      const origCreateElement = document.createElement.bind(document);
+      jest.spyOn(document, "createElement").mockImplementation((tag: string) => {
+        const element = origCreateElement(tag);
+        if (tag === "a") jest.spyOn(element, "click").mockImplementation(clickSpy);
+        return element;
+      });
+
+      const messages: Message[] = [{
+        role: "assistant",
+        content: "Here is the image",
+        timestamp: new Date().toISOString(),
+        attachments: [{
+          type: "image",
+          name: "result.png",
+          url: "http://localhost/media/result.png",
+          mimeType: "image/png",
+          size: 1024,
+        }],
+      }];
+
+      render(<TestWrapper><MessageList messages={messages} /></TestWrapper>);
+      const downloadButton = screen.getByTestId("download-btn-0-0");
+
+      await user.click(downloadButton);
+      expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
+      expect(global.URL.createObjectURL).not.toHaveBeenCalled();
+      expect(clickSpy).not.toHaveBeenCalled();
+
+      await user.click(downloadButton);
+      await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(global.URL.revokeObjectURL).toHaveBeenCalledWith(mockObjectUrl);
+
+      jest.restoreAllMocks();
+    });
+
     it("should trigger download on click", async () => {
       const user = userEvent.setup();
 
