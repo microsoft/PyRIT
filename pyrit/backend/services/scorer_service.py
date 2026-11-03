@@ -107,17 +107,13 @@ class ScorerService:
                     parameters=[
                         parameter.for_external_catalog()
                         for parameter in metadata.parameters
-                        if parameter.is_external_input and not parameter.mentions_path
+                        if parameter.is_allowed_external_input()
                     ],
                     is_llm_based=metadata.is_llm_based,
                     description=metadata.class_description or None,
                 )
                 for metadata in self._registry.get_all_registered_class_metadata()
-                if all(
-                    parameter.is_external_input and not parameter.mentions_path
-                    for parameter in metadata.parameters
-                    if parameter.required
-                )
+                if all(parameter.is_allowed_external_input() for parameter in metadata.parameters if parameter.required)
             ]
             return ScorerTypeResponse(items=items)
 

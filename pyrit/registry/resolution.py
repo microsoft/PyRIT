@@ -761,7 +761,7 @@ def reject_non_external_params(
     settable_names = {
         name
         for name, parameter in declared_by_name.items()
-        if parameter.is_external_input and (not parameter.mentions_path or name in allowed_path_params)
+        if parameter.is_allowed_external_input(allowed_path_params=allowed_path_params)
     }
     for name, value in params.items():
         parameter = declared_by_name.get(name)

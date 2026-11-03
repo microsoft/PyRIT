@@ -1,8 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 
-import { MessageBar, MessageBarBody, Text } from '@fluentui/react-components'
+import { MessageBar, MessageBarBody } from '@fluentui/react-components'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
 import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
@@ -17,6 +18,7 @@ import SaveConverterDialog from './SaveConverterDialog'
 
 interface ConverterChainFieldProps {
   label: string
+  readonly help: string
   converters: ConverterInstance[]
   value: ConverterSelection[]
   disabled?: boolean
@@ -27,7 +29,7 @@ interface ConverterChainFieldProps {
 
 /** Ordered converter references with the same picker and settings form as chat. */
 export default function ConverterChainField({
-  label, converters, value, disabled = false, allowTemporary = true, onChange, onConvertersChanged,
+  label, help, converters, value, disabled = false, allowTemporary = true, onChange, onConvertersChanged,
 }: ConverterChainFieldProps) {
   const styles = useConverterChainFieldStyles()
   const { generation } = useRuntime()
@@ -76,7 +78,9 @@ export default function ConverterChainField({
   }
 
   return <section className={styles.root} aria-label={label}>
-    <Text weight="semibold">{label}</Text>
+    <ContextualHelpLabel term={label} labelProps={{ weight: 'semibold' }}>
+      {help}
+    </ContextualHelpLabel>
     <SelectConverterInput
       label={label} disabled={disabled} groupedConverters={groupConverters(converters)}
       onOptionSelect={add} onCreateNew={() => setCreateOpen(true)}

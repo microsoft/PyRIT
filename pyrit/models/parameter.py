@@ -251,6 +251,22 @@ class Parameter(BaseModel):
         """Whether a value of this parameter can name a file or folder on the server."""
         return self.reference is None and _mentions_path(self.param_type)
 
+    def is_allowed_external_input(self, *, allowed_path_params: frozenset[str] = frozenset()) -> bool:
+        """
+        Return whether an external caller may set this parameter.
+
+        A parameter that can name a file or folder on the server is allowed only when
+        it is in ``allowed_path_params``.
+
+        Args:
+            allowed_path_params (frozenset[str]): Path parameters the caller has made safe.
+                Defaults to none.
+
+        Returns:
+            bool: True for an external input that names no server path, or whose path is allowed.
+        """
+        return self.is_external_input and (not self.mentions_path or self.name in allowed_path_params)
+
     @computed_field
     @property
     def reference_type(self) -> str | None:
