@@ -7,6 +7,7 @@ import {
   MessageBarBody,
 } from '@fluentui/react-components'
 import { ArrowSyncRegular, ChatRegular } from '@fluentui/react-icons'
+import { useRuntime } from '@/hooks/useRuntime'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary, FilterOption, TargetInstance } from '../../types'
@@ -68,6 +69,7 @@ export default function AttackHistory({
   showTitle = true,
 }: AttackHistoryProps) {
   const styles = useAttackHistoryStyles()
+  const runtime = useRuntime()
   const [attacks, setAttacks] = useState<AttackSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -82,6 +84,18 @@ export default function AttackHistory({
     filterKey: string
     options: string[]
   } | null>(null)
+  const [optionsGeneration, setOptionsGeneration] = useState(runtime.generation)
+
+  // Reset before paint so a new runtime never offers the previous runtime's filter options.
+  if (optionsGeneration !== runtime.generation) {
+    setOptionsGeneration(runtime.generation)
+    setAttackTypeOptions([])
+    setConverterOptions([])
+    setOperatorOptions([])
+    setOperationOptions([])
+    setAllOtherLabelOptions([])
+    setNarrowedOtherLabelOptions(null)
+  }
 
   // Pagination
   const [cursor, setCursor] = useState<string | undefined>(undefined)
@@ -98,7 +112,10 @@ export default function AttackHistory({
     filters.operationId,
     filters.otherLabels,
   ])
-  const [settledFilterKey, setSettledFilterKey] = useState<string | null>(null)
+  // A list request belongs to one runtime generation as well as one filter set:
+  // a new runtime drops the previous cursor and ignores its in-flight responses.
+  const listKey = JSON.stringify([runtime.generation, filterKey])
+  const [settledListKey, setSettledListKey] = useState<string | null>(null)
   const labelOptionFilterKey = JSON.stringify([
     filters.operator,
     filters.otherLabels,
@@ -114,39 +131,52 @@ export default function AttackHistory({
   // fetch effect without calling setState synchronously inside it.
   const [fetchToken, setFetchToken] = useState({
     cursor: undefined as string | undefined,
-    filterKey,
+    listKey,
     nonce: 0,
   })
 
   const fetchAttacks = useCallback((pageCursor?: string) => {
     setLoading(true)
     setError(null)
-    setFetchToken(prev => ({ cursor: pageCursor, filterKey, nonce: prev.nonce + 1 }))
-  }, [filterKey])
+    setFetchToken(prev => ({ cursor: pageCursor, listKey, nonce: prev.nonce + 1 }))
+  }, [listKey])
 
-  // Attack and converter options do not depend on the active history filters.
+  // Attack and converter options do not depend on the active history filters,
+  // only on the runtime generation that serves them.
   useEffect(() => {
+    if (!runtime.ready) return
+    let cancelled = false
     attacksApi.getAttackOptions()
-      .then(resp => setAttackTypeOptions(resp.attack_types))
+      .then(resp => {
+        if (!cancelled) setAttackTypeOptions(resp.attack_types)
+      })
       .catch(() => { /* ignore */ })
     attacksApi.getConverterOptions()
-      .then(resp => setConverterOptions(resp.converter_types))
+      .then(resp => {
+        if (!cancelled) setConverterOptions(resp.converter_types)
+      })
       .catch(() => { /* ignore */ })
     labelsApi.getLabels()
       .then(resp => {
+        if (cancelled) return
         // TODO(PyRIT 1.4): Remove the labels.* fallbacks with legacy attribution aliases.
         setOperatorOptions([...(resp.operators ?? resp.labels.operator ?? [])].sort())
         setAllOtherLabelOptions(buildOtherLabelOptions(resp.labels))
       })
       .catch(() => { /* ignore */ })
     operationsApi.list()
-      .then(resp => setOperationOptions(resp.items.map(operation => ({ value: operation.id, label: operation.name }))))
+      .then(resp => {
+        if (!cancelled) setOperationOptions(resp.items.map(operation => ({ value: operation.id, label: operation.name })))
+      })
       .catch(() => { /* ignore */ })
-  }, [])
+    return () => {
+      cancelled = true
+    }
+  }, [runtime.ready, runtime.generation])
 
   // Arbitrary label options are narrowed by the active indexed attribution filters.
   useEffect(() => {
-    if (!hasLabelOptionFilters) return
+    if (!runtime.ready || !hasLabelOptionFilters) return
     let cancelled = false
     labelsApi.getLabels('attacks', {
       operator: filters.operator.length > 0 ? filters.operator : undefined,
@@ -168,14 +198,17 @@ export default function AttackHistory({
     filters.otherLabels,
     hasLabelOptionFilters,
     labelOptionFilterKey,
+    runtime.ready,
+    runtime.generation,
   ])
 
   // Fetch attacks whenever filters change or an event handler bumps fetchToken.
   // All setState calls live in .then/.catch/.finally so we don't trigger
   // react-hooks/set-state-in-effect.
   useEffect(() => {
+    if (!runtime.ready) return
     let cancelled = false
-    const effectiveCursor = fetchToken.filterKey === filterKey && settledFilterKey === filterKey
+    const effectiveCursor = fetchToken.listKey === listKey && settledListKey === listKey
       ? fetchToken.cursor
       : undefined
     attacksApi.listAttacks(buildListParams(filters, effectiveCursor))
@@ -184,7 +217,7 @@ export default function AttackHistory({
         setAttacks(response.items.map(attack => ({ ...attack, labels: attack.labels ?? {} })))
         setIsLastPage(!response.pagination.has_more)
         setCursor(response.pagination.next_cursor ?? undefined)
-        setSettledFilterKey(filterKey)
+        setSettledListKey(listKey)
         setError(null)
         // Reset displayed page index when the trigger is a filter change (no
         // explicit cursor). Pagination handlers pass an explicit cursor and
@@ -194,7 +227,7 @@ export default function AttackHistory({
       .catch(err => {
         if (cancelled) return
         setAttacks([])
-        setSettledFilterKey(filterKey)
+        setSettledListKey(listKey)
         setError(toApiError(err).detail)
         if (!effectiveCursor) setPage(0)
       })
@@ -218,8 +251,9 @@ export default function AttackHistory({
     filters.operator,
     filters.operationId,
     filters.otherLabels,
-    filterKey,
+    listKey,
     fetchToken,
+    runtime.ready,
   ])
 
   const handleNextPage = () => {
@@ -250,7 +284,7 @@ export default function AttackHistory({
     filters.hasConverters !== undefined ||
     !filters.includeScenarioAttacks ||
     filters.operator.length > 0 || filters.operationId.length > 0 || filters.otherLabels.length > 0
-  const filtersPending = settledFilterKey !== filterKey
+  const filtersPending = settledListKey !== listKey
   const displayLoading = loading || filtersPending
   const emptyStateGuidance = activeTarget
     ? {
