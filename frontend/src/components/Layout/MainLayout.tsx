@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Button,
+  DrawerBody,
+  OverlayDrawer,
   Text,
   Tooltip,
   mergeClasses,
@@ -8,11 +10,15 @@ import {
 import { QuestionCircleRegular } from '@fluentui/react-icons'
 
 import LabelsBar, { type OperationControlProps } from '@/components/Labels/LabelsBar'
+import Navigation, { type ViewName } from '@/components/Sidebar/Navigation'
+import { UserAccountButton } from '@/components/UserAccountButton'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useTheme } from '@/hooks/useTheme'
+import { useUserPreferences } from '@/hooks/useUserPreferences'
+import { versionApi } from '@/services/api'
+import { NARROW_SCREEN_QUERY } from '@/styles/touchTargets'
+import type { UserPreferences } from '@/types'
 
-import { versionApi } from '../../services/api'
-import Navigation, { type ViewName } from '../Sidebar/Navigation'
-import { UserAccountButton } from '../UserAccountButton'
 import { useMainLayoutStyles } from './MainLayout.styles'
 
 interface MainLayoutProps extends OperationControlProps {
@@ -26,6 +32,8 @@ interface MainLayoutProps extends OperationControlProps {
   operatorReadOnly?: boolean
   toolbarRef?: React.Ref<HTMLDivElement>
   onStartTour?: () => void
+  labelsBusy?: boolean
+  featureNavigation?: React.ReactNode
 }
 
 export default function MainLayout({
@@ -42,12 +50,21 @@ export default function MainLayout({
   operatorReadOnly,
   toolbarRef,
   onStartTour,
+  labelsBusy = false,
+  featureNavigation,
 }: MainLayoutProps) {
   const styles = useMainLayoutStyles()
   const { background } = useTheme()
+  const { preferences, updatePreferences } = useUserPreferences()
   const [version, setVersion] = useState<string>('Loading...')
   const [commit, setCommit] = useState<string | null>(null)
   const [databaseInfo, setDatabaseInfo] = useState<string | null>(null)
+  const sidebarExpanded = preferences.sidebarExpanded ?? true
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const closeDrawer = useCallback((): void => {
+    setDrawerOpen(false)
+  }, [])
+  const narrow = useMediaQuery(NARROW_SCREEN_QUERY, closeDrawer)
 
   useEffect(() => {
     versionApi.getVersion()
@@ -107,14 +124,42 @@ export default function MainLayout({
         <UserAccountButton />
       </div>
       <div className={styles.contentArea}>
-        <aside className={styles.sidebar}>
+        <aside className={mergeClasses(styles.sidebar, !narrow && sidebarExpanded && styles.sidebarExpanded)}>
           <Navigation
             currentView={currentView}
             onNavigate={onNavigate}
             onOpenFeedback={onOpenFeedback}
             canManageConfiguration={canManageConfiguration}
+            expanded={!narrow && sidebarExpanded}
+            onToggleExpanded={() => {
+              if (narrow) setDrawerOpen(true)
+              else updatePreferences((current: UserPreferences) => ({
+                ...current,
+                sidebarExpanded: !(current.sidebarExpanded ?? true),
+              }))
+            }}
           />
         </aside>
+        {narrow && (
+          <OverlayDrawer
+            open={drawerOpen}
+            onOpenChange={(_, data) => { setDrawerOpen(data.open) }}
+            position="start"
+            className={styles.navigationDrawer}
+            aria-label="Navigation"
+          >
+            <DrawerBody className={styles.drawerBody}>
+              <Navigation
+                currentView={currentView}
+                onNavigate={(view: ViewName) => { onNavigate(view); setDrawerOpen(false) }}
+                onOpenFeedback={() => { setDrawerOpen(false); onOpenFeedback() }}
+                canManageConfiguration={canManageConfiguration}
+                expanded
+                onToggleExpanded={() => { setDrawerOpen(false) }}
+              />
+            </DrawerBody>
+          </OverlayDrawer>
+        )}
         <main
           id="main-content"
           tabIndex={-1}
@@ -137,12 +182,13 @@ export default function MainLayout({
             data-tour="labels-card"
           >
             <div className={styles.labelsRow}>
-              <div className={styles.labelsControls}>
+              <div className={styles.labelsControls} inert={labelsBusy} aria-busy={labelsBusy}>
                 <LabelsBar labels={labels} onLabelsChange={onLabelsChange} operatorReadOnly={operatorReadOnly}
               operation={operation} onOperationChange={onOperationChange} onRetryOperation={onRetryOperation} />
               </div>
             </div>
           </section>
+          {featureNavigation}
           <div ref={toolbarRef} className={styles.toolbarSlot} />
           {children}
         </main>

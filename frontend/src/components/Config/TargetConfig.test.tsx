@@ -65,6 +65,7 @@ const sampleTargets: TargetInstance[] = [
     target_type: "OpenAIChatTarget",
     endpoint: "https://api.openai.com",
     model_name: "gpt-4",
+    capabilities: { supports_multi_turn: true },
   }),
   makeTarget({
     target_registry_name: "openai_image_dalle",
@@ -76,9 +77,7 @@ const sampleTargets: TargetInstance[] = [
 
 describe("TargetConfig", () => {
   const defaultProps = {
-    defaultObjectiveTarget: null as TargetInstance | null,
     defaultAdversarialTarget: null as TargetInstance | null,
-    onSetDefaultObjectiveTarget: jest.fn(),
     onSetDefaultAdversarialTarget: jest.fn(),
   };
 
@@ -135,8 +134,8 @@ describe("TargetConfig", () => {
     render(<TestWrapper><TargetConfig {...defaultProps} /></TestWrapper>);
     expect(await screen.findByText("openai_image_dalle")).toBeInTheDocument();
     expect(mockedTargetsApi.listTargets).toHaveBeenCalledWith(200, "second-page");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Default objective target" }), sampleTargets[1].target_registry_name);
-    expect(defaultProps.onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[1]);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Default adversarial target" }), sampleTargets[0].target_registry_name);
+    expect(defaultProps.onSetDefaultAdversarialTarget).toHaveBeenCalledWith(sampleTargets[0]);
   });
 
   it("should show empty state when no targets", async () => {
@@ -189,9 +188,9 @@ describe("TargetConfig", () => {
     20000
   );
 
-  it("should set the objective default", async () => {
+  it("should set the adversarial default", async () => {
     const user = userEvent.setup();
-    const onSetDefaultObjectiveTarget = jest.fn();
+    const onSetDefaultAdversarialTarget = jest.fn();
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: sampleTargets,
       pagination: { limit: 200, has_more: false },
@@ -201,7 +200,7 @@ describe("TargetConfig", () => {
       <TestWrapper>
         <TargetConfig
           {...defaultProps}
-          onSetDefaultObjectiveTarget={onSetDefaultObjectiveTarget}
+          onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
         />
       </TestWrapper>
     );
@@ -210,12 +209,12 @@ describe("TargetConfig", () => {
       expect(screen.getAllByText("OpenAIChatTarget").length).toBeGreaterThanOrEqual(1);
     });
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Default objective target" }), sampleTargets[0].target_registry_name);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Default adversarial target" }), sampleTargets[0].target_registry_name);
 
-    expect(onSetDefaultObjectiveTarget).toHaveBeenCalledWith(sampleTargets[0]);
+    expect(onSetDefaultAdversarialTarget).toHaveBeenCalledWith(sampleTargets[0]);
   });
 
-  it("should show the objective default badge", async () => {
+  it("should show the adversarial default without an objective default control", async () => {
     mockedTargetsApi.listTargets.mockResolvedValue({
       items: sampleTargets,
       pagination: { limit: 200, has_more: false },
@@ -225,14 +224,15 @@ describe("TargetConfig", () => {
       <TestWrapper>
         <TargetConfig
           {...defaultProps}
-          defaultObjectiveTarget={sampleTargets[0]}
+          defaultAdversarialTarget={sampleTargets[0]}
         />
       </TestWrapper>
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "Default objective target" })).toHaveValue(sampleTargets[0].target_registry_name);
+      expect(screen.getByRole("combobox", { name: "Default adversarial target" })).toHaveValue(sampleTargets[0].target_registry_name);
     });
+    expect(screen.queryByRole("combobox", { name: "Default objective target" })).not.toBeInTheDocument();
   });
 
   it("should refresh targets when Refresh button is clicked", async () => {
@@ -296,7 +296,7 @@ describe("TargetConfig", () => {
     const onTargetsLoaded = jest.fn();
     const { rerender } = render(
       <TestWrapper>
-        <TargetConfig {...defaultProps} defaultObjectiveTarget={roundRobin} onTargetsLoaded={onTargetsLoaded} />
+        <TargetConfig {...defaultProps} defaultAdversarialTarget={roundRobin} onTargetsLoaded={onTargetsLoaded} />
       </TestWrapper>
     );
     await user.click(await screen.findByRole("combobox", { name: "Filter by input:" }));
@@ -308,7 +308,7 @@ describe("TargetConfig", () => {
     mockRuntimeGeneration = "generation-2";
     rerender(
       <TestWrapper>
-        <TargetConfig {...defaultProps} defaultObjectiveTarget={roundRobin} onTargetsLoaded={onTargetsLoaded} />
+        <TargetConfig {...defaultProps} defaultAdversarialTarget={roundRobin} onTargetsLoaded={onTargetsLoaded} />
       </TestWrapper>
     );
     await waitFor(() => {
@@ -320,7 +320,7 @@ describe("TargetConfig", () => {
     expect(screen.queryByRole("row", { name: /text_only/ })).not.toBeInTheDocument();
     expect(screen.getByText("#1 inner_a")).toBeInTheDocument();
     const defaults = within(screen.getByRole("region", { name: "Target defaults" }));
-    expect(defaults.getByRole("combobox", { name: "Default objective target" })).toHaveValue("rr_image");
+    expect(defaults.getByRole("combobox", { name: "Default adversarial target" })).toHaveValue("rr_image");
   });
 
   it("should drop a filter chosen while a runtime reload is still loading", async () => {

@@ -1,11 +1,11 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { Link, MemoryRouter, Route, Routes } from 'react-router'
 
 import { scenarioPresetsApi, scenariosApi } from '@/services/api'
 import { makeScenario } from '@/test-utils/scenarioFixtures'
-import type { ScenarioDatasetSettings, ScenarioPreset, ScenarioRunSizeEstimateResponse } from '@/types'
+import type { Parameter, ScenarioDatasetSettings, ScenarioPreset, ScenarioRunSizeEstimateResponse } from '@/types'
 
 import ScenarioPresetEditor from './ScenarioPresetEditor'
 
@@ -740,6 +740,13 @@ describe('ScenarioPresetEditor dataset projection', () => {
 })
 
 describe('ScenarioPresetEditor dynamic parameters', () => {
+  const GOALS_PARAMETER: Parameter = {
+    name: 'goals',
+    type_name: 'list[str]',
+    is_list: true,
+    required: false,
+    default: ['Default goal'],
+  }
   const SCENARIO_WITH_PARAM = makeScenario({
     supported_parameters: [
       {
@@ -787,6 +794,147 @@ describe('ScenarioPresetEditor dynamic parameters', () => {
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
       'nightly_probe',
       expect.objectContaining({ scenario_params: { max_turns: 5, max_concurrency: 4 } }),
+      'v1',
+    ))
+  })
+
+  it.each([
+    { label: 'comma-containing goals', goals: ['Hello, world!', 'Second goal'] },
+    { label: 'a comma-only goal', goals: [','] },
+    { label: 'an explicit empty list', goals: [] },
+    { label: 'whitespace, duplicates and order', goals: [' third ', 'first', 'first'] },
+  ])('should preserve $label during a description-only edit', async ({ goals }) => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supported_parameters: [GOALS_PARAMETER] }))
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, scenario_params: { goals } },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    await screen.findByRole('textbox', { name: 'goals' })
+    await user.type(screen.getByRole('textbox', { name: 'Description' }), ' Updated.')
+    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
+      'nightly_probe',
+      expect.objectContaining({ scenario_params: { goals } }),
+      'v1',
+    ))
+  })
+
+  it.each([
+    { input: 'a, b', goals: ['a', 'b'] },
+    { input: 'padded, Second goal', goals: ['padded', 'Second goal'] },
+  ])('should save an explicit list edit to "$input"', async ({ input, goals }) => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supported_parameters: [GOALS_PARAMETER] }))
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, scenario_params: { goals: [' padded ', 'Second goal'] } },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    const field = await screen.findByRole('textbox', { name: 'goals' })
+    await user.clear(field)
+    await user.type(field, input)
+    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
+      'nightly_probe',
+      expect.objectContaining({ scenario_params: { goals } }),
+      'v1',
+    ))
+  })
+
+  it('should preserve an untouched list when the operator fills a missing required field', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({
+      supported_parameters: [
+        { name: 'objective', type_name: 'str', required: true, multiline: true },
+        GOALS_PARAMETER,
+      ],
+    }))
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, scenario_params: { goals: ['Hello, world!'] } },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    await user.type(await screen.findByRole('textbox', { name: 'objective' }), 'Test this objective')
+    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
+      'nightly_probe',
+      expect.objectContaining({
+        scenario_params: { objective: 'Test this objective', goals: ['Hello, world!'] },
+      }),
+      'v1',
+    ))
+  })
+
+  it('should estimate with the same untouched list that will be saved', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supported_parameters: [GOALS_PARAMETER] }))
+    mockGet.mockResolvedValue({
+      preset: { ...STORED_PRESET, scenario_params: { goals: ['Hello, world!'] } },
+      version: 'v1',
+      issues: [],
+    })
+    renderEdit()
+
+    await screen.findByRole('textbox', { name: 'goals' })
+    await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledWith(
+      STORED_PRESET.scenario_name,
+      expect.objectContaining({ scenario_params: { goals: ['Hello, world!'] } }),
+      expect.any(AbortSignal),
+    ))
+    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
+      'nightly_probe',
+      expect.objectContaining({ scenario_params: { goals: ['Hello, world!'] } }),
+      'v1',
+    ))
+  })
+
+  it('should preserve values from the newly opened preset rather than the previous form', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supported_parameters: [GOALS_PARAMETER] }))
+    mockGet.mockImplementation((name: string) => Promise.resolve({
+      preset: {
+        ...STORED_PRESET,
+        name,
+        scenario_params: { goals: name === 'first' ? ['Hello, world!'] : [' Next, goal '] },
+      },
+      version: 'v1',
+      issues: [],
+    }))
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={['/registry/scenario-presets/first/edit']}>
+          <Link to="/registry/scenario-presets/second/edit">Open second preset</Link>
+          <Routes>
+            <Route
+              path="/registry/scenario-presets/:presetName/edit"
+              element={<ScenarioPresetEditor mode="edit" />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </FluentProvider>,
+    )
+
+    await user.type(await screen.findByRole('textbox', { name: 'goals' }), ' discarded edit')
+    await user.click(screen.getByRole('link', { name: 'Open second preset' }))
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'goals' })).toHaveValue(' Next, goal '))
+    await user.click(screen.getByRole('button', { name: 'Save preset' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(
+      'second',
+      expect.objectContaining({ scenario_params: { goals: [' Next, goal '] } }),
       'v1',
     ))
   })
