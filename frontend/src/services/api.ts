@@ -701,6 +701,7 @@ export const scenariosApi = {
     return response.data
   },
 
+  /** Lists scenario runs by creation time by default or by activity when requested. */
   listRuns: async (params?: {
     limit?: number
     cursor?: string
@@ -709,6 +710,7 @@ export const scenariosApi = {
     label?: string[]
     operation_id?: string[]
     reference_id?: string
+    sort_by?: 'created_at' | 'activity'
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,

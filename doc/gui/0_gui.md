@@ -23,12 +23,21 @@ For other setup options, see [Docker](../getting_started/install_docker.md) or t
 
 ## Home
 
-Home shows your last-used objective target and recent attacks grouped by operation.
-Open an attack to return to its conversation, or go to Registry to configure a
-target. The shared labels bar sets the operator, operation, and custom labels
-for new work; it does not change saved results.
+Home puts **Attacks**, **Scans**, **Recent work**, and **Operations** first.
+Select **New attack** to start a fresh chat, or **Configure scan** to open scanner
+setup. These actions do not send prompts or start a scan. The sidebar's
+**Attacks** entry returns to your last conversation or unsent draft.
+Each workflow has its own history link. Recent work shows up to five saved
+attacks and scans; filter by type or select **Refresh Home** to update the list.
+Open a saved operation to review its work and findings. Registry remains
+available below these sections for setup. Operation links put the selected saved
+operation first, then the newest-created records, not the most recently active
+records. When the complete registry confirms that no targets are registered, the
+secondary setup action offers **Register a target**.
+The shared labels bar applies the selected operator, operation, and custom labels
+to new work; changes do not alter saved results.
 
-![Home page with target and recent work](images/home.png)
+![Home page with workflows and recent work](images/home.png)
 
 ## Chat
 

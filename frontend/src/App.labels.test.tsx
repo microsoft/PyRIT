@@ -65,6 +65,7 @@ jest.mock('@/services/api', () => ({
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   scenariosApi: {
     listCatalog: jest.fn(),
+    listRuns: jest.fn(),
     getScenario: jest.fn(),
     getRunHierarchy: jest.fn(),
     estimateRun: jest.fn(),
@@ -198,6 +199,9 @@ describe('Shared new run labels', () => {
     jest.mocked(scenariosApi.listCatalog).mockResolvedValue({
       items: [SCENARIO], pagination: { limit: 200, has_more: false },
     })
+    jest.mocked(scenariosApi.listRuns).mockResolvedValue({
+      items: [], pagination: { limit: 5, has_more: false },
+    })
     jest.mocked(scenariosApi.estimateRun).mockResolvedValue(SCENARIO.default_run_size)
     jest.mocked(scenarioPresetsApi.list).mockResolvedValue({ source: '', items: [] })
     jest.mocked(scenarioSuitesApi.list).mockResolvedValue({ source: '', items: [] })
@@ -277,6 +281,46 @@ describe('Shared new run labels', () => {
     renderApp()
     await screen.findByRole('button', { name: 'Edit team label, currently new_team' })
     expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('remembered_op')
+  })
+
+  it('promotes only the saved Operation selected in the labels bar on Home', async () => {
+    const user = userEvent.setup()
+    renderApp('/')
+    await chooseOperation(user, 'remembered_op')
+    const operations = screen.getByRole('region', { name: 'Operations', exact: true })
+    await waitFor(() => {
+      expect(within(operations).getAllByRole('button')[1]).toHaveAccessibleName('remembered_op')
+    })
+  })
+
+  it('offers target registration only in the secondary setup area after an authoritative empty registry load', async () => {
+    let finish: ((response: Awaited<ReturnType<typeof targetsApi.listTargets>>) => void) | undefined
+    jest.mocked(targetsApi.listTargets).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    renderApp('/')
+    await screen.findByText('Your recent work will appear here')
+    expect(screen.queryByRole('button', { name: 'Register a target', exact: true })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Open Registry', exact: true })).toBeVisible()
+    await act(async () => {
+      if (!finish) throw new Error('Registry load did not start')
+      finish({ items: [], pagination: { limit: 200, has_more: false } })
+    })
+    const register = await screen.findByRole('button', { name: 'Register a target', exact: true })
+    expect(register.closest('footer')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'New attack', exact: true })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Configure scan', exact: true })).toBeEnabled()
+    expect(targetsApi.listTargets).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not treat hidden targets or an unselected objective target as an empty registry', async () => {
+    writeUserPreferences('local', {
+      ...DEFAULT_USER_PREFERENCES,
+      hiddenTargetRegistryNames: [TARGET.target_registry_name],
+    })
+    renderApp('/')
+    await screen.findByText('Your recent work will appear here')
+    expect(screen.getByRole('button', { name: 'Open Registry', exact: true })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Register a target', exact: true })).not.toBeInTheDocument()
+    expect(targetsApi.listTargets).toHaveBeenCalledTimes(1)
   })
 
   it('uses the signed-in alias ahead of stored and backend operators when launching', async () => {
