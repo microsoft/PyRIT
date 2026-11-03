@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
-  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface,
-  DialogTitle, DialogTrigger, Field, Input, MessageBar, MessageBarBody, Select, Spinner,
-  Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text,
+  Badge, Button, Field, Input, MessageBar, MessageBarBody, Select, Spinner,
+  Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, useRestoreFocusTarget,
 } from '@fluentui/react-components'
 import { AddRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
@@ -14,6 +13,7 @@ import type { TechniqueInstance } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import CreateTechniqueDialog from './CreateTechniqueDialog'
+import RegistryIdentityRow from './RegistryIdentityRow'
 import { useTechniqueRegistryStyles } from './TechniqueRegistry.styles'
 
 interface TechniqueRegistryPageProps {
@@ -23,6 +23,7 @@ interface TechniqueRegistryPageProps {
 
 function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps) {
   const styles = useTechniqueRegistryStyles()
+  const restoreFocusTarget = useRestoreFocusTarget()
   const [items, setItems] = useState<TechniqueInstance[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -30,7 +31,7 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
   const [typeFilter, setTypeFilter] = useState('')
   const [tagFilter, setTagFilter] = useState('')
   const [createOpen, setCreateOpen] = useState(false)
-  const [detail, setDetail] = useState<TechniqueInstance | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [focusRestore, setFocusRestore] = useState(0)
   const mounted = useRef(true)
   const listEpoch = useRef(0)
@@ -66,7 +67,7 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
       setTypeFilter('')
       setTagFilter('')
       setCreateOpen(false)
-      setDetail(null)
+      setExpanded(new Set())
       setFocusRestore((current) => current + 1)
     }
     void Promise.resolve().then(() => { if (mounted.current) void load() })
@@ -87,6 +88,15 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
     setFocusRestore((current) => current + 1)
   }
 
+  const toggleDetails = (name: string): void => {
+    setExpanded((current: Set<string>) => {
+      const next = new Set(current)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
   const visible = items.filter((item) => (
     `${item.name} ${item.description ?? ''} ${item.attack_type} ${item.tags.join(' ')}`.toLowerCase().includes(search.toLowerCase())
     && (!typeFilter || item.attack_type === typeFilter)
@@ -105,7 +115,7 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
         <div className={styles.headerActions}>
           <Button className={styles.headerAction} appearance="subtle" icon={<ArrowSyncRegular />}
             disabled={loading || !ready} onClick={() => { void load() }}>Refresh</Button>
-          <Button className={styles.headerAction} ref={newButton} appearance="primary" icon={<AddRegular />} disabled={!ready}
+          <Button {...restoreFocusTarget} className={styles.headerAction} ref={newButton} appearance="primary" icon={<AddRegular />} disabled={!ready}
             onClick={() => setCreateOpen(true)}>New technique</Button>
         </div>
       </div>
@@ -129,32 +139,15 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
           <Table className={styles.tableContent} aria-label="Registered techniques">
             <TableHeader className={styles.tableHeader}><TableRow>
               <TableHeaderCell>Name</TableHeaderCell><TableHeaderCell>Description</TableHeaderCell>
-              <TableHeaderCell>Attack type</TableHeaderCell><TableHeaderCell>Tags</TableHeaderCell><TableHeaderCell>Details</TableHeaderCell>
+              <TableHeaderCell>Attack type</TableHeaderCell><TableHeaderCell>Tags</TableHeaderCell>
             </TableRow></TableHeader>
             <TableBody>{visible.map((item) => (
-              <TableRow key={item.name}>
-                <TableCell className={styles.nameCell}>{item.name}</TableCell><TableCell>{item.description ?? 'No description'}</TableCell>
+              <RegistryIdentityRow key={item.name} name={item.name} identity={item.identifier} columns={4}
+                expanded={expanded.has(item.name)} onToggle={() => toggleDetails(item.name)}>
+                <TableCell>{item.description ?? 'No description'}</TableCell>
                 <TableCell className={styles.nameCell}>{item.attack_type}</TableCell>
                 <TableCell><div className={styles.tags}>{item.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div></TableCell>
-                <TableCell>
-                  <Dialog open={detail?.name === item.name} onOpenChange={(_, data) => {
-                    if (!data.open) setDetail(null)
-                  }}>
-                    <DialogTrigger disableButtonEnhancement>
-                      <Button className={styles.action} onClick={() => setDetail(item)} aria-label={`Details for ${item.name}`}>Details</Button>
-                    </DialogTrigger>
-                    <DialogSurface>
-                      <DialogBody>
-                        <DialogTitle>{item.name}</DialogTitle>
-                        <DialogContent className={styles.content}>
-                          {detail && <pre className={styles.creationCall} aria-label="Technique creation call">{detail.creation_statement}</pre>}
-                        </DialogContent>
-                        <DialogActions><DialogTrigger disableButtonEnhancement><Button>Close</Button></DialogTrigger></DialogActions>
-                      </DialogBody>
-                    </DialogSurface>
-                  </Dialog>
-                </TableCell>
-              </TableRow>
+              </RegistryIdentityRow>
             ))}</TableBody>
           </Table>
         </div>
