@@ -50,6 +50,27 @@ describe('useConversationDraft', () => {
     },
   )
 
+  it('keeps execution identity in dirty tracking when bindings share a registered source', () => {
+    const bound: TargetInstance = {
+      ...registeredTarget, identifier: { ...registeredTarget.identifier, hash: 'effective-hash' },
+      binding: {
+        version: 1, source_name: 'source', source_hash: registeredTarget.identifier.hash,
+        effective_hash: 'effective-hash', temperature: 0.8,
+      },
+    }
+    const { result } = renderHook(() => useConversationDraft())
+    act(() => result.current.begin({ ...initial, target: bound }))
+    expect(result.current.dirty).toBe(false)
+    act(() => result.current.changeTarget({
+      ...bound, identifier: { ...bound.identifier, hash: 'changed-effective-hash' },
+      binding: { ...bound.binding, version: 1, source_name: 'source', source_hash: registeredTarget.identifier.hash,
+        effective_hash: 'changed-effective-hash', temperature: 1 },
+    }))
+    expect(result.current.dirty).toBe(true)
+    act(() => result.current.changeTarget(bound))
+    expect(result.current.dirty).toBe(false)
+  })
+
   it.each(['same_attack', 'new_attack'] as const)(
     'preserves an existing binding and historical generation metadata when saving %s',
     async (destination) => {

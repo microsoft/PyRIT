@@ -55,6 +55,7 @@ from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import ClauseElement
 
 from pyrit.analytics.outcome_statistics import compute_outcome_statistics, success_percentage
+from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
@@ -7213,8 +7214,10 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
         Return one descending scenario-history page and its database-side attempt metrics.
@@ -7240,8 +7243,10 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
+            sort_by=sort_by,
         )
         aggregates = self._dispatch_memory_operation(
             "get_scenario_history_aggregates",
@@ -7376,7 +7381,10 @@ class MemoryInterface(abc.ABC):
                 outcomes=g_outcomes,
             )
             run_groups = groups_by_run.setdefault(run_id, {})
-            run_groups[canonical_gid] = counts
+            if canonical_gid in run_groups:
+                run_groups[canonical_gid] = combine_execution_counts([run_groups[canonical_gid], counts])
+            else:
+                run_groups[canonical_gid] = counts
             if canonical_gid != raw_gid:
                 run_groups[raw_gid] = counts
 
@@ -11814,8 +11822,10 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
         Use ``get_scenario_run_history_page_async``.
@@ -11835,8 +11845,10 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
+            sort_by=sort_by,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.get_scenario_run_history_page)
@@ -11847,8 +11859,10 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
         Return one descending scenario-history page and its database-side attempt metrics.
@@ -11864,7 +11878,7 @@ class MemoryInterface(abc.ABC):
                 another page exists.
 
         Raises:
-            ValueError: If the limit, cursor ID, or label keys are invalid.
+            ValueError: If the limit, cursor ID, sort mode, or label keys are invalid.
         """
         return await self._run_database_operation_async(
             self._execute_get_scenario_run_history_page,
@@ -11872,8 +11886,10 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
+            sort_by=sort_by,
         )
 
     def get_scenario_history_aggregates(

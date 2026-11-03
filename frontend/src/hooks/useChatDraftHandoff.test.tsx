@@ -99,6 +99,9 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       { target: null },
       { target: { registryName: 'selected-target', identifierHash: 'selected-hash' } },
       { converters: converterSetup },
+      { generationDraft: {} },
+      { generationDraft: { temperature: '0' } },
+      { generationDraft: { temperature: '' } },
     ]) {
       expect(hasChatDraftState({ text: '', attachments: [], ...setup })).toBe(true)
       expect(isChatDraftDirty({ text: '', attachments: [], ...setup })).toBe(false)
@@ -113,7 +116,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const cleanDraft = {
         originatingAttackId: null,
         originatingConversationId: null,
-        originatingPath: '/chat',
+        originatingPath: '/attack/chat',
         draft: { text: '   ', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -125,7 +128,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const unsavedDraft = {
         originatingAttackId: null,
         originatingConversationId: null,
-        originatingPath: '/chat',
+        originatingPath: '/attack/chat',
         draft: { text: 'draft prompt', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -137,7 +140,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const persistedDraft = {
         originatingAttackId: 'attack-456',
         originatingConversationId: 'conv-456',
-        originatingPath: '/attacks/attack-456',
+        originatingPath: '/attack/chat/attack-456',
         draft: { text: 'draft for attack 456', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -151,7 +154,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const attackDraft = {
         originatingAttackId: 'attack-1',
         originatingConversationId: 'conv-1',
-        originatingPath: '/attacks/attack-1',
+        originatingPath: '/attack/chat/attack-1',
         draft: { text: 'attack 1 prompt', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -162,7 +165,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const unsavedDraft = {
         originatingAttackId: null,
         originatingConversationId: null,
-        originatingPath: '/chat',
+        originatingPath: '/attack/chat',
         draft: { text: 'unsaved draft', attachments: [] },
         savedAt: Date.now(),
         sequence: 1,
@@ -273,6 +276,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const draftContent: ChatDraftContent = {
         text: 'Hello from draft',
         systemPrompt: 'Adversarial system prompt',
+        generationDraft: { temperature: '0' },
         attachments: [
           { name: 'sample.png', type: 'image', mimeType: 'image/png', url: 'blob:http://localhost/img1', size: 500 },
         ],
@@ -283,7 +287,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: draftContent,
         })
       })
@@ -293,6 +297,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       expect(result.current.preservedDraft?.draft.systemPrompt).toBe('Adversarial system prompt')
       expect(result.current.preservedDraft?.draft.attachments).toHaveLength(1)
       expect(result.current.preservedDraft?.draft.converters).toEqual(CONVERTERS)
+      expect(result.current.preservedDraft?.draft.generationDraft).toEqual({ temperature: '0' })
 
       // Consume preserved draft once
       let consumed: ChatDraftContent | null = null
@@ -301,6 +306,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       })
       expect(consumed).not.toBeNull()
       expect(consumed?.text).toBe('Hello from draft')
+      expect(consumed?.generationDraft).toEqual({ temperature: '0' })
       expect(consumed?.converters?.applied.text.convertedValue).toBe('Uryyb sebz qensg')
 
       // Second consumption returns null (single-use guarantee prevents duplicate restores)
@@ -318,7 +324,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: 'attack-100',
           originatingConversationId: 'conv-100',
-          originatingPath: '/attacks/attack-100',
+          originatingPath: '/attack/chat/attack-100',
           draft: { text: 'Attack 100 draft', attachments: [] },
         })
       })
@@ -354,7 +360,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: { text: 'my draft text', attachments: [] },
         })
       })
@@ -383,7 +389,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: {
             text: 'v1',
             attachments: [
@@ -398,7 +404,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: {
             text: 'v2',
             attachments: [
@@ -418,7 +424,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: {
             text: 'to be cleared',
             attachments: [
@@ -497,7 +503,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         result.current.preserveDraft({
           originatingAttackId: null,
           originatingConversationId: null,
-          originatingPath: '/chat',
+          originatingPath: '/attack/chat',
           draft: {
             text: 'unmount draft',
             attachments: [
@@ -525,14 +531,14 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Earlier draft', attachments: [] },
         })
       })
       const sequence = result.current.preservedDraft?.sequence
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Newer draft', attachments: [] },
         })
         expect(result.current.consumePreservedDraft(null, null, sequence)).toBeNull()
@@ -567,7 +573,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       }
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Newer draft', attachments: [] },
         })
         expect(result.current.stagePendingImport({
@@ -594,7 +600,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       }
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Preserved', attachments: [attachment] },
         })
         result.current.stagePendingImport({
@@ -616,7 +622,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       }
       act(() => {
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Preserved', attachments: [attachment] },
         })
         result.current.stagePendingImport({
@@ -640,7 +646,7 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
           destinationType: 'new_attack', content: { text: 'Old import', attachments: [attachment] },
         })
         result.current.preserveDraft({
-          originatingAttackId: null, originatingConversationId: null, originatingPath: '/chat',
+          originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
           draft: { text: 'Newer draft', attachments: [attachment] },
         })
         expect(result.current.consumePendingImport()).toBeNull()
