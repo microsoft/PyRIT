@@ -197,7 +197,9 @@ def test_composite_images_translucent_overlay_uses_source_over_pixels():
     result = converter._composite_images(base=base, overlay=overlay)
 
     # Source-over of 50% white on opaque black: color ~128, alpha stays opaque.
-    r, g, b, a = result.getpixel((1, 1))
+    pixel = result.getpixel((1, 1))
+    assert isinstance(pixel, tuple)
+    r, g, b, a = pixel
     assert abs(r - 128) <= 1
     assert abs(g - 128) <= 1
     assert abs(b - 128) <= 1
