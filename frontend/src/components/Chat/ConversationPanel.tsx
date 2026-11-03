@@ -140,10 +140,6 @@ export default function ConversationPanel({
       })
       .catch((err: unknown) => {
         if (cancelled || activeReadRef.current !== readId) return
-        if (referencePageSize === undefined) {
-          setUnpagedConversations([])
-          setUnpagedMainConversationId(null)
-        }
         setError(toApiError(err).detail)
       })
       .finally(() => {
@@ -156,13 +152,12 @@ export default function ConversationPanel({
     }
   }, [attackResultId, referencePageSize, selectionRefreshId, refreshKey, retryCount, saveReferencePage])
 
-  // Reset local state when the attack is unloaded so stale data from a prior
-  // attack doesn't briefly appear when the user opens a new one. Uses the
-  // "adjust state during render" pattern instead of a useEffect to satisfy
-  // react-hooks/set-state-in-effect.
+  // Reset attack/paging identity, but retain keyed rows during manual background
+  // refreshes so keyboard focus survives. Adjust state during render instead of
+  // an effect to satisfy react-hooks/set-state-in-effect.
   const [previousSource, setPreviousSource] = useState({ attackResultId, referencePageSize, refreshKey })
   if (attackResultId !== previousSource.attackResultId || referencePageSize !== previousSource.referencePageSize
-    || refreshKey !== previousSource.refreshKey) {
+    || (referencePageSize !== undefined && refreshKey !== previousSource.refreshKey)) {
     setPreviousSource({ attackResultId, referencePageSize, refreshKey })
     setUnpagedConversations([])
     setUnpagedMainConversationId(null)
@@ -217,8 +212,8 @@ export default function ConversationPanel({
     ? savedReferencePage : null
   const conversations = referencePageSize === undefined ? unpagedConversations : currentPage?.response.conversations ?? []
   const mainConversationId = referencePageSize === undefined ? unpagedMainConversationId : currentPage?.response.main_conversation_id ?? null
-  const showLoadedReferences = currentPage !== null
-  const showRows = (!isLoading || showLoadedReferences) && (!error || showLoadedReferences)
+  const hasLoadedConversations = currentPage !== null || (referencePageSize === undefined && unpagedConversations.length > 0)
+  const showRows = (!isLoading || hasLoadedConversations) && (!error || hasLoadedConversations)
   const selectionOutsidePage = currentPage && activeConversationId
     && !conversations.some((conversation: ConversationSummary) => conversation.conversation_id === activeConversationId)
 
@@ -389,6 +384,7 @@ export default function ConversationPanel({
             </MessageBarBody></MessageBar>
           )}
           <Text ref={pagingStatusRef} tabIndex={-1} size={200} role="status" aria-live="polite">
+            {isLoading ? 'Loading saved conversation references... ' : isLoadingMore ? 'Loading more conversations... ' : ''}
             {conversations.length} of {currentPage.response.total_count} saved conversations loaded.{' '}
             {currentPage.response.pagination?.has_more ? 'More references are available.' : 'End of saved conversation references.'}
           </Text>

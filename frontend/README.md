@@ -65,8 +65,10 @@ the source conversation. New outgoing turns are always converted.
 
 ## Saved Scenario conversation evidence
 
-Saved Scenario results reuse Chat's read-only viewer. The conversation selector
-initially loads 50 main/pruned references, and the viewer requests 100 **message
+Saved Scenario results reuse Chat's read-only viewer. Initial Chat metadata
+reports a server reference count and validates the selected conversation without
+downloading complete reference arrays. The conversation selector initially loads
+50 main/pruned references, and the viewer requests 100 **message
 pieces**, not turns, from only the selected conversation. **Load more
 conversations** and **Load more message pieces** follow separate server cursors.
 Reference totals come from the server; selecting a conversation outside the
@@ -78,13 +80,16 @@ unfinished turn, while the paging footer describes the whole loaded transcript.
 Continuation failures keep the loaded evidence available with **Retry** or
 **Restart** controls. A restart begins a new bounded read rather than reusing a
 stale cursor. **End of saved transcript** means the server has no further pieces;
-it does not infer a final target-response status.
+it does not infer a final target-response status. The reference and transcript
+status regions announce pending page loads, including retries and restarts.
 
 Load the complete transcript before continuing manually, copying/branching,
-exporting, or assessing/attaching its evidence. Existing live/manual Chat reads,
-drafts and send/edit/recovery workflows are unchanged. Selected conversation
-URLs, Scenario breadcrumbs and the originating History filters survive paging
-and reloads.
+exporting, or assessing/attaching its evidence. Adding or removing a human score
+refreshes scores on the loaded pieces without discarding evidence, pagination,
+or completeness. Existing live/manual Chat reads, drafts and send/edit/recovery
+workflows are unchanged, and manual conversation-list refreshes retain keyed
+rows and keyboard focus. Selected conversation URLs, Scenario breadcrumbs and
+the originating History filters survive paging and reloads.
 On narrow screens, the saved viewer scrolls as one surface so loaded evidence
 and continuation controls remain reachable without squeezing the transcript.
 Selecting another saved conversation starts at its beginning; continuation

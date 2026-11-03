@@ -1,6 +1,6 @@
 import { expect, test, type Page, type Request, type Response, type TestInfo } from '@playwright/test'
 
-import type { AttackConversationsResponse, BackendMessage, BackendMessagePiece, ConversationMessagesResponse, ConversationSummary } from '@/types'
+import type { AttackConversationsResponse, AttackMetadata, BackendMessage, BackendMessagePiece, ConversationMessagesResponse, ConversationSummary } from '@/types'
 import { attackConversationRoutePath, scenarioRunRoutePath } from '../src/utils/routeParams'
 import { compatibilityHeaders } from './_compatibility'
 
@@ -15,9 +15,12 @@ const OFF_PAGE_ID = '00000000-0000-0000-0000-00010b00006e'
 const SAVED_REQUEST = 'Synthetic request for Step 5. No external model was called.'
 const SAVED_RESPONSE = 'Stored example response for Step 5. This is offline sample data.'
 
-type SavedReadAction = 'reset' | 'status' | 'fail_messages' | 'fail_references' | 'hold_messages' | 'release_messages'
+type SavedReadAction = 'reset' | 'status' | 'fail_messages' | 'fail_references'
+  | 'hold_messages' | 'release_messages' | 'hold_references' | 'release_references'
 
-async function controlSavedRead(page: Page, action: SavedReadAction, status: 400 | 503 = 503): Promise<{ waiting: boolean }> {
+async function controlSavedRead(
+  page: Page, action: SavedReadAction, status: 400 | 503 = 503,
+): Promise<{ waiting: boolean; reference_waiting: boolean }> {
   const response = await page.request.post('/api/e2e/saved-evidence', {
     data: { action, status }, headers: compatibilityHeaders(),
   })
@@ -25,19 +28,51 @@ async function controlSavedRead(page: Page, action: SavedReadAction, status: 400
   return response.json()
 }
 
-function captureSavedReads(page: Page): URL[] {
-  const reads: URL[] = []
+interface SavedMetadataRead {
+  readonly url: URL
+  readonly status: number
+  readonly body: Promise<AttackMetadata>
+}
+
+interface SavedReads {
+  readonly requests: URL[]
+  readonly metadata: SavedMetadataRead[]
+}
+
+function captureSavedReads(page: Page): SavedReads {
+  const reads: SavedReads = { requests: [], metadata: [] }
   page.on('request', (request: Request): void => {
     const url = new URL(request.url())
-    if (request.method() === 'GET' && /\/api\/attacks\/[^/]+\/(?:messages|conversations)$/.test(url.pathname)) reads.push(url)
+    if (request.method() === 'GET' && /\/api\/attacks\/[^/]+(?:\/(?:messages|conversations|metadata))?$/.test(url.pathname)) {
+      reads.requests.push(url)
+    }
+  })
+  page.on('response', (response: Response): void => {
+    const url = new URL(response.url())
+    if (response.request().method() === 'GET' && /\/api\/attacks\/[^/]+\/metadata$/.test(url.pathname)) {
+      reads.metadata.push({ url, status: response.status(), body: response.json() })
+    }
   })
   return reads
 }
 
-function expectBoundedReads(reads: URL[]): void {
-  expect(reads.length).toBeGreaterThan(0)
-  for (const url of reads) {
+async function expectBoundedReads(reads: SavedReads): Promise<void> {
+  expect(reads.requests.length).toBeGreaterThan(0)
+  for (const url of reads.requests) {
+    if (url.pathname.endsWith('/metadata')) continue
+    expect(url.pathname, 'Saved Chat must not fetch legacy full attack details.').toMatch(/\/(?:messages|conversations)$/)
     expect(url.searchParams.get('limit')).toBe(url.pathname.endsWith('/messages') ? '100' : '50')
+  }
+  expect(reads.metadata.length).toBeGreaterThan(0)
+  for (const read of reads.metadata) {
+    expect(read.status).toBe(200)
+    const metadata = await read.body
+    expect(metadata).not.toHaveProperty('related_conversations')
+    expect(metadata).not.toHaveProperty('related_conversation_ids')
+    expect(metadata).not.toHaveProperty('last_response')
+    expect(metadata.selected_conversation_id).toBe(read.url.searchParams.get('conversation_id') ?? metadata.conversation_id)
+    expect(metadata.selected_conversation_valid).toBe(true)
+    if (metadata.attack_result_id === SAVED_ATTACK_ID) expect(metadata.related_conversation_count).toBe(120)
   }
 }
 
@@ -193,10 +228,10 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   await page.getByRole('link', { name: 'Back to scanner history', exact: true }).click()
   await expect(page).toHaveURL(historyPath)
   await expect(page.getByRole('combobox', { name: 'Run status', exact: true })).toHaveValue('COMPLETED')
-  expectBoundedReads(reads)
+  await expectBoundedReads(reads)
 })
 
-test('merges bounded piece pages into one scored multimodal turn without jumping to the end', async (
+test('merges bounded piece pages and preserves the complete transcript when adding and removing a human score', async (
   { page }: { page: Page }, testInfo: TestInfo,
 ): Promise<void> => {
   const reads = captureSavedReads(page)
@@ -281,7 +316,59 @@ test('merges bounded piece pages into one scored multimodal turn without jumping
   await page.getByRole('region', { name: 'Default Labels', exact: true }).getByRole('button', { name: 'Clear', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Continue manually', exact: true })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Export conversation', exact: true })).toBeEnabled()
-  expectBoundedReads(reads)
+
+  const tail = page.getByTestId('message-list').getByText('Saved continuation turn 121. Offline evidence.', { exact: true })
+  const tailElement = await tail.elementHandle()
+  const waitForScoreRefresh = (): Promise<Response> => page.waitForResponse(async (response: Response): Promise<boolean> => {
+    const url = new URL(response.url())
+    if (response.request().method() !== 'GET' || url.pathname !== `/api/attacks/${SAVED_ATTACK_ID}/messages`) return false
+    const body: ConversationMessagesResponse = await response.json()
+    return body.pagination?.has_more === false
+  })
+  await page.getByRole('button', { name: /objective achieved outcome/i }).click()
+  await page.getByRole('radio', { name: 'Failure', exact: true }).check()
+  await page.getByRole('textbox', { name: 'Rationale', exact: true }).fill('Offline human review of all 222 saved pieces.')
+  const scoreCreated = page.waitForResponse((response: Response): boolean =>
+    response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/scores/manual',
+  )
+  const addedScoresRefreshed = waitForScoreRefresh()
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  const createdResponse = await scoreCreated
+  expect(createdResponse.status(), await createdResponse.text()).toBe(201)
+  expect((await addedScoresRefreshed).status()).toBe(200)
+  await expect(page.getByText('Attack Result Details', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Saved transcript paging' }))
+    .toContainText('End of saved transcript. 222 message pieces loaded.')
+  await expect(page.getByTestId(/^message-bubble-/)).toHaveCount(123)
+  expect(await tailElement?.evaluate((element: Element): boolean => element.isConnected)).toBe(true)
+  await expect(tail).toHaveCount(1)
+  await expect(score).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Continue manually', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Export conversation', exact: true })).toBeEnabled()
+
+  await page.getByRole('button', { name: /objective achieved outcome/i }).click()
+  await expect(page.getByRole('textbox', { name: 'Rationale', exact: true }))
+    .toHaveValue('Offline human review of all 222 saved pieces.')
+  await expect(page.getByRole('radio', { name: 'Failure', exact: true })).toBeChecked()
+  const scoreRemoved = page.waitForResponse((response: Response): boolean =>
+    response.request().method() === 'DELETE' && new URL(response.url()).pathname === `/api/attacks/${SAVED_ATTACK_ID}/human-score`,
+  )
+  const removedScoresRefreshed = waitForScoreRefresh()
+  await page.getByRole('button', { name: 'Remove', exact: true }).click()
+  const removedResponse = await scoreRemoved
+  expect(removedResponse.status(), await removedResponse.text()).toBe(200)
+  expect((await removedScoresRefreshed).status()).toBe(200)
+  await expect(page.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('region', { name: 'Saved transcript paging' }))
+    .toContainText('End of saved transcript. 222 message pieces loaded.')
+  await expect(page.getByTestId(/^message-bubble-/)).toHaveCount(123)
+  expect(await tailElement?.evaluate((element: Element): boolean => element.isConnected)).toBe(true)
+  await expect(tail).toHaveCount(1)
+  await expect(score).toHaveCount(1)
+  await expect(page.getByRole('button', { name: 'Continue manually', exact: true })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Export conversation', exact: true })).toBeEnabled()
+  await expectBoundedReads(reads)
 })
 
 test('retains loaded evidence through continuation errors and a failed bounded restart', async (
@@ -320,7 +407,7 @@ test('retains loaded evidence through continuation errors and a failed bounded r
   expect((await restart).status()).toBe(200)
   await expect(controls).toContainText('100 message pieces loaded.')
   await expect(controls).not.toContainText('Loaded evidence is still shown.')
-  expectBoundedReads(reads)
+  await expectBoundedReads(reads)
 })
 
 test('pages references independently and retains rows through retry and restart failures', async (
@@ -344,8 +431,15 @@ test('pages references independently and retains rows through retry and restart 
   expect((await failure).status()).toBe(503)
   await expect(panel.getByRole('button', { name: /^Select conversation / })).toHaveCount(50)
   await expect(controls).toContainText('Loaded references are still available.')
+  await controlSavedRead(page, 'hold_references')
   const retry = waitForSavedRead(page, 'conversations', true)
-  await controls.getByRole('button', { name: 'Retry more conversations', exact: true }).click()
+  await controls.getByRole('button', { name: 'Retry more conversations', exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await expect.poll(async (): Promise<boolean> => (await controlSavedRead(page, 'status')).reference_waiting).toBe(true)
+  await expect(controls.getByRole('status')).toContainText(/loading/i)
+  await expect(controls.getByRole('status')).toBeFocused()
+  await expect(panel.getByRole('button', { name: /^Select conversation / })).toHaveCount(50)
+  await controlSavedRead(page, 'release_references')
   const second: AttackConversationsResponse = await (await retry).json()
   expect(second.conversations).toHaveLength(50)
   await expect(controls).toContainText('100 of 121 saved conversations loaded.')
@@ -373,8 +467,8 @@ test('pages references independently and retains rows through retry and restart 
   }
   await expect(controls).toContainText('End of saved conversation references.')
   await expect(controls.getByRole('button', { name: 'Load more conversations', exact: true })).toHaveCount(0)
-  expect(reads.filter((url: URL): boolean => url.pathname.endsWith('/messages'))).toHaveLength(1)
-  expectBoundedReads(reads)
+  expect(reads.requests.filter((url: URL): boolean => url.pathname.endsWith('/messages'))).toHaveLength(1)
+  await expectBoundedReads(reads)
 })
 
 test('owns pending continuations across rapid selection, attack navigation and unmount', async (
@@ -396,11 +490,13 @@ test('owns pending continuations across rapid selection, attack navigation and u
   const held = waitForSavedRead(page, 'messages', true)
   await page.getByRole('button', { name: 'Load more message pieces', exact: true }).click()
   await expect.poll(async (): Promise<boolean> => (await controlSavedRead(page, 'status')).waiting).toBe(true)
+  await expect(page.getByRole('region', { name: 'Saved transcript paging' }).getByRole('status'))
+    .toContainText(/loading.*message/i)
   const loading = page.getByRole('button', { name: 'Loading more message pieces...', exact: true })
   await expect(loading).toBeDisabled()
   await loading.press('Enter')
   expect(await transcript.evaluate((element: HTMLElement | SVGElement): number => element.scrollTop)).toBeGreaterThan(0)
-  expect(reads.filter((url: URL): boolean => url.pathname.endsWith('/messages') && url.searchParams.has('cursor'))).toHaveLength(1)
+  expect(reads.requests.filter((url: URL): boolean => url.pathname.endsWith('/messages') && url.searchParams.has('cursor'))).toHaveLength(1)
   const selected = waitForSavedRead(page, 'messages', false, OFF_PAGE_ID)
   await panel.getByRole('button', { name: `Select conversation ${OFF_PAGE_ID}`, exact: true }).focus()
   await page.keyboard.press('Enter')
@@ -432,7 +528,7 @@ test('owns pending continuations across rapid selection, attack navigation and u
   expect((await unmounted).status()).toBe(200)
   await expect(page.getByText(SAVED_RESPONSE, { exact: true })).toHaveCount(0)
   await expect(page.getByRole('region', { name: 'Saved transcript paging' })).toContainText('End of saved transcript. 2 message pieces loaded.')
-  expectBoundedReads(reads)
+  await expectBoundedReads(reads)
 })
 
 test.describe('on a narrow touch screen', () => {
@@ -558,6 +654,6 @@ test.describe('on a narrow touch screen', () => {
     await expect(page.getByText(`Saved pruned user for ${OFF_PAGE_ID}. Offline evidence.`, { exact: true })).toBeVisible()
     await expect(page.getByRole('region', { name: 'Saved transcript paging' })).toContainText('End of saved transcript. 2 message pieces loaded.')
     await expect(page.getByRole('link', { name: `Return to scenario run ${scenarioResultId}` })).toHaveCount(0)
-    expectBoundedReads(reads)
+    await expectBoundedReads(reads)
   })
 })

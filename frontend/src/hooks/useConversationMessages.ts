@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from 'react'
 
 import { attacksApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ConversationMessagesResponse, Message, PaginationInfo } from '@/types'
+import type { BackendMessage, BackendMessagePiece, BackendScore, ConversationMessagesResponse, Message, PaginationInfo } from '@/types'
 import { backendMessagesToFrontend, mergeBackendMessages } from '@/utils/messageMapper'
 
 export interface ConversationLoadIssue {
@@ -85,6 +85,8 @@ export interface ConversationMessages {
   messageContinuationIssue: { detail: string; restartRequired: boolean } | null
   loadMoreMessages: () => Promise<void>
   loadConversation: (attackResultId: string, conversationId: string) => Promise<void>
+  /** Refreshes scores without replacing saved evidence or its paging state. */
+  refreshConversationScores: (attackResultId: string, conversationId: string) => Promise<void>
   /** Lets the next conversation change load even while that conversation is sending. */
   requestForcedLoad: () => void
   markConversationLoaded: (conversationId: string | null) => void
@@ -201,7 +203,7 @@ export function useConversationMessages({
   }, [])
 
   // Load messages for a given conversation
-  const loadConversation = useCallback(async (arId: string, convId: string) => {
+  const loadConversation = useCallback(async (arId: string, convId: string, rejectOnFailure: boolean = false): Promise<void> => {
     const requestId = claimConversationRead(convId)
     const viewRevision = viewRevisionRef.current
     activeLoadRef.current = { attackResultId: arId, conversationId: convId, requestId }
@@ -252,6 +254,11 @@ export function useConversationMessages({
           })
         }
       }
+      if (rejectOnFailure) {
+        const refreshError = new Error(`Could not refresh conversation scores: ${error.detail}`)
+        Object.defineProperty(refreshError, 'cause', { value: cause })
+        throw refreshError
+      }
     } finally {
       if (isLatestConversationRead(convId, requestId)) {
         latestReadIdsRef.current.delete(convId)
@@ -264,6 +271,72 @@ export function useConversationMessages({
       }
     }
   }, [claimConversationRead, isLatestConversationRead, markConversationLoaded, findingEvidenceId, messagePageSize, saveTranscriptPage])
+
+  const refreshConversationScores = useCallback(async (arId: string, convId: string): Promise<void> => {
+    if (viewedAttackRef.current !== arId || viewedConvRef.current !== convId) return
+    if (messagePageSize === undefined) {
+      await loadConversation(arId, convId, true)
+      return
+    }
+    if (activeLoadRef.current) throw new Error('Wait for transcript loading to finish before refreshing scores.')
+    const page = savedTranscriptPageRef.current
+    if (!page?.response || page.attackResultId !== arId || page.conversationId !== convId
+      || page.pageSize !== messagePageSize) {
+      throw new Error('Load the conversation before refreshing its scores.')
+    }
+    const response = page.response
+    const pieceIds = new Set(response.messages.flatMap(
+      (message: BackendMessage) => message.message_pieces.map((piece: BackendMessagePiece) => piece.id),
+    ))
+    if (pieceIds.size === 0) return
+    const requestId = claimConversationRead(convId)
+    const viewRevision = viewRevisionRef.current
+    const isCurrentRefresh = (): boolean => isLatestConversationRead(convId, requestId)
+      && viewedAttackRef.current === arId && viewedConvRef.current === convId
+      && viewRevisionRef.current === viewRevision && savedTranscriptPageRef.current === page
+    const scoresByPiece = new Map<string, BackendScore[]>()
+    const consumedCursors = new Set<string>()
+    let cursor: string | undefined
+    try {
+      // Re-read at most the prefix already loaded, using fresh cursors and only retaining scores.
+      for (let remainingPages = page.consumedCursors.size + 1; remainingPages > 0; remainingPages -= 1) {
+        const incoming = await attacksApi.getMessages(
+          arId, convId, cursor === undefined ? { limit: page.pageSize } : { limit: page.pageSize, cursor },
+        )
+        if (!isCurrentRefresh()) return
+        mergeTranscriptPage(null, incoming, convId, cursor, consumedCursors)
+        for (const message of incoming.messages) {
+          for (const piece of message.message_pieces) {
+            if (pieceIds.has(piece.id)) scoresByPiece.set(piece.id, piece.scores)
+          }
+        }
+        if (scoresByPiece.size === pieceIds.size || !incoming.pagination?.has_more) break
+        if (cursor) consumedCursors.add(cursor)
+        cursor = incoming.pagination.next_cursor ?? undefined
+      }
+      if (scoresByPiece.size !== pieceIds.size) {
+        throw new Error('The loaded evidence changed. Restart transcript loading before refreshing scores.')
+      }
+      const refreshed: ConversationMessagesResponse = {
+        ...response,
+        messages: response.messages.map((message: BackendMessage) => ({
+          ...message,
+          message_pieces: message.message_pieces.map((piece: BackendMessagePiece) => ({
+            ...piece, scores: scoresByPiece.get(piece.id) ?? piece.scores,
+          })),
+        })),
+      }
+      setMessages(backendMessagesToFrontend(refreshed.messages, refreshed.partial_message_sequences))
+      saveTranscriptPage({ ...page, response: refreshed })
+    } catch (cause: unknown) {
+      if (!isCurrentRefresh()) return
+      const refreshError = new Error(`Could not refresh conversation scores: ${toApiError(cause).detail}`)
+      Object.defineProperty(refreshError, 'cause', { value: cause })
+      throw refreshError
+    } finally {
+      if (isLatestConversationRead(convId, requestId)) latestReadIdsRef.current.delete(convId)
+    }
+  }, [claimConversationRead, isLatestConversationRead, loadConversation, messagePageSize, saveTranscriptPage])
 
   const loadMoreMessages = useCallback(async (): Promise<void> => {
     const page = savedTranscriptPageRef.current
@@ -368,6 +441,7 @@ export function useConversationMessages({
     messageContinuationIssue: currentPage ? messageContinuationIssue : null,
     loadMoreMessages,
     loadConversation,
+    refreshConversationScores,
     requestForcedLoad,
     markConversationLoaded,
     resetConversationMessages,

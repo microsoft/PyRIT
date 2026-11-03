@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { attacksApi } from '@/services/api'
 import { deferred } from '@/test-utils/deferred'
-import type { BackendMessage, ConversationMessagesResponse, Message } from '@/types'
+import type { BackendMessage, BackendScore, ConversationMessagesResponse, Message, MessageDisplayPiece } from '@/types'
 import { backendMessagesToFrontend } from '@/utils/messageMapper'
 
 import { useConversationMessages } from './useConversationMessages'
@@ -157,6 +157,20 @@ describe('useConversationMessages', () => {
     expect(contents(result.current.messages)).toEqual(['branch:1'])
   })
 
+  it('should retain the manual transcript and reject a failed score refresh', async () => {
+    getMessages.mockResolvedValueOnce(transcript('main')).mockRejectedValueOnce(new Error('Scores unavailable'))
+    const { result } = renderMessages()
+    await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+
+    await act(async () => {
+      await expect(result.current.refreshConversationScores('attack', 'main')).rejects.toThrow('Scores unavailable')
+    })
+
+    expect(contents(result.current.messages)).toEqual(['main:1'])
+    expect(result.current.conversationLoadIssue?.detail).toContain('Scores unavailable')
+    expect(getMessages.mock.calls).toEqual([['attack', 'main'], ['attack', 'main']])
+  })
+
   it('should skip loaded or sending conversations unless a forced load is requested', async () => {
     getMessages.mockResolvedValue(transcript('main'))
     const isSendInFlight = (conversationId: string): boolean => conversationId === 'branch'
@@ -300,6 +314,23 @@ describe('useConversationMessages', () => {
     const continueLoading = async (result: ReturnType<typeof renderMessages>['result']): Promise<void> => {
       await act(async () => { await result.current.loadMoreMessages() })
     }
+    const longPieceIds = Array.from({ length: 150 }, (_value: unknown, index: number) => `piece-${String(index).padStart(3, '0')}`)
+    const humanScore: BackendScore = {
+      id: 'human', message_piece_id: longPieceIds[149], scorer_type: 'ManualScorer',
+      score_type: 'true_false', score_value: 'True', timestamp: '2026-01-01T00:01:00Z', is_objective_score: true,
+    }
+    function longPage(start: number, end: number, nextCursor: string | null, scores: BackendScore[] = []): ConversationMessagesResponse {
+      const response = page('main', [{ sequence: 1, ids: longPieceIds.slice(start, end) }], nextCursor, [1])
+      for (const piece of response.messages[0].message_pieces) {
+        piece.scores = scores.filter((score: BackendScore) => score.message_piece_id === piece.id)
+      }
+      return response
+    }
+    function displayedScores(messages: Message[]): BackendScore[] {
+      return messages.flatMap(
+        (message: Message) => message.displayPieces?.flatMap((piece: MessageDisplayPiece) => piece.scores ?? []) ?? [],
+      )
+    }
 
     beforeEach(() => {
       jest.mocked(backendMessagesToFrontend).mockImplementation(
@@ -345,6 +376,239 @@ describe('useConversationMessages', () => {
       expect(getMessages.mock.calls.map((call) => call[2])).toEqual([
         { limit: 100 }, { limit: 100, cursor: 'pieces-1' }, { limit: 100, cursor: 'pieces-2' },
       ])
+    })
+
+    it('should add and remove scores from all 150 accumulated pieces without replacing evidence or pagination', async () => {
+      const onConversationLoaded = jest.fn((_id: string, _response: ConversationMessagesResponse, messages: Message[]) => messages)
+      getMessages.mockResolvedValueOnce(longPage(0, 100, 'original-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null))
+        .mockResolvedValueOnce(longPage(0, 100, 'fresh-add-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null, [humanScore]))
+        .mockResolvedValueOnce(longPage(0, 100, 'fresh-remove-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null))
+      const { result } = renderSaved({ onConversationLoaded })
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(100))
+      await continueLoading(result)
+      const pagination = result.current.messagePagination
+      const content = contents(result.current.messages)
+      expect(result.current.messages[0].isPartial).toBe(false)
+
+      await act(async () => { await result.current.refreshConversationScores('attack', 'main') })
+      expect(displayedScores(result.current.messages)).toEqual([expect.objectContaining(humanScore)])
+      expect(contents(result.current.messages)).toEqual(content)
+      expect(result.current.loadedPieceCount).toBe(150)
+      expect(result.current.messagePagination).toBe(pagination)
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+      expect(result.current.isLoadingMessages).toBe(false)
+      expect(result.current.isLoadingMoreMessages).toBe(false)
+
+      await act(async () => { await result.current.refreshConversationScores('attack', 'main') })
+      expect(displayedScores(result.current.messages)).toEqual([])
+      expect(contents(result.current.messages)).toEqual(content)
+      expect(result.current.loadedPieceCount).toBe(150)
+      expect(result.current.messagePagination).toBe(pagination)
+      expect(result.current.messages[0].isPartial).toBe(false)
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+      expect(result.current.messageContinuationIssue).toBeNull()
+      expect(onConversationLoaded).toHaveBeenCalledTimes(2)
+      expect(getMessages.mock.calls).toEqual([
+        ['attack', 'main', { limit: 100 }], ['attack', 'main', { limit: 100, cursor: 'original-cursor' }],
+        ['attack', 'main', { limit: 100 }], ['attack', 'main', { limit: 100, cursor: 'fresh-add-cursor' }],
+        ['attack', 'main', { limit: 100 }], ['attack', 'main', { limit: 100, cursor: 'fresh-remove-cursor' }],
+      ])
+    })
+
+    it('should replace canonical scores but keep an incomplete transcript and its incumbent continuation cursor', async () => {
+      const priorScore = { ...humanScore, message_piece_id: longPieceIds[0] }
+      const refreshed = longPage(0, 100, 'unused-refresh-cursor')
+      refreshed.messages[0].message_pieces[0].converted_value = 'Do not replace saved evidence'
+      getMessages.mockResolvedValueOnce(longPage(0, 100, 'original-cursor', [priorScore]))
+        .mockResolvedValueOnce(refreshed).mockResolvedValueOnce(longPage(100, 150, null))
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(100))
+      const pagination = result.current.messagePagination
+      const content = contents(result.current.messages)
+
+      await act(async () => { await result.current.refreshConversationScores('attack', 'main') })
+
+      expect(displayedScores(result.current.messages)).toEqual([])
+      expect(contents(result.current.messages)).toEqual(content)
+      expect(result.current.messagePagination).toBe(pagination)
+      expect(result.current.loadedPieceCount).toBe(100)
+      expect(result.current.isTranscriptIncomplete).toBe(true)
+      expect(result.current.messages[0].isPartial).toBe(true)
+      await continueLoading(result)
+      expect(getMessages).toHaveBeenLastCalledWith('attack', 'main', { limit: 100, cursor: 'original-cursor' })
+      expect(displayedScores(result.current.messages)).toEqual([])
+      expect(result.current.loadedPieceCount).toBe(150)
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+    })
+
+    it('should retain all accumulated scores and paging state if a later refresh page fails, then allow retry', async () => {
+      const changedScore = { ...humanScore, score_value: 'False' }
+      getMessages.mockResolvedValueOnce(longPage(0, 100, 'original-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null, [humanScore]))
+        .mockResolvedValueOnce(longPage(0, 100, 'failed-refresh-cursor'))
+        .mockRejectedValueOnce(new Error('Score service busy'))
+        .mockResolvedValueOnce(longPage(0, 100, 'retry-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null, [changedScore]))
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(100))
+      await continueLoading(result)
+      const messages = result.current.messages
+      const pagination = result.current.messagePagination
+
+      await act(async () => {
+        await expect(result.current.refreshConversationScores('attack', 'main')).rejects.toThrow('Score service busy')
+      })
+      expect(result.current.messages).toBe(messages)
+      expect(displayedScores(result.current.messages)).toEqual([expect.objectContaining(humanScore)])
+      expect(result.current.messagePagination).toBe(pagination)
+      expect(result.current.loadedPieceCount).toBe(150)
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+      expect(result.current.conversationLoadIssue).toBeNull()
+      expect(result.current.messageContinuationIssue).toBeNull()
+      await act(async () => { await result.current.refreshConversationScores('attack', 'main') })
+      expect(displayedScores(result.current.messages)).toEqual([expect.objectContaining(changedScore)])
+      expect(result.current.messagePagination).toBe(pagination)
+      expect(getMessages.mock.calls.slice(2).every((call: Parameters<typeof attacksApi.getMessages>) => call[2]?.limit === pageSize)).toBe(true)
+    })
+
+    it('should refresh a retained historical score when the backend removes only its objective-override marker', async () => {
+      const historicalScore = { ...humanScore, is_objective_score: false }
+      getMessages.mockResolvedValueOnce(longPage(0, 100, 'original-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null, [humanScore]))
+        .mockResolvedValueOnce(longPage(0, 100, 'refresh-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null, [historicalScore]))
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(100))
+      await continueLoading(result)
+      await act(async () => { await result.current.refreshConversationScores('attack', 'main') })
+
+      expect(displayedScores(result.current.messages)).toEqual([expect.objectContaining(historicalScore)])
+      expect(result.current.loadedPieceCount).toBe(150)
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+    })
+
+    it('should stop at the already-loaded prefix and fail atomically if a loaded piece is missing', async () => {
+      const changedEnd = longPage(100, 149, 'must-not-follow')
+      getMessages.mockResolvedValueOnce(longPage(0, 100, 'original-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null, [humanScore]))
+        .mockResolvedValueOnce(longPage(0, 100, 'refresh-cursor'))
+        .mockResolvedValueOnce(changedEnd)
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(100))
+      await continueLoading(result)
+      const messages = result.current.messages
+      const pagination = result.current.messagePagination
+
+      await act(async () => {
+        await expect(result.current.refreshConversationScores('attack', 'main')).rejects.toThrow('loaded evidence changed')
+      })
+      expect(getMessages).toHaveBeenCalledTimes(4)
+      expect(result.current.messages).toBe(messages)
+      expect(result.current.messagePagination).toBe(pagination)
+      expect(result.current.loadedPieceCount).toBe(150)
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+    })
+
+    it.each(['conversation', 'attack', 'return', 'unmount'])(
+      'should discard a score refresh after a %s ownership change', async (change: string) => {
+        const pending = deferred<ConversationMessagesResponse>()
+        getMessages.mockResolvedValueOnce(longPage(0, 100, 'original-cursor'))
+          .mockResolvedValueOnce(longPage(100, 150, null))
+          .mockReturnValueOnce(pending.promise)
+        const { result, rerender, unmount } = renderSaved()
+        await waitFor(() => expect(result.current.loadedPieceCount).toBe(100))
+        await continueLoading(result)
+        let refresh: Promise<void> = Promise.resolve()
+        act(() => { refresh = result.current.refreshConversationScores('attack', 'main') })
+        if (change === 'unmount') {
+          unmount()
+        } else {
+          const nextConversationId = change === 'attack' ? 'main' : 'branch'
+          getMessages.mockResolvedValueOnce(page(nextConversationId, [{ sequence: 2, ids: ['selected'] }], null))
+          rerender({ messagePageSize: pageSize, activeConversationId: nextConversationId,
+            attackResultId: change === 'attack' ? 'other-attack' : 'attack' })
+          await waitFor(() => expect(contents(result.current.messages)).toEqual(['selected']))
+          if (change === 'return') {
+            getMessages.mockResolvedValueOnce(page('main', [{ sequence: 2, ids: ['returned'] }], null))
+            rerender({ messagePageSize: pageSize })
+            await waitFor(() => expect(contents(result.current.messages)).toEqual(['returned']))
+          }
+        }
+        const mapperCalls = jest.mocked(backendMessagesToFrontend).mock.calls.length
+        const fetchCalls = getMessages.mock.calls.length
+        await act(async () => { pending.resolve(longPage(0, 100, 'stale-cursor', [humanScore])); await refresh })
+
+        expect(backendMessagesToFrontend).toHaveBeenCalledTimes(mapperCalls)
+        expect(getMessages).toHaveBeenCalledTimes(fetchCalls)
+        if (change !== 'unmount') {
+          expect(contents(result.current.messages)).toEqual([change === 'return' ? 'returned' : 'selected'])
+          expect(result.current.loadedPieceCount).toBe(1)
+          expect(result.current.isTranscriptIncomplete).toBe(false)
+        }
+      },
+    )
+
+    it.each(['resolve', 'reject'])('should let only the latest score refresh apply despite an older %s', async (settlement: string) => {
+      const older = deferred<ConversationMessagesResponse>()
+      getMessages.mockResolvedValueOnce(longPage(0, 100, 'original-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null))
+        .mockReturnValueOnce(older.promise)
+        .mockResolvedValueOnce(longPage(0, 100, 'newer-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null, [humanScore]))
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(100))
+      await continueLoading(result)
+      let refresh: Promise<void> = Promise.resolve()
+      act(() => { refresh = result.current.refreshConversationScores('attack', 'main') })
+      await act(async () => { await result.current.refreshConversationScores('attack', 'main') })
+      const messages = result.current.messages
+      await act(async () => {
+        if (settlement === 'reject') older.reject(new Error('Superseded score refresh failed'))
+        else older.resolve(longPage(0, 100, 'older-cursor'))
+        await refresh
+      })
+      expect(result.current.messages).toBe(messages)
+      expect(displayedScores(result.current.messages)).toEqual([expect.objectContaining(humanScore)])
+      expect(result.current.loadedPieceCount).toBe(150)
+      expect(result.current.isTranscriptIncomplete).toBe(false)
+      expect(getMessages).toHaveBeenCalledTimes(5)
+    })
+
+    it('should not refresh another attack or conversation through the currently loaded reader', async () => {
+      getMessages.mockResolvedValueOnce(first())
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(2))
+      await act(async () => {
+        await result.current.refreshConversationScores('other-attack', 'main')
+        await result.current.refreshConversationScores('attack', 'branch')
+      })
+      expect(getMessages).toHaveBeenCalledTimes(1)
+      expect(contents(result.current.messages)).toEqual(['a\nb'])
+    })
+
+    it('should not let a score refresh supersede an explicit transcript restart already in flight', async () => {
+      const restart = deferred<ConversationMessagesResponse>()
+      getMessages.mockResolvedValueOnce(longPage(0, 100, 'original-cursor'))
+        .mockResolvedValueOnce(longPage(100, 150, null))
+        .mockReturnValueOnce(restart.promise)
+      const { result } = renderSaved()
+      await waitFor(() => expect(result.current.loadedPieceCount).toBe(100))
+      await continueLoading(result)
+      let pending: Promise<void> = Promise.resolve()
+      act(() => { pending = result.current.loadConversation('attack', 'main') })
+      await act(async () => {
+        await expect(result.current.refreshConversationScores('attack', 'main')).rejects.toThrow('Wait for transcript loading')
+      })
+      await act(async () => { restart.resolve(longPage(0, 100, 'restarted')); await pending })
+
+      expect(getMessages).toHaveBeenCalledTimes(3)
+      expect(result.current.loadedPieceCount).toBe(100)
+      expect(result.current.messagePagination?.next_cursor).toBe('restarted')
+      expect(result.current.isTranscriptIncomplete).toBe(true)
+      expect(result.current.isLoadingMessages).toBe(false)
     })
 
     it('should prevent duplicate continuations while keeping loaded evidence visible', async () => {

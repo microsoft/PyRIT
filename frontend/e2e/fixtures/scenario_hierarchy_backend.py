@@ -39,7 +39,16 @@ SAVED_PRUNED_COUNT = 120
 class SavedEvidenceControl(BaseModel):
     """One-shot offline read faults, never provider or production configuration."""
 
-    action: Literal["reset", "status", "fail_messages", "fail_references", "hold_messages", "release_messages"]
+    action: Literal[
+        "reset",
+        "status",
+        "fail_messages",
+        "fail_references",
+        "hold_messages",
+        "release_messages",
+        "hold_references",
+        "release_references",
+    ]
     status: Literal[400, 503] = 503
 
 
@@ -132,18 +141,23 @@ def _install_read_controls(*, memory: SQLiteMemory, patches: ExitStack) -> None:
     message_error = 0
     reference_error = 0
     hold_next_message = False
+    hold_next_reference = False
     waiting = False
+    reference_waiting = False
     release = asyncio.Event()
     release.set()
+    reference_release = asyncio.Event()
+    reference_release.set()
     original_messages = memory.get_conversation_message_page_async
     original_references = memory.get_attack_conversation_page_async
 
     async def control_async(command: SavedEvidenceControl) -> dict[str, bool]:
-        nonlocal message_error, reference_error, hold_next_message
+        nonlocal message_error, reference_error, hold_next_message, hold_next_reference
         if command.action == "reset":
             message_error = reference_error = 0
-            hold_next_message = False
+            hold_next_message = hold_next_reference = False
             release.set()
+            reference_release.set()
         elif command.action == "fail_messages":
             message_error = command.status
         elif command.action == "fail_references":
@@ -153,7 +167,12 @@ def _install_read_controls(*, memory: SQLiteMemory, patches: ExitStack) -> None:
             release.clear()
         elif command.action == "release_messages":
             release.set()
-        return {"waiting": waiting}
+        elif command.action == "hold_references":
+            hold_next_reference = True
+            reference_release.clear()
+        elif command.action == "release_references":
+            reference_release.set()
+        return {"waiting": waiting, "reference_waiting": reference_waiting}
 
     async def messages_async(
         *, conversation_id: str, cursor: MessagePieceKeysetCursor | None = None, limit: int = 100
@@ -186,11 +205,19 @@ def _install_read_controls(*, memory: SQLiteMemory, patches: ExitStack) -> None:
     async def references_async(
         *, attack_result_id: str, offset: int = 0, limit: int = 50, conversation_id: str | None = None
     ) -> AttackConversationPage | None:
-        nonlocal reference_error
-        if attack_result_id == SAVED_ATTACK_ID and reference_error:
-            status = reference_error
-            reference_error = 0
-            raise HTTPException(status_code=status, detail="Offline saved reference read fault")
+        nonlocal reference_error, hold_next_reference, reference_waiting
+        if attack_result_id == SAVED_ATTACK_ID:
+            if reference_error:
+                status = reference_error
+                reference_error = 0
+                raise HTTPException(status_code=status, detail="Offline saved reference read fault")
+            if offset > 0 and hold_next_reference:
+                hold_next_reference = False
+                reference_waiting = True
+                try:
+                    await reference_release.wait()
+                finally:
+                    reference_waiting = False
         return await original_references(
             attack_result_id=attack_result_id, offset=offset, limit=limit, conversation_id=conversation_id
         )
@@ -343,7 +370,9 @@ async def _seed_async(memory: SQLiteMemory) -> None:
                 ]
             )
             if row.attack_result_id == SAVED_ATTACK_ID:
-                pieces.extend(await _long_evidence_async(directory=Path(memory.db_path).parent, timestamp=timestamp))
+                saved_evidence = await _long_evidence_async(directory=Path(memory.db_path).parent, timestamp=timestamp)
+                pieces.extend(saved_evidence)
+                saved.last_response = saved_evidence[-1]
     pruned_roles: tuple[Literal["user", "assistant"], ...] = ("user", "assistant")
     for reference in sorted(saved.related_conversations, key=lambda reference: reference.conversation_id):
         await memory.add_conversation_to_memory_async(
@@ -364,6 +393,12 @@ async def _seed_async(memory: SQLiteMemory) -> None:
             ]
         )
     await memory.add_message_pieces_to_memory_async(message_pieces=pieces)
+    if saved.last_response is None:
+        raise RuntimeError("The offline saved attack has no final response to assess.")
+    if not await memory.update_attack_result_by_id_async(
+        attack_result_id=SAVED_ATTACK_ID, update_fields={"last_response_id": saved.last_response.id}
+    ):
+        raise RuntimeError("The offline saved attack lost its final response reference.")
     await memory.add_scores_to_memory_async(
         scores=[
             Score(

@@ -109,6 +109,72 @@ describe("ConversationPanel", () => {
       expect(status).toHaveFocus();
     });
 
+    it.each([
+      ["continuation", "success"], ["continuation", "error"],
+      ["retry", "success"], ["retry", "error"],
+      ["restart", "success"], ["restart", "error"],
+    ])("should announce pending paging for reference %s and settle %s without stealing focus", async (phase: string, outcome: string) => {
+      const user = userEvent.setup();
+      let finishPage: (response: AttackConversationsResponse) => void = () => { throw new Error("No pending reference page"); };
+      let failPage: (cause: unknown) => void = () => { throw new Error("No pending reference page"); };
+      mockedAttacksApi.getConversations.mockResolvedValueOnce(first);
+      if (phase !== "continuation") {
+        mockedAttacksApi.getConversations.mockRejectedValueOnce(phase === "restart"
+          ? { isAxiosError: true, response: { status: 400, data: { detail: "Saved reference cursor expired" } } }
+          : unavailable);
+      }
+      mockedAttacksApi.getConversations.mockImplementationOnce(
+        () => new Promise<AttackConversationsResponse>((resolve, reject) => { finishPage = resolve; failPage = reject; }),
+      );
+      render(<TestWrapper><ConversationPanel {...props} lockedReason="Saved evidence is read-only." /></TestWrapper>);
+      let button = await screen.findByRole("button", { name: "Load more conversations" });
+      if (phase !== "continuation") {
+        button.focus();
+        await user.keyboard("{Enter}");
+        button = await screen.findByRole("button", {
+          name: phase === "restart" ? "Restart conversation references" : "Retry more conversations",
+        });
+      }
+      const region = screen.getByRole("region", { name: "Saved conversation references" });
+      const status = within(region).getByRole("status");
+      const focusStatus = jest.spyOn(status, "focus");
+      const loadedRow = screen.getByRole("button", { name: "Select conversation saved-ref-49" });
+      button.focus();
+      await user.keyboard("{Enter}");
+      expect(status).toHaveFocus();
+      expect(focusStatus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(status).toHaveAttribute("aria-live", "polite");
+      expect(status).toHaveTextContent(phase === "restart" ? "Loading saved conversation references..." : "Loading more conversations...");
+      expect(status).toHaveTextContent("50 of 55 saved conversations loaded.");
+      expect(loadedRow).toBeVisible();
+      expect(button).toBeDisabled();
+      expect(mockedAttacksApi.getConversations.mock.calls.at(-1)).toEqual([
+        "ar-attack-123", phase === "restart" ? { limit: 50 } : { limit: 50, cursor: "reference-cursor" },
+      ]);
+      await user.tab({ shift: true });
+      expect(loadedRow).toHaveFocus();
+      await act(async () => {
+        if (outcome === "error") failPage(unavailable);
+        else finishPage(phase === "restart" ? page(references.slice(0, 50), "fresh-reference-cursor") : final);
+      });
+      expect(status).not.toHaveTextContent(/Loading (more|saved)/);
+      expect(status).toHaveTextContent(outcome === "success" && phase !== "restart"
+        ? "55 of 55 saved conversations loaded. End of saved conversation references."
+        : "50 of 55 saved conversations loaded. More references are available.");
+      if (outcome === "error") {
+        expect(screen.getByTestId("conversation-panel")).toHaveTextContent("Saved references temporarily unavailable");
+        expect(screen.getByRole("button", {
+          name: phase === "restart" ? "Restart conversation references" : "Retry more conversations",
+        })).toBeEnabled();
+      }
+      expect(screen.getByRole("button", { name: "Select conversation saved-ref-49" })).toBe(loadedRow);
+      expect(loadedRow).toHaveFocus();
+      expect(focusStatus).toHaveBeenCalledTimes(1);
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+      expect(Element.prototype.scrollTo).not.toHaveBeenCalled();
+      focusStatus.mockRestore();
+    });
+
     it("should keep references on continuation failure and retry the same bounded cursor", async () => {
       const user = userEvent.setup();
       mockedAttacksApi.getConversations.mockResolvedValueOnce(first).mockRejectedValueOnce(unavailable).mockResolvedValueOnce(final);
@@ -383,6 +449,90 @@ describe("ConversationPanel", () => {
   // -----------------------------------------------------------------------
   // Selection and actions
   // -----------------------------------------------------------------------
+
+  it.each(["row", "star"])("should preserve manual refresh focus on the %s through sends, promotions and failures", async (focusTarget: string) => {
+    const user = userEvent.setup();
+    const initial: AttackConversationsResponse = {
+      attack_result_id: defaultProps.attackResultId, main_conversation_id: "attack-123",
+      conversations: [
+        { conversation_id: "attack-123", message_count: 3 },
+        { conversation_id: "branch-1", message_count: 2, last_message_preview: "Before refresh" },
+        { conversation_id: "branch-2", message_count: 1 },
+      ],
+    };
+    let finishRefresh: (response: AttackConversationsResponse) => void = () => { throw new Error("No pending manual refresh"); };
+    let failRefresh: (cause: unknown) => void = () => { throw new Error("No pending manual refresh"); };
+    mockedAttacksApi.getConversations.mockReset().mockResolvedValueOnce(initial).mockImplementation(
+      () => new Promise<AttackConversationsResponse>((resolve, reject) => { finishRefresh = resolve; failRefresh = reject; }),
+    );
+    const rendered = render(<TestWrapper><ConversationPanel {...defaultProps} refreshKey={0} /></TestWrapper>);
+    const row = await screen.findByRole("button", { name: "Select conversation branch-1" });
+    const star = screen.getByRole("button", { name: "Promote conversation branch-1 to main" });
+    screen.getByTestId("close-panel-btn").focus();
+    await user.tab();
+    await user.tab();
+    if (focusTarget === "star") await user.tab();
+    const focused = focusTarget === "star" ? star : row;
+    expect(focused).toHaveFocus();
+    for (const [refreshKey, mainConversationId] of [[1, "attack-123"], [2, "branch-2"]] as const) {
+      rendered.rerender(<TestWrapper><ConversationPanel {...defaultProps} refreshKey={refreshKey} /></TestWrapper>);
+      expect(row).toBeInTheDocument();
+      expect(star).toBeInTheDocument();
+      expect(focused).toHaveFocus();
+      expect(screen.getByText(refreshKey === 1 ? "Before refresh" : "After refresh 1")).toBeVisible();
+      await act(async () => {
+        finishRefresh({
+          ...initial, main_conversation_id: mainConversationId,
+          conversations: [
+            initial.conversations[2],
+            { ...initial.conversations[1], message_count: 2 + refreshKey, last_message_preview: `After refresh ${refreshKey}` },
+            initial.conversations[0],
+          ],
+        });
+      });
+      expect(screen.getByRole("button", { name: "Select conversation branch-1" })).toBe(row);
+      expect(screen.getByRole("button", { name: "Promote conversation branch-1 to main" })).toBe(star);
+      expect(focused).toHaveFocus();
+      expect(screen.getByText(`After refresh ${refreshKey}`)).toBeVisible();
+    }
+    rendered.rerender(<TestWrapper><ConversationPanel {...defaultProps} refreshKey={3} /></TestWrapper>);
+    expect(focused).toHaveFocus();
+    await act(async () => { failRefresh(new Error("Manual refresh unavailable")); });
+    expect(screen.getByText("Manual refresh unavailable")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Select conversation branch-1" })).toBe(row);
+    expect(screen.getByRole("button", { name: "Promote conversation branch-1 to main" })).toBe(star);
+    expect(screen.getByText("After refresh 2")).toBeVisible();
+    expect(focused).toHaveFocus();
+    expect(mockedAttacksApi.getConversations.mock.calls).toEqual(Array.from({ length: 4 }, () => [defaultProps.attackResultId]));
+  });
+
+  it.each(["attack", "mode"])("should isolate manual refresh focus data when the %s identity changes", async (identity: string) => {
+    let finishRead: (response: AttackConversationsResponse) => void = () => { throw new Error("No pending identity read"); };
+    mockedAttacksApi.getConversations.mockReset().mockResolvedValueOnce({
+      attack_result_id: defaultProps.attackResultId, main_conversation_id: "attack-123",
+      conversations: [{ conversation_id: "attack-123", message_count: 3 }],
+    }).mockImplementationOnce(
+      () => new Promise<AttackConversationsResponse>((resolve) => { finishRead = resolve; }),
+    );
+    const rendered = render(<TestWrapper><ConversationPanel {...defaultProps} refreshKey={0} /></TestWrapper>);
+    const oldRow = await screen.findByRole("button", { name: "Select conversation attack-123" });
+    const attackId = identity === "attack" ? "other-attack" : defaultProps.attackResultId;
+    rendered.rerender(<TestWrapper><ConversationPanel {...defaultProps} attackResultId={attackId}
+      referencePageSize={identity === "mode" ? 50 : undefined} refreshKey={1} /></TestWrapper>);
+    expect(oldRow).not.toBeInTheDocument();
+    await act(async () => {
+      finishRead({
+        attack_result_id: attackId, main_conversation_id: "new-conversation",
+        conversations: [{ conversation_id: "new-conversation", message_count: 1 }],
+        total_count: 1, pagination: { limit: 50, has_more: false, next_cursor: null },
+      });
+    });
+    expect(screen.getByRole("button", { name: "Select conversation new-conversation" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Select conversation attack-123" })).not.toBeInTheDocument();
+    expect(mockedAttacksApi.getConversations.mock.calls).toEqual([
+      [defaultProps.attackResultId], identity === "mode" ? [attackId, { limit: 50 }] : [attackId],
+    ]);
+  });
 
   it("should call onSelectConversation when clicking a conversation", async () => {
     const user = userEvent.setup();

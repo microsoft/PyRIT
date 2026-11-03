@@ -625,6 +625,81 @@ describe("ChatWindow Integration", () => {
       expect(status).toHaveFocus();
     });
 
+    it.each([
+      ["continuation", "success"], ["continuation", "error"],
+      ["retry", "success"], ["retry", "error"],
+      ["restart", "success"], ["restart", "error"],
+    ])("should announce pending paging for transcript %s and settle %s without stealing focus", async (phase: string, outcome: string) => {
+      const user = userEvent.setup();
+      let finishPage: (response: ConversationMessagesResponse) => void = () => { throw new Error("No pending transcript page"); };
+      let failPage: (cause: unknown) => void = () => { throw new Error("No pending transcript page"); };
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first);
+      if (phase !== "continuation") {
+        mockedAttacksApi.getMessages.mockRejectedValueOnce(phase === "restart"
+          ? { isAxiosError: true, response: { status: 400, data: { detail: "Saved message cursor expired" } } }
+          : unavailable);
+      }
+      mockedAttacksApi.getMessages.mockImplementationOnce(
+        () => new Promise<ConversationMessagesResponse>((resolve, reject) => { finishPage = resolve; failPage = reject; }),
+      );
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      let button = await screen.findByRole("button", { name: "Load more message pieces" });
+      if (phase !== "continuation") {
+        button.focus();
+        await user.keyboard("{Enter}");
+        button = await screen.findByRole("button", {
+          name: phase === "restart" ? "Restart transcript loading" : "Retry more message pieces",
+        });
+      }
+      const status = within(screen.getByRole("region", { name: "Saved transcript paging" })).getByRole("status");
+      const focusStatus = jest.spyOn(status, "focus");
+      const area = screen.getByTestId("chat-area");
+      area.scrollTop = 300;
+      const loadedBubble = screen.getByTestId("message-bubble-0");
+      button.focus();
+      await user.keyboard("{Enter}");
+      expect(status).toHaveFocus();
+      expect(focusStatus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(status).toHaveAttribute("aria-live", "polite");
+      expect(status).toHaveTextContent(phase === "restart" ? "Loading saved transcript..." : "Loading more message pieces...");
+      expect(status).toHaveTextContent("2 message pieces loaded.");
+      if (phase !== "restart") expect(loadedBubble).toBeVisible();
+      expect(button).toBeDisabled();
+      expect(area.scrollTop).toBe(300);
+      expect(mockedAttacksApi.getMessages.mock.calls.at(-1)).toEqual([
+        "saved-attack", "saved-main", phase === "restart" ? { limit: 100 } : { limit: 100, cursor: "message-cursor" },
+      ]);
+      await user.tab({ shift: true });
+      const movedFocus = document.activeElement;
+      expect(movedFocus).not.toBe(status);
+      expect(movedFocus).not.toBe(document.body);
+      await act(async () => {
+        if (outcome === "error") failPage(unavailable);
+        else finishPage(phase === "restart" ? page([request, reply], null) : final);
+      });
+      expect(status).not.toHaveTextContent(/Loading (more|saved)/);
+      if (outcome === "error") {
+        expect(status).toHaveTextContent("2 message pieces loaded. More saved evidence is available.");
+        expect(screen.getByText("Saved request", { exact: true })).toBeVisible();
+        expect(screen.getByRole("button", {
+          name: phase === "restart" ? "Restart transcript loading" : "Retry more message pieces",
+        })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Continue manually" })).toBeDisabled();
+        expect(screen.getByText(phase === "restart"
+          ? /Could not load conversation: Saved read temporarily unavailable/
+          : /Could not load more messages: Saved read temporarily unavailable/)).toBeVisible();
+      } else {
+        expect(status).toHaveTextContent("End of saved transcript. 3 message pieces loaded.");
+        expect(screen.queryByRole("button", { name: "Load more message pieces" })).not.toBeInTheDocument();
+      }
+      if (phase !== "restart") expect(screen.getByTestId("message-bubble-0")).toBe(loadedBubble);
+      expect(movedFocus).toHaveFocus();
+      expect(focusStatus).toHaveBeenCalledTimes(1);
+      expect(area.scrollTop).toBe(300);
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+      expect(Element.prototype.scrollTo).not.toHaveBeenCalled();
+    });
+
     it("should preserve saved reading position for continuation but reset it for a new saved owner and when leaving saved mode", async () => {
       const user = userEvent.setup();
       mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockResolvedValueOnce(final)
@@ -2892,7 +2967,10 @@ describe("ChatWindow Integration", () => {
     async (targetResolutionStatus) => {
     const user = userEvent.setup();
     const onHumanScoreChange = jest.fn();
-    mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Forked response") as never);
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      ...makeTextResponse("Forked response").messages,
+      conversation_id: "forked-conversation-id",
+    });
     mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
     mockedScoresApi.createManualScore.mockResolvedValue({
       id: "manual-score-id",
@@ -2953,6 +3031,10 @@ describe("ChatWindow Integration", () => {
         "success",
       );
     });
+    expect(mockedAttacksApi.getMessages.mock.calls).toEqual([
+      ["attack-result-id", "forked-conversation-id"],
+      ["attack-result-id", "forked-conversation-id"],
+    ]);
   });
 
   it.each<AttackTargetResolutionStatus>(["resolved", "unavailable", "ambiguous", "legacy", "error"])(

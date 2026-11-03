@@ -614,6 +614,7 @@ export default function ChatWindow({
     messageContinuationIssue,
     loadMoreMessages,
     loadConversation,
+    refreshConversationScores,
     requestForcedLoad,
     markConversationLoaded,
     resetConversationMessages,
@@ -786,7 +787,7 @@ export default function ChatWindow({
     lastResponseMessagePieceId,
     humanScore,
     isScoreLocked,
-    loadConversation,
+    refreshConversationScores,
     getViewedConversationId,
     onHumanScoreChange,
     onAttackChange,
@@ -2493,6 +2494,8 @@ export default function ChatWindow({
             )}
             <div className={styles.savedTranscriptActions}>
               <Text ref={transcriptStatusRef} tabIndex={-1} id={transcriptStatusId} role="status" aria-live="polite" size={200}>
+                {isLoadingMessages || awaitingConversationLoad ? 'Loading saved transcript... '
+                  : isLoadingMoreMessages ? 'Loading more message pieces... ' : ''}
                 {isTranscriptIncomplete
                   ? `${loadedPieceSummary} More saved evidence is available. ${INCOMPLETE_TRANSCRIPT_REASON}`
                   : `End of saved transcript. ${loadedPieceSummary}`}
