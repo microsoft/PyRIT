@@ -241,6 +241,10 @@ and no stage guarantees that retrying delivery is safe. Stored target errors and
 Terminal states are published only after finalization and ownership release. Progress also
 includes the `request_turn_number` assigned during preparation, so clients can distinguish
 this send's response from a later turn written by another client.
+Each conversation receipt also retains `target_invoked`, set only at the target
+invocation boundary. It remains false during preparation and retains its value
+after interruption. An allocated request turn alone is not evidence of target use,
+and an invocation does not guarantee successful delivery.
 
 The optional `wait_ms` query parameter (0-1000) waits for completion, returning immediately
 if the operation settles. Cancelling this read, disconnecting, or navigating away does not

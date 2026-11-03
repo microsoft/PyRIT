@@ -120,6 +120,7 @@ class _MessageSendContext(TargetSendContext):
 
     def mark_target_invoked(self) -> None:
         self._target_invocation_count += 1
+        self._progress.target_invoked = True
         self._progress.state = MessageSendState.SENDING
 
     def finish_send(self, *, succeeded: bool) -> None:

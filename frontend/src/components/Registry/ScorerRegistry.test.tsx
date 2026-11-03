@@ -38,6 +38,7 @@ describe('ScorerRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Refresh' }))
     expect(onRefresh).toHaveBeenCalledTimes(1)
     const selector = screen.getByRole('combobox', { name: 'Default objective scorer for chats' })
+    expect(selector).toHaveValue('last-used')
     for (const option of within(selector).getAllByRole('option')) expect(option).toBeEnabled()
     expect(within(selector).getByRole('option', { name: 'judge - SubStringScorer' })).toBeInTheDocument()
     await user.selectOptions(selector, 'registered:judge')
@@ -53,6 +54,8 @@ describe('ScorerRegistry', () => {
     expect(screen.queryByRole('option', { name: 'Unavailable: judge' })).not.toBeInTheDocument()
     await user.selectOptions(selector, '')
     expect(readUserPreferences('alice').chatScorer).toBeNull()
+    await user.selectOptions(selector, 'last-used')
+    expect(readUserPreferences('alice').chatScorer).toBeUndefined()
   })
 
   it('shows nested types, canonical identity JSON, primary metrics, and average time', async () => {

@@ -23,12 +23,12 @@ For other setup options, see [Docker](../getting_started/install_docker.md) or t
 
 ## Home
 
-Home shows your default objective target and recent attacks grouped by operation.
+Home shows your last-used objective target and recent attacks grouped by operation.
 Open an attack to return to its conversation, or go to Registry to configure a
 target. The shared labels bar sets the operator, operation, and custom labels
 for new work; it does not change saved results.
 
-![Home page with default target and recent work](images/home.png)
+![Home page with target and recent work](images/home.png)
 
 ## Chat
 
@@ -36,6 +36,17 @@ Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conv
 workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
 and branch or edit conversations to try another approach. Add an objective and
 select a chat scorer if you want automated assessment of responses.
+
+New chats and scans start with the last objective target you used. New chats also
+reuse the last chat scorer, including **Off**, unless a Registry default is set.
+These choices are saved in the current browser profile after use. Opening saved
+activity or editing an unsent draft does not change them.
+Chat use is recorded only after a request turn is confirmed, not after preparation
+fails, and stays with the initiating account even if you navigate away. A chat
+with a temperature override remembers its registered source target, without
+changing that chat's execution binding. While a remembered scorer is loading,
+wait for its catalog. Explicit scorer selections, including **Off**, take
+precedence; an unavailable remembered scorer is not saved as **Off**.
 
 The **Chat** tab returns to your retained draft, or your last chat if there is no draft.
 Selecting **Chat** while a chat is open keeps that chat open.
@@ -85,7 +96,10 @@ Registry prepares reusable components; it does not execute attacks. Create
 targets to connect to model endpoints, converters to transform content, and
 named techniques that configure existing attacks. Browse configured scorers
 and select a default chat scorer; scorer setup uses initializers, not an editor
-on this page. Target defaults apply to new chats and scans.
+on this page. An explicit scan choice takes precedence. Otherwise, the current
+adversarial-target order is a saved Registry default, the registered
+`adversarial_chat` target, then last use. Objective targets do not have a Registry
+default. Existing chats and runs keep their settings.
 
 Expand a target, scorer, technique, or converter name to inspect its identity
 JSON. Target identity inspection is independent of expanding composite target
@@ -96,6 +110,9 @@ red X to remove a converter from the live registry; confirmation is required.
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
 They are stored separately from live component instances.
+Suite launch dialogs apply arriving target defaults only to untouched selections.
+An explicit target choice, including clearing an optional adversarial target to
+use the server default, is retained when the registry refreshes.
 
 Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use

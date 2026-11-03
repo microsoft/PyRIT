@@ -61,9 +61,7 @@ import TargetSelect from './TargetSelect'
 
 interface TargetTableProps {
   targets: TargetInstance[]
-  defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
-  onSetDefaultObjectiveTarget: (target: TargetInstance | null) => void
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
 }
 
@@ -244,9 +242,7 @@ function InnerTargetRows({ parentKey, innerTargets, weights }: {
 
 export default function TargetTable({
   targets,
-  defaultObjectiveTarget,
   defaultAdversarialTarget,
-  onSetDefaultObjectiveTarget,
   onSetDefaultAdversarialTarget,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
@@ -320,8 +316,6 @@ export default function TargetTable({
   )
   const noTargetsMatch = displayedTargets.length > 0 && filteredTargets.length === 0
 
-  const isDefaultObjective = (target: TargetInstance): boolean =>
-    sameTarget(defaultObjectiveTarget, target)
   const isDefaultAdversarial = (target: TargetInstance): boolean =>
     sameTarget(defaultAdversarialTarget, target)
 
@@ -346,13 +340,6 @@ export default function TargetTable({
   return (
     <div className={styles.tableContainer} data-testid="target-table-scroll-region">
       <section aria-label="Target defaults" className={styles.defaultsSummary}>
-        <TargetSelect
-          label="Default objective target"
-          targets={targets}
-          value={defaultObjectiveTarget?.target_registry_name ?? ''}
-          onChange={onSetDefaultObjectiveTarget}
-          placeholder="Not set"
-        />
         <TargetSelect
           label="Default adversarial target"
           targets={targets.filter((target: TargetInstance) => target.capabilities?.supports_multi_turn === true)}
@@ -454,13 +441,8 @@ export default function TargetTable({
                 }
                 nameCellClassName={styles.registryNameCell}
                 nameContent={
-                  (isDefaultObjective(target) || isDefaultAdversarial(target)) && (
+                  isDefaultAdversarial(target) && (
                     <div className={styles.defaultIndicators}>
-                      {isDefaultObjective(target) && (
-                        <Badge appearance="tint" color="brand" size="small" aria-label="Default objective target">
-                          Objective
-                        </Badge>
-                      )}
                       {isDefaultAdversarial(target) && (
                         <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
                           Adversarial
@@ -470,7 +452,7 @@ export default function TargetTable({
                   )
                 }
                 rowClassName={mergeClasses(
-                  (isDefaultObjective(target) || isDefaultAdversarial(target)) && styles.defaultRow,
+                  isDefaultAdversarial(target) && styles.defaultRow,
                   hidden && styles.hiddenRow,
                 )}
                 rowTestId={`target-row-${target.target_registry_name}`}
