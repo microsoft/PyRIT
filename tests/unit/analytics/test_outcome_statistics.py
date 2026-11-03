@@ -90,6 +90,16 @@ def test_large_integer_counts_validate_without_float_overflow() -> None:
     assert statistics.success_rate_ci_upper == 0.5
 
 
+def test_skewed_large_integer_counts_do_not_underflow_wilson_interval() -> None:
+    total = 10**200
+    statistics = compute_outcome_statistics({"success": 1, "failure": total - 1})
+    assert statistics.success_rate_ci_lower is not None
+    assert statistics.success_rate_ci_upper is not None
+    assert 0.0 < statistics.success_rate_ci_lower < statistics.success_rate < statistics.success_rate_ci_upper
+    assert statistics.success_rate_ci_lower == pytest.approx(1.7655213934448394e-201, rel=1e-12, abs=0.0)
+    assert statistics.success_rate_ci_upper == pytest.approx(5.664049203893855e-200, rel=1e-12, abs=0.0)
+
+
 @pytest.mark.parametrize(
     ("successes", "failures", "expected_lower", "expected_upper"),
     [

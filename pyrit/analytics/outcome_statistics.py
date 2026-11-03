@@ -140,7 +140,7 @@ def _wilson_ci(*, successes: int, total: int) -> tuple[float | None, float | Non
     z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) * inv_n
     denom = 1.0 + z2_inv_n
     center = (p + 0.5 * z2_inv_n) / denom
-    half_width = _WILSON_Z_95 * sqrt(max(0.0, (p * (1.0 - p) + 0.25 * z2_inv_n) * inv_n)) / denom
+    half_width = _WILSON_Z_95 * sqrt(max(0.0, p * (1.0 - p) + 0.25 * z2_inv_n)) * sqrt(inv_n) / denom
     lower = 0.0 if successes == 0 else float(max(0.0, center - half_width))
     upper = 1.0 if successes == total else float(min(1.0, center + half_width))
     return lower, upper

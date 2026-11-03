@@ -198,12 +198,12 @@ class AttackAnalyticsStatistics(AttackStats):
         z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) * inv_n
         denom = 1.0 + z2_inv_n
         center = (p + 0.5 * z2_inv_n) / denom
-        half_width = _WILSON_Z_95 * sqrt(max(0.0, (p * (1.0 - p) + 0.25 * z2_inv_n) * inv_n)) / denom
+        half_width = _WILSON_Z_95 * sqrt(max(0.0, p * (1.0 - p) + 0.25 * z2_inv_n)) * sqrt(inv_n) / denom
         expected_lower = 0.0 if numerator == 0 else max(0.0, center - half_width)
         expected_upper = 1.0 if numerator == denominator else min(1.0, center + half_width)
         if not (
-            isclose(lower, expected_lower, rel_tol=1e-12, abs_tol=1e-12)
-            and isclose(upper, expected_upper, rel_tol=1e-12, abs_tol=1e-12)
+            isclose(lower, expected_lower, rel_tol=1e-12, abs_tol=0.0)
+            and isclose(upper, expected_upper, rel_tol=1e-12, abs_tol=0.0)
         ):
             raise ValueError("success_rate confidence interval must agree with its outcome counts.")
 

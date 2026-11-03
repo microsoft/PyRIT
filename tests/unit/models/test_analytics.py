@@ -157,6 +157,14 @@ def test_shared_statistics_accept_legacy_payload_without_confidence_interval_and
             {**asdict(empty_decided), "success_rate_ci_lower": 0.0, "success_rate_ci_upper": 1.0}
         )
 
+    small_rate = compute_outcome_statistics({"success": 1, "failure": 10**14 - 1})
+    with pytest.raises(ValueError, match="confidence interval"):
+        replace(small_rate, success_rate_ci_lower=0.0, success_rate_ci_upper=0.0)
+    with pytest.raises(ValidationError):
+        TypeAdapter(OutcomeStatistics).validate_python(
+            {**asdict(small_rate), "success_rate_ci_lower": 0.0, "success_rate_ci_upper": 0.0}
+        )
+
 
 def test_reembedding_mutated_outcomes_revalidates_the_counts() -> None:
     statistics = compute_outcome_statistics({"success": 1})
