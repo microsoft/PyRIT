@@ -1,10 +1,22 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { deferred } from '@/test-utils/deferred'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import AttackHistory from './AttackHistory'
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
+
+let runtimeGeneration = ''
+let runtimeReady = true
+
+jest.mock('@/hooks/useRuntime', () => ({
+  useRuntime: () => ({
+    ready: runtimeReady,
+    state: runtimeReady ? 'ready' : 'connecting',
+    generation: runtimeGeneration,
+  }),
+}))
 
 jest.mock('../../services/api', () => ({
   attacksApi: {
@@ -74,6 +86,8 @@ describe('AttackHistory', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    runtimeGeneration = ''
+    runtimeReady = true
     mockedAttacksApi.getAttackOptions.mockImplementation(() => new Promise(() => {}))
     mockedAttacksApi.getConverterOptions.mockImplementation(() => new Promise(() => {}))
     mockedLabelsApi.getLabels.mockImplementation(() => new Promise(() => {}))
@@ -1279,5 +1293,127 @@ describe('AttackHistory', () => {
         converter_types_match: 'all',
       })
     )
+  })
+
+  it('should wait for the runtime to be ready before loading history and options', async () => {
+    runtimeReady = false
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: [sampleAttacks[0]],
+      pagination: { limit: 25, has_more: false },
+    })
+
+    const history = render(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+    await act(async () => {})
+
+    expect(mockedAttacksApi.listAttacks).not.toHaveBeenCalled()
+    expect(mockedAttacksApi.getAttackOptions).not.toHaveBeenCalled()
+    expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
+
+    runtimeReady = true
+    runtimeGeneration = 'gen-1'
+    history.rerender(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+
+    expect(await screen.findByTestId('attack-row-ar-conv-1')).toBeInTheDocument()
+    expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
+    expect(mockedAttacksApi.getAttackOptions).toHaveBeenCalledTimes(1)
+  })
+
+  it('should ignore a list response from the previous runtime generation', async () => {
+    runtimeGeneration = 'gen-1'
+    const previousRuntimePage = deferred<Awaited<ReturnType<typeof attacksApi.listAttacks>>>()
+    mockedAttacksApi.listAttacks
+      .mockReturnValueOnce(previousRuntimePage.promise)
+      .mockResolvedValueOnce({
+        items: [sampleAttacks[1]],
+        pagination: { limit: 25, has_more: false },
+      })
+
+    const history = render(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+    await waitFor(() => expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1))
+
+    runtimeGeneration = 'gen-2'
+    history.rerender(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+
+    expect(await screen.findByTestId('attack-row-ar-conv-2')).toBeInTheDocument()
+    expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      previousRuntimePage.resolve({
+        items: [sampleAttacks[0]],
+        pagination: { limit: 25, has_more: true, next_cursor: 'stale-cursor' },
+      })
+    })
+
+    expect(screen.getByTestId('attack-row-ar-conv-2')).toBeInTheDocument()
+    expect(screen.queryByTestId('attack-row-ar-conv-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('next-page-btn')).toBeDisabled()
+  })
+
+  it('should return to the first page with fresh filter options after a runtime reconnect', async () => {
+    const user = userEvent.setup()
+    runtimeGeneration = 'gen-1'
+    const previousRuntimeOptions = deferred<Awaited<ReturnType<typeof attacksApi.getAttackOptions>>>()
+    mockedAttacksApi.getAttackOptions
+      .mockReturnValueOnce(previousRuntimeOptions.promise)
+      .mockResolvedValueOnce({ attack_types: ['NewRuntimeAttack'] })
+    mockedAttacksApi.listAttacks
+      .mockResolvedValueOnce({
+        items: sampleAttacks,
+        pagination: { limit: 25, has_more: true, next_cursor: 'cursor-page2' },
+      })
+      .mockResolvedValueOnce({
+        items: [sampleAttacks[1]],
+        pagination: { limit: 25, has_more: false },
+      })
+      .mockResolvedValueOnce({
+        items: [sampleAttacks[0]],
+        pagination: { limit: 25, has_more: false },
+      })
+
+    const history = render(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+    await waitFor(() => expect(screen.getByTestId('next-page-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('next-page-btn'))
+    expect(await screen.findByText('Page 2')).toBeInTheDocument()
+
+    runtimeGeneration = 'gen-2'
+    history.rerender(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} />
+      </TestWrapper>
+    )
+
+    expect(await screen.findByText('Page 1')).toBeInTheDocument()
+    expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(3)
+    expect(mockedAttacksApi.listAttacks.mock.calls[2][0]).not.toHaveProperty('cursor')
+    expect(screen.getByTestId('attack-row-ar-conv-1')).toBeInTheDocument()
+    expect(mockedAttacksApi.getAttackOptions).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      previousRuntimeOptions.resolve({ attack_types: ['OldRuntimeAttack'] })
+    })
+    await user.click(screen.getByTestId('attack-type-filter'))
+
+    expect(await screen.findByText('NewRuntimeAttack')).toBeInTheDocument()
+    expect(screen.queryByText('OldRuntimeAttack')).not.toBeInTheDocument()
   })
 })
