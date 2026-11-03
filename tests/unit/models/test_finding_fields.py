@@ -159,6 +159,7 @@ NESTED = {("chat", "Chat"): [("history", "History")]}
         (SEVERITY, [_choice(levels=[("severity", "Severity")], options=NESTED)], "'severity' is used more than once"),
         (SEVERITY, [_choice(key="title")], "'title' is reserved"),
         (SEVERITY, [_choice(label=" ")], "must not be blank"),
+        ({**SEVERITY, "options": [("high ", "High")]}, [], "surrounding whitespace"),
     ],
 )
 def test_finding_fields_rejects_invalid_definitions(severity: dict, fields: list, match: str) -> None:
@@ -173,6 +174,11 @@ def test_finding_fields_rejects_invalid_definitions(severity: dict, fields: list
         (_choice(key="__proto__"), "'__proto__' is reserved"),
         (_choice(levels=[("__proto__", "Feature")], options=NESTED), "'__proto__' is reserved"),
         (_choice(options=[("chat", " ")]), "must not be blank"),
+        (_choice(options=[(" chat", "Chat")]), "surrounding whitespace"),
+        (
+            _choice(levels=[("feature", "Feature")], options={("chat", "Chat"): [("history ", "History")]}),
+            "surrounding whitespace",
+        ),
         (_choice(levels=[("feature", "Feature")], options={("chat", "Chat"): [(" ", "History")]}), "must not be blank"),
         ({"key": "notes", "label": "Notes", "type": "text", "default": "a"}, "cannot have default"),
         (_choice(options={"chat": []}), r"\(key, label\) pair"),

@@ -50,9 +50,11 @@ interface FindingExportDialogProps {
   operation: Operation
   /** The active finding fields, which decide the severity badges and which stored values are retired. */
   fields: FindingFields
+  /** Changes when the severity ranking changes, which loads every page again. */
+  orderRevision: number
 }
 
-export default function FindingExportDialog({ operation, fields }: FindingExportDialogProps) {
+export default function FindingExportDialog({ operation, fields, orderRevision }: FindingExportDialogProps) {
   const styles = useFindingExportDialogStyles()
   const [open, setOpen] = useState(false)
   const [loadRevision, setLoadRevision] = useState(0)
@@ -65,6 +67,8 @@ export default function FindingExportDialog({ operation, fields }: FindingExport
   const [exporting, setExporting] = useState(false)
   const submitting = useRef(false)
   const recovery = useRef<SelectionRecovery | null>(null)
+  // The IDs of the last list loaded since the dialog opened. A reload ticks every row only if all of these were ticked.
+  const shown = useRef<ReadonlySet<string> | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const rowId = useId()
   // Aborted when the dialog closes or unmounts, so a late export never downloads into a later view.
@@ -111,8 +115,12 @@ export default function FindingExportDialog({ operation, fields }: FindingExport
       setRecovering(false)
       const kept = recovery.current
       recovery.current = null
+      const previous = shown.current
+      shown.current = new Set(loaded.keys())
       if (kept === null) {
-        setSelected(new Set(loaded.keys()))
+        setSelected(current => (previous === null || [...previous].every(findingId => current.has(findingId))
+          ? new Set(loaded.keys())
+          : new Set([...current].filter(findingId => loaded.has(findingId)))))
         return
       }
       setSelected(new Set(kept.selected.filter(finding => loaded.has(finding.id)).map(finding => finding.id)))
@@ -126,11 +134,12 @@ export default function FindingExportDialog({ operation, fields }: FindingExport
       setRecovering(false)
     })
     return () => { ignore = true }
-  }, [open, loadRevision, operation.id])
+  }, [open, loadRevision, operation.id, orderRevision])
 
   const start = (): void => {
     submitting.current = false
     recovery.current = null
+    shown.current = null
     setRecovering(false)
     setExporting(false)
     setExportError('')

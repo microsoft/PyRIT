@@ -48,7 +48,8 @@ const REVIEW_AGAIN = 'Review the list and download again.'
 function renderDialog(operation: Operation = OPERATION): ReturnType<typeof render> {
   return render(
     <FluentProvider theme={webLightTheme}>
-      <FindingExportDialog key={operation.id} operation={operation} fields={DEFAULT_FINDING_FIELDS_FIXTURE} />
+      <FindingExportDialog key={operation.id} operation={operation} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
+        orderRevision={0} />
     </FluentProvider>,
   )
 }
@@ -502,7 +503,7 @@ describe('FindingExportDialog', () => {
     view.rerender(
       <FluentProvider theme={webLightTheme}>
         <FindingExportDialog key={OTHER_OPERATION.id} operation={OTHER_OPERATION}
-          fields={DEFAULT_FINDING_FIELDS_FIXTURE} />
+          fields={DEFAULT_FINDING_FIELDS_FIXTURE} orderRevision={0} />
       </FluentProvider>,
     )
     expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][2]?.aborted).toBe(true)
@@ -524,7 +525,7 @@ describe('FindingExportDialog', () => {
     view.rerender(
       <FluentProvider theme={webLightTheme}>
         <FindingExportDialog key={OTHER_OPERATION.id} operation={OTHER_OPERATION}
-          fields={DEFAULT_FINDING_FIELDS_FIXTURE} />
+          fields={DEFAULT_FINDING_FIELDS_FIXTURE} orderRevision={0} />
       </FluentProvider>,
     )
     const dialog = await openDialog(user)
@@ -534,6 +535,47 @@ describe('FindingExportDialog', () => {
     await act(async () => { staleList.resolve(onePage([ALPHA])) })
     expect(within(dialog).queryByRole('checkbox', { name: ALPHA.title })).not.toBeInTheDocument()
     expect(within(dialog).getByRole('checkbox', { name: other.title })).toBeChecked()
+  })
+
+  it('loads every page again when the severity order changes, keeping the selection', async () => {
+    const user = userEvent.setup()
+    const delta = syntheticFinding(4, { title: 'Delta', severity: 'critical' })
+    const view = renderDialog(OPERATION)
+    const dialog = await openDialog(user)
+    await user.click(await within(dialog).findByRole('checkbox', { name: BETA.title }))
+    expect(within(dialog).getByRole('checkbox', { name: BETA.title })).not.toBeChecked()
+
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([delta, GAMMA, ALPHA, BETA]))
+    view.rerender(
+      <FluentProvider theme={webLightTheme}>
+        <FindingExportDialog key={OPERATION.id} operation={OPERATION} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
+          orderRevision={1} />
+      </FluentProvider>,
+    )
+    expect(await within(dialog).findByRole('checkbox', { name: delta.title })).not.toBeChecked()
+    expect(operationsApi.listFindings).toHaveBeenCalledTimes(2)
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith(OPERATION.id, { limit: 100, offset: 0 })
+    expect(within(dialog).getByRole('checkbox', { name: BETA.title })).not.toBeChecked()
+    expect(within(dialog).getByRole('checkbox', { name: ALPHA.title })).toBeChecked()
+    expect(within(dialog).getByRole('checkbox', { name: GAMMA.title })).toBeChecked()
+  })
+
+  it('selects every finding again after the severity order changes when every finding was selected', async () => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([ALPHA, BETA]))
+    const view = renderDialog(OPERATION)
+    const dialog = await openDialog(user)
+    expect(await within(dialog).findByRole('checkbox', { name: 'Select all' })).toBeChecked()
+
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([GAMMA, ALPHA, BETA]))
+    view.rerender(
+      <FluentProvider theme={webLightTheme}>
+        <FindingExportDialog key={OPERATION.id} operation={OPERATION} fields={DEFAULT_FINDING_FIELDS_FIXTURE}
+          orderRevision={1} />
+      </FluentProvider>,
+    )
+    expect(await within(dialog).findByRole('checkbox', { name: GAMMA.title })).toBeChecked()
+    expect(within(dialog).getByRole('checkbox', { name: 'Select all' })).toBeChecked()
   })
 
   it('warns when selected findings have retired values', async () => {

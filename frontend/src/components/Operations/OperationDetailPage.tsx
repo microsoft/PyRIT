@@ -209,7 +209,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
               void navigate('/operations')
             }} />
           {fields !== null && <FindingExportDialog key={current.operation.id} operation={current.operation}
-            fields={fields} />}
+            fields={fields} orderRevision={orderRevision} />}
           <Button ref={newFindingRef} appearance="primary" className={styles.button} icon={<AddRegular />}
             disabled={fields === null} onClick={event => {
               returnFocusRef.current = event.currentTarget

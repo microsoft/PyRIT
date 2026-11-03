@@ -129,16 +129,21 @@ class FindingField(BaseModel):
 
     def _check_not_blank(self) -> None:
         """
-        Require non-blank labels, option keys and option labels.
+        Require non-blank labels, option keys and option labels, and option keys without surrounding whitespace.
 
         Raises:
-            ValueError: If any of them is blank.
+            ValueError: If any of them is blank, or an option key has surrounding whitespace.
         """
+        options = list(_walk(self.options))
         texts = [self.label, *(label for _, label in self.levels)]
-        for option in _walk(self.options):
+        for option in options:
             texts += [option.key, option.label]
         if any(not text.strip() for text in texts):
             raise ValueError(f"Labels, option keys and option labels of '{self.key}' must not be blank.")
+        # Saved severities lose surrounding whitespace, so a padded key could never be chosen.
+        padded = next((option.key for option in options if option.key != option.key.strip()), None)
+        if padded is not None:
+            raise ValueError(f"Option key {padded!r} of '{self.key}' has surrounding whitespace.")
 
     def _check_no_choice_settings(self) -> None:
         """

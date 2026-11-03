@@ -142,6 +142,23 @@ def test_upgrade_moves_an_other_severity_stored_in_any_case() -> None:
         engine.dispose()
 
 
+@pytest.mark.parametrize("custom_text", ["  Review  ", "\tReview\n", "\u00a0Review\u00a0"])
+def test_upgrade_removes_surrounding_whitespace_from_other_severity_text(custom_text: str) -> None:
+    engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, PREVIOUS_REVISION)
+            _insert_operation(connection)
+            _insert_finding(connection=connection, id=A, severity="other", severity_other=custom_text, description="")
+
+            command.upgrade(config, REVISION)
+
+            assert connection.execute(sa.text("SELECT severity FROM FindingEntries")).scalar_one() == "Review"
+    finally:
+        engine.dispose()
+
+
 def test_upgrade_drops_the_finding_check_constraints() -> None:
     engine = sa.create_engine("sqlite:///:memory:")
     try:
@@ -186,19 +203,20 @@ def test_downgrade_refuses_offline() -> None:
         _migration().downgrade()
 
 
-def test_upgrade_compiles_for_sql_server() -> None:
+def test_upgrade_compiles_for_sql_server(caplog: pytest.LogCaptureFixture) -> None:
     output = io.StringIO()
     context = MigrationContext.configure(dialect_name="mssql", opts={"as_sql": True, "output_buffer": output})
     with Operations.context(context):
         _migration().upgrade()
     ddl = output.getvalue()
+    assert "Skipping custom severity trimming" in caplog.text
     assert _migration().down_revision == "e7c4a2d9f013"
     for name in CHECKS:
         assert f"DROP CONSTRAINT {name}" in ddl
     drops = [match.start() for match in re.finditer("DROP CONSTRAINT", ddl)]
     assert len(drops) == 3 and max(drops) < ddl.index("ALTER COLUMN severity")
     assert "COLLATE Latin1_General_100_BIN2" in ddl
-    assert "WHERE LOWER(severity) = 'other'" in ddl
+    assert "SET severity = severity_other WHERE LOWER(severity) = 'other'" in ddl
     assert "JSON_MODIFY" in ddl
     for column in ("description", "severity_other", "harm_type", "harm_type_other"):
         assert f"DROP COLUMN {column}" in ddl
