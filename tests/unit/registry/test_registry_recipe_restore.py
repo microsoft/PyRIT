@@ -16,7 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.backend.models.techniques import CreateTechniqueRequest
-from pyrit.converter import Base64Converter
+from pyrit.converter import Base64Converter, ColloquialWordswapConverter
 from pyrit.models.catalog.registry_recipe import (
     RegistryRecipeKind,
     RestoreFailure,
@@ -701,6 +701,29 @@ class TestRestoreFailures:
         target = TargetRegistry.get_registry_singleton().instances.get("copilot")
         assert target is not None
         assert target._working_directory == str(workspace.resolve())
+
+    def test_gives_only_targets_the_path_parameters_their_class_allows_callers(self, tmp_path: Path) -> None:
+        class CallerPathWordswap(ColloquialWordswapConverter):
+            caller_path_parameters = frozenset({"wordswap_path"})
+
+        ConverterRegistry.get_registry_singleton().register_class(CallerPathWordswap)
+        _save(
+            tmp_path,
+            RegistryRecipeKind.CONVERTERS,
+            "wordswap",
+            {
+                "class_module": CallerPathWordswap.__module__,
+                "class_name": "CallerPathWordswap",
+                "params": {"wordswap_path": "/etc/passwd"},
+            },
+        )
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert failure.reason is RestoreFailureReason.BUILD_ERROR
+        assert "wordswap_path" in failure.message
+        assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances
 
     def test_reports_a_name_taken_at_startup_and_fails_its_dependents(self, tmp_path: Path) -> None:
         startup_target = OpenAIChatTarget(
