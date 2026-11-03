@@ -20,11 +20,13 @@ from pyrit.models import (
     ProgramExecutionObservationPayload,
 )
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score.observation.program_selector import ProgramSelectionError
 
 if TYPE_CHECKING:
     from pyrit._code_execution import SandboxClient
     from pyrit.models import ProgramExecutionScorable
     from pyrit.models.code_execution import _ProgramExecutionEvent
+    from pyrit.score.observation.program_selector import ProgramSelector
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,9 @@ class ProgramExecutionSource:
 
     Expected results never reach the source. Memory is needed only to resolve stored program
     references. A message must contain exactly one text piece; blocked or failed responses
-    leave evidence unavailable. Code is not extracted from prose.
+    leave evidence unavailable. Program text is submitted verbatim unless an injected
+    ``program_selector`` chooses the code within it; text the selector cannot settle on leaves
+    evidence unavailable, so a mixed response is never run as if it were all code.
 
     Each acquisition runs afresh and returns a new observation. Program failures are execution
     evidence; infrastructure failures are acquisition errors. A run that stops after some
@@ -47,13 +51,18 @@ class ProgramExecutionSource:
     with truncation flags, and cleanup warnings remain in ``sandbox_warnings`` metadata.
     """
 
-    def __init__(self, *, sandbox: SandboxClient, max_output_chars: int = 64_000) -> None:
+    def __init__(
+        self, *, sandbox: SandboxClient, max_output_chars: int = 64_000, program_selector: ProgramSelector | None = None
+    ) -> None:
         """
         Initialize with the sandbox that runs submitted programs.
 
         Args:
             sandbox (SandboxClient): Runs programs under its allowlisted runtime profiles.
             max_output_chars (int): The most characters of each stream retained per invocation.
+            program_selector (ProgramSelector | None): Chooses the code to run from each program
+                text, such as one fenced block in a model response. Defaults to None, which runs
+                the text verbatim.
 
         Raises:
             ValueError: If the output limit is not positive.
@@ -62,10 +71,11 @@ class ProgramExecutionSource:
             raise ValueError("max_output_chars must be positive.")
         self._sandbox = sandbox
         self._max_output_chars = max_output_chars
+        self._program_selector = program_selector
 
     def get_identifier(self) -> ComponentIdentifier:
         """
-        Return the acquisition version, output limit, and sandbox configuration.
+        Return the acquisition version, output limit, sandbox configuration, and any program selector.
 
         Returns:
             ComponentIdentifier: The nonsecret source configuration.
@@ -73,7 +83,10 @@ class ProgramExecutionSource:
         return ComponentIdentifier.of(
             self,
             params={"acquisition_version": 3, "max_output_chars": self._max_output_chars},
-            children={"sandbox": self._sandbox.get_identifier()},
+            children={
+                "sandbox": self._sandbox.get_identifier(),
+                "program_selector": self._program_selector.get_identifier() if self._program_selector else None,
+            },
         )
 
     async def acquire_async(self, *, scorable: ProgramExecutionScorable) -> Observation:
@@ -98,7 +111,9 @@ class ProgramExecutionSource:
             )
         try:
             program = await self._resolve_program_async(scorable=scorable)
-        except _NoProgramError as error:
+            if self._program_selector is not None:
+                program = self._program_selector.select_program(text=program)
+        except (_NoProgramError, ProgramSelectionError) as error:
             return self._observation(scorable=scorable, acquisition=Acquisition.UNAVAILABLE, reasons=(str(error),))
         try:
             run = await self._sandbox.execute_async(
@@ -138,7 +153,7 @@ class ProgramExecutionSource:
         Read the program text the scorable names.
 
         Returns:
-            str: The code to submit, verbatim.
+            str: The program text, verbatim.
 
         Raises:
             _NoProgramError: If the named message holds a blocked or failed response.
