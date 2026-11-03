@@ -349,13 +349,16 @@ class TestRestoreFailures:
         assert [ref.name for ref in report.restored] == ["b_second"]
 
     @pytest.mark.parametrize(
-        "endpoint",
+        ("endpoint", "shown"),
         [
-            "https://user:hunter2@evil.example/openai/v1?sig=SYNTHETIC-SAS#frag",
-            "https://user:hunter2@evil.example/openai/v1'part?sig=SYNTHETIC-SAS#frag",
+            ("https://evil.example/openai/v1?sig=SYNTHETIC-SAS#frag", "https://evil.example/openai/v1"),
+            ("https://evil.example/openai/v1'part?sig=SYNTHETIC-SAS#frag", "https://evil.example/openai/v1'part"),
+            ("https://evil.example/open\u00a0ai/v1?sig=SYNTHETIC-SAS", "https://evil.example/open\u00a0ai/v1"),
+            ("https://user:hunter2@evil.example/openai/v1?sig=SYNTHETIC-SAS#frag", None),
+            ("//user:hunter2@evil.example/openai/v1?sig=SYNTHETIC-SAS", None),
         ],
     )
-    def test_build_errors_drop_credentials_from_urls(self, tmp_path: Path, endpoint: str) -> None:
+    def test_build_errors_drop_credentials_from_urls(self, tmp_path: Path, endpoint: str, shown: str | None) -> None:
         no_endpoint = {**_IDENTITY_TARGET, "params": {"auth_mode": "identity", "model_name": "gpt-4o"}}
         _save(tmp_path, RegistryRecipeKind.TARGETS, "server_endpoint", no_endpoint)
 
@@ -364,7 +367,10 @@ class TestRestoreFailures:
 
         (failure,) = report.failures
         assert failure.reason is RestoreFailureReason.BUILD_ERROR
-        assert "evil.example/openai/v1" in failure.message
+        if shown is None:
+            assert failure.message == "ValueError"
+        else:
+            assert f"'{shown}" in failure.message
         for secret in ("hunter2", "SYNTHETIC-SAS", "frag"):
             assert secret not in failure.message
 
@@ -384,6 +390,25 @@ class TestRestoreFailures:
         assert "could not be coerced" in failure.message
         assert "SECRET" not in failure.message
         assert [ref.name for ref in report.restored] == ["good"]
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("got ://host/path?sig=SECRET", "ValueError: got ://host/path"),
+            ("got https://[x?sig=SECRET", "ValueError: got https://[x"),
+            ("got https:host/path?sig=SECRET#SECRET", "ValueError: got https:host/path"),
+            ("got https://host/pa\u00a0th?sig=SECRET#SECRET", "ValueError: got https://host/pa\u00a0th"),
+            ("keeps  spacing https://host/?sig=SECRET  intact", "ValueError: keeps  spacing https://host/  intact"),
+            ("bad value: 'abc' (expected a number?)", "ValueError: bad value: 'abc' (expected a number?)"),
+            ("no address here", "ValueError: no address here"),
+            ("got //user:SECRET@host/path", "ValueError"),
+            ("got user:SECRET@https://host/path", "ValueError"),
+            ("got https://user\t:SECRET@host/path", "ValueError"),
+            ("got https://host/a b?sig=SECRET", "ValueError"),
+        ],
+    )
+    def test_safe_messages_drop_credentials_from_anything_that_may_be_a_url(self, text: str, expected: str) -> None:
+        assert RegistryRecipeRestorer._safe_message(ValueError(text)) == expected
 
     def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
         attack_registry = AttackRegistry.get_registry_singleton()
@@ -537,6 +562,23 @@ class TestRestoreFailures:
         assert str(tmp_path) not in failure.message
         assert report.restored == []
         assert "contoso_gpt4o" not in TargetRegistry.get_registry_singleton().instances
+
+    def test_builds_nothing_when_listing_a_folder_fails_unexpectedly(self, tmp_path: Path) -> None:
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
+        original_list_recipes = RegistryRecipeStorage.list_recipes
+
+        def list_recipes(storage: RegistryRecipeStorage) -> Any:
+            if storage._kind is RegistryRecipeKind.SCORERS:
+                raise ValueError("https://account.blob.core.windows.net/x?sig=SECRET")
+            return original_list_recipes(storage)
+
+        with patch.object(RegistryRecipeStorage, "list_recipes", autospec=True, side_effect=list_recipes):
+            report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert (failure.kind, failure.reason) == (RegistryRecipeKind.SCORERS, RestoreFailureReason.UNREADABLE_STORAGE)
+        assert "SECRET" not in failure.message
+        assert report.restored == []
 
     def test_reports_constructor_errors_and_keeps_going(self, tmp_path: Path) -> None:
         bad_value = {**_IDENTITY_TARGET, "params": {**_IDENTITY_TARGET["params"], "temperature": "hot"}}
