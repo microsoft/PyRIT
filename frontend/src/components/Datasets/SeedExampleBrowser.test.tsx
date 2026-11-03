@@ -5,6 +5,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 
 import { apiClient } from '@/services/api'
+import { advanceAutoRefresh } from '@/test-utils/autoRefresh'
 import type { DatasetInfo, SeedExampleDetailResponse, SeedExampleListResponse, SeedExampleSummary, SeedRecord } from '@/types'
 
 import SeedExampleBrowser from './SeedExampleBrowser'
@@ -204,7 +205,36 @@ describe('SeedExampleBrowser', () => {
   })
 
   afterEach(() => {
+    jest.useRealTimers()
     jest.restoreAllMocks()
+  })
+
+  it('should retain visible examples, open detail, focus and URL through a failed background check and recovery', async () => {
+    jest.useFakeTimers({ advanceTimers: true })
+    renderBrowser('&example=example-1')
+    expect(await screen.findByText('prompt body kept', { exact: false })).toBeInTheDocument()
+    const table = screen.getByRole('table', { name: 'Examples' })
+    const search = screen.getByRole('textbox', { name: 'Search examples' })
+    search.focus()
+    const url = currentUrl().href
+    const successfulGet = mockGet.getMockImplementation()
+    mockGet.mockImplementation((url: string, ...args: unknown[]) => {
+      if (url === '/datasets/seeds') return Promise.reject(new Error('Examples temporarily unavailable'))
+      return successfulGet?.(url, ...args)
+    })
+    await advanceAutoRefresh()
+    expect(screen.getByText(/Examples temporarily unavailable/)).toBeInTheDocument()
+    expect(screen.getByText(/Showing previously loaded examples/)).toBeInTheDocument()
+    expect(screen.getByRole('table', { name: 'Examples' })).toBe(table)
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeEnabled()
+    expect(search).toHaveFocus()
+    expect(currentUrl().href).toBe(url)
+    expect(screen.getByText('prompt body kept', { exact: false })).toBeInTheDocument()
+    mockGet.mockImplementation(successfulGet)
+    await advanceAutoRefresh()
+    expect(screen.queryByText(/Examples temporarily unavailable/)).not.toBeInTheDocument()
+    expect(screen.getByRole('table', { name: 'Examples' })).toBe(table)
+    expect(search).toHaveFocus()
   })
 
   it('shows the server total and keeps multimodal examples in one row', async () => {

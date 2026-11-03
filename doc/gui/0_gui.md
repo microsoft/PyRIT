@@ -28,7 +28,7 @@ Select **New attack** to start a fresh chat, or **Configure scan** to open scann
 setup. These actions do not send prompts or start a scan. The sidebar's
 **Attacks** entry returns to your last conversation or unsent draft.
 Each workflow has its own history link. Recent work shows up to five saved
-attacks and scans; filter by type or select **Refresh Home** to update the list.
+attacks and scans; filter by type. The visible page checks for updates each minute.
 Open a saved operation to review its work and findings. Registry remains
 available below these sections for setup. Operation links put the selected saved
 operation first, then the newest-created records, not the most recently active
@@ -167,7 +167,7 @@ Browse datasets already loaded into backend memory. Open a dataset to inspect
 its examples, search text, or filter by seed type. Supported media can be
 previewed on request.
 
-Load data through PyRIT before refreshing this catalog. See
+Load data through PyRIT; the visible catalog checks for changes each minute. See
 [datasets](../code/datasets/0_dataset.md) for loading options.
 
 ![Datasets page with stored dataset summaries](images/datasets.png)
@@ -232,6 +232,10 @@ store and share exported files with care.
 Configuration is for backend administration, not per-chat settings. Administrators
 edit the PyRIT configuration and environment sources, inspect the initializer
 sequence, and manage trusted custom initializer scripts.
+
+After a save-version conflict, select **Reload from disk** and confirm
+**Discard and reload** to load the current file. Canceling or a failed read keeps
+your draft.
 
 Saving a change does not apply it to the running backend. Reinitialize PyRIT,
 when supported, or restart the backend to apply saved setup changes. This affects

@@ -474,9 +474,8 @@ test.describe("Converter Registry", () => {
     await expect(removeDialog.locator(":focus")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(removeDialog).toBeHidden();
-    // The row that opened the dialog was replaced by the refresh, so focus
-    // falls back to the always-mounted header action.
-    await expect(page.getByRole("button", { name: "New Converter" })).toBeFocused();
+    // The quiet read keeps the keyed row mounted, so focus returns to its opener.
+    await expect(removeTrigger).toBeFocused();
   });
 
   test("keeps a stale submission failure out of a reopened add dialog", async ({ page }) => {
