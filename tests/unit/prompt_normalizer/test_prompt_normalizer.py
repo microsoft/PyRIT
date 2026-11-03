@@ -1435,15 +1435,21 @@ async def test_convert_audio_async_removes_completed_write_cancelled_before_hand
     loop = asyncio.get_running_loop()
     event_loop_thread = threading.get_ident()
     cleaned = asyncio.Event()
+    cancellation_requested = threading.Event()
     paths: list[str] = []
     cleanup_threads: list[int] = []
     record_path = prompt_normalizer_module._TempWavWrite.record_path
     unlink = Path.unlink
 
+    def cancel_before_handoff() -> None:
+        task.cancel()
+        cancellation_requested.set()
+
     def record_then_cancel(ownership, path):
         accepted = record_path(ownership, path)
         paths.append(path)
-        loop.call_soon_threadsafe(task.cancel)
+        loop.call_soon_threadsafe(cancel_before_handoff)
+        assert cancellation_requested.wait(TEST_WATCHDOG_SECONDS)
         return accepted
 
     def record_unlink(path, *, missing_ok=False):
@@ -1474,10 +1480,12 @@ async def test_convert_audio_async_removes_completed_write_cancelled_before_hand
             with pytest.raises(asyncio.CancelledError):
                 await wait_for_completion_async(future=task)
             await wait_for_event_async(event=cleaned, tasks=[])
+            assert cancellation_requested.is_set()
             assert len(paths) == 1
             assert cleanup_threads and cleanup_threads[0] != event_loop_thread
             assert not Path(paths[0]).exists()
         finally:
+            cancellation_requested.set()
             if not task.done():
                 task.cancel()
             await drain_tasks_async(task)
