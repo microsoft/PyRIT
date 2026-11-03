@@ -361,7 +361,9 @@ async def test_undetermined_conversation_result_projects_but_does_not_block_appl
     class UndeterminedFirstScorer(SubStringScorer):
         calls = 0
 
-        async def _score_piece_async(self, message_piece, *, objective=None):
+        async def _score_piece_with_expectation_async(
+            self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+        ) -> list[Score]:
             self.calls += 1
             if self.calls == 1:
                 return [
@@ -371,11 +373,11 @@ async def test_undetermined_conversation_result_projects_but_does_not_block_appl
                         score_type="true_false",
                         scorer_class_identifier=self.get_identifier(),
                         message_piece_id=message_piece.id,
-                        objective=objective,
+                        objective=expectation.objective if expectation else None,
                         score_rationale="No verdict yet",
                     )
                 ]
-            return await super()._score_piece_async(message_piece, objective=objective)
+            return await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
 
     policy, attack, request, _ = latest_response_chat
     child = UndeterminedFirstScorer(substring="default")

@@ -11,7 +11,7 @@ import pytest
 import pyrit.score as score_package
 import pyrit.score.true_false.regex as regex_package
 from pyrit.memory import SQLiteMemory
-from pyrit.models import ComponentIdentifier, ScorerEvaluationIdentifier, config_hash
+from pyrit.models import ComponentIdentifier, MessagePiece, ScorerEvaluationIdentifier, ScoringExpectation, config_hash
 from pyrit.score import (
     AnsiEscapeOutputScorer,
     AnthraxKeywordScorer,
@@ -102,6 +102,36 @@ async def test_regex_scorer_categories_propagate(patch_central_database):
     scorer = RegexScorer(patterns=_TEST_PATTERNS, categories=["pii"])
     score = (await scorer.score_text_async(text="SSN is 123-45-6789"))[0]
     assert "pii" in score.score_category
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("scorer_class", "text"),
+    [
+        (LDAPInjectionOutputScorer, "ldap://host/dc=test??sub?%28uid=%2a%29%28uid=%2a%29"),
+        (MarkdownInjectionScorer, "![image](https://example.com/image.png)"),
+    ],
+)
+@pytest.mark.parametrize("custom_patterns", [False, True])
+@pytest.mark.parametrize("objective", [None, "Detect injected output"])
+async def test_new_regex_leaves_typed_hook_preserves_objective_async(
+    *,
+    scorer_class: type[RegexScorer],
+    text: str,
+    custom_patterns: bool,
+    objective: str | None,
+) -> None:
+    scorer = _scorer_factory(scorer_class)(patterns={"custom": "marker"} if custom_patterns else None)
+    piece = MessagePiece(role="assistant", original_value="marker" if custom_patterns else text)
+    expectation = ScoringExpectation(objective=objective) if objective else None
+
+    score = (await scorer._score_piece_with_expectation_async(piece, expectation=expectation))[0]
+
+    assert score.get_value() is True
+    assert score.objective == objective
+    assert score.message_piece_id == piece.id
+    assert score.score_category == ["security"]
+    assert "custom" in score.score_rationale if custom_patterns else "Matched:" in score.score_rationale
 
 
 def test_regex_scorer_rejects_empty_patterns():
@@ -247,12 +277,16 @@ def test_default_patterns_have_stable_content_sensitive_identity(scorer_class: t
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("scorer_class", _CONFIGURABLE_SCORERS)
-def test_explicit_default_patterns_share_effective_identity(scorer_class: type[RegexScorer]) -> None:
+def test_explicit_default_patterns_follow_effective_identity(scorer_class: type[RegexScorer]) -> None:
     default_patterns = scorer_class._DEFAULT_PATTERNS
     assert default_patterns is not None
-    assert _identity(_scorer_factory(scorer_class)(patterns=dict(default_patterns))) == _identity(
-        _scorer_factory(scorer_class)()
-    )
+    explicit_identity = _identity(_scorer_factory(scorer_class)(patterns=dict(default_patterns)))
+    default_identity = _identity(_scorer_factory(scorer_class)())
+    if scorer_class is LDAPInjectionOutputScorer:
+        assert explicit_identity[0] != default_identity[0]
+        assert explicit_identity[1] != default_identity[1]
+    else:
+        assert explicit_identity == default_identity
 
 
 @pytest.mark.usefixtures("patch_central_database")
