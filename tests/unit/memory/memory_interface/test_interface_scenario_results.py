@@ -3,6 +3,7 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -13,7 +14,7 @@ from unit.mocks import (
     run_memory_session_async,
 )
 
-from pyrit.memory import MemoryInterface
+from pyrit.memory import MemoryInterface, SQLiteMemory
 from pyrit.memory.memory_models import (
     ScenarioIdentifierEntry,
     ScenarioResultEntry,
@@ -1226,22 +1227,27 @@ async def test_increment_scenario_number_tries_missing_id_raises(sqlite_instance
         await sqlite_instance.increment_scenario_number_tries_async(scenario_result_id=missing_id)
 
 
-async def test_increment_scenario_number_tries_concurrent(sqlite_instance: MemoryInterface):
+async def test_increment_scenario_number_tries_concurrent(tmp_path: Path):
     """Concurrent increments are serialized by the transaction and never lose counts."""
-    scenario = make_scenario_result(
-        scenario_name="Concurrent Tries Scenario",
-        scenario_version=1,
-        objective_target_identifier=get_mock_target_identifier(),
-        objective_scorer_identifier=get_mock_scorer_identifier(),
-        attack_results={},
-    )
-    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario])
-    scenario_id = str(scenario.id)
+    memory = SQLiteMemory(db_path=tmp_path / "tries.db", silent=True)
+    memory.disable_embedding()
+    try:
+        scenario = make_scenario_result(
+            scenario_name="Concurrent Tries Scenario",
+            scenario_version=1,
+            objective_target_identifier=get_mock_target_identifier(),
+            objective_scorer_identifier=get_mock_scorer_identifier(),
+            attack_results={},
+        )
+        await memory.add_scenario_results_to_memory_async(scenario_results=[scenario])
+        scenario_id = str(scenario.id)
 
-    results = await asyncio.gather(
-        *[sqlite_instance.increment_scenario_number_tries_async(scenario_result_id=scenario_id) for _ in range(10)]
-    )
-    assert sorted(results) == list(range(1, 11))
+        results = await asyncio.gather(
+            *[memory.increment_scenario_number_tries_async(scenario_result_id=scenario_id) for _ in range(10)]
+        )
+        assert sorted(results) == list(range(1, 11))
 
-    stored = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[scenario_id]))[0]
-    assert stored.number_tries == 10
+        stored = (await memory.get_scenario_results_async(scenario_result_ids=[scenario_id]))[0]
+        assert stored.number_tries == 10
+    finally:
+        await memory.dispose_engine_async()

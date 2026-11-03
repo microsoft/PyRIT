@@ -23,7 +23,7 @@ from tqdm.auto import tqdm
 
 from pyrit.common import default_values, get_global_default_values
 from pyrit.common.utils import to_sha256
-from pyrit.exceptions import ScenarioPartialFailureException
+from pyrit.exceptions import ScenarioPartialFailureException, ScenarioRunInProgressException
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
 from pyrit.memory import CentralMemory
@@ -1689,6 +1689,7 @@ class Scenario(ABC):
                 attack results from all atomic attacks.
 
         Raises:
+            ScenarioRunInProgressException: If this scenario result run is already in progress in this process.
             asyncio.CancelledError: If the scenario task is cancelled. Completed results remain persisted
                 and a later call can resume the unfinished objectives.
             ValueError: If the scenario has no atomic attacks configured. If your scenario
@@ -1718,12 +1719,15 @@ class Scenario(ABC):
 
         with Scenario._active_runs_lock:
             if scenario_result_id in Scenario._active_runs:
-                raise RuntimeError(
-                    f"Scenario '{self._name}' execution is already in progress for run '{scenario_result_id}'."
+                raise ScenarioRunInProgressException(
+                    status_code=409,
+                    message=f"Scenario '{self._name}' execution is already in progress for run '{scenario_result_id}'.",
                 )
             Scenario._active_runs.add(scenario_result_id)
 
         try:
+            await self._prepare_run_async()
+
             # Implement retry logic
             last_exception = None
             for retry_attempt in range(self._max_retries + 1):  # +1 for initial attempt
@@ -1778,6 +1782,9 @@ class Scenario(ABC):
         finally:
             with Scenario._active_runs_lock:
                 Scenario._active_runs.discard(scenario_result_id)
+
+    async def _prepare_run_async(self) -> None:  # noqa: B027
+        """Run subclass pre-work while this process owns the run."""
 
     async def _execute_scenario_async(self) -> ScenarioResult:
         """

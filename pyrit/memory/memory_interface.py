@@ -7176,11 +7176,17 @@ class MemoryInterface(abc.ABC):
             ValueError: If the scenario result is not found in memory.
         """
         with closing(self._get_session()) as session:
-            entry = session.query(ScenarioResultEntry).filter_by(id=scenario_result_id).first()
-            if not entry:
+            updated_rows = (
+                session.query(ScenarioResultEntry)
+                .filter(ScenarioResultEntry.id == scenario_result_id)
+                .update(
+                    {ScenarioResultEntry.number_tries: ScenarioResultEntry.number_tries + 1},
+                    synchronize_session=False,
+                )
+            )
+            if not updated_rows:
                 raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
-            entry.number_tries += 1
-            new_tries = entry.number_tries
+            new_tries: int = session.query(ScenarioResultEntry.number_tries).filter_by(id=scenario_result_id).scalar()
             session.commit()
             return new_tries
 

@@ -12,10 +12,12 @@ from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 import sqlalchemy as sa
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario_result
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.datasets import SeedDatasetProvider
+from pyrit.exceptions import ScenarioRunInProgressException
 from pyrit.executor.attack import AttackStrategy, PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory, MemoryInterface
@@ -2689,10 +2691,12 @@ class TestScenarioParallelExecution:
         results = await asyncio.gather(scenario.run_async(), scenario.run_async(), return_exceptions=True)
 
         succeeded = [r for r in results if isinstance(r, ScenarioResult)]
-        rejected = [r for r in results if isinstance(r, RuntimeError)]
+        rejected = [r for r in results if isinstance(r, ScenarioRunInProgressException)]
 
         assert len(succeeded) == 1, f"Expected 1 succeeded run, got {len(succeeded)}"
         assert len(rejected) == 1, f"Expected 1 rejected run, got {len(rejected)}"
+        assert isinstance(rejected[0], RuntimeError)
+        assert rejected[0].status_code == 409
         assert f"execution is already in progress for run '{run_id}'" in str(rejected[0])
 
         # Exact expected metrics from Issue #3748:
@@ -2739,10 +2743,12 @@ class TestScenarioParallelExecution:
 
         results = await asyncio.gather(scenario1.run_async(), scenario2.run_async(), return_exceptions=True)
         succeeded = [r for r in results if isinstance(r, ScenarioResult)]
-        rejected = [r for r in results if isinstance(r, RuntimeError)]
+        rejected = [r for r in results if isinstance(r, ScenarioRunInProgressException)]
 
         assert len(succeeded) == 1
         assert len(rejected) == 1
+        assert isinstance(rejected[0], RuntimeError)
+        assert rejected[0].status_code == 409
         assert f"execution is already in progress for run '{run_id}'" in str(rejected[0])
 
     async def test_cancellation_cleans_up_guard_and_allows_legitimate_resume(
@@ -2786,7 +2792,7 @@ class TestScenarioParallelExecution:
         run_id = scenario._scenario_result_id
 
         task = asyncio.create_task(scenario.run_async())
-        await two_completed.wait()
+        await asyncio.wait_for(two_completed.wait(), timeout=TEST_WATCHDOG_SECONDS)
 
         # Cancel the active run while in progress
         task.cancel()
@@ -2851,7 +2857,7 @@ class TestScenarioParallelExecution:
         ) -> Any:
             entered_this.set()
             # Both scenarios must enter their attack execution before either can proceed
-            await asyncio.wait_for(entered_other.wait(), timeout=5.0)
+            await asyncio.wait_for(entered_other.wait(), timeout=TEST_WATCHDOG_SECONDS)
             return await base_run(*args, **kwargs)
 
         async def attack1_run(*args: Any, **kwargs: Any) -> Any:
@@ -2878,7 +2884,7 @@ class TestScenarioParallelExecution:
         task2 = asyncio.create_task(scenario2.run_async())
 
         try:
-            res1, res2 = await asyncio.wait_for(asyncio.gather(task1, task2), timeout=10.0)
+            res1, res2 = await asyncio.wait_for(asyncio.gather(task1, task2), timeout=TEST_WATCHDOG_SECONDS)
         except BaseException:
             task1.cancel()
             task2.cancel()
