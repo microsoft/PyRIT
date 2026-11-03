@@ -24,7 +24,7 @@ import pytest
 
 from pyrit.common import REQUIRED_VALUE
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
-from pyrit.converter import Base64Converter, PolicyPuppetryTemplate
+from pyrit.converter import Base64Converter, CodeAttackConverter, PolicyPuppetryTemplate
 from pyrit.converter.text_selection_strategy import (
     IndexSelectionStrategy,
     TextSelectionStrategy,
@@ -423,18 +423,24 @@ def _settings_with_allowed_values() -> list[tuple[str, str]]:
     ]
 
 
-@pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize(("converter_name", "parameter_name"), _settings_with_allowed_values())
-def test_every_allowed_value_gets_its_own_identifier(
-    converter_name: str, parameter_name: str, samples: dict[str, tuple[Any, ...]]
-) -> None:
+def _allowed_value_hashes(
+    *, converter_name: str, parameter_name: str, samples: dict[str, tuple[Any, ...]]
+) -> list[str]:
     registry = _registry()
     cls = registry.get_class(converter_name)
     parameters = list(registry.get_class_metadata(cls).parameters)
     allowed = _allowed_values(next(item for item in parameters if item.name == parameter_name))
     kwargs = {**_baseline(cls, parameters, samples), **ALLOWED_VALUES_NEED.get((converter_name, parameter_name), {})}
 
-    hashes = [_hash(cls, {**kwargs, parameter_name: value}, parameter_name) for value in allowed]
+    return [_hash(cls, {**kwargs, parameter_name: value}, parameter_name) for value in allowed]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(("converter_name", "parameter_name"), _settings_with_allowed_values())
+def test_every_allowed_value_gets_its_own_identifier(
+    converter_name: str, parameter_name: str, samples: dict[str, tuple[Any, ...]]
+) -> None:
+    hashes = _allowed_value_hashes(converter_name=converter_name, parameter_name=parameter_name, samples=samples)
 
     assert len(set(hashes)) == len(hashes), f"{converter_name}.{parameter_name}: two allowed values share an identifier"
 
@@ -583,9 +589,26 @@ def _every_identifier(folder: Path) -> dict[str, Any]:
         strategies = [_strategy_hashes(*parameters, samples) for parameters in _STRATEGY_PARAMETERS]
         return {
             **{".".join(setting): hashes for setting, hashes in _setting_hashes(samples).items()},
+            **{
+                f"{name}.{parameter} allowed values": _allowed_value_hashes(
+                    converter_name=name, parameter_name=parameter, samples=samples
+                )
+                for name, parameter in _settings_with_allowed_values()
+            },
             **{built: found for sweep in strategies for built, found in sweep.items()},
             **{f"{name} keywords": _keyword_hashes(name, samples) for name in KEYWORD_SETTINGS},
         }
+
+
+@pytest.mark.filterwarnings("ignore:.*TaskFramingConverter is deprecated:DeprecationWarning")
+@pytest.mark.usefixtures("patch_central_database")
+def test_process_snapshot_includes_builtin_templates(tmp_path: Path) -> None:
+    snapshot = _every_identifier(tmp_path)
+    expected = [
+        CodeAttackConverter(template=template).get_identifier().hash for template in CodeAttackConverter.Template
+    ]
+
+    assert snapshot["CodeAttackConverter.template allowed values"] == expected
 
 
 @pytest.mark.filterwarnings("ignore:.*TaskFramingConverter is deprecated:DeprecationWarning")
