@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "./_fixtures";
+import { READY_RUNTIME } from "./_runtime";
 
 // ---------------------------------------------------------------------------
 // Helpers – mock backend API responses so URL-driven navigation can be
@@ -103,6 +104,10 @@ const PREFERENCES_STORAGE_KEY = "pyrit.userPreferences.v1.local";
 
 /** Register every API mock the routing tests rely on. */
 async function mockRoutingAPIs(page: Page) {
+  await page.route(/\/api\/runtime(?:\?|$)/, async (route) => {
+    await route.fulfill({ json: READY_RUNTIME });
+  });
+
   await page.route(/\/api\/targets/, async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     const body = pathname.endsWith(`/${ROUTING_TARGET.target_registry_name}`)
