@@ -8,8 +8,9 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
 from enum import Enum
-from math import isclose, isfinite, sqrt
+from math import isclose, isfinite
 from typing import Annotated, Any, ClassVar, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
@@ -19,7 +20,7 @@ from pyrit.models.results.attack_result import AttackOutcome
 
 _OutcomeCount = Annotated[int, Field(strict=True, ge=0)]
 _OutcomeRate = Annotated[float, Field(strict=True, ge=0, le=1, allow_inf_nan=False)]
-_WILSON_Z_95 = 1.959963984540054
+_WILSON_Z_95 = Decimal("1.959963984540054")
 
 
 @dataclass
@@ -193,14 +194,19 @@ class AttackAnalyticsStatistics(AttackStats):
             or not 0 <= lower <= upper <= 1
         ):
             raise ValueError("success_rate confidence interval must agree with its outcome counts.")
-        p = numerator / denominator
-        inv_n = 1 / denominator
-        z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) * inv_n
-        denom = 1.0 + z2_inv_n
-        center = (p + 0.5 * z2_inv_n) / denom
-        half_width = _WILSON_Z_95 * sqrt(max(0.0, p * (1.0 - p) + 0.25 * z2_inv_n)) * sqrt(inv_n) / denom
-        expected_lower = 0.0 if numerator == 0 else max(0.0, center - half_width)
-        expected_upper = 1.0 if numerator == denominator else min(1.0, center + half_width)
+        with localcontext() as ctx:
+            ctx.prec = 50
+            ctx.Emin = MIN_EMIN
+            ctx.Emax = MAX_EMAX
+            n = Decimal(denominator)
+            p = Decimal(numerator) / n
+            q = Decimal(denominator - numerator) / n
+            z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) / n
+            denom = Decimal(1) + z2_inv_n
+            center = (p + Decimal("0.5") * z2_inv_n) / denom
+            half_width = (_WILSON_Z_95 * ((p * q + Decimal("0.25") * z2_inv_n) / n).sqrt()) / denom
+            expected_lower = 0.0 if numerator == 0 else float(max(Decimal(0), center - half_width))
+            expected_upper = 1.0 if numerator == denominator else float(min(Decimal(1), center + half_width))
         if not (
             isclose(lower, expected_lower, rel_tol=1e-12, abs_tol=0.0)
             and isclose(upper, expected_upper, rel_tol=1e-12, abs_tol=0.0)

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from math import sqrt
+from decimal import MAX_EMAX, MIN_EMIN, Decimal, localcontext
 from typing import TYPE_CHECKING
 
 from pyrit.models import AttackOutcome, OutcomeStatistics
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from pyrit.models import AttackStats
 
-_WILSON_Z_95 = 1.959963984540054
+_WILSON_Z_95 = Decimal("1.959963984540054")
 
 
 def compute_outcome_statistics(counts: Mapping[str, int] | Mapping[AttackOutcome, int]) -> OutcomeStatistics:
@@ -135,12 +135,17 @@ def _rate(*, successes: int, total: int) -> float | None:
 def _wilson_ci(*, successes: int, total: int) -> tuple[float | None, float | None]:
     if not total:
         return None, None
-    p = successes / total
-    inv_n = 1 / total
-    z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) * inv_n
-    denom = 1.0 + z2_inv_n
-    center = (p + 0.5 * z2_inv_n) / denom
-    half_width = _WILSON_Z_95 * sqrt(max(0.0, p * (1.0 - p) + 0.25 * z2_inv_n)) * sqrt(inv_n) / denom
-    lower = 0.0 if successes == 0 else float(max(0.0, center - half_width))
-    upper = 1.0 if successes == total else float(min(1.0, center + half_width))
+    with localcontext() as ctx:
+        ctx.prec = 50
+        ctx.Emin = MIN_EMIN
+        ctx.Emax = MAX_EMAX
+        n = Decimal(total)
+        p = Decimal(successes) / n
+        q = Decimal(total - successes) / n
+        z2_inv_n = (_WILSON_Z_95 * _WILSON_Z_95) / n
+        denom = Decimal(1) + z2_inv_n
+        center = (p + Decimal("0.5") * z2_inv_n) / denom
+        half_width = (_WILSON_Z_95 * ((p * q + Decimal("0.25") * z2_inv_n) / n).sqrt()) / denom
+        lower = 0.0 if successes == 0 else float(max(Decimal(0), center - half_width))
+        upper = 1.0 if successes == total else float(min(Decimal(1), center + half_width))
     return lower, upper

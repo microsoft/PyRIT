@@ -165,6 +165,14 @@ def test_shared_statistics_accept_legacy_payload_without_confidence_interval_and
             {**asdict(small_rate), "success_rate_ci_lower": 0.0, "success_rate_ci_upper": 0.0}
         )
 
+    subnormal_rate = compute_outcome_statistics({"success": 100, "failure": 10**324 - 100})
+    with pytest.raises(ValueError, match="confidence interval"):
+        replace(subnormal_rate, success_rate_ci_lower=1e-322, success_rate_ci_upper=1e-322)
+    with pytest.raises(ValidationError):
+        TypeAdapter(OutcomeStatistics).validate_python(
+            {**asdict(subnormal_rate), "success_rate_ci_lower": 1e-322, "success_rate_ci_upper": 1e-322}
+        )
+
 
 def test_reembedding_mutated_outcomes_revalidates_the_counts() -> None:
     statistics = compute_outcome_statistics({"success": 1})

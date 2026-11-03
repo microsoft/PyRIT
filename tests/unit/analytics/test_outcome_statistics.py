@@ -99,6 +99,19 @@ def test_skewed_large_integer_counts_do_not_underflow_wilson_interval() -> None:
     assert statistics.success_rate_ci_lower == pytest.approx(1.765245549351526e-201, rel=1e-12, abs=0.0)
     assert statistics.success_rate_ci_upper == pytest.approx(5.664934265758973e-200, rel=1e-12, abs=0.0)
 
+    subnormal_total = 10**324
+    subnormal_stats = compute_outcome_statistics({"success": 100, "failure": subnormal_total - 100})
+    assert subnormal_stats.success_rate_ci_lower is not None
+    assert subnormal_stats.success_rate_ci_upper is not None
+    assert (
+        0.0
+        < subnormal_stats.success_rate_ci_lower
+        < subnormal_stats.success_rate
+        < subnormal_stats.success_rate_ci_upper
+    )
+    assert subnormal_stats.success_rate_ci_lower == 8.4e-323
+    assert subnormal_stats.success_rate_ci_upper == 1.235e-322
+
 
 @pytest.mark.parametrize(
     ("successes", "failures", "expected_lower", "expected_upper"),
