@@ -34,6 +34,8 @@ available below these sections for setup. Operation links put the selected saved
 operation first, then the newest-created records, not the most recently active
 records. When the complete registry confirms that no targets are registered, the
 secondary setup action offers **Register a target**.
+The shared labels bar applies the selected operator, operation, and custom labels
+to new work; changes do not alter saved results.
 
 ![Home page with workflows and recent work](images/home.png)
 

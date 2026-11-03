@@ -223,6 +223,65 @@ async def test_activity_history_orders_persisted_attempts_before_limit(sqlite_in
     assert str(long_running.id) not in [record.scenario_result_id for record in default_page]
 
 
+async def test_activity_history_paginates_from_activity_timestamp_at_boundary(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
+    scenarios = [
+        _make_scenario(
+            result_id=uuid.UUID(int=index),
+            timestamp=timestamp + timedelta(days=index - 1),
+            name=f"Scenario{index}",
+            state=ScenarioRunState.IN_PROGRESS,
+            labels={},
+        )
+        for index in (1, 2, 3)
+    ]
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios)
+    activity_timestamps = {
+        scenarios[1].id: timestamp + timedelta(days=8),
+        scenarios[2].id: timestamp + timedelta(days=10),
+    }
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            AttackResult(
+                attack_result_id=str(uuid.UUID(int=100 + index)),
+                conversation_id=str(uuid.UUID(int=200 + index)),
+                objective=f"objective-{index}",
+                outcome=AttackOutcome.UNDETERMINED,
+                execution_time_ms=1,
+                timestamp=activity_timestamp,
+                attribution_parent_id=str(scenario_id),
+            )
+            for index, (scenario_id, activity_timestamp) in enumerate(activity_timestamps.items())
+        ]
+    )
+
+    first_page, first_aggregates, has_more = await sqlite_instance.get_scenario_run_history_page_async(
+        limit=2,
+        sort_by="activity",
+    )
+    boundary = first_page[-1]
+    boundary_activity = first_aggregates[boundary.scenario_result_id].latest_attempt_timestamp
+    assert boundary_activity is not None
+    assert boundary_activity != boundary.created_at
+
+    second_page, _, second_has_more = await sqlite_instance.get_scenario_run_history_page_async(
+        cursor=ScenarioHistoryKeysetCursor(
+            timestamp=boundary_activity,
+            scenario_result_id=boundary.scenario_result_id,
+        ),
+        limit=2,
+        sort_by="activity",
+    )
+    page_ids = [record.scenario_result_id for record in [*first_page, *second_page]]
+
+    assert has_more is True
+    assert second_has_more is False
+    assert page_ids == [str(uuid.UUID(int=value)) for value in (3, 2, 1)]
+    assert len(page_ids) == len(set(page_ids))
+
+
 async def test_terminal_completion_controls_activity_history_order(sqlite_instance: MemoryInterface) -> None:
     timestamp = datetime(2026, 8, 7, tzinfo=UTC)
     completed = _make_scenario(
