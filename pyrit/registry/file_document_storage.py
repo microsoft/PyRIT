@@ -125,10 +125,14 @@ def _read_regular_file(path: str) -> bytes | None:
     Returns:
         bytes | None: The content, or None if the path names something other than a regular file.
     """
-    with open(os.open(path, _READ_FLAGS), "rb") as file:
-        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+    descriptor = os.open(path, _READ_FLAGS)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             return None
-        return file.read()
+        with open(descriptor, "rb", closefd=False) as file:
+            return file.read()
+    finally:
+        os.close(descriptor)
 
 
 class DocumentConflictError(ValueError):
@@ -317,8 +321,22 @@ class FileDocumentStorage:
             return UnreadableDocument(name=name, message=self._describe_read_error(error))
         if content is not None:
             return content
-        if not os.path.lexists(entry.path):
+        return self._describe_non_file(path=entry.path, name=name)
+
+    @classmethod
+    def _describe_non_file(cls, *, path: str, name: str) -> UnreadableDocument | None:
+        """
+        Report a listed entry that isn't a regular file, unless it was deleted after the listing.
+
+        Returns:
+            UnreadableDocument | None: Why it can't be read, or None if it no longer exists.
+        """
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
             return None
+        except OSError as error:
+            return UnreadableDocument(name=name, message=cls._describe_read_error(error))
         # A broken link, a folder, or a pipe, which would block if read.
         return UnreadableDocument(name=name, message="Not a regular file")
 
