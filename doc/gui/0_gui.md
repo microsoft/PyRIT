@@ -83,6 +83,10 @@ on this page. Target defaults apply to new chats and scans.
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
 They are stored separately from live component instances.
 
+Editing a preset preserves unchanged parameter values exactly, including commas
+and whitespace inside list entries, empty lists, duplicates, and their order.
+Editing a list field uses the comma-separated format shown in the editor.
+
 Targets, converters, and techniques added only to the live registry must be
 recreated after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
