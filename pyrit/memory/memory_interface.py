@@ -27,6 +27,7 @@ from sqlalchemy import (
     Select,
     String,
     Unicode,
+    UnicodeText,
     and_,
     case,
     column,
@@ -64,7 +65,7 @@ from pyrit.memory.analytics_sql import (
     JsonArrayValue,
     JsonContainer,
     JsonScalar,
-    UnicodeLower,
+    UnicodeCaseFold,
     UuidHex,
 )
 
@@ -5485,14 +5486,17 @@ class MemoryInterface(abc.ABC):
             member_conditions.append(SeedEntry.seed_type.in_(list(seed_types)))
         if value_search:
             # A simulated-conversation value is JSON, so its keys would match common words such as "prompt".
-            # SQLite's lower() only folds ASCII, so the column is folded with the Unicode-aware
-            # UnicodeLower used by the harm category filters, and the pattern is folded in Python.
-            pattern = "%" + re.sub(r"([\\%_\[])", r"\\\1", value_search).lower() + "%"
+            # casefold maps each character independently, so lowering the term separately from the
+            # stored text cannot lose context sensitive forms such as Greek final sigma, and verbatim
+            # text always still matches.
+            pattern = "%" + re.sub(r"([\\%_\[])", r"\\\1", value_search) + "%"
             member_conditions.append(
                 and_(
                     SeedEntry.data_type == "text",
                     SeedEntry.seed_type != "simulated_conversation",
-                    UnicodeLower(SeedEntry.value).like(pattern, escape="\\"),
+                    UnicodeCaseFold(SeedEntry.value).like(
+                        UnicodeCaseFold(literal(pattern, UnicodeText())), escape="\\"
+                    ),
                 )
             )
 

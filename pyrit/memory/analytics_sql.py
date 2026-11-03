@@ -66,6 +66,47 @@ def _sqlite_unicode_lower(element: UnicodeLower, compiler: Any, **kwargs: Any) -
     )
 
 
+class UnicodeCaseFold(FunctionElement[str]):
+    """
+    Fold text per character with Python casefold semantics for exact matching.
+
+    Unlike :class:`UnicodeLower`, every character maps on its own, so verbatim
+    text always matches regardless of context sensitive forms such as Greek
+    final sigma, and ``ss`` matches the sharp s.
+    """
+
+    SQLITE_FUNCTION_NAME: ClassVar[str] = "pyrit_analytics_casefold"
+    type = UnicodeText()
+    inherit_cache = True
+
+
+@compiles(UnicodeCaseFold, "sqlite")
+def _sqlite_unicode_casefold(element: UnicodeCaseFold, compiler: Any, **kwargs: Any) -> str:
+    """
+    Reuse UnicodeLower's ASCII fast path, falling back to the registered casefold.
+
+    Returns:
+        str: The compiled per character fold expression.
+    """
+    value = _arguments(element, compiler, **kwargs)[0]
+    return (
+        f"CASE WHEN typeof({value}) = 'text' AND length(CAST({value} AS BLOB)) = length({value}) "
+        f"THEN lower({value}) ELSE {UnicodeCaseFold.SQLITE_FUNCTION_NAME}({value}) END"
+    )
+
+
+@compiles(UnicodeCaseFold, "mssql")
+def _mssql_unicode_casefold(element: UnicodeCaseFold, compiler: Any, **kwargs: Any) -> str:
+    """
+    Compile the casefold for SQL Server, whose LOWER stays per character.
+
+    Returns:
+        str: The compiled per character fold expression.
+    """
+    value = _arguments(element, compiler, **kwargs)[0]
+    return f"LOWER({value})"
+
+
 @compiles(UnicodeLower, "mssql")
 def _mssql_unicode_lower(element: UnicodeLower, compiler: Any, **kwargs: Any) -> str:
     """

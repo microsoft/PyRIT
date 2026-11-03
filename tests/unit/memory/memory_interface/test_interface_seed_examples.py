@@ -175,6 +175,20 @@ async def test_get_seed_examples_value_search_folds_non_ascii_case(sqlite_instan
     assert await _ids(sqlite_instance, value_search="50%_off") == [wildcard]
 
 
+async def test_get_seed_examples_value_search_matches_greek_final_sigma(sqlite_instance: MemoryInterface):
+    """Verbatim Greek text must match regardless of context sensitive final sigma."""
+    astro = uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="ΑΣΤΡΟ navigation charts", dataset_name=DATASET, prompt_group_id=astro),
+    )
+
+    # 'ΑΣ' lower()s to 'ας' while the stored text lower()s to 'αστρο', so naive
+    # lowering of the two sides separately loses the match; casefold keeps it.
+    assert await _ids(sqlite_instance, value_search="ΑΣ") == [astro]
+    assert await _ids(sqlite_instance, value_search="ασ") == [astro]
+
+
 async def test_get_seed_examples_keeps_named_and_unnamed_scopes_apart(sqlite_instance: MemoryInterface):
     group = uuid4()
     named = SeedPrompt(value="named", dataset_name=DATASET, prompt_group_id=group)
