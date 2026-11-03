@@ -286,6 +286,93 @@ describe('CreateConverterDialog', () => {
     },
   )
 
+  describe('overlapping file reads', () => {
+    const converter = {
+      converter_id: 'source',
+      identifier: {
+        class_name: 'PathConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash', source: 'original.txt',
+      },
+    }
+
+    const setup = async () => {
+      const user = userEvent.setup()
+      mockConverterParameters([
+        { name: 'source', type_name: 'Path', required: true },
+      ], 'PathConverter')
+      const onTemporary = jest.fn()
+      mockedConvertersApi.buildConverter.mockResolvedValue({ identifier: converter.identifier })
+      const click = jest.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined)
+      const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+      renderDialog({ editing: { converter }, onTemporary })
+      await screen.findByRole('textbox', { name: 'source *' })
+
+      const startUpload = async (name: string): Promise<FileReader> => {
+        const index = read.mock.contexts.length
+        await user.click(screen.getByRole('button', { name: 'Upload' }))
+        const fileInput = click.mock.contexts[index]
+        if (!(fileInput instanceof HTMLInputElement)) throw new Error('File picker did not open')
+        screen.getByRole('dialog').appendChild(fileInput)
+        await user.upload(fileInput, new File([name], name, { type: 'text/plain' }))
+        fileInput.remove()
+        const reader = read.mock.contexts[index]
+        if (!(reader instanceof FileReader)) throw new Error('File read did not start')
+        return reader
+      }
+      const finishRead = (reader: FileReader, result: string) => {
+        act(() => {
+          Object.defineProperty(reader, 'result', { value: result })
+          reader.dispatchEvent(new ProgressEvent('load'))
+        })
+      }
+      const apply = async (expected: string) => {
+        await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+        await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+        expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('PathConverter', {
+          source_name: 'source', source_hash: 'source-hash', params: { source: expected },
+        })
+      }
+      return { user, startUpload, finishRead, apply }
+    }
+
+    it('should keep the newest upload when an older read finishes last', async () => {
+      const { startUpload, finishRead, apply } = await setup()
+      const readA = await startUpload('a.txt')
+      const readB = await startUpload('b.txt')
+
+      finishRead(readB, 'data:text/plain;base64,Yg==')
+      finishRead(readA, 'data:text/plain;base64,YQ==')
+
+      expect(screen.getByRole('textbox', { name: 'source *' })).toHaveValue('data:text/plain;base64,Yg==')
+      await apply('data:text/plain;base64,Yg==')
+    })
+
+    it('should apply both reads in order when the older read finishes first', async () => {
+      const { startUpload, finishRead, apply } = await setup()
+      const readA = await startUpload('a.txt')
+      const readB = await startUpload('b.txt')
+
+      finishRead(readA, 'data:text/plain;base64,YQ==')
+      finishRead(readB, 'data:text/plain;base64,Yg==')
+
+      expect(screen.getByRole('textbox', { name: 'source *' })).toHaveValue('data:text/plain;base64,Yg==')
+      await apply('data:text/plain;base64,Yg==')
+    })
+
+    it('should keep a manual path entered while an upload is still being read', async () => {
+      const { user, startUpload, finishRead, apply } = await setup()
+      const readA = await startUpload('a.txt')
+      const textbox = screen.getByRole('textbox', { name: 'source *' })
+      await user.clear(textbox)
+      await user.type(textbox, 'manual.txt')
+
+      finishRead(readA, 'data:text/plain;base64,YQ==')
+
+      expect(screen.getByRole('textbox', { name: 'source *' })).toHaveValue('manual.txt')
+      await apply('manual.txt')
+    })
+  })
+
   it('hides converter types with required parameters the form cannot configure', async () => {
     mockedConvertersApi.listConverterTypes.mockResolvedValue({
       items: [

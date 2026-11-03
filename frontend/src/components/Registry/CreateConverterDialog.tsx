@@ -288,6 +288,16 @@ export default function CreateConverterDialog({
   // The dialog instance is reused across openings, so a create response can
   // land after the opening that started it has gone.
   const openEpochRef = useRef(0)
+  // The latest input to touch each parameter owns it. A file read that finishes
+  // after a newer upload or a manual edit no longer owns the parameter and is dropped.
+  const inputSequenceRef = useRef(0)
+  const parameterOwnerRef = useRef<Record<string, number>>({})
+
+  const claimParameter = (parameterName: string): number => {
+    inputSequenceRef.current += 1
+    parameterOwnerRef.current[parameterName] = inputSequenceRef.current
+    return inputSequenceRef.current
+  }
 
   useEffect(() => {
     // Every change of `open` ends the opening before it, so a response from the
@@ -456,9 +466,11 @@ export default function CreateConverterDialog({
       if (openEpochRef.current !== epoch) return
       const file = input.files?.[0]
       if (!file) return
+      const owner = claimParameter(parameterName)
       const reader = new FileReader()
       reader.onload = () => {
         if (openEpochRef.current !== epoch) return
+        if (parameterOwnerRef.current[parameterName] !== owner) return
         setChangedParameters((current) => new Set([...current, parameterName]))
         setParameterValues((current) => ({
           ...current,
@@ -685,6 +697,7 @@ export default function CreateConverterDialog({
                             showRequiredError={showValidation && parameter.required}
                             testIdPrefix="structured"
                             onChange={(name, value) => {
+                              claimParameter(name)
                               setChangedParameters((current) => new Set([...current, name]))
                               setParameterValues((current) => ({ ...current, [name]: value }))
                             }}
@@ -700,6 +713,7 @@ export default function CreateConverterDialog({
                             && !formValueIsSet(parameterValues[parameter.name])
                           }
                           onChange={(value) => {
+                            claimParameter(parameter.name)
                             setChangedParameters((current) => new Set([...current, parameter.name]))
                             setParameterValues((current) => ({ ...current, [parameter.name]: value }))
                           }}
