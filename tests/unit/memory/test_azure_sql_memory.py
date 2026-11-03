@@ -595,6 +595,25 @@ def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: A
     assert not any("label_" in k for k in params)
 
 
+def test_get_conversation_stats_reattaches_utc_on_the_azure_parse(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The raw aggregate bypasses UTCDateTime, so a naive row still parses aware."""
+    session = MagicMock()
+    from datetime import datetime
+
+    naive = datetime(2026, 10, 30, 2, 40, 3)  # noqa: DTZ001  naive on purpose: this is the raw aggregate
+    session.execute.return_value.fetchall.return_value = [("conversation", 1, "hi", "text", naive)]
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        result = uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=["conversation"])
+
+    created_at = result["conversation"].created_at
+    assert created_at is not None
+    assert created_at.tzinfo is not None
+    assert created_at.utcoffset() == UTC.utcoffset(None)
+
+
 def test_get_conversation_stats_uses_one_latest_row_apply(
     uninitialized_memory_interface: AzureSQLMemory,
 ) -> None:
