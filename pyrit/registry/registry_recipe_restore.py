@@ -54,7 +54,6 @@ class RegistryRecipeRestorer:
     """
 
     _RESERVED_TECHNIQUE_NAMES: ClassVar[frozenset[str]] = frozenset({"all", "default", "types"})
-    _URL_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
     _KIND_BY_COMPONENT_TYPE: ClassVar[dict[ComponentType, RegistryRecipeKind]] = {
         ComponentType.TARGET: RegistryRecipeKind.TARGETS,
         ComponentType.CONVERTER: RegistryRecipeKind.CONVERTERS,
@@ -102,14 +101,12 @@ class RegistryRecipeRestorer:
             tuple[list[RecipeListing], list[RestoreFailure]]: The folders that were read, and one
                 failure per folder that wasn't.
         """
-        from azure.core.exceptions import AzureError
-
         listings: list[RecipeListing] = []
         failures: list[RestoreFailure] = []
         for kind, storage in self._storages.items():
             try:
                 listings.append(storage.list_recipes())
-            except (OSError, AzureError) as error:
+            except Exception as error:  # Any listing error, not only storage ones, must become a failure.
                 message = f"The saved {kind.value} couldn't be listed: {storage._describe_read_error(error)}"
                 failures.append(
                     RestoreFailure(kind=kind, reason=RestoreFailureReason.UNREADABLE_STORAGE, message=message)
@@ -505,35 +502,34 @@ class RegistryRecipeRestorer:
         """
         return kind.value.removesuffix("s")
 
-    @classmethod
-    def _safe_message(cls, error: Exception) -> str:
-        """
-        Describe an error for the failure report, removing credentials from any URL it mentions.
-
-        Constructor errors can quote a server setting, such as an endpoint with a SAS token. A URL
-        runs to the next whitespace, since quotes and other punctuation can appear inside one.
-
-        Returns:
-            str: The error's type and text, with every URL cut before its query or fragment and
-                without a user name or password; just the type if the text can't be read.
-        """
-        try:
-            text = cls._URL_PATTERN.sub(lambda match: cls._redact_url(match.group(0)), str(error))
-        except Exception:
-            text = ""
-        return f"{type(error).__name__}: {text}" if text else type(error).__name__
-
     @staticmethod
-    def _redact_url(url: str) -> str:
+    def _safe_message(error: Exception) -> str:
         """
-        Drop the user name, password, query, and fragment from a URL, without parsing it.
+        Describe an error for the failure report without any credential a URL in it may carry.
+
+        Constructor errors can quote a server setting, such as an endpoint with a SAS token. A word
+        with a ``:`` or ``//`` may hold a URL, so it's cut before any ``?`` or ``#``. If such a word
+        has an ``@`` (a user name or password), or a ``//`` URL can't be cut cleanly because it
+        contains a space, only the error's type is kept.
 
         Returns:
-            str: The scheme, host, and path, which can't carry a credential.
+            str: The error's type and its text with URLs cut, or just the type.
         """
-        scheme, _, rest = url.partition("://")
-        rest = re.split(r"[?#]", rest, maxsplit=1)[0]
-        return f"{scheme}://{rest.rpartition('@')[2]}"
+        name = type(error).__name__
+        try:
+            text = str(error)
+        except Exception:
+            return name
+        words = re.split(r"([ \t\n\r\f\v]+)", text)
+        may_be_url = [":" in word or "//" in word for word in words]
+        if any("@" in word for word, url in zip(words, may_be_url, strict=True) if url):
+            return name
+        cut = "".join(
+            re.split(r"[?#]", word, maxsplit=1)[0] if url else word for word, url in zip(words, may_be_url, strict=True)
+        )
+        if "//" in text and ("?" in cut or "#" in cut):
+            return name
+        return f"{name}: {cut}" if cut else name
 
 
 class _RecipeRejectedError(Exception):
