@@ -1,13 +1,14 @@
 import { useEffect } from 'react'
 
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { FluentProvider, Input, webLightTheme } from '@fluentui/react-components'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 
 import { attacksApi, convertersApi } from '@/services/api'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import HelpField from '@/components/HelpField'
 import type { AddMessageResponse, BackendMessage, ChatConverterSnapshot, ConversationDraftMessage, TargetInstance } from '@/types'
 import { toConversationDraft } from '@/utils/conversationDraft'
 
@@ -41,9 +42,11 @@ function setupEditor(
   target?: TargetInstance,
   newAttackDisabledReason?: string,
   initialConverters?: ChatConverterSnapshot,
+  contextualHelp = false,
   unsavedImport?: boolean,
 ) {
   const onSaved = jest.fn()
+  const onExit = jest.fn()
   function EditorHarness() {
     const controller = useConversationDraft()
     const { begin } = controller
@@ -54,9 +57,24 @@ function setupEditor(
         unsavedImport,
       })
     }, [begin])
-    return controller.draft && <ConversationEditor controller={controller}
-      initialConverters={initialConverters}
-      sameAttackDisabledReason={disabledReason} newAttackDisabledReason={newAttackDisabledReason} onSaved={onSaved} />
+    const leaveEditor = async (): Promise<boolean> => {
+      onExit()
+      if (controller.dirty) return controller.save('same_attack', onSaved)
+      controller.discard()
+      return true
+    }
+    return controller.draft && <>
+      {contextualHelp && <>
+        <div data-conversation-editor-controls>
+          <HelpField label="Objective target" help="The model or endpoint you are testing."><Input /></HelpField>
+        </div>
+        <p>Outside the editor</p>
+      </>}
+      <ConversationEditor controller={controller}
+        initialConverters={initialConverters}
+        onExit={contextualHelp ? leaveEditor : undefined}
+        sameAttackDisabledReason={disabledReason} newAttackDisabledReason={newAttackDisabledReason} onSaved={onSaved} />
+    </>
   }
   const router = createMemoryRouter([{
     path: '/',
@@ -69,7 +87,7 @@ function setupEditor(
       </UserPreferencesProvider>
     </FluentProvider>,
   )
-  return { onSaved, router, unmount }
+  return { onSaved, onExit, router, unmount }
 }
 
 describe('ConversationEditor', () => {
@@ -78,6 +96,63 @@ describe('ConversationEditor', () => {
     jest.mocked(attacksApi.saveConversation).mockImplementation(() => new Promise(() => {}))
     jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [] })
     jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [] })
+  })
+
+  it.each(['note', 'tooltip'] as const)('keeps a dirty editor open when reading and selecting contextual help in a %s', async (role: 'note' | 'tooltip') => {
+    const user = userEvent.setup()
+    const { onExit, onSaved } = setupEditor(undefined, undefined, undefined, undefined, undefined, true)
+    const prompt = within(screen.getByRole('region', { name: 'Message 1' })).getAllByPlaceholderText('Type prompt here')[0]
+    await user.clear(prompt)
+    await user.type(prompt, 'Unsaved changes')
+    if (role === 'note') {
+      await user.click(screen.getByRole('button', { name: /Objective target.*information/i }))
+    } else {
+      await user.hover(screen.getByText('Objective target'))
+    }
+    const help = await screen.findByRole(role)
+    expect(help).toHaveTextContent('The model or endpoint you are testing.')
+    expect(help).toHaveAttribute('data-conversation-editor-controls')
+    await user.click(help)
+    expect(onExit).not.toHaveBeenCalled()
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: help, offset: 0 },
+      { target: help, offset: 10 },
+      { keys: '[/MouseLeft]' },
+    ])
+    expect(window.getSelection()?.toString()).toBe('The model ')
+    expect(onExit).not.toHaveBeenCalled()
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(screen.getByTestId('conversation-editor')).toBeVisible()
+    expect(prompt).toHaveValue('Unsaved changes')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.click(screen.getByText('Outside the editor'))
+    expect(onExit).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].messages[0].pieces[0].original_value).toBe('Unsaved changes')
+  })
+
+  it('dismisses nested contextual help with Escape without saving or discarding a dirty editor', async () => {
+    const user = userEvent.setup()
+    const { onExit } = setupEditor(undefined, undefined, undefined, undefined, undefined, true)
+    const prompt = within(screen.getByRole('region', { name: 'Message 1' })).getAllByPlaceholderText('Type prompt here')[0]
+    await user.type(prompt, ' changed')
+    const information = screen.getByRole('button', { name: /Objective target.*information/i })
+    await user.click(information)
+    expect(await screen.findByRole('note')).toBeVisible()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('note')).not.toBeInTheDocument())
+    await waitFor(() => expect(information).toHaveFocus())
+    expect(onExit).not.toHaveBeenCalled()
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    expect(prompt).toHaveValue('First piece changed')
+    expect(screen.getByTestId('conversation-editor')).toBeVisible()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await user.click(screen.getByText('Objective target'))
+    expect(screen.getByRole('textbox', { name: 'Objective target' })).toHaveFocus()
+    expect(onExit).not.toHaveBeenCalled()
   })
 
   it.each([false, true])('cancels without a discard warning after unmatched conversions (empty: %s)', async (empty: boolean) => {
@@ -359,12 +434,15 @@ describe('ConversationEditor', () => {
     expect(screen.queryByText('Next page')).not.toBeInTheDocument()
   })
 
-  it('uploads a file as a separate ordered piece without persisting its object URL', async () => {
+  it.each(['picker', 'drop'])('should add a file from %s as an ordered piece without persisting its object URL', async (inputMethod: string) => {
     const user = userEvent.setup()
     setupEditor()
     const first = screen.getByRole('region', { name: 'Message 1' })
     const file = new File(['file bytes'], 'sample.txt', { type: 'text/plain' })
-    await user.upload(within(first).getAllByTestId('file-input')[0], file)
+    if (inputMethod === 'picker') await user.upload(within(first).getAllByTestId('file-input')[0], file)
+    else fireEvent.drop(within(first).getAllByTestId('prompt-editor')[0], {
+      dataTransfer: { types: ['Files'], files: [file] },
+    })
     expect(within(first).getAllByText(/sample\.txt/)).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Save conversation' }))
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))

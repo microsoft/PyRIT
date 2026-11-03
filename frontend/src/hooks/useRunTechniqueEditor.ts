@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { TechniqueConfiguration, TechniqueEditResponse } from '@/types'
+import type { TechniqueConfiguration, TechniqueEditResponse, TechniqueOverride } from '@/types'
 
 interface TechniqueResource {
   key: string
@@ -14,20 +14,21 @@ interface TechniqueResource {
 }
 
 /** One form-local edit. Neither loading nor applying settings changes the registry. */
-export function useRunTechniqueEditor(source: string | undefined, generation: string | null, ready: boolean) {
-  const key = JSON.stringify([source, generation])
+export function useRunTechniqueEditor(source: string | undefined, generation: string | null, ready: boolean, initialOverride?: TechniqueOverride) {
+  const key = JSON.stringify([source, generation, initialOverride])
   const [resource, setResource] = useState<TechniqueResource | null>(null)
   const [retry, setRetry] = useState(0)
   useEffect(() => {
     if (!source || !ready) return
     let ignore = false
-    void techniquesApi.getConfiguration(source).then((configuration) => {
-      if (!ignore) setResource({ key, original: configuration })
+    void techniquesApi.getConfiguration(source).then(async (configuration: TechniqueConfiguration) => {
+      const applied = initialOverride ? await techniquesApi.validateEdit(initialOverride) : undefined
+      if (!ignore) setResource({ key, original: configuration, applied })
     }).catch((error: unknown) => {
       if (!ignore) setResource({ key, error: toApiError(error).detail })
     })
     return () => { ignore = true }
-  }, [source, generation, key, ready, retry])
+  }, [source, generation, key, ready, retry, initialOverride])
 
   const current = ready && resource?.key === key ? resource : null
   const applied = current?.applied

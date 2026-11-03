@@ -120,6 +120,9 @@ export interface ChatDraftContent {
   text: string
   attachments: MessageAttachment[]
   systemPrompt?: string
+  objective?: string
+  temperature?: string
+  chatScorer?: RegisteredComponentReference | null
   target?: TargetReference | null
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
@@ -166,7 +169,10 @@ export interface ChatDraftHandoffContextValue {
   preservedDraft: ChatDraftContextState | null
   pendingImport: PendingImportPayload | null
   activeSequence: number
-  preserveDraft: (state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>) => void
+  preserveDraft: (
+    state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>,
+    expectedSequence?: number,
+  ) => void
   clearPreservedDraft: (expectedSequence?: number) => void
   /** Pass the sequence captured before preparing an import to reject stale async results. */
   stagePendingImport: (
@@ -357,7 +363,9 @@ export interface TargetPreferences {
 export type OperationSelection = { readonly id: string } | { readonly name: string }
 
 export interface UserPreferences {
-  readonly targets: TargetPreferences
+  readonly targets: Pick<TargetPreferences, 'adversarial'>
+  readonly lastUsedTargets?: TargetPreferences
+  readonly lastUsedChatScorer?: RegisteredComponentReference | null
   readonly hiddenTargetRegistryNames: string[]
   readonly labels: Record<string, string | null>
   /** Omitted to use the server default; null when the user cleared the selection. */
@@ -365,6 +373,7 @@ export interface UserPreferences {
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
   readonly chatScorer?: RegisteredComponentReference | null
+  readonly sidebarExpanded?: boolean
 }
 
 export interface RegisteredComponentReference {
@@ -570,6 +579,7 @@ export interface TechniqueInstance {
   tags: string[]
   uses_adversarial: boolean
   uses_default_adversarial_target: boolean
+  identifier: ComponentIdentifier
   /** Supplied factory creation inputs, with live component credentials omitted. */
   creation_statement: string
 }
@@ -1094,6 +1104,25 @@ export interface BackendScore {
   timestamp: string
 }
 
+export interface ApplyChatScorerRequest {
+  conversation_id: string
+  response_id: string
+  scorer: RegisteredComponentReference
+  objective: string
+}
+
+export interface ApplyChatScorerResponse {
+  conversation_id: string
+  score: BackendScore
+  reused: boolean
+}
+
+/** Result of the latest Apply scorer request, shown in the scorer pane. */
+export interface ApplyScorerStatus {
+  intent: 'info' | 'error'
+  message: string
+}
+
 export type PromptResponseError = 'blocked' | 'none' | 'processing' | 'empty' | 'unknown'
 
 export interface ComponentIdentifier {
@@ -1158,7 +1187,11 @@ export interface TargetResponseStatus {
 }
 
 export interface ConversationMessagesResponse {
+  automated_score?: BackendScore | null
   scoring_failure?: ScoringFailure | null
+  /** Outcome for the latest response; a human score overrides the attack. */
+  outcome?: AttackOutcome | null
+  latest_response_id?: string | null
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null
@@ -1237,6 +1270,7 @@ export interface MultiSendOptions {
 export interface MessageSendConversation {
   conversation_id: string
   request_turn_number: number | null
+  target_invoked?: boolean
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
@@ -1249,6 +1283,11 @@ export interface MessageSendStatus extends MessageSendConversation {
   attack_result_id: string
   count?: number
   conversations?: MessageSendConversation[]
+}
+
+export interface MessageSendObservation {
+  readProgress: (refresh?: boolean) => Promise<MessageSendStatus>
+  readAttack: (refresh?: boolean) => Promise<AttackSummary>
 }
 
 export interface AttackListResponse {
@@ -1498,6 +1537,7 @@ export interface ScenarioTechniqueSummary {
   name: string
   description: string | null
   tags: string[]
+  identifier?: ComponentIdentifier | null
 }
 
 export interface ListRegisteredScenariosResponse {
@@ -1964,6 +2004,10 @@ export interface ScenarioProgressHeader {
   scenario_name: string
   scenario_registry_name?: string | null
   scenario_version: number
+  description?: string | null
+  operation_id?: string | null
+  operation_name?: string | null
+  scenario_identity?: ScenarioComponentIdentity | null
   status: ScenarioRunState
   created_at: string
   started_at?: string | null
@@ -2038,6 +2082,8 @@ export interface ScenarioProgressResult {
   error_type?: string | null
   error_message?: string | null
   score?: ScenarioProgressScore | null
+  seed_identifiers?: ScenarioComponentIdentity[]
+  related_conversation_ids?: string[]
 }
 
 export interface ScenarioRunPlanSeedGroup {
@@ -2053,31 +2099,6 @@ export interface ScenarioRunPlanSeedPrompt {
   role?: string | null
   sequence: number
   parameters: string[]
-}
-
-export interface PairedOutcomeStatistics {
-  baseline_group_id: string
-  attack_group_id: string
-  planned_pairs: number
-  decided_pairs: number
-  excluded_pairs: number
-  failure_to_success: number
-  success_to_failure: number
-  failure_to_failure: number
-  success_to_success: number
-  baseline_success_rate: number | null
-  attack_success_rate: number | null
-  paired_difference: number | null
-  missing_baseline: number
-  missing_attack: number
-  missing_both: number
-  baseline_errors: number
-  attack_errors: number
-  baseline_undetermined: number
-  attack_undetermined: number
-  unmatched_baseline_seeds: number
-  unmatched_attack_seeds: number
-  unattributed_attempts: number
 }
 
 export interface ScenarioRunPlanAtomicGroup {
@@ -2099,13 +2120,27 @@ export interface ScenarioRunPlan {
   seed_groups: ScenarioRunPlanSeedGroup[]
 }
 
+export interface ScenarioProducerCategoryCounts {
+  attempts: number
+  errors: number
+  retries: number
+}
+
+export interface ScenarioProducerCounts {
+  target_facing: ScenarioProducerCategoryCounts
+  orchestration: ScenarioProducerCategoryCounts
+  unknown: ScenarioProducerCategoryCounts
+}
+
 export interface ScenarioProgressCounts {
+  outcomes?: OutcomeStatistics | null
   completed: number
   planned: number | null
   succeeded: number
   success_percentage: number | null
   errors: number
   retries: number
+  producer_counts?: ScenarioProducerCounts | null
 }
 
 export interface ScenarioTechniqueProgress extends ScenarioProgressCounts {
@@ -2137,6 +2172,106 @@ export interface ScenarioAtomicGroupProgress extends ScenarioProgressCounts {
   technique_details?: ScenarioAttackTechniqueDetails | null
 }
 
+/** What a saved attack result represents; not proof that the objective target was called. */
+export type AttackResultRole = 'target_facing' | 'orchestration' | 'unknown'
+
+export interface ScenarioOrchestrationParentSummary {
+  attack_result_id: string
+  result_role: AttackResultRole
+  outcome: AttackOutcome
+  outcome_reason?: string | null
+  attempt_index?: number | null
+  execution_time_ms: number
+  executed_turns: number
+  completion_policy?: string | null
+  child_attack_result_ids: string[]
+  child_references_truncated: boolean
+  error_type?: string | null
+  error_message?: string | null
+  timestamp: string
+  total_retries: number
+  retries: RetryEvent[]
+  retries_truncated: boolean
+}
+
+export interface ScenarioHierarchyNode {
+  attack_result_id: string
+  conversation_id: string
+  parent_attack_result_id?: string | null
+  /** Absolute position under the immediate parent. */
+  child_index?: number | null
+  result_role: AttackResultRole
+  attempt_index?: number | null
+  atomic_attack_name: string
+  atomic_group_id: string
+  seed_group_id: string
+  objective: string
+  outcome: AttackOutcome
+  outcome_reason?: string | null
+  execution_time_ms: number
+  executed_turns: number
+  timestamp: string
+  score?: ScenarioProgressScore | null
+  error_type?: string | null
+  error_message?: string | null
+  total_retries: number
+  retries: RetryEvent[]
+  retries_truncated: boolean
+  child_attack_result_ids: string[]
+  child_references_truncated: boolean
+  children: ScenarioHierarchyNode[]
+  children_truncated: boolean
+  /** Full saved child-reference count; null when not known. */
+  children_count?: number | null
+  /** Position of the first child-reference on this page. */
+  child_offset: number
+  /** Continuation for this node's children only; never for roots. */
+  next_children_cursor?: string | null
+  unresolved_child_attack_result_ids: string[]
+  unresolved_child_references_truncated: boolean
+  conversations: ConversationSummary[]
+  conversations_count?: number | null
+  conversations_truncated: boolean
+  orchestration?: ScenarioOrchestrationParentSummary | null
+}
+
+export interface ScenarioHierarchyGroup {
+  atomic_group_id: string
+  atomic_attack_name: string
+  display_group: string
+  technique?: ScenarioAttackTechniqueDetails | null
+  roots: ScenarioHierarchyNode[]
+  counts: ScenarioProgressCounts
+}
+
+export interface ScenarioHierarchyDiagnostics {
+  failed_attacks: AttackErrorSummary[]
+  failed_attacks_count: number
+  failed_attacks_truncated: boolean
+  attack_retries: AttackRetrySummary[]
+  attack_retries_count: number
+  attack_retries_truncated: boolean
+  total_retries: number
+  rootless_result_ids: string[]
+  rootless_results_count: number
+  rootless_results_truncated: boolean
+}
+
+export interface ScenarioHierarchyProjection {
+  scenario_result_id: string
+  scenario_name: string
+  scenario_version: number
+  status: ScenarioRunState
+  groups: ScenarioHierarchyGroup[]
+  /** Exact run totals; independent of which roots or children are loaded. */
+  overall_counts: ScenarioProgressCounts
+  diagnostics: ScenarioHierarchyDiagnostics
+  /** Root continuation only. */
+  has_more: boolean
+  next_cursor?: string | null
+  truncated: boolean
+}
+
 export interface ScenarioObjectiveScorerMetrics {
   accuracy: number
   accuracy_standard_error?: number | null
@@ -2162,6 +2297,17 @@ export interface ScenarioProgressSummary {
   unattributed_attempts?: number
 }
 
+export interface ScenarioActiveConversation {
+  attack_result_id: string
+  conversation_id: string
+  atomic_attack_name: string
+  seed_group_id?: string | null
+  objective: string
+  started_at: string
+  technique_details?: ScenarioAttackTechniqueDetails | null
+  seed_identifiers: ScenarioComponentIdentity[]
+}
+
 export interface ScenarioRunProgress {
   run: ScenarioProgressHeader
   plan: ScenarioRunPlan | null
@@ -2170,6 +2316,8 @@ export interface ScenarioRunProgress {
   next_cursor?: string | null
   has_more: boolean
   plan_complete: boolean
+  active_conversations?: ScenarioActiveConversation[]
+  recorded_conversations?: ScenarioActiveConversation[]
 }
 export interface RuntimeReadiness {
   ready: boolean

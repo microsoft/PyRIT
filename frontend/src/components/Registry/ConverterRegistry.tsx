@@ -10,6 +10,11 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Field,
+  Input,
+  MessageBar,
+  MessageBarBody,
+  Select,
   Spinner,
   Table,
   TableBody,
@@ -18,36 +23,22 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
+  mergeClasses,
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
-import { AddRegular, ArrowSyncRegular, DeleteRegular } from '@fluentui/react-icons'
+import { AddRegular, DismissRegular, SearchRegular } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ConverterIdentifier, ConverterInstance } from '@/types'
+import type { ConverterInstance } from '@/types'
 
 import CreateConverterDialog from './CreateConverterDialog'
+import { useConverterRegistryPageStyles } from './ConverterRegistry.styles'
+import RegistryIdentityRow from './RegistryIdentityRow'
 import { useConverterRegistryStyles } from './Registry.styles'
-
-const IDENTIFIER_FIELDS = new Set([
-  'class_name',
-  'class_module',
-  'hash',
-  'pyrit_version',
-  'eval_hash',
-  'children',
-  'attributes',
-  'supported_input_types',
-  'supported_output_types',
-])
-
-function formatParameters(identifier: ConverterIdentifier): string {
-  const parameters = Object.entries(identifier)
-    .filter(([key, value]) => !IDENTIFIER_FIELDS.has(key) && value != null)
-    .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : String(value)}`)
-  return parameters.join('\n') || '—'
-}
 
 // One token per dialog opening. A create response can land after the dialog it
 // was submitted from is gone, and by then another dialog may be open, so the
@@ -84,9 +75,23 @@ function DataTypeBadges({ dataTypes }: DataTypeBadgesProps) {
 export default function ConverterRegistry() {
   const { generation } = useRuntime()
   const styles = useConverterRegistryStyles()
+  const pageStyles = useConverterRegistryPageStyles()
   const [converters, setConverters] = useState<ConverterInstance[]>([])
+  const [hasShownConverters, setHasShownConverters] = useState(false)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
+  const [outputFilter, setOutputFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activeGeneration, setActiveGeneration] = useState(generation)
+  if (activeGeneration !== generation) {
+    setActiveGeneration(generation)
+    setConverters([])
+    setHasShownConverters(false)
+    setLoading(true)
+    setError(null)
+  }
   const [createToken, setCreateToken] = useState<DialogToken | null>(null)
   const [converterToRemove, setConverterToRemove] = useState<ConverterInstance | null>(null)
   const [removing, setRemoving] = useState(false)
@@ -105,6 +110,8 @@ export default function ConverterRegistry() {
   // and because the restore below has to read it as of the commit it runs in
   // rather than as of the render that requested it.
   const openDialogRef = useRef<DialogToken | null>(null)
+  const listEpoch = useRef({})
+  const mounted = useRef(false)
 
   const openDialog = (dialog: DialogToken['dialog']): DialogToken => {
     const token: DialogToken = { dialog }
@@ -140,24 +147,45 @@ export default function ConverterRegistry() {
     target?.focus()
   }, [focusRestore])
 
-  const loadConverters = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const loadConverters = useCallback(async (pruneRemovedFilters: boolean = false) => {
+    if (!mounted.current) return
+    const epoch = {}
+    listEpoch.current = epoch
     try {
       const response = await convertersApi.listConverters()
+      if (epoch !== listEpoch.current) return
       setConverters(response.items)
+      if (response.items.length > 0) setHasShownConverters(true)
+      setError(null)
+      // Explicit removal clears obsolete facets; background snapshots preserve the user's view.
+      if (pruneRemovedFilters) {
+        setTypeFilter((current) => (
+          current && response.items.some((converter) => converter.identifier.class_name === current)
+            ? current
+            : ''
+        ))
+        setOutputFilter((current) => (
+          current && response.items.some((converter) => converter.identifier.supported_output_types?.includes(current))
+            ? current
+            : ''
+        ))
+      }
     } catch (err) {
-      setError(toApiError(err).detail)
+      if (epoch === listEpoch.current) setError(toApiError(err).detail)
     } finally {
-      setLoading(false)
+      if (epoch === listEpoch.current) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    mounted.current = true
+    let active = true
     Promise.resolve().then(() => {
-      void loadConverters()
+      if (active) void loadConverters()
     })
+    return () => { active = false; mounted.current = false; listEpoch.current = {} }
   }, [loadConverters, generation])
+  useAutoRefresh(loadConverters, !loading && !removing)
 
   const openCreateDialog = (event: MouseEvent<HTMLButtonElement>) => {
     createTriggerRef.current = event.currentTarget
@@ -188,13 +216,15 @@ export default function ConverterRegistry() {
     setError(null)
     try {
       await convertersApi.deleteConverter(converterToRemove.converter_id)
+      setConverters((current) => current.filter((item) => item.converter_id !== converterToRemove.converter_id))
       // The row that opened the dialog is about to unmount, so this restores to
       // New Converter. Doing it before the refresh keeps focus off <body> while
       // the list reloads. No token check is needed: Cancel is disabled and the
       // Escape handler is ignored while `removing`, so this dialog is still the
       // one on screen.
       dismissRemoveDialog()
-      await loadConverters()
+      restoreFocus(newConverterRef.current)
+      await loadConverters(true)
     } catch (err) {
       setError(toApiError(err).detail)
     } finally {
@@ -202,23 +232,40 @@ export default function ConverterRegistry() {
     }
   }
 
+  const toggleDetails = (name: string): void => {
+    setExpanded((current: Set<string>) => {
+      const next = new Set(current)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const visible = converters.filter((converter: ConverterInstance) => (
+    `${converter.converter_id} ${converter.identifier.class_name} ${converter.description ?? ''}`.toLowerCase().includes(search.toLowerCase())
+    && (!typeFilter || converter.identifier.class_name === typeFilter)
+    && (!outputFilter || converter.identifier.supported_output_types?.includes(outputFilter))
+  ))
+  const types = [...new Set([
+    ...converters.map((converter: ConverterInstance) => converter.identifier.class_name), ...(typeFilter ? [typeFilter] : []),
+  ])].sort()
+  const outputs = [...new Set([
+    ...converters.flatMap((converter: ConverterInstance) => converter.identifier.supported_output_types ?? []),
+    ...(outputFilter ? [outputFilter] : []),
+  ])].sort()
+
   return (
     <div className={styles.root} data-testid="converter-registry">
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" size={600} weight="semibold">Converter Registry</Text>
-          <Text>Manage configured converter instances.</Text>
+          <Text as="h1" aria-label="Converter Registry" size={600} weight="semibold">
+            <ContextualHelpLabel term="Converter Registry" labelProps={{ weight: 'semibold' }}>
+              Reusable prompt or response transformations, such as text encoding or translation. Converters do not decide the next attack step.
+            </ContextualHelpLabel>
+          </Text>
+          <Text className={pageStyles.subtitle}>Browse configured converters and inspect their identity.</Text>
         </div>
         <div className={styles.actions}>
-          <Button
-            className={styles.action}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            disabled={loading}
-            onClick={() => void loadConverters()}
-          >
-            Refresh
-          </Button>
           <Button
             {...restoreFocusTarget}
             ref={newConverterRef}
@@ -238,9 +285,7 @@ export default function ConverterRegistry() {
         </div>
       )}
       {!loading && error && (
-        <div className={`${styles.state} ${styles.error}`}>
-          <Text>Error: {error}</Text>
-        </div>
+        <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>
       )}
       {!loading && !error && converters.length === 0 && (
         <div className={styles.state}>
@@ -256,26 +301,56 @@ export default function ConverterRegistry() {
           </Button>
         </div>
       )}
-      {!loading && !error && converters.length > 0 && (
-        <div className={styles.tableContainer}>
-          <Table className={styles.table} aria-label="Converter instances">
+      {!loading && (hasShownConverters || converters.length > 0) && (
+        <>
+        <div className={pageStyles.filters}>
+          <Field label="Search converters" className={pageStyles.search}>
+            <Input contentBefore={<SearchRegular />} placeholder="Name, type, or description"
+              value={search} onChange={(_, data) => setSearch(data.value)} />
+          </Field>
+          <Field label="Filter by type">
+            <Select value={typeFilter} onChange={(_, data) => setTypeFilter(data.value)}>
+              <option value="">All types</option>
+              {types.map((type: string) => <option key={type} value={type}>{type}</option>)}
+            </Select>
+          </Field>
+          <Field label="Filter by output">
+            <Select value={outputFilter} onChange={(_, data) => setOutputFilter(data.value)}>
+              <option value="">All outputs</option>
+              {outputs.map((output: string) => <option key={output} value={output}>{output.replace('_path', '')}</option>)}
+            </Select>
+          </Field>
+          {(search || typeFilter || outputFilter) && <Button appearance="subtle" onClick={() => {
+            setSearch('')
+            setTypeFilter('')
+            setOutputFilter('')
+          }}>Clear filters</Button>}
+        </div>
+        <div className={pageStyles.summary}>
+          <Text size={200} className={pageStyles.subtitle}>{visible.length} of {converters.length} converters</Text>
+          <Text size={200} className={pageStyles.subtitle}>Expand a name to view its identity</Text>
+        </div>
+        <div className={mergeClasses(styles.tableContainer, pageStyles.tableContainer)}>
+          <Table className={mergeClasses(styles.table, pageStyles.table)} aria-label="Converter instances">
             <TableHeader>
               <TableRow>
-                <TableHeaderCell>Registry Name</TableHeaderCell>
-                <TableHeaderCell>Type</TableHeaderCell>
-                <TableHeaderCell>Inputs</TableHeaderCell>
-                <TableHeaderCell>Outputs</TableHeaderCell>
-                <TableHeaderCell>Parameters</TableHeaderCell>
-                <TableHeaderCell>Actions</TableHeaderCell>
+                <TableHeaderCell aria-label="Name" className={pageStyles.nameColumn}><ContextualHelpLabel term="Name">The registry name used to select this configured converter.</ContextualHelpLabel></TableHeaderCell>
+                <TableHeaderCell aria-label="Type"><ContextualHelpLabel term="Type">The converter class that performs the transformation.</ContextualHelpLabel></TableHeaderCell>
+                <TableHeaderCell aria-label="Inputs" className={pageStyles.modalityColumn}><ContextualHelpLabel term="Inputs">Content types this converter accepts.</ContextualHelpLabel></TableHeaderCell>
+                <TableHeaderCell aria-label="Outputs" className={pageStyles.modalityColumn}><ContextualHelpLabel term="Outputs">Content types this converter can produce.</ContextualHelpLabel></TableHeaderCell>
+                <TableHeaderCell className={pageStyles.actionColumn} aria-label="Actions" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {converters.map((converter) => (
-                <TableRow key={converter.converter_id}>
-                  <TableCell className={styles.nameCell}>{converter.converter_id}</TableCell>
+              {visible.map((converter: ConverterInstance) => (
+                <RegistryIdentityRow key={converter.converter_id} name={converter.converter_id}
+                  identity={converter.identifier} columns={5} expanded={expanded.has(converter.converter_id)}
+                  onToggle={() => toggleDetails(converter.converter_id)}>
                   <TableCell>
+                    <div className={pageStyles.type}>
                     <Text>{converter.identifier.class_name}</Text>
                     {converter.is_llm_based && <Badge appearance="tint">LLM</Badge>}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <DataTypeBadges dataTypes={converter.identifier.supported_input_types} />
@@ -283,26 +358,26 @@ export default function ConverterRegistry() {
                   <TableCell>
                     <DataTypeBadges dataTypes={converter.identifier.supported_output_types} />
                   </TableCell>
-                  <TableCell className={styles.parameters}>
-                    {formatParameters(converter.identifier)}
-                  </TableCell>
-                  <TableCell>
+                  <TableCell className={pageStyles.actionCell}>
                     <Button
                       {...restoreFocusTarget}
-                      className={styles.deleteButton}
+                      className={pageStyles.removeButton}
                       appearance="subtle"
-                      icon={<DeleteRegular />}
+                      size="small"
+                      icon={<DismissRegular className={pageStyles.dismissIcon} />}
                       aria-label={`Remove ${converter.converter_id}`}
                       onClick={(event) => openRemoveDialog(event, converter)}
-                    >
-                      Remove
-                    </Button>
+                    />
                   </TableCell>
-                </TableRow>
+                </RegistryIdentityRow>
               ))}
             </TableBody>
           </Table>
         </div>
+        {visible.length === 0 && <div className={styles.state}>
+          <Text>No converters match these filters.</Text>
+        </div>}
+        </>
       )}
 
       <CreateConverterDialog
@@ -314,7 +389,10 @@ export default function ConverterRegistry() {
           // list, but only the opening it belongs to may clear the dialog state
           // and move focus, so it cannot pull focus out of a dialog the user
           // opened in the meantime or close one they reopened.
-          if (createToken && openDialogRef.current === createToken) closeCreateDialog()
+          if (createToken && openDialogRef.current === createToken) {
+            closeCreateDialog()
+            restoreFocus(newConverterRef.current)
+          }
           void loadConverters()
         }}
       />
