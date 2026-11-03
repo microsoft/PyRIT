@@ -21,6 +21,7 @@ from pyrit.models.catalog.registry_recipe import (
     SavedEntryRef,
     TechniqueRecipe,
 )
+from pyrit.registry.file_document_storage import _read_regular_file
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
 _TARGET = {
@@ -197,14 +198,13 @@ class TestRegistryRecipeStorageListing:
         folder = tmp_path / "scorers"
         _write(folder, "locked", json.dumps(_TARGET))
         _write(folder, "Bad-Name", "{}")
-        original_read_bytes = Path.read_bytes
 
-        def read_bytes(path: Path) -> bytes:
-            if path.name == "locked.json":
-                raise PermissionError(13, "Permission denied", str(path))
-            return original_read_bytes(path)
+        def read(path: str) -> bytes | None:
+            if Path(path).name == "locked.json":
+                raise PermissionError(13, "Permission denied", path)
+            return _read_regular_file(path)
 
-        with patch.object(Path, "read_bytes", autospec=True, side_effect=read_bytes):
+        with patch("pyrit.registry.file_document_storage._read_regular_file", side_effect=read):
             listing = RegistryRecipeStorage(kind=RegistryRecipeKind.SCORERS, source=str(tmp_path)).list_recipes()
 
         (failure,) = listing.failures
