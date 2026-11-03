@@ -154,3 +154,53 @@ def test_paired_outcomes_rejects_legacy_plan(client: TestClient) -> None:
         )
     assert response.status_code == 400
     assert "saved scenario run plan" in response.json()["detail"]
+
+
+def test_paired_detail_endpoint_returns_selected_seed_and_conversation_ids(client: TestClient) -> None:
+    saved = _saved_result()
+    params = {"baseline_group_id": "baseline", "attack_group_id": "attack", "transition": "failure_to_success"}
+    with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as service:
+        service.return_value.get_run_results_async = AsyncMock(return_value=saved)
+        response = client.get("/api/scenarios/runs/saved/paired-outcomes/details", params=params)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_pairs"] == 1
+    assert body["next_cursor"] is None
+    assert body["pairs"][0]["seed_group_id"] == "a"
+    assert body["pairs"][0]["objective"] == "a"
+    assert body["pairs"][0]["baseline"]["conversation_id"] == saved.attack_results["baseline"][0].conversation_id
+    assert body["pairs"][0]["attack"]["conversation_id"] == saved.attack_results["attack"][0].conversation_id
+
+
+@pytest.mark.parametrize(
+    ("params", "status_code"),
+    [
+        ({"baseline_group_id": "baseline", "attack_group_id": "attack", "transition": "bad"}, 422),
+        (
+            {
+                "baseline_group_id": "baseline",
+                "attack_group_id": "attack",
+                "transition": "failure_to_success",
+                "limit": 101,
+            },
+            422,
+        ),
+        (
+            {
+                "baseline_group_id": "baseline",
+                "attack_group_id": "attack",
+                "transition": "failure_to_success",
+                "cursor": "invalid!",
+            },
+            400,
+        ),
+        ({"baseline_group_id": "attack", "attack_group_id": "baseline", "transition": "failure_to_success"}, 400),
+    ],
+)
+def test_paired_detail_endpoint_validates_filters_and_cursors(
+    client: TestClient, params: dict[str, str | int], status_code: int
+) -> None:
+    with patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as service:
+        service.return_value.get_run_results_async = AsyncMock(return_value=_saved_result())
+        response = client.get("/api/scenarios/runs/saved/paired-outcomes/details", params=params)
+    assert response.status_code == status_code

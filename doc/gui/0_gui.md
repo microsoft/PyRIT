@@ -79,6 +79,26 @@ page; it does not start the scan.
 
 ![technique.execute objective and per-run technique settings](images/technique_execute_objective.png)
 
+### Paired outcomes
+
+When a scan includes a baseline comparison, its run page shows paired outcomes:
+how often the baseline and attack succeeded on the same objective, and how many
+pairs changed from failure to success or from success to failure. Only pairs
+with a success or failure on both sides are counted, using the most recent
+top-level attempt, so retries and child attempts never add pairs.
+
+Expand a transition row to see the objectives behind its count. Each pair shows
+the baseline and attack outcomes side by side, with links to both saved
+conversations. When a compound result has no conversation of its own, the link
+opens one of its child conversations and labels that child's outcome
+separately. Pairs load in pages: use **Load more** for additional pairs, and
+retry from the row if a request fails. Selecting a different group clears the
+expanded details.
+
+![Paired outcomes with an expanded transition, objective, and baseline and attack conversation links](images/paired-outcomes-desktop.png)
+
+![Expanded paired outcomes at a mobile viewport width](images/paired-outcomes-mobile.png)
+
 ## Registry
 
 Registry prepares reusable components; it does not execute attacks. Create
