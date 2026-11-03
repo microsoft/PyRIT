@@ -15,6 +15,7 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.backend.models.techniques import CreateTechniqueRequest
+from pyrit.converter import Base64Converter
 from pyrit.models.catalog.registry_recipe import (
     RegistryRecipeKind,
     RestoreFailure,
@@ -209,6 +210,27 @@ class TestRestoreFailures:
         failure = _failures_by_name(report.failures)["formal_red_team"]
         assert failure.reason is RestoreFailureReason.FAILED_DEPENDENCY
         assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="contoso_gpt4o")
+
+    @pytest.mark.parametrize("field", ["request_converters", "response_converters"])
+    def test_a_technique_waits_for_a_saved_converter_in_either_list(self, tmp_path: Path, field: str) -> None:
+        ConverterRegistry.get_registry_singleton().instances.register(Base64Converter(), name="shared_name")
+        _save_text(tmp_path, RegistryRecipeKind.CONVERTERS, "shared_name", "{not json")
+        _save(
+            tmp_path, RegistryRecipeKind.TECHNIQUES, "uses_shared", {"type": "RedTeamingAttack", field: ["shared_name"]}
+        )
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        failure = _failures_by_name(report.failures)["uses_shared"]
+        assert failure.reason is RestoreFailureReason.FAILED_DEPENDENCY
+        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.CONVERTERS, name="shared_name")
+
+    def test_reports_an_unknown_attack_type(self, tmp_path: Path) -> None:
+        _save(tmp_path, RegistryRecipeKind.TECHNIQUES, "unknown_attack", {"type": "NoSuchAttack"})
+
+        (failure,) = RegistryRecipeRestorer(source=str(tmp_path)).restore().failures
+
+        assert (failure.name, failure.reason) == ("unknown_attack", RestoreFailureReason.UNKNOWN_CLASS)
 
     def test_technique_parameters_are_checked_as_strict_json(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
