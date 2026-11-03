@@ -5000,6 +5000,7 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByText(/The target could not process this message\./)).toBeInTheDocument();
     expect(input).toHaveValue("keep this draft");
     expect(input).toBeDisabled();
+    expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(3);
   });
 
   it("should ignore an older same-conversation load failure after a processing failure", async () => {
@@ -5075,6 +5076,7 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByText(/The target could not process this message\./)).toBeInTheDocument();
     expect(input).toHaveValue("keep failed draft");
     expect(input).toBeDisabled();
+    expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(3);
   });
 
   it("should let the latest same-conversation load control the transcript and loading state", async () => {

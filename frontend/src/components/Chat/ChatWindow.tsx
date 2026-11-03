@@ -3,6 +3,9 @@ import type { ChangeEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Button,
+  Breadcrumb,
+  BreadcrumbDivider,
+  BreadcrumbItem,
   Field,
   Input,
   Drawer,
@@ -921,7 +924,7 @@ export default function ChatWindow({
     const previousId = getViewedConversationId()
     if (editing && !await editing.finishEditing()) return
     if (editing && convId === previousId) return
-    requestForcedLoad()
+    if (convId !== activeConversationId) requestForcedLoad()
     onSelectConversation(convId)
     if (isNarrowScreen) {
       setIsPanelOpen(false)
@@ -2453,6 +2456,26 @@ export default function ChatWindow({
         />
       )}
       <div className={styles.chatArea} data-testid="chat-area">
+        {scenarioResultId && (
+          <div className={styles.breadcrumbBar}>
+            <Breadcrumb aria-label="Attack provenance" size="small">
+              <BreadcrumbItem>
+                <Text size={200}>Scanner History</Text>
+              </BreadcrumbItem>
+              <BreadcrumbDivider />
+              <BreadcrumbItem>
+                <Link
+                  className={styles.breadcrumbLink}
+                  to={scenarioRunRoutePath(scenarioResultId)}
+                  state={location.state}
+                  aria-label={`Return to scenario run ${scenarioResultId}`}
+                >
+                  Scenario run {scenarioResultId.slice(0, 8)}
+                </Link>
+              </BreadcrumbItem>
+            </Breadcrumb>
+          </div>
+        )}
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         {executionReadOnly && <MessageBar intent="info">
           <MessageBarBody>

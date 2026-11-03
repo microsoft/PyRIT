@@ -1506,6 +1506,7 @@ export interface ScenarioTechniqueSummary {
   name: string
   description: string | null
   tags: string[]
+  identifier?: ComponentIdentifier | null
 }
 
 export interface ListRegisteredScenariosResponse {
@@ -1972,6 +1973,10 @@ export interface ScenarioProgressHeader {
   scenario_name: string
   scenario_registry_name?: string | null
   scenario_version: number
+  description?: string | null
+  operation_id?: string | null
+  operation_name?: string | null
+  scenario_identity?: ScenarioComponentIdentity | null
   status: ScenarioRunState
   created_at: string
   started_at?: string | null
@@ -2046,6 +2051,8 @@ export interface ScenarioProgressResult {
   error_type?: string | null
   error_message?: string | null
   score?: ScenarioProgressScore | null
+  seed_identifiers?: ScenarioComponentIdentity[]
+  related_conversation_ids?: string[]
 }
 
 export interface ScenarioRunPlanSeedGroup {
@@ -2061,31 +2068,6 @@ export interface ScenarioRunPlanSeedPrompt {
   role?: string | null
   sequence: number
   parameters: string[]
-}
-
-export interface PairedOutcomeStatistics {
-  baseline_group_id: string
-  attack_group_id: string
-  planned_pairs: number
-  decided_pairs: number
-  excluded_pairs: number
-  failure_to_success: number
-  success_to_failure: number
-  failure_to_failure: number
-  success_to_success: number
-  baseline_success_rate: number | null
-  attack_success_rate: number | null
-  paired_difference: number | null
-  missing_baseline: number
-  missing_attack: number
-  missing_both: number
-  baseline_errors: number
-  attack_errors: number
-  baseline_undetermined: number
-  attack_undetermined: number
-  unmatched_baseline_seeds: number
-  unmatched_attack_seeds: number
-  unattributed_attempts: number
 }
 
 export interface ScenarioRunPlanAtomicGroup {
@@ -2120,6 +2102,7 @@ export interface ScenarioProducerCounts {
 }
 
 export interface ScenarioProgressCounts {
+  outcomes?: OutcomeStatistics | null
   completed: number
   planned: number | null
   succeeded: number
@@ -2283,6 +2266,17 @@ export interface ScenarioProgressSummary {
   unattributed_attempts?: number
 }
 
+export interface ScenarioActiveConversation {
+  attack_result_id: string
+  conversation_id: string
+  atomic_attack_name: string
+  seed_group_id?: string | null
+  objective: string
+  started_at: string
+  technique_details?: ScenarioAttackTechniqueDetails | null
+  seed_identifiers: ScenarioComponentIdentity[]
+}
+
 export interface ScenarioRunProgress {
   run: ScenarioProgressHeader
   plan: ScenarioRunPlan | null
@@ -2291,6 +2285,8 @@ export interface ScenarioRunProgress {
   next_cursor?: string | null
   has_more: boolean
   plan_complete: boolean
+  active_conversations?: ScenarioActiveConversation[]
+  recorded_conversations?: ScenarioActiveConversation[]
 }
 export interface RuntimeReadiness {
   ready: boolean

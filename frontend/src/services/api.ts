@@ -70,7 +70,6 @@ import type {
   ScenarioRunProgress,
   ScenarioHierarchyNode,
   ScenarioHierarchyProjection,
-  PairedOutcomeStatistics,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -732,6 +731,14 @@ export const scenariosApi = {
     return response.data
   },
 
+  getLaunchConfiguration: async (scenarioResultId: string, signal?: AbortSignal): Promise<RunScenarioRequest> =>
+    (await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/launch-configuration`, { signal })).data,
+
+  getRunConversation: async (scenarioResultId: string, conversationId: string): Promise<ConversationMessagesResponse> =>
+    (await apiClient.get(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`,
+    )).data,
+
   /** Loads one page of hierarchy roots. `cursor` continues roots only, never a node's children. */
   getRunHierarchy: async (
     scenarioResultId: string,
@@ -754,18 +761,6 @@ export const scenariosApi = {
   ): Promise<ScenarioHierarchyNode> => {
     const response = await apiClient.get<ScenarioHierarchyNode>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
-      { params, signal },
-    )
-    return response.data
-  },
-
-  getPairedOutcomes: async (
-    scenarioResultId: string,
-    params: { baseline_group_id: string; attack_group_id: string },
-    signal?: AbortSignal,
-  ): Promise<PairedOutcomeStatistics> => {
-    const response = await apiClient.get<PairedOutcomeStatistics>(
-      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
       { params, signal },
     )
     return response.data
