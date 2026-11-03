@@ -496,6 +496,22 @@ class TestRestoreFailures:
         assert keep == "QuotingError: got https://host/v1 (rest hidden because it may include a credential)"
         assert exploding == "QuotingError: got https://host/v1"
 
+    def test_reports_a_reference_name_that_is_not_valid_text(self, tmp_path: Path) -> None:
+        _save_text(
+            tmp_path,
+            RegistryRecipeKind.TARGETS,
+            "pool",
+            '{"class_module": "pyrit.prompt_target.round_robin_target", "class_name": "RoundRobinTarget", '
+            '"params": {"targets": ["ghost\\ud800"]}}',
+        )
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert failure.reason is RestoreFailureReason.MISSING_DEPENDENCY
+        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\\ud800")
+        json.dumps(report.model_dump(mode="json"), ensure_ascii=False).encode("utf-8")
+
     def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
         attack_registry = AttackRegistry.get_registry_singleton()
         original_get_class_metadata = attack_registry.get_class_metadata
