@@ -122,17 +122,7 @@ target3 = OpenAIChatTarget(
 # )
 # ```
 #
-# Pass `auth_mode="none"` for an OpenAI-compatible server that needs no key, such as a local Ollama or vLLM server. The target then reads no key (not even the API key environment variable or `OPENAI_ADDITIONAL_REQUEST_HEADERS`) and mints no token. The OpenAI SDK still requires a key, so the target sends the fixed placeholder `not-needed`, which such servers ignore. It raises a `ValueError` if you also pass an explicit `api_key`.
-#
-# ```python
-# target = OpenAIChatTarget(
-#     endpoint="http://127.0.0.1:11434/v1",
-#     model_name="llama3",
-#     auth_mode="none",
-# )
-# ```
-#
-# `auth_mode` applies to the OpenAI targets, `AzureMLChatTarget`, and `PromptShieldTarget`; `auth_mode="none"` is for the OpenAI targets only. `AzureBlobStorageTarget` accepts the same `auth_mode="identity"` to bypass its SAS token sources; when no SAS token is configured it still selects a credential automatically, and that fallback is deprecated on the same schedule.
+# `auth_mode` applies to the OpenAI targets, `AzureMLChatTarget`, and `PromptShieldTarget`. `AzureBlobStorageTarget` accepts the same `auth_mode="identity"` to bypass its SAS token sources; when no SAS token is configured it still selects a credential automatically, and that fallback is deprecated on the same schedule.
 #
 # > **Migration note.** Earlier versions silently minted an Entra token when no key was found and the endpoint looked like an Azure host. That fallback still works, but it is deprecated and removed in 1.4.0 because it made an explicit `auth_mode="identity"` indistinguishable from "no key configured". Pass `auth_mode="identity"` instead (or a token provider as `api_key`, as the examples above do).
 
