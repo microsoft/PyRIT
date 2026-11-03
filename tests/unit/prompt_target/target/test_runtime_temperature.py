@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from openai import BadRequestError
 from openai.types.chat import ChatCompletion
 from unit.mocks import openai_chat_response_json_dict
 
@@ -32,7 +33,7 @@ from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, get_known_capabilities
 from pyrit.prompt_target.common import utils as target_utils
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.openai.openai_chat_target import _OpenAIModelSampling
+from pyrit.prompt_target.openai.openai_target import _OpenAIModelSampling
 from pyrit.score import SelfAskTrueFalseScorer
 
 
@@ -130,9 +131,11 @@ def test_openai_conditional_sampling_uses_model_reasoning_default(
         "gpt-4o-mini-realtime-preview",
     ],
 )
-def test_known_unsupported_sampling_cannot_be_enabled_by_declaration(model: str) -> None:
+def test_explicit_sampling_declaration_overrides_model_inference(model: str) -> None:
+    assert not _OpenAIModelSampling.supports_temperature(model_name=model, reasoning_effort="none")
+    assert _OpenAIModelSampling.supports_temperature(model_name=model, reasoning_effort="none", declared_support=True)
     assert not _OpenAIModelSampling.supports_temperature(
-        model_name=model, reasoning_effort="none", declared_support=True
+        model_name=model, reasoning_effort="high", declared_support=True
     )
 
 
@@ -140,6 +143,8 @@ def test_known_unsupported_sampling_cannot_be_enabled_by_declaration(model: str)
     "model",
     [
         "private-deployment",
+        "gpt-3.5-turbo",
+        "gpt-3.5-turbo-0125",
         "gpt-4o-custom",
         "gpt-4o-search-preview",
         "gpt-4.1-future",
@@ -150,9 +155,10 @@ def test_known_unsupported_sampling_cannot_be_enabled_by_declaration(model: str)
         "",
     ],
 )
-def test_unknown_sampling_variants_require_explicit_support(model: str) -> None:
-    assert not _OpenAIModelSampling.supports_temperature(model_name=model)
+def test_unknown_sampling_variants_default_to_supported(model: str) -> None:
+    assert _OpenAIModelSampling.supports_temperature(model_name=model)
     assert _OpenAIModelSampling.supports_temperature(model_name=model, declared_support=True)
+    assert not _OpenAIModelSampling.supports_temperature(model_name=model, declared_support=False)
     assert not _OpenAIModelSampling.supports_temperature(
         model_name=model, declared_support=True, reasoning_effort="high"
     )
@@ -246,7 +252,7 @@ async def test_temperature_normalization_retains_web_search_policy_guard_async(t
     send.assert_not_called()
 
 
-@pytest.mark.parametrize("model", ["o1", "o3", "gpt-5", "gpt-4o-audio-preview", "unknown"])
+@pytest.mark.parametrize("model", ["o1", "o3", "gpt-5", "gpt-4o-audio-preview"])
 async def test_unsupported_models_reject_override_async(patch_central_database: Any, model: str) -> None:
     target = OpenAIChatTarget(model_name=model, endpoint="https://example.test/v1", api_key="test-only-key")
     assert not target.capabilities.supports_temperature
@@ -313,7 +319,7 @@ async def test_set_model_name_refreshes_temperature_support_async(target: OpenAI
         for model, supported in (
             ("gpt-5", False),
             ("gpt-5.1", True),
-            ("unknown", False),
+            ("unknown", True),
             ("gpt-4o", True),
             ("gpt-4.1-nano-2025-04-14", True),
             ("gpt-5.5", False),
@@ -328,7 +334,7 @@ async def test_set_model_name_refreshes_temperature_support_async(target: OpenAI
             else:
                 with pytest.raises(ValueError, match="does not support runtime temperature"):
                     await target.send_prompt_async(message=request(0))
-        assert send.await_count == 4
+        assert send.await_count == 5
     assert target._temperature == 0.2
 
 
@@ -340,7 +346,7 @@ def test_set_model_name_retains_explicit_generation_capabilities(patch_central_d
         api_key="test-only-key",
         custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=enabled)),
     )
-    for model in ("unknown", "gpt-4o"):
+    for model in ("unknown", "gpt-4o", "gpt-5", "gpt-5.5"):
         target.set_model_name(model_name=model)
         assert target.capabilities.supports_temperature is enabled
 
@@ -375,6 +381,15 @@ def test_set_model_name_preserves_effective_model_and_mode_precedence(
 
 def test_adapter_hook_rechecks_mode_after_capability_declaration(target: OpenAIChatTarget) -> None:
     target._extra_body_parameters = {"reasoning_effort": "high"}
+    with pytest.raises(ValueError, match="Runtime temperature is not supported"):
+        target.validate_request_generation_config(request(0))
+
+
+@pytest.mark.parametrize("extras", [{"model": "gpt-5"}, {"extra_body": {"model": "gpt-5.5"}}])
+def test_inferred_support_does_not_override_changed_model_rules(
+    target: OpenAIChatTarget, extras: dict[str, Any]
+) -> None:
+    target._extra_body_parameters = extras
     with pytest.raises(ValueError, match="Runtime temperature is not supported"):
         target.validate_request_generation_config(request(0))
 
@@ -421,7 +436,7 @@ async def test_applied_capability_and_send_validation_agree_async(patch_central_
                 await target.send_prompt_async(message=request(0))
             send.assert_not_called()
     target.set_model_name(model_name="unknown")
-    assert not target.capabilities.supports_temperature
+    assert target.capabilities.supports_temperature
 
 
 @pytest.mark.parametrize(
@@ -444,16 +459,23 @@ def test_deployment_uses_underlying_model_profile(patch_central_database: Any) -
     assert target.capabilities.supports_temperature
 
 
-@pytest.mark.parametrize("model", ["private-deployment", "new-model-in-catalog"])
-async def test_explicit_capability_enables_unlisted_models_async(patch_central_database: Any, model: str) -> None:
+@pytest.mark.parametrize("model", ["private-deployment", "new-model-in-catalog", "gpt-3.5-turbo"])
+@pytest.mark.parametrize("declared", [False, True])
+async def test_unknown_models_support_runtime_temperature_async(
+    patch_central_database: Any, model: str, declared: bool
+) -> None:
     target = OpenAIChatTarget(
         model_name=model,
         endpoint="https://example.test/v1",
         api_key="test-only-key",
-        custom_configuration=TargetConfiguration(
-            capabilities=OpenAIChatTarget.get_default_configuration().capabilities.model_copy(
-                update={"supports_temperature": True}
+        custom_configuration=(
+            TargetConfiguration(
+                capabilities=OpenAIChatTarget.get_default_configuration().capabilities.model_copy(
+                    update={"supports_temperature": True}
+                )
             )
+            if declared
+            else None
         ),
     )
     assert target.capabilities.supports_temperature
@@ -564,8 +586,8 @@ async def test_effective_non_reasoning_mode_allows_temperature_async(
         ("gpt-5.5", {"extra_body": {"model": "gpt-5.4"}}, True),
         ("gpt-4o", {"model": "gpt-5.5", "extra_body": {"model": "gpt-4.1"}}, True),
         ("gpt-5.4-pro", {"reasoning_effort": "none"}, False),
-        ("gpt-4o-search-preview", {}, False),
-        ("gpt-5.99", {"reasoning_effort": "none"}, False),
+        ("gpt-4o-search-preview", {}, True),
+        ("gpt-5.99", {"reasoning_effort": "none"}, True),
     ],
 )
 async def test_sampling_rules_agree_with_advertised_support_and_provider_payload_async(
@@ -605,18 +627,32 @@ async def test_sampling_rules_agree_with_advertised_support_and_provider_payload
 
 
 @pytest.mark.parametrize("model", ["gpt-5", "gpt-5.5", "gpt-5.4-pro", "gpt-4o-audio-preview"])
-def test_declaration_cannot_bypass_known_sampling_restrictions(patch_central_database: Any, model: str) -> None:
+@pytest.mark.parametrize("constructor", [False, True])
+async def test_explicit_declaration_overrides_known_model_inference_async(
+    patch_central_database: Any, model: str, constructor: bool
+) -> None:
     target = OpenAIChatTarget(
         model_name=model,
         endpoint="https://example.test/v1",
         api_key="test-only-key",
-        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True)),
+        custom_configuration=(
+            TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True)) if constructor else None
+        ),
     )
-    assert not target.capabilities.supports_temperature
-    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_temperature": True}))
-    assert not target.capabilities.supports_temperature
-    with pytest.raises(ValueError, match="does not support runtime temperature"):
-        target.validate_request_generation_config(request(0))
+    if not constructor:
+        assert not target.capabilities.supports_temperature
+        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_temperature": True}))
+    assert target.capabilities.supports_temperature
+    message = request(0)
+    with patch.object(
+        target._client.chat.completions, "create", new_callable=AsyncMock, return_value=completion()
+    ) as send:
+        await target.send_prompt_async(message=message)
+    assert send.call_args.kwargs["temperature"] == 0
+    assert "reasoning_effort" not in send.call_args.kwargs
+    info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+    assert info is not None
+    assert info.temperature.requested == info.temperature.resolved == 0
 
 
 @pytest.mark.parametrize("model", ["gpt-5", "gpt-5.5", "gpt-5.99"])
@@ -665,6 +701,53 @@ async def test_nested_passthrough_precedence_at_http_boundary_async(patch_centra
     assert [body["temperature"] for body in bodies] == [1.7, 0]
     assert all(body["metadata"] == {"custom": "preserved"} for body in bodies)
     assert extras == original
+
+
+async def test_unknown_model_provider_rejection_preserves_evidence_async(
+    patch_central_database: Any, sqlite_instance: SQLiteMemory
+) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    async def reject_async(http_request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(http_request.content))
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "Temperature is not supported with this model.",
+                    "type": "invalid_request_error",
+                    "param": "temperature",
+                    "code": "unsupported_parameter",
+                }
+            },
+        )
+
+    conversation_id = str(uuid4())
+    async with httpx.AsyncClient(transport=httpx.MockTransport(reject_async)) as client:
+        target = OpenAIChatTarget(
+            model_name="private-deployment",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            httpx_client_kwargs={"http_client": client},
+        )
+        assert target.capabilities.supports_temperature
+        with pytest.raises(Exception, match="Error sending prompt") as error:
+            await PromptNormalizer().send_prompt_async(
+                message=request(0), target=target, conversation_id=conversation_id
+            )
+    assert isinstance(error.value.__cause__, BadRequestError)
+    assert error.value.__cause__.status_code == 400
+    assert len(bodies) == 1
+    assert bodies[0]["temperature"] == 0
+    saved = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
+    assert len(saved) == 2
+    assert saved[1].get_piece().response_error == "processing"
+    assert "unsupported_parameter" in saved[1].get_piece().original_value
+    for message in saved:
+        info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+        assert info is not None
+        assert info.temperature.requested == info.temperature.resolved == 0
+        assert info.temperature.source == "request"
 
 
 @pytest.mark.parametrize(
@@ -942,12 +1025,23 @@ def test_model_passthrough_restrictions_disable_capability(patch_central_databas
         target.validate_request_generation_config(request(0))
 
 
-@pytest.mark.parametrize("extras", [{"reasoning_effort": "high"}, {"extra_body": {"reasoning_effort": "high"}}])
+@pytest.mark.parametrize(
+    "extras",
+    [
+        {"reasoning_effort": "high"},
+        {"extra_body": {"reasoning_effort": "high"}},
+        {"stream": True},
+        {"extra_body": {"stream": True}},
+        {"modalities": ["text", "audio"]},
+        {"extra_body": {"modalities": ["text", "audio"]}},
+    ],
+)
+@pytest.mark.parametrize("model", ["private-deployment", "gpt-5", "gpt-5.5"])
 async def test_explicit_capability_does_not_bypass_mode_validation_async(
-    patch_central_database: Any, extras: dict[str, Any]
+    patch_central_database: Any, extras: dict[str, Any], model: str
 ) -> None:
     target = OpenAIChatTarget(
-        model_name="private-deployment",
+        model_name=model,
         endpoint="https://example.test/v1",
         api_key="test-only-key",
         custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True)),

@@ -129,7 +129,7 @@ class TestDiscoverTargetCapabilitiesAsync:
             additional_declaration: bool = True
 
         target = OpenAIChatTarget(
-            model_name="gpt-4o" if supported else "unknown",
+            model_name="gpt-4o" if supported else "gpt-5",
             endpoint="https://example.test/v1",
             api_key="test-only-key",
         )
@@ -145,7 +145,7 @@ class TestDiscoverTargetCapabilitiesAsync:
         assert result.output_modalities == declared.output_modalities
         assert target.capabilities == result
         assert isinstance(target.capabilities, ExtendedCapabilities)
-        target.set_model_name(model_name="unknown" if supported else "gpt-4o")
+        target.set_model_name(model_name="gpt-5" if supported else "unknown")
         assert target.capabilities.supports_temperature is not supported
 
     async def test_returns_only_supported_when_all_probes_succeed(self) -> None:

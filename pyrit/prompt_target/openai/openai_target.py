@@ -42,6 +42,72 @@ from pyrit.prompt_target.openai.openai_error_handling import (
 logger = logging.getLogger(__name__)
 
 
+class _OpenAIModelSampling:
+    """Resolve shared OpenAI model sampling rules, independently of API-specific support."""
+
+    _REASONING_DEFAULT_MODELS: ClassVar[frozenset[str]] = frozenset(
+        {"gpt-5.5", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+    )
+    _UNSUPPORTED_MODELS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-5-pro",
+            "gpt-5.2-pro",
+            "gpt-5.4-pro",
+            "gpt-5.5-pro",
+            "gpt-5-codex",
+            "gpt-5.1-codex",
+            "gpt-5.1-codex-mini",
+            "gpt-5.1-codex-max",
+            "gpt-5.2-codex",
+            "gpt-5.3-codex",
+            "o1",
+            "o1-mini",
+            "o1-preview",
+            "o1-pro",
+            "o3",
+            "o3-mini",
+            "o3-pro",
+            "o4-mini",
+            "gpt-4o-audio-preview",
+            "gpt-4o-mini-audio-preview",
+            "gpt-4o-realtime-preview",
+            "gpt-4o-mini-realtime-preview",
+        }
+    )
+    _SNAPSHOT_SUFFIX: ClassVar[re.Pattern[str]] = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+    @classmethod
+    def supports_temperature(
+        cls, *, model_name: object, reasoning_effort: object = None, declared_support: bool | None = None
+    ) -> bool:
+        """
+        Resolve support from explicit declarations, then model inference.
+
+        Args:
+            model_name (object): Effective model or deployment name.
+            reasoning_effort (object): Explicit effective effort, or None when omitted.
+            declared_support (bool | None): Override model inference, including inferred reasoning defaults.
+                Explicit reasoning effort other than "none" still disables temperature.
+
+        Returns:
+            bool: Inferred support. Unrecognized models default to supported; providers may still reject them.
+        """
+        if not isinstance(model_name, str) or reasoning_effort not in (None, "none"):
+            return False
+        if declared_support is not None:
+            return declared_support
+        # Only dated snapshots inherit a named model's rule, not arbitrary prefixed variants.
+        model = cls._SNAPSHOT_SUFFIX.sub("", model_name)
+        if model in cls._UNSUPPORTED_MODELS:
+            return False
+        if model in cls._REASONING_DEFAULT_MODELS:
+            return reasoning_effort == "none"
+        return True
+
+
 class OpenAITarget(PromptTarget):
     """
     Abstract base class for OpenAI-based prompt targets.

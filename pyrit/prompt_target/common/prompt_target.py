@@ -352,6 +352,7 @@ class PromptTarget(Identifiable):
             if self._get_web_search_config(normalized_request) != web_search_config:
                 raise ValueError("Normalization changed the request's web search policy.")
             self._validate_request(normalized_conversation=normalized_conversation)
+            self.validate_request_generation_config(normalized_request)
             with target_trace_context(
                 config=self._trace_config, request=message, normalized_request=normalized_conversation[-1]
             ):
@@ -369,6 +370,7 @@ class PromptTarget(Identifiable):
                         )
                         for piece in message.message_pieces:
                             piece.prompt_metadata.update(generation_info.to_metadata())
+            self._validate_request_generation_info(config=generation_config, info=generation_info)
             for response_message in response:
                 for piece in response_message.message_pieces:
                     piece.prompt_metadata = {
@@ -411,12 +413,38 @@ class PromptTarget(Identifiable):
     def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
         """Validate adapter-specific parameter ranges and joint model/mode restrictions."""
 
+    def _validate_request_generation_info(
+        self, *, config: RequestGenerationConfig, info: RequestGenerationInfo | None
+    ) -> None:
+        """
+        Check that adapter evidence agrees with explicit overrides.
+
+        Raises:
+            RuntimeError: The adapter omitted or contradicted the selected override.
+        """
+        recorded = info.model_dump() if info is not None else {}
+        for name, value in config.model_dump(exclude_none=True).items():
+            if recorded.get(name) != {"requested": value, "resolved": value, "source": "request"}:
+                raise RuntimeError(
+                    f"{type(self).__name__} returned missing or inconsistent generation evidence for {name}."
+                )
+
     @abc.abstractmethod
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         """
         Target-specific send logic.
 
         Called by ``send_prompt_async`` after validation and normalization.
+
+        Adapters opting into ``_SUPPORTED_GENERATION_CAPABILITIES`` must validate
+        their parameter limits and modes in ``_validate_request_generation_config``.
+        After asynchronous payload preparation, revalidate before provider I/O,
+        apply overrides to the actual payload (including passthrough settings),
+        and write ``RequestGenerationInfo`` to the normalized request's first piece.
+        Record it immediately before I/O and reuse the resolution on transport
+        retries or tool continuations. The base associates evidence with original
+        request pieces and responses; missing or inconsistent override evidence
+        is an adapter error, not a successful send.
 
         Args:
             normalized_conversation (list[Message]): The full conversation

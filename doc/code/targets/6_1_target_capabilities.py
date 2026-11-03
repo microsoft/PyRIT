@@ -101,19 +101,23 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 #
 # Model profiles do not resolve runtime generation support. Check the instantiated
 # target's `capabilities.supports_temperature`; `OpenAIChatTarget` computes it using
-# its own sampling rules and the effective model and reasoning settings:
+# shared OpenAI model-sampling rules and Chat-specific mode checks. Without an
+# explicit capability declaration, model inference works as follows:
 #
 # | Model family | Runtime temperature |
 # | --- | --- |
-# | GPT-4 / Turbo, GPT-4o / mini, GPT-4.1 / mini / nano | Supported |
+# | GPT-3.5, GPT-4 / Turbo, GPT-4o / mini, GPT-4.1 / mini / nano | Supported |
 # | GPT-5, GPT-5 mini / nano | Unsupported, including with `minimal` or `none` |
 # | GPT-5.1, GPT-5.2, GPT-5.4 / mini / nano | Supported with `reasoning_effort="none"` (the model default) |
 # | GPT-5.5, GPT-5.6 / sol / terra / luna | Requires explicit `reasoning_effort="none"`; default is `medium` |
+# | Unknown model or deployment alias | Assumed supported; the provider may reject temperature |
 #
 # Dated snapshots inherit their named model's rule; arbitrary suffixes do not.
-# Pro, Codex, audio/realtime, and o-series models do not inherit standard-family support.
-# Unknown deployments require an explicit capability declaration, which cannot bypass
-# known model restrictions. Audio output and streaming disable runtime support in this adapter.
+# Listed Pro, Codex, audio/realtime, and o-series models default to unsupported.
+# An explicit `supports_temperature=True` or `False` overrides model inference,
+# including inferred reasoning defaults. Explicit reasoning effort other than `"none"`,
+# audio output, and streaming still disable runtime support in this adapter.
+# Unknown models are not probed: provider rejection is surfaced without dropping the parameter.
 # Support refreshes when `set_model_name()` is called and is checked again before sending.
 # These rules do not change constructor defaults or requests without runtime overrides.
 #

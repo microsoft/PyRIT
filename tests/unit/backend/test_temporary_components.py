@@ -15,6 +15,7 @@ import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from openai import BadRequestError
 from openai.resources.chat.completions import AsyncCompletions
 from openai.types.chat import ChatCompletion
 
@@ -28,7 +29,7 @@ from pyrit.backend.models.attacks import (
     SaveConversationRequest,
 )
 from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConverterRequest
-from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
+from pyrit.backend.models.message_sends import MessageSendFailureStage, MessageSendRequest, MessageSendState
 from pyrit.backend.models.scorers import CreateScorerRequest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.routes import converters, scorers, targets
@@ -52,7 +53,7 @@ from pyrit.converter import (
 from pyrit.memory import SQLiteMemory
 from pyrit.models import JSONValue, Operation, PromptDataType, RequestGenerationConfig, RequestGenerationInfo
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget
+from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget, PromptTarget
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from unit.backend.mocks import _settle_send_async
@@ -714,6 +715,166 @@ class TestTemporaryComponents:
                 assert info.temperature.resolved == expected
             assert source.get_identifier().hash == binding.source_hash
             assert source._temperature == 0.2
+        finally:
+            await sender.shutdown_async()
+            await source.cleanup_target_async()
+
+    @pytest.mark.parametrize("saved_binding", [False, True])
+    @pytest.mark.parametrize("count", [1, 3])
+    @pytest.mark.parametrize(
+        ("temperature", "model", "extras", "error"),
+        [
+            (True, "gpt-4o", {}, "valid number"),
+            ("0.3", "gpt-4o", {}, "valid number"),
+            (float("nan"), "gpt-4o", {}, "finite"),
+            (float("inf"), "gpt-4o", {}, "finite"),
+            (-0.1, "gpt-4o", {}, "between 0 and 2"),
+            (2.1, "gpt-4o", {}, "between 0 and 2"),
+            (0, "gpt-5", {}, "does not support runtime temperature"),
+            (0, "gpt-4o", {"reasoning_effort": "high"}, "does not support runtime temperature"),
+        ],
+    )
+    async def test_generation_rejected_before_send_admission_async(
+        self,
+        sqlite_instance: SQLiteMemory,
+        saved_binding: bool,
+        count: int,
+        temperature: Any,
+        model: str,
+        extras: dict[str, Any],
+        error: str,
+    ) -> None:
+        source = OpenAIChatTarget(
+            model_name=model,
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature=0.2,
+            extra_body_parameters=extras,
+        )
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        target_service = get_target_service()
+        binding = None
+        if saved_binding:
+            built = await target_service.build_from_source_async(
+                SourceInstanceSpec(
+                    source_name="source", source_hash=source.get_identifier().hash, params={"temperature": 0.8}
+                )
+            )
+            binding = TargetBinding(
+                source_name="source",
+                source_hash=source.get_identifier().hash,
+                temperature=0.8,
+                effective_hash=built.get_identifier().hash,
+            )
+            await built.cleanup_target_async()
+        scheduler = ManualSendScheduler()
+        sender = MessageSendService(scheduler=scheduler)
+        resolved: list[PromptTarget] = []
+        resolve_binding_async = target_service.resolve_binding_async
+
+        async def track_binding_async(binding: TargetBinding) -> PromptTarget:
+            target = await resolve_binding_async(binding)
+            resolved.append(target)
+            return target
+
+        try:
+            created = await AttackService(message_send_service=sender).create_attack_async(
+                request=CreateAttackRequest(target_registry_name="source", target_binding=binding)
+            )
+            request = MessageSendRequest(
+                target_registry_name="source",
+                target_conversation_id=created.conversation_id,
+                submission_id="invalid-generation",
+                count=count,
+                role="user",
+                pieces=[
+                    MessagePieceRequest(
+                        original_value="hello",
+                        prompt_metadata={"request_generation_config": {"temperature": temperature}},
+                    )
+                ],
+            )
+            with (
+                patch.object(target_service, "resolve_binding_async", side_effect=track_binding_async),
+                patch.object(AsyncCompletions, "create", new_callable=AsyncMock) as provider,
+                patch.object(sender, "_run_send_async", new_callable=AsyncMock) as run_send,
+                patch.object(
+                    sqlite_instance, "add_message_to_memory_async", wraps=sqlite_instance.add_message_to_memory_async
+                ) as store,
+            ):
+                with pytest.raises(ValueError, match=error):
+                    await sender.submit_async(
+                        attack_result_id=created.attack_result_id,
+                        request=request,
+                    )
+                provider.assert_not_called()
+                run_send.assert_not_called()
+                store.assert_not_called()
+            assert not sender._sends
+            assert not sender._submissions
+            assert not scheduler.has_active_work()
+            with sender.reserve_conversation(created.conversation_id):
+                assert scheduler.has_active_work()
+            assert await sqlite_instance.get_conversation_messages_async(conversation_id=created.conversation_id) == []
+            assert len(resolved) == int(saved_binding)
+            for target in resolved:
+                assert isinstance(target, OpenAIChatTarget)
+                assert target is not source
+                assert target._client.is_closed()
+            assert not source._client.is_closed()
+            assert source._temperature == 0.2
+            [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id])
+            assert TargetBinding.from_metadata(saved.metadata) == binding
+        finally:
+            await sender.shutdown_async()
+            await source.cleanup_target_async()
+
+    async def test_unknown_model_provider_rejection_fails_accepted_send_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        source = source_target()
+        TargetRegistry.get_registry_singleton().instances.register(source, name="source")
+        scheduler = ManualSendScheduler()
+        sender = MessageSendService(scheduler=scheduler)
+        try:
+            created = await AttackService(message_send_service=sender).create_attack_async(
+                request=CreateAttackRequest(target_registry_name="source")
+            )
+            rejection = BadRequestError(
+                "Temperature is not supported with this model.",
+                response=httpx.Response(400, request=httpx.Request("POST", "https://example.test/v1/chat/completions")),
+                body={"code": "unsupported_parameter", "param": "temperature"},
+            )
+            with patch.object(AsyncCompletions, "create", new_callable=AsyncMock, side_effect=rejection) as provider:
+                status = await sender.submit_async(
+                    attack_result_id=created.attack_result_id,
+                    request=MessageSendRequest(
+                        target_registry_name="source",
+                        target_conversation_id=created.conversation_id,
+                        submission_id="provider-rejection",
+                        role="user",
+                        pieces=[
+                            MessagePieceRequest(
+                                original_value="hello",
+                                prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
+                            )
+                        ],
+                    ),
+                )
+                status = await _settle_send_async(service=sender, status=status)
+            provider.assert_awaited_once()
+            assert provider.call_args.kwargs["temperature"] == 0
+            assert status.state == MessageSendState.FAILED
+            assert status.failure_stage == MessageSendFailureStage.SENDING
+            assert not scheduler.has_active_work()
+            messages = await sqlite_instance.get_conversation_messages_async(conversation_id=created.conversation_id)
+            assert len(messages) == 2
+            assert messages[1].get_piece().response_error == "processing"
+            assert "Temperature is not supported with this model." in messages[1].get_piece().original_value
+            for message in messages:
+                info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+                assert info is not None
+                assert info.temperature.requested == info.temperature.resolved == 0
         finally:
             await sender.shutdown_async()
             await source.cleanup_target_async()

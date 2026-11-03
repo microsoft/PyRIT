@@ -86,17 +86,20 @@ response = await PromptNormalizer().send_prompt_async(message=message, target=ta
 
 `to_metadata()` produces `{"request_generation_config": {"temperature": 0}}` in
 this example. Put overrides on one current message piece or repeat matching
-values across pieces. Conflicting values, invalid inputs, and unsupported
-parameters or model modes fail before provider I/O. Only the current outbound
+values across pieces. Conflicting values, invalid inputs, and known unsupported
+parameters or model modes fail before provider I/O. Unknown OpenAI Chat models
+default to supported; a provider can still reject the parameter. PyRIT surfaces
+that error without retrying with the parameter removed. Only the current outbound
 message supplies overrides, not conversation history. Parameter limits are
 adapter-specific: OpenAI Chat accepts finite temperatures from 0 through 2,
 including zero, but not booleans or numeric strings.
 
 Missing or null fields preserve the target's configured behavior. Explicit
 overrides take precedence over provider passthrough values, including nested
-`extra_body` settings. Without an override, explicit passthrough values (including
-null) are preserved. Otherwise, if neither a request value nor a configured value
-exists, the parameter is omitted rather than assigning a guessed provider default.
+`extra_body` settings. Without an override, top-level passthrough nulls are
+filtered out; nulls nested in `extra_body` are retained. Otherwise, if neither a
+request value nor a configured value exists, the parameter is omitted rather
+than assigning a guessed provider default.
 Transport retries retain the resolved settings; a new send can select new values.
 
 `PromptNormalizer` saves generation evidence with the request and its responses.
