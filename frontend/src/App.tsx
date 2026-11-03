@@ -796,7 +796,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       onReturnToScan={() => {
         if (scenarioResultId) {
           navigate(scenarioRunRoutePath(scenarioResultId), {
-            state: location.state ?? { fromScenarioHistory: true, scenarioHistorySearch: lastScenarioHistorySearch.current },
+            state: location.state ?? {
+              fromScenarioHistory: true, scenarioHistorySearch: lastScenarioHistorySearch.current,
+            },
           })
         }
       }}

@@ -1073,6 +1073,25 @@ export interface BackendScore {
   timestamp: string
 }
 
+export interface ApplyChatScorerRequest {
+  conversation_id: string
+  response_id: string
+  scorer: RegisteredComponentReference
+  objective: string
+}
+
+export interface ApplyChatScorerResponse {
+  conversation_id: string
+  score: BackendScore
+  reused: boolean
+}
+
+/** Result of the latest Apply scorer request, shown in the scorer pane. */
+export interface ApplyScorerStatus {
+  intent: 'info' | 'error'
+  message: string
+}
+
 export type PromptResponseError = 'blocked' | 'none' | 'processing' | 'empty' | 'unknown'
 
 export interface ComponentIdentifier {
@@ -1137,7 +1156,11 @@ export interface TargetResponseStatus {
 }
 
 export interface ConversationMessagesResponse {
+  automated_score?: BackendScore | null
   scoring_failure?: ScoringFailure | null
+  /** Outcome for the latest response; a human score overrides the attack. */
+  outcome?: AttackOutcome | null
+  latest_response_id?: string | null
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null

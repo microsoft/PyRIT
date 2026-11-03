@@ -7,7 +7,7 @@ import pytest
 
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import ScorerEvaluationIdentifier
+from pyrit.models import ScorerEvaluationIdentifier, config_hash
 from pyrit.score import LDAPInjectionOutputScorer, TrueFalseScoreAggregator
 from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 
@@ -304,7 +304,7 @@ async def test_ldap_url_decoding_policy_has_distinct_persisted_identity_async(
         assert identifier.eval_hash == repeated.get_identifier().eval_hash
         assert identifier.eval_hash == ScorerEvaluationIdentifier(identifier).eval_hash
         assert identifier.params["score_aggregator"] == aggregator.__name__
-        assert "patterns_digest" not in identifier.params
+        assert identifier.params["patterns_digest"] == config_hash(default_patterns)
         stored = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
         assert len(stored) == 1
         assert stored[0].get_value() == score.get_value()
