@@ -23,6 +23,9 @@ export const useChatWindowStyles = makeStyles({
     height: '100%',
     width: '100%',
     overflow: 'hidden',
+    [NARROW_VIEWPORT_QUERY]: {
+      flexShrink: 0,
+    },
   },
   pageHeading: {
     position: 'absolute',
@@ -169,7 +172,7 @@ export const useChatWindowStyles = makeStyles({
     ...mobileTouchTarget,
   },
   newAttackLabel: {
-    '@media (max-width: 600px)': {
+    [NARROW_VIEWPORT_QUERY]: {
       display: 'none',
     },
   },

@@ -175,10 +175,13 @@ enums when registered factories change; it does not create attacks.
 Selections from an earlier enum remain valid in the same scenario and registry
 generation if their factories are unchanged. Earlier aggregate selections retain
 their original members; they do not gain newly registered techniques.
-Responses include `creation_statement`, a Python-style display of the factory's
+Responses include `identifier`, the canonical factory identity shown inline in
+the Registry. It can contain raw prompt and seed values, including nested
+technique seeds. This JSON is not a redacted or hash-only view.
+Responses also include `creation_statement`, a Python-style display of the factory's
 supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable
-or lossless source. Responses do not include identifier or expanded seed JSON.
+or lossless source. The GUI displays identity JSON, not the creation statement.
 
 ### Manual Messages
 
@@ -238,6 +241,10 @@ and no stage guarantees that retrying delivery is safe. Stored target errors and
 Terminal states are published only after finalization and ownership release. Progress also
 includes the `request_turn_number` assigned during preparation, so clients can distinguish
 this send's response from a later turn written by another client.
+Each conversation receipt also retains `target_invoked`, set only at the target
+invocation boundary. It remains false during preparation and retains its value
+after interruption. An allocated request turn alone is not evidence of target use,
+and an invocation does not guarantee successful delivery.
 
 The optional `wait_ms` query parameter (0-1000) waits for completion, returning immediately
 if the operation settles. Cancelling this read, disconnecting, or navigating away does not

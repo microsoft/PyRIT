@@ -86,14 +86,14 @@ export const useScenarioDetailStyles = makeStyles({
   },
   techniqueOption: {
     display: 'grid',
-    gridTemplateColumns: 'minmax(12rem, 35%) minmax(0, 1fr)',
+    gridTemplateColumns: 'minmax(12rem, 35%) minmax(0, 1fr) auto',
     gap: tokens.spacingHorizontalM,
     alignItems: 'start',
     padding: tokens.spacingVerticalS,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
     [NARROW_VIEWPORT_QUERY]: {
-      gridTemplateColumns: 'minmax(0, 1fr)',
+      gridTemplateColumns: 'minmax(0, 1fr) auto',
       gap: tokens.spacingVerticalXS,
     },
   },
@@ -101,6 +101,19 @@ export const useScenarioDetailStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     gap: tokens.spacingVerticalXS,
+    minWidth: 0,
+    [NARROW_VIEWPORT_QUERY]: {
+      gridColumn: '1 / -1',
+      gridRow: 2,
+    },
+  },
+  identityToggle: {
+    ...mobileTouchTarget,
+    gridColumn: '-2 / -1',
+    gridRow: 1,
+  },
+  identityRegion: {
+    gridColumn: '1 / -1',
     minWidth: 0,
   },
   techniqueTags: {
