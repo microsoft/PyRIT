@@ -128,6 +128,8 @@ export interface ChatDraftContent {
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
   conversation?: ConversationEditState
+  /** Set when this snapshot was an accepted send; used to avoid restoring completed prompts as unsent. */
+  acceptedSubmissionId?: string
 }
 
 export interface ChatDraftContextState {

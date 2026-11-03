@@ -53,6 +53,7 @@ import {
   shouldApplyPreservedDraft,
   canApplyPendingImport,
   hasChatDraftState,
+  historyContainsAcceptedDraft,
   isChatDraftDirty,
   computeAttachmentSignature,
   stableMetadataString,
@@ -628,6 +629,7 @@ export default function ChatWindow({
   const pendingSendsRef = useRef<Map<string, PendingSend>>(new Map())
   const loadedUserPieceIdsRef = useRef<Map<string, Set<string>>>(new Map())
   const loadedBackendMessagesRef = useRef<Map<string, BackendMessage[]>>(new Map())
+  const loadedUserOriginalsRef = useRef<Map<string, Set<string>>>(new Map())
   const isSendInFlight = useCallback(
     (convId: string): boolean => sendingConvIdsRef.current.has(convId),
     [],
@@ -641,6 +643,12 @@ export default function ChatWindow({
     if (response.messages) {
       loadedBackendMessagesRef.current.set(convId, response.messages)
     }
+    loadedUserOriginalsRef.current.set(convId, new Set(
+      response.messages.filter((message: BackendMessage) => message.role === 'user')
+        .flatMap((message: BackendMessage) => message.message_pieces
+          .map((piece: BackendMessagePiece) => piece.original_value)
+          .filter((value: string | null | undefined): value is string => Boolean(value))),
+    ))
     const persistedRecovery = getPersistedProcessingRecovery(convId, response)
     setRecoverableSends((currentRecoveries) => {
       const currentRecovery = currentRecoveries[convId]
@@ -895,12 +903,18 @@ export default function ChatWindow({
       discardDraftOnUnmountRef.current = false
       if (shouldDiscard || !ownsDraftRef.current || isWaitingForRestore
         || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
+      const operation = draftConversationId ? pendingSendsRef.current.get(draftConversationId) : undefined
+      const acceptedSubmissionId = operation?.progress
+        && operation.originalValue === savedDraft.text
+        && latestSendRef.current === operation.submissionId
+        ? operation.submissionId
+        : undefined
       draftHandoff.preserveDraft({
         originatingAttackId: draftAttackId,
         originatingConversationId: draftConversationId,
         originatingPath: location.pathname + location.search + location.hash,
         originatingState: location.state,
-        draft: savedDraft,
+        draft: acceptedSubmissionId ? { ...savedDraft, acceptedSubmissionId } : savedDraft,
       }, draftHandoff.activeSequence)
     }
   })
@@ -984,7 +998,13 @@ export default function ChatWindow({
       const consumed = draftHandoff.consumePreservedDraft(draftAttackId, draftConversationId, preserved.sequence)
       if (!consumed) return
       handoffRestoredRef.current = preserved.sequence
-      draft = { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
+      const completedAcceptedSend = historyContainsAcceptedDraft(
+        consumed,
+        loadedUserOriginalsRef.current.get(draftConversationId ?? ''),
+      )
+      draft = completedAcceptedSend
+        ? { ...consumed, text: '', attachments: [], textMetadata: undefined, converters: undefined, acceptedSubmissionId: undefined, systemPrompt: consumed.systemPrompt ?? '' }
+        : { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
       if (consumed.conversation) {
         let editorTarget: TargetInstance | null = consumed.conversation.target === null ? null : activeTarget
         if (consumed.conversation.target) {

@@ -6,6 +6,7 @@ import { createMemoryRouter, MemoryRouter, RouterProvider, Route, Routes, useLoc
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
+import { ChatDraftProvider } from "@/hooks/useChatDraftHandoff";
 import * as runtimeHooks from "@/hooks/useRuntime";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "@/utils/userPreferences";
 import {
@@ -1144,6 +1145,85 @@ describe("ChatWindow Integration", () => {
       expect(readUserPreferences("local").lastUsedTargets?.objective?.registryName).toBe(mockTarget.target_registry_name);
       expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
       expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not restore a completed send as an unsent draft after navigating to Datasets", async () => {
+      const user = userEvent.setup();
+      const prompt = "ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE";
+      const completedHistory: ConversationMessagesResponse = {
+        conversation_id: props.conversationId,
+        target_response_status: {
+          response_error: "none",
+          request_turn_number: 0,
+          response_turn_number: 1,
+        },
+        messages: [
+          {
+            turn_number: 0,
+            role: "user",
+            message_pieces: [{
+              id: "p-req",
+              original_value_data_type: "text",
+              converted_value_data_type: "text",
+              original_value: prompt,
+              converted_value: prompt,
+              scores: [],
+              response_error: "none",
+            }],
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            turn_number: 1,
+            role: "assistant",
+            message_pieces: [{
+              id: "p-resp",
+              original_value_data_type: "text",
+              converted_value_data_type: "text",
+              original_value: "Synthetic reply",
+              converted_value: "Synthetic reply",
+              scores: [],
+              response_error: "none",
+            }],
+            created_at: "2026-01-01T00:00:01Z",
+          },
+        ],
+      };
+      mockedAttacksApi.getMessages.mockResolvedValue(empty);
+      mockedAttacksApi.getMessageSend.mockImplementation(() => new Promise(() => {}));
+
+      function ChatOrDatasets({ showChat }: { showChat: boolean }) {
+        return (
+          <FluentProvider theme={webLightTheme}>
+            <UserPreferencesProvider accountKey="local">
+              <ChatDraftProvider>
+                <MemoryRouter>
+                  {showChat ? <ChatWindow {...props} /> : <h1>Datasets</h1>}
+                </MemoryRouter>
+              </ChatDraftProvider>
+            </UserPreferencesProvider>
+          </FluentProvider>
+        );
+      }
+
+      const rendered = render(<ChatOrDatasets showChat />);
+      await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+      await user.click(screen.getByRole("textbox"));
+      await user.paste(prompt);
+      await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled"));
+      await user.click(screen.getByRole("button", { name: /send message/i }));
+      await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).toHaveAttribute("aria-disabled", "true"));
+      await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(1));
+
+      mockedAttacksApi.getMessages.mockResolvedValue(completedHistory);
+      rendered.rerender(<ChatOrDatasets showChat={false} />);
+      expect(screen.getByRole("heading", { name: "Datasets" })).toBeInTheDocument();
+
+      rendered.rerender(<ChatOrDatasets showChat />);
+      expect(await screen.findByText("Synthetic reply")).toBeInTheDocument();
+      expect(within(screen.getByTestId("message-list")).getByText(prompt)).toBeInTheDocument();
+      await act(async () => { await Promise.resolve(); });
+      expect(screen.getByRole("textbox")).toHaveValue("");
+      expect(screen.getByRole("button", { name: /send message/i })).toHaveAttribute("aria-disabled", "true");
     });
 
     it("does not duplicate a saved optimistic message when refreshing an active conversation", async () => {
