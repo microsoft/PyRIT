@@ -982,6 +982,22 @@ async def test_status_reports_a_reference_name_that_is_not_valid_text_async(
     assert (failure["reason"], failure["dependency"]["name"]) == ("missing_dependency", "missing\\udcff")
 
 
+async def test_status_lists_a_file_name_that_is_not_valid_text_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+    folder = tmp_path / "recipes" / "converters"
+    folder.mkdir(parents=True)
+    try:
+        (folder / os.fsdecode(b"bad\xffname.json")).write_text("{}")
+    except (OSError, UnicodeError):
+        pytest.skip("This file system only allows UTF-8 file names")
+
+    await _start_with_recipes_async(runtime, recipes=tmp_path / "recipes")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        status = await client.get("/api/config/runtime")
+    assert status.status_code == 200
+    assert [item["file_name"] for item in status.json()["restore_ignored"]] == ["bad\\udcffname.json"]
+
+
 async def test_startup_lists_ignored_files_without_blocking_readiness_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
