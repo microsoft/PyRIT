@@ -700,8 +700,10 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(page.getByRole("heading", { name: SCENARIO_NAME })).toBeVisible();
     const atomicGroupsToggle = page.getByRole("button", { name: /atomic attack groups$/ });
     await expect(atomicGroupsToggle).toHaveAttribute("aria-expanded", "true");
-    const groupToggle = page.getByRole("button", { name: "Expand attacks in Prompt sending" });
+    const groupToggle = page.getByRole("button", { name: /^(Expand|Collapse) attacks in Prompt sending$/ });
     await expect(groupToggle).toBeVisible();
+    await expect(groupToggle).toHaveAttribute("aria-expanded", "true");
+    await groupToggle.click();
     await expect(groupToggle).toHaveAttribute("aria-expanded", "false");
     await groupToggle.click();
     const detailsButton = page.getByRole("button", { name: /^Open details for prompt_sending:/ });
@@ -888,6 +890,7 @@ test.describe("Scenario catalog, history, and live run routing", () => {
     await expect(queue.getByRole("link", { name: new RegExp(ACTIVE_RUN_ID) })).toHaveCount(0);
     await ownQueueEntry.getByRole("link").click();
     await expect(page).toHaveURL(`/scanner/history/${QUEUED_RUN_ID}`);
+    await expect(page.getByTestId("scenario-run-page")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("run-state-badge")).toHaveText("Executing");
     await expect(progress).not.toContainText("Queued");
     const liveProgressRequests = progressRequests;
