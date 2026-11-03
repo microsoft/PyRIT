@@ -70,6 +70,7 @@ function getModalityLabel(converterType: ConverterTypeEntry): string {
 interface DialogError {
   message: string
   fromSubmit: boolean
+  fileReadParameter?: string
 }
 
 interface CreateConverterDialogProps {
@@ -88,7 +89,7 @@ interface ParameterInputProps {
   showError: boolean
   onChange: (value: string) => void
   onBrowse: () => void
-  onFiles: (files: File[]) => void
+  onFiles: (files: File[], onReadSuccess?: () => void) => void
   allowUploads: boolean
   selectedFile?: SelectedFile
 }
@@ -181,6 +182,8 @@ function ParameterInput({
   const styles = useCreateConverterDialogStyles()
   const pathInputRef = useRef<HTMLInputElement>(null)
   const focusPathInput = useRef(false)
+  const focusReplaceButton = useRef(false)
+  const replaceButtonRef = useRef<HTMLButtonElement>(null)
   const [manualValue, setManualValue] = useState<string | null>(null)
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
   const help = parameter.description?.trim()
@@ -189,8 +192,19 @@ function ParameterInput({
     if (focusPathInput.current && pathInputRef.current) {
       focusPathInput.current = false
       pathInputRef.current.focus()
+      return
     }
-  }, [value])
+    if (focusReplaceButton.current) {
+      focusReplaceButton.current = false
+      replaceButtonRef.current?.focus()
+    }
+  }, [value, selectedFile])
+
+  const handleFiles = (files: File[]): void => {
+    onFiles(files, () => {
+      focusReplaceButton.current = document.activeElement === pathInputRef.current
+    })
+  }
 
   if (parameter.reference_type) {
     return (
@@ -271,7 +285,7 @@ function ParameterInput({
     >
       {(controlProps: FieldControlProps) => isFile ? (
         <FileDropZone disabled={!allowUploads}
-          label="Drop file" onFiles={onFiles}>
+          label="Drop file" onFiles={handleFiles}>
           <div {...(hasFileValue ? controlProps : {})} role={hasFileValue ? 'group' : undefined} className={styles.fileRow}>
             {hasFileValue ? <div className={styles.filePreview}>
               {imagePreview && <MediaPreview key={imagePreview} type="image" src={imagePreview} alt={`Preview for ${parameter.name}`}
@@ -293,7 +307,7 @@ function ParameterInput({
                 onChange(data.value)
               }}
             />}
-            <Button type="button" className={styles.fileButton} disabled={!allowUploads} onClick={onBrowse}>
+            <Button ref={replaceButtonRef} type="button" className={styles.fileButton} disabled={!allowUploads} onClick={onBrowse}>
               {hasFileValue ? 'Replace' : 'Upload'}
             </Button>
             {hasFileValue && <Button type="button" className={styles.fileButton} disabled={!allowUploads}
@@ -512,7 +526,7 @@ export default function CreateConverterDialog({
     setSelectedFiles({})
   }
 
-  const readFiles = (parameterName: string, files: File[]): void => {
+  const readFiles = (parameterName: string, files: File[], onReadSuccess?: () => void): void => {
     const file = files[0]
     if (!allowUploads || !file) return
     const extraCount = files.length - 1
@@ -529,7 +543,8 @@ export default function CreateConverterDialog({
       if (!isCurrentSelection()) return
       fileReads.current.delete(parameterName)
       const value = String(reader.result ?? '')
-      setError(null)
+      onReadSuccess?.()
+      setError((current) => current?.fileReadParameter === parameterName ? null : current)
       setChangedParameters((current) => new Set([...current, parameterName]))
       setParameterValues((current) => ({
         ...current,
@@ -542,7 +557,11 @@ export default function CreateConverterDialog({
     const reportReadFailure = (): void => {
       if (!isCurrentSelection()) return
       fileReads.current.delete(parameterName)
-      setError({ message: `Could not read "${file.name}". Select a file you can open and try again.`, fromSubmit: false })
+      setError({
+        message: `Could not read "${file.name}". Select a file you can open and try again.`,
+        fromSubmit: false,
+        fileReadParameter: parameterName,
+      })
     }
     reader.onerror = reportReadFailure
     reader.onabort = reportReadFailure
@@ -804,7 +823,8 @@ export default function CreateConverterDialog({
                             setParameterValues((current) => ({ ...current, [parameter.name]: value }))
                           }}
                           onBrowse={() => browse(parameter.name)}
-                          onFiles={(files: File[]) => readFiles(parameter.name, files)}
+                          onFiles={(files: File[], onReadSuccess?: () => void) =>
+                            readFiles(parameter.name, files, onReadSuccess)}
                           allowUploads={allowUploads}
                           selectedFile={selectedFiles[parameter.name]}
                         />}

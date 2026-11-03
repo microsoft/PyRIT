@@ -486,6 +486,42 @@ describe('CreateConverterDialog', () => {
     })
   })
 
+  it('should move focus from a replaced path input to Replace after the file read completes', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const path = screen.getByRole('textbox', { name: 'source *' })
+    await user.click(path)
+    fireEvent.drop(path, {
+      dataTransfer: { types: ['Files'], files: [new File(['asset'], 'source.pdf', { type: 'application/pdf' })] },
+    })
+
+    finishFileRead(read.mock.contexts[0], 'data:application/pdf;base64,YXNzZXQ=')
+
+    expect(screen.getByRole('button', { name: 'Replace' })).toHaveFocus()
+  })
+
+  it('should not move focus to Replace if the user moved focus during a file read', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const path = screen.getByRole('textbox', { name: 'source *' })
+    await user.click(path)
+    fireEvent.drop(path, {
+      dataTransfer: { types: ['Files'], files: [new File(['asset'], 'source.pdf', { type: 'application/pdf' })] },
+    })
+    const registryName = screen.getByRole('textbox', { name: /registry name/i })
+    await user.click(registryName)
+
+    finishFileRead(read.mock.contexts[0], 'data:application/pdf;base64,YXNzZXQ=')
+
+    expect(registryName).toHaveFocus()
+  })
+
   it('should retain the first file and disclose ignored extras through the shared drop and picker handler', async () => {
     const user = userEvent.setup()
     mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
@@ -620,6 +656,52 @@ describe('CreateConverterDialog', () => {
     expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
       name: 'PathConverter', type: 'PathConverter', params: { source: 'data:application/octet-stream;base64,bmV4dA==' },
     })
+  })
+
+  it('should preserve a submission error when a pending file read succeeds', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    mockedConvertersApi.createConverter.mockRejectedValue(new Error("Converter instance 'PathConverter' already exists"))
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const path = screen.getByRole('textbox', { name: 'source *' })
+    fireEvent.drop(path, {
+      dataTransfer: { types: ['Files'], files: [new File(['asset'], 'original.pdf', { type: 'application/pdf' })] },
+    })
+    finishFileRead(read.mock.contexts[0], 'data:application/pdf;base64,YXNzZXQ=')
+    fireEvent.drop(screen.getByText('original.pdf'), {
+      dataTransfer: { types: ['Files'], files: [new File(['replacement'], 'replacement.pdf', { type: 'application/pdf' })] },
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/already exists/i)
+
+    finishFileRead(read.mock.contexts[1], 'data:application/pdf;base64,cmVwbGFjZW1lbnQ=')
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/already exists/i)
+  })
+
+  it('should clear a file read error when that field is successfully read again', async () => {
+    mockConverterParameters([{ name: 'source', type_name: 'Path', required: true }], 'PathConverter')
+    const read = jest.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(() => undefined)
+    renderDialog()
+    await selectConverterType('PathConverter')
+    const path = screen.getByRole('textbox', { name: 'source *' })
+    fireEvent.drop(path, {
+      dataTransfer: { types: ['Files'], files: [new File(['bad'], 'unreadable.pdf', { type: 'application/pdf' })] },
+    })
+    const failedRead = read.mock.contexts[0]
+    if (!(failedRead instanceof FileReader)) throw new Error('File read did not start')
+    act(() => { failedRead.dispatchEvent(new ProgressEvent('error')) })
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not read/i)
+
+    fireEvent.drop(path, {
+      dataTransfer: { types: ['Files'], files: [new File(['good'], 'readable.pdf', { type: 'application/pdf' })] },
+    })
+    finishFileRead(read.mock.contexts[1], 'data:application/pdf;base64,cmVhZGFibGU=')
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('should let the latest selection win over an older late read and its metadata', async () => {
