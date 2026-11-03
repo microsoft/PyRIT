@@ -149,7 +149,7 @@ class RuntimeLifecycle:
         problems = f"{len(report.failures)} problem{'s' if len(report.failures) > 1 else ''}"
         self.message = (
             f"Saved registry entries couldn't be restored ({problems}). "
-            "Fix or delete the stored files listed in the runtime status, then restart the backend."
+            "Fix or delete the files named in the server log or GET /api/config/runtime, then restart the backend."
         )
         logger.error(
             "Saved registry entries couldn't be restored: %s",
