@@ -99,6 +99,31 @@ def test_program_behaves_invocations_drop_expected_results() -> None:
     assert condition.invocations == (_ProgramInvocation(arguments=("1",)), _ProgramInvocation(stdin="in"))
 
 
+def test_program_behaves_repeats_each_case_in_case_order() -> None:
+    first, second = _ProgramInvocation(arguments=("1",)), _ProgramInvocation(arguments=("2",))
+    condition = ProgramBehaves(
+        runtime_profile_name="python-3.12",
+        cases=(ProgramCase(invocation=first), ProgramCase(invocation=second)),
+        repetitions=3,
+    )
+    assert condition.invocations == (first, first, first, second, second, second)
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+
+
+def test_program_behaves_runs_each_case_once_by_default() -> None:
+    condition = ProgramBehaves(runtime_profile_name="python-3.12", cases=(ProgramCase(),))
+    assert condition.repetitions == 1
+    stored = condition.model_dump(mode="json")
+    del stored["repetitions"]
+    assert Condition.model_validate(stored) == condition
+
+
+@pytest.mark.parametrize("repetitions", [0, -1])
+def test_program_behaves_requires_a_positive_repetition_count(repetitions: int) -> None:
+    with pytest.raises(ValidationError, match="repetitions"):
+        ProgramBehaves(runtime_profile_name="python-3.12", cases=(ProgramCase(),), repetitions=repetitions)
+
+
 def test_program_case_defaults_expect_a_clean_exit_with_no_arguments() -> None:
     case = ProgramCase()
     assert case.invocation == _ProgramInvocation()

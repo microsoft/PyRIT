@@ -76,6 +76,11 @@ print(f"Score: {score.get_value()} - {score.score_rationale}")
 #
 # Replay uses the saved outputs, not the Docker client. Expected results may change, but the
 # runtime profile name and invocation inputs must still match the saved run.
+#
+# Replay repeats judgment, not execution, so a stored run cannot show that a program is
+# deterministic. To check, set `repetitions` on `ProgramBehaves`: each case runs that many times,
+# and a case whose runs reach different verdicts is undetermined. Output a case does not check
+# never counts as a difference.
 
 # %%
 memory = CentralMemory.get_memory_instance()
