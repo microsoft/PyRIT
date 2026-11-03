@@ -8,6 +8,7 @@ import sys
 import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 from unittest.mock import patch
 
@@ -340,6 +341,7 @@ class TestRestoreFailures:
             type_name="A2ATarget",
             params={"endpoint": "https://agent.example.test"},
             external_input=True,
+            allowed_path_params=frozenset(),
         )
 
     def test_refuses_a_class_that_needs_the_server_upload_folder(self, tmp_path: Path) -> None:
@@ -676,6 +678,29 @@ class TestRestoreFailures:
         assert failure.reason is RestoreFailureReason.BUILD_ERROR
         assert "wordswap_path" in failure.message
         assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances
+
+    def test_lets_a_target_set_the_path_parameters_its_class_allows_callers(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        recipes = tmp_path / "recipes"
+        _save(
+            recipes,
+            RegistryRecipeKind.TARGETS,
+            "copilot",
+            {
+                "class_module": "pyrit.prompt_target.github_copilot_target",
+                "class_name": "GitHubCopilotTarget",
+                "params": {"model_name": "gpt-5-mini", "working_directory": str(workspace)},
+            },
+        )
+
+        with patch.dict(sys.modules, {"copilot": ModuleType("copilot")}):
+            report = RegistryRecipeRestorer(source=str(recipes)).restore()
+
+        assert report.failures == []
+        target = TargetRegistry.get_registry_singleton().instances.get("copilot")
+        assert target is not None
+        assert target._working_directory == str(workspace.resolve())
 
     def test_reports_a_name_taken_at_startup_and_fails_its_dependents(self, tmp_path: Path) -> None:
         startup_target = OpenAIChatTarget(
