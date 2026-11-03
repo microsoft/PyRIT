@@ -47,6 +47,21 @@ export function hasChatDraftState(draft?: Partial<ChatDraftContent> | null): boo
 }
 
 /**
+ * True when an accepted send's prompt is already present in saved conversation history.
+ * Genuinely new edits keep their text because they have no accepted submission ID.
+ */
+export function historyContainsAcceptedDraft(
+  draft: Pick<ChatDraftContent, 'text' | 'acceptedSubmissionId'>,
+  userOriginalValues?: Iterable<string> | null,
+): boolean {
+  if (!draft.acceptedSubmissionId || !draft.text || !userOriginalValues) return false
+  for (const value of userOriginalValues) {
+    if (value === draft.text) return true
+  }
+  return false
+}
+
+/**
  * Checks whether a preserved draft belongs to the destination attack and conversation.
  * Prevents an unrelated draft from overwriting another attack or conversation.
  */

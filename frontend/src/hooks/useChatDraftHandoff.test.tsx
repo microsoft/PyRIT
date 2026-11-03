@@ -9,6 +9,7 @@ import type { ReactNode } from 'react'
 import {
   canApplyPendingImport,
   hasChatDraftState,
+  historyContainsAcceptedDraft,
   isChatDraftDirty,
   releaseSupersededUrls,
   revokeAttachmentUrls,
@@ -188,6 +189,23 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         sequence: 1,
       }
       expect(shouldApplyPreservedDraft(unsavedDraft, 'attack-1')).toBe(false)
+    })
+  })
+
+  describe('historyContainsAcceptedDraft', () => {
+    it('returns true only for an accepted submission whose prompt is already saved', () => {
+      expect(historyContainsAcceptedDraft(
+        { text: 'ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE', acceptedSubmissionId: 'send-1' },
+        ['ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE'],
+      )).toBe(true)
+      expect(historyContainsAcceptedDraft(
+        { text: 'ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE' },
+        ['ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE'],
+      )).toBe(false)
+      expect(historyContainsAcceptedDraft(
+        { text: 'a later edit', acceptedSubmissionId: 'send-1' },
+        ['ROUND6 INTERRUPTED NAVIGATION CONTROL DATASETS SEND ONCE'],
+      )).toBe(false)
     })
   })
 

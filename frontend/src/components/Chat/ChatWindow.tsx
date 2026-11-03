@@ -55,6 +55,7 @@ import {
   shouldApplyPreservedDraft,
   canApplyPendingImport,
   hasChatDraftState,
+  historyContainsAcceptedDraft,
   isChatDraftDirty,
   computeAttachmentSignature,
   stableMetadataString,
@@ -469,7 +470,7 @@ export default function ChatWindow({
   const sendState = useChatSendState({ activeConversationId, viewedConversationId, runtimeGeneration: runtime.generation })
   const {
     isSending, recoverableSend, isSendInFlight, reconcileLoadedConversation, getPendingSend,
-    getLoadedBackendMessages, rememberBackendMessages, clearUndoableSend, clearRecoveries,
+    getLoadedBackendMessages, getLatestSendId, rememberBackendMessages, clearUndoableSend, clearRecoveries,
   } = sendState
   const undoableSend = sendState.state.undoable
   const handleConversationLoaded = useCallback((
@@ -706,12 +707,18 @@ export default function ChatWindow({
       discardDraftOnUnmountRef.current = false
       if (shouldDiscard || !ownsDraftRef.current || isWaitingForRestore
         || !hasChatDraftState(activeDraft) || (hasUnrelatedDraft && !hasEditedContent)) return
+      const operation = draftConversationId ? getPendingSend(draftConversationId) : undefined
+      const acceptedSubmissionId = operation?.progress
+        && operation.originalValue === savedDraft.text
+        && getLatestSendId() === operation.submissionId
+        ? operation.submissionId
+        : undefined
       draftHandoff.preserveDraft({
         originatingAttackId: draftAttackId,
         originatingConversationId: draftConversationId,
         originatingPath: location.pathname + location.search + location.hash,
         originatingState: location.state,
-        draft: savedDraft,
+        draft: acceptedSubmissionId ? { ...savedDraft, acceptedSubmissionId } : savedDraft,
       }, draftHandoff.activeSequence, draftHandoff.pendingImport?.id)
     }
   })
@@ -795,7 +802,17 @@ export default function ChatWindow({
       const consumed = draftHandoff.consumePreservedDraft(draftAttackId, draftConversationId, preserved.sequence)
       if (!consumed) return
       handoffRestoredRef.current = preserved.sequence
-      draft = { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
+      const completedAcceptedSend = historyContainsAcceptedDraft(
+        consumed,
+        getLoadedBackendMessages(draftConversationId ?? '')
+          ?.filter((message: BackendMessage) => message.role === 'user')
+          .flatMap((message: BackendMessage) => message.message_pieces
+            .map((piece: BackendMessagePiece) => piece.original_value)
+            .filter((value: string | null | undefined): value is string => Boolean(value))),
+      )
+      draft = completedAcceptedSend
+        ? { ...consumed, text: '', attachments: [], textMetadata: undefined, converters: undefined, acceptedSubmissionId: undefined, systemPrompt: consumed.systemPrompt ?? '' }
+        : { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
       if (consumed.conversation) {
         let editorTarget: TargetInstance | null = consumed.conversation.target === null ? null : activeTarget
         if (consumed.conversation.target) {
