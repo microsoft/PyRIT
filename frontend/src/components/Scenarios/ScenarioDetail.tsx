@@ -40,6 +40,7 @@ import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import ParameterField from '@/components/Parameters/ParameterField'
@@ -742,6 +743,7 @@ function ScenarioLaunchForm({
   scorersError = null,
 }: ScenarioLaunchFormProps) {
   const runtime = useRuntime()
+  const { rememberScanTargets } = useUserPreferences()
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
   const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(null)
@@ -1256,6 +1258,7 @@ function ScenarioLaunchForm({
 
     try {
       const summary = await scenariosApi.startRun(requestResult.request)
+      rememberScanTargets(targets, requestResult.request)
       datasetMetadata.reload()
       setPreviewOpen(false)
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {

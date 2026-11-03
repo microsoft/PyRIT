@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
@@ -154,7 +155,7 @@ function LocationProbe() {
 
 function renderFlow(): void {
   render(
-    <FluentProvider theme={webLightTheme}>
+    <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <MemoryRouter initialEntries={['/scanner/launch']}>
         <LocationProbe />
         <Routes>
@@ -187,7 +188,7 @@ function renderFlow(): void {
           <Route path="/scanner/history/:scenarioResultId" element={<ScenarioRunPage />} />
         </Routes>
       </MemoryRouter>
-    </FluentProvider>,
+    </UserPreferencesProvider></FluentProvider>,
   )
 }
 

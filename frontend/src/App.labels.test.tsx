@@ -419,6 +419,7 @@ describe('Shared new run labels', () => {
     await user.click(panelToggle)
     expect(panelToggle).toHaveAttribute('aria-expanded', 'false')
     await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    expect(await screen.findByRole('button', { name: 'New attack', exact: true })).toBeEnabled()
     expect(await screen.findByRole('combobox', { name: 'Chat target' })).toBeEnabled()
     expect(screen.queryByTestId('operator-locked-banner')).not.toBeInTheDocument()
     expect(within(currentLabels()).getByRole('combobox', { name: 'Operation' })).toHaveValue('future_op')
