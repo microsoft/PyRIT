@@ -1477,7 +1477,6 @@ export interface ScenarioDatasetLoadResponse {
 
 export interface RegisteredScenario {
   supports_objective_scorer?: boolean
-  baseline_identifier?: ComponentIdentifier | null
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
   max_concrete_techniques?: number | null
   scenario_name: string

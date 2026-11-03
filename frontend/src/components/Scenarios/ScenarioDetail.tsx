@@ -985,7 +985,6 @@ function ScenarioLaunchForm({
     () => [
       ...(supportsBaseline ? [{
         ...BASELINE_TECHNIQUE,
-        identifier: scenario.baseline_identifier,
         isBaseline: true,
         disabled: isBaselineForbidden,
       }] : []),
@@ -995,7 +994,7 @@ function ScenarioLaunchForm({
         disabled: false,
       })) : []),
     ],
-    [isBaselineForbidden, scenario.baseline_identifier, supportsBaseline, supportsTechniques, techniqueOptions],
+    [isBaselineForbidden, supportsBaseline, supportsTechniques, techniqueOptions],
   )
   const techniques = selectedTechniques
   const datasetSizeLabel = !datasetOptions.total_limit ? 'Not applicable'
