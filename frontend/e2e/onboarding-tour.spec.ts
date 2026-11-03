@@ -98,27 +98,25 @@ test.describe("Onboarding tour", () => {
     await page.getByRole("button", { name: "Take a tour" }).click();
 
     const dialog = page.getByRole("alertdialog");
+    await page.getByRole("navigation", { name: "Primary" })
+      .getByRole("button", { name: "Registry", exact: true }).click();
+    await expect(page).toHaveURL(/\/registry\/targets$/);
+    await expect(page.getByRole("heading", { name: "Target Registry" })).toBeVisible();
+    await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
-    await expect(dialog).toContainText(
-      "Select a target from the Chat dropdown"
-    );
-    await expect(dialog).toContainText("set an adversarial default");
-    await expect(dialog).toContainText("for your account in this browser");
-    await expect(page.locator('[data-tour="target-card"]')).toBeVisible();
+    await expect(dialog).toContainText("Use New attack to start a conversation");
+    await expect(dialog).toContainText("Configure scan to choose an automated evaluation");
+    await expect(dialog).toContainText("Recent work and saved operations are below");
+    await expect(page.locator('[data-tour="home-workflows"]')).toBeVisible();
 
     await page
-      .getByRole("button", { name: "Configure a target", exact: true })
+      .getByRole("button", { name: "New attack", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/registry\/targets$/);
-    await expect(
-      page.getByRole("heading", { name: "Target Registry" })
-    ).toBeVisible();
+    await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText(
-      "Select a target from the Chat dropdown"
-    );
+    await expect(dialog).toContainText("Use New attack to start a conversation");
 
     await dialog.getByRole("button", { name: "Back", exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
@@ -131,9 +129,9 @@ test.describe("Onboarding tour", () => {
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
     await page
-      .getByRole("button", { name: "Configure a target", exact: true })
+      .getByRole("button", { name: "New attack", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/registry\/targets$/);
+    await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toBeVisible();
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
@@ -182,38 +180,44 @@ test.describe("Onboarding tour", () => {
 
     await seedLastUsedTarget(page);
     await page.goto("/");
-    await expect(page.getByTestId("home-target-active")).toContainText("gpt-4o");
+    await expect(page.locator('[data-tour="home-workflows"]')).toBeVisible();
 
     await page.getByRole("button", { name: "Take a tour" }).click();
     const dialog = page.getByRole("alertdialog");
+    await page.getByRole("navigation", { name: "Primary" })
+      .getByRole("button", { name: "Registry", exact: true }).click();
+    await expect(page).toHaveURL(/\/registry\/targets$/);
+    await expect(page.getByRole("heading", { name: "Target Registry" })).toBeVisible();
+    await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
-    await expect(dialog).toContainText("last-used objective target for new chats and scanner runs");
-    await expect(dialog).toContainText("change your adversarial default");
-    await expect(page.locator('[data-tour="target-card"]')).toBeVisible();
+    await expect(dialog).toContainText("Use New attack to start a conversation");
+    await expect(dialog).toContainText("Configure scan to choose an automated evaluation");
+    await expect(page.locator('[data-tour="home-workflows"]')).toBeVisible();
 
     await page
-      .getByRole("button", { name: "Manage targets", exact: true })
+      .getByRole("button", { name: "New attack", exact: true })
       .click();
-    await expect(page).toHaveURL(/\/registry\/targets$/);
-    await expect(
-      page.getByRole("heading", { name: "Target Registry" })
-    ).toBeVisible();
+    await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toBeVisible();
-    await expect(dialog).toContainText("last-used objective target for new chats and scanner runs");
+    await expect(dialog).toContainText("Use New attack to start a conversation");
 
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
     await expect(page).toHaveURL(/\/attack\/chat$/);
     await expect(dialog).toContainText("Chat shows the message composer");
     await expect(dialog).toContainText("Toggle converter panel");
+    await expect(page.getByRole("combobox", { name: "Chat target", exact: true })).toHaveValue("tour-target");
     await expect(page.getByRole("textbox", { name: "Type prompt here", exact: true })).toBeVisible();
     await expect(page.locator('[data-tour="converter-toggle"]')).toHaveAttribute(
       "aria-label",
       "Toggle converter panel"
     );
     await expect(page.getByTestId("no-target-banner")).toHaveCount(0);
+    expect(await page.evaluate(() => JSON.parse(
+      localStorage.getItem("pyrit.userPreferences.v1.local") ?? "{}",
+    ).lastUsedTargets.objective.registryName)).toBe("tour-target");
   });
 
   test("selects a per-chat target during the tour without creating an objective default", async ({
@@ -246,17 +250,21 @@ test.describe("Onboarding tour", () => {
     await page.getByRole("button", { name: "Take a tour" }).click();
 
     const dialog = page.getByRole("alertdialog");
-    await dialog.getByRole("button", { name: "Next", exact: true }).click();
-    await dialog.getByRole("button", { name: "Next", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Configure a target", exact: true })
-      .click();
+    await page.getByRole("navigation", { name: "Primary" })
+      .getByRole("button", { name: "Registry", exact: true }).click();
 
     await expect(page).toHaveURL(/\/registry\/targets$/);
     await expect(dialog).toBeVisible();
     await expect(page.getByRole("combobox", { name: "Default objective target", exact: true })).toHaveCount(0);
-    await expect(dialog).toContainText("Select a target from the Chat dropdown");
+    await expect(dialog).toContainText("Registry is where you manage targets and converters");
 
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(page.locator('[data-tour="home-workflows"]')).toBeVisible();
+    await expect(dialog).toContainText("Use New attack to start a conversation");
+    await page.getByRole("button", { name: "New attack", exact: true }).click();
+    await expect(page).toHaveURL(/\/attack\/chat$/);
+    await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
 
     await expect(page).toHaveURL(/\/attack\/chat$/);
@@ -271,6 +279,9 @@ test.describe("Onboarding tour", () => {
     expect(await page.evaluate(() => JSON.parse(
       localStorage.getItem("pyrit.userPreferences.v1.local") ?? "{}",
     ).lastUsedTargets)).toBeUndefined();
+    expect(await page.evaluate(() => JSON.parse(
+      localStorage.getItem("pyrit.userPreferences.v1.local") ?? "{}",
+    ).targets?.objective)).toBeUndefined();
   });
 
   test("recovers the Scanner step when Next is pressed from a scenario detail route", async ({

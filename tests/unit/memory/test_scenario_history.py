@@ -103,6 +103,7 @@ async def test_get_scenario_run_history_page_delegates_to_component_async(
         reference_id=reference_id,
         cursor=None,
         limit=50,
+        sort_by="created_at",
     )
     assert result[0] == records
     assert result[2] is True

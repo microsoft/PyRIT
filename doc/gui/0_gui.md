@@ -23,12 +23,21 @@ For other setup options, see [Docker](../getting_started/install_docker.md) or t
 
 ## Home
 
-Home shows your last-used objective target and recent attacks grouped by operation.
-Open an attack to return to its conversation, or go to Registry to configure a
-target. The shared labels bar sets the operator, operation, and custom labels
-for new work; it does not change saved results.
+Home puts **Attacks**, **Scans**, **Recent work**, and **Operations** first.
+Select **New attack** to start a fresh chat, or **Configure scan** to open scanner
+setup. These actions do not send prompts or start a scan. The sidebar's
+**Attacks** entry returns to your last conversation or unsent draft.
+Each workflow has its own history link. Recent work shows up to five saved
+attacks and scans; filter by type or select **Refresh Home** to update the list.
+Open a saved operation to review its work and findings. Registry remains
+available below these sections for setup. Operation links put the selected saved
+operation first, then the newest-created records, not the most recently active
+records. When the complete registry confirms that no targets are registered, the
+secondary setup action offers **Register a target**.
+The shared labels bar applies the selected operator, operation, and custom labels
+to new work; changes do not alter saved results.
 
-![Home page with target and recent work](images/home.png)
+![Home page with workflows and recent work](images/home.png)
 
 ## Chat
 
@@ -36,6 +45,13 @@ Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conv
 workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
 and branch or edit conversations to try another approach. Add an objective and
 select a chat scorer if you want automated assessment of responses.
+
+To score a saved response, open the objective outcome, expand **Automated scorer**,
+and select a scorer. **Apply scorer** evaluates only the latest saved assistant
+response in the open conversation. It keeps an existing complete result for the
+same response, scorer configuration, and objective criteria without another
+evaluation. **Off** hides the action. Earlier responses, other conversations, and
+human scores do not change; future responses keep the selected chat scorer.
 
 New chats and scans start with the last objective target you used. New chats also
 reuse the last chat scorer, including **Off**, unless a Registry default is set.
@@ -69,8 +85,29 @@ Each scenario defines a test workflow with its techniques, data, and scoring.
 Open one to select a target and adjust the settings it supports, such as
 techniques, dataset selection, and concurrency.
 
+Use the chevron on the right of a technique to inspect its identity JSON.
+This does not change the checkbox selection on the left.
+
 Review the run estimate, then launch the scan. Its run page shows progress,
-errors, and results, with links to individual attacks. See the
+errors, and results, with links to individual attacks and conversations.
+Expand an attack group or objective to inspect its attempts. Technique, scorer,
+dataset/seed provenance, and scenario settings use inline identity JSON.
+Decided attack outcomes use **True** and **False**; execution errors remain separate.
+Groups and objectives show success rates and completion counts separately.
+The results page does not include a paired-outcome comparison.
+
+**Watch live conversation** opens saved messages while an attack runs. This view
+is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
+stops remaining scan work and keeps saved results. Ordinary manual chats do not
+have scan cancellation controls.
+After cancellation, saved messages remain available in the read-only chat.
+Saving these conversation links does not add attack outcomes or change success rates.
+
+**Rerun** opens the scenario launch page with saved settings filled in. It does
+not start work or change the original run. Review or edit the settings before
+launching. Recorded target/scorer identities and the scenario version are checked.
+Settings that cannot be restored, including older records without a required identity,
+produce an error instead of silently using current defaults. See the
 [scanner guide](../scanner/0_scanner.md) for the scenario model.
 
 ![Scanner page with available scenarios](images/scanner.png)
@@ -80,7 +117,7 @@ errors, and results, with links to individual attacks. See the
 Select **technique.execute** in Scanner to run one attack technique against
 one free-text objective. This is not Chat: the selected technique controls
 the attack, rather than you writing each turn. You can adjust its configuration
-for this run and add a baseline comparison.
+for this run and include a baseline attack for reference.
 
 For techniques that support conversation history, start with a stored or edited
 conversation. **Use in scan** in Chat copies a conversation into this setup
@@ -147,7 +184,7 @@ finding, or scenario result ID and searches all stored runs. Hover over the fiel
 to see the supported ID types. **Back to scan**, beside Markdown in a scan-owned
 chat, returns to its run.
 
-Supported failed scanner runs can be resumed.
+Supported failed or cancelled scanner runs can be resumed.
 Resume retries unfinished objectives or objectives with execution errors when
 the original launch configuration is available. It skips completed objectives
 with non-error outcomes, including `failure`. Retrying an unsuccessful technique
