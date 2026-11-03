@@ -1,6 +1,6 @@
 import { StrictMode, type ReactNode } from 'react'
 
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { createMemoryRouter, MemoryRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
@@ -29,26 +29,35 @@ jest.mock('@/hooks/useConnectionHealth', () => ({
   ConnectionHealthProvider: ({ children }: { children: ReactNode }) => children,
   useConnectionHealth: () => ({ status: 'connected', reconnectCount: 0 }),
 }))
+jest.mock('@/components/Home/Home', () => ({
+  __esModule: true,
+  default: () => <h1>Home</h1>,
+}))
 jest.mock('@/components/Datasets/DatasetCatalog', () => ({
   __esModule: true,
   default: () => <h1>Dataset catalog</h1>,
+}))
+jest.mock('@/components/Scenarios/ScenarioCatalog', () => ({
+  __esModule: true,
+  default: () => <h1>Scanner launch</h1>,
 }))
 jest.mock('@/components/Layout/MainLayout', () => {
   const { useNavigate, useLocation } = jest.requireActual<typeof import('react-router')>('react-router')
   const { useChatDraftHandoff } = jest.requireActual<typeof import('@/hooks/useChatDraftHandoff')>('@/hooks/useChatDraftHandoff')
   return {
     __esModule: true,
-    default: function DraftTestLayout({ children, onNavigate }: { children: ReactNode; onNavigate: (view: string) => void }) {
+    default: function DraftTestLayout({ children, onNavigate, featureNavigation }: {
+      children: ReactNode; onNavigate: (view: string) => void; featureNavigation?: ReactNode
+    }) {
       const navigate = useNavigate()
       const location = useLocation()
       const handoff = useChatDraftHandoff()
       return <>
         <button onClick={() => onNavigate('datasets')}>Datasets</button>
         <button onClick={() => onNavigate('chat')}>Chat</button>
-        <button onClick={() => navigate('/chat')}>Open unsaved chat</button>
-        <button onClick={() => navigate('/attacks/other')}>Open another attack</button>
-        <button onClick={() => navigate('/attacks/saved/conversations/main')}>Open saved main</button>
-        <button onClick={() => navigate('/attacks/saved/conversations/branch')}>Open another conversation</button>
+        <button onClick={() => onNavigate('scenarios')}>Scanner</button>
+        <button onClick={() => navigate('/attack/chat/saved/conversations/main')}>Open saved main</button>
+        <button onClick={() => navigate('/attack/chat/saved/conversations/branch')}>Open another conversation</button>
         <button onClick={() => navigate(-1)}>Back</button>
         <button onClick={() => navigate(1)}>Forward</button>
         <button onClick={() => handoff.stagePendingImport({
@@ -71,6 +80,7 @@ jest.mock('@/components/Layout/MainLayout', () => {
         })}>Stage saved import</button>
         <output aria-label="Pending import">{handoff.pendingImport ? 'waiting' : 'none'}</output>
         <output aria-label="Current route">{location.pathname}</output>
+        {featureNavigation}
         {children}
       </>
     },
@@ -83,6 +93,9 @@ jest.mock('@/services/api', () => ({
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   attacksApi: {
     createAttack: jest.fn(),
+    listAttacks: jest.fn(),
+    getAttackOptions: jest.fn(),
+    getConverterOptions: jest.fn(),
     getAttack: jest.fn(),
     getMessages: jest.fn(),
     getConversations: jest.fn(),
@@ -95,6 +108,7 @@ jest.mock('@/services/api', () => ({
     previewConversion: jest.fn(),
   },
   labelsApi: { getLabels: jest.fn().mockResolvedValue({ labels: {} }) },
+  operationsApi: { list: jest.fn().mockResolvedValue({ items: [] }) },
   datasetsApi: {
     listDatasets: jest.fn().mockResolvedValue({ items: [{
       name: 'Example dataset', selection_key: 'example-dataset',
@@ -115,6 +129,7 @@ const TARGET = makeTarget({
     supports_json_schema: false,
     supports_json_output: false,
     supports_system_prompt: true,
+    supports_editable_history: true,
     supported_input_modalities: ['text', 'image_path', 'audio_path', 'video_path'],
     supported_output_modalities: ['text'],
   },
@@ -148,7 +163,7 @@ function savedAttack(id = 'saved'): AttackSummary {
   }
 }
 
-function renderChat(path = '/chat', strict = false): ReturnType<typeof render> {
+function renderChat(path = '/attack/chat', strict = false): ReturnType<typeof render> {
   const router = createMemoryRouter([{ path: '*', element: <App /> }], { initialEntries: [path] })
   const app = <RouterProvider router={router} />
   return render(strict ? <StrictMode>{app}</StrictMode> : app)
@@ -162,6 +177,11 @@ async function visitDatasets(user: UserEvent): Promise<void> {
 async function returnToChat(user: UserEvent): Promise<void> {
   await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
   await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+}
+
+async function visitHistory(user: UserEvent): Promise<void> {
+  await user.click(screen.getByRole('tab', { name: 'History', exact: true }))
+  await screen.findByRole('row', { name: 'Open ManualAttack attack' })
 }
 
 async function addConverter(user: UserEvent): Promise<void> {
@@ -184,6 +204,16 @@ describe('App draft handoff with the real chat and composer', () => {
     })
     jest.mocked(targetsApi.getTarget).mockResolvedValue(TARGET)
     jest.mocked(attacksApi.getAttack).mockImplementation(async (id: string) => savedAttack(id))
+    jest.mocked(attacksApi.listAttacks).mockResolvedValue({
+      items: [{
+        ...savedAttack('other'),
+        created_at: '2026-10-28T10:00:00Z',
+        updated_at: '2026-10-28T10:00:00Z',
+      }],
+      pagination: { limit: 25, has_more: false },
+    })
+    jest.mocked(attacksApi.getAttackOptions).mockResolvedValue({ attack_types: ['ManualAttack'] })
+    jest.mocked(attacksApi.getConverterOptions).mockResolvedValue({ converter_types: [] })
     jest.mocked(attacksApi.getMessages).mockImplementation(async (_id: string, conversationId: string) => ({
       conversation_id: conversationId, messages: [], target_response_status: null,
     }))
@@ -196,7 +226,7 @@ describe('App draft handoff with the real chat and composer', () => {
 
   it.each([false, true])('should preserve an unsaved draft across repeated visits with StrictMode=%s', async (strict: boolean) => {
     const user = userEvent.setup()
-    renderChat('/chat', strict)
+    renderChat('/attack/chat', strict)
     await user.type(await screen.findByPlaceholderText('Type prompt here'), 'Unsent prompt')
     for (let visit = 0; visit < 2; visit += 1) {
       await visitDatasets(user)
@@ -205,9 +235,110 @@ describe('App draft handoff with the real chat and composer', () => {
     }
   })
 
+  it.each(['/does-not-exist', '/attack/chat/saved/extra'])(
+    'should preserve the latest chat and draft through the fallback at %s',
+    async (path: string) => {
+      const user = userEvent.setup()
+      const router = createMemoryRouter([{ path: '*', element: <App /> }], {
+        initialEntries: ['/attack/chat'],
+      })
+      render(<RouterProvider router={router} />)
+      const target = await screen.findByRole('combobox', { name: 'Chat target' })
+      await waitFor(() => expect(target).toBeEnabled())
+      await user.selectOptions(target, 'draft-target')
+      await user.type(screen.getByPlaceholderText('Type prompt here'), 'Unsent prompt')
+      await act(async () => { await router.navigate(path) })
+      await screen.findByRole('heading', { name: 'Page not found' })
+      expect(router.state.location.pathname).toBe(path)
+      await user.click(screen.getByRole('link', { name: 'Home', exact: true }))
+      await screen.findByRole('heading', { name: 'Home', exact: true })
+      await returnToChat(user)
+      expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent prompt')
+      expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('draft-target')
+      expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
+      expect(attacksApi.createAttack).not.toHaveBeenCalled()
+      expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+    },
+  )
+
+  it('should retain the unsent chat through History and Scanner and reset only for New attack', async () => {
+    const user = userEvent.setup()
+    renderChat()
+    const composer = await screen.findByPlaceholderText('Type prompt here')
+    await user.type(composer, 'Unsent attack prompt')
+    await user.click(screen.getByRole('button', { name: /add objective/i }))
+    await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Unsent objective')
+    await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
+    await visitHistory(user)
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+    expect(await screen.findByPlaceholderText('Type prompt here')).toHaveValue('Unsent attack prompt')
+    expect(screen.getByRole('button', { name: 'Edit objective' })).toHaveTextContent('Unsent objective')
+    await user.click(screen.getByRole('button', { name: 'Scanner', exact: true }))
+    await screen.findByRole('heading', { name: 'Scanner launch' })
+    await returnToChat(user)
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent attack prompt')
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    expect(screen.getByRole('button', { name: /add objective/i })).toBeInTheDocument()
+    await visitDatasets(user)
+    await returnToChat(user)
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+  })
+
+  it.each(['/attack/chat', '/attack/chat/saved/conversations/main'])(
+    'should let the editor block New attack before any draft reset from %s',
+    async (path: string) => {
+      const user = userEvent.setup()
+      renderChat(path)
+      await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+      if (path === '/attack/chat') {
+        const target = screen.getByRole('combobox', { name: 'Chat target' })
+        await waitFor(() => expect(target).toBeEnabled())
+        await user.selectOptions(target, 'draft-target')
+      }
+      await user.type(screen.getByPlaceholderText('Type prompt here'), 'Original unsent prompt')
+      await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+      await user.click(await screen.findByRole('button', { name: 'Insert message at start' }))
+      await user.type(
+        within(screen.getByRole('region', { name: 'Message 1' })).getByPlaceholderText('Type prompt here'),
+        'Unsaved conversation edit',
+      )
+
+      await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+      const firstDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
+      await user.click(within(firstDialog).getByRole('button', { name: 'Keep editing' }))
+      await screen.findByRole('region', { name: 'Message 1' })
+      expect(within(screen.getByRole('region', { name: 'Message 1' }))
+        .getByPlaceholderText('Type prompt here')).toHaveValue('Unsaved conversation edit')
+
+      await user.click(await screen.findByRole('button', { name: 'Cancel', exact: true }))
+      const cancelDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
+      await user.click(within(cancelDialog).getByRole('button', { name: 'Discard draft' }))
+      await waitFor(() => expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument())
+      expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt')
+      await visitHistory(user)
+      await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+      await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Original unsent prompt'))
+
+      await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+      await user.click(await screen.findByRole('button', { name: 'Insert message at start' }))
+      await user.type(
+        within(screen.getByRole('region', { name: 'Message 1' })).getByPlaceholderText('Type prompt here'),
+        'Confirmed conversation edit',
+      )
+      await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+      const secondDialog = await screen.findByRole('dialog', { name: 'Discard conversation draft?' })
+      await user.click(within(secondDialog).getByRole('button', { name: 'Discard draft' }))
+      await waitFor(() => expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument())
+      expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+      expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+      expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+    },
+  )
+
   it('should restore a saved conversation only after its attack and transcript load', async () => {
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/branch')
+    renderChat('/attack/chat/saved/conversations/branch')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Saved attack draft')
     await user.upload(screen.getByTestId('file-input'), new File(['image'], 'draft.png', { type: 'image/png' }))
@@ -219,7 +350,7 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(screen.queryByDisplayValue('Saved attack draft')).not.toBeInTheDocument()
     await act(async () => { attackLoad.resolve(savedAttack()) })
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
-    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attacks/saved/conversations/branch')
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/branch')
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Saved attack draft')
     expect(screen.getByRole('button', { name: 'Remove draft.png' })).toBeInTheDocument()
     expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(url)
@@ -228,7 +359,7 @@ describe('App draft handoff with the real chat and composer', () => {
   it('should keep the historical conversation shell mounted while metadata loads', async () => {
     const attackLoad = deferred<AttackSummary>()
     jest.mocked(attacksApi.getAttack).mockReturnValueOnce(attackLoad.promise)
-    renderChat('/attacks/saved')
+    renderChat('/attack/chat/saved')
     const toggle = await screen.findByTestId('toggle-panel-btn')
     expect(toggle).toBeDisabled()
     expect(screen.getByText('Loading conversation...', { exact: true })).toBeInTheDocument()
@@ -274,11 +405,11 @@ describe('App draft handoff with the real chat and composer', () => {
         ? { response_error: 'processing', request_turn_number: 0, response_turn_number: 1 } : null,
     }))
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/main')
+    renderChat('/attack/chat/saved/conversations/main')
     await user.click(await screen.findByTestId('copy-to-input-btn-0'))
     await user.click(await screen.findByRole('menuitem', { name: 'Branch attack', exact: true }))
     await waitFor(() => expect(screen.getByLabelText('Current route')).toHaveTextContent(
-      '/attacks/recovered/conversations/recovered-main',
+      '/attack/chat/recovered/conversations/recovered-main',
     ))
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue(originalValue))
     await visitDatasets(user)
@@ -287,23 +418,53 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
   })
 
-  it('should leave an unsaved draft available when another saved attack is opened', async () => {
+  it('should return to retained work after clean saved-chat inspection through History', async () => {
     const user = userEvent.setup()
     renderChat()
     await user.type(await screen.findByPlaceholderText('Type prompt here'), 'Only for my unsaved chat')
-    await visitDatasets(user)
-    await user.click(screen.getByRole('button', { name: 'Open another attack' }))
+    await visitHistory(user)
+    await user.click(screen.getByRole('row', { name: 'Open ManualAttack attack' }))
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
-    await visitDatasets(user)
-    await returnToChat(user)
-    expect(screen.getByLabelText('Current route')).toHaveTextContent('/chat')
-    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Only for my unsaved chat')
+    await visitHistory(user)
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Only for my unsaved chat'))
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
+    expect(attacksApi.createAttack).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
+  })
+
+  it('should keep newer live work and return to it through History until New attack resets it', async () => {
+    const user = userEvent.setup()
+    renderChat()
+    await user.type(await screen.findByPlaceholderText('Type prompt here'), 'Older working draft')
+    await visitHistory(user)
+    await user.click(screen.getByRole('row', { name: 'Open ManualAttack attack' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Newer work in the saved chat')
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Newer work in the saved chat')
+    await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat\/other$/)
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Newer work in the saved chat')
+
+    await visitHistory(user)
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Newer work in the saved chat'))
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat\/other$/)
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    await visitHistory(user)
+    await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
+    expect(await screen.findByPlaceholderText('Type prompt here')).toHaveValue('')
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
+    expect(attacksApi.createAttack).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
   })
 
   it.each(['operator', 'execution'])('should not consume a draft when its destination becomes %s locked', async (lock: string) => {
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/main')
+    renderChat('/attack/chat/saved/conversations/main')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Keep until editable')
     await visitDatasets(user)
@@ -326,7 +487,7 @@ describe('App draft handoff with the real chat and composer', () => {
 
   it('should retain a draft when its attack is temporarily missing', async () => {
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/main')
+    renderChat('/attack/chat/saved/conversations/main')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Retry this destination')
     await visitDatasets(user)
@@ -342,7 +503,7 @@ describe('App draft handoff with the real chat and composer', () => {
 
   it('should discard a missing destination when explicitly starting a new attack', async () => {
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/main')
+    renderChat('/attack/chat/saved/conversations/main')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Discard this missing destination')
     await visitDatasets(user)
@@ -352,13 +513,13 @@ describe('App draft handoff with the real chat and composer', () => {
     await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
     await user.click(await screen.findByRole('button', { name: 'Start a new attack' }))
     await returnToChat(user)
-    expect(screen.getByLabelText('Current route')).toHaveTextContent('/chat')
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat')
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
   it.each([404, 500])('should retain a draft until its transcript can be loaded after HTTP %s', async (status: number) => {
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/main')
+    renderChat('/attack/chat/saved/conversations/main')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Retry this transcript')
     await visitDatasets(user)
@@ -374,7 +535,7 @@ describe('App draft handoff with the real chat and composer', () => {
 
   it('should leave a draft available when another conversation in the same attack is opened', async () => {
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/main')
+    renderChat('/attack/chat/saved/conversations/main')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Only for the main conversation')
     await visitDatasets(user)
@@ -384,12 +545,12 @@ describe('App draft handoff with the real chat and composer', () => {
     await visitDatasets(user)
     await returnToChat(user)
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Only for the main conversation'))
-    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attacks/saved/conversations/main')
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/main')
   })
 
   it.each([false, true])('should retain newer edits made before transcript loading with early departure=%s', async (leaveEarly: boolean) => {
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/main')
+    renderChat('/attack/chat/saved/conversations/main')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Older draft')
     await visitDatasets(user)
@@ -546,7 +707,7 @@ describe('App draft handoff with the real chat and composer', () => {
     jest.mocked(attacksApi.saveConversation).mockResolvedValue({ attack, messages: empty })
     jest.mocked(attacksApi.submitMessageSend).mockImplementation(() => new Promise(() => {}))
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/main')
+    renderChat('/attack/chat/saved/conversations/main')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
     await screen.findByRole('region', { name: 'Message 1' })
@@ -585,7 +746,7 @@ describe('App draft handoff with the real chat and composer', () => {
 
   it('should retain uploaded media across visits and release it when explicitly removed', async () => {
     const user = userEvent.setup()
-    renderChat('/chat', true)
+    renderChat('/attack/chat', true)
     await screen.findByPlaceholderText('Type prompt here')
     await user.upload(screen.getByTestId('file-input'), new File(['media'], 'draft.wav', { type: 'audio/wav' }))
     const url = jest.mocked(URL.createObjectURL).mock.results[0].value
@@ -601,12 +762,12 @@ describe('App draft handoff with the real chat and composer', () => {
 
   it('should not return to a discarded saved draft after starting a new attack', async () => {
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/main')
+    renderChat('/attack/chat/saved/conversations/main')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Discard this saved draft')
-    await user.click(screen.getByRole('button', { name: 'New Attack', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
     await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
-    expect(screen.getByLabelText('Current route')).toHaveTextContent('/chat')
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat')
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
@@ -641,7 +802,7 @@ describe('App draft handoff with the real chat and composer', () => {
 
   it('should apply an import only to its exact saved conversation', async () => {
     const user = userEvent.setup()
-    renderChat('/attacks/saved/conversations/branch')
+    renderChat('/attack/chat/saved/conversations/branch')
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.click(screen.getByRole('button', { name: 'Stage saved import' }))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
@@ -653,7 +814,7 @@ describe('App draft handoff with the real chat and composer', () => {
 
   it.each([false, true])('should release owned media when the App closes with a preserved snapshot=%s', async (preserve: boolean) => {
     const user = userEvent.setup()
-    const rendered = renderChat('/chat', true)
+    const rendered = renderChat('/attack/chat', true)
     await screen.findByPlaceholderText('Type prompt here')
     await user.upload(screen.getByTestId('file-input'), new File(['image'], 'owned.png', { type: 'image/png' }))
     const url = jest.mocked(URL.createObjectURL).mock.results[0].value

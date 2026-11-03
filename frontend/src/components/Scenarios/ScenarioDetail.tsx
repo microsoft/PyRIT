@@ -499,7 +499,7 @@ function ScenarioDetailStateFrame({ children }: ScenarioDetailStateFrameProps) {
   return (
     <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
+        <Link to="/scanner/launch" className={styles.backLink}>
           <ArrowLeftRegular /> Back to scanners
         </Link>
         {children}
@@ -649,7 +649,7 @@ function ScenarioDetailContent({
         <div className={styles.centeredState} data-testid="preset-not-found">
           <Text size={400}>Preset &quot;{presetName}&quot; was not found</Text>
           <Text size={200}>It may have been renamed or deleted.</Text>
-          <Link to={`/scanner/${encodeURIComponent(decodedScenarioName)}`}>
+          <Link to={`/scanner/launch/${encodeURIComponent(decodedScenarioName)}`}>
             Open {decodedScenarioName} without a preset
           </Link>
         </div>
@@ -1363,12 +1363,12 @@ function ScenarioLaunchForm({
       aria-labelledby="scenario-detail-title"
     >
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
+        <Link to="/scanner/launch" className={styles.backLink}>
           <ArrowLeftRegular /> Back to scanners
         </Link>
 
         <div className={styles.headerText}>
-          <Text id="scenario-detail-title" as="h1" size={600} weight="semibold">
+          <Text id="scenario-detail-title" as="h2" size={600} weight="semibold">
             {scenario.scenario_name}
           </Text>
         </div>
