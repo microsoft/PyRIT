@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route } from "./_fixtures";
+import { test, expect, selectChatTarget, type Page, type Route } from "./_fixtures";
 import type { BackendMessage, TargetInfo } from "@/types";
 import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
 import { READY_RUNTIME } from "./_runtime";
@@ -232,17 +232,9 @@ async function mockAllAPIs(
   });
 }
 
-/** Navigate to the target registry, set the objective default, return to chat. */
+/** Select the mock target in a new chat. */
 async function activateMockTarget(page: Page) {
-  await page.getByRole("button", { name: "Registry", exact: true }).click();
-  await expect(page.getByText("Target Registry")).toBeVisible({
-    timeout: 10000,
-  });
-  const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
-  await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
-  await objectiveDefault.selectOption({ index: 1 });
-  await page.getByRole("button", { name: "Attacks", exact: true }).click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
+  await selectChatTarget(page);
 }
 
 /** Send a message and wait for the response. */

@@ -2592,6 +2592,7 @@ class TestScenarioRunServiceListRuns:
             statuses=[],
             labels=None,
             operation_ids=None,
+            reference_id=None,
             cursor=None,
             limit=10,
         )
@@ -2608,6 +2609,18 @@ class TestScenarioRunServiceListRuns:
         (await service.list_runs_async(scenario_names=["second"], cursor=first_page.pagination.next_cursor))
         assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is None
         (await service.list_runs_async(cursor="not-a-cursor"))
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is None
+
+    async def test_history_cursor_is_bound_to_the_id_lookup(self, mock_memory) -> None:
+        record = _make_history_record(result_id=str(uuid.uuid4()), run_state=ScenarioRunState.COMPLETED)
+        mock_memory.get_scenario_run_history_page_async.return_value = ([record], {}, True)
+        service = ScenarioRunService()
+        reference_id = uuid.uuid4()
+        first = await service.list_runs_async(reference_id=reference_id, limit=1)
+        await service.list_runs_async(reference_id=reference_id, cursor=first.pagination.next_cursor, limit=1)
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is not None
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["reference_id"] == reference_id
+        await service.list_runs_async(reference_id=uuid.uuid4(), cursor=first.pagination.next_cursor, limit=1)
         assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is None
 
     async def test_history_uses_plan_and_latest_non_error_attempt_per_unit(self, mock_memory) -> None:
