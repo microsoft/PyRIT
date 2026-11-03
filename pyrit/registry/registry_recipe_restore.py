@@ -509,8 +509,8 @@ class RegistryRecipeRestorer:
 
         Constructor errors can quote a server setting, such as an endpoint with a SAS token. The text
         is cut at the first ``?`` or ``#``, where a URL's query or fragment starts. A user name and
-        password can't be told apart reliably, so text with an ``@`` isn't shown at all. Look-alike
-        characters, such as a full-width ``＠``, count as the characters they look like, and the text
+        password can't be told apart reliably, so text with an ``@`` isn't shown at all. A look-alike
+        character, such as a full-width ``＠``, counts as the character it looks like, and the text
         that is shown keeps its original characters.
 
         Returns:
@@ -521,27 +521,28 @@ class RegistryRecipeRestorer:
         try:
             # A plain str, so no string method a subclass overrides runs on the text below.
             text = str.__str__(str(error))
-            folded = unicodedata.normalize("NFKC", text)
         except Exception:
             return name
-        if "@" in folded:
+        if any(_looks_like(char, "@") for char in text):
             return f"{name} (message hidden {hidden})"
-        if "?" not in folded and "#" not in folded:
+        cut_at = next((index for index, char in enumerate(text) if _looks_like(char, "?#")), None)
+        if cut_at is None:
             return f"{name}: {text}" if text else name
-        cut_at = next((index for index, char in enumerate(text) if _may_start_query(char)), 0)
         cut = text[:cut_at]
         return f"{name}: {cut} (rest hidden {hidden})" if cut.strip() else f"{name} (message hidden {hidden})"
 
 
-def _may_start_query(char: str) -> bool:
+def _looks_like(char: str, marks: str) -> bool:
     """
-    Return whether a character is, or looks like, a ``?`` or ``#``.
+    Return whether a character is, or looks like, one of the given marks.
+
+    Each character is folded on its own, which keeps the check linear in the length of the text.
 
     Returns:
-        bool: True if the character could start a URL's query or fragment.
+        bool: True if the character's compatibility form contains one of the marks.
     """
     folded = unicodedata.normalize("NFKC", char)
-    return "?" in folded or "#" in folded
+    return any(mark in folded for mark in marks)
 
 
 class _RecipeRejectedError(Exception):

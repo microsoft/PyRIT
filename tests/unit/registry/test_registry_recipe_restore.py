@@ -5,6 +5,7 @@ import dataclasses
 import json
 import os
 import sys
+import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -126,6 +127,20 @@ class TestRestoreOrderAndRebuild:
         factory = AttackTechniqueRegistry.get_registry_singleton().instances.get("formal_red_team")
         assert factory is not None
         assert factory.technique_tags == ["custom"]
+
+    def test_finds_a_startup_entry_by_its_exact_name(self, tmp_path: Path) -> None:
+        registry = TargetRegistry.get_registry_singleton()
+        for name in ("ghost\ud800", "other\udcff"):
+            startup_target = OpenAIChatTarget(
+                endpoint="https://startup.openai.azure.com/openai/v1", model_name="gpt-4o", auth_mode="identity"
+            )
+            registry.instances.register(startup_target, name=name)
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("ghost\ud800", "other\udcff"))
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        assert report.failures == []
+        assert isinstance(registry.instances.get("a_pool"), RoundRobinTarget)
 
     def test_orders_entries_of_the_same_kind(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("b_member", "c_member"))
@@ -462,6 +477,25 @@ class TestRestoreFailures:
     def test_safe_messages_drop_queries_fragments_and_user_info(self, text: str, expected: str) -> None:
         assert RegistryRecipeRestorer._safe_message(ValueError(text)) == expected
 
+    @pytest.mark.parametrize(
+        "mark", ["\u2047", "\u2048", "\u2049", "\ufe16", "\ufe56", "\ufe5f", "\uff03", "\uff1f", "\ufe6b", "\uff20"]
+    )
+    def test_safe_message_treats_every_look_alike_as_the_real_mark(self, mark: str) -> None:
+        message = RegistryRecipeRestorer._safe_message(ValueError(f"got https://host/v1{mark}SECRET"))
+
+        assert "SECRET" not in message
+        assert message.endswith("because it may include a credential)")
+
+    def test_safe_message_folds_one_character_at_a_time(self) -> None:
+        marks = "\u0315" * 50 + "\u0300" * 50
+        with patch(
+            "pyrit.registry.registry_recipe_restore.unicodedata.normalize", wraps=unicodedata.normalize
+        ) as normalize:
+            message = RegistryRecipeRestorer._safe_message(ValueError(f"a{marks}\uff1fsig=SECRET"))
+
+        assert message == f"ValueError: a{marks} (rest hidden because it may include a credential)"
+        assert {len(call.args[1]) for call in normalize.call_args_list} == {1}
+
     def test_safe_message_survives_an_error_that_cannot_be_printed(self) -> None:
         class UnprintableError(Exception):
             def __str__(self) -> str:
@@ -509,8 +543,9 @@ class TestRestoreFailures:
 
         (failure,) = report.failures
         assert failure.reason is RestoreFailureReason.MISSING_DEPENDENCY
-        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\\ud800")
-        json.dumps(report.model_dump(mode="json"), ensure_ascii=False).encode("utf-8")
+        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800")
+        sent = json.loads(json.dumps(report.model_dump(mode="json"), ensure_ascii=False).encode("utf-8"))
+        assert sent["failures"][0]["dependency"]["name"] == "ghost\\ud800"
 
     def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
         attack_registry = AttackRegistry.get_registry_singleton()
