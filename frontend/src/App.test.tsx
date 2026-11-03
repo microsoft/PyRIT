@@ -201,7 +201,6 @@ jest.mock("./components/Chat/ChatWindow", () => {
     onRetryTargetResolution,
     onConversationCreated,
     onSelectConversation,
-    onNewAttack,
     labels,
     scenarioResultId,
     isLoadingAttack,
@@ -308,9 +307,6 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="route-location" data-navigation-state={JSON.stringify(location.state)}>
           {`${location.pathname}${location.search}`}
         </span>
-        <button onClick={onNewAttack} data-testid="new-attack">
-          New Attack
-        </button>
         <button
           onClick={() => onConversationCreated("ar-123", "conv-123")}
           data-testid="set-conversation"
