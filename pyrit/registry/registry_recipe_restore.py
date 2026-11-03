@@ -394,10 +394,10 @@ class RegistryRecipeRestorer:
                 self._build_technique(name=stored.ref.name, recipe=recipe)
             else:
                 registry = self._get_registry(stored.ref.kind)
-                # As in the API, a target may let callers set some path parameters, such as a working folder.
-                allowed_path_params = getattr(
-                    registry.get_class(recipe.class_name), "caller_path_parameters", frozenset()
-                )
+                allowed_path_params: frozenset[str] = frozenset()
+                if stored.ref.kind is RegistryRecipeKind.TARGETS:
+                    # As in the target API, a target may let callers set some path parameters, such as a working folder.
+                    allowed_path_params = registry.get_class(recipe.class_name).caller_path_parameters
                 registry.create_named_instance(
                     name=stored.ref.name,
                     type_name=recipe.class_name,
