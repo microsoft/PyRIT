@@ -143,10 +143,10 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
         participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
-        Require current evidence from every participating child.
+        Require current snapshots from every participating same-input child.
 
         Returns:
-            Root candidates whose participating snapshots are current.
+            list[Score]: The candidates with current snapshots from every child.
         """
         return await self._filter_matching_scores_by_children_async(
             scores=scores,
@@ -196,7 +196,8 @@ class TrueFalseCompositeScorer(TrueFalseScorer):
             message_piece_id=self._piece_id_from_scorable(scorable),
         )
         _set_snapshot_participation(
-            score=result, child_scores={index: child_scores[0] for index, child_scores in applicable_results}
+            score=result,
+            child_scores={index: child_scores[0] for index, child_scores in applicable_results},
         )
         return [result]
 

@@ -68,7 +68,7 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("textbox", { name: "Tags" }).fill("browser_test");
   await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
   await expect(page.getByRole("dialog")).not.toContainText(/Implementation of|This form shows|Runtime only|prompt_normalizer/);
-  await page.getByLabel("max_attempts_on_failure").fill("0");
+  await page.getByRole("spinbutton", { name: "max_attempts_on_failure", exact: true }).fill("0");
   const requestConverters = page.getByRole("combobox", { name: "Request converters", exact: true });
   for (let i = 0; i < 2; i++) {
     await requestConverters.click();
@@ -332,8 +332,8 @@ async function submitDuplicateName(page: Page): Promise<() => void> {
   await page.getByRole("button", { name: "Create First Converter" }).click();
   await page.getByRole("combobox", { name: "Converter type" }).click();
   await page.getByTestId("converter-type-option-CaesarConverter").click();
-  await page.getByLabel("Registry name").fill("caesar-custom");
-  await page.getByLabel("caesar_offset *").fill("5");
+  await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar-custom");
+  await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
   await page.getByRole("button", { name: "Add Converter" }).click();
   await expect(page.getByRole("button", { name: "Adding..." })).toBeVisible();
 
@@ -343,8 +343,8 @@ async function submitDuplicateName(page: Page): Promise<() => void> {
 async function createCaesarConverter(page: Page, name: string): Promise<void> {
   await page.getByRole("combobox", { name: "Converter type" }).click();
   await page.getByTestId("converter-type-option-CaesarConverter").click();
-  await page.getByLabel("Registry name").fill(name);
-  await page.getByLabel("caesar_offset *").fill("5");
+  await page.getByRole("textbox", { name: "Registry name", exact: true }).fill(name);
+  await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
   await page.getByRole("button", { name: "Add Converter" }).click();
 }
 
@@ -386,8 +386,8 @@ test.describe("Converter Registry", () => {
     await page.getByRole("button", { name: "New Converter" }).click();
     await page.getByRole("combobox", { name: "Converter type" }).click();
     await page.getByTestId("converter-type-option-CaesarConverter").click();
-    await page.getByLabel("Registry name").fill("caesar-custom");
-    await page.getByLabel("caesar_offset *").fill("5");
+    await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar-custom");
+    await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
     await page.getByRole("button", { name: "Add Converter" }).click();
 
     await expect(page.getByText("caesar-custom")).toBeVisible();
@@ -414,8 +414,8 @@ test.describe("Converter Registry", () => {
     await page.getByRole("button", { name: "Create First Converter" }).click();
     await page.getByRole("combobox", { name: "Converter type" }).click();
     await page.getByTestId("converter-type-option-CaesarConverter").click();
-    await page.getByLabel("Registry name").fill("caesar-focus");
-    await page.getByLabel("caesar_offset *").fill("5");
+    await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar-focus");
+    await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
     await page.getByRole("button", { name: "Add Converter" }).click();
 
     // The empty-state trigger unmounts with the list it belonged to, so focus
@@ -494,7 +494,7 @@ test.describe("Converter Registry", () => {
     // reopened dialog keeps the empty form the user opened.
     await expect(dialog.getByRole("button", { name: "Add Converter" })).toBeEnabled();
     await expect(page.getByRole("alert")).toHaveCount(0);
-    await expect(dialog.getByLabel("Registry name")).toHaveValue("");
+    await expect(dialog.getByRole("textbox", { name: "Registry name", exact: true })).toHaveValue("");
   });
 
   for (const { name, viewport, deviceScaleFactor } of [

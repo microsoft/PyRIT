@@ -13,6 +13,15 @@ Your choice is saved in this browser. System follows the operating system's
 light/dark preference. High-contrast mode overrides every palette and hides
 decorations without forgetting the selected preset.
 
+## Contextual help
+
+Hover over a term or field label to read its explanation. Its information
+button also opens the help with a click, tap, or Enter/Space. Press Escape
+to dismiss it. Label clicks still focus the field. Field descriptions remain
+available to assistive technology while the help is closed. Required markers,
+validation errors, input-format guidance, and unavailable-estimate reasons
+stay visible.
+
 ## Conversation selection
 
 Opening a saved attack with related conversations automatically opens the

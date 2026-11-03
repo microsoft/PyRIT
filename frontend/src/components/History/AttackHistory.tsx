@@ -6,7 +6,7 @@ import {
   MessageBar,
   MessageBarBody,
 } from '@fluentui/react-components'
-import { ArrowSyncRegular, ChatRegular, SettingsRegular } from '@fluentui/react-icons'
+import { ArrowSyncRegular, ChatRegular } from '@fluentui/react-icons'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 import { toApiError } from '../../services/errors'
 import type { AttackSummary, FilterOption, TargetInstance } from '../../types'
@@ -260,10 +260,10 @@ export default function AttackHistory({
         view: 'chat' as const,
       }
     : {
-        text: 'Set an objective default in the registry, or select a target directly in Chat.',
-        label: 'Configure target',
-        icon: <SettingsRegular />,
-        view: 'registry' as const,
+        text: 'Select a target in Chat to start an attack.',
+        label: 'Open Chat',
+        icon: <ChatRegular />,
+        view: 'chat' as const,
       }
 
   return (
