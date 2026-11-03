@@ -75,7 +75,7 @@ class _LocalDatasetLoader(SeedDatasetProvider):
             # could not merge it into the seeds. Carry the resolved provider name onto every
             # seed that has no name of its own before the dataset is returned for persistence;
             # otherwise the persisted rows stay unnamed and named queries/listing miss them.
-            # Explicit per-seed names are kept as-is (#3740).
+            # Explicit per-seed names are kept as-is.
             for seed in dataset.seeds:
                 if not seed.dataset_name:
                     seed.dataset_name = self.dataset_name

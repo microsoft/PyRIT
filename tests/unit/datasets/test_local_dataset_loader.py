@@ -10,6 +10,7 @@ import pytest
 from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
 from pyrit.memory import MemoryInterface
 from pyrit.models import SeedDataset, SeedOrigin, SeedPrompt
+from pyrit.scenario.core.dataset_configuration import DatasetConfiguration, DatasetSource
 
 
 class TestLocalDatasetLoader:
@@ -126,7 +127,7 @@ seeds:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestLocalDatasetFilenameFallback:
-    """A filename-derived dataset name must reach the seeds before they are persisted (#3740)."""
+    """A filename-derived dataset name must reach the seeds before they are persisted."""
 
     filename_only_yaml = """
 source: http://example.com
@@ -134,10 +135,9 @@ seeds:
   - value: filename fallback prompt
     data_type: text
     origin: local
-  - value: per seed named prompt
+  - value: second filename fallback prompt
     data_type: text
     origin: local
-    dataset_name: per_seed_dataset
 """
 
     explicitly_named_yaml = """
@@ -158,17 +158,28 @@ seeds:
         dataset = await _LocalDatasetLoader(file_path=file_path).fetch_dataset_async()
 
         assert dataset.dataset_name == "filename_only"
-        assert dataset.seeds[0].dataset_name == "filename_only"
-        assert dataset.seeds[1].dataset_name == "per_seed_dataset"
+        assert all(seed.dataset_name == "filename_only" for seed in dataset.seeds)
 
         await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="test")
 
         stored = await sqlite_instance.get_seeds_async(dataset_name="filename_only")
-        assert [seed.value for seed in stored] == ["filename fallback prompt"]
-        assert set(await sqlite_instance.get_seed_dataset_names_async()) == {
-            "filename_only",
-            "per_seed_dataset",
+        assert len(stored) == 2
+        assert {seed.value for seed in stored} == {
+            "filename fallback prompt",
+            "second filename fallback prompt",
         }
+        assert set(await sqlite_instance.get_seed_dataset_names_async()) == {"filename_only"}
+
+    async def test_filename_fallback_dataset_prepares_for_scenarios_async(
+        self, tmp_path: Path, sqlite_instance: MemoryInterface
+    ) -> None:
+        file_path = tmp_path / "filename_only.yaml"
+        file_path.write_text(self.filename_only_yaml, encoding="utf-8")
+        source = DatasetSource(name="filename_only", provider=_LocalDatasetLoader(file_path=file_path))
+
+        await DatasetConfiguration(sources=[source]).prepare_async()
+
+        assert len(await sqlite_instance.get_seeds_async(dataset_name="filename_only")) == 2
 
     async def test_explicit_dataset_name_is_unchanged_async(
         self, tmp_path: Path, sqlite_instance: MemoryInterface
