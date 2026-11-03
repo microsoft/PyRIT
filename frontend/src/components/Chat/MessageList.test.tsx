@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import MessageList from "./MessageList";
@@ -2119,7 +2119,7 @@ describe("MessageList", () => {
       // Mock fetch + blob
       const mockBlob = new Blob(["test"], { type: "image/png" });
       const mockObjectUrl = "blob:http://localhost/mock-uuid";
-      global.fetch = jest.fn().mockResolvedValue({ blob: () => Promise.resolve(mockBlob) });
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, blob: () => Promise.resolve(mockBlob) });
       global.URL.createObjectURL = jest.fn().mockReturnValue(mockObjectUrl);
       global.URL.revokeObjectURL = jest.fn();
 
