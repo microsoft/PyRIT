@@ -11,15 +11,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import and_, select, text
+from sqlalchemy.orm import Session
 from unit.mocks import get_mock_target_identifier, make_scenario_result, run_memory_session_async
 
 from pyrit.common.utils import to_sha256
 from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
-from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
+from pyrit.memory.memory_models import AttackResultEntry, ConversationEntry, ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AttackOutcome,
     AttackResult,
+    Conversation,
+    Finding,
+    FindingEvidence,
+    Operation,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
@@ -137,6 +142,149 @@ async def test_history_pages_descending_equal_timestamps_by_id(sqlite_instance: 
     assert has_more is True
     assert [row.scenario_result_id for row in second_page] == [str(uuid.UUID(int=1))]
     assert second_has_more is False
+
+
+async def test_history_id_lookup_matches_stored_runs_before_pagination(sqlite_instance: MemoryInterface) -> None:
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
+    scenarios = [
+        _make_scenario(
+            result_id=uuid.UUID(int=index + 10),
+            timestamp=timestamp + timedelta(minutes=index),
+            name=f"Scenario{index}",
+            state=ScenarioRunState.COMPLETED,
+            labels={"operator": "alice" if index == 0 else "bob"},
+        )
+        for index in range(3)
+    ]
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios)
+    attacks = [
+        AttackResult(
+            attack_result_id=str(uuid.UUID(int=index + 100)),
+            conversation_id=str(uuid.UUID(int=index + 200)),
+            objective="objective",
+            outcome=AttackOutcome.FAILURE,
+            execution_time_ms=1,
+            timestamp=timestamp,
+            attribution_parent_id=str(scenarios[index % 2].id),
+            attribution_data={"parent_collection": "attack"},
+        )
+        for index in range(3)
+    ]
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=attacks)
+    related_id = uuid.UUID(int=300)
+    with sqlite_instance._get_session() as session:
+        session.add(
+            ConversationEntry(
+                conversation=Conversation(
+                    conversation_id=str(related_id),
+                    attack_result_id=attacks[0].attack_result_id,
+                )
+            )
+        )
+        session.commit()
+    operation = await sqlite_instance.add_operation_async(Operation(name="History lookup"))
+    finding = await sqlite_instance.add_finding_async(
+        finding=Finding(
+            operation_id=operation.id,
+            title="Stored finding",
+            severity="low",
+        )
+    )
+    for attack in attacks:
+        await sqlite_instance.add_finding_evidence_async(
+            evidence=FindingEvidence(
+                finding_id=finding.id,
+                attack_result_id=uuid.UUID(attack.attack_result_id),
+            )
+        )
+
+    unfiltered, _, _ = await sqlite_instance.get_scenario_run_history_page_async(limit=1)
+    assert unfiltered[0].scenario_result_id == str(scenarios[2].id)
+    for reference_id in (
+        scenarios[0].id,
+        uuid.UUID(attacks[0].attack_result_id),
+        uuid.UUID(attacks[0].conversation_id),
+        related_id,
+    ):
+        records, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(reference_id=reference_id)
+        assert [record.scenario_result_id for record in records] == [str(scenarios[0].id)]
+        assert not has_more
+    first, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(reference_id=finding.id, limit=1)
+    assert [record.scenario_result_id for record in first] == [str(scenarios[1].id)]
+    assert has_more
+    second, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(
+        reference_id=finding.id,
+        limit=1,
+        cursor=ScenarioHistoryKeysetCursor(
+            timestamp=first[0].created_at,
+            scenario_result_id=first[0].scenario_result_id,
+        ),
+    )
+    assert [record.scenario_result_id for record in second] == [str(scenarios[0].id)]
+    assert not has_more
+    filtered, _, _ = await sqlite_instance.get_scenario_run_history_page_async(
+        reference_id=finding.id,
+        labels={"operator": "alice"},
+    )
+    assert [record.scenario_result_id for record in filtered] == [str(scenarios[0].id)]
+    unknown, _, _ = await sqlite_instance.get_scenario_run_history_page_async(reference_id=uuid.uuid4())
+    assert unknown == []
+
+
+async def test_history_id_lookup_matches_legacy_pruned_conversation_before_pagination_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    timestamp = datetime(2026, 8, 7, tzinfo=UTC)
+    pruned_id = uuid.uuid4()
+    scenarios = [
+        _make_scenario(
+            result_id=uuid.uuid4(),
+            timestamp=timestamp + timedelta(minutes=index),
+            name=f"LegacyScenario{index}",
+            state=ScenarioRunState.COMPLETED,
+            labels={},
+        )
+        for index in range(3)
+    ]
+    await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=scenarios)
+
+    def persist_legacy_entries(session: Session) -> None:
+        for scenario, pruned_ids in zip(scenarios, ([str(pruned_id)], [], None), strict=True):
+            entry = AttackResultEntry(
+                entry=AttackResult(
+                    attack_result_id=str(uuid.uuid4()),
+                    conversation_id=str(uuid.uuid4()),
+                    objective="objective",
+                    outcome=AttackOutcome.FAILURE,
+                    execution_time_ms=1,
+                    timestamp=timestamp,
+                    attribution_parent_id=str(scenario.id),
+                    attribution_data={"parent_collection": "attack"},
+                )
+            )
+            entry.pruned_conversation_ids = pruned_ids
+            session.add(entry)
+        session.add(ConversationEntry(conversation=Conversation(conversation_id=str(pruned_id), attack_result_id=None)))
+        session.commit()
+
+    await run_memory_session_async(memory=sqlite_instance, operation=persist_legacy_entries)
+    persisted_owner = await run_memory_session_async(
+        memory=sqlite_instance,
+        operation=lambda session: session.execute(
+            select(ConversationEntry.attack_result_id).where(ConversationEntry.conversation_id == str(pruned_id))
+        ).one(),
+    )
+    assert persisted_owner.attack_result_id is None
+
+    unfiltered, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(limit=1)
+    assert [record.scenario_result_id for record in unfiltered] == [str(scenarios[2].id)]
+    assert has_more
+    records, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(reference_id=pruned_id, limit=1)
+    assert [record.scenario_result_id for record in records] == [str(scenarios[0].id)]
+    assert not has_more
+    unknown, _, has_more = await sqlite_instance.get_scenario_run_history_page_async(reference_id=uuid.uuid4(), limit=1)
+    assert unknown == []
+    assert not has_more
 
 
 async def test_history_creation_order_is_stable_when_scenario_entry_is_rebuilt(

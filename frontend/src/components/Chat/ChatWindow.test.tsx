@@ -320,7 +320,6 @@ describe("ChatWindow Integration", () => {
   ];
 
   const defaultProps = {
-    onNewAttack: jest.fn(),
     defaultsReady: true,
     activeTarget: mockTarget,
     availableTargets: [mockTarget],
@@ -371,6 +370,16 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => { expect(screen.queryByText("Attack Result Details")).not.toBeInTheDocument(); });
   });
 
+  it("encodes both IDs in the manual-continuation source link", () => {
+    render(<TestWrapper><ChatWindow {...defaultProps} manualContinuation={{
+      source_attack_result_id: "attack/\u03b1 %",
+      source_conversation_id: "conv/?#%",
+    }} /></TestWrapper>);
+    expect(screen.getByRole("link", { name: "the original automated result" })).toHaveAttribute(
+      "href", "/attack/chat/attack%2F%CE%B1%20%25/conversations/conv%2F%3F%23%25",
+    );
+  });
+
   it("keeps an automated result read-only until Continue manually creates a separate attack", async () => {
     const user = userEvent.setup();
     const original = makeTextResponse("Original automated response").messages;
@@ -385,6 +394,7 @@ describe("ChatWindow Integration", () => {
       },
       messages: { ...original, conversation_id: "manual-conversation" },
     });
+
     render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="automated" conversationId="original"
       activeConversationId="original" objective="Original goal" executionReadOnly
       lastResponseMessagePieceId="p-resp"
@@ -2310,10 +2320,10 @@ describe("ChatWindow Integration", () => {
 
     // The ribbon no longer shows the "PyRIT Attack" prefix; the target
     // badge stands on its own as the leftmost element.
-    expect(screen.getByRole("heading", { level: 1, name: "Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Chat" })).toBeInTheDocument();
     expect(screen.queryByText("PyRIT Attack")).not.toBeInTheDocument();
     expect(screen.getByTestId("target-badge")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /new attack/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /new attack/i })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox")).toBeInTheDocument();
   });
 
@@ -2438,7 +2448,6 @@ describe("ChatWindow Integration", () => {
     expect(request.destination).toBe("new_attack");
     expect(request.messages.map((message) => message.pieces[0].converted_value)).toEqual([btoa("First prompt")]);
     expect(request.messages[0].pieces[0].applied_converter_ids).toEqual(["base64"]);
-    expect(defaultProps.onNewAttack).not.toHaveBeenCalled();
     expect(await screen.findByText("Conversation saved.")).toBeInTheDocument();
     await screen.findByRole("button", { name: "Send message" });
     expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Second prompt");
@@ -2483,7 +2492,7 @@ describe("ChatWindow Integration", () => {
         <Route path="/" element={<ChatWindow {...defaultProps} attackResultId="existing" conversationId="source"
           activeConversationId="source" objective="Source objective"
           defaultBranchTarget={makeTarget({ target_registry_name: "unrelated-default", capabilities: buildCapabilities() })} />} />
-        <Route path="/scanner/technique.execute" element={<><h1>Technique configuration</h1><RouterLocation /></>} />
+        <Route path="/scanner/launch/technique.execute" element={<><h1>Technique configuration</h1><RouterLocation /></>} />
       </Routes></MemoryRouter>
     </UserPreferencesProvider></FluentProvider>);
     await user.click(await screen.findByTestId("copy-to-input-btn-1"));
@@ -2500,7 +2509,7 @@ describe("ChatWindow Integration", () => {
     if (useInTechnique) {
       expect(await screen.findByRole("heading", { name: "Technique configuration" })).toBeInTheDocument();
       expect(screen.getByLabelText("Current URL")).toHaveTextContent(
-        "/scanner/technique.execute?prepended_conversation_id=copied-conversation",
+        "/scanner/launch/technique.execute?prepended_conversation_id=copied-conversation",
       );
       expect(defaultProps.onConversationCreated).not.toHaveBeenCalled();
       expect(defaultProps.onSelectConversation).not.toHaveBeenCalled();
@@ -2793,7 +2802,7 @@ describe("ChatWindow Integration", () => {
     });
   });
 
-  it("shows a safe scenario-run breadcrumb only when provenance is present", () => {
+  it("shows the scan return link with the conversation actions only when provenance is present", () => {
     const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
     const { rerender } = render(
       <TestWrapper>
@@ -2801,20 +2810,19 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByRole("navigation", { name: "Attack provenance" })).toBeInTheDocument();
-    expect(screen.getByRole("link", {
-      name: `Return to scenario run ${scenarioResultId}`,
-    })).toHaveAttribute("href", `/scanner-history/${scenarioResultId}`);
+    expect(within(screen.getByRole("group", { name: "Conversation actions" })).getByRole("link", {
+      name: "Back to scan",
+    })).toHaveAttribute("href", `/scanner/history/${scenarioResultId}`);
 
     rerender(
       <TestWrapper>
         <ChatWindow {...defaultProps} scenarioResultId={null} />
       </TestWrapper>
     );
-    expect(screen.queryByRole("navigation", { name: "Attack provenance" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Back to scan" })).not.toBeInTheDocument();
   });
 
-  it("returns to the originating scenario run from the breadcrumb", async () => {
+  it("returns to the originating scenario run from the chat controls", async () => {
     const user = userEvent.setup();
     const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
     const navigationState = {
@@ -2830,14 +2838,14 @@ describe("ChatWindow Integration", () => {
     render(
       <UserPreferencesProvider accountKey="local">
         <FluentProvider theme={webLightTheme}>
-        <MemoryRouter initialEntries={[{ pathname: "/attacks/attack-1", state: navigationState }]}>
+        <MemoryRouter initialEntries={[{ pathname: "/attack/chat/attack-1", state: navigationState }]}>
           <Routes>
             <Route
-              path="/attacks/:attackResultId"
+              path="/attack/chat/:attackResultId"
               element={<ChatWindow {...defaultProps} scenarioResultId={scenarioResultId} />}
             />
             <Route
-              path="/scanner-history/:scenarioResultId"
+              path="/scanner/history/:scenarioResultId"
               element={<OriginatingScenario />}
             />
           </Routes>
@@ -2847,7 +2855,7 @@ describe("ChatWindow Integration", () => {
     );
 
     await user.click(screen.getByRole("link", {
-      name: `Return to scenario run ${scenarioResultId}`,
+      name: "Back to scan",
     }));
 
     expect(screen.getByRole("heading", {
@@ -2947,30 +2955,6 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByTestId("no-target-banner")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Configure Target" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add objective/i })).toBeEnabled();
-  });
-
-  it("should call onNewAttack when New Attack button is clicked", async () => {
-    const user = userEvent.setup();
-    const onNewAttack = jest.fn();
-
-    mockedAttacksApi.getMessages.mockResolvedValue({ messages: [] });
-    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
-
-    render(
-      <TestWrapper>
-        <ChatWindow
-          {...defaultProps}
-          onNewAttack={onNewAttack}
-          attackResultId="ar-conv-123"
-          conversationId="conv-123"
-          activeConversationId="conv-123"
-        />
-      </TestWrapper>
-    );
-
-    await user.click(screen.getByRole("button", { name: "New Attack", exact: true }));
-
-    expect(onNewAttack).toHaveBeenCalled();
   });
 
   it("should allow drafting but disable sending when no target is selected", () => {

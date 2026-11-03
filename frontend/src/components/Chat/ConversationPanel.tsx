@@ -94,12 +94,14 @@ export default function ConversationPanel({
   const [prevAttackResultId, setPrevAttackResultId] = useState<string | null>(attackResultId ?? null)
   if (attackResultId !== prevAttackResultId) {
     setPrevAttackResultId(attackResultId ?? null)
-    if (!attackResultId) {
-      setConversations([])
-      setMainConversationId(null)
-      setError(null)
-      setIsLoading(false)
-    }
+    // Any switch of attack invalidates the loaded list: without this the
+    // previous attack's conversations render under the new attack's header
+    // until the fetch resolves, and rows clicked in that window hand the wrong
+    // conversation ids to the new attack's context.
+    setConversations([])
+    setMainConversationId(null)
+    setError(null)
+    setIsLoading(attackResultId != null)
   }
 
   const handleRetry = useCallback(() => {
