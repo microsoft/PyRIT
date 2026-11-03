@@ -113,10 +113,32 @@ async def test_frequency_shift_uses_single_upper_sideband(tmp_path: Path) -> Non
     assert spectrum[mirrored_sideband] < spectrum[upper_sideband] * 0.01
 
 
+@pytest.mark.usefixtures("sqlite_instance")
+async def test_frequency_shift_removes_content_that_would_alias(tmp_path: Path) -> None:
+    """Input content above the translated Nyquist limit must not fold into baseband."""
+    sample_rate = 44100
+    samples = (
+        np.sin(2 * np.pi * 440 * np.arange(sample_rate) / sample_rate)
+        + np.sin(2 * np.pi * 8000 * np.arange(sample_rate) / sample_rate)
+    ).astype(np.float32)
+    source = tmp_path / "wideband.wav"
+    await asyncio.to_thread(wavfile.write, source, sample_rate, samples)
+
+    result = await AudioFrequencyConverter(shift_value=20000).convert_async(prompt=str(source))
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+
+    frequencies = np.fft.rfftfreq(len(output), d=1 / rate)
+    spectrum = np.abs(np.fft.rfft(output))
+    expected = np.argmin(np.abs(frequencies - 20440))
+    aliased = np.argmin(np.abs(frequencies - 16100))
+
+    assert spectrum[expected] > 100 * spectrum[aliased]
+
+
 async def test_convert_async_success(sqlite_instance):
     # Simulate WAV data
     sample_rate = 44100
-    mock_audio_data = np.random.randint(-32768, 32767, size=(100,), dtype=np.int16)
+    mock_audio_data = (16000 * np.sin(2 * np.pi * 440 * np.arange(sample_rate) / sample_rate)).astype(np.int16)
 
     # Create a temporary file for the WAV file
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav_file:
@@ -141,7 +163,8 @@ async def test_convert_async_success(sqlite_instance):
 async def test_convert_async_stereo_audio(sqlite_instance):
     """Frequency shifting should support multi-channel WAV files."""
     sample_rate = 44100
-    mock_audio_data = np.tile(np.array([[1000, -1000], [500, -500]], dtype=np.int16), (sample_rate // 2, 1))
+    tone = (1000 * np.sin(2 * np.pi * 440 * np.arange(sample_rate // 2) / sample_rate)).astype(np.int16)
+    mock_audio_data = np.column_stack((tone, -tone))
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav_file:
         original_wav_path = temp_wav_file.name
