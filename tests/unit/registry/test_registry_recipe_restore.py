@@ -351,11 +351,14 @@ class TestRestoreFailures:
     @pytest.mark.parametrize(
         ("endpoint", "shown"),
         [
-            ("https://evil.example/openai/v1?sig=SYNTHETIC-SAS#frag", "https://evil.example/openai/v1"),
-            ("https://evil.example/openai/v1'part?sig=SYNTHETIC-SAS#frag", "https://evil.example/openai/v1'part"),
-            ("https://evil.example/open\u00a0ai/v1?sig=SYNTHETIC-SAS", "https://evil.example/open\u00a0ai/v1"),
-            ("https://user:hunter2@evil.example/openai/v1?sig=SYNTHETIC-SAS#frag", None),
-            ("//user:hunter2@evil.example/openai/v1?sig=SYNTHETIC-SAS", None),
+            ("https://evil.example/openai/v1?sig=SYNTHETIC-SAS#frag", "'https://evil.example/openai/v1"),
+            ("https://evil.example/openai/v1'part?sig=SYNTHETIC-SAS", "'https://evil.example/openai/v1'part"),
+            ("https://evil.example/openai/v1?sig=SYNTH\tETIC-SAS", "'https://evil.example/openai/v1"),
+            ("evil.example/openai/v1?api-version=1 &sig=SYNTHETIC-SAS", "'evil.example/openai/v1"),
+            ("https://evil.example/openai/v1#SYNTHETIC-SAS", "'https://evil.example/openai/v1"),
+            ("https://user:hunter2@evil.example/openai/v1?sig=SYNTHETIC-SAS", None),
+            ("https://user:hun\nter2@evil.example/openai/v1", None),
+            ("//user:hunter2@evil.example/openai/v1", None),
         ],
     )
     def test_build_errors_drop_credentials_from_urls(self, tmp_path: Path, endpoint: str, shown: str | None) -> None:
@@ -368,11 +371,22 @@ class TestRestoreFailures:
         (failure,) = report.failures
         assert failure.reason is RestoreFailureReason.BUILD_ERROR
         if shown is None:
-            assert failure.message == "ValueError"
+            assert failure.message == "ValueError (message hidden because it may include a credential)"
         else:
-            assert f"'{shown}" in failure.message
-        for secret in ("hunter2", "SYNTHETIC-SAS", "frag"):
+            assert failure.message.startswith("ValueError: Identity-based authentication requires")
+            assert shown in failure.message
+        for secret in ("hunter2", "hun", "ter2", "SYNTHETIC", "SYNTH", "ETIC", "frag"):
             assert secret not in failure.message
+
+    def test_build_errors_keep_text_without_a_credential(self, tmp_path: Path) -> None:
+        no_endpoint = {**_IDENTITY_TARGET, "params": {"auth_mode": "identity", "model_name": "gpt-4o"}}
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "server_endpoint", no_endpoint)
+
+        with patch.dict(os.environ, {"OPENAI_CHAT_ENDPOINT": "https://api.example.test/v1"}):
+            report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert "'https://api.example.test/v1'. Pass auth_mode" in failure.message
 
     def test_error_text_that_is_not_a_valid_url_fails_only_that_entry(self, tmp_path: Path) -> None:
         malformed = {
@@ -394,21 +408,31 @@ class TestRestoreFailures:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
-            ("got ://host/path?sig=SECRET", "ValueError: got ://host/path"),
-            ("got https://[x?sig=SECRET", "ValueError: got https://[x"),
-            ("got https:host/path?sig=SECRET#SECRET", "ValueError: got https:host/path"),
-            ("got https://host/pa\u00a0th?sig=SECRET#SECRET", "ValueError: got https://host/pa\u00a0th"),
-            ("keeps  spacing https://host/?sig=SECRET  intact", "ValueError: keeps  spacing https://host/  intact"),
-            ("bad value: 'abc' (expected a number?)", "ValueError: bad value: 'abc' (expected a number?)"),
-            ("no address here", "ValueError: no address here"),
-            ("got //user:SECRET@host/path", "ValueError"),
-            ("got user:SECRET@https://host/path", "ValueError"),
-            ("got https://user\t:SECRET@host/path", "ValueError"),
-            ("got https://host/a b?sig=SECRET", "ValueError"),
+            ("got https://host/v1?sig=SECRET", "ValueError: got https://host/v1"),
+            ("got https:host/p#SECRET", "ValueError: got https:host/p"),
+            ("got https://host/v1#a?b=SECRET", "ValueError: got https://host/v1"),
+            ("got https://host/v1? sig=SEC\tRET tail", "ValueError: got https://host/v1"),
+            ("got host/v1?api-version=1 &sig=SECRET", "ValueError: got host/v1"),
+            ("could not be coerced to float: 'hot'", "ValueError: could not be coerced to float: 'hot'"),
+            (
+                "Missing required parameters: ['objective_target']",
+                "ValueError: Missing required parameters: ['objective_target']",
+            ),
+            ("got https://host/v1", "ValueError: got https://host/v1"),
+            ("got //user:SECRET@host/v1", "ValueError (message hidden because it may include a credential)"),
+            ("got https://user:SEC\nRET@host/v1", "ValueError (message hidden because it may include a credential)"),
+            ("contact admin@example.com", "ValueError (message hidden because it may include a credential)"),
         ],
     )
-    def test_safe_messages_drop_credentials_from_anything_that_may_be_a_url(self, text: str, expected: str) -> None:
+    def test_safe_messages_drop_queries_fragments_and_user_info(self, text: str, expected: str) -> None:
         assert RegistryRecipeRestorer._safe_message(ValueError(text)) == expected
+
+    def test_safe_message_survives_an_error_that_cannot_be_printed(self) -> None:
+        class UnprintableError(Exception):
+            def __str__(self) -> str:
+                raise RuntimeError("cannot print")
+
+        assert RegistryRecipeRestorer._safe_message(UnprintableError()) == "UnprintableError"
 
     def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
         attack_registry = AttackRegistry.get_registry_singleton()
