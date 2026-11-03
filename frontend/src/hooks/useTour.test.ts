@@ -33,7 +33,7 @@ const TOUR_ANCHORS = [
   'chat-prerequisite',
   'converter-toggle',
   'scanner-catalog',
-  'history-tabs',
+  'feature-tabs',
   'registry-tabs',
 ]
 
@@ -118,13 +118,13 @@ describe('useTour', () => {
       '[data-tour="target-card"]',
       '[data-tour="chat-prerequisite"]',
       '[data-tour="scanner-catalog"]',
-      '[data-tour="history-tabs"]',
+      '[data-tour="feature-tabs"]',
       '[data-tour="registry-tabs"]',
     ])
-    expect(steps[0].content).toContain('Technique.execute opens Chat')
+    expect(steps[0].content).toContain('Attacks opens Chat')
     expect(steps[0].content).toContain('Scanner launches full test campaigns')
     expect(steps[4].content).toContain('Scanner runs a whole campaign')
-    expect(steps[5].content).toContain('The Attacks tab lists individual conversations')
+    expect(steps[5].content).toContain('Attacks and Scanner each have a History tab')
     expect(steps[6].content).toContain('Register targets and set your objective and adversarial defaults')
   })
 
