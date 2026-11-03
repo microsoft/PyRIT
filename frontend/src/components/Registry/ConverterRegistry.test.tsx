@@ -197,7 +197,7 @@ describe('ConverterRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Remove' }))
 
     expect(await screen.findByText('caesar')).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: 'Filter by type' })).toHaveValue('')
+    expect(await screen.findByRole('combobox', { name: 'Filter by type' })).toHaveValue('')
     expect(screen.getByRole('textbox', { name: 'Search converters' })).toHaveValue('converter')
     expect(screen.getByText('1 of 1 converters')).toBeVisible()
   })
@@ -230,7 +230,7 @@ describe('ConverterRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Remove' }))
 
     expect(await screen.findByRole('button', { name: 'Identity for text' })).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: 'Filter by type' })).toHaveValue('')
+    expect(await screen.findByRole('combobox', { name: 'Filter by type' })).toHaveValue('')
     expect(screen.getByRole('combobox', { name: 'Filter by output' })).toHaveValue('')
     expect(screen.getByText('1 of 1 converters')).toBeVisible()
   })
@@ -255,7 +255,7 @@ describe('ConverterRegistry', () => {
     await user.click(screen.getByRole('button', { name: 'Remove' }))
 
     expect(await screen.findByText('base64-second')).toBeInTheDocument()
-    expect(screen.getByRole('combobox', { name: 'Filter by type' })).toHaveValue('Base64Converter')
+    expect(await screen.findByRole('combobox', { name: 'Filter by type' })).toHaveValue('Base64Converter')
     expect(screen.getByRole('combobox', { name: 'Filter by output' })).toHaveValue('text')
     expect(screen.getByText('1 of 2 converters')).toBeVisible()
   })
