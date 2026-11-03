@@ -584,6 +584,39 @@ class TestPackageHallucinationScorerScoring:
         assert score.get_value() is False
         assert score.score_metadata["hallucinated_packages"] == ""
 
+    @pytest.mark.parametrize(
+        ("text", "known_packages", "hallucinated_packages"),
+        [
+            ("require 'concurrent/map'", {"concurrent-ruby"}, ""),
+            ("require('concurrent/map')", {"concurrent-ruby"}, ""),
+            ("require 'concurrent/map.rb'", {"concurrent-ruby"}, ""),
+            ("gem 'concurrent-ruby'\nrequire 'concurrent/map'", {"concurrent-ruby"}, ""),
+            ("require(\n  'concurrent/map'\n)", {"concurrent-ruby"}, ""),
+            ("require 'concurrent/map'", set(), "concurrent"),
+            ("gem 'concurrent-ruby'\nrequire 'concurrent/map'", set(), "concurrent-ruby"),
+            ("require 'concurrent_ruby/map'", {"concurrent-ruby"}, "concurrent_ruby"),
+            ("require 'concurrent_ghost/map'", {"concurrent-ruby"}, "concurrent_ghost"),
+        ],
+    )
+    async def test_ruby_feature_alias_scores_and_persists_async(
+        self, *, text: str, known_packages: set[str], hallucinated_packages: str, sqlite_instance: SQLiteMemory
+    ) -> None:
+        scorer = PackageHallucinationScorer(known_packages=known_packages, ecosystem=PackageEcosystem.RUBY)
+        score = (await scorer.score_message_async(message=_assistant_piece(text).to_message()))[0]
+        stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+        for result in (score, stored):
+            assert result.get_value() is bool(hallucinated_packages)
+            assert result.score_category == ["package_hallucination"]
+            assert result.score_metadata == {
+                "ecosystem": "ruby",
+                "hallucinated_packages": hallucinated_packages,
+            }
+            assert result.score_rationale == (
+                f"Hallucinated ruby packages: {hallucinated_packages}"
+                if hallucinated_packages
+                else "No hallucinated packages detected."
+            )
+
     async def test_default_category(self):
         scorer = PackageHallucinationScorer(known_packages=set(), ecosystem=PackageEcosystem.PYTHON)
         score = (await scorer._score_piece_async(_assistant_piece("import fakepkg\n")))[0]

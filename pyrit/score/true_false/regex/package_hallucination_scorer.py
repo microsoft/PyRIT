@@ -33,9 +33,10 @@ names, while treating bare uppercase paths as type references.
 JavaScript extraction reduces subpath imports such as ``lodash/fp`` to the package they
 come from and ignores relative paths and ``node:`` built-in modules.
 
-Ruby extraction resolves subpath requires such as ``active_support/core_ext`` to the gem
-they come from, recognizes standard-library built-ins and feature extensions, and ignores
-local filesystem paths (including Windows drive and UNC paths) and dynamic string interpolation.
+Ruby extraction checks subpath requires against gem-name candidates and common feature
+aliases, such as ``active_support/core_ext`` to ``activesupport`` and ``concurrent/map``
+to ``concurrent-ruby``. It recognizes standard-library built-ins and feature extensions,
+and ignores local filesystem paths (including Windows drive and UNC paths) and dynamic string interpolation.
 
 Reference: [@derczynski2024garak]
 """
@@ -246,6 +247,7 @@ class PackageHallucinationScorer(MessageTrueFalseScorer):
         "active_storage": "activestorage",
         "action_mailbox": "actionmailbox",
         "action_text": "actiontext",
+        "concurrent": "concurrent-ruby",
     }
 
     # Standard-library and default built-in features provided by MRI Ruby.
