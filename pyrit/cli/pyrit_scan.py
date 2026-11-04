@@ -1120,11 +1120,12 @@ async def _run_scenario_async(
             client=client,
             scenario_result_id=scenario_result_id,
         )
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n\nCancelling scenario run...")
+        cancellation_task = asyncio.create_task(client.cancel_scenario_run_async(scenario_result_id=scenario_result_id))
         try:
-            await client.cancel_scenario_run_async(scenario_result_id=scenario_result_id)
-            print("Scenario run cancelled.")
+            await asyncio.shield(cancellation_task)
+            print("Cancellation request sent to server.")
         except Exception:
             print("Warning: could not cancel scenario run on server.")
         return 1

@@ -255,7 +255,8 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
     for conv in items:
         name = conv.get("converter_id", "unknown")
         _header(name)
-        print(f"    Class: {conv.get('converter_type', '')}")
+        identifier = conv.get("identifier") or {}
+        print(f"    Class: {identifier.get('class_name', '')}")
         display_name = conv.get("display_name") or ""
         if display_name:
             print(f"    Name: {display_name}")
