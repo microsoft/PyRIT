@@ -22,11 +22,25 @@ jest.mock('@/components/Registry/CreateConverterDialog', () => ({
   default: ({
     open,
     onCreated,
+    onClose,
   }: {
     open: boolean
-    onCreated: (converterId: string) => void
+    onCreated: (converterId: string, isCurrentOpening: boolean) => void
+    onClose?: () => void
   }) => open
-    ? <button onClick={() => onCreated('new-converter')}>Complete converter creation</button>
+    ? (
+      <div>
+        <button onClick={() => onCreated('new-converter', true)}>Complete converter creation</button>
+        <button
+          onClick={() => {
+            onClose?.()
+            onCreated('new-converter', false)
+          }}
+        >
+          Dismiss then complete converter creation
+        </button>
+      </div>
+    )
     : null,
 }))
 
@@ -364,6 +378,26 @@ describe('ConverterPanel', () => {
 
     expect(await screen.findByTestId('converter-item-new-converter')).toBeInTheDocument()
     expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes the registry but does not append to the pipeline when creation completes after dialog dismissal', async () => {
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [textConverter] })
+      .mockResolvedValueOnce({
+        items: [textConverter, makeConverter('new-converter', 'CaesarConverter')],
+      })
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByTestId('converter-panel-list')
+
+    await user.click(screen.getByRole('combobox', { name: 'Add converter' }))
+    await user.click(screen.getByTestId('create-converter-option'))
+    await user.click(screen.getByRole('button', { name: 'Dismiss then complete converter creation' }))
+
+    // Converter list in registry should be refreshed
+    expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2)
+    // But the pipeline must not append the converter
+    expect(screen.queryByTestId('converter-item-new-converter')).not.toBeInTheDocument()
   })
 
   it('returns the selected registry ID with the converted value', async () => {

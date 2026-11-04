@@ -176,6 +176,7 @@ export default function ConverterPanel({
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [createTargetPieceType, setCreateTargetPieceType] = useState<string | null>(null)
   const [saving, setSaving] = useState<{
     stage: ConverterPipelineStage
     pieceType: string
@@ -313,6 +314,32 @@ export default function ConverterPanel({
     addConverter(effectiveActiveTab, converterId)
   }, [addConverter, effectiveActiveTab])
 
+  const handleOpenCreateDialog = useCallback((): void => {
+    setCreateTargetPieceType(effectiveActiveTab)
+    setCreateDialogOpen(true)
+  }, [effectiveActiveTab])
+
+  const handleCloseCreateDialog = useCallback((): void => {
+    setCreateDialogOpen(false)
+    setCreateTargetPieceType(null)
+  }, [])
+
+  const handleConverterCreated = useCallback((converterId: string, isCurrentOpening: boolean): void => {
+    const targetPieceType = createTargetPieceType
+    if (isCurrentOpening) {
+      setCreateDialogOpen(false)
+      setCreateTargetPieceType(null)
+    }
+    // Only append the new converter to the pipeline if this dialog opening
+    // remained active until creation completed and the active modality tab matches.
+    // Late completions after dismissal (or tab switch) only refresh the registry.
+    if (isCurrentOpening && targetPieceType && targetPieceType === effectiveActiveTab) {
+      void loadConverters(converterId, targetPieceType)
+    } else {
+      void loadConverters()
+    }
+  }, [createTargetPieceType, effectiveActiveTab, loadConverters])
+
   const removeConverter = useCallback((index: number): void => {
     setPipeline(effectiveActiveTab, (stages: ConverterPipelineStage[]) => stages.filter(
       (_: ConverterPipelineStage, currentIndex: number) => currentIndex !== index,
@@ -428,7 +455,7 @@ export default function ConverterPanel({
             <SelectConverterInput
               groupedConverters={groupedConverters}
               onOptionSelect={handleConverterSelect}
-              onCreateNew={() => setCreateDialogOpen(true)}
+              onCreateNew={handleOpenCreateDialog}
             />
           )}
           {!isBatch && activeInputs.map((input: ConverterInputPiece) => <ValuePreview
@@ -609,11 +636,8 @@ export default function ConverterPanel({
       />
       <CreateConverterDialog
         open={createDialogOpen}
-        onClose={() => setCreateDialogOpen(false)}
-        onCreated={(converterId: string, isCurrentOpening: boolean) => {
-          if (isCurrentOpening) setCreateDialogOpen(false)
-          void loadConverters(converterId, effectiveActiveTab)
-        }}
+        onClose={handleCloseCreateDialog}
+        onCreated={handleConverterCreated}
       />
       {settings && <CreateConverterDialog
         open

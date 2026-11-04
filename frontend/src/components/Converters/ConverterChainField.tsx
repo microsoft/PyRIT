@@ -119,11 +119,17 @@ export default function ConverterChainField({
           }}
       />
     })}
-    {createOpen && <CreateConverterDialog open onClose={() => setCreateOpen(false)}
+    {createOpen && <CreateConverterDialog
+      open
+      onClose={() => setCreateOpen(false)}
       onCreated={(name: string, isCurrentOpening: boolean) => {
         if (!active.current) return
-        if (isCurrentOpening) setCreateOpen(false)
-        add(name)
+        if (isCurrentOpening) {
+          setCreateOpen(false)
+          add(name)
+        }
+        // Refresh the converters registry on late success, but mutate the chain
+        // only if this dialog opening was not dismissed.
         void convertersApi.listConverters().then((response) => {
           if (!active.current) return
           onConvertersChanged(response.items)

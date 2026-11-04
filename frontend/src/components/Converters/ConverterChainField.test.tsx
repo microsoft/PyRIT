@@ -24,8 +24,38 @@ describe('ConverterChainField', () => {
   })
 })
 
-jest.mock('@/services/api', () => ({ convertersApi: { createConverter: jest.fn() } }))
-jest.mock('@/components/Registry/CreateConverterDialog', () => ({ __esModule: true, default: () => null }))
+jest.mock('@/services/api', () => ({
+  convertersApi: {
+    createConverter: jest.fn(),
+    listConverters: jest.fn(),
+  },
+}))
+jest.mock('@/components/Registry/CreateConverterDialog', () => ({
+  __esModule: true,
+  default: ({
+    open,
+    onClose,
+    onCreated,
+  }: {
+    open: boolean
+    onClose: () => void
+    onCreated: (name: string, isCurrentOpening: boolean) => void
+  }) => open
+    ? (
+      <div data-testid="mock-create-dialog">
+        <button onClick={() => onCreated('new-converter', true)}>Complete creation</button>
+        <button
+          onClick={() => {
+            onClose()
+            onCreated('new-converter', false)
+          }}
+        >
+          Dismiss then complete creation
+        </button>
+      </div>
+    )
+    : null,
+}))
 let mockGeneration = ''
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: () => ({ ready: true, generation: mockGeneration }) }))
 
@@ -124,5 +154,37 @@ describe('ConverterChainField registry save', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await user.click(await screen.findByRole('combobox', { name: 'Request converters' }))
     expect(screen.queryByRole('option', { name: /^saved/ })).not.toBeInTheDocument()
+  })
+
+  it('appends converter and refreshes list when created successfully', async () => {
+    jest.mocked(convertersApi.listConverters).mockResolvedValue({
+      items: [converter, { ...converter, converter_id: 'new-converter' }],
+    })
+    const user = userEvent.setup()
+    render(<Harness value={[]} />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Request converters' }))
+    await user.click(screen.getByTestId('create-converter-option'))
+    await user.click(screen.getByRole('button', { name: 'Complete creation' }))
+
+    await waitFor(() => expect(screen.queryByTestId('mock-create-dialog')).not.toBeInTheDocument())
+    expect(convertersApi.listConverters).toHaveBeenCalled()
+    expect(await screen.findByRole('button', { name: /Settings for converter new-converter/ })).toBeInTheDocument()
+  })
+
+  it('refreshes the list but does not append to the chain when dialog was dismissed before creation finished', async () => {
+    jest.mocked(convertersApi.listConverters).mockResolvedValue({
+      items: [converter, { ...converter, converter_id: 'new-converter' }],
+    })
+    const user = userEvent.setup()
+    render(<Harness value={[]} />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Request converters' }))
+    await user.click(screen.getByTestId('create-converter-option'))
+    await user.click(screen.getByRole('button', { name: 'Dismiss then complete creation' }))
+
+    await waitFor(() => expect(screen.queryByTestId('mock-create-dialog')).not.toBeInTheDocument())
+    expect(convertersApi.listConverters).toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /Settings for converter new-converter/ })).not.toBeInTheDocument()
   })
 })
