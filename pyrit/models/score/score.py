@@ -18,6 +18,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PlainSerializer,
+    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -73,6 +74,19 @@ class Score(BaseModel):
         extra="forbid",
         validate_assignment=False,
     )
+
+    _snapshot_participation: dict[str, Any] | None = PrivateAttr(default=None)
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Compare canonical score fields without private freshness state.
+
+        Returns:
+            Whether the same concrete score model has equal canonical values.
+        """
+        if not isinstance(other, Score):
+            return NotImplemented
+        return type(self) is type(other) and self.__dict__ == other.__dict__
 
     id: uuid.UUID | str = Field(default_factory=uuid4)
 
