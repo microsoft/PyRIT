@@ -1254,7 +1254,7 @@ class Scenario(ABC):
                 errors = self._check_adversarial_target(target=target)
                 for technique in self._scenario_techniques:
                     factory = factories.get(technique.value)
-                    if factory is None or not factory.uses_default_adversarial_target or not factory.uses_adversarial:
+                    if factory is None or not factory.uses_default_adversarial_target:
                         continue
                     if (
                         self._objective_target is not None

@@ -14,13 +14,15 @@ from pyrit.converter import StringJoinConverter, TranslationConverter
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import HistorySquashNormalizer
+from pyrit.models import SeedPrompt
 from pyrit.models.catalog import RunScenarioRequest, ScenarioRunSizeEstimateRequest
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
-from pyrit.prompt_target import CapabilityName, TargetCapabilities, TargetConfiguration
+from pyrit.prompt_target import CapabilityName, TargetCapabilities, TargetConfiguration, TargetRequirements
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory, override_default_adversarial_target
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.multilingual import Multilingual
 from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
@@ -68,6 +70,21 @@ def named_target(name: str) -> MockPromptTarget:
     target = MockPromptTarget()
     target.set_model_name(model_name=name)
     return target
+
+
+@pytest.fixture
+def simulated_outer_opt_out_factory() -> AttackTechniqueFactory:
+    factory = AttackTechniqueFactory.with_simulated_conversation(
+        name="simulated_outer_opt_out",
+        adversarial_chat_system_prompt=SeedPrompt(value="Generate the simulated conversation.", data_type="text"),
+        uses_adversarial=False,
+        supports_additional_request_converters=True,
+        requirements=TechniqueRequirements(
+            objective_target=TargetRequirements(native_required=frozenset({CapabilityName.MULTI_TURN}))
+        ),
+    )
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+    return factory
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -259,6 +276,84 @@ class TestScenarioReadiness:
         assert any("system_prompt" in issue.reason for issue in readiness.issues)
         assert not target.prompt_sent
 
+    @pytest.mark.parametrize("native_system_prompt", [False, True])
+    async def test_simulation_outer_opt_out_checks_internal_consumer_before_work_async(
+        self, simulated_outer_opt_out_factory: AttackTechniqueFactory, native_system_prompt: bool
+    ) -> None:
+        factory = simulated_outer_opt_out_factory
+        assert factory.attack_class is PromptSendingAttack
+        assert not factory.uses_adversarial
+        assert factory.uses_default_adversarial_target
+        scenario = configured_execute(technique=factory.name)
+        helper = MockPromptTarget()
+        helper.apply_capabilities(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True, supports_editable_history=True, supports_system_prompt=native_system_prompt
+            )
+        )
+        with override_default_adversarial_target(helper):
+            assert factory.resolve_adversarial_chat() is helper
+            readiness = scenario.get_readiness()
+            assert readiness.ready is native_system_prompt
+            if native_system_prompt:
+                await scenario.initialize_async()
+                assert scenario._scenario_result_id
+            else:
+                assert {issue.role for issue in readiness.issues} == {"adversarial_target"}
+                assert any("system_prompt" in issue.reason for issue in readiness.issues)
+                with (
+                    patch.object(scenario._dataset_config, "prepare_async", new_callable=AsyncMock) as prepare,
+                    patch.object(scenario, "_build_atomic_attacks_async", new_callable=AsyncMock) as build,
+                    pytest.raises(ScenarioConfigurationError, match="system_prompt"),
+                ):
+                    await scenario.initialize_async()
+                prepare.assert_not_awaited()
+                build.assert_not_awaited()
+        assert len(await CentralMemory.get_memory_instance().get_scenario_results_async()) == int(native_system_prompt)
+        assert not helper.prompt_sent
+        assert not scenario._objective_target.prompt_sent
+
+    async def test_simulation_outer_opt_out_rejects_before_service_initialization_or_scheduling_async(
+        self, simulated_outer_opt_out_factory: AttackTechniqueFactory
+    ) -> None:
+        target, helper = MockPromptTarget(), MockPromptTarget()
+        helper.apply_capabilities(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True, supports_editable_history=True, supports_system_prompt=False
+            )
+        )
+        targets = TargetRegistry.get_registry_singleton().instances
+        targets.register(target, name="objective")
+        targets.register(helper, name="generator")
+        ScorerRegistry.get_registry_singleton().instances.register(
+            SubStringScorer(substring="default"), name="default", tags=[ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER]
+        )
+        request = RunScenarioRequest(
+            scenario_name="technique.execute",
+            target_name="objective",
+            adversarial_target_name="generator",
+            techniques=[simulated_outer_opt_out_factory.name],
+            scenario_params={"objective": "Return a response"},
+        )
+        service = ScenarioRunService()
+        try:
+            with (
+                patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
+                patch.object(Execute, "initialize_async", new_callable=AsyncMock) as initialize,
+                patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock) as prepare,
+                patch.object(service, "_schedule_prepared_run_async", new_callable=AsyncMock) as schedule,
+                pytest.raises(ScenarioConfigurationError, match="system_prompt"),
+            ):
+                await service.start_run_async(request=request)
+            initialize.assert_not_awaited()
+            prepare.assert_not_awaited()
+            schedule.assert_not_awaited()
+            assert await CentralMemory.get_memory_instance().get_scenario_results_async() == []
+            assert not target.prompt_sent
+            assert not helper.prompt_sent
+        finally:
+            await service.shutdown_async()
+
     @pytest.mark.parametrize(
         ("scenario_class", "technique"),
         [(Jailbreak, "prompt_sending"), (Multilingual, "prompt_sending"), (Doctor, "policy_puppetry")],
@@ -398,24 +493,30 @@ class TestScenarioReadiness:
             assert any("editable_history" in issue.reason for issue in readiness.issues)
         assert not target.prompt_sent
 
-    def test_skipped_attack_does_not_constrain_translation_only_target(self) -> None:
+    @pytest.mark.parametrize("technique", ["crescendo", "simulated_outer_opt_out"])
+    def test_skipped_attack_does_not_constrain_translation_only_target(
+        self, simulated_outer_opt_out_factory: AttackTechniqueFactory, technique: str
+    ) -> None:
         scenario = Multilingual(objective_scorer=SubStringScorer(substring="default"))
         scenario.set_params_from_args(args={"objective_target": MockPromptTarget()})
         scenario._resolve_runtime_configuration(require_objective_target=False)
         scenario.params["scenario_techniques"] = [
-            scenario._technique_class(name) for name in ("crescendo", "prompt_sending")
+            scenario._technique_class(name) for name in (technique, "prompt_sending")
         ]
         scenario._objective_target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=False))
-        helper = MockPromptTarget()
-        helper.apply_capabilities(
-            capabilities=TargetCapabilities(
-                supports_multi_turn=True, supports_editable_history=True, supports_system_prompt=False
+        helper = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(
+                    supports_multi_turn=True, supports_editable_history=False, supports_system_prompt=False
+                ),
+                normalizer_overrides={CapabilityName.EDITABLE_HISTORY: HistorySquashNormalizer()},
             )
         )
         with override_default_adversarial_target(helper):
             readiness = scenario.get_readiness()
         assert readiness.ready
         assert any(binding.role == "adversarial_target" for binding in readiness.bindings)
+        assert not helper.prompt_sent
 
     def test_benchmark_technique_overrides_are_effective_readiness_bindings(self) -> None:
         TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="generator")
