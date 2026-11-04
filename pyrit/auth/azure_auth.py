@@ -249,7 +249,8 @@ class AzureAuth(Authenticator):
 
         Args:
             token_scope (str): The token scope for authentication.
-            tenant_id (str, optional): The tenant ID. Defaults to "".
+            tenant_id (str, optional): The tenant ID to request the token for. If empty, the credential
+                chain uses its default tenant. Defaults to "".
         """
         self._tenant_id = tenant_id
         self._token_scope = token_scope
@@ -260,7 +261,10 @@ class AzureAuth(Authenticator):
         Set up default Azure credentials and retrieve access token.
         """
         self.azure_creds = DefaultAzureCredential()
-        self.access_token = self.azure_creds.get_token(self._token_scope)
+        # DefaultAzureCredential rejects a tenant_id constructor argument, but get_token accepts one
+        # and forwards it to each credential in the chain.
+        token_kwargs = {"tenant_id": self._tenant_id} if self._tenant_id else {}
+        self.access_token = self.azure_creds.get_token(self._token_scope, **token_kwargs)
         self.token = self.access_token.token
 
     def refresh_token(self) -> str:
