@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import os
 from copy import deepcopy
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -30,7 +31,7 @@ from pyrit.models import (
     WebSearchMode,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, get_known_capabilities
+from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, RoundRobinTarget, get_known_capabilities
 from pyrit.prompt_target.common import utils as target_utils
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.openai.openai_target import _OpenAIModelSampling
@@ -701,6 +702,81 @@ async def test_nested_passthrough_precedence_at_http_boundary_async(patch_centra
     assert [body["temperature"] for body in bodies] == [1.7, 0]
     assert all(body["metadata"] == {"custom": "preserved"} for body in bodies)
     assert extras == original
+
+
+@pytest.mark.parametrize("fallback_temperature", [0, 0.8, None])
+async def test_round_robin_fallback_resolves_its_own_temperature_async(
+    *, patch_central_database: Any, sqlite_instance: SQLiteMemory, fallback_temperature: float | None
+) -> None:
+    attempts: list[tuple[str, dict[str, Any]]] = []
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        host = http_request.url.host
+        attempts.append((host, json.loads(http_request.content)))
+        if host == "first.example.test":
+            return httpx.Response(
+                429,
+                json={"error": {"message": "Rate limit exhausted", "type": "rate_limit_error", "code": "rate_limit"}},
+            )
+        return httpx.Response(200, json=openai_chat_response_json_dict())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        first = OpenAIChatTarget(
+            model_name="gpt-4o",
+            endpoint="https://first.example.test/v1",
+            api_key="test-only-key",
+            extra_body_parameters={"extra_body": {"temperature": 0.3}},
+            httpx_client_kwargs={"http_client": client, "max_retries": 0},
+        )
+        second = OpenAIChatTarget(
+            model_name="gpt-4o",
+            endpoint="https://second.example.test/v1",
+            api_key="test-only-key",
+            extra_body_parameters=(
+                {"extra_body": {"temperature": fallback_temperature}} if fallback_temperature is not None else {}
+            ),
+            httpx_client_kwargs={"http_client": client, "max_retries": 0},
+        )
+        target = RoundRobinTarget(targets=[first, second])
+        message = request()
+        message.get_piece().prompt_metadata["custom"] = "preserved"
+        with (
+            patch.dict(os.environ, {"RETRY_MAX_NUM_ATTEMPTS": "2"}),
+            patch.object(first._send_prompt_to_target_async.retry, "sleep", new_callable=AsyncMock),
+            patch.object(
+                first, "_resolve_request_temperature", wraps=first._resolve_request_temperature
+            ) as first_resolve,
+            patch.object(
+                second, "_resolve_request_temperature", wraps=second._resolve_request_temperature
+            ) as second_resolve,
+        ):
+            result = await PromptNormalizer().send_prompt_async(
+                message=message, target=target, conversation_id=message.get_piece().conversation_id
+            )
+        assert [(host, body.get("temperature")) for host, body in attempts] == [
+            ("first.example.test", 0.3),
+            ("first.example.test", 0.3),
+            ("second.example.test", fallback_temperature),
+        ]
+        first_resolve.assert_called_once()
+        second_resolve.assert_called_once()
+        if fallback_temperature is None:
+            assert "temperature" not in attempts[-1][1]
+        assert result.get_piece().prompt_metadata["inner_target_identifier"] == second.get_identifier().hash
+        saved = await sqlite_instance.get_conversation_messages_async(
+            conversation_id=result.get_piece().conversation_id
+        )
+        assert len(saved) == 2
+        assert saved[0].get_piece().prompt_metadata["custom"] == "preserved"
+        for stored in saved:
+            info = RequestGenerationInfo.from_metadata(metadata=stored.get_piece().prompt_metadata)
+            assert info is not None
+            assert info.temperature.requested is None
+            assert info.temperature.resolved == fallback_temperature
+            assert info.temperature.source == (
+                "target_default" if fallback_temperature is not None else "provider_default"
+            )
+            assert info.request_piece_ids == (str(saved[0].get_piece().id),)
 
 
 async def test_unknown_model_provider_rejection_preserves_evidence_async(

@@ -451,6 +451,8 @@ class PromptTarget(Identifiable):
         retries or tool continuations. The base associates evidence with original
         request pieces and responses; missing or inconsistent override evidence
         is an adapter error, not a successful send.
+        Wrappers dispatching directly to children must clear incoming generation
+        evidence before each child invocation, not between that child's retries.
 
         Args:
             normalized_conversation (list[Message]): The full conversation

@@ -323,8 +323,8 @@ class OpenAIChatTarget(OpenAITarget):
         """
         message = normalized_conversation[-1]
         message_piece: MessagePiece = message.message_pieces[0]
-        # The public send boundary clears incoming evidence. Only this logical send's
-        # first provider attempt can have populated it; retries retain its resolution.
+        # Public sends and wrapper dispatch clear incoming evidence. Within this child
+        # invocation, retries retain the first provider attempt's resolution.
         generation_info = RequestGenerationInfo.from_metadata(metadata=message_piece.prompt_metadata)
         json_config = self._get_json_response_config(message_piece=message_piece)
 

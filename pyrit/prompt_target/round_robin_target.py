@@ -10,6 +10,7 @@ from pyrit.models import (
     TARGET_EVAL_PARAMS,
     ComponentIdentifier,
     Message,
+    RequestGenerationInfo,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
@@ -186,6 +187,9 @@ class RoundRobinTarget(PromptTarget):
 
         for target in targets_to_try:
             try:
+                # Each child resolves its own defaults; only its internal retries share evidence.
+                for piece in normalized_conversation[-1].message_pieces:
+                    RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
                 responses = await target._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
 
                 inner_id_hash = target.get_identifier().hash
