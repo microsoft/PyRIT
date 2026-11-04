@@ -710,6 +710,12 @@ class _ConsoleLineReader:
             self._turn = turn = concurrent.futures.Future()
         try:
             await asyncio.shield(asyncio.wrap_future(previous_turn))
+        except BaseException:
+            # A caller cancelled while queued never held the turn, so it passes the turn on only once
+            # the caller ahead of it is done. Releasing it now would let a later caller share the pending line.
+            previous_turn.add_done_callback(lambda _: turn.set_result(None))
+            raise
+        try:
             with self._lock:
                 if self._unclaimed_line is None:
                     self._unclaimed_line = self._start_read(prompt=prompt)

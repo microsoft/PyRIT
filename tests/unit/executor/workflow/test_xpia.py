@@ -787,6 +787,42 @@ class TestXPIAManualProcessingWorkflow:
         assert response == "processed output"
         mock_input.assert_called_once()
 
+    async def test_cancelled_queued_read_keeps_later_reads_waiting_their_turn(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+        first_input_started = threading.Event()
+        release_first_input = threading.Event()
+        lines = iter(["first output", "second output"])
+
+        def operator_input(prompt: str) -> str:
+            line = next(lines)
+            if line == "first output":
+                first_input_started.set()
+                assert release_first_input.wait(timeout=TEST_WATCHDOG_SECONDS)
+            return line
+
+        with patch("builtins.input", side_effect=operator_input) as mock_input:
+            reading = asyncio.create_task(context.processing_callback())
+            assert await asyncio.to_thread(first_input_started.wait, TEST_WATCHDOG_SECONDS)
+            cancelled_while_queued = asyncio.create_task(context.processing_callback())
+            queued = asyncio.create_task(context.processing_callback())
+            await asyncio.sleep(0)
+            cancelled_while_queued.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled_while_queued
+            # Give a read that wrongly skipped the queue the chance to claim the pending line.
+            for _ in range(10):
+                await asyncio.sleep(0)
+
+            release_first_input.set()
+            responses = await asyncio.wait_for(asyncio.gather(reading, queued), timeout=TEST_WATCHDOG_SECONDS)
+
+        assert responses == ["first output", "second output"]
+        assert mock_input.call_count == 2
+
     async def test_concurrent_reads_receive_separate_lines_in_order(
         self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
     ) -> None:
