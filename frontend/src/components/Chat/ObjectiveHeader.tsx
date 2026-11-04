@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import {
@@ -12,12 +12,14 @@ import {
   Popover,
   PopoverSurface,
   PopoverTrigger,
+  PositioningConfigurationProvider,
   Radio,
   RadioGroup,
   Spinner,
   Text,
   Textarea,
   mergeClasses,
+  type PositioningConfigurationFn,
 } from '@fluentui/react-components'
 import {
   AddRegular,
@@ -29,6 +31,9 @@ import {
 } from '@fluentui/react-icons'
 
 import OutcomeBadge from '@/components/OutcomeBadge'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { NARROW_SCREEN_QUERY } from '@/styles/touchTargets'
 import type {
   ApplyScorerStatus,
   AttackOutcome,
@@ -42,6 +47,8 @@ import { toApiError } from '@/services/errors'
 
 import { useObjectiveHeaderStyles } from './ObjectiveHeader.styles'
 import ChatScorerPicker from './ChatScorerPicker'
+
+const OBJECTIVE_HELP = 'The behavior you are testing for. An objective gives the scorer a goal; it is not automatically sent as a user message.'
 
 interface ObjectiveHeaderProps {
   objective: string
@@ -123,6 +130,12 @@ export default function ObjectiveHeader({
   applyStatus = null,
 }: ObjectiveHeaderProps) {
   const styles = useObjectiveHeaderStyles()
+  const isNarrow = useMediaQuery(NARROW_SCREEN_QUERY)
+  const configurePositioning = useCallback<PositioningConfigurationFn>(({ options }) => ({
+    ...options,
+    // Keep the editor on screen when its anchor leaves a narrow viewport.
+    unstable_disableTether: isNarrow ? 'all' : options.unstable_disableTether,
+  }), [isNarrow])
   const [resultOpen, setResultOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
@@ -248,8 +261,11 @@ export default function ObjectiveHeader({
   const resultControl = (outcome || objective.trim()) && (
     <div className={styles.outcomeSection}>
       <Badge className={styles.label} appearance="tint" color="brand" size="small">
-        Objective Achieved Outcome
+        <ContextualHelpLabel term="Objective Achieved Outcome">
+          Whether the objective was met. Automated and human judgments are recorded separately; open the outcome details to review them.
+        </ContextualHelpLabel>
       </Badge>
+      <PositioningConfigurationProvider value={configurePositioning}>
       <Popover
         withArrow
         open={resultOpen}
@@ -441,6 +457,7 @@ export default function ObjectiveHeader({
           </div>
         </PopoverSurface>
       </Popover>
+      </PositioningConfigurationProvider>
     </div>
   )
 
@@ -452,7 +469,7 @@ export default function ObjectiveHeader({
         {canShowObjective && (
           <div className={mergeClasses(styles.headerSection, styles.emptyHeaderSection)}>
             <Badge className={styles.label} appearance="tint" color="brand" size="small">
-              Objective
+              <ContextualHelpLabel term="Objective">{OBJECTIVE_HELP}</ContextualHelpLabel>
             </Badge>
             {isEditing ? (
               <>
@@ -497,7 +514,7 @@ export default function ObjectiveHeader({
     <div className={styles.root} data-testid="objective-header" data-conversation-editor-controls>
       <div className={styles.headerSection}>
         <Badge className={styles.label} appearance="tint" color="brand" size="small">
-          Objective
+          <ContextualHelpLabel term="Objective">{OBJECTIVE_HELP}</ContextualHelpLabel>
         </Badge>
         <ObjectiveContent
           type={canAdd && onAdd ? 'button' : undefined}

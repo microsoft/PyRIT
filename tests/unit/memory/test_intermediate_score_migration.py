@@ -21,9 +21,9 @@ def test_score_storage_marker_stays_private(is_intermediate: bool) -> None:
     score._snapshot_participation = {"0": None}
     entry = ScoreEntry(entry=score, is_intermediate=is_intermediate)
     assert entry.is_intermediate is is_intermediate
-    assert entry.to_dict()["is_intermediate"] is is_intermediate
     assert entry.snapshot_participation == {"0": None}
-    assert entry.get_score()._snapshot_participation == {"0": None}
+    assert entry.to_dict()["is_intermediate"] is is_intermediate
+    assert "pyrit_internal_snapshot_participation" not in score.score_metadata
     for field in ("is_root", "is_intermediate"):
         assert field not in Score.model_fields
         assert field not in Score.model_json_schema()["properties"]
@@ -31,15 +31,19 @@ def test_score_storage_marker_stays_private(is_intermediate: bool) -> None:
     assert "_snapshot_participation" not in Score.model_fields
     assert "snapshot_participation" not in Score.model_json_schema()["properties"]
     assert "snapshot_participation" not in score.model_dump()
+    assert entry.get_score()._snapshot_participation == {"0": None}
 
 
-@pytest.mark.parametrize("value", ["not-json", '{"1": null}', 17, 1.5])
+@pytest.mark.parametrize("value", ["not-json", '{"0": null}', '{"1": null}', 17, 1.5])
 async def test_score_preserves_reserved_name_as_caller_metadata_async(value, sqlite_instance) -> None:
     metadata = {"pyrit_internal_snapshot_participation": value}
     score = Score(score_value="true", score_type="true_false", score_metadata=metadata)
+
+    assert score.score_metadata == metadata
     assert score._snapshot_participation is None
     assert Score.model_validate(score.model_dump()).score_metadata == metadata
     assert Score.model_validate_json(score.model_dump_json()).score_metadata == metadata
+
     await sqlite_instance.add_scores_to_memory_async(scores=[score])
     [persisted] = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
     assert persisted.score_metadata == metadata
