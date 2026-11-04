@@ -177,7 +177,7 @@ class TestJailbreakInitialization:
     def test_init_with_default_scorer(self, mock_memory_seed_groups):
         with _patch_seed_groups(mock_memory_seed_groups):
             scenario = Jailbreak()
-            assert scenario._objective_scorer_identifier
+            assert scenario._objective_scorer_identifier is None
 
     def test_init_with_custom_scorer(self, mock_objective_scorer, mock_memory_seed_groups):
         with _patch_seed_groups(mock_memory_seed_groups):

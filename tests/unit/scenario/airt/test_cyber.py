@@ -185,7 +185,7 @@ class TestCyberBasic:
 
     def test_initialization_with_default_scorer(self):
         scenario = Cyber()
-        assert scenario._objective_scorer_identifier is not None
+        assert scenario._objective_scorer_identifier is None
 
     def test_scenario_name_is_cyber(self, mock_objective_scorer):
         scenario = Cyber(objective_scorer=mock_objective_scorer)

@@ -782,6 +782,7 @@ class TestScenarioInitialization2:
         assert stored.metadata == {
             "scenario_owned": "value",
             "scheduler_managed_by": "test",
+            "scenario_role_references_v1": stored.metadata["scenario_role_references_v1"],
         }
 
     async def test_initialize_async_requires_objective_target(self):

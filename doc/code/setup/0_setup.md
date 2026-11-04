@@ -17,7 +17,57 @@ from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
 await initialize_pyrit_async(memory_db_type="InMemory", initializers=[TargetInitializer(), ScorerInitializer()])
 ```
 
-This configuration allows you to run most PyRIT notebooks immediately.
+This explicitly registers environment-configured targets and scorers. Configure the
+role-specific target settings needed by your scan; an incomplete optional provider is
+not automatically replaced by `OPENAI_CHAT_MODEL`.
+
+## Explicit scan targets and migration
+
+Scenario discovery, descriptions, dataset selection, and offline estimates do not
+require model credentials. Execution requires the dependencies of the selected
+scenario and techniques, resolved before prompt generation or run admission:
+
+| Role | Configure explicitly |
+|------|----------------------|
+| Objective target | Select the registered system to test. |
+| Objective scorer | Supply a compatible true/false scorer, or use the scenario's real scoring rubric. |
+| Scoring target | For a model-based default rubric, select `scoring_target` or register `objective_scorer_chat`. A deterministic scorer needs no model. |
+| Generation target | For selected generative attacks, converters, or simulated conversations, select a generation target or register `adversarial_chat`. A plain single-turn technique needs none. |
+
+**Breaking change:** missing helper defaults no longer construct `OpenAIChatTarget`
+implicitly, even if `OPENAI_CHAT_*` exists. The objective target is never silently
+reused as a helper. To reuse one target deliberately, select it separately for each
+required role.
+
+There are two supported setup workflows:
+
+- In CoPyRIT, create/register targets with explicit provider connection fields, then
+  select them in the scan or suite form. Target and scorer creation returns to the
+  same configuration draft; cancelling preserves the draft.
+- Deliberately run `TargetInitializer`, `ScorerInitializer`, or your custom
+  initializer before scanning. Per-target environment namespaces remain supported,
+  as do intentionally invoked Python constructors such as `OpenAIChatTarget()`.
+  Merely setting ambient OpenAI variables does not configure scan roles.
+
+Python callers may supply a scorer directly, set `scoring_target` in the scenario
+parameter bag, and scope generation with
+`override_default_adversarial_target(generation_target)` around initialization.
+Call `scenario.get_readiness()` to inspect effective bindings and all discoverable
+role issues without generating prompts. `initialize_async()` independently enforces
+the same rules. Scorers retain scenario-specific questions, refusal handling, and
+blocking policies; a missing role never disables scoring.
+
+API clients can preview `POST /api/scenarios/catalog/{name}/readiness` using the
+same configuration as the estimate request, including `scoring_target_name` and
+`adversarial_target_name`. Suite clients can preview
+`POST /api/scenario-suites/{name}/readiness` with the reviewed suite launch request.
+The suite preview may omit `target_name` while selecting roles; suite launch still
+requires an explicit objective target.
+Launch validates again, and suite launch rejects an invalid later child before
+submitting any child. Saved runs pin effective component hashes: after a registry
+reset or changed default, explicitly repair/reconfigure instead of substituting a
+different target. Readiness checks configuration, not remote reachability or
+authentication; provider failures remain runtime errors.
 
 ## Configuration Options
 

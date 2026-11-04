@@ -28,7 +28,7 @@ const OPENAI_COMMON_PARAMETERS: Parameter[] = [
   {
     name: "endpoint",
     type_name: "str",
-    required: false,
+    required: true,
     default: null,
     description: "The target URL for the OpenAI service.",
   },
@@ -52,7 +52,7 @@ const AZURE_ML_COMMON_PARAMETERS: Parameter[] = [
   {
     name: "endpoint",
     type_name: "str",
-    required: false,
+    required: true,
     default: null,
     description: "The endpoint URL for the deployed Azure ML model.",
   },
@@ -412,7 +412,7 @@ async function selectTargetType(value: string): Promise<void> {
   await waitFor(() => {
     restoreDialogAccessibility();
     expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent(
-      TARGET_DISPLAY_NAMES[value]
+      TARGET_DISPLAY_NAMES[value] ?? value
     );
   });
 }
@@ -959,6 +959,23 @@ describe("CreateTargetDialog", () => {
       "https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
     );
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("preserves an optional endpoint default for a locally implemented target", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [{
+        target_type: "LocalTarget",
+        parameters: [{ name: "endpoint", type_name: "str", required: false, default: "" }],
+        supported_auth_modes: ["api_key"],
+      }],
+    });
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await selectTargetType("LocalTarget");
+    const create = screen.getByRole("button", { name: "Create Target", exact: true });
+    expect(create).toBeEnabled();
+    await user.click(create);
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({ type: "LocalTarget", params: {} });
   });
 
   it("should require an endpoint when identity authentication is selected", async () => {

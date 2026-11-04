@@ -437,7 +437,7 @@ class TestLatentAttacks:
         resumed = LatentInjection(
             scenario_result_id=original._scenario_result_id, objective_scorer=SubStringScorer(substring="changed")
         )
-        with pytest.raises(ValueError, match="matching configuration"):
+        with pytest.raises(ValueError, match="saved scenario dependencies changed"):
             await _initialize_async(resumed, **args)
 
     async def test_changed_harm_scorer_refuses_resume_async(self) -> None:

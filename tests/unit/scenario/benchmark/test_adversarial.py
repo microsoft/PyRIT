@@ -568,7 +568,8 @@ class TestAdversarialBenchmarkInit:
         default_scorer = MagicMock(spec=TrueFalseScorer)
         with patch.object(AdversarialBenchmark, "_get_default_objective_scorer", return_value=default_scorer):
             bench = AdversarialBenchmark()
-        assert bench._objective_scorer is default_scorer
+            assert bench._configured_objective_scorer is None
+            assert bench._objective_scorer is default_scorer
         assert bench.uses_default_adversarial_target is False
 
     def test_construct_with_explicit_objective_scorer(self):

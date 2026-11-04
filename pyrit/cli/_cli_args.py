@@ -751,6 +751,8 @@ _TARGET_ARG = _ArgSpec(
 )
 
 _RUN_ARG_SPECS: list[_ArgSpec] = [
+    _ArgSpec(flags=["--scoring-target"], result_key="scoring_target"),
+    _ArgSpec(flags=["--adversarial-target"], result_key="adversarial_target"),
     _INITIALIZERS_ARG,
     _TECHNIQUES_ARG,
     _MAX_CONCURRENCY_ARG,

@@ -222,9 +222,6 @@ class Multilingual(Scenario):
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         self._adversarial_chat = adversarial_chat
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
         self._default_languages = self._get_default_languages()
         self._resolved_languages: list[str] = []
 
@@ -233,11 +230,12 @@ class Multilingual(Scenario):
         super().__init__(
             version=self.VERSION,
             uses_default_adversarial_target=adversarial_chat is None,
+            adversarial_target=adversarial_chat,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=5
             ),
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 

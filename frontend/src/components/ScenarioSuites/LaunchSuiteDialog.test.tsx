@@ -14,7 +14,14 @@ import LaunchSuiteDialog from './LaunchSuiteDialog'
 jest.mock('@/services/api', () => ({
   scenarioSuitesApi: {
     launch: jest.fn(),
+    readiness: jest.fn(),
   },
+}))
+jest.mock('@/hooks/useRuntime', () => ({
+  useRuntime: () => ({ ready: true, state: 'ready', generation: 'first' }),
+}))
+jest.mock('@/hooks/useScorerRegistry', () => ({
+  useScorerRegistry: () => ({ scorers: [], loading: false, error: null }),
 }))
 
 const mockLaunch = scenarioSuitesApi.launch as jest.Mock
@@ -127,9 +134,25 @@ beforeEach(() => {
   jest.clearAllMocks()
   window.localStorage.clear()
   mockLaunch.mockResolvedValue({ suite_execution_id: 'execution-1' })
+  jest.mocked(scenarioSuitesApi.readiness).mockResolvedValue({ issues: [], bindings: [{
+    role: 'adversarial_target', component: 'first_preset',
+    identifier: { class_name: 'ConfiguredGenerator', hash: 'generator' },
+  }] })
 })
 
 describe('LaunchSuiteDialog', () => {
+  it('blocks the whole suite when a later child has missing roles', async () => {
+    jest.mocked(scenarioSuitesApi.readiness).mockResolvedValue({ bindings: [], issues: [{
+      role: 'scoring_target', component: 'Entry 2 (second_preset)', reason: 'No configured scoring target.',
+      remediation: 'Create a scoring target.',
+    }] })
+    renderDialog()
+    expect(await screen.findByLabelText('Suite configuration issues')).toHaveTextContent('Entry 2 (second_preset)')
+    expect(screen.getByRole('button', { name: 'Create scoring target', exact: true })).toBeVisible()
+    expect(screen.getByTestId('confirm-launch-suite')).toBeDisabled()
+    expect(mockLaunch).not.toHaveBeenCalled()
+  })
+
   function dialog(options: RenderOptions) {
     return <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local"><MemoryRouter>
       <LaunchSuiteDialog suite={makeSuite()} targets={options.targets ?? [OBJECTIVE_TARGET, ADVERSARIAL_TARGET]}
@@ -148,7 +171,7 @@ describe('LaunchSuiteDialog', () => {
       defaultObjectiveTarget: OBJECTIVE_TARGET, defaultAdversarialTarget: ADVERSARIAL_TARGET,
     }))
     expect(screen.getByRole('combobox', { name: 'Target' })).toHaveValue('objective-target')
-    expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('adversarial-target')
+    expect(await screen.findByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('adversarial-target')
     await user.click(screen.getByRole('button', { name: 'Launch suite' }))
     expect(mockLaunch).toHaveBeenCalledWith('nightly_suite', expect.objectContaining({
       target_name: 'objective-target', adversarial_target_name: 'adversarial-target',
@@ -267,6 +290,7 @@ describe('LaunchSuiteDialog', () => {
     const retries = screen.getByTestId('suite-max-retries-input')
     await user.clear(retries)
     await user.type(retries, '2')
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-suite')).toBeEnabled())
     await user.click(screen.getByTestId('confirm-launch-suite'))
 
     await waitFor(() => expect(mockLaunch).toHaveBeenCalledWith(

@@ -26,6 +26,22 @@ PyRIT provides two command-line interfaces:
 pyrit_scan run foundry.red_team_agent --target openai_chat --initializers target --techniques base64
 ```
 
+Targets must already be registered or be created by an explicitly requested
+initializer. Select helper roles separately when needed:
+
+```bash
+pyrit_scan run technique.execute --target model_under_test --techniques prompt_sending \
+  --scoring-target scoring_model
+```
+
+`--adversarial-target generation_model` selects the generation role for generative
+techniques and simulated conversations. These same options work in `pyrit_shell`.
+They do not automatically reuse `--target`, and no missing role constructs OpenAI
+from ambient environment variables. A configured deterministic objective scorer
+needs no scoring model; techniques without generation need no adversarial model.
+See [explicit setup and migration](../code/setup/0_setup.md#explicit-scan-targets-and-migration)
+for both manual and environment-initializer workflows.
+
 ### Connecting to CoPyRIT
 
 Point a local configuration file at the remote backend:
