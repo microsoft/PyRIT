@@ -89,6 +89,12 @@ class PromptTarget(Identifiable):
     # configured and does not let callers choose it.
     upload_directory_parameter: ClassVar[str | None] = None
 
+    # Path parameters callers may set through the API, when creating a target or overriding a saved
+    # one, such as a folder the target's own session works in. The upload folder above is not one,
+    # since the server sets it. The API rejects every other parameter that can name a file or folder
+    # on the server; direct Python use is unaffected.
+    caller_path_parameters: ClassVar[frozenset[str]] = frozenset()
+
     # Targets whose construction can run model repository code name the boolean constructor
     # parameter that enables it (e.g. ``"trust_remote_code"``). The create-target API builds
     # them only for an administrator when that parameter resolves true; direct Python use is

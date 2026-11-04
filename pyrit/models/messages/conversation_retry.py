@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
 
-class ConversationRetryReason(str, Enum):
+class ConversationRetryReason(StrEnum):
     """Why a turn in a conversation had to be retried."""
 
     JSON_PARSING = "json_parsing"
