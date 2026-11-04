@@ -87,6 +87,7 @@ interface ParameterInputProps {
   referenceOptions: Array<{ name: string; type: string; isDefault?: boolean }>
   value: string
   showError: boolean
+  disabled?: boolean
   onChange: (value: string) => void
   onBrowse: () => void
   onFiles: (files: File[], onReadSuccess?: () => void) => void
@@ -173,6 +174,7 @@ function ParameterInput({
   referenceOptions,
   value,
   showError,
+  disabled = false,
   onChange,
   onBrowse,
   onFiles,
@@ -215,7 +217,11 @@ function ParameterInput({
           : `Select a registered ${parameter.reference_type}.`}
         validationMessage={showError ? 'Required' : undefined}
       >
-        <Select value={value} onChange={(_, data) => onChange(data.value)}>
+        <Select
+          disabled={disabled}
+          value={value}
+          onChange={(_, data) => onChange(data.value)}
+        >
           <option value="">Select a registered {parameter.reference_type}</option>
           {referenceOptions.map((option) => (
             <option key={option.name} value={option.name}>
@@ -233,6 +239,7 @@ function ParameterInput({
       <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
         <Switch
           checked={checked}
+          disabled={disabled}
           label={checked ? 'True' : 'False'}
           onChange={(_, data) => onChange(data.checked ? 'true' : 'false')}
         />
@@ -243,7 +250,11 @@ function ParameterInput({
   if (parameter.choices?.length) {
     return (
       <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
-        <Select value={value || parameterDefaultValue(parameter)} onChange={(_, data) => onChange(data.value)}>
+        <Select
+          disabled={disabled}
+          value={value || parameterDefaultValue(parameter)}
+          onChange={(_, data) => onChange(data.value)}
+        >
           {parameter.required && !parameter.default && <option value="">Select a value</option>}
           {parameter.choices.map((choice) => (
             <option key={choice} value={choice}>{choice}</option>
@@ -284,8 +295,11 @@ function ParameterInput({
       validationMessage={showError ? 'Required' : undefined}
     >
       {(controlProps: FieldControlProps) => isFile ? (
-        <FileDropZone disabled={!allowUploads}
-          label="Drop file" onFiles={handleFiles}>
+        <FileDropZone
+          disabled={disabled || !allowUploads}
+          label="Drop file"
+          onFiles={handleFiles}
+        >
           <div {...(hasFileValue ? controlProps : {})} role={hasFileValue ? 'group' : undefined} className={styles.fileRow}>
             {hasFileValue ? <div className={styles.filePreview}>
               {imagePreview && <MediaPreview key={imagePreview} type="image" src={imagePreview} alt={`Preview for ${parameter.name}`}
@@ -298,7 +312,7 @@ function ParameterInput({
               </div>
             </div> : <Input
               input={{ ref: pathInputRef }}
-              disabled={!allowUploads}
+              disabled={disabled || !allowUploads}
               className={styles.fileInput}
               value={value}
               placeholder={defaultValue && !defaultValue.startsWith('data:') ? defaultValue : pathPlaceholder}
@@ -307,18 +321,34 @@ function ParameterInput({
                 onChange(data.value)
               }}
             />}
-            <Button ref={replaceButtonRef} type="button" className={styles.fileButton} disabled={!allowUploads} onClick={onBrowse}>
+            <Button
+              ref={replaceButtonRef}
+              type="button"
+              className={styles.fileButton}
+              disabled={disabled || !allowUploads}
+              onClick={onBrowse}
+            >
               {hasFileValue ? 'Replace' : 'Upload'}
             </Button>
-            {hasFileValue && <Button type="button" className={styles.fileButton} disabled={!allowUploads}
-              aria-label={`Remove ${imagePreview ? 'image' : 'file'} for ${parameter.name}`} onClick={() => {
-                focusPathInput.current = true
-                onChange('')
-              }}>Remove</Button>}
+            {hasFileValue && (
+              <Button
+                type="button"
+                className={styles.fileButton}
+                disabled={disabled || !allowUploads}
+                aria-label={`Remove ${imagePreview ? 'image' : 'file'} for ${parameter.name}`}
+                onClick={() => {
+                  focusPathInput.current = true
+                  onChange('')
+                }}
+              >
+                Remove
+              </Button>
+            )}
           </div>
         </FileDropZone>
       ) : (
         <Input
+          disabled={disabled}
           value={value}
           placeholder={parameterDefaultValue(parameter) || undefined}
           onChange={(_, data) => onChange(data.value)}
@@ -580,6 +610,9 @@ export default function CreateConverterDialog({
   }
 
   const submit = async () => {
+    if (loading || submitting || !selectedConverterType) {
+      return
+    }
     const missingParameters = (selectedConverterType?.parameters ?? []).some(
       (parameter) => parameter.required
         && !parameter.default
@@ -701,7 +734,7 @@ export default function CreateConverterDialog({
                     validationMessage={showValidation && !selectedType ? 'Select a converter type' : undefined}
                   >
                     <Dropdown
-                      disabled={Boolean(editing)}
+                      disabled={Boolean(editing) || submitting}
                       aria-label="Converter type"
                       className={styles.typeDropdown}
                       listbox={{ className: styles.typeListbox }}
@@ -778,6 +811,7 @@ export default function CreateConverterDialog({
                     }
                   >
                     <Input
+                      disabled={submitting}
                       value={registryName}
                       onChange={(_, data) => {
                         setRegistryName(data.value)
@@ -797,12 +831,14 @@ export default function CreateConverterDialog({
                             showRequiredError={showValidation && parameter.required}
                             testIdPrefix="structured"
                             onChange={(name, value) => {
+                              if (submitting) return
                               setChangedParameters((current) => new Set([...current, name]))
                               setParameterValues((current) => ({ ...current, [name]: value }))
                             }}
                           />
                         ) : <ParameterInput
                           parameter={parameter}
+                          disabled={submitting}
                           referenceOptions={referenceOptions(parameter)}
                           value={stringFormValue(parameterValues[parameter.name])}
                           showError={
@@ -812,6 +848,7 @@ export default function CreateConverterDialog({
                             && !formValueIsSet(parameterValues[parameter.name])
                           }
                           onChange={(value) => {
+                            if (submitting) return
                             fileReads.current.delete(parameter.name)
                             setFileNotice(null)
                             setSelectedFiles((current) => {
@@ -822,9 +859,12 @@ export default function CreateConverterDialog({
                             setChangedParameters((current) => new Set([...current, parameter.name]))
                             setParameterValues((current) => ({ ...current, [parameter.name]: value }))
                           }}
-                          onBrowse={() => browse(parameter.name)}
-                          onFiles={(files: File[], onReadSuccess?: () => void) =>
-                            readFiles(parameter.name, files, onReadSuccess)}
+                          onBrowse={() => {
+                            if (!submitting) browse(parameter.name)
+                          }}
+                          onFiles={(files: File[], onReadSuccess?: () => void) => {
+                            if (!submitting) readFiles(parameter.name, files, onReadSuccess)
+                          }}
                           allowUploads={allowUploads}
                           selectedFile={selectedFiles[parameter.name]}
                         />}

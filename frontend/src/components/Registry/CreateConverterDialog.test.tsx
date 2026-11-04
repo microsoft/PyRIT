@@ -179,6 +179,74 @@ describe('CreateConverterDialog', () => {
     expect(onTemporary.mock.calls[0][1].hash).toBe('private-hash')
   })
 
+  it('disables scalar inputs and actions while buildConverter is pending in temporary settings', async () => {
+    const user = userEvent.setup()
+    const onTemporary = jest.fn()
+    const converter = {
+      converter_id: 'source',
+      identifier: {
+        class_name: 'CaesarConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash', caesar_offset: 1,
+      },
+    }
+    let resolveBuild: ((value: unknown) => void) | undefined
+    mockedConvertersApi.buildConverter.mockImplementation(
+      () => new Promise((resolve) => { resolveBuild = resolve }),
+    )
+    renderDialog({ editing: { converter }, onTemporary })
+    const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
+    expect(offset).toHaveValue('1')
+    await user.clear(offset)
+    await user.type(offset, '3')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+
+    // While build is pending, input must be disabled to prevent edit loss
+    expect(offset).toBeDisabled()
+    const submitBtn = screen.getByRole('button', { name: 'Saving...' })
+    expect(submitBtn).toHaveAttribute('aria-disabled', 'true')
+
+    // Resolve the build
+    await act(async () => {
+      resolveBuild?.({
+        identifier: { ...converter.identifier, hash: 'private-hash', caesar_offset: 3 },
+      })
+    })
+
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('CaesarConverter', {
+      source_name: 'source', source_hash: 'source-hash', params: { caesar_offset: 3 },
+    })
+  })
+
+  it('disables registry name, inputs and actions while createConverter is pending', async () => {
+    const user = userEvent.setup()
+    const onCreated = jest.fn()
+    let resolveCreate: ((value: unknown) => void) | undefined
+    mockedConvertersApi.createConverter.mockImplementation(
+      () => new Promise((resolve) => { resolveCreate = resolve }),
+    )
+    renderDialog({ onCreated })
+    await selectConverterType('CaesarConverter')
+    const nameInput = screen.getByRole('textbox', { name: /registry name/i })
+    const offsetInput = screen.getByRole('textbox', { name: /caesar_offset/i })
+    const submitBtn = screen.getByRole('button', { name: 'Add Converter' })
+
+    await user.type(offsetInput, '3')
+    await user.click(submitBtn)
+
+    // While create is pending, form controls and submit button must be disabled
+    expect(nameInput).toBeDisabled()
+    expect(offsetInput).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Adding...' })).toHaveAttribute('aria-disabled', 'true')
+
+    // Resolve the creation
+    await act(async () => {
+      resolveCreate?.({ converter_id: 'new-caesar' })
+    })
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-caesar', true))
+  })
+
   it('loads converter classes from registry type metadata', async () => {
     const user = userEvent.setup()
     renderDialog()
