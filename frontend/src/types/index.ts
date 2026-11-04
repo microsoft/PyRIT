@@ -261,6 +261,9 @@ export interface MessageMediaDisplayPiece {
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
 export interface Message {
+  /** Saved sequence used to keep a split turn stable across piece pages. */
+  sequence?: number
+  isPartial?: boolean
   role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system' | 'developer'
   content: string
   timestamp: string
@@ -312,6 +315,11 @@ export interface PaginationInfo {
   has_more: boolean
   next_cursor?: string | null
   prev_cursor?: string | null
+}
+
+export interface ConversationPageParams {
+  limit?: number
+  cursor?: string
 }
 
 export interface ConfigurationFileContent {
@@ -997,6 +1005,20 @@ export interface AttackSummary {
   updated_at: string
 }
 
+/** Initial Chat metadata; reference membership does not depend on loading a sidebar page. */
+export interface AttackMetadata extends Pick<AttackSummary,
+  | 'attack_result_id' | 'conversation_id' | 'objective' | 'labels' | 'operator'
+  | 'target' | 'target_unbound' | 'outcome' | 'automated_score' | 'human_score'
+  | 'chat_scorer' | 'chat_scorer_inherited' | 'manual_continuation'
+> {
+  readonly execution_read_only: boolean
+  readonly last_response_message_piece_id: string | null
+  /** Number of pruned references; excludes the main conversation. */
+  readonly related_conversation_count: number
+  readonly selected_conversation_id: string
+  readonly selected_conversation_valid: boolean
+}
+
 export interface CreateAttackRequest {
   target_registry_name?: string
   target_binding?: TargetBinding
@@ -1159,6 +1181,9 @@ export interface DisplayScore extends BackendScore {
 
 export interface BackendMessagePiece {
   id: string
+  sequence?: number
+  role?: string
+  timestamp?: string
   original_value_data_type: string
   converted_value_data_type: string
   original_value?: string | null
@@ -1198,6 +1223,8 @@ export interface ConversationMessagesResponse {
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null
+  pagination?: PaginationInfo | null
+  partial_message_sequences?: number[]
 }
 
 export interface MessagePieceRequest {
@@ -1302,6 +1329,7 @@ export interface AttackListResponse {
 
 export interface ConversationSummary {
   conversation_id: string
+  conversation_type?: 'main' | 'pruned'
   message_count: number
   last_message_preview?: string | null
   created_at?: string | null
@@ -1311,6 +1339,8 @@ export interface AttackConversationsResponse {
   attack_result_id: string
   main_conversation_id: string
   conversations: ConversationSummary[]
+  pagination?: PaginationInfo | null
+  total_count?: number | null
 }
 
 
