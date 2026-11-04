@@ -398,22 +398,32 @@ class _AnthropicModelWrittenEvalsDataset(_RemoteDatasetLoader):
         paths = self._list_jsonl_paths()
         logger.info("Loading %s Anthropic model-written eval files", len(paths))
 
-        # A TaskGroup cancels sibling fetches (including ones still queued for a worker
-        # thread) as soon as one fails, instead of leaving them running unowned.
-        fetch_tasks: list[asyncio.Task[list[dict[str, Any]]]] = []
-        fetch_error: Exception | None = None
-        try:
-            async with asyncio.TaskGroup() as task_group:
-                fetch_tasks.extend(task_group.create_task(self._fetch_file_async(path, cache=cache)) for path in paths)
-        except ExceptionGroup as group:
-            fetch_error = group.exceptions[0]
-        if fetch_error is not None:
-            # Re-raise outside the handler so callers see the original exception, as with gather.
-            raise fetch_error
+        async def fetch_files_async() -> list[list[dict[str, Any]]]:
+            """
+            Fetch files, cancelling sibling fetches on failure.
+
+            Returns:
+                File rows in manifest order.
+            """
+            fetch_tasks: list[asyncio.Task[list[dict[str, Any]]]] = []
+            fetch_error: Exception | None = None
+            try:
+                async with asyncio.TaskGroup() as task_group:
+                    fetch_tasks.extend(
+                        task_group.create_task(self._fetch_file_async(path, cache=cache)) for path in paths
+                    )
+            except ExceptionGroup as group:
+                fetch_error = group.exceptions[0]
+            if fetch_error is not None:
+                # Preserve the original error without adding the group's exception context.
+                raise fetch_error
+            return [task.result() for task in fetch_tasks]
+
+        # Isolate TaskGroup's internal cancellation count on Python 3.11/3.12.
+        file_rows = await asyncio.create_task(fetch_files_async())
 
         seeds: list[SeedUnion] = []
-        for path, task in zip(paths, fetch_tasks, strict=True):
-            rows = task.result()
+        for path, rows in zip(paths, file_rows, strict=True):
             seeds.extend(self._rows_to_seeds(path=path, rows=rows))
 
         if not seeds:
