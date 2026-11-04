@@ -50,6 +50,23 @@ test.describe("dataset examples against the real backend @seeded", () => {
     await waitForBackend(request);
   });
 
+  test("empty Chat can browse seed prompts and return to its draft @seeded", async ({ page, request }) => {
+    test.setTimeout(90_000);
+    await waitForBackend(request);
+    const postRequests: string[] = [];
+    page.on("request", (outgoing) => {
+      if (outgoing.method() === "POST") postRequests.push(new URL(outgoing.url()).pathname);
+    });
+    await page.goto("/attack/chat");
+    await page.getByRole("button", { name: "Browse seed prompts" }).click();
+    await expect(page).toHaveURL(/\\/datasets$/);
+    await page.getByRole("link", { name: "jailbreak_templates", exact: true }).click();
+    await page.getByRole("link", { name: "Return to Chat" }).click();
+    await expect(page).toHaveURL(/\\/attack\\/chat$/);
+    await expect(page.getByPlaceholder("Type prompt here")).toBeVisible();
+    expect(postRequests).toEqual([]);
+  });
+
   for (const entry of ["chat", "dataset"]) {
     test(`imports a template from ${entry} into the visible prompt box without sending @seeded`, async ({ page, request }) => {
       test.setTimeout(90_000);
