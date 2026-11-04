@@ -869,6 +869,29 @@ async def test_metadata_replacement_preserves_dictionary_behavior_async(
     )
 
 
+async def test_metadata_replacement_sync_entry_rejects_invalid_root_async(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="response",
+                conversation_id="replace",
+                prompt_metadata={"owner": "original"},
+            )
+        ]
+    )
+    metadata: Any = []
+    with pytest.warns(DeprecationWarning, match="update_prompt_metadata_by_conversation_id"):
+        with pytest.raises(ValueError, match="prompt_metadata must be a dictionary"):
+            sqlite_instance.update_prompt_metadata_by_conversation_id(
+                conversation_id="replace", prompt_metadata=metadata
+            )
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id="replace")
+    assert len(pieces) == 1
+    assert pieces[0].original_value == "response"
+    assert pieces[0].prompt_metadata == {"owner": "original"}
+
+
 async def test_metadata_replacement_rejection_survives_reopen_async(tmp_path: Path) -> None:
     script = """
 import asyncio
