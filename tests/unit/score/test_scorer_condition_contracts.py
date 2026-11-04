@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import pyrit
 import pyrit.score
 from pyrit.models import (
     ComponentIdentifier,
@@ -34,6 +36,7 @@ from pyrit.score import (
     ScorerPromptValidator,
     SelfAskGeneralFloatScaleScorer,
     SelfAskScaleScorer,
+    SubStringScorer,
     TrueFalseScorer,
 )
 from pyrit.score.float_scale.decision_scorer import DecisionScorer
@@ -98,6 +101,8 @@ class _TypedMessageScorer(MessageTrueFalseScorer):
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
+        condition = self._get_required_condition(expectation=expectation, condition_type=_TypedCondition)
+        assert condition.value == "typed"
         return _score_for(self, message_piece, expectation)
 
 
@@ -312,3 +317,71 @@ class TestLegacyHookConstruction:
             expectation=ScoringExpectation(conditions=(_TypedCondition(),)),
         )
         assert score.get_value() is True
+
+
+def _defines_legacy_piece_hook(node: ast.AST) -> bool:
+    return isinstance(node, ast.ClassDef) and any(
+        isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and member.name == "_score_piece_async"
+        for member in node.body
+    )
+
+
+def _legacy_piece_hook_definitions() -> list[str]:
+    root = Path(pyrit.__file__).parent
+    definitions: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        definitions.extend(
+            f"{path.relative_to(root).as_posix()}::{node.name}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef) and _defines_legacy_piece_hook(node)
+        )
+    return definitions
+
+
+class TestInRepoScorersUseTypedHook:
+    def test_only_the_message_base_defines_the_legacy_piece_hook(self) -> None:
+        assert _legacy_piece_hook_definitions() == ["score/message_scorer.py::MessageScorer"]
+
+    def test_external_subclass_of_migrated_scorer_must_move_its_override(self) -> None:
+        class CustomSubstringScorer(SubStringScorer):
+            async def _score_piece_async(
+                self, message_piece: MessagePiece, *, objective: str | None = None
+            ) -> list[Score]:
+                raise AssertionError("must not be silently skipped")
+
+        with pytest.raises(
+            LegacyScorerHookError, match="Move the custom policy to _score_piece_with_expectation_async"
+        ):
+            CustomSubstringScorer(substring="x")
+
+    def test_external_subclass_with_both_piece_hooks_fails_at_construction(self) -> None:
+        class CustomSubstringScorer(SubStringScorer):
+            async def _score_piece_async(
+                self, message_piece: MessagePiece, *, objective: str | None = None
+            ) -> list[Score]:
+                raise AssertionError("must not be silently skipped")
+
+            async def _score_piece_with_expectation_async(
+                self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+            ) -> list[Score]:
+                raise AssertionError("construction must fail")
+
+        with pytest.raises(
+            LegacyScorerHookError, match="Move the custom policy to _score_piece_with_expectation_async"
+        ):
+            CustomSubstringScorer(substring="x")
+
+    async def test_legacy_call_on_migrated_scorer_names_the_typed_hook_async(self) -> None:
+        piece = MessagePiece(role="assistant", original_value="a word")
+        with pytest.raises(NotImplementedError, match=r"Call _score_piece_with_expectation_async\(message_piece"):
+            await SubStringScorer(substring="word")._score_piece_async(piece)
+
+    async def test_migrated_scorer_still_records_objective_async(self) -> None:
+        expectation = ScoringExpectation(objective="find the word")
+        [score] = await SubStringScorer(substring="word").score_async(
+            scorable=ContentScorable(value="a word"), expectation=expectation
+        )
+
+        assert score.get_value() is True
+        assert score.objective == "find the word"
