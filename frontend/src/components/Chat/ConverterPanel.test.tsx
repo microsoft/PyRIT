@@ -400,6 +400,39 @@ describe('ConverterPanel', () => {
     expect(screen.queryByTestId('converter-item-new-converter')).not.toBeInTheDocument()
   })
 
+  it('refreshes the registry but does not append to the pipeline when modality tab changes before creation completes', async () => {
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [textConverter] })
+      .mockResolvedValueOnce({
+        items: [textConverter, makeConverter('new-converter', 'CaesarConverter')],
+      })
+    const user = userEvent.setup()
+    renderPanel({
+      attachments: [{
+        draftId: 'photo', name: 'photo.png', type: 'image', mimeType: 'image/png',
+        sourceValue: 'photo.png', url: 'photo.png',
+      }],
+    })
+    await screen.findByTestId('converter-panel-list')
+
+    // Start on Text tab, open create converter dialog
+    await user.click(screen.getByRole('combobox', { name: 'Add converter' }))
+    await user.click(screen.getByTestId('create-converter-option'))
+
+    // While dialog is open/pending, switch to Image tab
+    await user.click(screen.getByRole('tab', { name: 'Image' }))
+
+    // Now creation completes
+    await user.click(screen.getByRole('button', { name: 'Complete converter creation' }))
+
+    // Registry is refreshed
+    expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2)
+    // Neither Image tab nor Text tab should have the converter appended to pipeline
+    expect(screen.queryByTestId('converter-item-new-converter')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'Text' }))
+    expect(screen.queryByTestId('converter-item-new-converter')).not.toBeInTheDocument()
+  })
+
   it('returns the selected registry ID with the converted value', async () => {
     mockedConvertersApi.previewConversion.mockResolvedValue(
       makePreviewResponse(['base64-default'], ['converted']),

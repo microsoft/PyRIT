@@ -231,6 +231,11 @@ export default function ConverterPanel({
   // The selected tab can disappear when an attachment is removed; fall back to
   // text for every derivation instead of resetting state from an effect.
   const effectiveActiveTab = tabs.includes(activeTab) ? activeTab : 'text'
+  const effectiveActiveTabRef = useRef(effectiveActiveTab)
+  useLayoutEffect(() => {
+    effectiveActiveTabRef.current = effectiveActiveTab
+  }, [effectiveActiveTab])
+  const createTargetPieceTypeRef = useRef<string | null>(null)
   const selectedStages = useMemo(
     () => pipelines[effectiveActiveTab] ?? [],
     [effectiveActiveTab, pipelines],
@@ -315,35 +320,39 @@ export default function ConverterPanel({
   }, [addConverter, effectiveActiveTab])
 
   const handleOpenCreateDialog = useCallback((): void => {
-    setCreateTargetPieceType(effectiveActiveTab)
+    createTargetPieceTypeRef.current = effectiveActiveTabRef.current
+    setCreateTargetPieceType(effectiveActiveTabRef.current)
     setCreateDialogOpen(true)
-  }, [effectiveActiveTab])
+  }, [])
 
   const handleCloseCreateDialog = useCallback((): void => {
     setCreateDialogOpen(false)
+    createTargetPieceTypeRef.current = null
     setCreateTargetPieceType(null)
   }, [])
 
   const handleConverterCreated = useCallback((converterId: string, isCurrentOpening: boolean): void => {
-    const targetPieceType = createTargetPieceType
+    const targetPieceType = createTargetPieceTypeRef.current ?? createTargetPieceType
     if (isCurrentOpening) {
       setCreateDialogOpen(false)
+      createTargetPieceTypeRef.current = null
       setCreateTargetPieceType(null)
     }
     // Only append the new converter to the pipeline if this dialog opening
     // remained active until creation completed and the active modality tab matches.
     // Late completions after dismissal (or tab switch) only refresh the registry.
+    const currentTab = effectiveActiveTabRef.current
     const shouldAppendToPipeline =
       isCurrentOpening &&
       Boolean(targetPieceType) &&
-      targetPieceType === effectiveActiveTab
+      targetPieceType === currentTab
 
     if (shouldAppendToPipeline && targetPieceType) {
       void loadConverters(converterId, targetPieceType)
     } else {
       void loadConverters()
     }
-  }, [createTargetPieceType, effectiveActiveTab, loadConverters])
+  }, [createTargetPieceType, loadConverters])
 
   const removeConverter = useCallback((index: number): void => {
     setPipeline(effectiveActiveTab, (stages: ConverterPipelineStage[]) => stages.filter(
