@@ -85,7 +85,6 @@ import {
   routerPathParamValue,
   scenarioRunProvenance,
   findingEvidenceOrigin,
-  parseChatRoute,
   scenarioRunRoutePath,
 } from './utils/routeParams'
 
