@@ -22,6 +22,7 @@ from pyrit.converter import (
     TranslationConverter,
     VariationConverter,
 )
+from pyrit.converter.llm_generic_text_converter import _order_template_sets
 from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import SQLiteMemory
 from pyrit.models import ConverterIdentifier, Message, MessagePiece, SeedPrompt
@@ -599,6 +600,125 @@ async def test_generic_llm_converter_ordered_sets_keep_set_behavior(mock_target)
     )
 
     assert await _sent_prompt_async(converter, mock_target) == "hello a,b,c 3 True False"
+
+
+@pytest.mark.parametrize(
+    "kind, expected",
+    [(set, "hello {0, 8}"), (frozenset, "hello frozenset({0, 8})")],
+)
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "words.copy()",
+        "words.union([])",
+        "words.intersection(words)",
+        "words.difference([])",
+        "words.symmetric_difference([])",
+        "words - other",
+    ],
+)
+async def test_generic_llm_converter_set_operations_keep_the_order(mock_target, expression, kind, expected) -> None:
+    template = _custom_template("{{ objective }} {{ " + expression + " }}", "objective", "words", "other")
+    first_words, second_words = _colliding_sets()
+    first = LLMGenericTextConverter(
+        converter_target=mock_target, user_prompt_template_with_objective=template, words=kind(first_words), other=set()
+    )
+    second = LLMGenericTextConverter(
+        converter_target=mock_target,
+        user_prompt_template_with_objective=template,
+        words=kind(second_words),
+        other=set(),
+    )
+
+    assert await _sent_prompt_async(first, mock_target) == expected
+    assert await _sent_prompt_async(second, mock_target) == expected
+    assert first.get_identifier().hash == second.get_identifier().hash
+
+
+@pytest.mark.parametrize("kind", [set, frozenset])
+def test_ordered_set_operations_keep_set_results_and_order(kind: type) -> None:
+    words = _order_template_sets(kind({"gamma", "alpha"}))
+    other = kind({"beta", "alpha"})
+    results = [
+        (words | other, {"alpha", "beta", "gamma"}),
+        (other | words, {"alpha", "beta", "gamma"}),
+        (words & other, {"alpha"}),
+        (other & words, {"alpha"}),
+        (words - other, {"gamma"}),
+        (other - words, {"beta"}),
+        (words ^ other, {"beta", "gamma"}),
+        (other ^ words, {"beta", "gamma"}),
+        (words.copy(), {"alpha", "gamma"}),
+        (words.union(other, ["delta"]), {"alpha", "beta", "delta", "gamma"}),
+    ]
+
+    for result, expected in results:
+        assert result == expected
+        assert type(result) is type(words)
+        assert list(result) == sorted(expected)
+    with pytest.raises(TypeError):
+        words - "alpha"
+    with pytest.raises(TypeError):
+        words | 1
+
+
+def _self_referencing_list(words: set[int]) -> list[Any]:
+    value: list[Any] = ["first"]
+    value.append(value)
+    value.append(words)
+    return value
+
+
+def _self_referencing_dict(words: set[int]) -> dict[str, Any]:
+    value: dict[str, Any] = {"words": words}
+    value["self"] = value
+    return value
+
+
+def _tuple_cycle(words: set[int]) -> tuple[Any, ...]:
+    items: list[Any] = []
+    value = (items, words)
+    items.append(value)
+    return value
+
+
+@pytest.mark.parametrize(
+    "build, expected",
+    [
+        (_self_referencing_list, "hello ['first', [...], {0, 8}]"),
+        (_self_referencing_dict, "hello {'words': {0, 8}, 'self': {...}}"),
+        (_tuple_cycle, "hello ([(...)], {0, 8})"),
+    ],
+)
+async def test_generic_llm_converter_orders_sets_in_self_referencing_parameters(mock_target, build, expected) -> None:
+    template = _custom_template("{{ objective }} {{ words }}", "objective", "words")
+    first_words, second_words = _colliding_sets()
+    first = LLMGenericTextConverter(
+        converter_target=mock_target, user_prompt_template_with_objective=template, words=build(first_words)
+    )
+    second = LLMGenericTextConverter(
+        converter_target=mock_target, user_prompt_template_with_objective=template, words=build(second_words)
+    )
+
+    assert await _sent_prompt_async(first, mock_target) == expected
+    assert await _sent_prompt_async(second, mock_target) == expected
+    assert first.get_identifier().hash == second.get_identifier().hash
+
+
+async def test_generic_llm_converter_keeps_shared_references_when_ordering_sets(mock_target) -> None:
+    shared = [{"b", "a"}]
+    template = _custom_template(
+        "{{ objective }} {{ words.first is sameas words.second }} {{ words.first[0] is sameas words.tags }}",
+        "objective",
+        "words",
+    )
+    converter = LLMGenericTextConverter(
+        converter_target=mock_target,
+        user_prompt_template_with_objective=template,
+        words={"first": shared, "second": shared, "tags": shared[0]},
+    )
+
+    assert await _sent_prompt_async(converter, mock_target) == "hello True True"
 
 
 @pytest.mark.usefixtures("patch_central_database")

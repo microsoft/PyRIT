@@ -9,7 +9,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import fields, is_dataclass
 from inspect import isroutine
 from pathlib import PurePath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential, wait_none
 
@@ -49,31 +49,147 @@ def _reproducible_order(items: Iterable[Any]) -> list[Any]:
     return sorted(items, key=_describe_template_value)
 
 
-class _OrderedSet(set):
+class _ReproducibleOrder:
+    """
+    Iterate in a reproducible order, and keep that order in the sets that set operations return.
+
+    Mixed into ``set`` and ``frozenset`` subclasses. Their inherited operations would otherwise return
+    plain sets, which a template could render in an order that depends on ``PYTHONHASHSEED``.
+    """
+
+    __slots__ = ()
+    # The built-in set type that the class extends.
+    _set_type: ClassVar[Any]
+
+    def _keep_order(self, result: Any) -> Any:
+        ordered_type: Any = type(self)
+        return result if result is NotImplemented else ordered_type(result)
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(_reproducible_order(self._set_type.__iter__(self)))
+
+    def copy(self) -> Any:
+        return self._keep_order(self._set_type.copy(self))
+
+    def union(self, *others: Iterable[Any]) -> Any:
+        return self._keep_order(self._set_type.union(self, *others))
+
+    def intersection(self, *others: Iterable[Any]) -> Any:
+        return self._keep_order(self._set_type.intersection(self, *others))
+
+    def difference(self, *others: Iterable[Any]) -> Any:
+        return self._keep_order(self._set_type.difference(self, *others))
+
+    def symmetric_difference(self, other: Iterable[Any]) -> Any:
+        return self._keep_order(self._set_type.symmetric_difference(self, other))
+
+    def __or__(self, other: Any) -> Any:
+        return self._keep_order(self._set_type.__or__(self, other))
+
+    def __ror__(self, other: Any) -> Any:
+        return self._keep_order(self._set_type.__ror__(self, other))
+
+    def __and__(self, other: Any) -> Any:
+        return self._keep_order(self._set_type.__and__(self, other))
+
+    def __rand__(self, other: Any) -> Any:
+        return self._keep_order(self._set_type.__rand__(self, other))
+
+    def __sub__(self, other: Any) -> Any:
+        return self._keep_order(self._set_type.__sub__(self, other))
+
+    def __rsub__(self, other: Any) -> Any:
+        return self._keep_order(self._set_type.__rsub__(self, other))
+
+    def __xor__(self, other: Any) -> Any:
+        return self._keep_order(self._set_type.__xor__(self, other))
+
+    def __rxor__(self, other: Any) -> Any:
+        return self._keep_order(self._set_type.__rxor__(self, other))
+
+
+class _OrderedSet(_ReproducibleOrder, set):
     """A ``set`` that iterates, and so renders, in a reproducible order."""
 
     __slots__ = ()
-
-    def __iter__(self) -> Iterator[Any]:
-        return iter(_reproducible_order(super().__iter__()))
+    _set_type = set
 
     def __repr__(self) -> str:
         return f"{{{', '.join(map(repr, self))}}}" if self else "set()"
 
 
-class _OrderedFrozenSet(frozenset):
+class _OrderedFrozenSet(_ReproducibleOrder, frozenset):
     """A ``frozenset`` that iterates, and so renders, in a reproducible order."""
 
     __slots__ = ()
-
-    def __iter__(self) -> Iterator[Any]:
-        return iter(_reproducible_order(super().__iter__()))
+    _set_type = frozenset
 
     def __repr__(self) -> str:
         return f"frozenset({{{', '.join(map(repr, self))}}})" if self else "frozenset()"
 
 
-def _order_template_sets(value: Any, *, enclosing: frozenset[int] = frozenset()) -> Any:
+def _holds_set(value: Any, *, seen: set[int]) -> bool:
+    """
+    Check whether a value holds a set or frozenset, directly or through lists, tuples and dictionaries.
+
+    Args:
+        value (Any): The template parameter value.
+        seen (set[int]): Ids of the containers already checked, to stop at self-references.
+
+    Returns:
+        bool: Whether the value is or holds a set or frozenset.
+    """
+    if type(value) in (set, frozenset):
+        return True
+    if type(value) not in (list, tuple, dict) or id(value) in seen:
+        return False
+    seen.add(id(value))
+    items = [*value.keys(), *value.values()] if type(value) is dict else value
+    return any(_holds_set(item, seen=seen) for item in items)
+
+
+def _copy_with_ordered_sets(value: Any, *, copies: dict[int, Any]) -> Any:
+    """
+    Copy a value, replacing its sets with sets that iterate in a reproducible order.
+
+    Lists, tuples and dictionaries are copied, so that the sets they hold can be replaced. Each
+    container is copied once, so self-references and shared references point to the copies, as
+    they pointed to the originals.
+
+    Args:
+        value (Any): The template parameter value.
+        copies (dict[int, Any]): Copies made so far, by the id of the original.
+
+    Returns:
+        Any: The copied value.
+    """
+    if id(value) in copies:
+        return copies[id(value)]
+
+    def copy(item: Any) -> Any:
+        return _copy_with_ordered_sets(item, copies=copies)
+
+    if type(value) is set:
+        return copies.setdefault(id(value), _OrderedSet(map(copy, value)))
+    if type(value) is frozenset:
+        return copies.setdefault(id(value), _OrderedFrozenSet(map(copy, value)))
+    if type(value) is list:
+        # Register the copy before filling it, so that references back to the list find it.
+        copied_list: list[Any] = copies.setdefault(id(value), [])
+        copied_list.extend(map(copy, value))
+        return copied_list
+    if type(value) is dict:
+        copied_dict: dict[Any, Any] = copies.setdefault(id(value), {})
+        copied_dict.update((copy(key), copy(item)) for key, item in value.items())
+        return copied_dict
+    if type(value) is tuple:
+        items = tuple(map(copy, value))
+        # A reference back to this tuple through one of its items may already have copied it.
+        return copies.setdefault(id(value), items)
+    return value
+
+
+def _order_template_sets(value: Any) -> Any:
     """
     Replace sets with copies that iterate in a reproducible order.
 
@@ -84,34 +200,11 @@ def _order_template_sets(value: Any, *, enclosing: frozenset[int] = frozenset())
 
     Args:
         value (Any): The template parameter value.
-        enclosing (frozenset[int]): Ids of the containers being copied, to stop at self-references.
 
     Returns:
         Any: The value with its sets ordered, or the value itself if it holds no sets.
     """
-    if id(value) in enclosing:
-        return value
-    nested = enclosing | {id(value)}
-
-    def order(item: Any) -> Any:
-        return _order_template_sets(item, enclosing=nested)
-
-    if type(value) is set:
-        return _OrderedSet(map(order, value))
-    if type(value) is frozenset:
-        return _OrderedFrozenSet(map(order, value))
-    if type(value) in (list, tuple):
-        items = [order(item) for item in value]
-        changed = any(new is not old for new, old in zip(items, value, strict=True))
-        return type(value)(items) if changed else value
-    if type(value) is dict:
-        entries = [(order(key), order(item)) for key, item in value.items()]
-        changed = any(
-            new_key is not key or new_item is not item
-            for (new_key, new_item), (key, item) in zip(entries, value.items(), strict=True)
-        )
-        return dict(entries) if changed else value
-    return value
+    return _copy_with_ordered_sets(value, copies={}) if _holds_set(value, seen=set()) else value
 
 
 def _describe_template_value(value: Any, *, enclosing: frozenset[int] = frozenset()) -> str:
