@@ -1483,6 +1483,8 @@ class ScoreEntry(Base):
         """
         snapshot_participation = entry._snapshot_participation
         entry = Score.model_validate(entry.model_dump(exclude={"objective"}))
+        if snapshot_participation is None:
+            snapshot_participation = entry._snapshot_participation
         self.id = entry.id
         self.is_intermediate = is_intermediate
         self.score_value = entry.score_value
@@ -1546,7 +1548,6 @@ class ScoreEntry(Base):
                 else None
             ),
         )
-
         score._snapshot_participation = self.snapshot_participation
         return score
 

@@ -5,6 +5,7 @@
 Unit tests for the pyrit_scan CLI module (thin REST client).
 """
 
+import asyncio
 import logging
 from argparse import Namespace
 from datetime import UTC
@@ -87,6 +88,20 @@ def test_compatibility_failure_exits_without_replay(stage, capsys):
         client.start_scenario_run_async.assert_awaited_once()
         client.get_scenario_run_async.assert_awaited_once()
         assert "server run may still be active" in output
+
+
+def test_run_scenario_cancellation_requests_server_cancellation(capsys):
+    client = _mock_api_client()
+    with (
+        patch("pyrit.cli.api_client.PyRITApiClient", return_value=client),
+        patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new=AsyncMock(return_value=True)),
+        patch.object(pyrit_scan, "_poll_until_terminal_async", new=AsyncMock(side_effect=asyncio.CancelledError)),
+    ):
+        exit_code = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+
+    assert exit_code == 1
+    client.cancel_scenario_run_async.assert_awaited_once_with(scenario_result_id="test-id-123")
+    assert "Cancellation request sent to server." in capsys.readouterr().out
 
 
 def test_dataset_filter_help_covers_every_request_model_key():

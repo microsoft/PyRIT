@@ -11,7 +11,7 @@ import type {
   ScenarioRunSizeEstimateResponse,
   TargetInstance,
 } from '@/types'
-import type { ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
+import { INITIAL_SCENARIO_RUN_PROGRESS_STATE, type ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
 
 import ScenarioCatalog from './ScenarioCatalog'
 import ScenarioDetail from './ScenarioDetail'
@@ -113,6 +113,7 @@ const ESTIMATE: ScenarioRunSizeEstimateResponse = {
 }
 
 const RUN_STATE: ScenarioRunProgressState = {
+  ...INITIAL_SCENARIO_RUN_PROGRESS_STATE,
   loadStatus: 'ready',
   run: {
     scenario_result_id: RUN_ID,
@@ -229,7 +230,8 @@ describe('Scenario catalog-to-run integration', () => {
       expect.any(AbortSignal),
     ))
     const estimate = screen.getByRole('region', { name: 'Run estimate' })
-    expect(within(estimate).getByText('Total atomic attacks').parentElement).toHaveTextContent('2')
+    expect(within(estimate).getAllByRole('term')[0]).toHaveTextContent('Total atomic attacks')
+    expect(within(estimate).getAllByRole('definition')[0]).toHaveTextContent(/^2$/)
 
     await user.click(screen.getByTestId('launch-scenario-btn'))
     const preview = await screen.findByRole('dialog', { name: 'Run preview' })
@@ -248,7 +250,7 @@ describe('Scenario catalog-to-run integration', () => {
     expect(screen.getByLabelText('Current route')).toHaveTextContent(
       `/scanner/history/${RUN_ID}`,
     )
-    expect(await screen.findByRole('heading', { level: 2, name: SCENARIO_NAME })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: SCENARIO_NAME })).toBeInTheDocument()
     expect(mockListTargets).not.toHaveBeenCalled()
   })
 })

@@ -10,6 +10,9 @@ import type {
 } from '@/types'
 
 import Initializers from './Initializers'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   initializersApi: {
@@ -85,16 +88,16 @@ describe('Initializers', () => {
     expect(screen.getByTestId('configured-initializer-row-0')).toHaveTextContent('Registers targets.')
   })
 
-  it('should refresh settings when the refresh button is clicked', async () => {
-    const user = userEvent.setup()
+  it('should quietly update settings after a visible minute', async () => {
     renderInitializers()
+    await screen.findByRole('heading', { level: 2, name: 'Configured initializers' })
 
     await waitFor(() => {
       expect(mockedInitializersApi.getSettings).toHaveBeenCalledTimes(1)
       expect(mockedInitializersApi.listRegistered).toHaveBeenCalledTimes(1)
     })
 
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advanceAutoRefresh()
 
     await waitFor(() => {
       expect(mockedInitializersApi.getSettings).toHaveBeenCalledTimes(2)
@@ -122,8 +125,7 @@ describe('Initializers', () => {
     expect(screen.getByText('Service Unavailable')).toBeInTheDocument()
   })
 
-  it('should drop the loaded catalog and disable the dialog when a refresh fails after a successful load', async () => {
-    const user = userEvent.setup()
+  it('should retain the loaded catalog when a background read fails', async () => {
     renderInitializers()
 
     const loadedRow = await screen.findByTestId('configured-initializer-row-0')
@@ -132,14 +134,13 @@ describe('Initializers', () => {
     expect(screen.getByRole('button', { name: 'Browse available initializers' })).toBeEnabled()
 
     mockedInitializersApi.listRegistered.mockRejectedValueOnce(new Error('Service Unavailable'))
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advanceAutoRefresh()
 
     await waitFor(() => expect(mockedInitializersApi.listRegistered).toHaveBeenCalledTimes(2))
     const refreshedRow = await screen.findByTestId('configured-initializer-row-0')
-    await waitFor(() => expect(refreshedRow).toHaveTextContent('Catalog metadata temporarily unavailable.'))
-    expect(refreshedRow).not.toHaveTextContent('Registers targets.')
-    expect(refreshedRow).not.toHaveTextContent('Required env vars')
-    expect(screen.getByRole('button', { name: 'Browse available initializers' })).toBeDisabled()
+    expect(refreshedRow).toHaveTextContent('Registers targets.')
+    expect(refreshedRow).toHaveTextContent('Required env vars: AZURE_OPENAI_ENDPOINT')
+    expect(screen.getByRole('button', { name: 'Browse available initializers' })).toBeEnabled()
     expect(screen.getByText('Service Unavailable')).toBeInTheDocument()
   })
 })

@@ -21,6 +21,7 @@ from pyrit.backend.models.attacks import (
     MessagePieceRequest,
     MessageRequest,
     SaveConversationRequest,
+    ScoreView,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
@@ -89,6 +90,19 @@ class _ChatJudgeTarget(MockPromptTarget):
                     '"rationale": "Captured conversation satisfies the rubric", "metadata": ""}'
                 ),
             ).to_message()
+        ]
+
+
+class _UndeterminedChatScorer(SubStringScorer):
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        return [
+            self._build_undetermined_score(
+                rationale="No verdict was reachable.",
+                message_piece_id=message_piece.id,
+                objective=expectation.objective if expectation else None,
+            )
         ]
 
 
@@ -179,17 +193,22 @@ async def test_apply_conversation_snapshot_reuse_projection_and_judge_owner_asyn
     target = _ChatJudgeTarget()
     child = SelfAskTrueFalseScorer(chat_target=target) if target_backed else SubStringScorer(substring="default")
     conversation_scorer = create_conversation_scorer(scorer=child)
-    scorer = conversation_scorer
-    if wrapper_mode != "direct":
+    if wrapper_mode == "composite":
         scorer = TrueFalseCompositeScorer(
             aggregator=TrueFalseScoreAggregator.AND,
-            scorers=[scorer, SubStringScorer(substring="default")],
+            scorers=[conversation_scorer, SubStringScorer(substring="default")],
         )
-    if wrapper_mode == "nested":
+    elif wrapper_mode == "nested":
+        inner = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.AND,
+            scorers=[conversation_scorer, SubStringScorer(substring="default")],
+        )
         scorer = TrueFalseCompositeScorer(
             aggregator=TrueFalseScoreAggregator.OR,
-            scorers=[scorer, SubStringScorer(substring="default")],
+            scorers=[inner, SubStringScorer(substring="default")],
         )
+    else:
+        scorer = conversation_scorer
     ScorerRegistry.get_registry_singleton().instances.register(scorer, name="conversation-judge")
     reference = RegisteredComponentReference(
         registry_name="conversation-judge", identifier_hash=scorer.get_identifier().hash
@@ -240,6 +259,154 @@ async def test_apply_conversation_snapshot_reuse_projection_and_judge_owner_asyn
     assert not reevaluated.reused and reevaluated.score.id != first.score.id
     if target_backed:
         assert len(target.prompt_sent) == 2
+
+
+async def test_apply_reuses_and_projects_legacy_snapshot_free_fallback_collision_async(
+    *,
+    latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    policy, attack, request, _ = latest_response_chat
+    primary_resolved = TrueFalseFallbackScorer(
+        scorer=SubStringScorer(substring="default"),
+        fallback_scorer=SubStringScorer(substring="unused"),
+    )
+    fallback_resolved = TrueFalseFallbackScorer(
+        scorer=_UndeterminedChatScorer(substring="unreachable"),
+        fallback_scorer=SubStringScorer(substring="default"),
+    )
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[primary_resolved, fallback_resolved],
+    )
+    scorable = MessageScorable(message_piece_ids=(request.response_id,))
+    expectation = ScoringExpectation(objective=request.objective)
+    [primary_probe] = await primary_resolved.score_async(scorable=scorable, expectation=expectation)
+    [fallback_probe] = await fallback_resolved.score_async(scorable=scorable, expectation=expectation)
+    assert primary_probe.score_metadata["resolved_by"] == "primary"
+    assert fallback_probe.score_metadata["resolved_by"] == "fallback"
+
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="snapshot-free-fallback-collision")
+    reference = RegisteredComponentReference(
+        registry_name="snapshot-free-fallback-collision", identifier_hash=scorer.get_identifier().hash
+    )
+    await AttackService().update_attack_async(
+        attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
+    )
+    request = request.model_copy(update={"scorer": reference})
+
+    with patch.object(scorer, "score_async", wraps=scorer.score_async) as evaluate:
+        first = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert "resolved_by" not in first.score.score_metadata
+
+        def remove_participation_metadata(session) -> None:
+            entry = session.get(ScoreEntry, first.score.id)
+            assert entry is not None
+            entry.snapshot_participation = None
+            session.commit()
+
+        await run_memory_session_async(
+            memory=sqlite_instance,
+            operation=remove_participation_metadata,
+        )
+        [persisted_root] = [
+            score
+            for score in await sqlite_instance.get_prompt_scores_async(prompt_ids=[request.response_id])
+            if score.id == first.score.id
+        ]
+        assert persisted_root._snapshot_participation is None
+        repeated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+
+    assert repeated.reused and repeated.score.id == first.score.id and evaluate.call_count == 1
+    transcript = await AttackService().get_conversation_messages_async(
+        attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+    )
+    assert transcript is not None and transcript.automated_score is not None
+    assert transcript.automated_score.id == first.score.id
+    score_view = transcript.automated_score
+    assert isinstance(score_view, ScoreView)
+    assert "pyrit_internal_snapshot_participation" not in score_view.score_metadata
+    assert "snapshot_participation" not in score_view.model_dump()
+
+
+@pytest.mark.parametrize("forged_public_metadata", [False, True])
+async def test_apply_rechecks_legacy_composite_missing_required_conversation_provenance_async(
+    *,
+    latest_response_chat: tuple[ChatScoringService, AttackResult, ApplyChatScorerRequest, SubStringScorer],
+    sqlite_instance: SQLiteMemory,
+    forged_public_metadata: bool,
+) -> None:
+    policy, attack, request, _ = latest_response_chat
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[
+            create_conversation_scorer(scorer=SubStringScorer(substring="default")),
+            SubStringScorer(substring="default"),
+        ],
+    )
+    ScorerRegistry.get_registry_singleton().instances.register(scorer, name="legacy-missing-conversation-provenance")
+    reference = RegisteredComponentReference(
+        registry_name="legacy-missing-conversation-provenance", identifier_hash=scorer.get_identifier().hash
+    )
+    await AttackService().update_attack_async(
+        attack_result_id=attack.attack_result_id, request=UpdateAttackRequest(chat_scorer=reference)
+    )
+    request = request.model_copy(update={"scorer": reference})
+
+    with patch.object(scorer, "score_async", wraps=scorer.score_async) as evaluate:
+        first = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert first.score.observation_ids
+
+        def remove_legacy_provenance(session) -> None:
+            entry = session.get(ScoreEntry, first.score.id)
+            assert entry is not None
+            entry.snapshot_participation = None
+            if forged_public_metadata:
+                entry.score_metadata = {
+                    **entry.score_metadata,
+                    "pyrit_internal_snapshot_participation": '{"1": null}',
+                }
+            else:
+                entry.observation_links.clear()
+            session.commit()
+            session.expire_all()
+            reloaded = session.get(ScoreEntry, first.score.id)
+            assert reloaded is not None and reloaded.snapshot_participation is None
+            if forged_public_metadata:
+                assert reloaded.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+
+        await run_memory_session_async(memory=sqlite_instance, operation=remove_legacy_provenance)
+        if forged_public_metadata:
+            await sqlite_instance.add_message_to_memory_async(
+                request=MessagePiece(
+                    role="user", original_value="An appended live request", conversation_id=attack.conversation_id
+                ).to_message()
+            )
+        [legacy_root] = [
+            score
+            for score in await sqlite_instance.get_prompt_scores_async(prompt_ids=[request.response_id])
+            if score.id == first.score.id
+        ]
+        if forged_public_metadata:
+            assert legacy_root.observation_ids == first.score.observation_ids
+            assert legacy_root.score_metadata["pyrit_internal_snapshot_participation"] == '{"1": null}'
+        else:
+            assert not legacy_root.observation_ids
+        assert legacy_root._snapshot_participation is None
+        stale_projection = await AttackService().get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+        )
+        assert stale_projection is not None and stale_projection.automated_score is None
+
+        reevaluated = await policy.apply_async(attack_result_id=attack.attack_result_id, request=request)
+        assert not reevaluated.reused and reevaluated.score.id != first.score.id
+        transcript = await AttackService().get_conversation_messages_async(
+            attack_result_id=attack.attack_result_id, conversation_id=attack.conversation_id
+        )
+
+    assert evaluate.call_count == 2
+    assert transcript is not None and transcript.automated_score is not None
+    assert transcript.automated_score.id == reevaluated.score.id
 
 
 @pytest.mark.parametrize("private_value", [None, '{"1": null}', {"0": None, "1": None}])

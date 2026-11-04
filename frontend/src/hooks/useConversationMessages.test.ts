@@ -43,12 +43,29 @@ function contents(messages: Message[]): string[] {
 
 describe('useConversationMessages', () => {
   const getMessages = jest.mocked(attacksApi.getMessages)
+  afterEach(() => { jest.useRealTimers() })
 
   beforeEach(() => {
     jest.resetAllMocks()
     jest.mocked(backendMessagesToFrontend).mockImplementation((messages: BackendMessage[]) => messages.map(
       (message) => ({ role: 'user', content: `${message.created_at}:${message.turn_number}`, timestamp: '' }),
     ))
+  })
+
+  it('polls an injected saved-conversation reader without changing manual send ownership', async () => {
+    jest.useFakeTimers()
+    const readConversation = jest.fn().mockResolvedValue(transcript('main', [1]))
+    const { result, unmount } = renderMessages({ readConversation, pollIntervalMs: 2500 })
+    await act(async () => { await Promise.resolve() })
+    expect(readConversation).toHaveBeenCalledTimes(1)
+    readConversation.mockResolvedValue(transcript('main', [1, 2]))
+    await act(async () => { jest.advanceTimersByTime(2500); await Promise.resolve() })
+    expect(contents(result.current.messages)).toEqual(['main:1', 'main:2'])
+    expect(getMessages).not.toHaveBeenCalled()
+    unmount()
+    await act(async () => { jest.advanceTimersByTime(10000); await Promise.resolve() })
+    expect(readConversation).toHaveBeenCalledTimes(2)
+    jest.useRealTimers()
   })
 
   it('should load the active conversation and expose its loading state', async () => {
@@ -270,5 +287,124 @@ describe('useConversationMessages', () => {
 
     expect(result.current.getViewedConversationId()).toBe('created')
     expect(result.current.loadedConversationId).toBe('created')
+  })
+
+  describe('send ownership handoff', () => {
+    function savedTranscript(conversationId: string): ConversationMessagesResponse {
+      return {
+        conversation_id: conversationId,
+        messages: (['user', 'assistant'] as const).map((role, turn) => ({
+          role,
+          turn_number: turn,
+          created_at: '2026-01-01T00:00:00Z',
+          message_pieces: [{
+            id: `${conversationId}-${role}`,
+            original_value_data_type: 'text',
+            converted_value_data_type: 'text',
+            original_value: `${conversationId} ${role} text`,
+            converted_value: `${conversationId} ${role} text`,
+            scores: [],
+            response_error: 'none',
+          }],
+        })),
+        target_response_status: {
+          response_error: 'none', request_turn_number: 0, response_turn_number: 1,
+        },
+      }
+    }
+
+    beforeEach(() => {
+      const mapper = jest.requireActual<typeof import('@/utils/messageMapper')>('@/utils/messageMapper')
+      jest.mocked(backendMessagesToFrontend).mockImplementation(mapper.backendMessagesToFrontend)
+    })
+
+    it('loads the exact saved transcript once when selected send ownership ends with unchanged IDs', async () => {
+      let sending = true
+      const isSendInFlight = (): boolean => sending
+      getMessages.mockResolvedValue(savedTranscript('main'))
+      const { result, rerender } = renderMessages({
+        sendingConversations: new Set(['main']), isSendInFlight,
+      })
+      expect(getMessages).not.toHaveBeenCalled()
+      expect(result.current.awaitingConversationLoad).toBe(false)
+
+      sending = false
+      rerender({ sendingConversations: notSending, isSendInFlight })
+
+      await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+      expect(getMessages).toHaveBeenCalledTimes(1)
+      expect(getMessages).toHaveBeenCalledWith('attack', 'main')
+      expect(contents(result.current.messages)).toEqual(['main user text', 'main assistant text'])
+      expect(result.current.messages.map((message) => message.role)).toEqual(['user', 'assistant'])
+      expect(result.current.getLoadedConversationId()).toBe('main')
+      expect(result.current.awaitingConversationLoad).toBe(false)
+      expect(result.current.isLoadingMessages).toBe(false)
+    })
+
+    it('does not reload an already-loaded successful send when ownership ends', () => {
+      let sending = true
+      const isSendInFlight = (): boolean => sending
+      const { result, rerender } = renderMessages({
+        sendingConversations: new Set(['main']), isSendInFlight,
+      })
+      act(() => {
+        result.current.setMessages(backendMessagesToFrontend(savedTranscript('main').messages))
+        result.current.markConversationLoaded('main')
+      })
+
+      sending = false
+      rerender({ sendingConversations: notSending, isSendInFlight })
+
+      expect(getMessages).not.toHaveBeenCalled()
+      expect(contents(result.current.messages)).toEqual(['main user text', 'main assistant text'])
+      expect(result.current.loadedConversationId).toBe('main')
+      expect(result.current.awaitingConversationLoad).toBe(false)
+    })
+
+    it('does not supersede a pending selected read when another conversation starts or stops sending', async () => {
+      const load = deferred<ConversationMessagesResponse>()
+      getMessages.mockReturnValueOnce(load.promise)
+      const isSendInFlight = (id: string): boolean => id === 'other'
+      const { result, rerender } = renderMessages({ isSendInFlight })
+
+      rerender({ isSendInFlight, sendingConversations: new Set(['other']) })
+      rerender({ isSendInFlight, sendingConversations: notSending })
+
+      expect(getMessages).toHaveBeenCalledTimes(1)
+      expect(getMessages).toHaveBeenCalledWith('attack', 'main')
+      await act(async () => { load.resolve(savedTranscript('main')) })
+      expect(contents(result.current.messages)).toEqual(['main user text', 'main assistant text'])
+      expect(result.current.loadedConversationId).toBe('main')
+      expect(result.current.awaitingConversationLoad).toBe(false)
+    })
+
+    it('does not apply a completed handoff read after navigating to another conversation', async () => {
+      const mainLoad = deferred<ConversationMessagesResponse>()
+      const branchLoad = deferred<ConversationMessagesResponse>()
+      getMessages.mockReturnValueOnce(mainLoad.promise).mockReturnValueOnce(branchLoad.promise)
+      let sending = true
+      const isSendInFlight = (id: string): boolean => id === 'main' && sending
+      const { result, rerender } = renderMessages({
+        isSendInFlight, sendingConversations: new Set(['main']),
+      })
+      sending = false
+      rerender({ isSendInFlight, sendingConversations: notSending })
+      expect(getMessages).toHaveBeenCalledTimes(1)
+      expect(getMessages).toHaveBeenLastCalledWith('attack', 'main')
+
+      rerender({ activeConversationId: 'branch', isSendInFlight, sendingConversations: notSending })
+      expect(getMessages).toHaveBeenCalledTimes(2)
+      expect(getMessages).toHaveBeenLastCalledWith('attack', 'branch')
+      await act(async () => { mainLoad.resolve(savedTranscript('main')) })
+      expect(result.current.messages).toEqual([])
+      expect(result.current.loadedConversationId).toBeNull()
+      expect(result.current.isLoadingMessages).toBe(true)
+
+      await act(async () => { branchLoad.resolve(savedTranscript('branch')) })
+      expect(contents(result.current.messages)).toEqual(['branch user text', 'branch assistant text'])
+      expect(result.current.loadedConversationId).toBe('branch')
+      expect(result.current.awaitingConversationLoad).toBe(false)
+      expect(result.current.isLoadingMessages).toBe(false)
+    })
   })
 })

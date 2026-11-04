@@ -2,9 +2,11 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 
 import type { SeedBrowserQuery } from '@/components/Datasets/seedExampleQuery'
 import { datasetsApi } from '@/services/api'
+import { deferred } from '@/test-utils/deferred'
 import type { SeedExampleDetailResponse, SeedExampleListResponse, SeedExampleSummary } from '@/types'
 
 import { useSeedExampleDetail, useSeedExamples } from './useSeedExamples'
+import { AUTO_REFRESH_INTERVAL_MS } from './useAutoRefresh'
 
 jest.mock('@/services/api', () => ({
   datasetsApi: {
@@ -55,6 +57,91 @@ const DETAIL: SeedExampleDetailResponse = {
   ...summary('example-1', 'preview'),
   members: [],
 }
+
+describe('visible seed revalidation', () => {
+  const query = { ...QUERY, search: 'policy', cursor: 'visible-page', exampleId: 'example-1' }
+  const originalPage = page([summary('example-1', 'old')])
+
+  function renderVisibleExamples() {
+    return renderHook(() => ({
+      list: useSeedExamples('dataset-key', query, 'one'),
+      detail: useSeedExampleDetail('dataset-key', 'example-1', false, 'one'),
+    }))
+  }
+
+  async function advance(milliseconds = AUTO_REFRESH_INTERVAL_MS): Promise<void> {
+    await act(async () => { await jest.advanceTimersByTimeAsync(milliseconds) })
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers()
+    mockList.mockReset().mockResolvedValue(originalPage)
+    mockDetail.mockReset().mockResolvedValue(DETAIL)
+  })
+
+  afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks() })
+
+  it('should re-read the visible filtered cursor and selected detail without hiding them', async () => {
+    const { result } = renderVisibleExamples()
+    await advance(0)
+    const pendingPage = deferred<SeedExampleListResponse>()
+    const pendingDetail = deferred<SeedExampleDetailResponse>()
+    mockList.mockReturnValueOnce(pendingPage.promise)
+    mockDetail.mockReturnValueOnce(pendingDetail.promise)
+    await advance()
+    expect(mockList).toHaveBeenCalledTimes(2)
+    expect(mockDetail).toHaveBeenCalledTimes(2)
+    expect(mockList.mock.calls[1][0]).toMatchObject({
+      selection_key: 'dataset-key', cursor: 'visible-page', search: 'policy',
+    })
+    expect(result.current.list.loading).toBe(false)
+    expect(result.current.detail.loading).toBe(false)
+    expect(result.current.list.page).toEqual(originalPage)
+    expect(result.current.detail.detail).toEqual(DETAIL)
+    await advance()
+    expect(mockList).toHaveBeenCalledTimes(2)
+    expect(mockDetail).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      pendingPage.resolve(page([summary('example-1', 'new')], 3))
+      pendingDetail.resolve({ ...DETAIL, preview: 'updated' })
+    })
+    expect(result.current.list.page?.total).toBe(3)
+    expect(result.current.detail.detail?.preview).toBe('updated')
+  })
+
+  it('should skip hidden views and recover transient refresh errors without clearing loaded content', async () => {
+    const visibility = jest.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const { result } = renderVisibleExamples()
+    await advance(0)
+    await advance()
+    expect(mockList).toHaveBeenCalledTimes(1)
+    expect(mockDetail).toHaveBeenCalledTimes(1)
+    visibility.mockReturnValue('visible')
+    mockList.mockRejectedValueOnce(new Error('List unavailable'))
+    mockDetail.mockRejectedValueOnce(new Error('Detail unavailable'))
+    await advance()
+    expect(result.current.list.page).toEqual(originalPage)
+    expect(result.current.detail.detail).toEqual(DETAIL)
+    expect(result.current.list.error?.detail).toBe('List unavailable')
+    expect(result.current.detail.error?.detail).toBe('Detail unavailable')
+    await advance()
+    expect(result.current.list.error).toBeNull()
+    expect(result.current.detail.error).toBeNull()
+  })
+
+  it('should clear authoritative cursor and deleted-example errors on background checks', async () => {
+    const { result } = renderVisibleExamples()
+    await advance(0)
+    mockList.mockRejectedValueOnce({ isAxiosError: true, response: { status: 400, data: { detail: 'Invalid cursor' } } })
+    mockDetail.mockRejectedValueOnce({ isAxiosError: true, response: { status: 404, data: { detail: 'Deleted' } } })
+    await advance()
+    expect(result.current.list.page).toBeNull()
+    expect(result.current.list.error?.status).toBe(400)
+    expect(result.current.detail.detail).toBeNull()
+    expect(result.current.detail.notFound).toBe(true)
+    expect(result.current.detail.error).toBeNull()
+  })
+})
 
 describe('useSeedExamples', () => {
   beforeEach(() => {
