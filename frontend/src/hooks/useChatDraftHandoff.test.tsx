@@ -721,5 +721,43 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       })
       expect(result.current.getPreservedDraft('attack-2', 'conv-2')).toBeNull()
     })
+
+    it('does not revoke attachment blob URLs still referenced by another preserved conversation draft', () => {
+      const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
+      const sharedAttachment: MessageAttachment = {
+        name: 'shared.png',
+        type: 'image',
+        mimeType: 'image/png',
+        url: 'blob:http://localhost/shared-across-convs',
+        size: 1024,
+      }
+
+      act(() => {
+        result.current.preserveDraft({
+          originatingAttackId: 'attack-1',
+          originatingConversationId: 'conv-1',
+          originatingPath: '/attack/chat/attack-1/conversations/conv-1',
+          draft: { text: 'Draft 1', attachments: [sharedAttachment] },
+        })
+        result.current.preserveDraft({
+          originatingAttackId: 'attack-2',
+          originatingConversationId: 'conv-2',
+          originatingPath: '/attack/chat/attack-2/conversations/conv-2',
+          draft: { text: 'Draft 2', attachments: [sharedAttachment] },
+        })
+      })
+
+      // Clearing draft 1 should NOT revoke sharedAttachment because draft 2 still references it
+      act(() => {
+        result.current.clearPreservedDraft(undefined, 'attack-1', 'conv-1')
+      })
+      expect(revokeObjectURLSpy).not.toHaveBeenCalledWith('blob:http://localhost/shared-across-convs')
+
+      // Clearing draft 2 should now revoke sharedAttachment since no other preserved draft references it
+      act(() => {
+        result.current.clearPreservedDraft(undefined, 'attack-2', 'conv-2')
+      })
+      expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:http://localhost/shared-across-convs')
+    })
   })
 })

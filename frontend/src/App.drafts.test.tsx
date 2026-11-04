@@ -663,6 +663,44 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('ROUND6 UNSAVED PRESERVATION CONTROL')
   })
 
+  it('should preserve and restore drafts when switching directly between conversations without unmounting (#3735)', async () => {
+    const user = userEvent.setup()
+    renderChat('/attack/chat/saved/conversations/main')
+    const composer = await screen.findByPlaceholderText('Type prompt here')
+    await user.type(composer, 'Draft for main conversation')
+
+    // Switch directly to branch conversation without unmounting ChatWindow
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByLabelText('Current route')).toHaveTextContent(
+      '/attack/chat/saved/conversations/branch',
+    ))
+    // Composer starts empty for branch conversation
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue(''))
+
+    // Type a draft in branch conversation
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Draft for branch conversation')
+
+    // Switch back directly to main conversation
+    await user.click(screen.getByRole('button', { name: 'Open saved main' }))
+    await waitFor(() => expect(screen.getByLabelText('Current route')).toHaveTextContent(
+      '/attack/chat/saved/conversations/main',
+    ))
+    // Main's draft is restored intact!
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue(
+      'Draft for main conversation',
+    ))
+
+    // Switch back to branch conversation
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByLabelText('Current route')).toHaveTextContent(
+      '/attack/chat/saved/conversations/branch',
+    ))
+    // Branch's draft is restored intact!
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue(
+      'Draft for branch conversation',
+    ))
+  })
+
   it.each(['/attack/chat', '/attack/chat/saved/conversations/main'])(
     'should let the editor block New attack before any draft reset from %s',
     async (path: string) => {
