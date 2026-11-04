@@ -31,6 +31,7 @@ from pyrit.common.pagination import decode_keyset_cursor, encode_keyset_cursor, 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.exceptions.dataset_exception import DatasetAPIException
 from pyrit.memory import CentralMemory
+from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
     ConversationStats,
@@ -89,6 +90,8 @@ class DatasetService:
         """
         try:
             result = await self._memory.cleanup_dataset_media_async(operation_id=deletion_id)
+        except DatasetNameConflictError as exc:
+            raise DatasetAPIException(status_code=409, message="The upload is still active.") from exc
         except LookupError as exc:
             raise DatasetAPIException(status_code=404, message="Dataset deletion not found.") from exc
         return DatasetDeletionResponse.model_validate(result)

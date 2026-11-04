@@ -80,10 +80,16 @@ attachments; local retrieval uses the existing media route's safe inline allowli
 
 Names are exact, nonempty, at most 256 UTF-16 code units, and have no surrounding
 whitespace or control characters. An existing stored dataset or in-progress upload
-with the same name returns `409`, never append/replace or silent deduplication.
+with a database-collation-equivalent name returns `409`, never append/replace or
+silent deduplication. SQLite keeps its normal case-sensitive identity; SQL Server
+uses the existing seed-name column collation. Exact deletion remains exact even
+when legacy datasets contain collated aliases. Seed and journal names use Unicode
+storage on SQL Server, including databases with non-UTF-8 collations.
 A provider-only name is allowed; its provider registration remains unchanged.
 Descriptive metadata, response schema, roles, sequence numbers, and grouping are
-preserved. Seed/group IDs, checksums, timestamps, origin, and ingestion attribution
+preserved. Complete remapped groups must satisfy the canonical `SeedGroup` role
+and conversation rules before any name reservation or media write. Validation
+does not mutate the supplied roles. Seed/group IDs, checksums, timestamps, origin, and ingestion attribution
 are assigned by the server. Attribution uses the authenticated object ID, or
 `dataset-api` in local mode. Original multipart filename and content type are
 recorded as `upload_filename` and `upload_content_type` metadata. Trusted Jinja
@@ -128,12 +134,24 @@ An upload that cannot finish rollback cleanup returns `503` with the same
 `Location` guidance. Database failure after seed deletion likewise returns `503`
 with its cleanup resource, not a false success.
 
-Ownership and incomplete cleanup survive restarts. Backend startup recovers
-abandoned imports and pending deletions; status requests can also retry them.
+Ownership and incomplete cleanup survive restarts. Initialization recovers abandoned
+imports and pending deletions after memory/schema setup, before configured initializers
+can write seeds; status requests can also
+retry them. A live upload holds native ownership across its reservation and
+publication transactions: SQLite uses an OS-locked sidecar beside the database
+(temporary storage for in-memory databases), and SQL Server uses a detached,
+session-owned application lock. Recovery skips live owners; process/connection
+loss or explicit shutdown releases ownership. Tiny SQLite sidecars are retained
+like journal records so deleting a lock file cannot split its identity. Do not
+remove them while any runtime uses the database. A status request for an active
+upload returns `409`, not permission to cancel it.
 The lifecycle uses a database-backed lock shared by seed/message/scorer-media
 writers on SQLite and SQL Server. Upload storage writes hold that lock; deletion
 claims media transactionally before removing bytes, and later writes cannot
-attach claimed/deleted assets. Writers may wait during an upload. Direct SQL or
+attach claimed/deleted assets. Rejected Core/bulk DML is rolled back to a
+savepoint even if its caller catches the error and commits other work. Azure blob
+URLs and relative blob names use the configured adapter's same storage identity.
+Writers may wait during an upload. Direct SQL or
 external filesystem/blob modifications outside PyRIT's memory APIs do not
 participate in this protocol. Deploy the new Alembic migration before starting
 backends configured to require an already-current Azure SQL schema.

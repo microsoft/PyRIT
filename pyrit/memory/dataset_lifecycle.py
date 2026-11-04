@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from sqlalchemy import select
 from sqlalchemy.util.concurrency import await_only
 
+from pyrit.memory.dataset_upload_lease import try_upload_lease_async
 from pyrit.memory.memory_models import (
     DatasetLifecycleEntry,
     DatasetLifecycleLock,
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from pyrit.memory.memory_interface import MemoryInterface
+    from pyrit.memory.storage import StorageIO
     from pyrit.models import SeedPrompt
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,7 @@ class DatasetNameConflictError(ValueError):
     """A stored dataset or another import already uses this exact name."""
 
 
-def media_key(value: str) -> str:
+def media_key(value: str, *, storage: StorageIO | None = None) -> str:
     """
     Canonicalize local aliases and blob SAS URLs.
 
@@ -52,7 +54,9 @@ def media_key(value: str) -> str:
     if value.startswith("/api/media?"):
         value = parse_qs(urlparse(value).query).get("path", [value])[0]
     parsed = urlparse(value)
-    if parsed.scheme in {"http", "https"} and (parsed.hostname or "").endswith(".blob.core.windows.net"):
+    if storage is not None:
+        canonical = storage.canonical_path(value)
+    elif parsed.scheme in {"http", "https"} and (parsed.hostname or "").endswith(".blob.core.windows.net"):
         # AzureBlobStorageIO resolves the URL's blob name against its configured container,
         # not against the supplied hostname/container. Match that effective storage identity.
         canonical = "blob:" + "/".join(parsed.path.split("/")[2:])
@@ -67,7 +71,7 @@ def media_key(value: str) -> str:
 
 def _media_keys(session: Session, values: Sequence[str]) -> set[str]:
     def canonicalize() -> set[str]:
-        return {media_key(value) for value in values}
+        return {media_key(value, storage=session.info.get("dataset_storage_io")) for value in values}
 
     if session.get_bind().dialect.is_async:
         return await_only(asyncio.to_thread(canonicalize))
@@ -128,11 +132,17 @@ def validate_dataset_reference_writes(*, session: Session, entries: Sequence[obj
 
 def _validate_dataset_references(*, session: Session, dataset_names: set[str | None], keys: set[str]) -> None:
     with session.no_autoflush:
-        staged = session.scalars(select(DatasetLifecycleEntry).where(DatasetLifecycleEntry.status == "staging")).all()
         own_upload = session.info.get("dataset_upload_id")
-        reserved = {entry.dataset_name for entry in staged if entry.id != own_upload}
-        if dataset_names & reserved:
-            raise DatasetNameConflictError("The dataset name is reserved by an upload.")
+        names = sorted(name for name in dataset_names if name is not None)
+        for start in range(0, len(names), 500):
+            reservation = select(DatasetLifecycleEntry.id).where(
+                DatasetLifecycleEntry.status == "staging",
+                DatasetLifecycleEntry.dataset_name.in_(names[start : start + 500]),
+            )
+            if own_upload is not None:
+                reservation = reservation.where(DatasetLifecycleEntry.id != own_upload)
+            if session.scalar(reservation.limit(1)) is not None:
+                raise DatasetNameConflictError("The dataset name is reserved by an upload.")
         # Chunk for SQL Server's parameter limit.
         ordered = sorted(keys)
         for start in range(0, len(ordered), 500):
@@ -200,18 +210,30 @@ async def reserve_upload_async(*, memory: MemoryInterface, dataset_name: str, pa
         DatasetNameConflictError: If this exact dataset name is already in use.
     """
     upload_id = uuid.uuid4()
-    keys = await asyncio.to_thread(lambda: [media_key(path) for path in paths])
+    lease = await try_upload_lease_async(memory=memory, upload_id=upload_id)
+    if lease is None:
+        raise DatasetNameConflictError("The upload identifier is already active.")
+    memory._dataset_upload_leases[upload_id] = lease
+    try:
+        return await _reserve_upload_async(memory=memory, upload_id=upload_id, dataset_name=dataset_name, paths=paths)
+    except BaseException:
+        await memory.release_dataset_upload_async(upload_id)
+        raise
+
+
+async def _reserve_upload_async(
+    *, memory: MemoryInterface, upload_id: uuid.UUID, dataset_name: str, paths: Sequence[str]
+) -> uuid.UUID:
+    keys = await asyncio.to_thread(lambda: [media_key(path, storage=memory.results_storage_io) for path in paths])
     async with await memory.get_session_async() as session:
         await session.run_sync(lock_dataset_lifecycle)
-        names = (
-            await session.scalars(select(SeedEntry.dataset_name).where(SeedEntry.dataset_name == dataset_name))
-        ).all()
-        staging_names = (
-            await session.scalars(
-                select(DatasetLifecycleEntry.dataset_name).where(DatasetLifecycleEntry.status == "staging")
-            )
-        ).all()
-        if dataset_name in names or dataset_name in staging_names:
+        stored = await session.scalar(select(SeedEntry.id).where(SeedEntry.dataset_name == dataset_name).limit(1))
+        staging = await session.scalar(
+            select(DatasetLifecycleEntry.id)
+            .where(DatasetLifecycleEntry.status == "staging", DatasetLifecycleEntry.dataset_name == dataset_name)
+            .limit(1)
+        )
+        if stored is not None or staging is not None:
             raise DatasetNameConflictError("A stored dataset or upload already uses this name.")
         session.add(
             DatasetLifecycleEntry(
@@ -243,6 +265,9 @@ async def commit_upload_async(
     """
     async with await memory.get_session_async() as session:
         await session.run_sync(lock_dataset_lifecycle)
+        lease = memory._dataset_upload_leases.get(upload_id)
+        if lease is None or not await lease.active_async():
+            raise DatasetNameConflictError("The upload owner is no longer active.")
         operation = await session.get(DatasetLifecycleEntry, upload_id)
         if operation is None or operation.status != "staging":
             raise DatasetNameConflictError("The upload reservation is no longer active.")
@@ -261,6 +286,7 @@ async def commit_upload_async(
             asset.status = "live"
         operation.status = "completed"
         await session.commit()
+    await memory.release_dataset_upload_async(upload_id)
 
 
 async def delete_dataset_async(*, memory: MemoryInterface, dataset_name: str) -> uuid.UUID:
@@ -302,7 +328,9 @@ async def delete_dataset_async(*, memory: MemoryInterface, dataset_name: str) ->
     return deletion_id
 
 
-async def cleanup_dataset_media_async(*, memory: MemoryInterface, operation_id: uuid.UUID) -> dict[str, object]:
+async def cleanup_dataset_media_async(
+    *, memory: MemoryInterface, operation_id: uuid.UUID, abandon_upload: bool = False
+) -> dict[str, object]:
     """
     Retry cleanup inline; a committed tombstone blocks all new memory references.
 
@@ -310,9 +338,22 @@ async def cleanup_dataset_media_async(*, memory: MemoryInterface, operation_id: 
         dict[str, object]: Durable counts, completion state, and a sanitized cleanup error.
 
     Raises:
+        DatasetNameConflictError: If a live upload still owns the reservation.
         LookupError: If the operation identifier is unknown.
         RuntimeError: If results storage is unavailable during cleanup.
     """
+    lease = memory._dataset_upload_leases.pop(operation_id, None) if abandon_upload else None
+    if lease is None:
+        lease = await try_upload_lease_async(memory=memory, upload_id=operation_id)
+    if lease is None:
+        raise DatasetNameConflictError("The upload is still active; cleanup cannot claim its reservation.")
+    try:
+        return await _cleanup_dataset_media_async(memory=memory, operation_id=operation_id)
+    finally:
+        await _finish_storage_write_async(lease.close_async())
+
+
+async def _cleanup_dataset_media_async(*, memory: MemoryInterface, operation_id: uuid.UUID) -> dict[str, object]:
     async with await memory.get_session_async() as session:
         await session.run_sync(lock_dataset_lifecycle)
         operation = await session.get(DatasetLifecycleEntry, operation_id)
@@ -392,4 +433,7 @@ async def recover_dataset_cleanup_async(memory: MemoryInterface) -> None:
             )
         ).all()
     for operation_id in ids:
-        await cleanup_dataset_media_async(memory=memory, operation_id=operation_id)
+        try:
+            await cleanup_dataset_media_async(memory=memory, operation_id=operation_id)
+        except DatasetNameConflictError:
+            logger.info("Skipping dataset recovery for active upload %s", operation_id)

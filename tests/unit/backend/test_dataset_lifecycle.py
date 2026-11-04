@@ -8,6 +8,7 @@ import hashlib
 import json
 import tempfile
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -15,7 +16,7 @@ from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event, select, update
+from sqlalchemy import event, insert, select, update
 from sqlalchemy.engine import Connection, ExecutionContext
 from starlette.requests import Request
 
@@ -24,7 +25,13 @@ from pyrit.backend.main import app
 from pyrit.backend.models.datasets import DatasetUploadLimits
 from pyrit.backend.services.dataset_upload_service import _DatasetMultipartParser
 from pyrit.memory import AzureBlobStorageIO, SQLiteMemory
-from pyrit.memory.memory_models import DatasetMediaEntry, PromptMemoryEntry, SeedEntry
+from pyrit.memory.memory_models import (
+    DatasetLifecycleEntry,
+    DatasetMediaEntry,
+    PromptMemoryEntry,
+    ScorableContentEntry,
+    SeedEntry,
+)
 from pyrit.models import MessagePiece, SeedPrompt
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 
@@ -179,6 +186,48 @@ async def test_duplicate_names_and_concurrent_uploads(client: AsyncClient, sqlit
     assert (await _upload(client)).status_code == 409
 
 
+@pytest.mark.parametrize("roles,sequences", [(["user", "assistant"], [0, 0]), ([None, None], [0, 1])])
+async def test_invalid_complete_groups_are_rejected_before_reservation(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, roles: list[str | None], sequences: list[int]
+) -> None:
+    group = str(uuid4())
+    prompts = [
+        {"data_type": "text", "value": "private prompt", "prompt_group_id": group, "role": role, "sequence": sequence}
+        for role, sequence in zip(roles, sequences, strict=True)
+    ]
+    response = await _upload(client, manifest=_manifest(seeds=prompts))
+    assert response.status_code == 422, response.text
+    assert "private prompt" not in response.text
+    async with await sqlite_instance.get_session_async() as session:
+        assert not (await session.scalars(select(DatasetLifecycleEntry))).all()
+        assert not (await session.scalars(select(SeedEntry))).all()
+
+
+async def test_complete_group_validation_preserves_uploaded_roles_and_unicode_identity(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    group = str(uuid4())
+    name = "\u6570\u636e-\U0001f600"
+    response = await _upload(
+        client,
+        manifest=_manifest(
+            name=name,
+            seeds=[
+                {"data_type": "text", "value": "explicit", "role": "user", "prompt_group_id": group},
+                {"data_type": "text", "value": "inferred on consumption", "role": None, "prompt_group_id": group},
+            ],
+        ),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["name"] == name
+    stored = await _seeds(sqlite_instance)
+    assert {seed.value: seed.role for seed in stored} == {"explicit": "user", "inferred on consumption": None}
+    page = await client.get(f"{URL}/seeds", params={"selection_key": f"dataset:named:{name}"})
+    assert page.status_code == 200 and page.json()["total"] == 1
+    assert (await client.delete(URL, params={"selection_key": f"dataset:named:{name}"})).status_code == 200
+    assert not await _seeds(sqlite_instance)
+
+
 async def test_cleanup_failure_is_durable_and_retryable(client: AsyncClient, sqlite_instance: SQLiteMemory):
     response = await _upload(
         client,
@@ -281,6 +330,60 @@ async def test_late_reference_to_cleanup_claim_is_rejected(client: AsyncClient, 
     assert not Path(path).exists()
 
 
+@pytest.mark.parametrize("surface", ["seed", "original", "converted", "scorable"])
+@pytest.mark.parametrize("operation", ["insert", "update"])
+async def test_rejected_core_media_dml_is_not_committable(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, surface: str, operation: str
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(seeds=[{"data_type": "binary_path", "value": "upload:file"}]),
+        files={"file": ("file.bin", b"removed")},
+    )
+    path = (await _seeds(sqlite_instance))[0].value
+    deletion_id = await sqlite_instance.delete_dataset_async(dataset_name="upload")
+    entry: SeedEntry | ScorableContentEntry | PromptMemoryEntry
+    if surface == "seed":
+        entry = SeedEntry(entry=SeedPrompt(value="original", dataset_name="other", added_by="test"))
+        changes = {"value": path, "data_type": "binary_path"}
+    elif surface == "scorable":
+        entry = ScorableContentEntry(
+            id=uuid4(),
+            value="original",
+            value_sha256=hashlib.sha256(b"original").hexdigest(),
+            data_type="text",
+            timestamp=datetime.now(UTC),
+        )
+        changes = {"value": path, "data_type": "binary_path"}
+    else:
+        entry = PromptMemoryEntry(
+            entry=MessagePiece(role="user", original_value="original", conversation_id=str(uuid4()), sequence=0)
+        )
+        changes = {f"{surface}_value": path, f"{surface}_value_data_type": "binary_path"}
+    model = type(entry)
+    entry_id = entry.id
+    async with await sqlite_instance.get_session_async() as session:
+        if operation == "update":
+            session.add(entry)
+            await session.commit()
+            statement = update(model.__table__).where(model.id == entry_id).values(**changes)
+        else:
+            values = {column.name: getattr(entry, column.name) for column in model.__table__.columns}
+            statement = insert(model.__table__).values(**(values | changes))
+        with pytest.raises(ValueError, match="reserved for dataset cleanup"):
+            await session.execute(statement)
+        await session.commit()
+    async with await sqlite_instance.get_session_async() as session:
+        stored = await session.get(model, entry_id)
+        if operation == "insert":
+            assert stored is None
+        else:
+            column = f"{surface}_value" if surface in {"original", "converted"} else "value"
+            assert await session.scalar(select(model.__table__.c[column]).where(model.id == entry_id)) == "original"
+    await sqlite_instance.cleanup_dataset_media_async(operation_id=deletion_id)
+    assert not Path(path).exists()
+
+
 async def test_manifest_and_prompt_count_limits(client: AsyncClient):
     manifest = json.dumps(_manifest())
     with patch.dict("os.environ", {"PYRIT_DATASET_MAX_MANIFEST_BYTES": str(len(manifest.encode()))}):
@@ -322,6 +425,10 @@ async def test_restart_recovers_journaled_upload(client: AsyncClient, sqlite_ins
     path.parent.mkdir(parents=True)
     operation_id = await sqlite_instance.reserve_dataset_upload_async(dataset_name="abandoned", paths=[str(path)])
     path.write_bytes(b"partial")
+    assert (await client.get(f"{URL}/deletions/{operation_id}")).status_code == 409
+    # A runtime restart releases native ownership; recovery must not assume a live
+    # reservation is abandoned merely because its transaction already committed.
+    await sqlite_instance.release_dataset_upload_async(operation_id)
     await sqlite_instance.recover_dataset_cleanup_async()
     assert not path.exists()
     status = await client.get(f"{URL}/deletions/{operation_id}")
@@ -489,8 +596,9 @@ async def test_truncated_multipart_and_invalid_json_values(client: AsyncClient, 
     assert not await _seeds(sqlite_instance)
 
 
+@pytest.mark.parametrize("reference", ["signed-url", "relative", "windows-relative"])
 async def test_blob_upload_streams_inert_bytes_and_recognizes_signed_shared_references(
-    client: AsyncClient, sqlite_instance: SQLiteMemory
+    client: AsyncClient, sqlite_instance: SQLiteMemory, reference: str
 ):
     blob = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/results")
     uploaded: dict[str, bytes] = {}
@@ -515,13 +623,15 @@ async def test_blob_upload_streams_inert_bytes_and_recognizes_signed_shared_refe
         assert uploaded == {path: b"arbitrary inert bytes"}
         # StorageIO resolves this alias to the same configured container/blob.
         alias = path.replace(".net/results/", ".net:443/other/")
+        if reference != "signed-url":
+            alias = blob._resolve_blob_name(path)
+            if reference == "windows-relative":
+                alias = alias.replace("/", "\\")
+        else:
+            alias += "?sig=signed"
         async with await sqlite_instance.get_session_async() as session:
             session.add(
-                SeedEntry(
-                    entry=SeedPrompt(
-                        value=alias + "?sig=signed", data_type="audio_path", dataset_name="shared", added_by="sdk"
-                    )
-                )
+                SeedEntry(entry=SeedPrompt(value=alias, data_type="audio_path", dataset_name="shared", added_by="sdk"))
             )
             await session.commit()
         deleted = await client.delete(URL, params={"selection_key": "dataset:named:upload"})

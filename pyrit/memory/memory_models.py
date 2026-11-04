@@ -1720,7 +1720,7 @@ class SeedEntry(Base):
     value_sha256 = mapped_column(Unicode, nullable=True)
     data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
     name = mapped_column(String, nullable=True)
-    dataset_name = mapped_column(String, nullable=True)
+    dataset_name = mapped_column(Unicode, nullable=True)
     harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     description = mapped_column(String, nullable=True)
     authors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

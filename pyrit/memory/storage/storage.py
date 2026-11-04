@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
@@ -38,6 +39,15 @@ class StorageIO(ABC):
     """
     Abstract interface for storage systems (local disk, Azure Storage Account, etc.).
     """
+
+    def canonical_path(self, path: str) -> str:
+        """
+        Resolve the effective storage identity; non-disk adapters override this.
+
+        Returns:
+            str: The canonical local identity.
+        """
+        return os.path.normcase(str(Path(path).resolve()))
 
     async def delete_file_async(self, path: Path | str) -> None:
         """Delete one caller-owned file; custom storage must implement cleanup explicitly."""
@@ -327,6 +337,15 @@ class AzureBlobStorageIO(StorageIO):
             if len(path_parts) > 1 and path_parts[1]:
                 return path_parts[1], "/".join(path_parts[2:])
         raise ValueError("Invalid blob URL")
+
+    def canonical_path(self, path: str) -> str:
+        """
+        Resolve URLs and relative names against this adapter's configured container.
+
+        Returns:
+            str: The effective blob identity, without SAS parameters.
+        """
+        return "blob:" + self._resolve_blob_name(path)
 
     def _resolve_blob_name(self, path: Path | str) -> str:
         """

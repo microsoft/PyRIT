@@ -62,6 +62,7 @@ from pyrit.common.pagination import DecodedKeysetCursor
 from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonArrayValue, JsonContainer, JsonScalar, UuidHex
 
 if TYPE_CHECKING:
+    from pyrit.memory.dataset_upload_lease import DatasetUploadLease
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
@@ -642,6 +643,7 @@ class MemoryInterface(abc.ABC):
         self.memory_embedding = embedding_model
         self._operation_session: ContextVar[Session | None] = ContextVar("memory_operation_session", default=None)
         self._async_engines: dict[asyncio.AbstractEventLoop, AsyncEngine] = {}
+        self._dataset_upload_leases: dict[uuid.UUID, DatasetUploadLease] = {}
         self._initialized = False
         self._initialization_lock = threading.Lock()
         self._init_storage_io()
@@ -680,7 +682,11 @@ class MemoryInterface(abc.ABC):
         """
         if self._uses_legacy_session_override():
             raise NotImplementedError("Override get_session_async when customizing the legacy get_session hook.")
-        return AsyncSession(bind=self._get_async_engine(), sync_session_class=MemorySession)
+        return AsyncSession(
+            bind=self._get_async_engine(),
+            sync_session_class=MemorySession,
+            info={"dataset_storage_io": self.results_storage_io},
+        )
 
     def _uses_legacy_session_override(self) -> bool:
         return (
@@ -1310,11 +1316,18 @@ class MemoryInterface(abc.ABC):
 
     async def dispose_loop_resources_async(self) -> None:
         """Close resources before their owning event loop stops."""
+        await self._release_dataset_uploads_async()
         loop = asyncio.get_running_loop()
         engine = self._async_engines.get(loop)
         if engine is not None:
             await engine.dispose()
             del self._async_engines[loop]
+
+    async def _release_dataset_uploads_async(self) -> None:
+        loop = asyncio.get_running_loop()
+        for upload_id, lease in list(self._dataset_upload_leases.items()):
+            if lease.loop is loop:
+                await self.release_dataset_upload_async(upload_id)
 
     @legacy_sync_override(lambda: MemoryInterface.dispose_engine)
     async def dispose_engine_async(self) -> None:
@@ -5043,7 +5056,9 @@ class MemoryInterface(abc.ABC):
 
         return await delete_dataset_async(memory=self, dataset_name=dataset_name)
 
-    async def cleanup_dataset_media_async(self, *, operation_id: uuid.UUID) -> dict[str, object]:
+    async def cleanup_dataset_media_async(
+        self, *, operation_id: uuid.UUID, abandon_upload: bool = False
+    ) -> dict[str, object]:
         """
         Retry owned-media cleanup.
 
@@ -5052,7 +5067,15 @@ class MemoryInterface(abc.ABC):
         """
         from pyrit.memory.dataset_lifecycle import cleanup_dataset_media_async
 
-        return await cleanup_dataset_media_async(memory=self, operation_id=operation_id)
+        return await cleanup_dataset_media_async(memory=self, operation_id=operation_id, abandon_upload=abandon_upload)
+
+    async def release_dataset_upload_async(self, upload_id: uuid.UUID) -> None:
+        """Release this runtime's native upload ownership after publication, failure, or shutdown."""
+        from pyrit.memory.dataset_lifecycle import _finish_storage_write_async
+
+        lease = self._dataset_upload_leases.pop(upload_id, None)
+        if lease is not None:
+            await _finish_storage_write_async(lease.close_async())
 
     async def recover_dataset_cleanup_async(self) -> None:
         """Recover abandoned uploads and incomplete deletions after runtime initialization."""

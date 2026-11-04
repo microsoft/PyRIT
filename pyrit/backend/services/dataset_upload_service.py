@@ -26,7 +26,7 @@ from pyrit.backend.models.datasets import DatasetUploadLimits, DatasetUploadMani
 from pyrit.exceptions.dataset_exception import DatasetAPIException
 from pyrit.memory import CentralMemory, DataTypeSerializer, data_serializer_factory
 from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
-from pyrit.models import MEDIA_PATH_DATA_TYPES, PromptDataType, SeedOrigin, SeedPrompt
+from pyrit.models import MEDIA_PATH_DATA_TYPES, PromptDataType, SeedDataset, SeedOrigin, SeedPrompt
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -164,6 +164,10 @@ def _validated_prompts(
         prompts.append(prompt)
     if referenced != set(files):
         raise _invalid_manifest(field="multipart", message="Every media part must be referenced by a prompt.")
+    try:
+        SeedDataset.group_seed_prompts_by_prompt_group_id([prompt.model_copy(deep=True) for prompt in prompts])
+    except ValueError as exc:
+        raise _invalid_manifest(field="seeds", message="Invalid SeedPrompt grouping or conversation roles.") from exc
     return prompts
 
 
@@ -258,7 +262,7 @@ async def _persist_dataset_async(
         await memory.commit_dataset_upload_async(upload_id=upload_id, seeds=prompts, write_media=write_media_async)
     except BaseException as error:
         # Cancellation and storage/DB errors take the same compensating cleanup path.
-        cleanup = asyncio.create_task(memory.cleanup_dataset_media_async(operation_id=upload_id))
+        cleanup = asyncio.create_task(memory.cleanup_dataset_media_async(operation_id=upload_id, abandon_upload=True))
         while not cleanup.done():
             try:
                 await asyncio.shield(cleanup)
@@ -287,6 +291,8 @@ async def _persist_dataset_async(
             raise DatasetAPIException(status_code=409, message="The upload reservation is no longer active.") from error
         logger.exception("Dataset upload failed for operation %s", upload_id)
         raise DatasetAPIException(status_code=503, message="Dataset upload could not be stored.") from error
+    finally:
+        await memory.release_dataset_upload_async(upload_id)
     return DatasetUploadResponse(
         name=manifest.name,
         selection_key=f"dataset:named:{manifest.name}",

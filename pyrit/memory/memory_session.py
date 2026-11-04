@@ -188,7 +188,9 @@ def _guard_bulk_media_writes(state: ORMExecuteState) -> Any:
     from pyrit.memory.dataset_lifecycle import lock_dataset_lifecycle, validate_stored_dataset_references
 
     lock_dataset_lifecycle(state.session)
-    result = state.invoke_statement()
-    if state.is_insert or state.is_update:
+    if state.is_delete:
+        return state.invoke_statement()
+    with state.session.begin_nested():
+        result = state.invoke_statement()
         validate_stored_dataset_references(state.session)
     return result
