@@ -247,6 +247,48 @@ describe('CreateConverterDialog', () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('new-caesar', true))
   })
 
+  it('shows required-field validation when clicking Add Converter without selecting a type', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+    await screen.findByRole('combobox', { name: /^converter type$/i })
+
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    const alerts = screen.getAllByRole('alert')
+    expect(alerts.some((el) => el.textContent?.includes('Select a converter type'))).toBe(true)
+    expect(alerts.some((el) => el.textContent?.includes('Enter a registry name'))).toBe(true)
+    expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
+  })
+
+  it('maintains focus on primary action after Enter submission and dismisses on Escape during pending build', async () => {
+    const user = userEvent.setup()
+    const onClose = jest.fn()
+    const onTemporary = jest.fn()
+    const converter = {
+      converter_id: 'source',
+      identifier: {
+        class_name: 'CaesarConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash', caesar_offset: 1,
+      },
+    }
+    mockedConvertersApi.buildConverter.mockImplementation(
+      () => new Promise(() => {}),
+    )
+    renderDialog({ editing: { converter }, onTemporary, onClose })
+    const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
+    await user.clear(offset)
+    await user.type(offset, '5{Enter}')
+
+    // Focus must move to primary action button and not fall to document.body
+    const submitBtn = screen.getByRole('button', { name: 'Saving...' })
+    expect(submitBtn).toHaveFocus()
+    expect(offset).toBeDisabled()
+
+    // Escape should reach the dialog and trigger onClose
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('loads converter classes from registry type metadata', async () => {
     const user = userEvent.setup()
     renderDialog()

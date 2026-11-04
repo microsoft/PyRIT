@@ -378,6 +378,8 @@ export default function CreateConverterDialog({
   const [changedParameters, setChangedParameters] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const submittingRef = useRef(false)
+  const submitButtonRef = useRef<HTMLButtonElement>(null)
   const [showValidation, setShowValidation] = useState(false)
   const [error, setError] = useState<DialogError | null>(null)
   const [fileNotice, setFileNotice] = useState<string | null>(null)
@@ -393,6 +395,7 @@ export default function CreateConverterDialog({
     // previous one leaves this opening's own state alone.
     openEpochRef.current += 1
     fileReads.current.clear()
+    submittingRef.current = false
     if (!open) return
     let cancelled = false
     Promise.resolve()
@@ -513,6 +516,7 @@ export default function CreateConverterDialog({
 
   const reset = () => {
     fileReads.current.clear()
+    submittingRef.current = false
     setSelectedType('')
     setRegistryName('')
     setNameEdited(false)
@@ -570,7 +574,7 @@ export default function CreateConverterDialog({
       openEpochRef.current === epoch && fileReads.current.get(parameterName) === selection
     const reader = new FileReader()
     reader.onload = () => {
-      if (!isCurrentSelection()) return
+      if (!isCurrentSelection() || submittingRef.current) return
       fileReads.current.delete(parameterName)
       const value = String(reader.result ?? '')
       onReadSuccess?.()
@@ -610,7 +614,7 @@ export default function CreateConverterDialog({
   }
 
   const submit = async () => {
-    if (loading || submitting || !selectedConverterType) {
+    if (loading || submitting) {
       return
     }
     const missingParameters = (selectedConverterType?.parameters ?? []).some(
@@ -620,6 +624,9 @@ export default function CreateConverterDialog({
     )
     if (!selectedType || (!editing && (!registryName.trim() || missingParameters))) {
       setShowValidation(true)
+      return
+    }
+    if (!selectedConverterType) {
       return
     }
 
@@ -646,6 +653,8 @@ export default function CreateConverterDialog({
     }
 
     const epoch = openEpochRef.current
+    submitButtonRef.current?.focus()
+    submittingRef.current = true
     setSubmitting(true)
     setError(null)
     try {
@@ -684,6 +693,7 @@ export default function CreateConverterDialog({
       }
     } finally {
       if (openEpochRef.current === epoch) {
+        submittingRef.current = false
         setSubmitting(false)
       }
     }
@@ -878,6 +888,7 @@ export default function CreateConverterDialog({
           <DialogActions>
             <Button appearance="secondary" onClick={close}>Cancel</Button>
             <Button
+              ref={submitButtonRef}
               appearance="primary"
               disabled={submitDisabled}
               disabledFocusable={submitDisabled}
