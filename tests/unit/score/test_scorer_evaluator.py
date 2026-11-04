@@ -77,6 +77,16 @@ def test_from_scorer_objective(mock_objective_scorer):
     assert isinstance(evaluator2, ObjectiveScorerEvaluator)
 
 
+def test_from_scorer_unknown_metrics_type_falls_back_to_harm_evaluator(mock_harm_scorer):
+    """Values outside MetricsType keep the historical runtime fallback to the harm evaluator."""
+    evaluator = ScorerEvaluator.from_scorer(
+        scorer=mock_harm_scorer,
+        metrics_type="future_metrics_type",  # type: ignore[arg-type]
+    )
+    assert isinstance(evaluator, HarmScorerEvaluator)
+    assert evaluator.scorer is mock_harm_scorer
+
+
 async def test_evaluate_dataset_async_harm(mock_harm_scorer):
     responses = [
         Message(message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")])
