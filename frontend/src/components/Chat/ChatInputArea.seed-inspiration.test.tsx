@@ -8,7 +8,7 @@ describe('ChatInputArea seed inspiration', () => {
   it('shows an accessible browse action for an empty unsaved chat without sending', async () => {
     const user = userEvent.setup()
     const onBrowseSeedPrompts = jest.fn()
-    const onSend = jest.fn().mockResolvedValue({ clearDraft: false })
+    const onSend = jest.fn().mockResolvedValue({ status: 'sent', clearDraft: false })
 
     render(
       <FluentProvider theme={webLightTheme}>
@@ -39,7 +39,7 @@ describe('ChatInputArea seed inspiration', () => {
     render(
       <FluentProvider theme={webLightTheme}>
         <ChatInputArea
-          onSend={jest.fn().mockResolvedValue({ clearDraft: false })}
+          onSend={jest.fn().mockResolvedValue({ status: 'sent', clearDraft: false })}
           onToggleConverterPanel={jest.fn()}
           isConverterPanelOpen={false}
           onInputChange={jest.fn()}
