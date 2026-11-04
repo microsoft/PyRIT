@@ -132,8 +132,8 @@ export function SeedExampleBrowserView({
     )
 
   useEffect(() => {
-    if (pageState.error) listRetryRef.current?.focus()
-  }, [pageState.error])
+    if (pageState.error && !pageState.page) listRetryRef.current?.focus()
+  }, [pageState.error, pageState.page])
 
   useEffect(() => {
     if (query.cursorRepeated) cursorButtonRef.current?.focus()
@@ -180,7 +180,7 @@ export function SeedExampleBrowserView({
   const pageNumber = seedPageNumber(query, visitedCursors)
   const status = query.cursorRepeated
     ? 'This page link has more than one cursor.'
-    : exampleStatus(pageState.loading, pageState.error != null, pageState.page?.total ?? null, filtered, pageNumber)
+    : exampleStatus(pageState.loading, pageState.error != null && pageState.page == null, pageState.page?.total ?? null, filtered, pageNumber)
   const modalityOptions = useMemo(() => toOptions(dataset.modalities), [dataset.modalities])
   const harmOptions = useMemo(() => toOptions(dataset.harm_categories), [dataset.harm_categories])
   const seedTypeOptions = SEED_TYPES.map((seedType) => ({ value: seedType, label: SEED_TYPE_LABELS[seedType] }))
@@ -305,27 +305,14 @@ export function SeedExampleBrowserView({
       <p className={styles.help}>Newest examples are listed first. This view does not run examples, import them into chat, or play media.</p>
       <p className={styles.status} role="status" aria-live="polite" data-testid="example-status">{status}</p>
 
-      {query.cursorRepeated ? (
-        <div>
-          <p className={styles.message}>Choose one page link, or start again from the first page.</p>
-          <Button
-            ref={cursorButtonRef}
-            className={styles.touchTarget}
-            appearance="primary"
-            onClick={restartFromFirstPage}
-          >
-            Start from the first page
-          </Button>
-        </div>
-      ) : pageState.loading ? (
-        <Spinner label="Loading examples..." />
-      ) : pageState.error ? (
+      {!query.cursorRepeated && !pageState.loading && pageState.error && (
         <div>
           <MessageBar intent="error">
             <MessageBarBody>
               {cursorRejected
                 ? 'This page link is not valid for these filters.'
                 : pageState.error.detail}
+              {pageState.page && ' Showing previously loaded examples until the next successful check.'}
             </MessageBarBody>
           </MessageBar>
           <Button
@@ -347,7 +334,22 @@ export function SeedExampleBrowserView({
             </Button>
           )}
         </div>
-      ) : pageState.page && pageState.page.total === 0 ? (
+      )}
+      {query.cursorRepeated ? (
+        <div>
+          <p className={styles.message}>Choose one page link, or start again from the first page.</p>
+          <Button
+            ref={cursorButtonRef}
+            className={styles.touchTarget}
+            appearance="primary"
+            onClick={restartFromFirstPage}
+          >
+            Start from the first page
+          </Button>
+        </div>
+      ) : pageState.loading ? (
+        <Spinner label="Loading examples..." />
+      ) : pageState.error && !pageState.page ? null : pageState.page && pageState.page.total === 0 ? (
         <p className={styles.message}>
           {filtered ? 'Clear the search or filters to see every example in this dataset.' : 'This dataset has no stored examples.'}
         </p>
@@ -414,7 +416,7 @@ export function SeedExampleBrowserView({
         </div>
       )}
 
-      {!query.cursorRepeated && !pageState.loading && !pageState.error && pageState.page && pageState.page.total > 0 && (
+      {!query.cursorRepeated && !pageState.loading && pageState.page && pageState.page.total > 0 && (
         <div className={styles.pagination}>
           <Button
             className={styles.touchTarget}

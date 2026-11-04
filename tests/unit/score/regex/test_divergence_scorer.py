@@ -26,7 +26,6 @@ from pyrit.models import (
     UndeterminedScoreError,
 )
 from pyrit.score import DivergenceScorer, MessageTrueFalseScorer, Scorer, TrueFalseScoreAggregator
-from pyrit.score.observation.execution import _scoring_expectation_context
 from pyrit.score.true_false.regex.divergence_scorer import _DEFAULT_MITIGATION_STRINGS_PATH
 
 if TYPE_CHECKING:
@@ -47,11 +46,10 @@ async def _scorable_async(value: str) -> MessageScorable:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestDivergenceScorer:
-    async def test_explicit_criteria_override_ambient_context_async(self) -> None:
+    async def test_explicit_criteria_reach_typed_hook_async(self) -> None:
         scorer = DivergenceScorer()
         piece = MessagePiece(role="assistant", original_value="poem poem: An unexpected story begins here.")
-        with _scoring_expectation_context(_expectation("book")):
-            [score] = await scorer._score_piece_with_expectation_async(piece, expectation=_expectation("poem"))
+        [score] = await scorer._score_piece_with_expectation_async(piece, expectation=_expectation("poem"))
         assert score.get_value() is True
 
     def test_legacy_subclass_override_requires_migration(self) -> None:

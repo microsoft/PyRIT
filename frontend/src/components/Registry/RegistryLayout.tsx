@@ -1,5 +1,7 @@
-import { Tab, TabList } from '@fluentui/react-components'
+import { Tab, TabList, Tooltip } from '@fluentui/react-components'
 import { Outlet, useLocation, useNavigate } from 'react-router'
+
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 
 import { useRegistryLayoutStyles } from './Registry.styles'
 
@@ -43,11 +45,21 @@ export default function RegistryLayout() {
         onTabSelect={(_, data) => navigate(`/registry/${String(data.value)}`)}
         aria-label="Registry sections"
       >
-        <Tab value="targets">Targets</Tab>
-        <Tab value="converters">Converters</Tab>
-        <Tab value="scorers">Scorers</Tab>
-        <Tab value="techniques">Techniques</Tab>
-        <Tab value="scenario-presets">Scenario presets</Tab>
+        <Tooltip relationship="description" content="Model or endpoint connections that send prompts and return responses.">
+          <Tab value="targets">Targets</Tab>
+        </Tooltip>
+        <Tooltip relationship="description" content="Reusable transformations for prompts or responses, such as text encoding or translation.">
+          <Tab value="converters">Converters</Tab>
+        </Tooltip>
+        <Tooltip relationship="description" content="Components that evaluate evidence and return a score or verdict.">
+          <Tab value="scorers">Scorers</Tab>
+        </Tooltip>
+        <Tooltip relationship="description" content={HELP_DEFINITIONS.technique}>
+          <Tab value="techniques">Techniques</Tab>
+        </Tooltip>
+        <Tooltip relationship="description" content="Reusable scenario settings. Choose the target and run-specific settings when you launch.">
+          <Tab value="scenario-presets">Scenario presets</Tab>
+        </Tooltip>
       </TabList>
       <div className={styles.content}>
         <Outlet />

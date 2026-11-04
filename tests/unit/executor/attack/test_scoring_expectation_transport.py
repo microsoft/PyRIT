@@ -519,7 +519,9 @@ class TestExecutionExpectationTransport:
         assert target.prompt_sent == ["seed prompt"]
         assert objective.calls[0][1] is supplied
         assert auxiliary.calls[0][1] is supplied
-        assert refusal.calls[0][1] == ScoringExpectation(objective="seed prompt")
+        # The refusal judge renders its criterion as the conversation objective,
+        # so it receives the attack objective, not the prompt that was sent.
+        assert refusal.calls[0][1] == ScoringExpectation(objective="attack objective")
         assert refusal.calls[0][0] == objective.calls[0][0]
 
     async def test_chunked_scores_combined_content_with_auxiliary_async(self, sqlite_instance: SQLiteMemory) -> None:
@@ -655,7 +657,7 @@ class TestExecutionExpectationTransport:
         original = ValueError("scoring failed")
 
         def record_write(*args: Any) -> None:
-            if args[2] == "BEGIN IMMEDIATE":
+            if args[2] == "BEGIN IMMEDIATE" and objective.calls:
                 write_started.set()
 
         async def fail_auxiliary_async(**_kwargs: Any) -> list[Score]:
