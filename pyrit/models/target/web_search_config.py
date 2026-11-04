@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict
 
@@ -42,7 +42,7 @@ class WebSearchConfig(BaseModel):
         return {self.METADATA_KEY: self.model_dump(mode="json")}
 
     @classmethod
-    def from_metadata(cls, *, metadata: Mapping[str, Any] | None) -> WebSearchConfig:
+    def from_metadata(cls, *, metadata: Mapping[str, Any] | None) -> Self:
         """
         Read a policy without changing the metadata.
 
@@ -50,7 +50,7 @@ class WebSearchConfig(BaseModel):
             metadata (Mapping[str, Any] | None): Message-piece prompt metadata.
 
         Returns:
-            WebSearchConfig: The explicit policy, or default behavior when absent.
+            Self: The explicit policy, or default behavior when absent, as the calling class.
         """
         if metadata is None or cls.METADATA_KEY not in metadata:
             return cls()

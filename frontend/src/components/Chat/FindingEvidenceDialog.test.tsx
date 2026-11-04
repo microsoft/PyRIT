@@ -56,6 +56,32 @@ beforeEach(() => {
   jest.mocked(operationsApi.getFindingOptions).mockResolvedValue({ harm_types: ['Malware', 'Other'] })
 })
 
+it('does not fetch attack or Operation metadata while closed, including across saved-conversation changes', async () => {
+  const user = userEvent.setup()
+  const rendered = render(<FluentProvider theme={webLightTheme}><MemoryRouter>
+    <Harness attackResultId="initial" disabled={false} />
+  </MemoryRouter></FluentProvider>)
+  rendered.rerender(<FluentProvider theme={webLightTheme}><MemoryRouter>
+    <Harness attackResultId="selected" disabled={false} />
+  </MemoryRouter></FluentProvider>)
+  expect(attacksApi.getAttack).not.toHaveBeenCalled()
+  expect(operationsApi.get).not.toHaveBeenCalled()
+  expect(operationsApi.list).not.toHaveBeenCalled()
+  expect(operationsApi.listFindings).not.toHaveBeenCalled()
+
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio', { name: /Proof/ })
+  expect(jest.mocked(attacksApi.getAttack).mock.calls).toEqual([['selected']])
+  expect(operationsApi.get).toHaveBeenCalledWith('saved')
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
+  rendered.rerender(<FluentProvider theme={webLightTheme}><MemoryRouter>
+    <Harness attackResultId="next" disabled={false} />
+  </MemoryRouter></FluentProvider>)
+  expect(jest.mocked(attacksApi.getAttack).mock.calls).toEqual([['selected']])
+  expect(operationsApi.get).toHaveBeenCalledTimes(1)
+})
+
 it('defaults to the attack\'s own Operation and attaches the viewed attack', async () => {
   const user = userEvent.setup()
   renderDialog()
@@ -363,6 +389,62 @@ it('does not keep a cancelled selection when the picker reopens', async () => {
   await user.click(action)
   expect(await screen.findByRole('radio', { name: /Proof/ })).not.toBeChecked()
   expect(screen.getByRole('button', { name: 'Attach attack' })).toBeDisabled()
+})
+
+it('restarts pagination and search when the picker reopens', async () => {
+  const user = userEvent.setup()
+  ;(operationsApi.listFindings as jest.Mock).mockResolvedValue({
+    items: [FINDING], has_more: true, next_offset: 20,
+  })
+  renderDialog()
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio')
+  await user.click(screen.getByRole('button', { name: 'Next findings' }))
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 20, title: '' })
+  })
+
+  await user.type(screen.getByRole('textbox'), 'Proof')
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: 'Proof' })
+  })
+  await user.click(screen.getByRole('button', { name: 'Next findings' }))
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 20, title: 'Proof' })
+  })
+
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio')
+  expect(screen.getByRole('textbox')).toHaveValue('')
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '' })
+  })
+})
+
+it('restarts pagination when the picker reopens without a search', async () => {
+  const user = userEvent.setup()
+  ;(operationsApi.listFindings as jest.Mock).mockResolvedValue({
+    items: [FINDING], has_more: true, next_offset: 20,
+  })
+  renderDialog()
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio')
+  await user.click(screen.getByRole('button', { name: 'Next findings' }))
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 20, title: '' })
+  })
+
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio')
+  await waitFor(() => {
+    expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '' })
+  })
 })
 
 it('drops the selection when the viewed attack changes while the picker is open', async () => {
