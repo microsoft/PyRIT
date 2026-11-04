@@ -759,7 +759,7 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(attacksApi.getAttack).not.toHaveBeenCalled()
     expect(metadata).not.toHaveProperty('related_conversations')
     expect(metadata).not.toHaveProperty('related_conversation_ids')
-    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attacks/saved/conversations/off-page')
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/off-page')
     expect(screen.getByPlaceholderText('Type prompt here')).toBeDisabled()
   })
 
@@ -1963,8 +1963,8 @@ describe('App draft handoff with the real chat and composer', () => {
     it('sets initialObjective to persisted objective A and objective to imported B, sending both in Save payload', async () => {
       const user = userEvent.setup()
       let savedPayload: SaveConversationRequest | null = null
-      jest.mocked(attacksApi.getAttack).mockImplementation(async (id: string) => ({
-        ...savedAttack(id),
+      jest.mocked(attacksApi.getAttackMetadata).mockImplementation(async (id: string, conversationId?: string) => ({
+        ...savedMetadata(id, conversationId),
         objective: 'Objective A',
       }))
       jest.mocked(attacksApi.saveConversation).mockImplementation(async (req) => {
@@ -2003,8 +2003,8 @@ describe('App draft handoff with the real chat and composer', () => {
     it('retains destination objective A when imported example has no objective', async () => {
       const user = userEvent.setup()
       let savedPayload: SaveConversationRequest | null = null
-      jest.mocked(attacksApi.getAttack).mockImplementation(async (id: string) => ({
-        ...savedAttack(id),
+      jest.mocked(attacksApi.getAttackMetadata).mockImplementation(async (id: string, conversationId?: string) => ({
+        ...savedMetadata(id, conversationId),
         objective: 'Objective A',
       }))
       jest.mocked(attacksApi.saveConversation).mockImplementation(async (req) => {

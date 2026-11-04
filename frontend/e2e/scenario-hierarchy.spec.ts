@@ -184,13 +184,13 @@ test('browses compound results in the existing attack-group table with stable to
 
 test('opens an actual saved child chat and retains the existing scenario breadcrumb after a reload', async ({ page }, testInfo) => {
   const reads = captureSavedReads(page)
-  const historyPath = '/history/scanner?status=COMPLETED'
+  const historyPath = '/scanner/history?status=COMPLETED'
   await page.goto(historyPath)
   await expect(page.getByRole('combobox', { name: 'Run status', exact: true })).toHaveValue('COMPLETED')
   await page.getByRole('table', { name: 'Scanner history' }).getByRole('link', { name: /Open .+ scenario run/ }).click()
   await expect(page).toHaveURL(run)
   const section = page.getByRole('region', { name: 'Atomic attack groups', exact: true })
-  await section.getByRole('button', { name: 'Expand attacks in Sequential' }).click()
+  await expect(section.getByRole('button', { name: 'Collapse attacks in Sequential' })).toHaveAttribute('aria-expanded', 'true')
   await section.getByRole('button', { name: 'Expand children of sequential: Sequential parent' }).click()
   const row = section.getByRole('row', { name: 'View conversation for #5 sequential: Step 5' })
   const chatLink = row.getByRole('link', { name: 'Step 5', exact: true })
@@ -235,7 +235,7 @@ test('opens an actual saved child chat and retains the existing scenario breadcr
   await expect(page.getByText('Stored example response for Single-turn attempt. This is offline sample data.', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Back to scan', exact: true }).click()
   await expect(page).toHaveURL(run)
-  await page.getByRole('link', { name: 'Back to scanner history', exact: true }).click()
+  await page.getByRole('link', { name: 'Back to scans', exact: true }).click()
   await expect(page).toHaveURL(historyPath)
   await expect(page.getByRole('combobox', { name: 'Run status', exact: true })).toHaveValue('COMPLETED')
   await expectBoundedReads(reads)
@@ -335,7 +335,7 @@ test('merges bounded piece pages and preserves the complete transcript when addi
     const body: ConversationMessagesResponse = await response.json()
     return body.pagination?.has_more === false
   })
-  await page.getByRole('button', { name: /objective achieved outcome/i }).click()
+  await page.getByRole('button', { name: /^Objective achieved outcome:/i }).click()
   await page.getByRole('radio', { name: 'Failure', exact: true }).check()
   await page.getByRole('textbox', { name: 'Rationale', exact: true }).fill('Offline human review of all 222 saved pieces.')
   const scoreCreated = page.waitForResponse((response: Response): boolean =>
@@ -356,7 +356,7 @@ test('merges bounded piece pages and preserves the complete transcript when addi
   await expect(page.getByRole('button', { name: 'Continue manually', exact: true })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Export conversation', exact: true })).toBeEnabled()
 
-  await page.getByRole('button', { name: /objective achieved outcome/i }).click()
+  await page.getByRole('button', { name: /^Objective achieved outcome:/i }).click()
   await expect(page.getByRole('textbox', { name: 'Rationale', exact: true }))
     .toHaveValue('Offline human review of all 222 saved pieces.')
   await expect(page.getByRole('radio', { name: 'Failure', exact: true })).toBeChecked()
@@ -529,8 +529,9 @@ test('owns pending continuations across rapid selection, attack navigation and u
   await page.getByRole('button', { name: 'Load more message pieces', exact: true }).click()
   await expect.poll(async (): Promise<boolean> => (await controlSavedRead(page, 'status')).waiting).toBe(true)
   await page.getByRole('link', { name: 'Back to scan', exact: true }).click()
+  await expect(page).toHaveURL(run)
   const groups = page.getByRole('region', { name: 'Atomic attack groups', exact: true })
-  await groups.getByRole('button', { name: 'Expand attacks in Single turn' }).click()
+  await expect(groups.getByRole('button', { name: 'Collapse attacks in Single turn' })).toHaveAttribute('aria-expanded', 'true')
   await groups.getByRole('row', { name: 'View conversation for single: Single-turn attempt' }).focus()
   await page.keyboard.press('Enter')
   await expect(page.getByText('Stored example response for Single-turn attempt. This is offline sample data.', { exact: true })).toBeVisible()

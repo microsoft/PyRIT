@@ -1483,11 +1483,14 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.getMessages.mockResolvedValue({
       ...makeTextResponse("Saved response").messages, conversation_id: "score-conv",
       automated_score: null, outcome: projected, latest_response_id: "p-resp",
+      pagination: { limit: 100, has_more: false, next_cursor: null },
+      partial_message_sequences: [],
     });
     render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="score-attack" conversationId="score-conv"
       activeConversationId="score-conv" objective="Goal" outcome={attackOutcome} executionReadOnly /></TestWrapper>);
     await screen.findByText("Saved response");
     expect(screen.getByRole("button", { name: `Objective achieved outcome: ${projected}` })).toBeInTheDocument();
+    expect(mockedAttacksApi.getMessages).toHaveBeenCalledWith("score-attack", "score-conv", { limit: 100 });
   });
 
   it.each([false, true])("should invalidate the header after objective changes even if refresh fails (%s)", async (refreshFails) => {
