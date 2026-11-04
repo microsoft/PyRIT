@@ -23,6 +23,7 @@ from pyrit.converter.text_selection_strategy import (
     ProportionSelectionStrategy,
     RangeSelectionStrategy,
     RegexSelectionStrategy,
+    TextSelectionStrategy,
     TokenSelectionStrategy,
     WordIndexSelectionStrategy,
     WordPositionSelectionStrategy,
@@ -186,7 +187,7 @@ async def test_token_selection_rejects_nontext_output_async(*, preserve_tokens: 
 )
 @pytest.mark.parametrize("preserve_tokens", [False, True])
 async def test_range_and_word_selection_reject_nontext_output_async(
-    *, selection_strategy, preserve_tokens: bool
+    *, selection_strategy: TextSelectionStrategy, preserve_tokens: bool
 ) -> None:
     sub_converter = Base64Converter()
     converter = SelectiveTextConverter(
