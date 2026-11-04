@@ -161,6 +161,13 @@ orders have the same metadata, `type_name: "Path | str"`, including after a JSON
 round-trip. Optional forms accept `None` in Python; the display type omits `None`,
 as it does for other optional parameters.
 
+External construction rejects a parameter whose type includes `Path`, because its
+value can name a file on the server. A caller that has made the value safe, as the
+backend does by storing an uploaded file first, passes the name in
+`allowed_path_params` to `create_instance_from_external_input`, or to
+`create_named_instance` or `recreate_instance` with `external_input=True`.
+In-process `create_instance` still accepts paths.
+
 The backend exposes scorer types at `GET /api/scorers/types`, lists registered
 instances at `GET /api/scorers`, retrieves one at `GET /api/scorers/{name}`, and
 creates one with `POST /api/scorers` (`name`, `type`, and optional `params`). The

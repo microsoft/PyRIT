@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 import { createMemoryRouter, Link, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
 import {
@@ -246,7 +248,7 @@ function renderDetail(
   }
   const merged = { ...defaultProps, ...props }
   const renderPage = (pageProps: React.ComponentProps<typeof ScenarioDetail>): React.ReactElement => (
-    <FluentProvider theme={webLightTheme}>
+    <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       {dataRouter ? <RouterProvider router={createMemoryRouter([{
         path: '/scanner/launch/:scenarioName', element: <ScenarioDetail {...pageProps} />,
       }], { initialEntries: [path] })} /> : <MemoryRouter initialEntries={[path]}>
@@ -257,7 +259,7 @@ function renderDetail(
           />
         </Routes>
       </MemoryRouter>}
-    </FluentProvider>
+    </UserPreferencesProvider></FluentProvider>
   )
   const view = render(renderPage(merged))
   return {
@@ -271,6 +273,7 @@ function renderDetail(
 describe('ScenarioDetail', () => {
   it('uses the shared scorer picker for estimates and launch without changing the scenario default', async () => {
     const user = userEvent.setup()
+    writeUserPreferences('local', { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: null })
     mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))
     const scorer = { scorer_registry_name: 'custom', identifier: {
       class_name: 'SubStringScorer', hash: 'custom-hash', scorer_type: 'true_false',
@@ -287,8 +290,11 @@ describe('ScenarioDetail', () => {
     await user.selectOptions(picker, '')
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('objective_scorer'))
     await user.selectOptions(picker, 'registered:custom')
+    expect(readUserPreferences('local').lastUsedTargets).toBeUndefined()
     await confirmRunPreview(user)
     expect(mockStartRun.mock.calls[0][0].objective_scorer).toEqual(reference)
+    expect(readUserPreferences('local').lastUsedTargets?.objective?.registryName).toBe('target-a')
+    expect(readUserPreferences('local').lastUsedChatScorer).toBeNull()
   })
 
   it('does not show a scorer override for fixed-scoring scenarios', async () => {
@@ -299,6 +305,7 @@ describe('ScenarioDetail', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    window.localStorage.clear()
     mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
     mockGetScenario.mockReset()
     mockEstimateRun.mockReset()
@@ -323,6 +330,33 @@ describe('ScenarioDetail', () => {
 
   afterEach(() => {
     jest.useRealTimers()
+  })
+
+  it('prefills a rerun without replacing its saved server-default adversarial target', async () => {
+    const user = userEvent.setup()
+    const preferred = makeAdversarialTarget('preferred-adversarial')
+    renderDetail('/scanner/launch/foundry.red_team_agent', {
+      targets: [makeTarget('target-a'), makeTarget('target-b'), preferred],
+      defaultAdversarialTarget: preferred,
+      sourceRunId: '123e4567-e89b-12d3-a456-426614174000',
+      initialRun: {
+        scenario_name: 'foundry.red_team_agent', target_name: 'target-b',
+        adversarial_target_name: null, techniques: ['crescendo'], include_baseline: false,
+        max_concurrency: 3, max_retries: 2,
+      },
+    })
+    expect(await screen.findByRole('combobox', { name: 'Objective Target' })).toHaveValue('target-b')
+    expect(screen.getByRole('combobox', { name: 'Adversarial Target' })).toHaveValue('')
+    expect(screen.getByRole('checkbox', { name: 'crescendo', exact: true })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'default_technique', exact: true })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).not.toBeChecked()
+    expect(screen.getByRole('spinbutton', { name: 'Max concurrency' })).toHaveValue('3')
+    expect(screen.getByRole('spinbutton', { name: 'Max retries' })).toHaveValue('2')
+    await confirmRunPreview(user)
+    expect(mockStartRun.mock.calls[0][0]).toEqual(expect.objectContaining({
+      target_name: 'target-b', techniques: ['crescendo'], include_baseline: false, max_concurrency: 3, max_retries: 2,
+    }))
+    expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('adversarial_target_name')
   })
 
   describe('scanner conversation configuration', () => {
@@ -441,7 +475,7 @@ describe('ScenarioDetail', () => {
 
     it('should fill a new conversation when the same scanner is opened with a different URL parameter', async () => {
       const user = userEvent.setup()
-      render(<FluentProvider theme={webLightTheme}>
+      render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
         <MemoryRouter initialEntries={['/scanner/launch/technique.execute?prepended_conversation_id=first-conversation']}>
           <Link to="/scanner/launch/technique.execute?prepended_conversation_id=second-conversation">Use another conversation</Link>
           <Routes><Route path="/scanner/launch/:scenarioName" element={
@@ -449,7 +483,7 @@ describe('ScenarioDetail', () => {
               labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
           } /></Routes>
         </MemoryRouter>
-      </FluentProvider>)
+      </UserPreferencesProvider></FluentProvider>)
       expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('first-conversation')
       await user.click(screen.getByRole('link', { name: 'Use another conversation' }))
       expect(await screen.findByRole('textbox', { name: 'prepended_conversation_id' })).toHaveValue('second-conversation')
@@ -888,7 +922,7 @@ describe('ScenarioDetail', () => {
     const datasetsSection = screen.getByRole('region', { name: 'Datasets' })
     expect(within(datasetsSection).getByRole('table', { name: 'Selected datasets' })).toBeInTheDocument()
     expect(datasetsSection.compareDocumentPosition(parameters)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(fallback).toHaveAccessibleDescription('The registered target this scenario uses to generate attacks.')
+    expect(fallback).toHaveAccessibleDescription(/The model used for adversarial chat/)
     expect(fallback).toHaveValue('adversary')
     expect(within(fallback).queryByRole('option', { name: 'target-a' })).not.toBeInTheDocument()
   })
@@ -1011,7 +1045,7 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByRole('combobox', { name: 'Objective Target' })
     expect(screen.queryByRole('combobox', { name: 'Adversarial Target' })).not.toBeInTheDocument()
-    expect(screen.queryByText('The registered target this scenario uses to generate attacks.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/The model used for adversarial chat/)).not.toBeInTheDocument()
   })
 
   it('shows the configuration, estimate, and launch sections before the preview dialog', async () => {
@@ -1120,6 +1154,22 @@ describe('ScenarioDetail', () => {
     await flushRenderedPromises()
     expect(within(estimate).getByText('12')).toBeInTheDocument()
     expect(within(estimate).queryByText('8')).not.toBeInTheDocument()
+  })
+
+  it('shows an unavailable estimate and its actionable reason without opening help', async () => {
+    mockEstimateRun.mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 503, data: { detail: 'Estimate service is unavailable. Try again after it recovers.' } },
+    })
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+
+    const estimate = await screen.findByTestId('run-estimate')
+    await waitFor(() => {
+      expect(within(estimate).getByRole('status')).toHaveTextContent('The backend estimate could not be refreshed.')
+      expect(within(estimate).getByRole('status')).toHaveTextContent('Estimate service is unavailable. Try again after it recovers.')
+    })
+    expect(within(estimate).getByRole('status')).toBeVisible()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
   it('keeps the last good estimate and entered state after a transient preview failure', async () => {
@@ -1235,7 +1285,7 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(within(editor).queryByRole('combobox', { name: 'Attack type' })).not.toBeInTheDocument()
     expect(await within(editor).findByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
-    expect(within(editor).getByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
+    expect(within(editor).getByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Movie script\n{{ objective }}')
     await user.clear(within(editor).getByRole('spinbutton', { name: 'Turn count' }))
     await user.type(within(editor).getByRole('spinbutton', { name: 'Turn count' }), '4')
     expect(within(editor).queryByRole('button', { name: 'Apply to run' })).not.toBeInTheDocument()
@@ -1264,9 +1314,9 @@ describe('ScenarioDetail', () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValue(makeScenario({ max_concrete_techniques: 1 }))
     renderDetail('/scanner/launch/technique.execute')
-    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
+    await user.type(await screen.findByRole('textbox', { name: 'Simulated user system prompt' }), ' edited')
     await screen.findByRole('button', { name: 'Edited - click to reset' })
-    expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }} edited')
+    expect(await screen.findByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Movie script\n{{ objective }} edited')
     await user.click(await screen.findByRole('radio', { name: 'crescendo' }))
     expect(await screen.findByText('Discard technique edits?')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
@@ -1276,7 +1326,7 @@ describe('ScenarioDetail', () => {
     expect(screen.getByRole('button', { name: 'Edited - click to reset' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Edited - click to reset' }))
     expect(screen.queryByRole('button', { name: 'Edited - click to reset' })).not.toBeInTheDocument()
-    expect(await screen.findByLabelText('Simulated user system prompt')).toHaveValue('Movie script\n{{ objective }}')
+    expect(await screen.findByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Movie script\n{{ objective }}')
     await user.click(screen.getByRole('radio', { name: 'crescendo' }))
     expect(screen.getByRole('radio', { name: 'crescendo' })).toBeChecked()
     await waitFor(() => expect(mockTechniques.getConfiguration).toHaveBeenCalledWith('crescendo'))
@@ -1651,6 +1701,19 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0].include_baseline).toBe(false)
   })
 
+  it('explains baseline identity locally without changing its selection', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await screen.findByTestId('scenario-target-select')
+
+    await user.click(screen.getByRole('button', { name: 'Identity for baseline' }))
+
+    expect(screen.getByRole('region', { name: 'Identity for baseline' }))
+      .toHaveTextContent('Baseline identity is available after launch.')
+    expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).toBeChecked()
+    expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
   it('includes the baseline when a shared tag selects or clears its members', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/launch/foundry.red_team_agent')
@@ -1752,7 +1815,7 @@ describe('ScenarioDetail', () => {
     expect(request.max_retries).toBe(0)
   })
 
-  it('shows the combined configured dataset size without submitting it as an override', async () => {
+  it('shows the combined configured dataset selection limit without submitting it as an override', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockResolvedValueOnce(
       makeScenario({
@@ -1803,14 +1866,21 @@ describe('ScenarioDetail', () => {
     expect(screen.queryByText('Advanced options')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 8')
     const estimate = screen.getByTestId('run-estimate')
-    expect(within(estimate).getByText('Dataset size')).toBeInTheDocument()
+    expect(within(estimate).getByText('Dataset selection limit')).toBeInTheDocument()
     expect(within(estimate).getByText('8')).toBeInTheDocument()
     expect(within(estimate).getByText('Number techniques')).toBeInTheDocument()
     expect(within(estimate).getByText('2')).toBeInTheDocument()
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalled())
     expect(mockEstimateRun.mock.calls.at(-1)?.[1]).not.toHaveProperty('max_dataset_size')
 
-    await confirmRunPreview(user)
+    await user.hover(within(estimate).getByText('Dataset selection limit'))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      'The configured maximum number of examples to select. The actual selection may be smaller after filtering or because fewer examples are available.',
+    )
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText(/dataset selection limit: 8/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('max_dataset_size')
   })
@@ -1862,6 +1932,8 @@ describe('ScenarioDetail', () => {
     await screen.findByRole('table', { name: 'Selected datasets' })
     expect(screen.queryByRole('textbox', { name: 'Maximum objectives' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Use all data' })).not.toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('Dataset selection limit')).toBeInTheDocument()
+    expect(within(screen.getByTestId('run-estimate')).getByText('Not applicable')).toBeInTheDocument()
   })
 
   it('keeps scenario defaults when the dataset-limit field is cleared', async () => {
@@ -1894,7 +1966,11 @@ describe('ScenarioDetail', () => {
     await user.click(screen.getByRole('checkbox', { name: 'All available for Maximum objectives' }))
     await user.keyboard('{Escape}')
     await waitFor(() => expect(mockEstimateRun.mock.calls.at(-1)?.[1]).toHaveProperty('datasets.max_total', 'all'))
-    await confirmRunPreview(user)
+    expect(within(screen.getByTestId('run-estimate')).getByText('No total limit')).toBeInTheDocument()
+    const preview = await openRunPreview(user)
+    expect(within(preview).getByText(/dataset selection limit: No total limit/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('confirm-launch-scenario-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('confirm-launch-scenario-btn'))
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())
     expect(mockStartRun.mock.calls[0][0]).toHaveProperty('datasets.max_total', 'all')
   })
@@ -2403,6 +2479,7 @@ describe('ScenarioDetail', () => {
     expect(await screen.findByText('Invalid target')).toBeInTheDocument()
     expect(screen.getByTestId('launch-scenario-btn')).not.toBeDisabled()
     expect(mockNavigate).not.toHaveBeenCalled()
+    expect(readUserPreferences('local').lastUsedTargets).toBeUndefined()
   })
 
   it('guards against a duplicate submit from a fast double click', async () => {
@@ -2923,7 +3000,7 @@ describe('ScenarioDetail', () => {
       mockGetPreset.mockImplementation(async (name: string) => makePresetResponse(
         name === 'first' ? { name, techniques: ['crescendo'] } : { name, techniques: ['default_technique'] },
       ))
-      render(<FluentProvider theme={webLightTheme}>
+      render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
         <MemoryRouter initialEntries={['/scanner/launch/foundry.red_team_agent?preset=first']}>
           <Link to="/scanner/launch/foundry.red_team_agent?preset=second">Use another preset</Link>
           <Routes><Route path="/scanner/launch/:scenarioName" element={
@@ -2931,7 +3008,7 @@ describe('ScenarioDetail', () => {
               labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
           } /></Routes>
         </MemoryRouter>
-      </FluentProvider>)
+      </UserPreferencesProvider></FluentProvider>)
 
       expect(await screen.findByTestId('preset-seed-banner')).toHaveTextContent('Pre-filled from preset first.')
       expect(screen.getByRole('checkbox', { name: 'crescendo' })).toBeChecked()
