@@ -413,6 +413,7 @@ export default function ChatWindow({
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const transcriptStatusId = useId()
+  const transcriptDisabledReasonId = useId()
   const transcriptStatusRef = useRef<HTMLSpanElement>(null)
   const chatAreaRef = useRef<HTMLDivElement>(null)
   const wasSavedEvidenceRef = useRef(executionReadOnly)
@@ -2262,7 +2263,7 @@ export default function ChatWindow({
                 icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
                 disabled={!canExportConversation}
                 aria-label="Export conversation"
-                aria-describedby={messagePagination && isTranscriptIncomplete ? transcriptStatusId : undefined}
+                aria-describedby={messagePagination && isTranscriptIncomplete ? transcriptDisabledReasonId : undefined}
                 data-testid="export-conversation-btn"
               />
             </Tooltip>
@@ -2331,6 +2332,7 @@ export default function ChatWindow({
   return (
     <div className={styles.root}>
       <h1 className={styles.pageHeading}>Chat</h1>
+      {incompleteTranscriptReason && <span id={transcriptDisabledReasonId} hidden>{incompleteTranscriptReason}</span>}
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
@@ -2366,7 +2368,7 @@ export default function ChatWindow({
           <MessageBarActions><Button className={styles.ribbonAction}
             disabled={isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad
               || isTranscriptIncomplete || Boolean(newAttackDisabledReason)}
-            aria-describedby={messagePagination && isTranscriptIncomplete ? transcriptStatusId : undefined}
+            aria-describedby={messagePagination && isTranscriptIncomplete ? transcriptDisabledReasonId : undefined}
             onClick={() => { void copyConversation(recoverableSend?.failedRequestMessageIndex ?? messages.length - 1, 'new_attack') }}>
             {isLoadingEdit ? 'Creating continuation...' : 'Continue manually'}
           </Button></MessageBarActions>
@@ -2497,7 +2499,7 @@ export default function ChatWindow({
                 {isLoadingMessages || awaitingConversationLoad ? 'Loading saved transcript... '
                   : isLoadingMoreMessages ? 'Loading more message pieces... ' : ''}
                 {isTranscriptIncomplete
-                  ? `${loadedPieceSummary} More saved evidence is available. ${INCOMPLETE_TRANSCRIPT_REASON}`
+                  ? `${loadedPieceSummary} Transcript incomplete.`
                   : `End of saved transcript. ${loadedPieceSummary}`}
               </Text>
               {messagePagination.has_more && (

@@ -554,6 +554,7 @@ describe("ChatWindow Integration", () => {
     const first = page([request, { ...reply, message_pieces: [reply.message_pieces[0]] }], "message-cursor", props.activeConversationId, [1]);
     const final = page([reply], null, props.activeConversationId, [1]);
     const unavailable = { isAxiosError: true, response: { status: 503, data: { detail: "Saved read temporarily unavailable" } } };
+    const incompleteReason = /Load the complete saved transcript before continuing, copying, exporting, or assessing this result\./;
 
     it("should wait for saved metadata, bound every read, and complete a split multimodal turn without enabling partial-history actions", async () => {
       const user = userEvent.setup();
@@ -567,10 +568,13 @@ describe("ChatWindow Integration", () => {
       expect(await screen.findByText("Saved request", { exact: true })).toBeInTheDocument();
       const originalBubble = screen.getByTestId("message-bubble-0");
       expect(screen.getByText("Incomplete turn")).toBeVisible();
-      expect(screen.getByRole("region", { name: "Saved transcript paging" })).toHaveTextContent("2 message pieces loaded");
+      expect(within(screen.getByRole("region", { name: "Saved transcript paging" })).getByRole("status"))
+        .toHaveTextContent(/^2 message pieces loaded\. Transcript incomplete\.$/);
       expect(mockedAttacksApi.getMessages.mock.calls).toEqual([["saved-attack", "saved-main", { limit: 100 }]]);
       expect(screen.getByRole("button", { name: "Continue manually" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Continue manually" })).toHaveAccessibleDescription(incompleteReason);
       expect(screen.getByRole("button", { name: "Export conversation" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Export conversation" })).toHaveAccessibleDescription(incompleteReason);
       expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "true");
       await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
       for (const name of ["Copy to next message", "Branch conversation", "Branch attack", "Use in scan"]) {
@@ -602,9 +606,38 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByText("Here is the result:", { exact: true })).toBeVisible();
       expect(screen.getByAltText("generated.jpeg")).toHaveAttribute("src", "/api/media?path=generated.jpeg");
       expect(screen.getByRole("button", { name: "Continue manually" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Continue manually" })).not.toHaveAccessibleDescription(incompleteReason);
       expect(screen.getByRole("button", { name: "Export conversation" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Export conversation" })).not.toHaveAccessibleDescription(incompleteReason);
       expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "false");
       expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("should keep incomplete paging status concise across pages and explain blocked actions on demand", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockResolvedValueOnce(
+        page([reply], "next-message-cursor", props.activeConversationId, [1]),
+      );
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      const more = await screen.findByRole("button", { name: "Load more message pieces" });
+      const status = within(screen.getByRole("region", { name: "Saved transcript paging" })).getByRole("status");
+      expect(status).toHaveTextContent(/^2 message pieces loaded\. Transcript incomplete\.$/);
+      expect(screen.getByRole("button", { name: "Send message" })).toHaveAccessibleDescription(incompleteReason);
+      await user.click(screen.getByLabelText("Why the prompt box is disabled"));
+      expect(within(screen.getByLabelText("Prompt input is disabled")).getByText(incompleteReason)).toBeVisible();
+      await user.keyboard("{Escape}");
+      await user.click(more);
+      await waitFor(() => expect(status).toHaveTextContent(/^3 message pieces loaded\. Transcript incomplete\.$/));
+      expect(screen.getByRole("button", { name: "Load more message pieces" })).toBeEnabled();
+      for (const name of ["Continue manually", "Export conversation"]) {
+        const action = screen.getByRole("button", { name, exact: true });
+        expect(action).toBeDisabled();
+        expect(action).toHaveAccessibleDescription(incompleteReason);
+      }
+      expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "true");
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2);
+      expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
+      expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
     });
 
     it.each(["{Enter}", " "])("should retain keyboard focus when the final transcript button disappears after %s", async (key: string) => {
@@ -663,6 +696,8 @@ describe("ChatWindow Integration", () => {
       expect(status).toHaveAttribute("aria-live", "polite");
       expect(status).toHaveTextContent(phase === "restart" ? "Loading saved transcript..." : "Loading more message pieces...");
       expect(status).toHaveTextContent("2 message pieces loaded.");
+      expect(status).toHaveTextContent("Transcript incomplete.");
+      expect(status).not.toHaveTextContent(incompleteReason);
       if (phase !== "restart") expect(loadedBubble).toBeVisible();
       expect(button).toBeDisabled();
       expect(area.scrollTop).toBe(300);
@@ -679,7 +714,7 @@ describe("ChatWindow Integration", () => {
       });
       expect(status).not.toHaveTextContent(/Loading (more|saved)/);
       if (outcome === "error") {
-        expect(status).toHaveTextContent("2 message pieces loaded. More saved evidence is available.");
+        expect(status).toHaveTextContent(/^2 message pieces loaded\. Transcript incomplete\.$/);
         expect(screen.getByText("Saved request", { exact: true })).toBeVisible();
         expect(screen.getByRole("button", {
           name: phase === "restart" ? "Restart transcript loading" : "Retry more message pieces",
