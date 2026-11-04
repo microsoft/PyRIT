@@ -17,10 +17,59 @@ export function formatStructuredMessage(text: string): string | null {
   }
 
   try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2)
+    JSON.parse(trimmed)
   } catch {
     return null
   }
+  return indentJson(trimmed)
+}
+
+const JSON_WHITESPACE = ' \t\n\r'
+
+// Indents valid JSON text the way JSON.stringify(value, null, 2) does, but copies each
+// number as written: JSON.parse turns numbers into doubles, which rounds integers above
+// Number.MAX_SAFE_INTEGER. Strings still go through JSON.parse and JSON.stringify, so
+// escapes such as é are shown as the characters they stand for.
+function indentJson(json: string): string {
+  let out = ''
+  let depth = 0
+  const newline = () => '\n' + '  '.repeat(depth)
+
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i]
+    if (JSON_WHITESPACE.includes(ch)) continue
+
+    if (ch === '"') {
+      let end = i + 1
+      while (json[end] !== '"') end += json[end] === '\\' ? 2 : 1
+      out += JSON.stringify(JSON.parse(json.slice(i, end + 1)))
+      i = end
+    } else if (ch === '{' || ch === '[') {
+      let next = i + 1
+      while (JSON_WHITESPACE.includes(json[next])) next++
+      if (json[next] === (ch === '{' ? '}' : ']')) {
+        out += ch + json[next]
+        i = next
+      } else {
+        depth++
+        out += ch + newline()
+      }
+    } else if (ch === '}' || ch === ']') {
+      depth--
+      out += newline() + ch
+    } else if (ch === ',') {
+      out += ',' + newline()
+    } else if (ch === ':') {
+      out += ': '
+    } else {
+      // A number or one of the literals true, false and null
+      let end = i + 1
+      while (end < json.length && !',:]}'.includes(json[end]) && !JSON_WHITESPACE.includes(json[end])) end++
+      out += json.slice(i, end)
+      i = end - 1
+    }
+  }
+  return out
 }
 
 export function getRenderMessagePieces(

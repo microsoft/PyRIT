@@ -13,6 +13,27 @@ describe('messageViewModel', () => {
       expect(formatStructuredMessage('true')).toBeNull()
       expect(formatStructuredMessage('{not-json}')).toBeNull()
     })
+
+    it('should keep integers above Number.MAX_SAFE_INTEGER as received', () => {
+      expect(formatStructuredMessage('{"id":9007199254740993}')).toBe('{\n  "id": 9007199254740993\n}')
+    })
+
+    it('should keep every number as written', () => {
+      expect(formatStructuredMessage('[1.0, 1e5, -0, 0.1000000000000000055511151231257827]')).toBe(
+        '[\n  1.0,\n  1e5,\n  -0,\n  0.1000000000000000055511151231257827\n]',
+      )
+    })
+
+    it('should otherwise match JSON.stringify with two spaces', () => {
+      const inputs = [
+        '{"a":{"b":[1,{"c":null}],"d":{},"e":[ ]},"t":false}',
+        ' [ "caf\\u00e9", "say \\"hi\\"\\n", "a/b\\\\c", {"k:,{}[]":"v"} ] ',
+        '{\n  "nested": [[], [[]], {"x": [true, false]}]\n}',
+      ]
+      for (const input of inputs) {
+        expect(formatStructuredMessage(input)).toBe(JSON.stringify(JSON.parse(input), null, 2))
+      }
+    })
   })
 
   describe('getRenderMessagePieces', () => {

@@ -1330,6 +1330,24 @@ describe("MessageList", () => {
       });
     });
 
+    it("shows integers above Number.MAX_SAFE_INTEGER as received", () => {
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: '{"id":9007199254740993}',
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      expect(screen.getByTestId("message-json-0").textContent).toBe(
+        '{\n  "id": 9007199254740993\n}'
+      );
+    });
+
     it("renders JSON array responses as pretty-printed <pre>", () => {
       const messages: Message[] = [
         {
