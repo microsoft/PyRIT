@@ -606,7 +606,18 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       return
     }
     if (view === 'datasets') {
-      if (lastDatasetsLocation.current.path) {
+      if (isChatPath(location.pathname)) {
+        navigate(VIEW_PATHS.datasets, {
+          state: {
+            chatOrigin: {
+              path: location.pathname + location.search + location.hash,
+              state: location.state,
+              attackId: routeAttackId,
+              conversationId: activeConversationId,
+            },
+          },
+        })
+      } else if (lastDatasetsLocation.current.path) {
         navigate(lastDatasetsLocation.current.path, { state: lastDatasetsLocation.current.state })
       } else {
         navigate(VIEW_PATHS.datasets)
@@ -627,7 +638,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       return
     }
     navigate(VIEW_PATHS[view])
-  }, [navigate, draftHandoff.preservedDraft, location.pathname, routeAttackId])
+  }, [navigate, draftHandoff.preservedDraft, location.pathname, location.search, location.hash, location.state, routeAttackId, activeConversationId])
 
   const handleNewAttack = useCallback(() => {
     const id = generateClientId()
@@ -977,15 +988,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               />
               <Route path="/scanner/history/suites/executions/:executionId" element={<ScenarioSuiteExecutionPage />} />
               <Route path={DATASETS_PATH} element={<DatasetCatalog />} />
-              <Route
-                path={DATASET_DETAIL_PATH}
-                element={
-                  <DatasetSelection
-                    activeAttackId={parseChatRoute(lastChatLocation.current.path).attackId}
-                    activeConversationId={parseChatRoute(lastChatLocation.current.path).conversationId}
-                  />
-                }
-              />
+              <Route path={DATASET_DETAIL_PATH} element={<DatasetSelection />} />
               <Route path="/scanner/presets" element={<Navigate to="/registry/scenario-presets" replace />} />
               <Route path="/scanner/presets/new" element={<Navigate to="/registry/scenario-presets/new" replace />} />
               <Route path="/scanner/presets/:presetName/edit" element={<LegacyPresetEditorRedirect />} />
