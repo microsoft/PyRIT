@@ -179,6 +179,33 @@ describe('CreateConverterDialog', () => {
     expect(onTemporary.mock.calls[0][1].hash).toBe('private-hash')
   })
 
+  it('locks scalar inputs while Apply Settings is building so a newer edit cannot be lost', async () => {
+    const user = userEvent.setup()
+    const onTemporary = jest.fn()
+    const converter = {
+      converter_id: 'source',
+      identifier: {
+        class_name: 'CaesarConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash', caesar_offset: 1,
+      },
+    }
+    let finishBuild: (value: { identifier: typeof converter.identifier }) => void = () => {}
+    mockedConvertersApi.buildConverter.mockReturnValue(
+      new Promise((resolve) => { finishBuild = resolve }),
+    )
+    renderDialog({ editing: { converter }, onTemporary })
+    const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
+    await user.clear(offset)
+    await user.type(offset, '3')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toBeDisabled())
+
+    finishBuild({ identifier: { ...converter.identifier, hash: 'private-hash', caesar_offset: 3 } })
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledTimes(1)
+  })
+
   it('loads converter classes from registry type metadata', async () => {
     const user = userEvent.setup()
     renderDialog()
