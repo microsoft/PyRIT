@@ -98,6 +98,25 @@ export interface ChatConverterSnapshot {
   applied: Record<string, PieceConversion>
 }
 
+export interface PendingComposerDraft {
+  text: string
+  attachments?: MessageAttachment[]
+  textMetadata?: Record<string, unknown>
+}
+
+export interface ConversationEditState {
+  messages: ConversationDraftMessage[]
+  objective?: string
+  initialObjective?: string
+  sourceConversationId?: string | null
+  sourceAttackId?: string | null
+  sourcePieceIds?: string[]
+  temperature?: string
+  target?: TargetReference | null
+  pendingPromptId?: string
+  unsavedImport?: boolean
+}
+
 export interface ChatDraftContent {
   text: string
   attachments: MessageAttachment[]
@@ -108,6 +127,7 @@ export interface ChatDraftContent {
   target?: TargetReference | null
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
+  conversation?: ConversationEditState
 }
 
 export interface ChatDraftContextState {
@@ -122,6 +142,13 @@ export interface ChatDraftContextState {
 
 export type ImportDestinationType = 'new_attack' | 'current_conversation' | 'new_conversation' | 'any'
 
+export interface PendingImportConversation {
+  messages: ConversationDraftMessage[]
+  objective?: string
+  systemPrompt?: string
+  composerDraft?: PendingComposerDraft
+}
+
 export interface PendingImportPayload {
   id: string
   sequence: number
@@ -133,6 +160,9 @@ export interface PendingImportPayload {
     attachments?: MessageAttachment[]
     textMetadata?: Record<string, unknown>
   }
+  conversation?: PendingImportConversation
+  objective?: string
+  setup?: ChatDraftContent
   replaceDirty?: boolean
   focus?: boolean
   stagedAt: number
@@ -1007,6 +1037,10 @@ export interface ConversationSaveInput {
   sourceAttackId: string | null
   sourceConversationId: string | null
   labels?: Record<string, string>
+  baselineMessages?: ConversationDraftMessage[]
+  temperature?: string
+  unsavedImport?: boolean
+  pendingPromptId?: string
 }
 
 export interface NewAttackContext {
