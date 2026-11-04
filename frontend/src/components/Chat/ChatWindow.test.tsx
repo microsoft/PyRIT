@@ -4075,7 +4075,7 @@ describe("ChatWindow Integration", () => {
     expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
 
-  it("allows an override on a saved target variant without changing its default", async () => {
+  it("allows a temperature override on a saved target variant without changing its default", async () => {
     const user = userEvent.setup();
     const target = {
       ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }),
@@ -4087,14 +4087,15 @@ describe("ChatWindow Integration", () => {
     const settings = screen.getByRole("button", { name: /^Adjust temperature/ });
     await waitFor(() => expect(settings).toBeEnabled());
     await user.click(settings);
-    expect(screen.getByLabelText("Temperature")).toBeEnabled();
-    expect(screen.getByLabelText("Temperature")).toHaveValue("");
-    expect(screen.getByLabelText("Temperature")).toHaveAttribute("placeholder", "Default");
-    expect(screen.getByLabelText("Temperature")).toHaveAccessibleDescription(expect.stringContaining("Configured default: 0.8"));
+    const input = screen.getByRole("textbox", { name: "Temperature" });
+    expect(input).toBeEnabled();
+    expect(input).toHaveValue("");
+    expect(input).toHaveAttribute("placeholder", "Default");
+    expect(input).toHaveAccessibleDescription(expect.stringContaining("Configured default: 0.8"));
     expect(screen.queryByText("Read-only for this attack.")).not.toBeInTheDocument();
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-    await user.type(screen.getByLabelText("Temperature"), "0");
-    expect(screen.getByLabelText("Temperature")).toHaveValue("0");
+    await user.type(input, "0");
+    expect(input).toHaveValue("0");
     expect(target.identifier.temperature).toBe(0.8);
   });
 

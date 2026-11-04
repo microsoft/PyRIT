@@ -59,14 +59,10 @@ overriding `send_prompt_async`.
 
 ## Runtime generation configuration
 
-Use `RequestGenerationConfig` to attach typed generation overrides to one outbound
-request without changing the target's configured defaults or identity. Support is
-declared per parameter and depends on the adapter, model, and effective sampling
-mode. See [Target Capabilities](./6_1_target_capabilities.ipynb) for inspecting support
-and OpenAI model-family rules.
-
-The config currently exposes `temperature`. For example, with an `OpenAIChatTarget`
-whose `target.capabilities.supports_temperature` is true:
+Use `RequestGenerationConfig` for per-request temperature overrides without changing
+the target's defaults or identity. Check `target.capabilities.supports_temperature`;
+see [Target Capabilities](./6_1_target_capabilities.ipynb#runtime-temperature-support)
+for support rules and exceptions.
 
 ```python
 from pyrit.models import Message, MessagePiece, RequestGenerationConfig
@@ -84,30 +80,20 @@ message = Message(
 response = await PromptNormalizer().send_prompt_async(message=message, target=target, conversation_id=conversation_id)
 ```
 
-`to_metadata()` produces `{"request_generation_config": {"temperature": 0}}` in
-this example. Put overrides on one current message piece or repeat matching
-values across pieces. Conflicting values, invalid inputs, and known unsupported
-parameters or model modes fail before provider I/O. Unknown OpenAI Chat models
-default to supported; a provider can still reject the parameter. PyRIT surfaces
-that error without retrying with the parameter removed. Only the current outbound
-message supplies overrides, not conversation history. Parameter limits are
-adapter-specific: OpenAI Chat accepts finite temperatures from 0 through 2,
-including zero, but not booleans or numeric strings.
+- Set metadata on the current outbound message, not conversation history.
+  One piece is sufficient; values on multiple pieces must agree.
+- Values must be finite numbers, not booleans or numeric strings. OpenAI Chat
+  accepts 0 through 2. Invalid, conflicting, or known unsupported overrides fail
+  before provider I/O.
+- Overrides take precedence over target defaults and provider passthrough settings.
+  Missing or null overrides preserve existing behavior. Transport retries reuse
+  the resolved value.
 
-Missing or null fields preserve the target's configured behavior. Explicit
-overrides take precedence over provider passthrough values, including nested
-`extra_body` settings. Without an override, top-level passthrough nulls are
-filtered out; nulls nested in `extra_body` are retained. Otherwise, if neither a
-request value nor a configured value exists, the parameter is omitted rather
-than assigning a guessed provider default.
-Transport retries retain the resolved settings; a new send can select new values.
-
-`PromptNormalizer` saves generation evidence with the request and its responses.
+`PromptNormalizer` saves evidence with the request and its responses.
 Read it using `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)`.
-Each parameter record, such as `info.temperature`, contains the `requested`
-override, `resolved` value sent, and `source`: `request`, `target_default`, or
-`provider_default`. Unknown provider defaults remain `None`; reading a message
-without generation evidence returns `None`.
+`info.temperature` records the `requested` override, `resolved` value sent, and
+`source` (`request`, `target_default`, or `provider_default`). Unknown provider
+defaults remain `None`; messages without evidence return `None`.
 
 ## Chat-style targets vs general targets
 
@@ -305,7 +291,8 @@ Each target class defines defaults; instances can override individual capabiliti
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
 These profiles do not resolve runtime generation support. Check the instantiated
 target's `capabilities.supports_temperature`, which accounts for the adapter and
-its configured model mode.
+its configured model mode. `OpenAIChatTarget` defaults to supported for unknown
+models and deployment aliases; this does not imply runtime support in other adapters.
 
 Tool-call history uses the existing `function_call` and `function_call_output` input
 modalities. These describe acceptance of prior calls and results, not tool execution.

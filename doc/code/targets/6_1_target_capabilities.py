@@ -99,30 +99,32 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 # and other models pick up the right modality combinations automatically. Unknown models fall back to
 # the class default.
 #
-# Model profiles do not resolve runtime generation support. Check the instantiated
-# target's `capabilities.supports_temperature`; `OpenAIChatTarget` computes it using
-# shared OpenAI model-sampling rules and Chat-specific mode checks. Without an
-# explicit capability declaration, model inference works as follows:
+# ### Runtime temperature support
 #
-# | Model family | Runtime temperature |
-# | --- | --- |
-# | GPT-4 / Turbo, GPT-4o / mini, GPT-4.1 / mini / nano | Supported |
-# | GPT-5, GPT-5 mini / nano | Unsupported, including with `minimal` or `none` |
-# | GPT-5.1, GPT-5.2, GPT-5.4 / mini / nano | Supported with `reasoning_effort="none"` (the model default) |
-# | GPT-5.5, GPT-5.6 / sol / terra / luna | Requires explicit `reasoning_effort="none"`; default is `medium` |
-# | Unknown model or deployment alias | Assumed supported; the provider may reject temperature |
+# Model profiles above do not resolve runtime generation support. Check the
+# instantiated target's `capabilities.supports_temperature`.
 #
-# Dated snapshots inherit their named model's rule; arbitrary suffixes do not.
-# Listed Pro, Codex, audio/realtime, and o-series models default to unsupported.
-# An explicit `supports_temperature=True` or `False` overrides model inference,
-# including inferred reasoning defaults. Explicit reasoning effort other than `"none"`,
-# audio output, and streaming still disable runtime support in this adapter.
-# Unknown models are not probed: provider rejection is surfaced without dropping the parameter.
+# **`OpenAIChatTarget` assumes temperature is supported unless a known model or
+# configured mode rules it out.** This is not a supported-model allowlist: unknown
+# model names and deployment aliases are supported by default. They are not probed;
+# provider rejection is surfaced without silently dropping the parameter.
+#
+# Without an explicit capability declaration, the exceptions are:
+#
+# - Known model exclusions, such as `gpt-5`, `gpt-5-mini`, and `gpt-5-nano`, disable
+#   support even with `reasoning_effort="none"`. Exclusions match exact names after
+#   removing a dated snapshot suffix, not arbitrary model-family prefixes.
+# - Known reasoning-enabled defaults (`gpt-5.5`, `gpt-5.6`, `gpt-5.6-sol`,
+#   `gpt-5.6-terra`, and `gpt-5.6-luna`) require explicit `reasoning_effort="none"`.
+#
+# An explicit `supports_temperature=True` or `False` overrides these model-based
+# decisions, including inferred reasoning defaults. Explicit reasoning effort
+# other than `"none"`, audio output, and streaming still disable runtime support.
 # Support refreshes when `set_model_name()` is called and is checked again before sending.
 # These rules do not change constructor defaults or requests without runtime overrides.
+# Other target adapters do not inherit OpenAI Chat's default; check their capabilities.
 #
-# Reasoning defaults follow OpenAI's [GPT-5.4](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.4),
-# [GPT-5.5](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.5), and
+# Reasoning defaults follow OpenAI's [GPT-5.5](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.5) and
 # [GPT-5.6](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6) guides.
 
 # %%
