@@ -119,6 +119,11 @@ describe('scenario launch requests', () => {
   })
 
   it('keeps run-only limits out of the estimate', () => {
-    expect(buildEstimateRequest(makeInput({ maxConcurrency: 0, maxRetries: -1 })).ok).toBe(true)
+    const before = buildEstimateRequest(makeInput())
+    const after = buildEstimateRequest(makeInput({ maxConcurrency: 0, maxRetries: -1 }))
+
+    expect(after.ok).toBe(true)
+    // An identical payload keeps the estimate key, so editing launch-only fields sends no new estimate.
+    expect(after).toEqual(before)
   })
 })
