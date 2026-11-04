@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import json
+import re
 import uuid
 from typing import Any
 
@@ -276,14 +277,18 @@ def _set_piece(payload: dict[str, Any], piece: dict[str, Any]) -> None:
     payload["conversations"][0]["messages"][0]["pieces"][0] = {"response_error": None, **piece}
 
 
+def _flatten(html: str) -> str:
+    return re.sub(r">\s+<", "><", html)
+
+
 async def test_html_report_labels_original_and_converted_when_they_differ():
     payload = _payload()
     _set_piece(payload, {"data_type": "text", "original_value": "plain ask", "converted_value": "cGxhaW4gYXNr"})
 
-    html = await HtmlScenarioReportPrinter().render_async(payload)
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
 
-    assert '<div class="piece-label">Original:</div>\n          <div class="piece">plain ask</div>' in html
-    assert '<div class="piece-label">Converted:</div>\n          <div class="piece">cGxhaW4gYXNr</div>' in html
+    assert '<div class="piece-label">Original:</div><div class="piece">plain ask</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece">cGxhaW4gYXNr</div>' in html
 
 
 async def test_html_report_shows_value_once_when_converted_matches_original():
@@ -301,20 +306,22 @@ async def test_html_report_labels_empty_converted_text():
     payload = _payload()
     _set_piece(payload, {"data_type": "text", "original_value": "ORIGINAL_WAS_REMOVED", "converted_value": ""})
 
-    html = await HtmlScenarioReportPrinter().render_async(payload)
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
 
-    assert '<div class="piece">ORIGINAL_WAS_REMOVED</div>' in html
-    assert '<div class="piece-label">Converted:</div>\n          <div class="piece"></div>' in html
+    assert '<div class="piece-label">Original:</div><div class="piece">ORIGINAL_WAS_REMOVED</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece"></div>' in html
 
 
 async def test_html_report_labels_empty_converted_media():
     payload = _payload()
     _set_piece(payload, {"data_type": "image_path", "original_value": "media/original.png", "converted_value": ""})
 
-    html = await HtmlScenarioReportPrinter().render_async(payload)
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
 
-    assert '<div class="piece media">[image_path] media/original.png</div>' in html
-    assert '<div class="piece-label">Converted:</div>\n          <div class="piece media">[image_path] </div>' in html
+    assert (
+        '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/original.png</div>' in html
+    )
+    assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] </div>' in html
 
 
 @pytest.mark.parametrize("piece_extra", [{"converted_value": None}, {}])
@@ -345,3 +352,21 @@ async def test_html_report_escapes_original_and_converted_values():
     assert "<img src=x" not in html
     assert "&lt;script&gt;alert(&#39;o&#39;)&lt;/script&gt;" in html
     assert "&lt;img src=x onerror=&#34;alert(1)&#34;&gt;" in html
+
+
+async def test_html_report_labels_converted_piece_from_real_builders():
+    attack = AttackResult(conversation_id=str(uuid.uuid4()), objective="obj", outcome=AttackOutcome.SUCCESS)
+    result = make_scenario_result(attack_results={"tech": [attack]})
+    overview = JsonScenarioResultPrinter().build(result, view="overview")
+    piece = MessagePiece(
+        role="user", original_value="ORIGINAL_WAS_REMOVED", converted_value="", conversation_id=attack.conversation_id
+    )
+    messages = await JsonConversationPrinter(source=_StubConversationSource({})).build_async(
+        [Message(message_pieces=[piece])]
+    )
+    payload = build_scenario_full_payload(result=result, overview=overview, entries=[("tech", attack, messages)])
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">ORIGINAL_WAS_REMOVED</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece"></div>' in html
