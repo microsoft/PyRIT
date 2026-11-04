@@ -5,16 +5,34 @@ import { mobileTouchTarget } from '@/styles/touchTargets'
 export const useGenerationSettingsStyles = makeStyles({
   root: {
     display: 'flex',
-    flexWrap: 'wrap',
+    flexDirection: 'column',
     alignItems: 'center',
-    gap: tokens.spacingHorizontalS,
-    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+    gap: tokens.spacingVerticalXXS,
+    position: 'relative',
+    zIndex: 1,
   },
   button: {
+    minWidth: 0,
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalXS}`,
     ...mobileTouchTarget,
   },
+  chevron: {
+    fontSize: tokens.fontSizeBase100,
+  },
+  value: {
+    maxWidth: '4rem',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  override: {
+    color: tokens.colorBrandForeground1,
+  },
+  invalid: {
+    color: tokens.colorPaletteRedForeground1,
+  },
   surface: {
-    width: '20rem',
+    width: '17rem',
     maxWidth: 'calc(100vw - 2rem)',
     boxSizing: 'border-box',
   },
@@ -23,12 +41,10 @@ export const useGenerationSettingsStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalS,
   },
-  field: {
+  actions: {
     display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXS,
-  },
-  summary: {
-    color: tokens.colorBrandForeground1,
+    justifyContent: 'flex-end',
+    gap: tokens.spacingHorizontalXS,
+    flexWrap: 'wrap',
   },
 })

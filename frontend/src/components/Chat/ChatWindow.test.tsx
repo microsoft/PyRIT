@@ -125,15 +125,14 @@ async function findRecoveryAction(user: ReturnType<typeof userEvent.setup>): Pro
 }
 
 async function chooseTemperature(user: ReturnType<typeof userEvent.setup>, value?: string): Promise<void> {
-  await user.click(screen.getByRole("button", { name: "Generation settings" }));
-  const defaults = screen.getByRole<HTMLInputElement>("checkbox", { name: "Use target default for temperature" });
-  if (defaults.checked !== (value === undefined)) await user.click(defaults);
+  const button = screen.getByRole("button", { name: /^Adjust temperature/ });
+  await user.click(button);
+  const input = screen.getByRole("textbox", { name: "Temperature" });
+  await user.clear(input);
   if (value !== undefined) {
-    const input = screen.getByRole("spinbutton", { name: "Temperature" });
-    await user.clear(input);
     await user.type(input, value);
   }
-  await user.keyboard("{Escape}");
+  await user.click(button);
 }
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
@@ -2856,10 +2855,10 @@ describe("ChatWindow Integration", () => {
     expect(await screen.findByRole("button", { name: "Convert Conversation" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Draft objective" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Generation settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Adjust temperature/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
     expect(await screen.findByPlaceholderText("Type prompt here")).toHaveValue("Keep this unsent prompt");
-    expect(screen.getByText("Temperature: 0.7")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adjust temperature: 0.7" })).toHaveTextContent("0.7");
     await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
     await screen.findByRole("button", { name: "Convert Conversation" });
     await user.click(screen.getByRole("button", { name: "Add objective" }));
@@ -2873,7 +2872,7 @@ describe("ChatWindow Integration", () => {
     else expect(onConversationCreated).toHaveBeenCalledWith("new", "saved", "Draft goal", target);
     expect(targetsApi.buildTarget).not.toHaveBeenCalled();
     expect(mockedAttacksApi.saveConversation.mock.calls[0][0]).not.toHaveProperty("target_binding");
-    expect(screen.getByText("Temperature: 0.7")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adjust temperature: 0.7" })).toHaveTextContent("0.7");
     expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
 
@@ -3645,7 +3644,7 @@ describe("ChatWindow Integration", () => {
     } as never);
     const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
       onConversationCreated={onConversationCreated} /></TestWrapper>);
-    expect(within(screen.getByTestId("prompt-editor")).getByRole("button", { name: "Generation settings" })).toBeInTheDocument();
+    expect(within(screen.getByTestId("prompt-editor")).getByRole("button", { name: /^Adjust temperature/ })).toBeInTheDocument();
     expect(within(screen.getByRole("group", { name: "Chat controls" })).queryByRole("spinbutton")).not.toBeInTheDocument();
     await chooseTemperature(user, "0.8");
     await user.type(screen.getByRole("textbox"), "Hello");
@@ -3661,11 +3660,11 @@ describe("ChatWindow Integration", () => {
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
       attackResultId="default-created-attack" conversationId="default-created-conversation"
       onConversationCreated={onConversationCreated} /></TestWrapper>);
-    expect(screen.getByText("Temperature: 0.8")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adjust temperature: 0.8" })).toHaveTextContent("0.8");
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={source}
       attackResultId="another-attack" conversationId="another-conversation"
       onConversationCreated={onConversationCreated} /></TestWrapper>);
-    expect(screen.queryByText("Temperature: 0.8")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adjust temperature: 0.8" })).not.toBeInTheDocument();
   });
 
   it("remembers the registered source on a subsequent send using a reopened temperature binding", async () => {
@@ -3736,7 +3735,7 @@ describe("ChatWindow Integration", () => {
     await act(async () => { finish(pieces); });
     expect(await screen.findByText(/Runtime or default labels changed while preparing this message/)).toBeInTheDocument();
     expect(input).toHaveValue("Prepared prompt");
-    expect(screen.getByText("Temperature: 0.8")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adjust temperature: 0.8" })).toHaveTextContent("0.8");
     expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
     expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
   });
@@ -3750,18 +3749,17 @@ describe("ChatWindow Integration", () => {
     };
     render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
       attackResultId="existing" conversationId="conversation" /></TestWrapper>);
-    const settings = screen.getByRole("button", { name: "Generation settings" });
+    const settings = screen.getByRole("button", { name: /^Adjust temperature/ });
     await waitFor(() => expect(settings).toBeEnabled());
     await user.click(settings);
-    expect(screen.getByRole("checkbox", { name: "Use target default for temperature" })).toBeChecked();
-    expect(screen.getByLabelText("Temperature")).toBeDisabled();
-    expect(screen.getByLabelText("Temperature")).toHaveValue(null);
-    expect(screen.getByLabelText("Temperature")).toHaveAttribute("placeholder", "0.8");
+    expect(screen.getByLabelText("Temperature")).toBeEnabled();
+    expect(screen.getByLabelText("Temperature")).toHaveValue("");
+    expect(screen.getByLabelText("Temperature")).toHaveAttribute("placeholder", "Default");
+    expect(screen.getByLabelText("Temperature")).toHaveAccessibleDescription(expect.stringContaining("Configured default: 0.8"));
     expect(screen.queryByText("Read-only for this attack.")).not.toBeInTheDocument();
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("checkbox", { name: "Use target default for temperature" }));
     await user.type(screen.getByLabelText("Temperature"), "0");
-    expect(screen.getByLabelText("Temperature")).toHaveValue(0);
+    expect(screen.getByLabelText("Temperature")).toHaveValue("0");
     expect(target.identifier.temperature).toBe(0.8);
   });
 
@@ -3773,27 +3771,30 @@ describe("ChatWindow Integration", () => {
     };
     render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
       attackResultId="existing" conversationId="conversation" /></TestWrapper>);
-    const settings = screen.getByRole("button", { name: "Generation settings" });
-    await waitFor(() => expect(settings).toBeEnabled());
-    await user.click(settings);
-    const input = screen.getByLabelText("Temperature");
-    expect(screen.getByText("This target does not support runtime temperature.")).toBeInTheDocument();
-    expect(input).toBeDisabled();
+    const settings = screen.getByRole("button", { name: "Temperature unavailable" });
+    expect(settings).toHaveAttribute("aria-disabled", "true");
+    await user.hover(settings);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("This target does not support runtime temperature.");
+    expect(screen.queryByRole("textbox", { name: "Temperature" })).not.toBeInTheDocument();
     expect(targetsApi.buildTarget).not.toHaveBeenCalled();
   });
 
-  it.each(["click", "keyboard"])("explains unavailable runtime temperature on %s", async (interaction: string) => {
+  it.each(["hover", "keyboard"])("explains unavailable runtime temperature on %s", async (interaction: string) => {
     const user = userEvent.setup();
     const explanation = "This target does not support runtime temperature.";
     render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={mockTarget} /></TestWrapper>);
-    const button = screen.getByRole("button", { name: "Generation settings" });
-    if (interaction === "click") await user.click(button);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Temperature unavailable" })).not.toBeDisabled());
+    const button = screen.getByRole("button", { name: "Temperature unavailable" });
+    if (interaction === "hover") await user.hover(button);
     else {
-      act(() => button.focus());
-      await user.keyboard("{Enter}");
+      act(() => screen.getByRole("button", { name: "Send message" }).focus());
+      await user.tab();
+      expect(button).toHaveFocus();
     }
-    expect(screen.getByRole("spinbutton", { name: "Temperature" })).toBeDisabled();
-    expect(screen.getByRole("dialog", { name: "Generation settings" })).toHaveTextContent(explanation);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(explanation);
+    if (interaction === "keyboard") await user.keyboard("{Enter}");
+    expect(screen.queryByRole("textbox", { name: "Temperature" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Temperature" })).not.toBeInTheDocument();
     expect(targetsApi.buildTarget).not.toHaveBeenCalled();
   });
 
@@ -3821,7 +3822,7 @@ describe("ChatWindow Integration", () => {
       attackResultId="existing" conversationId="conversation" /></TestWrapper>);
     await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
     for (const [index, value] of ["0", "1.3", undefined].entries()) {
-      await waitFor(() => expect(screen.getByRole("button", { name: "Generation settings" })).toBeEnabled());
+      await waitFor(() => expect(screen.getByRole("button", { name: /^Adjust temperature/ })).toBeEnabled());
       await chooseTemperature(user, value);
       await user.type(screen.getByRole("textbox"), "Hello");
       await user.click(screen.getByRole("button", { name: "Send message" }));
@@ -3858,10 +3859,10 @@ describe("ChatWindow Integration", () => {
     await user.type(screen.getByRole("textbox"), "Hello");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockedMapper.buildMessagePieces).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole("button", { name: "Generation settings" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Adjust temperature/ })).toBeDisabled();
     await act(async () => finish(pieces));
     await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
-    expect(screen.getByText("Temperature: 0")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adjust temperature: 0" })).toHaveTextContent("0");
     await user.type(screen.getByRole("textbox"), "Again");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
@@ -3880,14 +3881,14 @@ describe("ChatWindow Integration", () => {
     const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={first} /></TestWrapper>);
     await chooseTemperature(user, "0.8");
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={{ ...first }} /></TestWrapper>);
-    expect(screen.getByText("Temperature: 0.8")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adjust temperature: 0.8" })).toHaveTextContent("0.8");
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={null} /></TestWrapper>);
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={first} /></TestWrapper>);
-    expect(screen.getByText("Temperature: 0.8")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adjust temperature: 0.8" })).toHaveTextContent("0.8");
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={second} /></TestWrapper>);
-    expect(screen.queryByText("Temperature: 0.8")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Generation settings" }));
-    expect(screen.getByRole("checkbox", { name: "Use target default for temperature" })).toBeChecked();
+    expect(screen.queryByRole("button", { name: "Adjust temperature: 0.8" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Adjust temperature/ }));
+    expect(screen.getByRole("textbox", { name: "Temperature" })).toHaveValue("");
   });
 
   it("blocks an invalid explicit generation value without preparing or submitting the message", async () => {
@@ -3900,7 +3901,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     expect(mockedMapper.buildMessagePieces).not.toHaveBeenCalled();
     expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Generation settings" }));
+    await user.click(screen.getByRole("button", { name: /^Adjust temperature/ }));
     expect(screen.getByText("Temperature must be a finite number between 0 and 2.")).toBeVisible();
   });
 

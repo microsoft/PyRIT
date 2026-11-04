@@ -23,7 +23,8 @@ export function generationFieldError(
   const field = GENERATION_FIELDS.find((entry) => entry.name === name)
   if (!field) throw new Error(`Unknown generation option: ${name}`)
   if (!capabilities?.[field.capability]) return `This target does not support runtime ${name}.`
-  if (!input.trim() || !Number.isFinite(Number(input)) || Number(input) < field.min || Number(input) > field.max) {
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(input.trim())
+    || !Number.isFinite(Number(input)) || Number(input) < field.min || Number(input) > field.max) {
     return `${field.label} must be a finite number between ${field.min} and ${field.max}.`
   }
   return undefined

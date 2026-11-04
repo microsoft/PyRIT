@@ -6,6 +6,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { makeTarget } from '@/test-utils/targetFixtures'
 import type { RequestGenerationDraft, TargetInstance } from '@/types'
+import { parseGenerationConfig } from '@/utils/requestGeneration'
 
 import GenerationSettings from './GenerationSettings'
 
@@ -19,87 +20,190 @@ const TestWrapper = ({ children }: { children: React.ReactNode }) => (
   <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
 )
 
-function SettingsHarness({ selectedTarget = target }: { selectedTarget?: TargetInstance }) {
-  const [value, setValue] = useState<RequestGenerationDraft>({})
-  return <GenerationSettings value={value} onChange={setValue} target={selectedTarget} disabled={false} />
+function SettingsHarness({ selectedTarget = target, initialValue = {}, disabled = false, onChange = jest.fn() }: {
+  selectedTarget?: TargetInstance
+  initialValue?: RequestGenerationDraft
+  disabled?: boolean
+  onChange?: (value: RequestGenerationDraft) => void
+}) {
+  const [value, setValue] = useState(initialValue)
+  return <>
+    <GenerationSettings value={value} onChange={(next: RequestGenerationDraft) => { setValue(next); onChange(next) }}
+      target={selectedTarget} disabled={disabled} />
+    <button onClick={() => setValue({})}>Reset draft</button>
+  </>
 }
 
 describe('GenerationSettings', () => {
   beforeEach(() => jest.clearAllMocks())
 
-  it('uses defaults until explicitly overridden, shows zero outside the popover, and clears back to defaults', async () => {
+  it('should show a compact editable default, preserve zero, and omit a cleared override', async () => {
     const user = userEvent.setup()
-    render(<TestWrapper><SettingsHarness /></TestWrapper>)
-    const button = screen.getByRole('button', { name: 'Generation settings' })
+    const onChange = jest.fn()
+    render(<TestWrapper><SettingsHarness onChange={onChange} /></TestWrapper>)
+    const button = screen.getByRole('button', { name: 'Adjust temperature: target default' })
+    expect(button).toHaveTextContent('')
+    expect(within(button).getByTestId('temperature-chevron')).toBeInTheDocument()
     await user.click(button)
-    const defaults = screen.getByRole('checkbox', { name: 'Use target default for temperature' })
-    expect(defaults).toBeChecked()
-    const input = screen.getByRole('spinbutton', { name: 'Temperature' })
-    expect(input).toBeDisabled()
-    expect(input).toHaveValue(null)
-    expect(screen.getByText(/Configured default: 0.2/)).toBeVisible()
-    await user.click(defaults)
-    expect(screen.getByText('Temperature must be a finite number between 0 and 2.')).toBeVisible()
+    const input = screen.getByRole('textbox', { name: 'Temperature' })
+    expect(input).toBeEnabled()
+    expect(input).toHaveFocus()
+    expect(input).toHaveValue('')
+    expect(input).toHaveAttribute('placeholder', 'Default')
     await user.type(input, '0')
-    await user.keyboard('{Escape}')
+    expect(onChange).toHaveBeenLastCalledWith({ temperature: '0' })
+    await user.keyboard('{Enter}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(screen.getByText('Temperature: 0')).toBeVisible()
+    expect(button).toHaveTextContent('0')
+    expect(button).toHaveAccessibleName('Adjust temperature: 0')
     await user.click(button)
-    expect(screen.getByRole('spinbutton', { name: 'Temperature' })).toHaveValue(0)
-    await user.click(screen.getByRole('checkbox', { name: 'Use target default for temperature' }))
-    await user.keyboard('{Escape}')
-    expect(screen.queryByText('Temperature: 0')).not.toBeInTheDocument()
+    await user.clear(screen.getByRole('textbox', { name: 'Temperature' }))
+    await user.click(screen.getByRole('button', { name: 'Apply temperature' }))
+    expect(button).toHaveAccessibleName('Adjust temperature: target default')
+    expect(onChange).toHaveBeenLastCalledWith({})
+    expect(parseGenerationConfig(onChange.mock.lastCall[0], target.capabilities)).toEqual({})
   })
 
-  it('explains unsupported fields inside a keyboard-accessible popover', async () => {
+  it('should show an override even when it equals the configured default', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><SettingsHarness /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    await user.type(screen.getByRole('textbox', { name: 'Temperature' }), '0.2')
+    await user.click(screen.getByRole('button', { name: 'Apply temperature' }))
+    expect(screen.getByRole('button', { name: 'Adjust temperature: 0.2' })).toHaveTextContent('0.2')
+  })
+
+  it.each(['Escape', 'Cancel'])('should restore the previous selection with %s', async (action: string) => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<TestWrapper><SettingsHarness initialValue={{ temperature: '0' }} onChange={onChange} /></TestWrapper>)
+    const button = screen.getByRole('button', { name: 'Adjust temperature: 0' })
+    await user.click(button)
+    const input = screen.getByRole('textbox', { name: 'Temperature' })
+    await user.clear(input)
+    await user.type(input, '1.2')
+    if (action === 'Escape') await user.keyboard('{Escape}')
+    else await user.click(screen.getByRole('button', { name: 'Cancel temperature edit' }))
+    expect(onChange).toHaveBeenLastCalledWith({ temperature: '0' })
+    expect(button).toHaveAccessibleName('Adjust temperature: 0')
+    expect(button).toHaveFocus()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('should clear to the default with the explicit action', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<TestWrapper><SettingsHarness initialValue={{ temperature: '0.8' }} onChange={onChange} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    await user.click(screen.getByRole('button', { name: 'Use target default' }))
+    expect(onChange).toHaveBeenLastCalledWith({})
+    expect(screen.getByRole('button', { name: 'Adjust temperature: target default' })).toHaveFocus()
+  })
+
+  it.each(['2.1', 'abc', '1e', '0x1'])('should retain invalid input %s for send validation', async (value: string) => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<TestWrapper><SettingsHarness onChange={onChange} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    const input = screen.getByRole('textbox', { name: 'Temperature' })
+    await user.type(input, value)
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByText('Temperature must be a finite number between 0 and 2.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Apply temperature' })).toBeDisabled()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('dialog', { name: 'Temperature' })).toBeVisible()
+    expect(onChange).toHaveBeenLastCalledWith({ temperature: value })
+    expect(() => parseGenerationConfig(onChange.mock.lastCall[0], target.capabilities)).toThrow(/finite number/)
+    await user.keyboard('{Escape}')
+    expect(onChange).toHaveBeenLastCalledWith({})
+  })
+
+  it('should explain unsupported temperature on focus without opening an unusable form', async () => {
     const user = userEvent.setup()
     render(<TestWrapper><SettingsHarness selectedTarget={{ ...target, capabilities: { supports_temperature: false } }} /></TestWrapper>)
     await user.tab()
-    expect(screen.getByRole('button', { name: 'Generation settings' })).toHaveFocus()
+    const button = screen.getByRole('button', { name: 'Temperature unavailable' })
+    expect(button).toHaveFocus()
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.queryByTestId('temperature-chevron')).not.toBeInTheDocument()
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('This target does not support runtime temperature.')
     await user.keyboard('{Enter}')
-    const dialog = screen.getByRole('dialog', { name: 'Generation settings' })
-    expect(within(dialog).getByText('This target does not support runtime temperature.')).toBeVisible()
-    expect(within(dialog).getByRole('spinbutton', { name: 'Temperature' })).toBeDisabled()
-    expect(within(dialog).getByRole('checkbox')).toBeDisabled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Temperature' })).not.toBeInTheDocument()
   })
 
-  it.each([undefined, null])('does not invent a default when it is %s', async (temperature: undefined | null) => {
+  it.each([undefined, null])('should not invent an unspecified default (%s)', async (temperature: undefined | null) => {
     const user = userEvent.setup()
     render(<TestWrapper><SettingsHarness selectedTarget={{
       ...target, identifier: { ...target.identifier, temperature },
     }} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: 'Generation settings' }))
-    expect(screen.getByText(/Configured default: not specified/)).toBeVisible()
-    expect(screen.getByRole('spinbutton', { name: 'Temperature' })).toHaveValue(null)
+    await user.hover(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('not specified; provider default unknown')
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    expect(screen.getByRole('textbox', { name: 'Temperature' })).toHaveValue('')
   })
 
-  it('allows clearing a retained override after the target loses support', async () => {
+  it('should close editing and allow clearing a retained override when support is lost', async () => {
     const user = userEvent.setup()
-    const rendered = render(<TestWrapper><SettingsHarness /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: 'Generation settings' }))
-    await user.click(screen.getByRole('checkbox', { name: 'Use target default for temperature' }))
-    await user.type(screen.getByRole('spinbutton', { name: 'Temperature' }), '0')
-    rendered.rerender(<TestWrapper><SettingsHarness selectedTarget={{
+    const onChange = jest.fn()
+    const rendered = render(<TestWrapper><SettingsHarness onChange={onChange} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    await user.type(screen.getByRole('textbox', { name: 'Temperature' }), '0')
+    rendered.rerender(<TestWrapper><SettingsHarness onChange={onChange} selectedTarget={{
       ...target, capabilities: { supports_temperature: false },
     }} /></TestWrapper>)
-    const defaults = screen.getByRole('checkbox', { name: 'Use target default for temperature' })
-    expect(defaults).toBeEnabled()
-    expect(screen.getByRole('spinbutton', { name: 'Temperature' })).toBeDisabled()
-    await user.click(defaults)
-    expect(defaults).toBeChecked()
-    expect(defaults).toBeDisabled()
-    expect(screen.queryByText('Temperature: 0')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Temperature unavailable' })).toHaveTextContent('')
+    await user.click(screen.getByRole('button', { name: 'Clear temperature override' }))
+    expect(onChange).toHaveBeenLastCalledWith({})
+    expect(screen.queryByRole('button', { name: 'Clear temperature override' })).not.toBeInTheDocument()
   })
 
-  it('disables settings while sending without losing the visible override', () => {
-    const onChange = jest.fn()
-    const rendered = render(<TestWrapper><GenerationSettings value={{ temperature: '0' }}
-      onChange={onChange} target={target} disabled /></TestWrapper>)
-    expect(screen.getByRole('button', { name: 'Generation settings' })).toBeDisabled()
-    expect(screen.getByText('Temperature: 0')).toBeVisible()
-    rendered.rerender(<TestWrapper><GenerationSettings value={{ temperature: '0' }}
-      onChange={onChange} target={target} disabled={false} /></TestWrapper>)
-    expect(screen.getByRole('button', { name: 'Generation settings' })).toBeEnabled()
-    expect(onChange).not.toHaveBeenCalled()
+  it('should disable editing while sending without losing the override or reopening stale edits', async () => {
+    const user = userEvent.setup()
+    const rendered = render(<TestWrapper><SettingsHarness initialValue={{ temperature: '0' }} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    rendered.rerender(<TestWrapper><SettingsHarness initialValue={{ temperature: '0' }} disabled /></TestWrapper>)
+    const button = screen.getByRole('button', { name: 'Adjust temperature: 0' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveTextContent('0')
+    expect(screen.queryByTestId('temperature-chevron')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    rendered.rerender(<TestWrapper><SettingsHarness initialValue={{ temperature: '0' }} /></TestWrapper>)
+    expect(screen.getByRole('button', { name: 'Adjust temperature: 0' })).toBeEnabled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it.each(['0.7', ''])('should discard an old cancel value on external reset, even when the edited value is %s', async (value: string) => {
+    const user = userEvent.setup()
+    let rendered: ReturnType<typeof render>
+    const onChange = jest.fn((next: RequestGenerationDraft): void => { rendered.rerender(control(next)) })
+    const control = (draft: RequestGenerationDraft) => <TestWrapper>
+      <GenerationSettings value={draft} target={target} disabled={false} onChange={onChange} />
+    </TestWrapper>
+    rendered = render(control({ temperature: '0.8' }))
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    const input = screen.getByRole('textbox', { name: 'Temperature' })
+    await user.clear(input)
+    if (value) await user.type(input, value)
+    rendered.rerender(control({}))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Adjust temperature: target default' }))
+    await user.type(screen.getByRole('textbox', { name: 'Temperature' }), '0.7')
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('button', { name: 'Adjust temperature: target default' })).toHaveTextContent('')
+    expect(onChange).toHaveBeenLastCalledWith({})
+  })
+
+  it('should keep optional help available without dismissing the temperature editor', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><SettingsHarness /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    expect(screen.getByRole('textbox', { name: 'Temperature' })).toHaveAccessibleDescription(
+      expect.stringContaining('Configured default: 0.2'),
+    )
+    await user.click(screen.getByRole('button', { name: 'Temperature information' }))
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Temperature' })).toBeVisible()
   })
 })

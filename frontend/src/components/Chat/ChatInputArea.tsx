@@ -312,8 +312,6 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             convertedFileChip={convertedFileChip} onClearConvertedFileChip={onClearConvertedFileChip}
             setup={showSystemPrompt && onSystemPromptChange && <SystemPromptSetup value={systemPrompt}
               onChange={onSystemPromptChange} disabled={!!activeTarget && !supportsSystemPrompt} />}
-            footer={onGenerationDraftChange && <GenerationSettings value={generationDraft}
-              onChange={onGenerationDraftChange} target={activeTarget} disabled={disabled} />}
             warning={hasUnsupportedModalities && <div className={styles.unsupportedWarning} data-testid="unsupported-modality-warning">
               <WarningRegular fontSize={14} /><Caption1>
                 {unsupportedModalityReasons.join(' ')}
@@ -330,6 +328,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
                 <Button className={styles.sendButton} appearance="primary" icon={<SendRegular />}
                   onClick={() => { void handleSend() }} disabledFocusable={!canSend} aria-label="Send message" data-testid="send-message-btn" />
               </Tooltip>
+              {onGenerationDraftChange && <GenerationSettings value={generationDraft}
+                onChange={onGenerationDraftChange} target={activeTarget} disabled={disabled} />}
               {convertedValue != null && <Tooltip content="Clear conversion" relationship="label">
                 <Button appearance="subtle" className={styles.clearConversionButton} icon={<DismissRegular />}
                   onClick={onClearConversion} data-testid="clear-conversion-btn" />

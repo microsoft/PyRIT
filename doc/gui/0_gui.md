@@ -99,14 +99,14 @@ corresponding Chat route while retaining query parameters and fragments.
 
 ![Chat workspace with a prompt and target response](images/chat.png)
 
-### Generation settings
+### Temperature
 
-Open **Generation settings** in the message composer to override supported
-parameters for outgoing messages. For example, to set **Temperature**, uncheck
-**Use target default for temperature** and enter a value within the limits shown.
-Active overrides stay visible beside the button. Select **Use target default**
-to omit an override and use the configured target/provider settings. Unsupported
-overrides cannot be enabled; any retained override can still be cleared.
+The thermometer sits directly below **Send** in the same column. A chevron
+indicates it is editable; a number appears only for an explicit override,
+including zero. Click to edit, press Enter to apply or Escape to cancel.
+Leave blank or choose **Use target default** to clear the override.
+Invalid values block sending. Unsupported targets show a muted icon without a
+chevron; hover or focus for the reason. Retained overrides can still be cleared.
 
 Settings apply to the whole outbound message, including attachments, and remain
 selected across sends until changed. They reset when you switch attacks or

@@ -20,7 +20,6 @@ interface PromptEditorProps {
   fileDropEnabled?: boolean
   header?: ReactNode
   setup?: ReactNode
-  footer?: ReactNode
   warning?: ReactNode
   actions?: ReactNode
   attachmentMenuItems?: ReactNode
@@ -44,7 +43,7 @@ function attachmentIcon(kind: MessageAttachment['type']): string {
 
 export default function PromptEditor({
   text, attachments, onInputChange, onAttachmentsChange, disabled = false, disabledReason, fileDropEnabled = true,
-  header, setup, footer, warning, actions,
+  header, setup, warning, actions,
   attachmentMenuItems, showTextInput = true, textareaRef: externalTextareaRef, onKeyDown,
   onToggleConverterPanel, isConverterPanelOpen, undoLastSend, convertedValue, onConvertedValueChange,
   mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip,
@@ -190,6 +189,5 @@ export default function PromptEditor({
       </div>
       {actions && <div className={styles.columnRight}>{actions}</div>}
     </div>
-    {footer}
   </FileDropZone>
 }

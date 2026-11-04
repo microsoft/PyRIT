@@ -30,7 +30,7 @@ describe('request temperature', () => {
     expect(piece).toEqual(original)
   })
 
-  it.each(['', ' ', 'NaN', 'Infinity', '-0.1', '2.1', 'not a number'])('rejects %s', (input: string) => {
+  it.each(['', ' ', 'NaN', 'Infinity', '-0.1', '2.1', 'not a number', '0x1', '0b1', '1e', 'true'])('rejects %s', (input: string) => {
     expect(() => parseGenerationConfig({ temperature: input }, { supports_temperature: true }))
       .toThrow(/finite number between 0 and 2/)
   })

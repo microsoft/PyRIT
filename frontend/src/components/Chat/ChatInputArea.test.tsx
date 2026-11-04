@@ -121,6 +121,30 @@ describe("ChatInputArea", () => {
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
+  it("should place the compact temperature control immediately after Send without losing converter or Undo actions", async () => {
+    const user = userEvent.setup();
+    const onUndo = jest.fn();
+    render(<TestWrapper><ChatInputArea {...defaultProps} initialText="Hello"
+      activeTarget={makeTarget({ target_registry_name: "temperature-target", capabilities: buildCapabilities({ supports_temperature: true }) })}
+      generationDraft={{ temperature: "0" }} onGenerationDraftChange={jest.fn()}
+      undoLastSend={{ isUndoing: false, onUndo }} convertedValue="Converted"
+    /></TestWrapper>);
+    const prompt = screen.getByTestId("prompt-editor");
+    const send = within(prompt).getByRole("button", { name: "Send message" });
+    const temperature = within(prompt).getByRole("button", { name: "Adjust temperature: 0" });
+    const clearConversion = within(prompt).getByRole("button", { name: "Clear conversion" });
+    expect(send.compareDocumentPosition(temperature) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(temperature.compareDocumentPosition(clearConversion) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    act(() => send.focus());
+    await user.tab();
+    expect(temperature).toHaveFocus();
+    expect(temperature).toHaveTextContent("0");
+    await user.click(within(prompt).getByRole("button", { name: "Undo last send" }));
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    await user.click(within(prompt).getByRole("button", { name: "Toggle converter panel" }));
+    expect(defaultProps.onToggleConverterPanel).toHaveBeenCalledTimes(1);
+  });
+
   it("should place Undo directly after the converter button inside the prompt box without opening the panel", async () => {
     const user = userEvent.setup();
     const onUndo = jest.fn();
