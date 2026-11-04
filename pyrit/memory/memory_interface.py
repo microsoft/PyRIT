@@ -5023,7 +5023,8 @@ class MemoryInterface(abc.ABC):
         a different conversation. Duplicates *within* ``seeds`` are all inserted, because the check
         looks at what storage held when the call started.
         When a stored seed is copied to a new group, its caller-visible ID is updated after
-        successful insertion.
+        successful insertion; a copy that would otherwise reuse the stored group ID is moved to a
+        new group so editing it cannot alter the original group.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -5114,12 +5115,19 @@ class MemoryInterface(abc.ABC):
             entry = SeedEntry(entry=prompt)
             if prompt.id in stored_groups:
                 entry.id = uuid.uuid4()
+                # A caller that wraps a stored seed in a new group keeps the stored group ID.
+                # Move the independent copy to its own group so editing it cannot alter the
+                # original group's membership.
+                if prompt.prompt_group_id is not None and stored_groups[prompt.id] == prompt.prompt_group_id:
+                    entry.prompt_group_id = uuid.uuid4()
                 copied_seed_ids.append((prompt, entry.id))
             entries.append(entry)
 
+        group_ids_by_entry = {entry.id: entry.prompt_group_id for entry in entries}
         self._insert_entries(entries=entries)
         for prompt, new_id in copied_seed_ids:
             prompt.id = new_id
+            prompt.prompt_group_id = group_ids_by_entry[new_id]
 
     @staticmethod
     def _seed_group_member_key(seed: Seed[Any]) -> str:

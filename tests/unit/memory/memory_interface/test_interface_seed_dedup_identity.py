@@ -152,3 +152,20 @@ async def test_dedup_is_order_independent_across_shapes(
         await _add(sqlite_instance, standalone)
 
     assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == 1
+
+
+@pytest.mark.parametrize(("field", "value"), [("role", "system"), ("response_json_schema", SCHEMA_ALPHA)])
+async def test_readding_edited_grouped_seed_keeps_original_group_intact(
+    sqlite_instance: MemoryInterface, field: str, value: Any
+) -> None:
+    """A copy of a stored grouped seed must land in a new group, leaving the original group intact."""
+    await _add(sqlite_instance, *SeedGroup(seeds=[SeedPrompt(value="grouped", dataset_name=DATASET)]).seeds)
+    stored = (await sqlite_instance.get_seeds_async(dataset_name=DATASET))[0]
+    original_group_id = stored.prompt_group_id
+
+    setattr(stored, field, value)
+    await _add(sqlite_instance, *SeedGroup(seeds=[stored]).seeds)
+
+    groups = await sqlite_instance.get_seed_groups_async(dataset_name=DATASET)
+    assert sorted(len(group.seeds) for group in groups) == [1, 1]
+    assert stored.prompt_group_id != original_group_id
