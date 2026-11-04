@@ -9,6 +9,29 @@ describe('messageViewModel', () => {
       expect(formatStructuredMessage('[1,2]')).toBe('[\n  1,\n  2\n]')
     })
 
+    it('should keep number lexemes exactly as written', () => {
+      expect(formatStructuredMessage('{"id":9007199254740993}')).toBe('{\n  "id": 9007199254740993\n}')
+      expect(formatStructuredMessage('[12345678901234567890,1.0,-0,1E+2,0.10]')).toBe(
+        '[\n  12345678901234567890,\n  1.0,\n  -0,\n  1E+2,\n  0.10\n]',
+      )
+    })
+
+    it('should format nested, empty and escaped content like JSON.stringify', () => {
+      const value = {
+        a: [],
+        b: {},
+        c: [{ d: 'quote " backslash \\ newline \n tab \t', e: null }],
+        f: 'caf\u00e9 \u0001 \ud83d\ude00',
+        g: [[1, [2]], false],
+      }
+      expect(formatStructuredMessage(JSON.stringify(value))).toBe(JSON.stringify(value, null, 2))
+      expect(formatStructuredMessage('{"s":"\\u0041\\ud83d"}')).toBe(
+        JSON.stringify(JSON.parse('{"s":"\\u0041\\ud83d"}'), null, 2),
+      )
+      expect(formatStructuredMessage('{}')).toBe('{}')
+      expect(formatStructuredMessage(' [ ] ')).toBe('[]')
+    })
+
     it('should leave scalar and malformed JSON as plain text', () => {
       expect(formatStructuredMessage('true')).toBeNull()
       expect(formatStructuredMessage('{not-json}')).toBeNull()
