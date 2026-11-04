@@ -95,6 +95,7 @@ export default function ConverterRegistry() {
   const [createToken, setCreateToken] = useState<DialogToken | null>(null)
   const [converterToRemove, setConverterToRemove] = useState<ConverterInstance | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [removeError, setRemoveError] = useState<string | null>(null)
   const [focusRestore, setFocusRestore] = useState<FocusRestore | null>(null)
   // Both dialogs open from state rather than from a DialogTrigger, so mark the
   // opening controls as restore targets the way FeedbackDialog does; that is what
@@ -202,18 +203,20 @@ export default function ConverterRegistry() {
     removeTriggerRef.current = event.currentTarget
     openDialog('remove')
     setConverterToRemove(converter)
+    setRemoveError(null)
   }
 
   const dismissRemoveDialog = () => {
     openDialogRef.current = null
     setConverterToRemove(null)
+    setRemoveError(null)
     restoreFocus(removeTriggerRef.current)
   }
 
   const removeConverter = async () => {
     if (!converterToRemove) return
     setRemoving(true)
-    setError(null)
+    setRemoveError(null)
     try {
       await convertersApi.deleteConverter(converterToRemove.converter_id)
       setConverters((current) => current.filter((item) => item.converter_id !== converterToRemove.converter_id))
@@ -226,7 +229,12 @@ export default function ConverterRegistry() {
       restoreFocus(newConverterRef.current)
       await loadConverters(true)
     } catch (err) {
-      setError(toApiError(err).detail)
+      const apiError = toApiError(err)
+      if (apiError.status === 404) {
+        setRemoveError(apiError.detail || `Converter "${converterToRemove.converter_id}" was not found or has already been removed.`)
+      } else {
+        setRemoveError(apiError.detail || 'Failed to remove converter. Please try again.')
+      }
     } finally {
       setRemoving(false)
     }
@@ -404,10 +412,17 @@ export default function ConverterRegistry() {
         <DialogSurface>
           <DialogBody>
             <DialogTitle>Remove converter?</DialogTitle>
-            <DialogContent>
-              {converterToRemove
-                ? `Remove "${converterToRemove.converter_id}" from the converter registry?`
-                : ''}
+            <DialogContent className={pageStyles.removeDialogContent}>
+              {removeError && (
+                <MessageBar intent="error" className={pageStyles.removeError}>
+                  <MessageBarBody role="alert">{removeError}</MessageBarBody>
+                </MessageBar>
+              )}
+              <Text>
+                {converterToRemove
+                  ? `Remove "${converterToRemove.converter_id}" from the converter registry?`
+                  : ''}
+              </Text>
             </DialogContent>
             <DialogActions>
               <Button disabled={removing} onClick={dismissRemoveDialog}>Cancel</Button>
