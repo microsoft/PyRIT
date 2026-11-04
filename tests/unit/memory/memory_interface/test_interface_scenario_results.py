@@ -1227,9 +1227,11 @@ async def test_increment_scenario_number_tries_missing_id_raises(sqlite_instance
         await sqlite_instance.increment_scenario_number_tries_async(scenario_result_id=missing_id)
 
 
-async def test_increment_scenario_number_tries_concurrent(tmp_path: Path):
+async def test_increment_scenario_number_tries_concurrent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Concurrent increments are serialized by the transaction and never lose counts."""
-    memory = SQLiteMemory(db_path=tmp_path / "tries.db", silent=True)
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    monkeypatch.setattr(memory, "cleanup", lambda: None)
+    memory.__init__(db_path=tmp_path / "tries.db", silent=True)
     memory.disable_embedding()
     try:
         scenario = make_scenario_result(
