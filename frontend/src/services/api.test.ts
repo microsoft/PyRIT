@@ -201,8 +201,12 @@ describe("api service", () => {
         expected_version: "v1",
       });
       await scenarioSuitesApi.remove("a/b", "v1");
-      expect(apiClient.delete).toHaveBeenCalledWith("/scenario-suites/a%2Fb", {
+      expect(apiClient.delete).toHaveBeenLastCalledWith("/scenario-suites/a%2Fb", {
         params: { expected_version: "v1" },
+      });
+      await scenarioSuitesApi.remove("a/b");
+      expect(apiClient.delete).toHaveBeenLastCalledWith("/scenario-suites/a%2Fb", {
+        params: { expected_version: undefined },
       });
       await expect(scenarioSuitesApi.launch("a/b", launch)).resolves.toEqual(execution);
       expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites/a%2Fb/launch", launch);

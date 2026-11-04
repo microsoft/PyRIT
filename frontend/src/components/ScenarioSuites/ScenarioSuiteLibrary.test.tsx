@@ -259,6 +259,25 @@ describe('ScenarioSuiteLibrary', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(screen.getByTestId('suite-row-nightly_suite')).toBeInTheDocument()
     expect(screen.queryByText('Mismatch.')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('edit-suite-nightly_suite')).toHaveFocus())
+  })
+
+  it('focuses refresh when a conflicting suite is gone after reloading', async () => {
+    const user = userEvent.setup()
+    mockList
+      .mockResolvedValueOnce(listOf(makeSuite()))
+      .mockResolvedValueOnce(listOf())
+    mockRemove.mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { detail: 'Mismatch.' } } })
+
+    renderLibrary()
+
+    await user.click(await screen.findByTestId('delete-suite-nightly_suite'))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    expect(await screen.findByTestId('suite-empty-state')).toBeInTheDocument()
+    // JSDOM can leave Tabster's modal aria-hidden after the dialog unmounts.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh suites', hidden: true })).toHaveFocus())
   })
 
   it('holds the confirmation until the server finishes deleting', async () => {

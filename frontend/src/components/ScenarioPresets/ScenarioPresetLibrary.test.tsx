@@ -572,6 +572,25 @@ describe('ScenarioPresetLibrary', () => {
     expect(mockList).toHaveBeenCalledTimes(2)
     expect(onPresetDeleted).not.toHaveBeenCalled()
     expect(screen.queryByText('Version mismatch.')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('edit-preset-nightly_probe')).toHaveFocus())
+  })
+
+  it('focuses refresh when a conflicting preset is gone after reloading', async () => {
+    const user = userEvent.setup()
+    mockList
+      .mockResolvedValueOnce({ source: 'presets.yaml', items: [makeItem()] })
+      .mockResolvedValueOnce({ source: 'presets.yaml', items: [] })
+    mockRemove.mockRejectedValueOnce(httpError(409, 'Version mismatch.'))
+
+    renderLibrary()
+
+    await user.click(await screen.findByTestId('delete-preset-nightly_probe'))
+    const dialog = await screen.findByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    expect(await screen.findByTestId('empty-state')).toBeInTheDocument()
+    // JSDOM can leave Tabster's modal aria-hidden after the dialog unmounts.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh presets', hidden: true })).toHaveFocus())
   })
 
   it('deletes a stored preset with no version unconditionally', async () => {

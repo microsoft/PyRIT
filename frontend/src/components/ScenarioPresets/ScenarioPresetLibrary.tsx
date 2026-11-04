@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -74,6 +74,10 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
   const [deleting, setDeleting] = useState(false)
   const [togglingVisibility, setTogglingVisibility] = useState(false)
   const [generation, setGeneration] = useState(0)
+  const editButtons = useRef(new Map<string, HTMLElement>())
+  const refreshButton = useRef<HTMLButtonElement>(null)
+  // A conflict reload replaces the table, so the confirmed delete's trigger is gone.
+  const focusAfterReload = useRef<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -128,6 +132,15 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
     setGeneration((current) => current + 1)
   }, [])
 
+  useEffect(() => {
+    const name = focusAfterReload.current
+    if (name === null || loading) return
+    focusAfterReload.current = null
+    const editButton = editButtons.current.get(name)
+    if (editButton && !editButton.matches(':disabled')) editButton.focus()
+    else refreshButton.current?.focus()
+  }, [loading])
+
   const handleDelete = async (): Promise<void> => {
     if (!pendingDelete) {
       return
@@ -142,6 +155,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
     } catch (err) {
       const apiError = toApiError(err)
       if (apiError.status === 409) {
+        focusAfterReload.current = pendingDelete.preset.name
         setPendingDelete(null)
         refresh()
         setActionError(
@@ -218,6 +232,7 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
             New preset
           </Button>
           <Button
+            ref={refreshButton}
             className={styles.touchTarget}
             appearance="subtle"
             icon={<ArrowSyncRegular />}
@@ -364,6 +379,10 @@ export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPrese
                     <TableCell>
                       <div className={styles.cardActions}>
                         <Button
+                          ref={(node) => {
+                            if (node) editButtons.current.set(item.preset.name, node)
+                            else editButtons.current.delete(item.preset.name)
+                          }}
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<EditRegular />}
