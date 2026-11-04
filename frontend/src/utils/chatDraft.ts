@@ -30,10 +30,6 @@ export function isChatDraftDirty(draft?: Partial<ChatDraftContent> | null): bool
   if (typeof draft.systemPrompt === 'string' && draft.systemPrompt.trim().length > 0) return true
   if (draft.converters?.applied && Object.keys(draft.converters.applied).length > 0) return true
   if (draft.conversation?.messages && draft.conversation.messages.length > 0) return true
-  if (draft.conversation?.pendingComposerDraft && (
-    (typeof draft.conversation.pendingComposerDraft.text === 'string' && draft.conversation.pendingComposerDraft.text.trim().length > 0)
-    || (Array.isArray(draft.conversation.pendingComposerDraft.attachments) && draft.conversation.pendingComposerDraft.attachments.length > 0)
-  )) return true
   return false
 }
 

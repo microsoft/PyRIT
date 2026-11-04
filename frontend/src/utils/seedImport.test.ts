@@ -1,5 +1,5 @@
-import type { SeedRecord } from '@/types'
-import { buildSeedImport } from './seedImport'
+import type { ConversationDraftMessage, SeedRecord } from '@/types'
+import { buildSeedImport, mergeImportedHistory } from './seedImport'
 
 function makeSeed(overrides: Partial<SeedRecord> = {}): SeedRecord {
   return {
@@ -30,12 +30,51 @@ function makeSeed(overrides: Partial<SeedRecord> = {}): SeedRecord {
 }
 
 describe('buildSeedImport', () => {
+  it('rejects roleless multi-turn records rather than guessing user roles', () => {
+    expect(buildSeedImport([
+      makeSeed({ sequence: 0, role: null }), makeSeed({ sequence: 1, role: null }),
+    ])).toEqual({ type: 'unsupported', reason: expect.stringContaining('missing roles') })
+    expect(buildSeedImport([makeSeed({ sequence: null, role: null })]).type).toBe('single_prompt')
+  })
   it('returns unsupported for empty members', () => {
     const outcome = buildSeedImport([])
     expect(outcome.type).toBe('unsupported')
     if (outcome.type === 'unsupported') {
       expect(outcome.reason).toMatch(/No stored members/)
     }
+  })
+
+  describe('mergeImportedHistory', () => {
+    const message = (id: string, role: ConversationDraftMessage['role'], value: string): ConversationDraftMessage => ({
+      id, role, pieces: [{ draftId: id, data_type: 'text', original_value: value }],
+    })
+    const system = message('system', 'system', 'Destination instructions')
+    const user = message('user', 'user', 'Existing prompt')
+    const importedSystem = message('imported-system', 'system', 'Imported instructions')
+    const assistant = message('assistant', 'simulated_assistant', 'Imported response')
+
+    it('requires an explicit choice when system instructions differ', () => {
+      expect(mergeImportedHistory([system, user], [importedSystem, assistant])).toBeNull()
+      expect(mergeImportedHistory([system, user], [importedSystem, assistant], 'destination'))
+        .toEqual([system, user, assistant])
+      expect(mergeImportedHistory([system, user], [importedSystem, assistant], 'imported'))
+        .toEqual([importedSystem, user, assistant])
+    })
+
+    it('deduplicates identical setup and places imported setup before existing dialogue', () => {
+      expect(mergeImportedHistory([system, user], [{ ...system, id: 'copy' }, assistant]))
+        .toEqual([system, user, assistant])
+      expect(mergeImportedHistory([user], [importedSystem, assistant]))
+        .toEqual([importedSystem, user, assistant])
+    })
+
+    it('treats developer instructions and converted setup as part of the conflict', () => {
+      const developer = message('developer', 'developer', 'Developer instructions')
+      expect(mergeImportedHistory([system, developer], [system])).toBeNull()
+      const converted = { ...system, pieces: [{ ...system.pieces[0], converted_value: 'Changed instructions' }] }
+      expect(mergeImportedHistory([system], [converted])).toBeNull()
+      expect(mergeImportedHistory([], [system, developer, assistant])).toEqual([system, developer, assistant])
+    })
   })
 
   it('rejects simulated_conversation configs with clear explanation', () => {

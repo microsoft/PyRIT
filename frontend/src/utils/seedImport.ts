@@ -37,6 +37,25 @@ export interface UnsupportedImport {
 
 export type SeedImportOutcome = SinglePromptImport | ConversationImport | UnsupportedImport
 
+/** Reconciles setup before dialogue; null requires an explicit conflict choice. */
+export function mergeImportedHistory(
+  existing: ConversationDraftMessage[], imported: ConversationDraftMessage[],
+  choice?: 'destination' | 'imported',
+): ConversationDraftMessage[] | null {
+  const isSetup = (message: ConversationDraftMessage): boolean => message.role === 'system' || message.role === 'developer'
+  const destinationSetup = existing.filter(isSetup)
+  const importedSetup = imported.filter(isSetup)
+  const signature = (messages: ConversationDraftMessage[]): string => JSON.stringify(messages.map(
+    (message: ConversationDraftMessage) => [message.role, message.pieces.map(
+      (piece: ConversationDraftPiece) => [piece.converted_value_data_type ?? piece.data_type, piece.converted_value ?? piece.original_value],
+    )],
+  ))
+  if (destinationSetup.length && importedSetup.length && signature(destinationSetup) !== signature(importedSetup) && !choice) return null
+  const setup = importedSetup.length && (!destinationSetup.length || choice === 'imported') ? importedSetup : destinationSetup
+  return [...setup, ...existing.filter((message: ConversationDraftMessage) => !isSetup(message)),
+    ...imported.filter((message: ConversationDraftMessage) => !isSetup(message))]
+}
+
 /**
  * Maps a stored SeedRecord role to a conversation draft role.
  * Imported assistant and tool messages strictly use simulated roles.
@@ -127,6 +146,12 @@ export function buildSeedImport(members: readonly SeedRecord[]): SeedImportOutco
   // 4. Validate roles & check for ambiguity
   const hasRoles = promptRecords.map((m) => m.role)
   const nonNullRoles = hasRoles.filter((r): r is ChatMessageRole => r !== null && r !== undefined)
+  if (nonNullRoles.length === 0 && new Set(promptRecords.map((record: SeedRecord) => record.sequence ?? 0)).size > 1) {
+    return { type: 'unsupported', reason: 'Conversation turns are missing roles, making the dialogue ambiguous.' }
+  }
+  if (nonNullRoles.some((role: ChatMessageRole) => mapToDraftRole(role) === null)) {
+    return { type: 'unsupported', reason: 'This example contains unsupported role values.' }
+  }
 
   if (promptRecords.length > 1) {
     if (nonNullRoles.length > 0 && nonNullRoles.length < promptRecords.length) {

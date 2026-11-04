@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import {
@@ -23,6 +23,7 @@ import { useNavigate } from 'react-router'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useChatDraftHandoff } from '@/hooks/useChatDraftHandoff'
+import { useRuntime } from '@/hooks/useRuntime'
 import { useSeedExampleDetail, useSeedExamples } from '@/hooks/useSeedExamples'
 import { attacksApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -128,12 +129,19 @@ export function SeedExampleBrowserView({
   const helpId = useId()
   const navigate = useNavigate()
   const draftHandoff = useChatDraftHandoff()
+  const runtime = useRuntime()
+  const importRequestRef = useRef(0)
   const [importError, setImportError] = useState<string | null>(null)
   const [pendingDirtyDestination, setPendingDirtyDestination] = useState<ImportDestinationType | null>(null)
 
   const effectiveAttackId = activeAttackId ?? draftHandoff.preservedDraft?.originatingAttackId ?? null
   const effectiveConversationId = activeConversationId ?? draftHandoff.preservedDraft?.originatingConversationId ?? null
   const { query, visitedCursors, generation, commit } = browserState
+  useLayoutEffect(() => {
+    importRequestRef.current += 1
+    return () => { importRequestRef.current += 1 }
+  }, [dataset.selection_key, query.exampleId, generation, effectiveAttackId, effectiveConversationId,
+    draftHandoff.activeSequence, runtime.generation, runtime.ready])
   const pageState = useSeedExamples(dataset.selection_key, query, generation)
   const detailState = useSeedExampleDetail(
     dataset.selection_key,
@@ -284,7 +292,9 @@ export function SeedExampleBrowserView({
   const executeImport = useCallback(
     async (destination: ImportDestinationType, replaceDirty: boolean) => {
       setImportError(null)
-      if (!detailState.detail?.members) return
+      if (!detailState.detail?.members || !runtime.ready) return
+      const requestId = ++importRequestRef.current
+      const expectedSequence = draftHandoff.activeSequence
 
       const outcome = buildSeedImport(detailState.detail.members)
       if (outcome.type === 'unsupported') {
@@ -300,18 +310,26 @@ export function SeedExampleBrowserView({
           const newConv = await attacksApi.createConversation(effectiveAttackId, {})
           targetConversationId = newConv.conversation_id
         } catch (e) {
-          setImportError(toApiError(e).detail)
+          if (importRequestRef.current === requestId) setImportError(toApiError(e).detail)
           return
         }
       }
-
-      // If preserved draft is clean or user confirmed replacing it, clear it so it does not collide
-      if (draftHandoff.preservedDraft && (!draftHandoff.isDraftDirty(draftHandoff.preservedDraft.draft) || replaceDirty)) {
-        draftHandoff.clearPreservedDraft()
-      }
+      if (importRequestRef.current !== requestId) return
+      const preserved = draftHandoff.preservedDraft
+      const setup = preserved && (destination === 'new_conversation'
+        ? preserved.originatingAttackId === effectiveAttackId
+        : preserved.originatingAttackId === (destination === 'new_attack' ? null : effectiveAttackId)
+          && preserved.originatingConversationId === targetConversationId)
+        ? {
+            ...preserved.draft, text: '', attachments: [], textMetadata: undefined,
+            conversation: undefined,
+          }
+        : undefined
 
       const staged = draftHandoff.stagePendingImport({
         destinationType: destination,
+        objective: outcome.objective,
+        setup,
         targetAttackId: destination === 'new_attack' ? null : effectiveAttackId,
         targetConversationId,
         content: {
@@ -331,7 +349,7 @@ export function SeedExampleBrowserView({
           : {}),
         focus: true,
         replaceDirty,
-      })
+      }, expectedSequence)
 
       if (!staged) {
         setImportError('Import staging was superseded by another action.')
@@ -339,7 +357,7 @@ export function SeedExampleBrowserView({
       }
 
       if (destination === 'new_attack') {
-        navigate('/chat')
+        navigate('/attack/chat')
       } else if (
         destination === 'current_conversation' &&
         effectiveAttackId &&
@@ -350,7 +368,7 @@ export function SeedExampleBrowserView({
         navigate(attackConversationRoutePath(effectiveAttackId, targetConversationId))
       }
     },
-    [detailState.detail, draftHandoff, effectiveAttackId, effectiveConversationId, navigate],
+    [detailState.detail, draftHandoff, effectiveAttackId, effectiveConversationId, navigate, runtime.ready],
   )
 
   const handleImport = useCallback(
@@ -438,7 +456,7 @@ export function SeedExampleBrowserView({
         )}
       </div>
       <p id={helpId} className={styles.help}>{SEARCH_HELP}</p>
-      <p className={styles.help}>Newest examples are listed first. This view does not run examples, import them into chat, or play media.</p>
+      <p className={styles.help}>Newest examples are listed first. Import into Chat prepares an editable draft without sending it.</p>
       <p className={styles.status} role="status" aria-live="polite" data-testid="example-status">{status}</p>
 
       {!query.cursorRepeated && !pageState.loading && pageState.error && (

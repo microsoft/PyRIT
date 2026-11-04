@@ -110,9 +110,10 @@ export interface ConversationEditState {
   initialObjective?: string
   sourceConversationId?: string | null
   sourceAttackId?: string | null
+  sourcePieceIds?: string[]
   temperature?: string
   target?: TargetReference | null
-  pendingComposerDraft?: PendingComposerDraft
+  pendingPromptId?: string
   unsavedImport?: boolean
 }
 
@@ -160,6 +161,8 @@ export interface PendingImportPayload {
     textMetadata?: Record<string, unknown>
   }
   conversation?: PendingImportConversation
+  objective?: string
+  setup?: ChatDraftContent
   replaceDirty?: boolean
   focus?: boolean
   stagedAt: number
@@ -1037,7 +1040,7 @@ export interface ConversationSaveInput {
   baselineMessages?: ConversationDraftMessage[]
   temperature?: string
   unsavedImport?: boolean
-  pendingComposerDraft?: PendingComposerDraft
+  pendingPromptId?: string
 }
 
 export interface NewAttackContext {

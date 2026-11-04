@@ -483,6 +483,7 @@ describe('ConversationEditor', () => {
       undefined,
       undefined,
       undefined,
+      false,
       true,
     )
     expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()

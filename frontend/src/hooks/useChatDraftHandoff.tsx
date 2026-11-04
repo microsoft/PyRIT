@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type {
-  ChatDraftContent, ChatDraftContextState, ChatDraftHandoffContextValue, MessageAttachment, PendingImportPayload,
+  ChatDraftContent, ChatDraftContextState, ChatDraftHandoffContextValue, ConversationDraftMessage,
+  ConversationDraftPiece, MessageAttachment, PendingImportPayload,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
+import { draftAttachment } from '@/utils/conversationDraft'
 import {
   canApplyPendingImport,
   isChatDraftDirty,
@@ -18,15 +20,18 @@ function allDraftAttachments(draft?: ChatDraftContent | null): MessageAttachment
   if (!draft) return []
   return [
     ...draft.attachments ?? [],
-    ...draft.conversation?.pendingComposerDraft?.attachments ?? [],
+    ...draft.conversation?.messages.flatMap((message: ConversationDraftMessage) => message.pieces
+      .filter((piece: ConversationDraftPiece) => piece.previewUrl?.startsWith('blob:')).map(draftAttachment)) ?? [],
   ]
 }
 
-function allImportAttachments(payload?: PendingImportPayload | null): MessageAttachment[] {
+function allImportAttachments(payload?: Pick<PendingImportPayload, 'content' | 'conversation'> | null): MessageAttachment[] {
   if (!payload) return []
   return [
     ...payload.content?.attachments ?? [],
     ...payload.conversation?.composerDraft?.attachments ?? [],
+    ...payload.conversation?.messages.flatMap((message: ConversationDraftMessage) => message.pieces
+      .filter((piece: ConversationDraftPiece) => piece.previewUrl?.startsWith('blob:')).map(draftAttachment)) ?? [],
   ]
 }
 
@@ -104,10 +109,7 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
     payload: Omit<PendingImportPayload, 'id' | 'sequence' | 'stagedAt'>,
     expectedSequence?: number,
   ): PendingImportPayload | null => {
-    const incomingAttachments = [
-      ...payload.content.attachments ?? [],
-      ...payload.conversation?.composerDraft?.attachments ?? [],
-    ]
+    const incomingAttachments = allImportAttachments(payload)
     if (!mountedRef.current || (expectedSequence !== undefined && expectedSequence !== sequenceRef.current)) {
       releaseSupersededUrls(incomingAttachments, [
         ...allDraftAttachments(preservedDraftRef.current?.draft),

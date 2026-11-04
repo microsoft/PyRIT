@@ -61,6 +61,7 @@ import {
   stableMetadataString,
 } from '@/utils/chatDraft'
 import { resolveTargetReference, targetReference } from '@/utils/targetIdentity'
+import { mergeImportedHistory } from '@/utils/seedImport'
 import { resolveChatScorerReference } from '@/utils/scorerPresentation'
 import type { PieceConversion } from './converterTypes'
 import { useChatConverters } from '@/hooks/useChatConverters'
@@ -514,6 +515,8 @@ export default function ChatWindow({
     return () => { window.clearTimeout(fade); window.clearTimeout(dismiss) }
   }, [noticeId])
   const [editorError, setEditorError] = useState<string | null>(null)
+  const [importSystemConflict, setImportSystemConflict] = useState<string | null>(null)
+  const [importSystemChoice, setImportSystemChoice] = useState<{ id: string; choice: 'destination' | 'imported' } | null>(null)
   const exitSaveRef = useRef<Promise<boolean> | null>(null)
   // Track sending state per conversation so parallel conversations can send independently
   const [sendingConversations, setSendingConversations] = useState<Set<string>>(new Set())
@@ -578,6 +581,11 @@ export default function ChatWindow({
   const handoffRestoredRef = useRef<number | null>(null)
   const importInFlightRef = useRef<string | null>(null)
   const importFailedRef = useRef<string | null>(null)
+  const importMountedRef = useRef(true)
+  useEffect(() => {
+    importMountedRef.current = true
+    return () => { importMountedRef.current = false }
+  }, [])
   const currentAttackIdRef = useRef(draftAttackId)
   const currentConversationIdRef = useRef(draftConversationId)
   const pendingImportRef = useRef(draftHandoff.pendingImport)
@@ -844,7 +852,8 @@ export default function ChatWindow({
         sourceAttackId: editDraft.sourceAttackId,
         temperature: editDraft.temperature,
         target: editDraft.target ? targetReference(editDraft.target) : null,
-        pendingComposerDraft: editDraft.pendingComposerDraft,
+        pendingPromptId: editDraft.pendingPromptId,
+        sourcePieceIds: editDraft.sourcePieceIds,
         unsavedImport: editDraft.unsavedImport,
       },
     } : {}),
@@ -877,6 +886,8 @@ export default function ChatWindow({
 
   const restoreComposerDraft = useCallback((draft: ChatDraftContent): MessageAttachment[] => {
     const attachments = draft.attachments.map(withDraftIdentity)
+    // The next layout publishes the restored draft. Effect replay must not preserve the old snapshot.
+    preserveOnUnmountRef.current = null
     lastTextRef.current = draft.text
     lastAttachmentsSignatureRef.current = computeAttachmentSignature(attachments)
     setChatInputText(draft.text)
@@ -954,7 +965,7 @@ export default function ChatWindow({
       handoffRestoredRef.current = preserved.sequence
       draft = { ...consumed, systemPrompt: consumed.systemPrompt ?? '' }
       if (consumed.conversation) {
-        let editorTarget: TargetInstance | null = activeTarget
+        let editorTarget: TargetInstance | null = consumed.conversation.target === null ? null : activeTarget
         if (consumed.conversation.target) {
           const resolved = resolveTargetReference(consumed.conversation.target, availableTargets)
           if (resolved) {
@@ -975,7 +986,8 @@ export default function ChatWindow({
           target: editorTarget,
           temperature: consumed.conversation.temperature ?? '',
           labels,
-          pendingComposerDraft: consumed.conversation.pendingComposerDraft,
+          pendingPromptId: consumed.conversation.pendingPromptId,
+          sourcePieceIds: consumed.conversation.sourcePieceIds,
           unsavedImport: consumed.conversation.unsavedImport,
         })
       }
@@ -984,6 +996,7 @@ export default function ChatWindow({
       if (importInFlightRef.current === pending.id || importFailedRef.current === pending.id) return
 
       const executeImportHandoff = async (): Promise<void> => {
+        const snapshotGeneration = runtime.generation
         const snapshotPendingId = pending.id
         const snapshotTargetAttackId = draftAttackId
         const snapshotTargetConversationId = draftConversationId
@@ -996,17 +1009,19 @@ export default function ChatWindow({
 
         importInFlightRef.current = snapshotPendingId
         let existingTurns: ConversationDraftMessage[] = []
+        let backendMsgs: BackendMessage[] = []
         if (pending.conversation && pending.destinationType === 'current_conversation' && draftConversationId && draftAttackId) {
-          let backendMsgs = loadedBackendMessagesRef.current.get(draftConversationId)
-          if (!backendMsgs || backendMsgs.length === 0) {
+          backendMsgs = loadedBackendMessagesRef.current.get(draftConversationId) ?? []
+          if (backendMsgs.length === 0) {
             try {
               const res = await attacksApi.getMessages(draftAttackId, draftConversationId)
               backendMsgs = res?.messages ?? []
-              if (backendMsgs.length > 0) {
-                loadedBackendMessagesRef.current.set(draftConversationId, backendMsgs)
-              }
             } catch (err) {
               importInFlightRef.current = null
+              if (!importMountedRef.current || pendingImportRef.current?.id !== snapshotPendingId
+                || currentAttackIdRef.current !== snapshotTargetAttackId
+                || currentConversationIdRef.current !== snapshotTargetConversationId
+                || launchStateRef.current.generation !== snapshotGeneration) return
               importFailedRef.current = snapshotPendingId
               setEditorError(toApiError(err).detail || 'Failed to load conversation history. Preserved pending import.')
               return
@@ -1016,7 +1031,8 @@ export default function ChatWindow({
 
         // Validate state before proceeding to consume the import
         const currentPending = pendingImportRef.current
-        if (!currentPending || currentPending.id !== snapshotPendingId) {
+        if (!importMountedRef.current || launchStateRef.current.generation !== snapshotGeneration
+          || !launchStateRef.current.ready || !currentPending || currentPending.id !== snapshotPendingId) {
           importInFlightRef.current = null
           return
         }
@@ -1059,7 +1075,15 @@ export default function ChatWindow({
         }
 
         if (pending.conversation && pending.destinationType === 'current_conversation' && draftConversationId && draftAttackId) {
-          const backendMsgs = loadedBackendMessagesRef.current.get(draftConversationId) ?? []
+          if (backendMsgs.length > 0) loadedBackendMessagesRef.current.set(draftConversationId, backendMsgs)
+          if (backendMsgs.some((message: BackendMessage) => message.role === 'assistant' || message.role === 'tool'
+            || message.message_pieces.some((piece: BackendMessagePiece) => piece.prompt_metadata?.pyrit_request_trace
+              || piece.prompt_metadata?.pyrit_target_request))) {
+            importInFlightRef.current = null
+            importFailedRef.current = snapshotPendingId
+            setEditorError('This conversation contains sent evidence. Choose Import to new conversation or Import to new attack instead.')
+            return
+          }
           try {
             existingTurns = toConversationDraft(backendMsgs)
           } catch (err) {
@@ -1070,6 +1094,21 @@ export default function ChatWindow({
           }
         }
 
+        const setup = pending.setup ?? matchingPreservedDraft
+        const sourcePieceIds = existingTurns.flatMap((message: ConversationDraftMessage) => message.pieces
+          .flatMap((piece: ConversationDraftPiece) => piece.source_piece_id ? [piece.source_piece_id] : []))
+        if (pending.conversation && !existingTurns.some((message: ConversationDraftMessage) =>
+          message.role === 'system' || message.role === 'developer') && (setup?.systemPrompt || systemPrompt)) {
+          existingTurns.unshift({ id: generateClientId(), role: 'system',
+            pieces: [{ ...newDraftPiece(), original_value: setup?.systemPrompt || systemPrompt }] })
+        }
+        const importedMessages = pending.conversation ? mergeImportedHistory(existingTurns, pending.conversation.messages,
+          importSystemChoice?.id === pending.id ? importSystemChoice.choice : undefined) : []
+        if (!importedMessages) {
+          importInFlightRef.current = null
+          setImportSystemConflict(pending.id)
+          return
+        }
         const consumed = draftHandoff.consumePendingImport(
           snapshotPendingId,
           currentAttackIdRef.current,
@@ -1078,26 +1117,30 @@ export default function ChatWindow({
         importInFlightRef.current = null
         if (!consumed) return
         importFailedRef.current = null
-        if (preserved) {
-          draftHandoff.clearPreservedDraft(preserved.sequence)
-        }
-        converters.clearAll()
+        setEditorError(null)
+        setImportSystemConflict(null)
+        const importedObjective = consumed.objective ?? consumed.conversation?.objective
+        const composerDraft = consumed.conversation?.composerDraft
+          ?? (consumed.content.text || consumed.content.attachments?.length ? consumed.content : undefined)
+        let pendingPromptId: string | undefined
         if (consumed.conversation) {
-          const allMessages = [...existingTurns, ...consumed.conversation.messages]
+          const allMessages = importedMessages
+          if (composerDraft) {
+            pendingPromptId = generateClientId()
+            allMessages.push({
+              id: pendingPromptId, role: 'user',
+              pieces: [
+                ...(composerDraft.text ? [{ ...newDraftPiece(), original_value: composerDraft.text,
+                  prompt_metadata: composerDraft.textMetadata }] : []),
+                ...(composerDraft.attachments ?? []).map(attachmentDraft),
+              ],
+            })
+          }
           const isNewAttack = !currentAttackIdRef.current
           const initialObjective = isNewAttack
-            ? (consumed.conversation.objective ?? currentObjective)
+            ? (importedObjective ?? setup?.objective ?? currentObjective)
             : currentObjective
-          const objective = consumed.conversation.objective ?? currentObjective
-          const pendingComposerDraft = consumed.conversation.composerDraft ?? (
-            consumed.content.text || (consumed.content.attachments && consumed.content.attachments.length > 0)
-              ? {
-                  text: consumed.content.text,
-                  attachments: consumed.content.attachments ?? [],
-                  textMetadata: consumed.content.textMetadata,
-                }
-              : undefined
-          )
+          const objective = importedObjective ?? setup?.objective ?? currentObjective
 
           editor.begin({
             messages: allMessages,
@@ -1105,25 +1148,27 @@ export default function ChatWindow({
             initialObjective,
             sourceConversationId: currentConversationIdRef.current ?? null,
             sourceAttackId: currentAttackIdRef.current,
+            sourcePieceIds,
             target: activeTarget,
+            temperature: setup?.temperature ?? '',
             unsavedImport: true,
             labels,
-            pendingComposerDraft,
+            pendingPromptId,
           })
-          if (consumed.conversation.systemPrompt) {
-            if (systemPrompt && systemPrompt.trim() !== consumed.conversation.systemPrompt.trim()) {
-              setEditorNotice('The imported example includes a system prompt that differs from the existing system prompt. The existing system prompt was preserved.')
-            }
-          }
+        }
+        if (preserved && (matchingPreservedDraft || (consumed.setup && consumed.replaceDirty))) {
+          draftHandoff.clearPreservedDraft(preserved.sequence)
         }
         draft = {
-          text: consumed.content.text,
-          attachments: consumed.content.attachments ?? [],
-          textMetadata: consumed.content.textMetadata,
-          ...(consumed.conversation?.systemPrompt && !systemPrompt ? { systemPrompt: consumed.conversation.systemPrompt } : {}),
+          ...setup,
+          text: consumed.conversation ? '' : consumed.content.text,
+          attachments: consumed.conversation ? [] : consumed.content.attachments ?? [],
+          textMetadata: consumed.conversation ? undefined : consumed.content.textMetadata,
+          objective: currentAttackIdRef.current ? undefined : importedObjective ?? setup?.objective,
         }
         focus = consumed.focus === true
-        restoreComposerDraft(draft)
+        const attachments = restoreComposerDraft(draft)
+        restoreConversions(draft.text, attachments, {}, draft.converters?.pipelines ?? {})
         if (focus) inputBoxRef.current?.focus()
       }
       void executeImportHandoff()
@@ -1147,7 +1192,7 @@ export default function ChatWindow({
     canApplyImportNow, pending, draftHandoff, draftAttackId, draftConversationId, converters,
     isDraftDestinationReady, matchingPreservedDraft, isActiveDraftDirty, runtime.ready, runtime.generation,
     restoreComposerDraft, restoreConverterSnapshot, restoreConversions,
-    activeTarget, currentObjective, editor, labels, setEditorNotice, systemPrompt, availableTargets,
+    activeTarget, currentObjective, editor, labels, setEditorNotice, systemPrompt, availableTargets, importSystemChoice,
   ])
 
   // Handle conversation selection from the panel
@@ -2157,15 +2202,7 @@ export default function ChatWindow({
     const snapshot = editorRef.current?.getConverters() ?? converters.snapshot()
     let pendingPrompt: ReturnType<typeof draftMessageToComposer> | undefined
     let history: ConversationDraftMessage[]
-    if (editDraft.pendingComposerDraft) {
-      pendingPrompt = {
-        text: editDraft.pendingComposerDraft.text,
-        attachments: editDraft.pendingComposerDraft.attachments ?? [],
-        textMetadata: editDraft.pendingComposerDraft.textMetadata,
-        converters: snapshot,
-      }
-      history = editDraft.messages
-    } else if (editDraft.unsavedImport) {
+    if (editDraft.unsavedImport && editDraft.pendingPromptId !== editDraft.messages[editDraft.messages.length - 1]?.id) {
       pendingPrompt = undefined
       history = editDraft.messages
     } else {
@@ -2177,7 +2214,7 @@ export default function ChatWindow({
     return editor.save(destination, (response: AddMessageResponse, target?: TargetInstance | null) => {
       handleEditorSaved(response, target)
       restoreEditorPrompt(pendingPrompt, snapshot)
-    }, history, reuseUnsentConversation && destination === 'same_attack'
+    }, history, (reuseUnsentConversation || editDraft.unsavedImport === true) && destination === 'same_attack'
       && Boolean(editDraft.sourceConversationId && editDraft.sourceAttackId === attackResultId))
   }
 
@@ -2190,13 +2227,6 @@ export default function ChatWindow({
       let prompt: ReturnType<typeof draftMessageToComposer> | undefined
       if (editDraft?.unsavedImport) {
         prompt = undefined
-      } else if (editDraft?.pendingComposerDraft) {
-        prompt = {
-          text: editDraft.pendingComposerDraft.text,
-          attachments: editDraft.pendingComposerDraft.attachments ?? [],
-          textMetadata: editDraft.pendingComposerDraft.textMetadata,
-          converters: snapshot,
-        }
       } else {
         const lastMessage = editDraft?.messages[editDraft.messages.length - 1]
         prompt = (chatInputText || draftAttachments.length || activePieceConversions.text) && lastMessage?.role === 'user'
@@ -2829,6 +2859,14 @@ export default function ChatWindow({
           <MessageBarBody>{scoringNotice.message}</MessageBarBody>
         </MessageBar>}
         {editorError && <MessageBar intent="error"><MessageBarBody>{editorError}</MessageBarBody></MessageBar>}
+        {pending && importSystemConflict === pending.id && <MessageBar intent="warning">
+          <MessageBarBody>
+            The destination and imported example have different system or developer instructions. Choose which setup to keep.
+            <Button onClick={() => setImportSystemChoice({ id: pending.id, choice: 'destination' })}>Keep destination setup</Button>
+            <Button onClick={() => setImportSystemChoice({ id: pending.id, choice: 'imported' })}>Use imported setup</Button>
+            <Button onClick={() => draftHandoff.dismissPendingImport(pending.id)}>Cancel import</Button>
+          </MessageBarBody>
+        </MessageBar>}
         {editorNotice && <MessageBar intent="success"
           className={mergeClasses(styles.infoNotice, editorNotice.fading && styles.fadingInfoNotice)}>
           <MessageBarBody>{editorNotice.message}</MessageBarBody>
