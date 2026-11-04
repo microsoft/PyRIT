@@ -38,6 +38,106 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+### Dataset upload and deletion
+
+`POST /api/datasets` creates a named dataset synchronously from multipart form data.
+Send exactly one `manifest` part containing JSON (a form field or a JSON file), plus
+named file parts referenced by its prompts. For example, `manifest.json`:
+
+```json
+{
+  "name": "my_dataset",
+  "seeds": [
+    {"seed_type": "prompt", "data_type": "text", "value": "Example"},
+    {"seed_type": "prompt", "data_type": "binary_path", "value": "upload:document"}
+  ]
+}
+```
+
+```bash
+curl -X POST http://localhost:8000/api/datasets \
+  -H "PyRIT-Compatibility-ID: $PYRIT_COMPATIBILITY_ID" \
+  -F 'manifest=@manifest.json;type=application/json' \
+  -F 'document=@local-document.bin;type=application/octet-stream'
+```
+
+Include the normal bearer token in Entra mode; this route does not bypass
+authentication or build compatibility. A successful response is `201`:
+
+```json
+{"name":"my_dataset","selection_key":"dataset:named:my_dataset","seed_pieces":2,"logical_examples":2}
+```
+
+Each seed requires an explicit `data_type` and a string `value`. Imports accept
+`SeedPrompt` records only. File-valued prompts (`image_path`, `audio_path`,
+`video_path`, `binary_path`) must use `upload:<part-name>`; server paths, remote
+file fetching, and base64 ingestion are not supported. Part names use 1-128 ASCII
+letters, digits, underscores, or hyphens. Multiple prompts may share one part;
+missing, duplicate, non-file, and unreferenced media parts are rejected. Media
+bytes need not decode successfully as their declared modality. Files use
+server-generated storage names and are never executed. Blob uploads are opaque
+attachments; local retrieval uses the existing media route's safe inline allowlist.
+
+Names are exact, nonempty, at most 256 UTF-16 code units, and have no surrounding
+whitespace or control characters. An existing stored dataset or in-progress upload
+with the same name returns `409`, never append/replace or silent deduplication.
+A provider-only name is allowed; its provider registration remains unchanged.
+Descriptive metadata, response schema, roles, sequence numbers, and grouping are
+preserved. Seed/group IDs, checksums, timestamps, origin, and ingestion attribution
+are assigned by the server. Attribution uses the authenticated object ID, or
+`dataset-api` in local mode. Original multipart filename and content type are
+recorded as `upload_filename` and `upload_content_type` metadata. Trusted Jinja
+templates are rejected before constructing prompts; literal template syntax stays
+literal. These are imports, not a new export/round-trip serialization contract.
+
+| Environment variable | Default |
+|---|---|
+| `PYRIT_DATASET_MAX_REQUEST_BYTES` | `104857600` (100 MiB, including multipart framing) |
+| `PYRIT_DATASET_MAX_MANIFEST_BYTES` | `10485760` (10 MiB JSON) |
+| `PYRIT_DATASET_MAX_PROMPTS` | `10000` |
+
+Limits must be positive integers. Actual incoming bytes are bounded even without
+`Content-Length`; exceeding a byte/count limit returns `413`. Unsupported content
+types return `415`; malformed manifests, unsafe template flags, and invalid
+prompt/reference fields return `422`, without echoing prompt content. Media is
+spooled during parsing and streamed to the configured disk/blob results store.
+No seed rows become visible until the complete import commits.
+
+Use the existing `GET /api/datasets`, `/api/datasets/seeds`,
+`/api/datasets/seeds/{example_id}`, and media URLs to browse uploaded datasets.
+No export or dataset-detail endpoint is added.
+
+```bash
+curl -X DELETE \
+  'http://localhost:8000/api/datasets?selection_key=dataset%3Anamed%3Amy_dataset' \
+  -H "PyRIT-Compatibility-ID: $PYRIT_COMPATIBILITY_ID"
+```
+
+Deletion permanently removes all stored seeds with the **exact** named dataset,
+including stored SDK/provider seeds, but never unregisters a provider. Missing or
+provider-only populations return `404`; deleting `dataset:unnamed` is rejected.
+External/unowned media is never deleted. API-owned media is removed only if
+unreferenced by remaining seeds, original/converted message values, or loose
+scorer content. Shared media is retained rather than scheduled for later deletion.
+
+Normal cleanup finishes inline with `200`. If storage cleanup fails, seeds are
+still deleted and the response is `202` with `deletion_id`, `pending_media`, and a
+sanitized `error`. Follow `Location` with
+`GET /api/datasets/deletions/{deletion_id}` to read durable status and retry cleanup.
+An upload that cannot finish rollback cleanup returns `503` with the same
+`Location` guidance. Database failure after seed deletion likewise returns `503`
+with its cleanup resource, not a false success.
+
+Ownership and incomplete cleanup survive restarts. Backend startup recovers
+abandoned imports and pending deletions; status requests can also retry them.
+The lifecycle uses a database-backed lock shared by seed/message/scorer-media
+writers on SQLite and SQL Server. Upload storage writes hold that lock; deletion
+claims media transactionally before removing bytes, and later writes cannot
+attach claimed/deleted assets. Writers may wait during an upload. Direct SQL or
+external filesystem/blob modifications outside PyRIT's memory APIs do not
+participate in this protocol. Deploy the new Alembic migration before starting
+backends configured to require an already-current Azure SQL schema.
+
 ### Saved conversations
 
 `GET /api/attacks/conversations/{conversation_id}` returns the saved chat history

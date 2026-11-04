@@ -1,0 +1,395 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""Create-only dataset transactions and durable, reference-safe owned-media cleanup."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import os
+import uuid
+from pathlib import Path
+from typing import TYPE_CHECKING
+from urllib.parse import parse_qs, unquote, urlparse
+
+from sqlalchemy import select
+from sqlalchemy.util.concurrency import await_only
+
+from pyrit.memory.memory_models import (
+    DatasetLifecycleEntry,
+    DatasetLifecycleLock,
+    DatasetMediaEntry,
+    PromptMemoryEntry,
+    ScorableContentEntry,
+    SeedEntry,
+)
+from pyrit.models import MEDIA_PATH_DATA_TYPES
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Sequence
+
+    from sqlalchemy.orm import Session
+
+    from pyrit.memory.memory_interface import MemoryInterface
+    from pyrit.models import SeedPrompt
+
+logger = logging.getLogger(__name__)
+
+
+class DatasetNameConflictError(ValueError):
+    """A stored dataset or another import already uses this exact name."""
+
+
+def media_key(value: str) -> str:
+    """
+    Canonicalize local aliases and blob SAS URLs.
+
+    Returns:
+        str: A bounded storage identity, independent of signed query parameters.
+    """
+    if value.startswith("/api/media?"):
+        value = parse_qs(urlparse(value).query).get("path", [value])[0]
+    parsed = urlparse(value)
+    if parsed.scheme in {"http", "https"} and (parsed.hostname or "").endswith(".blob.core.windows.net"):
+        # AzureBlobStorageIO resolves the URL's blob name against its configured container,
+        # not against the supplied hostname/container. Match that effective storage identity.
+        canonical = "blob:" + "/".join(parsed.path.split("/")[2:])
+    elif parsed.scheme in {"http", "https"}:
+        canonical = parsed._replace(
+            netloc=parsed.netloc.lower(), path=unquote(parsed.path), query="", fragment=""
+        ).geturl()
+    else:
+        canonical = os.path.normcase(str(Path(value).resolve()))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _media_keys(session: Session, values: Sequence[str]) -> set[str]:
+    def canonicalize() -> set[str]:
+        return {media_key(value) for value in values}
+
+    if session.get_bind().dialect.is_async:
+        return await_only(asyncio.to_thread(canonicalize))
+    return canonicalize()
+
+
+def lock_dataset_lifecycle(session: Session) -> None:
+    """
+    Hold the same database lock for lifecycle decisions and every reference change.
+
+    Raises:
+        RuntimeError: If schema migration has not installed the singleton lock row.
+    """
+    if session.info.get("dataset_lifecycle_locked"):
+        return
+    from pyrit.memory.memory_session import _begin_sqlite_write
+
+    _begin_sqlite_write(session)
+    statement = select(DatasetLifecycleLock.id).where(DatasetLifecycleLock.id == 1)
+    if session.get_bind().dialect.name == "mssql":
+        statement = statement.with_hint(DatasetLifecycleLock, "WITH (XLOCK, HOLDLOCK)", dialect_name="mssql")
+    with session.no_autoflush:
+        if session.scalar(statement) is None:
+            raise RuntimeError("Dataset lifecycle lock is missing; apply memory schema migrations.")
+    session.info["dataset_lifecycle_locked"] = True
+
+
+def _entry_media_values(entry: object) -> list[str]:
+    if isinstance(entry, (SeedEntry, ScorableContentEntry)):
+        return [entry.value] if entry.data_type in MEDIA_PATH_DATA_TYPES else []
+    if isinstance(entry, PromptMemoryEntry):
+        return [
+            value
+            for value, data_type in (
+                (entry.original_value, entry.original_value_data_type),
+                (entry.converted_value, entry.converted_value_data_type),
+            )
+            if value and data_type in MEDIA_PATH_DATA_TYPES
+        ]
+    return []
+
+
+def validate_dataset_reference_writes(*, session: Session, entries: Sequence[object]) -> None:
+    """
+    Reject late references to claimed/deleted assets and writes into reserved imports.
+
+    Raises:
+        DatasetNameConflictError: If another upload reserved this dataset.
+        ValueError: If media is staged by another upload or claimed for cleanup.
+    """
+    values = [value for entry in entries for value in _entry_media_values(entry)]
+    _validate_dataset_references(
+        session=session,
+        dataset_names={entry.dataset_name for entry in entries if isinstance(entry, SeedEntry)},
+        keys=_media_keys(session, values) if values else set(),
+    )
+
+
+def _validate_dataset_references(*, session: Session, dataset_names: set[str | None], keys: set[str]) -> None:
+    with session.no_autoflush:
+        staged = session.scalars(select(DatasetLifecycleEntry).where(DatasetLifecycleEntry.status == "staging")).all()
+        own_upload = session.info.get("dataset_upload_id")
+        reserved = {entry.dataset_name for entry in staged if entry.id != own_upload}
+        if dataset_names & reserved:
+            raise DatasetNameConflictError("The dataset name is reserved by an upload.")
+        # Chunk for SQL Server's parameter limit.
+        ordered = sorted(keys)
+        for start in range(0, len(ordered), 500):
+            assets = session.execute(
+                select(DatasetMediaEntry.status, DatasetMediaEntry.upload_id).where(
+                    DatasetMediaEntry.key.in_(ordered[start : start + 500])
+                )
+            ).all()
+            for asset_status, upload_id in assets:
+                if asset_status in {"pending", "deleted"} or (asset_status == "staged" and upload_id != own_upload):
+                    raise ValueError("Media has been removed or is reserved for dataset cleanup.")
+
+
+def stored_media_keys(session: Session) -> set[str]:
+    """
+    Read all live seed, original/converted message, and loose scorer-media references.
+
+    Returns:
+        set[str]: Canonical identities of the referenced media.
+    """
+    values: list[str] = []
+    for model in (SeedEntry, ScorableContentEntry):
+        values.extend(session.scalars(select(model.value).where(model.data_type.in_(MEDIA_PATH_DATA_TYPES))).all())
+    for value_column, type_column in (
+        (PromptMemoryEntry.original_value, PromptMemoryEntry.original_value_data_type),
+        (PromptMemoryEntry.converted_value, PromptMemoryEntry.converted_value_data_type),
+    ):
+        values.extend(session.scalars(select(value_column).where(type_column.in_(MEDIA_PATH_DATA_TYPES))).all())
+    return _media_keys(session, [value for value in values if value])
+
+
+def validate_stored_dataset_references(session: Session) -> None:
+    """Validate bulk writes without refreshing or discarding pending ORM changes."""
+    with session.no_autoflush:
+        _validate_dataset_references(
+            session=session,
+            dataset_names=set(session.scalars(select(SeedEntry.dataset_name))),
+            keys=stored_media_keys(session),
+        )
+
+
+async def _finish_storage_write_async(write: Awaitable[None]) -> None:
+    task = asyncio.ensure_future(write)
+    try:
+        await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # A partial/late write must finish before compensating deletion starts.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        task.result()
+        raise
+
+
+async def reserve_upload_async(*, memory: MemoryInterface, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+    """
+    Durably journal every generated asset path before any bytes are written.
+
+    Returns:
+        uuid.UUID: The durable upload/cleanup identifier.
+
+    Raises:
+        DatasetNameConflictError: If this exact dataset name is already in use.
+    """
+    upload_id = uuid.uuid4()
+    keys = await asyncio.to_thread(lambda: [media_key(path) for path in paths])
+    async with await memory.get_session_async() as session:
+        await session.run_sync(lock_dataset_lifecycle)
+        names = (
+            await session.scalars(select(SeedEntry.dataset_name).where(SeedEntry.dataset_name == dataset_name))
+        ).all()
+        staging_names = (
+            await session.scalars(
+                select(DatasetLifecycleEntry.dataset_name).where(DatasetLifecycleEntry.status == "staging")
+            )
+        ).all()
+        if dataset_name in names or dataset_name in staging_names:
+            raise DatasetNameConflictError("A stored dataset or upload already uses this name.")
+        session.add(
+            DatasetLifecycleEntry(
+                id=upload_id, dataset_name=dataset_name, kind="upload", status="staging", deleted_seeds=0
+            )
+        )
+        await session.flush()
+        session.add_all(
+            DatasetMediaEntry(key=key, path=path, upload_id=upload_id, status="staged")
+            for key, path in zip(keys, paths, strict=True)
+        )
+        await session.commit()
+    return upload_id
+
+
+async def commit_upload_async(
+    *,
+    memory: MemoryInterface,
+    upload_id: uuid.UUID,
+    seeds: Sequence[SeedPrompt],
+    write_media: Callable[[], Awaitable[None]],
+) -> None:
+    """
+    Write staged bytes and all seeds under one reference lock; never deduplicate.
+
+    Raises:
+        DatasetNameConflictError: If recovery already released the reservation.
+        ValueError: If the batch is empty, belongs to another dataset, or lacks storage checksums.
+    """
+    async with await memory.get_session_async() as session:
+        await session.run_sync(lock_dataset_lifecycle)
+        operation = await session.get(DatasetLifecycleEntry, upload_id)
+        if operation is None or operation.status != "staging":
+            raise DatasetNameConflictError("The upload reservation is no longer active.")
+        if not seeds or any(seed.dataset_name != operation.dataset_name or not seed.added_by for seed in seeds):
+            raise ValueError("An upload requires a nonempty, storage-ready batch belonging to its reserved dataset.")
+        # The durable journal survives a rollback or process exit, whereas these seeds do not.
+        session.info["dataset_upload_id"] = upload_id
+        await _finish_storage_write_async(write_media())
+        if any(not seed.value_sha256 for seed in seeds):
+            raise ValueError("Uploaded seed checksums must be computed before persistence.")
+        session.add_all(SeedEntry(entry=seed) for seed in seeds)
+        assets = (
+            await session.scalars(select(DatasetMediaEntry).where(DatasetMediaEntry.upload_id == upload_id))
+        ).all()
+        for asset in assets:
+            asset.status = "live"
+        operation.status = "completed"
+        await session.commit()
+
+
+async def delete_dataset_async(*, memory: MemoryInterface, dataset_name: str) -> uuid.UUID:
+    """
+    Remove only exact-name seeds and durably queue only their recorded owned media.
+
+    Returns:
+        uuid.UUID: The durable deletion identifier.
+
+    Raises:
+        LookupError: If no seeds have this exact dataset name.
+    """
+    deletion_id = uuid.uuid4()
+    async with await memory.get_session_async() as session:
+        await session.run_sync(lock_dataset_lifecycle)
+        entries = (await session.scalars(select(SeedEntry).where(SeedEntry.dataset_name == dataset_name))).all()
+        # SQL Server collations can match case variants and trailing spaces; the API is exact.
+        entries = [entry for entry in entries if entry.dataset_name == dataset_name]
+        if not entries:
+            raise LookupError("No stored dataset has this exact name.")
+        session.add(
+            DatasetLifecycleEntry(
+                id=deletion_id, dataset_name=dataset_name, kind="delete", status="pending", deleted_seeds=len(entries)
+            )
+        )
+        await session.flush()
+        for entry in entries:
+            await session.delete(entry)
+        uploads = (
+            await session.scalars(select(DatasetLifecycleEntry).where(DatasetLifecycleEntry.kind == "upload"))
+        ).all()
+        upload_ids = {upload.id for upload in uploads if upload.dataset_name == dataset_name}
+        assets = (await session.scalars(select(DatasetMediaEntry).where(DatasetMediaEntry.status == "live"))).all()
+        for asset in assets:
+            if asset.upload_id in upload_ids:
+                asset.cleanup_id = deletion_id
+                asset.status = "pending"
+        await session.commit()
+    return deletion_id
+
+
+async def cleanup_dataset_media_async(*, memory: MemoryInterface, operation_id: uuid.UUID) -> dict[str, object]:
+    """
+    Retry cleanup inline; a committed tombstone blocks all new memory references.
+
+    Returns:
+        dict[str, object]: Durable counts, completion state, and a sanitized cleanup error.
+
+    Raises:
+        LookupError: If the operation identifier is unknown.
+        RuntimeError: If results storage is unavailable during cleanup.
+    """
+    async with await memory.get_session_async() as session:
+        await session.run_sync(lock_dataset_lifecycle)
+        operation = await session.get(DatasetLifecycleEntry, operation_id)
+        if operation is None:
+            raise LookupError("Dataset deletion not found.")
+        if operation.status == "staging":
+            operation.status = "pending"
+            assets = (
+                await session.scalars(select(DatasetMediaEntry).where(DatasetMediaEntry.upload_id == operation_id))
+            ).all()
+            for asset in assets:
+                asset.cleanup_id = operation_id
+                asset.status = "pending"
+        assets = (
+            await session.scalars(select(DatasetMediaEntry).where(DatasetMediaEntry.cleanup_id == operation_id))
+        ).all()
+        try:
+            references = await session.run_sync(stored_media_keys) if assets else set()
+        except (OSError, ValueError):
+            logger.exception("Could not establish media reference safety for cleanup %s", operation_id)
+            references = None
+        for asset in assets:
+            if asset.status == "pending" and references is not None and asset.key in references:
+                asset.status = "retained"
+        candidates = (
+            [(asset.key, asset.path) for asset in assets if asset.status == "pending"] if references is not None else []
+        )
+        # Claiming precedes external deletion. This state survives a crash after unlinking.
+        await session.commit()
+
+    failed = False
+    for key, path in candidates:
+        try:
+            if memory.results_storage_io is None:
+                raise RuntimeError("Results storage is not configured.")
+            await memory.results_storage_io.delete_file_async(path)
+        except Exception:
+            logger.exception("Dataset media cleanup failed for operation %s", operation_id)
+            failed = True
+            continue
+        async with await memory.get_session_async() as session:
+            current = await session.get(DatasetMediaEntry, key)
+            if current is not None:
+                current.status = "deleted"
+                await session.commit()
+    async with await memory.get_session_async() as session:
+        operation = await session.get(DatasetLifecycleEntry, operation_id)
+        if operation is None:
+            raise LookupError("Dataset deletion not found.")
+        remaining = (
+            await session.scalars(
+                select(DatasetMediaEntry.key).where(
+                    DatasetMediaEntry.cleanup_id == operation_id, DatasetMediaEntry.status == "pending"
+                )
+            )
+        ).all()
+        if operation.status != "completed":
+            operation.status = "pending" if remaining else "completed"
+        operation.error = "Media cleanup failed; retry this status resource." if failed or remaining else None
+        result: dict[str, object] = {
+            "deletion_id": str(operation_id),
+            "status": operation.status,
+            "deleted_seeds": operation.deleted_seeds,
+            "pending_media": len(remaining),
+            "error": operation.error,
+        }
+        await session.commit()
+        return result
+
+
+async def recover_dataset_cleanup_async(memory: MemoryInterface) -> None:
+    """Recover interrupted imports/deletions when a backend runtime starts."""
+    async with await memory.get_session_async() as session:
+        ids = (
+            await session.scalars(
+                select(DatasetLifecycleEntry.id).where(DatasetLifecycleEntry.status.in_(["staging", "pending"]))
+            )
+        ).all()
+    for operation_id in ids:
+        await cleanup_dataset_media_async(memory=memory, operation_id=operation_id)

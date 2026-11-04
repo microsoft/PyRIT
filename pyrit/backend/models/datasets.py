@@ -9,9 +9,12 @@ Datasets are seed prompt/objective collections provided by
 listing available datasets and browsing their stored seed examples.
 """
 
+import os
+from dataclasses import dataclass
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.models import PromptDataType, SeedRecord, SeedType
@@ -48,6 +51,69 @@ class DatasetListResponse(BaseModel):
     """Response for listing available datasets."""
 
     items: list[DatasetInfo] = Field(..., description="List of available datasets")
+
+
+@dataclass(frozen=True)
+class DatasetUploadLimits:
+    """Positive environment-configured limits, in bytes except for prompt count."""
+
+    request_bytes: int = 100 * 1024 * 1024
+    manifest_bytes: int = 10 * 1024 * 1024
+    prompts: int = 10_000
+
+    @classmethod
+    def from_environment(cls) -> "DatasetUploadLimits":
+        """
+        Read explicit limits without silently accepting invalid configuration.
+
+        Returns:
+            DatasetUploadLimits: The positive configured limits.
+        """
+        values = {
+            field: int(os.environ.get(variable, default))
+            for field, variable, default in (
+                ("request_bytes", "PYRIT_DATASET_MAX_REQUEST_BYTES", cls.request_bytes),
+                ("manifest_bytes", "PYRIT_DATASET_MAX_MANIFEST_BYTES", cls.manifest_bytes),
+                ("prompts", "PYRIT_DATASET_MAX_PROMPTS", cls.prompts),
+            )
+        }
+        if any(value <= 0 for value in values.values()):
+            raise ValueError("Dataset upload limits must be positive integers.")
+        return cls(**values)
+
+
+class DatasetUploadManifest(BaseModel):
+    """Untrusted JSON; prompt construction happens only after trust and reference checks."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: str = Field(min_length=1, max_length=256)
+    seeds: list[dict[str, Any]] = Field(min_length=1)
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        if value != value.strip() or any(ord(char) < 32 for char in value) or len(value.encode("utf-16-le")) > 512:
+            raise ValueError("Use a nonempty dataset name of at most 256 UTF-16 code units without outer whitespace.")
+        return value
+
+
+class DatasetUploadResponse(BaseModel):
+    """The actual committed population, immediately available through existing browsing."""
+
+    name: str
+    selection_key: str
+    seed_pieces: int
+    logical_examples: int
+
+
+class DatasetDeletionResponse(BaseModel):
+    """Durable status of exact dataset removal and its owned-media cleanup."""
+
+    deletion_id: UUID
+    status: Literal["pending", "completed"]
+    deleted_seeds: int
+    pending_media: int
+    error: str | None = None
 
 
 class ScenarioDatasetLoadResponse(BaseModel):

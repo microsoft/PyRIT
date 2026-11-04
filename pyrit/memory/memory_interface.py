@@ -12,7 +12,7 @@ import threading
 import uuid
 import weakref
 from collections import Counter
-from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -5008,6 +5008,57 @@ class MemoryInterface(abc.ABC):
             batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
         """
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=batch.seeds)
+
+    async def reserve_dataset_upload_async(self, *, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+        """
+        Reserve an exact name and journal owned asset paths before writing bytes.
+
+        Returns:
+            uuid.UUID: The durable upload/cleanup identifier.
+        """
+        from pyrit.memory.dataset_lifecycle import reserve_upload_async
+
+        return await reserve_upload_async(memory=self, dataset_name=dataset_name, paths=paths)
+
+    async def commit_dataset_upload_async(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        seeds: Sequence[SeedPrompt],
+        write_media: Callable[[], Awaitable[None]],
+    ) -> None:
+        """Atomically publish all storage-ready prompts without deduplication or replacement."""
+        from pyrit.memory.dataset_lifecycle import commit_upload_async
+
+        await commit_upload_async(memory=self, upload_id=upload_id, seeds=seeds, write_media=write_media)
+
+    async def delete_dataset_async(self, *, dataset_name: str) -> uuid.UUID:
+        """
+        Delete exact-name stored seeds and journal cleanup of API-owned media.
+
+        Returns:
+            uuid.UUID: The durable deletion identifier.
+        """
+        from pyrit.memory.dataset_lifecycle import delete_dataset_async
+
+        return await delete_dataset_async(memory=self, dataset_name=dataset_name)
+
+    async def cleanup_dataset_media_async(self, *, operation_id: uuid.UUID) -> dict[str, object]:
+        """
+        Retry owned-media cleanup.
+
+        Returns:
+            dict[str, object]: Durable, non-sensitive cleanup status.
+        """
+        from pyrit.memory.dataset_lifecycle import cleanup_dataset_media_async
+
+        return await cleanup_dataset_media_async(memory=self, operation_id=operation_id)
+
+    async def recover_dataset_cleanup_async(self) -> None:
+        """Recover abandoned uploads and incomplete deletions after runtime initialization."""
+        from pyrit.memory.dataset_lifecycle import recover_dataset_cleanup_async
+
+        await recover_dataset_cleanup_async(self)
 
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """

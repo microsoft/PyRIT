@@ -19,6 +19,7 @@ from pyrit.backend.mappers import format_last_message_preview
 from pyrit.backend.mappers.attack_mappers import resolve_client_media_url_async
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.datasets import (
+    DatasetDeletionResponse,
     DatasetInfo,
     DatasetListResponse,
     SeedExampleDetailResponse,
@@ -28,6 +29,7 @@ from pyrit.backend.models.datasets import (
 )
 from pyrit.common.pagination import decode_keyset_cursor, encode_keyset_cursor, fingerprint_filters
 from pyrit.datasets import SeedDatasetProvider
+from pyrit.exceptions.dataset_exception import DatasetAPIException
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
@@ -47,6 +49,49 @@ class DatasetService:
     def __init__(self) -> None:
         """Initialize the dataset service."""
         self._memory = CentralMemory.get_memory_instance()
+
+    async def delete_dataset_async(self, *, selection_key: str) -> DatasetDeletionResponse:
+        """
+        Permanently remove exact-name stored seeds and clean up their unshared owned media.
+
+        Returns:
+            DatasetDeletionResponse: Durable deletion and media-cleanup status.
+
+        Raises:
+            DatasetAPIException: If the selection is unnamed or has no stored seeds.
+        """
+        name = self._parse_selection_key(selection_key)
+        if name is None:
+            raise DatasetAPIException(status_code=400, message="The unnamed aggregate cannot be deleted.")
+        try:
+            deletion_id = await self._memory.delete_dataset_async(dataset_name=name)
+        except LookupError as exc:
+            raise DatasetAPIException(status_code=404, message="No stored dataset has this exact name.") from exc
+        try:
+            return await self.get_dataset_deletion_async(deletion_id)
+        except Exception as exc:
+            logger.exception("Dataset deletion cleanup interrupted: %s", deletion_id)
+            raise DatasetAPIException(
+                status_code=503,
+                message="Seeds were deleted; cleanup requires a retry. Inspect the resource in Location.",
+                cleanup_id=deletion_id,
+            ) from exc
+
+    async def get_dataset_deletion_async(self, deletion_id: UUID) -> DatasetDeletionResponse:
+        """
+        Read durable cleanup status and retry pending owned-media cleanup.
+
+        Returns:
+            DatasetDeletionResponse: The current cleanup outcome.
+
+        Raises:
+            DatasetAPIException: If the deletion identifier does not exist.
+        """
+        try:
+            result = await self._memory.cleanup_dataset_media_async(operation_id=deletion_id)
+        except LookupError as exc:
+            raise DatasetAPIException(status_code=404, message="Dataset deletion not found.") from exc
+        return DatasetDeletionResponse.model_validate(result)
 
     async def list_datasets_async(self, *, loaded_only: bool = False) -> DatasetListResponse:
         """

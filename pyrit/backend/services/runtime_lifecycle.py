@@ -135,6 +135,7 @@ class RuntimeLifecycle:
                 logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
                 await asyncio.to_thread(registry.register_stored_initializers, strict=True)
             await config.initialize_pyrit_async(raise_on_initializer_error=True)
+            await CentralMemory.get_memory_instance().recover_dataset_cleanup_async()
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
             self._publish(config)

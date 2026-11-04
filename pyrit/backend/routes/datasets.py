@@ -4,14 +4,14 @@
 """
 Dataset API routes.
 
-Lists available seed datasets and browses the stored seed examples of one dataset. Datasets are
-discovered from registered ``SeedDatasetProvider`` subclasses and from memory.
+Uploads and deletes named seed datasets, lists available datasets, and browses stored examples.
+Datasets are discovered from registered ``SeedDatasetProvider`` subclasses and from memory.
 """
 
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import Field
 
 from pyrit.backend.models.common import (
@@ -22,16 +22,110 @@ from pyrit.backend.models.common import (
     ProblemDetail,
 )
 from pyrit.backend.models.datasets import (
+    DatasetDeletionResponse,
     DatasetListResponse,
+    DatasetUploadResponse,
     SeedExampleDetailResponse,
     SeedExampleListResponse,
 )
 from pyrit.backend.services.dataset_service import get_dataset_service
+from pyrit.backend.services.dataset_upload_service import upload_dataset_async
 from pyrit.models import PromptDataType, SeedType
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 _SELECTION_KEY_DESCRIPTION = "The selection_key of a dataset from GET /datasets"
+
+
+@router.post(
+    "",
+    response_model=DatasetUploadResponse,
+    status_code=201,
+    responses={
+        code: {"model": ProblemDetail, "description": description}
+        for code, description in {
+            409: "Dataset name already stored or reserved",
+            413: "Request, manifest, or prompt count exceeds configured limits",
+            415: "Use multipart/form-data",
+            422: "Invalid manifest, prompt, or multipart reference",
+            503: "Upload failed and cleanup remains pending; see Location",
+        }.items()
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["manifest"],
+                        "properties": {
+                            "manifest": {
+                                "type": "string",
+                                "description": (
+                                    'JSON: {"name":"example","seeds":[{"seed_type":"prompt",'
+                                    '"data_type":"binary_path","value":"upload:document"}]}. '
+                                    "Other named parts contain referenced files. Defaults: 100 MiB request, "
+                                    "10 MiB JSON, 10,000 prompts. Each file part must be referenced."
+                                ),
+                            }
+                        },
+                        "additionalProperties": {"type": "string", "format": "binary"},
+                    }
+                }
+            },
+        }
+    },
+)
+async def upload_dataset_route_async(request: Request) -> DatasetUploadResponse:
+    """
+    Create a dataset atomically from a JSON manifest and inert media file parts.
+
+    Returns:
+        DatasetUploadResponse: The committed dataset name and actual population counts.
+    """
+    return await upload_dataset_async(request)
+
+
+@router.delete(
+    "",
+    response_model=DatasetDeletionResponse,
+    responses={
+        202: {"model": DatasetDeletionResponse, "description": "Seeds removed; owned-media cleanup pending"},
+        400: {"model": ProblemDetail, "description": "Named selection key required"},
+        404: {"model": ProblemDetail, "description": "No stored dataset with this exact name"},
+    },
+)
+async def delete_dataset_route_async(
+    response: Response,
+    selection_key: str = Query(..., max_length=MAX_CURSOR_LENGTH, description=_SELECTION_KEY_DESCRIPTION),
+) -> DatasetDeletionResponse:
+    """
+    Permanently delete exact-name stored seeds, not providers or shared/external media.
+
+    Returns:
+        DatasetDeletionResponse: Durable cleanup status and deleted seed count.
+    """
+    result = await get_dataset_service().delete_dataset_async(selection_key=selection_key)
+    response.status_code = 202 if result.status == "pending" else 200
+    response.headers["Location"] = f"/api/datasets/deletions/{result.deletion_id}"
+    return result
+
+
+@router.get(
+    "/deletions/{deletion_id}",
+    response_model=DatasetDeletionResponse,
+    responses={404: {"model": ProblemDetail, "description": "Dataset deletion not found"}},
+)
+async def get_dataset_deletion_async(deletion_id: UUID) -> DatasetDeletionResponse:
+    """
+    Read durable cleanup status and retry pending owned-media cleanup inline.
+
+    Returns:
+        DatasetDeletionResponse: The current cleanup outcome.
+
+    """
+    return await get_dataset_service().get_dataset_deletion_async(deletion_id)
 
 
 @router.get(
