@@ -1351,6 +1351,24 @@ describe("MessageList", () => {
       ]);
     });
 
+    it("renders JSON responses with large integers without rounding", () => {
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: '{"id":9007199254740993}',
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      const block = screen.getByTestId("message-json-0");
+      expect(block.tagName).toBe("PRE");
+      expect(block.textContent).toBe('{\n  "id": 9007199254740993\n}');
+    });
+
     it("does not reformat plain text assistant content", () => {
       const messages: Message[] = [
         {

@@ -13,6 +13,21 @@ describe('messageViewModel', () => {
       expect(formatStructuredMessage('true')).toBeNull()
       expect(formatStructuredMessage('{not-json}')).toBeNull()
     })
+
+    it('should preserve exact numeric lexemes and large integers without rounding', () => {
+      expect(formatStructuredMessage('{"id":9007199254740993}')).toBe('{\n  "id": 9007199254740993\n}')
+      expect(formatStructuredMessage('{"large":-9007199254740995}')).toBe('{\n  "large": -9007199254740995\n}')
+      expect(formatStructuredMessage('[9007199254740994, 9007199254740997]')).toBe('[\n  9007199254740994,\n  9007199254740997\n]')
+    })
+
+    it('should not alter numbers within string values', () => {
+      const input = '{"desc":"ID 9007199254740993 in text","id":9007199254740993}'
+      expect(formatStructuredMessage(input)).toBe('{\n  "desc": "ID 9007199254740993 in text",\n  "id": 9007199254740993\n}')
+    })
+
+    it('should format floating point numbers and exponential notation faithfully', () => {
+      expect(formatStructuredMessage('{"pi":3.14159,"exp":1e20}')).toBe('{\n  "pi": 3.14159,\n  "exp": 1e20\n}')
+    })
   })
 
   describe('getRenderMessagePieces', () => {

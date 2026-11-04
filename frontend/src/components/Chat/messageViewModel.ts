@@ -6,6 +6,15 @@ export interface RenderMessagePiece {
   readonly markdownTestId: string
 }
 
+/**
+ * If the trimmed text is a JSON object or array, return a 2-space pretty-printed
+ * version of it; otherwise return null. Used to render structured assistant
+ * responses (e.g. PromptShield verdicts) as readable JSON instead of a single
+ * unformatted line.
+ *
+ * Preserves exact numeric lexemes (including integers exceeding Number.MAX_SAFE_INTEGER)
+ * so 64-bit identifiers and large numeric payloads are not rounded by JavaScript Number.
+ */
 export function formatStructuredMessage(text: string): string | null {
   const trimmed = text.trim()
   if (!trimmed) return null
@@ -16,8 +25,31 @@ export function formatStructuredMessage(text: string): string | null {
     return null
   }
 
+  // Tokenize JSON strings and numeric literals so numbers inside strings are not touched
+  // while numeric literals are temporarily protected from IEEE 754 precision loss during parsing.
+  const numbers: string[] = []
+  const tokenRegex = /"(?:[^"\\]|\\.)*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/g
+
   try {
-    return JSON.stringify(JSON.parse(trimmed), null, 2)
+    const placeholderJson = trimmed.replace(tokenRegex, (match) => {
+      if (match.startsWith('"')) {
+        return match // String literal, preserve untouched
+      }
+      // Numeric literal: replace with a placeholder string that parses losslessly
+      const id = numbers.length
+      numbers.push(match)
+      return `"__PYRIT_NUM_${id}__"`
+    })
+
+    // Validate that the substituted JSON is structurally valid JSON (object or array)
+    const parsed = JSON.parse(placeholderJson)
+    if (typeof parsed !== 'object' || parsed === null) {
+      return null
+    }
+
+    const formatted = JSON.stringify(parsed, null, 2)
+    // Restore the exact numeric lexemes in place of the placeholders
+    return formatted.replace(/"__PYRIT_NUM_(\d+)__"/g, (_, index) => numbers[Number(index)])
   } catch {
     return null
   }
