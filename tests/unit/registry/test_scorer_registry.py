@@ -435,6 +435,12 @@ class TestClassMetadata:
 
         assert api_key.sensitive is True
 
+    def test_api_key_metadata_accepts_external_input(self, registry: ScorerRegistry) -> None:
+        meta = self._metadata_for(registry, "AzureContentFilterScorer")
+        api_key = next(parameter for parameter in meta.parameters if parameter.name == "api_key")
+
+        assert api_key.is_external_input is True
+
 
 class TestRegistrationGate:
     """The identifier blueprint must line up with a resolvable contract for every scorer."""
