@@ -88,8 +88,8 @@ class CreateTargetRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
-        if self.source is not None and (self.register or self.params):
-            raise ValueError("source requires register=false and overrides in source.params")
+        if self.source is not None and (self.register or self.params or "auth_mode" in self.model_fields_set):
+            raise ValueError("source requires register=false and overrides, including auth_mode, in source.params")
         return self
 
 

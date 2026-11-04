@@ -15,6 +15,7 @@ import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
@@ -266,6 +267,13 @@ class TestTemporaryComponents:
                 await private.cleanup_target_async()
         finally:
             await source.cleanup_target_async()
+
+    @pytest.mark.parametrize("auth_mode", ["none", "identity", "api_key"])
+    def test_source_takes_its_auth_mode_only_from_source_params(self, auth_mode: str) -> None:
+        source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
+
+        with pytest.raises(ValidationError, match="including auth_mode"):
+            CreateTargetRequest(type="OpenAIChatTarget", source=source, register=False, auth_mode=auth_mode)
 
     @pytest.mark.parametrize(
         "overrides",
