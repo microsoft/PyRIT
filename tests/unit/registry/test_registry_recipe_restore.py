@@ -144,6 +144,19 @@ class TestRestoreOrderAndRebuild:
         assert report.failures == []
         assert isinstance(registry.instances.get("a_pool"), RoundRobinTarget)
 
+    def test_reads_without_building_and_restores_what_was_read(self, tmp_path: Path) -> None:
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
+        restorer = RegistryRecipeRestorer(source=str(tmp_path))
+
+        with patch.object(TargetRegistry, "create_instance_from_external_input") as build:
+            saved = restorer.read()
+        build.assert_not_called()
+        with patch.object(RegistryRecipeStorage, "list_recipes", side_effect=AssertionError("read again")):
+            report = restorer.restore(saved=saved)
+
+        assert report.failures == []
+        assert [ref.name for ref in report.restored] == ["contoso_gpt4o"]
+
     def test_orders_entries_of_the_same_kind(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("b_member", "c_member"))
         _save(tmp_path, RegistryRecipeKind.TARGETS, "b_member", _IDENTITY_TARGET)
