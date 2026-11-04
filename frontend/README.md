@@ -72,6 +72,23 @@ off by default and disabled when the conversation ID is empty. When enabled,
 request converters run on the stored history during the scan, without changing
 the source conversation. New outgoing turns are always converted.
 
+Drop files onto the chat or an editable prompt to attach them. Converter file
+fields also accept drops, including **New converter** in the chat pane.
+Drops use the same handling as **Attach files** or **Upload**. Read-only inputs
+stay read-only. The attachment chooser's file-type filter is a browser hint,
+not an application-enforced allowlist. Existing reading and target/component
+checks still apply to both entry methods.
+Newly selected converter files show their actual name and size
+with **Replace** and **Remove**. Image previews use the existing safe display
+rules. Existing encoded values use a generic label when file details are
+unknown; manually typed or pasted values stay editable. **Remove** restores
+the path field.
+Drops outside writable media surfaces, including unrelated portal dialogs, do
+not attach files or navigate away from the app. A converter read failure is
+reported without replacing the previous field value.
+Blocked chat file drags show the existing disabled-input reason only during the
+drag. Converter file fields retain the first file and report ignored extras.
+
 ## Dataset catalog
 
 Chat drafts stay in memory while you visit Datasets and return. Text, attachments,
