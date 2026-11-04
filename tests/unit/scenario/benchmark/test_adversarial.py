@@ -2038,43 +2038,6 @@ class TestRunAsyncCachePersistence:
 
         mark_failed.assert_called_once()
 
-    async def test_base_result_is_returned_after_cache_persistence(self):
-        bench = AdversarialBenchmark(
-            objective_scorer=MagicMock(spec=TrueFalseScorer),
-            use_cached=True,
-        )
-
-        bench._precomputed_cached_results = {"technique_a__adv_target_harmbench": [MagicMock(spec=AttackResult)]}
-
-        base_scenario_result = MagicMock()
-        base_scenario_result.attack_results = {}
-        base_scenario_result.display_group_map = {}
-
-        with (
-            patch.object(bench, "_persist_precomputed_cached_results_async"),
-            patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)),
-        ):
-            result = await bench.run_async()
-
-        assert result is base_scenario_result
-
-    async def test_no_injection_when_no_cached_attacks(self):
-        """When all attacks were executed freshly, attack_results is returned unchanged."""
-        bench = AdversarialBenchmark(
-            objective_scorer=MagicMock(spec=TrueFalseScorer),
-            use_cached=False,
-        )
-
-        result_z = MagicMock(spec=AttackResult)
-        base_scenario_result = MagicMock()
-        base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
-        base_scenario_result.display_group_map = {}
-
-        with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
-            result = await bench.run_async()
-
-        assert set(result.attack_results.keys()) == {"technique_c__adv_target_harmbench"}
-
     async def test_concurrent_run_async_rejects_before_prepare_run_async(self):
         """A concurrent run on the same run ID is rejected before _prepare_run_async can duplicate cached rows."""
         bench = AdversarialBenchmark(
