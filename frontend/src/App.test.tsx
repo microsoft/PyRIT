@@ -1383,7 +1383,11 @@ describe("App", () => {
         attack_result_id: "owner", conversation_id: "main", related_conversation_ids: [],
         labels: {}, objective: "", outcome: "undetermined",
       });
-      renderApp(`${routePrefix}/owner/conversations/source?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&findingEvidenceId=123e4567-e89b-12d3-a456-426614174000`);
+      const user = userEvent.setup();
+      renderApp(
+        `${routePrefix}/owner/conversations/source?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&findingEvidenceId=123e4567-e89b-12d3-a456-426614174000`,
+        { fromScan: true },
+      );
       expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
       expect(screen.getByText(/The requested evidence conversation/)).toBeInTheDocument();
       expect(screen.getByText("source")).toBeInTheDocument();
@@ -1391,6 +1395,11 @@ describe("App", () => {
       expect(screen.queryByText(/No attack matches the id/)).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "View parent attack" })).toBeInTheDocument();
       expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "View parent attack" }));
+      expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
+      expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("123e4567-e89b-12d3-a456-426614174000");
+      expect(screen.getByTestId("route-location")).toHaveAttribute("data-navigation-state", JSON.stringify({ fromScan: true }));
     },
   );
 
