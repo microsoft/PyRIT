@@ -5284,9 +5284,15 @@ class MemoryInterface(abc.ABC):
         for value_hash, behavior in existing_hashes:
             behaviors_by_value.setdefault((value_hash, None), set()).add(behavior)
 
+        group_sizes = Counter(seed.prompt_group_id for seed in seeds)
         group_ids: set[uuid.UUID] = set()
         for seed in seeds:
-            if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
+            if (
+                not isinstance(seed, SeedObjective)
+                or seed.prompt_group_id is None
+                or group_sizes[seed.prompt_group_id] < 2
+                or not seed.value_sha256
+            ):
                 continue
             stored_behaviors = behaviors_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
             behavior_key = self._seed_behavior_key(seed)

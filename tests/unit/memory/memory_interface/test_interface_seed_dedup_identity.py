@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from pyrit.memory import MemoryInterface
-from pyrit.models import Seed, SeedGroup, SeedObjective, SeedPrompt
+from pyrit.models import AnswerMatches, Seed, SeedGroup, SeedObjective, SeedPrompt
 
 DATASET = "dedup-identity"
 
@@ -169,3 +169,25 @@ async def test_readding_edited_grouped_seed_keeps_original_group_intact(
     groups = await sqlite_instance.get_seed_groups_async(dataset_name=DATASET)
     assert sorted(len(group.seeds) for group in groups) == [1, 1]
     assert stored.prompt_group_id != original_group_id
+
+
+async def test_readding_objective_with_edited_conditions_keeps_both_async(sqlite_instance: MemoryInterface) -> None:
+    """An execution edit to a stored singleton objective preserves both independent groups."""
+    original_conditions = (AnswerMatches(correct_answer="Paris", correct_answer_label="A"),)
+    edited_conditions = (AnswerMatches(correct_answer="Lyon", correct_answer_label="A"),)
+    objective = SeedObjective(value="capital?", dataset_name=DATASET, conditions=original_conditions)
+    await _add(sqlite_instance, *SeedGroup(seeds=[objective]).seeds)
+    stored = (await sqlite_instance.get_seeds_async(dataset_name=DATASET))[0]
+    assert isinstance(stored, SeedObjective)
+    original_id, original_group_id = stored.id, stored.prompt_group_id
+
+    stored.conditions = edited_conditions
+    await _add(sqlite_instance, *SeedGroup(seeds=[stored]).seeds)
+
+    groups = await sqlite_instance.get_seed_groups_async(dataset_name=DATASET)
+    assert sorted(len(group.seeds) for group in groups) == [1, 1]
+    assert stored.id != original_id
+    assert stored.prompt_group_id != original_group_id
+    assert {
+        seed.id: seed.conditions for group in groups for seed in group.seeds if isinstance(seed, SeedObjective)
+    } == {original_id: original_conditions, stored.id: edited_conditions}
