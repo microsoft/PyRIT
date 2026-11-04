@@ -154,7 +154,7 @@ jobs:
   # Main job runs only if pre-commit succeeded
   main-job:
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         # disable macOS unit tests in merge queue, enable otherwise
         os: ${{ fromJSON(github.event_name == 'merge_group' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest", "windows-latest", "macos-latest"]') }}
