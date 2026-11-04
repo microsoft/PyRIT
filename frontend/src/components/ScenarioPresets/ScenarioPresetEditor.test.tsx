@@ -277,6 +277,40 @@ describe('ScenarioPresetEditor create mode', () => {
     expect(mockCreate).not.toHaveBeenCalled()
   })
 
+  it('cannot save the previous scenario while a newly picked scenario is loading', async () => {
+    const user = userEvent.setup()
+    const multilingual = makeScenario({ scenario_name: 'airt.multilingual' })
+    mockListCatalog.mockResolvedValue({
+      items: [SCENARIO, multilingual],
+      pagination: { has_more: false, next_cursor: null },
+    })
+    let resolveMultilingual: (scenario: typeof multilingual) => void = () => {}
+    mockGetScenario.mockImplementation((scenarioName: string) => (scenarioName === 'airt.multilingual'
+      ? new Promise((resolve) => { resolveMultilingual = resolve })
+      : Promise.resolve(SCENARIO)))
+    renderCreate()
+
+    await user.type(await screen.findByTestId('preset-name-input'), 'nightly_probe')
+    await user.click(screen.getByTestId('preset-scenario-select'))
+    await user.click(await screen.findByRole('option', { name: 'foundry.red_team_agent' }))
+    await waitFor(() => expect(screen.getByTestId('save-preset-btn')).toBeEnabled())
+
+    await user.click(screen.getByTestId('preset-scenario-select'))
+    await user.click(await screen.findByRole('option', { name: 'airt.multilingual' }))
+
+    expect(await screen.findByText('Loading scenario...')).toBeInTheDocument()
+    expect(screen.getByTestId('save-preset-btn')).toBeDisabled()
+    fireEvent.submit(screen.getByTestId('save-preset-btn').closest('form') as HTMLFormElement)
+    expect(mockCreate).not.toHaveBeenCalled()
+
+    await act(async () => resolveMultilingual(multilingual))
+    await waitFor(() => expect(screen.getByTestId('save-preset-btn')).toBeEnabled())
+    await user.click(screen.getByTestId('save-preset-btn'))
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1))
+    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ scenario_name: 'airt.multilingual' }))
+  })
+
   it('reports a failure to load the scenario the operator picked', async () => {
     const user = userEvent.setup()
     mockGetScenario.mockRejectedValue(apiError(503, 'Scenario registry is unavailable.'))
