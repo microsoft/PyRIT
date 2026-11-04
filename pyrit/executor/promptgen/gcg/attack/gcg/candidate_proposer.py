@@ -3,8 +3,11 @@
 
 """Candidate proposal logic for Greedy Coordinate Gradient (GCG) attacks."""
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 
@@ -13,8 +16,22 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     ModelWorkerOperation,
     PromptManager,
 )
-from pyrit.executor.promptgen.gcg.attack.base.model_adapters import GCGTokenizerAdapter
 from pyrit.executor.promptgen.gcg.extension_protocols import CandidateFilter, SamplingStrategy
+
+
+def _hf_vocabulary_identity(*, tokenizer: Any, num_embeddings: int) -> str:
+    """
+    Fingerprint Hugging Face token/id mappings within the paired model's embedding rows.
+
+    Args:
+        tokenizer (Any): The worker's Hugging Face tokenizer.
+        num_embeddings (int): The number of rows in the paired model's embedding matrix.
+
+    Returns:
+        str: A stable SHA-256 digest of the sampleable token/id mappings.
+    """
+    vocab = sorted((i, token) for token, i in tokenizer.get_vocab().items() if i < num_embeddings)
+    return hashlib.sha256(json.dumps(vocab).encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,8 +144,8 @@ class GCGCandidateProposer:
             # Tokens outside the embedding matrix cannot be sampled and need not match.
             key = (j, new_grad.shape[-1])
             if key not in self._vocabulary_identities:
-                self._vocabulary_identities[key] = GCGTokenizerAdapter(worker.tokenizer).vocabulary_identity(
-                    num_embeddings=new_grad.shape[-1]
+                self._vocabulary_identities[key] = _hf_vocabulary_identity(
+                    tokenizer=worker.tokenizer, num_embeddings=new_grad.shape[-1]
                 )
             new_vocab = self._vocabulary_identities[key]
 

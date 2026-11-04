@@ -24,6 +24,24 @@ result = asyncio.run(generator.execute_async(goals=[...], targets=[...]))
 from `pyrit.executor.promptgen.gcg`. See `pyrit/executor/promptgen/gcg/config.py`
 for the full surface and defaults.
 
+### Model and tokenizer requirements
+
+GCG currently uses local PyTorch causal language models through Hugging Face
+Transformers APIs. It needs a floating-point input embedding matrix and a fast
+tokenizer with a chat template that preserves message content and provides
+character-to-token offsets. This is not a backend-neutral adapter interface.
+
+Before any worker starts, GCG checks the actual training and held-out prompts
+against the model's embedding rows. The initial control must also survive the
+same decode-and-render round trip used for candidate controls without changing
+its token IDs. An incompatible `control_init` raises an error identifying the
+model and control; choose a suffix that re-encodes to the same tokens.
+
+Worker gradients are combined only when their shapes and token/id mappings
+within the embedding rows agree. These vocabulary fingerprints are cached for
+the lifetime of the candidate proposer, so tokenizers must not be modified
+during an optimization run.
+
 ### Running on Azure ML
 
 `run.py` is a thin CLI wrapper around `GCG.execute_async`. It takes a single

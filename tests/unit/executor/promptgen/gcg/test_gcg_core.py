@@ -34,9 +34,8 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E
     get_embedding_matrix,
     get_embeddings,
 )
-from pyrit.executor.promptgen.gcg.attack.base.model_adapters import (  # noqa: E402
-    GCGModelAdapter,
-    GCGTokenizerAdapter,
+from pyrit.executor.promptgen.gcg.attack.gcg.candidate_proposer import (  # noqa: E402
+    _hf_vocabulary_identity,
 )
 from pyrit.executor.promptgen.gcg.config import GCGAlgorithmConfig, GCGModelConfig, GCGStrategyConfig  # noqa: E402
 from pyrit.executor.promptgen.gcg.extension_protocols import SuffixInitializer  # noqa: E402
@@ -1179,25 +1178,7 @@ class TestGetWorkersChatTemplateValidation:
         worker.start.assert_not_called()
 
 
-class TestModelAdapters:
-    def test_model_adapter_exposes_the_embedding_contract(self) -> None:
-        model = _tiny_model("llama")
-        weight = model.get_input_embeddings().weight
-        adapter = GCGModelAdapter(model)
-
-        assert adapter.embedding_matrix is weight
-        assert (adapter.device, adapter.dtype, adapter.num_embeddings) == (weight.device, weight.dtype, 256)
-        assert adapter.supports_selective_logits
-        assert adapter.supports_prefix_cache
-
-    def test_model_adapter_reports_forward_without_cache_or_selective_logits(self) -> None:
-        model = MagicMock()
-        model.forward = lambda input_ids, attention_mask=None: None
-        adapter = GCGModelAdapter(model)
-
-        assert not adapter.supports_selective_logits
-        assert not adapter.supports_prefix_cache
-
+class TestVocabularyIdentity:
     @pytest.mark.parametrize(
         ("added_token", "num_embeddings", "same_identity"),
         [
@@ -1208,22 +1189,28 @@ class TestModelAdapters:
         ],
     )
     def test_vocabulary_identity_covers_only_sampleable_ids(
-        self, added_token: str | None, num_embeddings: int, same_identity: bool
+        self, *, added_token: str | None, num_embeddings: int, same_identity: bool
     ) -> None:
         other = _fast_tokenizer()
         if added_token is not None:
             other.add_tokens([added_token])
 
-        identity = GCGTokenizerAdapter(_fast_tokenizer()).vocabulary_identity(num_embeddings=num_embeddings)
-        other_identity = GCGTokenizerAdapter(other).vocabulary_identity(num_embeddings=num_embeddings)
+        identity = _hf_vocabulary_identity(tokenizer=_fast_tokenizer(), num_embeddings=num_embeddings)
+        other_identity = _hf_vocabulary_identity(tokenizer=other, num_embeddings=num_embeddings)
 
         assert (identity == other_identity) is same_identity
 
     def test_vocabulary_identity_differs_for_a_different_vocabulary(self) -> None:
-        words = GCGTokenizerAdapter(_fast_tokenizer()).vocabulary_identity(num_embeddings=27)
-        bytes_ = GCGTokenizerAdapter(_fast_tokenizer(byte_level=True)).vocabulary_identity(num_embeddings=27)
+        words = _hf_vocabulary_identity(tokenizer=_fast_tokenizer(), num_embeddings=27)
+        bytes_ = _hf_vocabulary_identity(tokenizer=_fast_tokenizer(byte_level=True), num_embeddings=27)
 
         assert words != bytes_
+
+    def test_vocabulary_identity_ignores_dictionary_order(self) -> None:
+        tokenizer = _fast_tokenizer()
+        identity = _hf_vocabulary_identity(tokenizer=tokenizer, num_embeddings=27)
+        with patch.object(tokenizer, "get_vocab", return_value=dict(reversed(list(tokenizer.get_vocab().items())))):
+            assert _hf_vocabulary_identity(tokenizer=tokenizer, num_embeddings=27) == identity
 
 
 class TestCheckGcgCapabilities:
@@ -1256,19 +1243,27 @@ class TestCheckGcgCapabilities:
             attack_manager_mod._check_gcg_capabilities(
                 model=_tiny_model("llama"), tokenizer=tokenizer, model_path="fake/model", prompts=[prompt]
             )
+        assert prompt.control == "hello world"
+        assert prompt.control_toks.tolist() == tokenizer("hello world", add_special_tokens=False).input_ids
 
     def test_accepts_tiny_model_with_fast_tokenizer(self) -> None:
         attack_manager_mod._check_gcg_capabilities(
             model=_tiny_model("llama"), tokenizer=_fast_tokenizer(), model_path="fake/model"
         )
 
-    def test_round_trip_check_leaves_the_prompt_unchanged(self) -> None:
-        tokenizer = _fast_tokenizer()
+    @pytest.mark.parametrize("byte_level", [False, True])
+    def test_round_trip_check_leaves_the_prompt_unchanged(self, *, byte_level: bool) -> None:
+        tokenizer = _fast_tokenizer(byte_level=byte_level)
         prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
         control, input_ids, control_slice = prompt.control, prompt.input_ids.tolist(), prompt._control_slice
+        model = _tiny_model("llama")
+        model.resize_token_embeddings(len(tokenizer), mean_resizing=False)
 
         attack_manager_mod._check_gcg_capabilities(
-            model=_tiny_model("llama"), tokenizer=tokenizer, model_path="fake/model", prompts=[prompt]
+            model=model,
+            tokenizer=tokenizer,
+            model_path="fake/model",
+            prompts=[prompt],
         )
 
         assert (prompt.control, prompt.input_ids.tolist(), prompt._control_slice) == (
@@ -1276,6 +1271,23 @@ class TestCheckGcgCapabilities:
             input_ids,
             control_slice,
         )
+
+    @pytest.mark.parametrize("control", ["unknown_control", "hello world"])
+    def test_round_trip_failure_prevents_all_workers_from_starting(
+        self, *, control: str, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+    ) -> None:
+        from tokenizers import decoders
+
+        preflight_params.control_init = control
+        preflight_workers[0].tokenizer.add_tokens(["unknown_control"])
+        preflight_workers[-1].tokenizer = _fast_tokenizer()
+        preflight_workers[-1].tokenizer.backend_tokenizer.decoder = decoders.Fuse()
+
+        with pytest.raises(ValueError, match="'fake/held-out-model'"):
+            attack_manager_mod.start_workers(params=preflight_params, workers=preflight_workers)
+
+        for worker in preflight_workers:
+            worker.start.assert_not_called()
 
     def test_accepts_unused_added_tokens_beyond_embeddings(self) -> None:
         # <start_of_turn> and <end_of_turn> (ids 25 and 26) are added tokens the ChatML
