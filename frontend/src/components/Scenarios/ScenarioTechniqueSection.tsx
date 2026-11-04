@@ -1,4 +1,11 @@
-import { Badge, Checkbox, Radio, Tag, TagGroup, Text, ToggleButton } from '@fluentui/react-components'
+import { useId, useState } from 'react'
+
+import { Badge, Button, Checkbox, Radio, Tag, TagGroup, Text, ToggleButton, mergeClasses } from '@fluentui/react-components'
+import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
+
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
+import { useRegistryIdentityRowStyles } from '@/components/Registry/RegistryIdentityRow.styles'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { exceedsTechniqueLimit, type SelectableTechnique } from './scenarioLaunchForm'
@@ -39,10 +46,23 @@ export default function ScenarioTechniqueSection({
   onRemoveToken,
 }: ScenarioTechniqueSectionProps) {
   const styles = useScenarioDetailStyles()
+  const identityStyles = useRegistryIdentityRowStyles()
+  const identityId = useId()
+  const [expandedIdentities, setExpandedIdentities] = useState<Set<string>>(new Set())
+  const toggleIdentity = (name: string): void => {
+    setExpandedIdentities((current: Set<string>) => {
+      const next = new Set(current)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
   return (
     <section className={styles.section} aria-labelledby="techniques-section-title">
-      <Text id="techniques-section-title" as="h2" size={400} weight="semibold">
-        Techniques
+      <Text id="techniques-section-title" as="h2" aria-label="Techniques" size={400} weight="semibold">
+        <ContextualHelpLabel term="Techniques" labelProps={{ weight: 'semibold' }}>
+          {HELP_DEFINITIONS.technique}
+        </ContextualHelpLabel>
       </Text>
       {supportsTechniques && <Text size={200} className={styles.hint}>
         {singleTechnique
@@ -83,6 +103,8 @@ export default function ScenarioTechniqueSection({
       <div className={styles.techniqueList} role="group" aria-label="Techniques">
         {techniques.map((technique) => {
           const selected = isSelected(technique)
+          const expanded = expandedIdentities.has(technique.name)
+          const regionId = `${identityId}-${encodeURIComponent(technique.name)}`
           return (
             <div className={styles.techniqueOption} key={technique.name}>
             {singleTechnique && !technique.isBaseline ? (
@@ -148,6 +170,15 @@ export default function ScenarioTechniqueSection({
                 </Text>
               )}
             </div>
+            <Button type="button" appearance="subtle" className={styles.identityToggle}
+              icon={expanded ? <ChevronDownRegular /> : <ChevronRightRegular />}
+              aria-label={`Identity for ${technique.name}`} aria-expanded={expanded} aria-controls={regionId}
+              onClick={() => toggleIdentity(technique.name)} />
+            {expanded && <div id={regionId} role="region" aria-label={`Identity for ${technique.name}`}
+              className={mergeClasses(styles.identityRegion, identityStyles.details)}>
+              {technique.identifier ? <pre className={identityStyles.json}>{JSON.stringify(technique.identifier, null, 2)}</pre>
+                : <Text>{technique.isBaseline ? 'Baseline identity is available after launch.' : 'Identity was not recorded for this technique.'}</Text>}
+            </div>}
           </div>
           )
         })}

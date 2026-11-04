@@ -2,8 +2,13 @@
 # Licensed under the MIT license.
 
 from types import SimpleNamespace
+from typing import assert_type
 
 from pyrit.models import TokenUsage, read_usage_int, read_usage_value
+
+
+class DerivedTokenUsage(TokenUsage):
+    pass
 
 
 def test_to_metadata_uses_input_output_key_names_and_omits_none():
@@ -34,6 +39,15 @@ def test_round_trip_through_metadata():
     )
     restored = TokenUsage.from_metadata(original.to_metadata())
     assert restored == original
+
+
+def test_from_metadata_preserves_subclass_type():
+    restored = DerivedTokenUsage.from_metadata({"token_usage_input_tokens": 8})
+    assert_type(restored, DerivedTokenUsage | None)
+    assert restored is not None
+    assert_type(restored, DerivedTokenUsage)
+    assert type(restored) is DerivedTokenUsage
+    assert restored.input_tokens == 8
 
 
 def test_from_metadata_reads_input_output_suffixes():

@@ -579,7 +579,7 @@ async def test_fallback_has_violence_semantics_async(
     piece = MessagePiece(
         role="assistant", original_value="blocked or failed", original_value_data_type=data_type, response_error=error
     )
-    with patch.object(scorer, "_score_piece_async", new_callable=AsyncMock) as score_piece:
+    with patch.object(scorer, "_score_piece_with_expectation_async", new_callable=AsyncMock) as score_piece:
         scores = await scorer.score_message_async(message=Message(message_pieces=[piece]))
     assert scores[0].status is status
     if value is not None:
@@ -634,7 +634,9 @@ async def test_readable_partial_block_is_scored_async() -> None:
         response_error="blocked",
         prompt_metadata={"partial_content": True},
     )
-    with patch.object(scorer, "_score_piece_async", new_callable=AsyncMock, return_value=[]) as score_piece:
+    with patch.object(
+        scorer, "_score_piece_with_expectation_async", new_callable=AsyncMock, return_value=[]
+    ) as score_piece:
         await scorer.score_message_async(message=Message(message_pieces=[piece]))
     score_piece.assert_awaited_once()
 

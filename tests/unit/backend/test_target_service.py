@@ -15,6 +15,7 @@ import pytest
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
+from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities
 from pyrit.registry import TargetRegistry
 from unit.mocks import MockPromptTarget
@@ -530,6 +531,158 @@ async def test_create_github_copilot_target_requires_token_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("register", [True, False])
+async def test_create_github_copilot_target_accepts_working_directory_async(tmp_path: Path, register: bool) -> None:
+    params = {"model_name": "gpt-5-mini", "github_token": "test-github-token", "working_directory": str(tmp_path)}
+
+    with patch.dict("sys.modules", {"copilot": ModuleType("copilot")}):
+        target = await TargetService().create_target_async(
+            request=CreateTargetRequest(
+                name="copilot" if register else None, type="GitHubCopilotTarget", register=register, params=params
+            )
+        )
+
+    assert target.identifier.params["working_directory"] == str(tmp_path.resolve())
+
+
+class _FileTarget(MockPromptTarget):
+    """A target with a parameter that names a file on the server."""
+
+    def __init__(self, *, data_file: Path | None = None) -> None:
+        super().__init__()
+        self.data_file = data_file
+
+
+class _RequiredFileTarget(MockPromptTarget):
+    """A target that cannot be built without a file on the server."""
+
+    def __init__(self, *, data_file: Path) -> None:
+        super().__init__()
+        self.data_file = data_file
+
+
+class _RequiredUploadTarget(MockPromptTarget):
+    """A target that uploads local files from a folder only the server sets."""
+
+    upload_directory_parameter = "upload_dir"
+
+    def __init__(self, *, upload_dir: Path) -> None:
+        super().__init__()
+        self.upload_dir = upload_dir
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_target_path_parameters_are_left_out_and_rejected() -> None:
+    service = TargetService()
+    service._registry.register_class(_FileTarget)
+    service._registry.register_class(_RequiredFileTarget)
+
+    types = await service.list_target_types_async()
+    with pytest.raises(ValueError, match="'data_file' of '_FileTarget' names a server file"):
+        await service.create_target_async(
+            request=CreateTargetRequest(name="files", type="_FileTarget", params={"data_file": "/etc/hosts"})
+        )
+
+    entries = {item.target_type: item for item in types.items}
+    assert "data_file" not in [parameter.name for parameter in entries["_FileTarget"].parameters]
+    assert "_RequiredFileTarget" not in entries
+    assert service.get_target_object(target_registry_name="files") is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_types_list_a_target_whose_required_path_is_the_server_upload_folder(tmp_path: Path) -> None:
+    service = TargetService()
+    service._registry.register_class(_RequiredUploadTarget)
+
+    with_folder = await service.list_target_types_async(upload_directory=str(tmp_path))
+    without_folder = await service.list_target_types_async()
+
+    entry = next(item for item in with_folder.items if item.target_type == "_RequiredUploadTarget")
+    assert "upload_dir" not in [parameter.name for parameter in entry.parameters]
+    assert all(item.target_type != "_RequiredUploadTarget" for item in without_folder.items)
+
+
+class _RebuildableFolderTarget(MockPromptTarget):
+    """A rebuildable target with a folder callers may set and an upload folder only the server sets."""
+
+    upload_directory_parameter = "allowed_upload_directory"
+    caller_path_parameters = frozenset({"working_directory"})
+
+    def __init__(
+        self,
+        *,
+        label: str = "source",
+        working_directory: Path | None = None,
+        allowed_upload_directory: Path | None = None,
+    ) -> None:
+        super().__init__()
+        self.label = label
+        self.working_directory = working_directory
+        self.allowed_upload_directory = allowed_upload_directory
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "working_directory": self.working_directory,
+            "allowed_upload_directory": self.allowed_upload_directory,
+        }
+
+
+def _register_folder_source(*, service: TargetService, folder: Path) -> _RebuildableFolderTarget:
+    service._registry.register_class(_RebuildableFolderTarget)
+    source = _RebuildableFolderTarget(working_directory=folder, allowed_upload_directory=folder)
+    service._registry.instances.register(source, name="folders")
+    return source
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_build_from_source_rejects_an_upload_folder_override_async(tmp_path: Path) -> None:
+    service = TargetService()
+    source = _register_folder_source(service=service, folder=tmp_path)
+    spec = SourceInstanceSpec(
+        source_name="folders", source_hash=source.get_identifier().hash, params={"allowed_upload_directory": "/"}
+    )
+
+    with pytest.raises(
+        ValueError, match="'allowed_upload_directory' of '_RebuildableFolderTarget' names a server file"
+    ):
+        await service.build_from_source_async(spec)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_build_from_source_accepts_a_working_directory_override_async(tmp_path: Path) -> None:
+    service = TargetService()
+    source = _register_folder_source(service=service, folder=tmp_path)
+    other = tmp_path / "other"
+
+    rebuilt = await service.build_from_source_async(
+        SourceInstanceSpec(
+            source_name="folders", source_hash=source.get_identifier().hash, params={"working_directory": str(other)}
+        )
+    )
+
+    assert isinstance(rebuilt, _RebuildableFolderTarget)
+    assert rebuilt.working_directory == other
+    assert rebuilt.allowed_upload_directory == tmp_path
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_build_from_source_keeps_the_source_folders_async(tmp_path: Path) -> None:
+    service = TargetService()
+    source = _register_folder_source(service=service, folder=tmp_path)
+
+    rebuilt = await service.build_from_source_async(
+        SourceInstanceSpec(source_name="folders", source_hash=source.get_identifier().hash, params={"label": "copy"})
+    )
+
+    assert isinstance(rebuilt, _RebuildableFolderTarget)
+    assert rebuilt is not source
+    assert rebuilt.label == "copy"
+    assert rebuilt.working_directory == tmp_path
+    assert rebuilt.allowed_upload_directory == tmp_path
+
+
+@pytest.mark.usefixtures("patch_central_database")
 class TestCreateTargetCodeExecution:
     """Admin gate for targets whose construction runs model repository code."""
 
@@ -900,7 +1053,7 @@ class TestCreateTarget:
         ) as create:
             await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
 
-        create.assert_called_once_with("TextTarget", params={})
+        create.assert_called_once_with("TextTarget", params={}, allowed_path_params=frozenset())
 
     async def test_create_target_rejects_invalid_enum_value(self, sqlite_instance) -> None:
         """An invalid enum value from the JSON request raises a parameter error before target construction."""

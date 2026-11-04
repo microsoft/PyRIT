@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, assert_never, cast
 from uuid import uuid4
 
 import pandas as pd
@@ -382,18 +382,28 @@ class HumanLabeledDataset:
                 )
             ]
             entry: HumanLabeledEntry
-            if metrics_type == MetricsType.HARM:
-                entry = cls._construct_harm_entry(
-                    messages=messages,
-                    harm=objective_or_harm,
-                    human_scores=human_scores,
-                )
-            else:
-                entry = cls._construct_objective_entry(
-                    messages=messages,
-                    objective=objective_or_harm,
-                    human_scores=human_scores,
-                )
+            match metrics_type:
+                case MetricsType.HARM:
+                    entry = cls._construct_harm_entry(
+                        messages=messages,
+                        harm=objective_or_harm,
+                        human_scores=human_scores,
+                    )
+                case MetricsType.OBJECTIVE:
+                    entry = cls._construct_objective_entry(
+                        messages=messages,
+                        objective=objective_or_harm,
+                        human_scores=human_scores,
+                    )
+                case _:
+                    if TYPE_CHECKING:
+                        assert_never(metrics_type)
+                    # Preserve the historical runtime fallback for values outside the declared enum.
+                    entry = cls._construct_objective_entry(
+                        messages=messages,
+                        objective=objective_or_harm,
+                        human_scores=human_scores,
+                    )
             entries.append(entry)
 
         dataset_name = dataset_name or Path(csv_path).stem

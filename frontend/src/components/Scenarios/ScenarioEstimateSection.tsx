@@ -1,6 +1,6 @@
-import { Button, Spinner, Text, Tooltip, mergeClasses } from '@fluentui/react-components'
-import { InfoRegular } from '@fluentui/react-icons'
+import { Spinner, Text, mergeClasses } from '@fluentui/react-components'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
 import type { Parameter, ScenarioRunEstimateState } from '@/types'
 
@@ -32,7 +32,7 @@ export default function ScenarioEstimateSection({
   scenarioParamValues,
 }: ScenarioEstimateSectionProps) {
   const styles = useScenarioDetailStyles()
-  const notes = estimateNotes(state)
+  const notes = state.status === 'unavailable' ? null : estimateNotes(state)
   const estimate = estimateFromState(state)
   return (
     <section
@@ -41,37 +41,31 @@ export default function ScenarioEstimateSection({
       data-testid="run-estimate"
     >
       <div className={styles.estimateHeader}>
-        <Text id="run-estimate-title" as="h2" size={400} weight="semibold">
-          Run estimate
+        <Text id="run-estimate-title" as="h2" aria-label="Run estimate" size={400} weight="semibold">
+          <ContextualHelpLabel term="Run estimate" labelProps={{ weight: 'semibold' }}>
+            {`Estimated work in this scan, not its cost or duration.${notes ? ` ${notes}` : ''}`}
+          </ContextualHelpLabel>
         </Text>
-        {notes && (
-          <Tooltip
-            content={notes}
-            relationship="description"
-            positioning="above"
-          >
-            <Button
-              appearance="subtle"
-              icon={<InfoRegular />}
-              aria-label="Estimate notes"
-              size="small"
-            />
-          </Tooltip>
-        )}
       </div>
       <dl className={styles.costEstimateList}>
         <div className={mergeClasses(styles.costEstimateRow, styles.totalEstimateRow)}>
-          <dt>Total atomic attacks</dt>
+          <dt><ContextualHelpLabel term="Total atomic attacks">
+            Individual attack executions in this scan, across its objectives and techniques.
+          </ContextualHelpLabel></dt>
           <dd>{formatAtomicAttackCount(state)}</dd>
         </div>
         {showDatasetSize && <div className={styles.costEstimateRow}>
-          <dt>Dataset size</dt>
+          <dt><ContextualHelpLabel term="Dataset selection limit">
+            The configured maximum number of examples to select. The actual selection may be smaller after filtering or because fewer examples are available.
+          </ContextualHelpLabel></dt>
           <dd>
             {datasetSizeLabel}
           </dd>
         </div>}
         {showTechniqueCount && <div className={styles.costEstimateRow}>
-          <dt>Number techniques</dt>
+          <dt><ContextualHelpLabel term="Number techniques">
+            How many techniques are included. Each technique can produce multiple individual attacks.
+          </ContextualHelpLabel></dt>
           <dd>{techniqueCount}</dd>
         </div>}
         {dynamicParameters.map((parameter) => (
@@ -87,6 +81,12 @@ export default function ScenarioEstimateSection({
           </div>
         ))}
       </dl>
+      {state.status === 'unavailable' && (
+        <Text size={200} className={styles.warningText} role="status">
+          {state.label}
+          {state.note && state.note !== state.label ? ` ${state.note}` : ''}
+        </Text>
+      )}
       {state.status === 'refreshing' && (
         <div className={styles.inlineStatus}>
           <Spinner size="tiny" />

@@ -2,6 +2,7 @@ import { getInitialFormValues, type ParameterFormValue } from '@/components/Para
 import type {
   Parameter,
   RegisteredScenario,
+  RunScenarioRequest,
   ScenarioDatasetRequest,
   ScenarioPresetResponse,
   ScenarioTechniqueSummary,
@@ -99,6 +100,8 @@ interface InitialFormInput {
   preset?: ScenarioPresetResponse | null
   /** Techniques already resolved from the preset; falls back to the scenario defaults. */
   seededTechniques?: string[]
+  /** A saved run to start from. Its values win over the preset's. Seeds initial state only. */
+  initialRun?: RunScenarioRequest
 }
 
 function defaultTargetName(target: TargetInstance | null, available: TargetInstance[]): string {
@@ -116,19 +119,23 @@ export function initialScenarioLaunchForm({
   initialConversationId,
   preset = null,
   seededTechniques,
+  initialRun,
 }: InitialFormInput): ScenarioLaunchFormState {
   return {
-    targetName: defaultTargetName(defaultObjectiveTarget, targets),
-    adversarialTargetName: defaultTargetName(defaultAdversarialTarget, adversarialTargets),
+    targetName: initialRun ? initialRun.target_name ?? '' : defaultTargetName(defaultObjectiveTarget, targets),
+    adversarialTargetName: initialRun
+      ? initialRun.adversarial_target_name ?? ''
+      : defaultTargetName(defaultAdversarialTarget, adversarialTargets),
     selectedTechniques: seededTechniques ?? defaultTechniques,
     baselineChecked: scenario.baseline_policy !== 'forbidden'
-      && (preset?.preset.include_baseline ?? scenario.include_baseline_by_default),
-    datasetEdits: preset?.preset.datasets ?? {},
+      && (initialRun?.include_baseline ?? preset?.preset.include_baseline ?? scenario.include_baseline_by_default),
+    datasetEdits: initialRun?.datasets ?? preset?.preset.datasets ?? {},
     datasetError: null,
-    maxConcurrency: DEFAULT_MAX_CONCURRENCY,
-    maxRetries: DEFAULT_MAX_RETRIES,
+    maxConcurrency: initialRun?.max_concurrency ?? DEFAULT_MAX_CONCURRENCY,
+    maxRetries: initialRun?.max_retries ?? DEFAULT_MAX_RETRIES,
     scenarioParamValues: getInitialFormValues(dynamicParameters, {
       ...(preset?.preset.scenario_params ?? {}),
+      ...(initialRun?.scenario_params ?? {}),
       ...(initialConversationId ? { prepended_conversation_id: initialConversationId } : {}),
     }),
   }

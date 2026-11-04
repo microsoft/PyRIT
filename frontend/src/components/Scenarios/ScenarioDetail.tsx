@@ -8,7 +8,6 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
-  Field,
   MessageBar,
   MessageBarBody,
   Select,
@@ -25,12 +24,16 @@ import {
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import HelpField from '@/components/HelpField'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import TargetSelect from '@/components/Config/TargetSelect'
 import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
 import { useScenarioDetail } from '@/hooks/useScenarioDetail'
@@ -49,6 +52,7 @@ import type {
   Parameter,
   RegisteredComponentReference,
   RegisteredScenario,
+  RunScenarioRequest,
   ScenarioDatasetOptions,
   ScenarioDatasetRequest,
   ScenarioDatasetSettings,
@@ -119,6 +123,10 @@ interface ScorerPickerData {
 }
 
 interface ScenarioDetailProps extends ScorerPickerData {
+  /** A saved run to start from, or undefined for a fresh form. */
+  initialRun?: RunScenarioRequest
+  /** The scan the saved run came from, for the back link. */
+  sourceRunId?: string
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
@@ -136,8 +144,11 @@ export default function ScenarioDetail(props: ScenarioDetailProps) {
   const conversationIds = searchParams.getAll('prepended_conversation_id')
   const initialConversationId = conversationIds.length === 1 ? conversationIds[0].trim() : ''
   const presetName = searchParams.get(PRESET_QUERY_PARAM)?.trim() ?? ''
-  // A new scenario, conversation, or preset link starts a fresh configuration form.
-  return <ScenarioDetailContent key={JSON.stringify([encodedScenarioName, initialConversationId, presetName])}
+  if (presetName && props.sourceRunId) return <ScenarioDetailStateFrame>
+    <MessageBar intent="error"><MessageBarBody>Choose a saved run or a preset, not both.</MessageBarBody></MessageBar>
+  </ScenarioDetailStateFrame>
+  // A new scenario, conversation, preset, or saved-run link starts a fresh configuration form.
+  return <ScenarioDetailContent key={JSON.stringify([encodedScenarioName, initialConversationId, presetName, props.sourceRunId])}
     encodedScenarioName={encodedScenarioName} initialConversationId={initialConversationId}
     presetName={presetName} {...props} />
 }
@@ -158,7 +169,7 @@ function ScenarioDetailStateFrame({ children }: ScenarioDetailStateFrameProps) {
   return (
     <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
+        <Link to="/scanner/launch" className={styles.backLink}>
           <ArrowLeftRegular /> Back to scanners
         </Link>
         {children}
@@ -168,6 +179,8 @@ function ScenarioDetailStateFrame({ children }: ScenarioDetailStateFrameProps) {
 }
 
 function ScenarioDetailContent({
+  initialRun,
+  sourceRunId,
   encodedScenarioName,
   initialConversationId,
   presetName,
@@ -244,7 +257,7 @@ function ScenarioDetailContent({
         <div className={styles.centeredState} data-testid="preset-not-found">
           <Text size={400}>Preset &quot;{presetName}&quot; was not found</Text>
           <Text size={200}>It may have been renamed or deleted.</Text>
-          <Link to={`/scanner/${encodeURIComponent(decodedScenarioName)}`}>
+          <Link to={`/scanner/launch/${encodeURIComponent(decodedScenarioName)}`}>
             Open {decodedScenarioName} without a preset
           </Link>
         </div>
@@ -288,11 +301,16 @@ function ScenarioDetailContent({
     )
   }
 
+  if (initialRun && scenario.scenario_name !== initialRun.scenario_name) return <ScenarioDetailStateFrame>
+    <MessageBar intent="error"><MessageBarBody>The saved configuration belongs to a different scenario.</MessageBarBody></MessageBar>
+  </ScenarioDetailStateFrame>
   return (
     <ScenarioLaunchForm
       key={scenario.scenario_name}
       scenario={scenario}
       preset={preset}
+      initialRun={initialRun}
+      sourceRunId={sourceRunId}
       initialConversationId={initialConversationId}
       targets={targets}
       defaultObjectiveTarget={defaultObjectiveTarget}
@@ -309,6 +327,8 @@ function ScenarioDetailContent({
 }
 
 interface ScenarioLaunchFormProps extends ScorerPickerData {
+  initialRun?: RunScenarioRequest
+  sourceRunId?: string
   scenario: RegisteredScenario
   /** Seeds the initial form state only; edits are never written back to the preset. */
   preset?: ScenarioPresetResponse | null
@@ -324,6 +344,8 @@ interface ScenarioLaunchFormProps extends ScorerPickerData {
 }
 
 function ScenarioLaunchForm({
+  initialRun,
+  sourceRunId,
   scenario,
   preset = null,
   initialConversationId,
@@ -339,9 +361,10 @@ function ScenarioLaunchForm({
   scorersError = null,
 }: ScenarioLaunchFormProps) {
   const runtime = useRuntime()
+  const { rememberScanTargets } = useUserPreferences()
   const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
   const staleSelection = selectionGeneration !== runtime.generation
-  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(null)
+  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(initialRun?.objective_scorer ?? null)
   const scorerError = objectiveScorer && (
     scorersLoading || scorersError || !findRegisteredScorer(objectiveScorer, scorers)
   ) ? 'The selected objective scorer is unavailable. Select a scorer or use the scenario default.' : undefined
@@ -356,7 +379,7 @@ function ScenarioLaunchForm({
   const dynamicParameters = useMemo(() => scenarioDynamicParameters(scenario), [scenario])
   const [techniqueSeed] = useState(() => seedPresetTechniques(
     scenario,
-    preset?.preset.techniques,
+    initialRun?.techniques ?? preset?.preset.techniques,
     new Set(techniqueOptions.map((technique) => technique.name)),
     scenario.scenario_name === 'technique.execute' ? [] : defaultTechniques,
   ))
@@ -399,6 +422,7 @@ function ScenarioLaunchForm({
       initialConversationId,
       preset,
       seededTechniques: techniqueSeed.techniques,
+      initialRun,
     }),
   )
   const {
@@ -434,6 +458,8 @@ function ScenarioLaunchForm({
   const techniqueEditor = useRunTechniqueEditor(
     opaqueSelectedTechnique ? undefined : singleSelectedTechnique,
     runtime.generation, runtime.ready,
+    initialRun?.technique_override && initialRun.technique_override.source_name === singleSelectedTechnique
+      ? initialRun.technique_override : undefined,
   )
   const [pendingTechnique, setPendingTechnique] = useState<string | null>(null)
   const techniqueEditError = techniqueEditor.unresolved
@@ -455,17 +481,18 @@ function ScenarioLaunchForm({
   ) || (supportsTechniques
     && selectedTechniques.some((name) => !presetTokens.has(name)
       && !techniqueOptions.some((technique) => technique.name === name)))
+  const savedScenarioParams = initialRun?.scenario_params ?? preset?.preset.scenario_params
   const carriedScenarioParams = useMemo(
-    () => carriedPresetScenarioParams(preset?.preset.scenario_params, dynamicParameters),
-    [preset, dynamicParameters],
+    () => carriedPresetScenarioParams(savedScenarioParams, dynamicParameters),
+    [savedScenarioParams, dynamicParameters],
   )
   const carriedScenarioParamNames = Object.keys(carriedScenarioParams)
   const presetScenarioParams = useMemo(
     () => ({
       ...carriedScenarioParams,
-      ...untouchedPresetScenarioParams(preset?.preset.scenario_params, dynamicParameters, scenarioParamValues),
+      ...untouchedPresetScenarioParams(savedScenarioParams, dynamicParameters, scenarioParamValues),
     }),
-    [carriedScenarioParams, dynamicParameters, preset, scenarioParamValues],
+    [carriedScenarioParams, dynamicParameters, savedScenarioParams, scenarioParamValues],
   )
   const techniquesWithoutCheckbox = selectedTechniques.filter((name) => presetTokens.has(name)
     && !techniqueOptions.some((technique) => technique.name === name))
@@ -606,6 +633,8 @@ function ScenarioLaunchForm({
     launchBlocked: conversationBusy || Boolean(techniqueEditError) || !runtime.ready || !defaultsReady
       || staleSelection || unavailableSelection || checkingRefreshPolicies,
     onLaunched: (summary: ScenarioRunSummary) => {
+      // The launched request is the one this render built, so it is still current here.
+      if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
       datasetMetadata.reload()
       navigate(scenarioRunRoutePath(summary.scenario_result_id), {
         state: { scenarioName: scenario.scenario_name },
@@ -757,12 +786,12 @@ function ScenarioLaunchForm({
       aria-labelledby="scenario-detail-title"
     >
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
-          <ArrowLeftRegular /> Back to scanners
+        <Link to={sourceRunId ? scenarioRunRoutePath(sourceRunId) : '/scanner/launch'} className={styles.backLink}>
+          <ArrowLeftRegular /> {sourceRunId ? 'Back to scan' : 'Back to scanners'}
         </Link>
 
         <div className={styles.headerText}>
-          <Text id="scenario-detail-title" as="h1" size={600} weight="semibold">
+          <Text id="scenario-detail-title" as="h2" size={600} weight="semibold">
             {scenario.scenario_name}
           </Text>
         </div>
@@ -858,9 +887,13 @@ function ScenarioLaunchForm({
 
             {(supportsObjectiveTarget || objectiveParameters.length > 0 || scenario.supports_objective_scorer) && (
               <section className={styles.section} aria-labelledby="objective-section-title">
-                <Text id="objective-section-title" as="h2" size={400} weight="semibold">Objective</Text>
+                <Text id="objective-section-title" as="h2" aria-label="Objective" size={400} weight="semibold">
+                  <ContextualHelpLabel term="Objective" labelProps={{ weight: 'semibold' }}>
+                    The behavior you want to test for. A clear goal lets the attack and scorer work toward the same result.
+                  </ContextualHelpLabel>
+                </Text>
                 {supportsObjectiveTarget && <>
-                  <Field label="Objective Target" required hint="The registered target this scenario will run against.">
+                  <HelpField label="Objective Target" required help={HELP_DEFINITIONS.objectiveTarget}>
                     <Select
                       className={styles.control}
                       value={targetName}
@@ -879,7 +912,7 @@ function ScenarioLaunchForm({
                         </option>
                       ))}
                     </Select>
-                  </Field>
+                  </HelpField>
                   {targets.length === 0 && (
                     <Button className={styles.touchTarget} appearance="secondary" icon={<SettingsRegular />}
                       type="button" onClick={() => onNavigate('registry')}>
@@ -934,7 +967,11 @@ function ScenarioLaunchForm({
 
             {(supportsDatasets || datasetDefaults.sources.length > 0) && (
             <section className={styles.section} aria-labelledby="datasets-section-title">
-              <Text id="datasets-section-title" as="h2" size={400} weight="semibold">Datasets</Text>
+              <Text id="datasets-section-title" as="h2" aria-label="Datasets" size={400} weight="semibold">
+                <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold' }}>
+                  Seed examples used by this scan. Limits and filters control which examples are selected.
+                </ContextualHelpLabel>
+              </Text>
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
@@ -967,12 +1004,12 @@ function ScenarioLaunchForm({
                       dispatch({ type: 'setAdversarialTarget', name: target?.target_registry_name ?? '' })
                     }}
                     label="Adversarial Target"
-                    hint="The registered target this scenario uses to generate attacks."
+                    help={HELP_DEFINITIONS.adversarialTarget}
                     placeholder="Use server default"
                     disabled={submitting}
                   />
                 )}
-                {supportsConcurrency && <Field label="Max concurrency">
+                {supportsConcurrency && <HelpField label="Max concurrency" help={HELP_DEFINITIONS.maxConcurrency}>
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxConcurrency}
@@ -982,8 +1019,8 @@ function ScenarioLaunchForm({
                     onChange={(_, data) => dispatch({ type: 'setMaxConcurrency', value: resolveSpinButtonValue(data, maxConcurrency) })}
                     data-testid="max-concurrency-input"
                   />
-                </Field>}
-                {supportsRetries && <Field label="Max retries">
+                </HelpField>}
+                {supportsRetries && <HelpField label="Max retries" help={HELP_DEFINITIONS.maxRetries}>
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxRetries}
@@ -993,7 +1030,7 @@ function ScenarioLaunchForm({
                     onChange={(_, data) => dispatch({ type: 'setMaxRetries', value: resolveSpinButtonValue(data, maxRetries) })}
                     data-testid="max-retries-input"
                   />
-                </Field>}
+                </HelpField>}
               </div>
             </section>
             )}

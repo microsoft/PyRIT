@@ -156,7 +156,7 @@ export default function ScenarioRunPreviewDialog({
                     </Text>
                     <Text size={200} className={styles.hint}>
                       {datasets.custom ? 'Custom override' : 'Scenario defaults'}
-                      {` - dataset size: ${datasets.sizeLabel}`}
+                      {` - dataset selection limit: ${datasets.sizeLabel}`}
                     </Text>
                   </div>
                 </dd>
