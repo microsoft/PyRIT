@@ -7,6 +7,9 @@ import { makeTarget } from '@/test-utils/targetFixtures'
 import type { Parameter, TechniqueInstance, TechniqueListResponse, TechniqueTypeResponse } from '@/types'
 
 import TechniqueRegistry from './TechniqueRegistry'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 let mockRuntime = { generation: 1, ready: true }
 jest.mock('@/hooks/useRuntime', () => ({ useRuntime: () => mockRuntime }))
@@ -102,7 +105,7 @@ describe('TechniqueRegistry', () => {
     expect(within(details).queryByRole('button')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Identity for first' }))
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Filter by tag' }), '')
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advanceAutoRefresh()
     await waitFor(() => expect(techniques.listTechniques).toHaveBeenCalledTimes(2))
   })
 
@@ -124,18 +127,18 @@ describe('TechniqueRegistry', () => {
     const user = userEvent.setup()
     render(tree())
     await screen.findByText(/No techniques registered/)
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advanceAutoRefresh()
     await screen.findByRole('table')
     await user.type(screen.getByRole('textbox', { name: 'Search techniques' }), 'missing')
     expect(screen.getByText('No techniques match these filters.')).toBeInTheDocument()
   })
 
-  it('reports list errors with retry', async () => {
+  it('reports list errors and recovers on the next automatic check', async () => {
     techniques.listTechniques.mockRejectedValueOnce(new Error('List unavailable'))
-    const user = userEvent.setup()
     render(tree())
     await screen.findByText('List unavailable')
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
     await screen.findByRole('table')
   })
 
@@ -165,11 +168,10 @@ describe('TechniqueRegistry', () => {
         pagination: { limit: 200, has_more: true, next_cursor: 'first' },
       })
       .mockRejectedValueOnce(new Error('Next page unavailable'))
-    const user = userEvent.setup()
     render(tree())
     await screen.findByText('Next page unavailable')
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await advanceAutoRefresh()
     await screen.findByRole('table')
     expect(techniques.listTechniques).toHaveBeenLastCalledWith(200, undefined)
   })
@@ -345,7 +347,7 @@ describe('TechniqueRegistry', () => {
     expect(techniques.listTechniques).toHaveBeenCalledTimes(1)
     let completeList: ((value: TechniqueListResponse) => void) | undefined
     techniques.listTechniques.mockReturnValueOnce(new Promise((resolve) => { completeList = resolve }))
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    await advanceAutoRefresh()
     mockRuntime = { generation: 2, ready: true }
     rerender(tree())
     await waitFor(() => expect(screen.getByText('New technique', { selector: 'button' })).toHaveFocus())

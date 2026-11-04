@@ -141,10 +141,10 @@ class FloatScaleThresholdScorer(TrueFalseScorer):
         participation_by_score: dict[str, SnapshotParticipation | None],
     ) -> list[Score]:
         """
-        Check the wrapped float scorer's evidence freshness.
+        Validate the wrapped float scorer's evidence before reusing its threshold result.
 
         Returns:
-            Candidates with current child evidence.
+            list[Score]: The candidates linked to the wrapped scorer's current snapshot.
         """
         return await self._filter_matching_scores_by_children_async(
             scores=scores,
