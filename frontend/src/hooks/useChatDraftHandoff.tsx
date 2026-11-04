@@ -42,10 +42,21 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
     return sequenceRef.current
   }, [])
 
-  const preserveDraft = useCallback((state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>) => {
+  const preserveDraft = useCallback((
+    state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>,
+    expectedSequence?: number,
+  ) => {
     // Parent effects are cleaned up before the active composer's unmount.
     if (!mountedRef.current) {
       revokeAttachmentUrls(state.draft.attachments)
+      return
+    }
+    // A new attack must not restore the old composer's unmount snapshot.
+    if (expectedSequence !== undefined && expectedSequence !== sequenceRef.current) {
+      releaseSupersededUrls(state.draft.attachments, [
+        ...preservedDraftRef.current?.draft.attachments ?? [],
+        ...pendingImportRef.current?.content.attachments ?? [],
+      ])
       return
     }
     releaseSupersededUrls(preservedDraftRef.current?.draft.attachments, [

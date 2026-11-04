@@ -108,8 +108,8 @@ class TestTemporaryComponents:
         registry = TargetRegistry.get_registry_singleton()
         factory = registry.create_instance_from_external_input
 
-        def create(name: str, *, params: Any) -> HuggingFaceChatTarget:
-            target = factory(name, params=params)
+        def create(name: str, *, params: Any, allowed_path_params: Any) -> HuggingFaceChatTarget:
+            target = factory(name, params=params, allowed_path_params=allowed_path_params)
             assert isinstance(target, HuggingFaceChatTarget)
             constructed.append(target)
             return target
@@ -557,7 +557,10 @@ class TestTemporaryComponents:
             await sender.shutdown_async()
             await source.cleanup_target_async()
 
-    async def test_reconstruction_rejects_wrong_type_unknown_override_and_effective_hash_async(self) -> None:
+    @pytest.mark.parametrize("register", [False, True])
+    async def test_reconstruction_rejects_wrong_type_unknown_override_and_effective_hash_async(
+        self, register: bool
+    ) -> None:
         source = CaesarConverter(caesar_offset=1)
         ConverterRegistry.get_registry_singleton().instances.register(source, name="source")
         spec = SourceInstanceSpec(
@@ -572,7 +575,8 @@ class TestTemporaryComponents:
                     request=CreateConverterRequest(
                         type="CaesarConverter",
                         source=spec,
-                        register=False,
+                        register=register,
+                        name="saved" if register else None,
                     )
                 )
             with pytest.raises(ValueError, match="type does not match"):
@@ -580,7 +584,8 @@ class TestTemporaryComponents:
                     request=CreateConverterRequest(
                         type="Base64Converter",
                         source=spec,
-                        register=False,
+                        register=register,
+                        name="saved" if register else None,
                     )
                 )
             spec.params = {}
@@ -590,7 +595,8 @@ class TestTemporaryComponents:
                     request=CreateConverterRequest(
                         type="CaesarConverter",
                         source=spec,
-                        register=False,
+                        register=register,
+                        name="saved" if register else None,
                     )
                 )
         finally:

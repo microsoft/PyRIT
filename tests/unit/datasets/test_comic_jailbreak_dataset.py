@@ -224,9 +224,31 @@ class TestComicJailbreakDataset:
         goals = {s.metadata["goal"] for s in dataset.seeds if isinstance(s, SeedPrompt)}
         assert goals == {"Goal 0", "Goal 1"}
 
+    async def test_fetch_dataset_max_examples_skips_goals_without_template_text(self):
+        """Goals with no text for the selected templates render nothing and do not count toward max_examples."""
+        mock_data = [_make_example(Goal=f"Goal {i}", Code="") for i in range(3)] + [
+            _make_example(Goal=f"Goal {i}", Code="print('hello')") for i in range(3, 6)
+        ]
+        loader = _ComicJailbreakDataset(templates=["code"], max_examples=2)
+
+        with (
+            patch.object(loader, "_fetch_from_url", return_value=mock_data),
+            patch.object(loader, "_fetch_template_async", new_callable=AsyncMock, return_value="/fake/template.png"),
+            patch.object(loader, "_render_comic_async", new_callable=AsyncMock, return_value="/fake/rendered.png"),
+        ):
+            dataset = await loader.fetch_dataset_async(cache=False)
+
+        goals = {s.metadata["goal"] for s in dataset.seeds if isinstance(s, SeedPrompt)}
+        assert goals == {"Goal 3", "Goal 4"}
+
     def test_init_default_max_examples_is_none(self):
         loader = _ComicJailbreakDataset()
         assert loader.max_examples is None
+
+    @pytest.mark.parametrize("max_examples", [0, -1])
+    def test_init_rejects_max_examples_below_one(self, max_examples):
+        with pytest.raises(ValueError, match="max_examples must be at least 1"):
+            _ComicJailbreakDataset(max_examples=max_examples)
 
 
 class TestComicJailbreakTemplates:
