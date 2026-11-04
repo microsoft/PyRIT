@@ -106,7 +106,7 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 #
 # | Model family | Runtime temperature |
 # | --- | --- |
-# | GPT-3.5, GPT-4 / Turbo, GPT-4o / mini, GPT-4.1 / mini / nano | Supported |
+# | GPT-4 / Turbo, GPT-4o / mini, GPT-4.1 / mini / nano | Supported |
 # | GPT-5, GPT-5 mini / nano | Unsupported, including with `minimal` or `none` |
 # | GPT-5.1, GPT-5.2, GPT-5.4 / mini / nano | Supported with `reasoning_effort="none"` (the model default) |
 # | GPT-5.5, GPT-5.6 / sol / terra / luna | Requires explicit `reasoning_effort="none"`; default is `medium` |
