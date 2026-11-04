@@ -333,7 +333,12 @@ export default function ConverterPanel({
     // Only append the new converter to the pipeline if this dialog opening
     // remained active until creation completed and the active modality tab matches.
     // Late completions after dismissal (or tab switch) only refresh the registry.
-    if (isCurrentOpening && targetPieceType && targetPieceType === effectiveActiveTab) {
+    const shouldAppendToPipeline =
+      isCurrentOpening &&
+      Boolean(targetPieceType) &&
+      targetPieceType === effectiveActiveTab
+
+    if (shouldAppendToPipeline && targetPieceType) {
       void loadConverters(converterId, targetPieceType)
     } else {
       void loadConverters()
