@@ -52,9 +52,26 @@ def test_singleton_preserves_init_args():
 def test_singleton_concurrent_first_calls_construct_once():
     first_entered = threading.Event()
     second_entered = threading.Event()
+    second_attempted_lock = threading.Event()
     release = threading.Event()
     count = 0
     count_lock = threading.Lock()
+
+    class _InstrumentedLock:
+        def __init__(self, target_lock: threading.RLock) -> None:
+            self._target_lock = target_lock
+            self._attempts = 0
+            self._attempts_lock = threading.Lock()
+
+        def __enter__(self) -> bool:
+            with self._attempts_lock:
+                self._attempts += 1
+                if self._attempts >= 2:
+                    second_attempted_lock.set()
+            return self._target_lock.__enter__()
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return self._target_lock.__exit__(exc_type, exc_val, exc_tb)
 
     class _ConcurrentSingleton(abc.ABC, metaclass=Singleton):
         def __init__(self) -> None:
@@ -66,12 +83,17 @@ def test_singleton_concurrent_first_calls_construct_once():
             if not release.wait(timeout=5):
                 raise TimeoutError("Constructor timed out waiting for release.")
 
+    _ConcurrentSingleton._singleton_lock = _InstrumentedLock(
+        _ConcurrentSingleton._singleton_lock
+    )
+
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(_ConcurrentSingleton)
         try:
             assert first_entered.wait(timeout=5)
             second = pool.submit(_ConcurrentSingleton)
-            assert not second_entered.wait(timeout=0.2)
+            assert second_attempted_lock.wait(timeout=5)
+            assert not second_entered.is_set()
         finally:
             release.set()
         a, b = first.result(timeout=5), second.result(timeout=5)
