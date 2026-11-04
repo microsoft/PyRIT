@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import uuid
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from pyrit.analytics.result_analysis import get_cached_results_for_technique_async
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
     ContentScorable,
     Message,
     MessagePiece,
@@ -140,6 +147,10 @@ def _judge(*, host: str = "example.com", policy: str = "A", **options: Any) -> H
     )
 
 
+def _judge_with_request(*, request: str, **options: Any) -> HTTPTarget:
+    return HTTPTarget(http_request=request, custom_configuration=_JUDGE_CONFIGURATION, **options)
+
+
 def _scorer_eval_hash(target: HTTPTarget) -> str:
     return ScorerEvaluationIdentifier(SelfAskTrueFalseScorer(chat_target=target).get_identifier()).eval_hash
 
@@ -189,21 +200,27 @@ def test_identifier_ignores_client_defaults_and_credentials():
     assert with_kwargs.get_identifier().hash == plain.get_identifier().hash
 
 
-def _policy_judge(*, policy: str, requests: list[httpx.Request]) -> SelfAskTrueFalseScorer:
+def _sent_policy(request: httpx.Request) -> str:
+    return str(request.headers.get("x-policy") or request.url.params.get("policy"))
+
+
+def _policy_judge(*, policy: str, policy_option: str, requests: list[httpx.Request]) -> SelfAskTrueFalseScorer:
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return httpx.Response(200, text=_JUDGMENT)
 
-    client = httpx.AsyncClient(headers={"X-Policy": policy}, transport=httpx.MockTransport(respond))
+    policy_setting = {"headers": {"X-Policy": policy}} if policy_option == "header" else {"params": {"policy": policy}}
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond), **policy_setting)
     return SelfAskTrueFalseScorer(chat_target=_judge(client=client))
 
 
-async def test_judgment_from_one_client_policy_does_not_replay_for_another_async(sqlite_instance):
+@pytest.mark.parametrize("policy_option", ["header", "query"])
+async def test_judgment_from_one_client_policy_does_not_replay_for_another_async(sqlite_instance, policy_option: str):
     policy_a_requests: list[httpx.Request] = []
     policy_b_requests: list[httpx.Request] = []
     expectation = ScoringExpectation(objective="Judge this response")
     score = (
-        await _policy_judge(policy="A", requests=policy_a_requests).score_async(
+        await _policy_judge(policy="A", policy_option=policy_option, requests=policy_a_requests).score_async(
             scorable=ContentScorable(value="candidate response"),
             expectation=expectation,
         )
@@ -211,13 +228,90 @@ async def test_judgment_from_one_client_policy_does_not_replay_for_another_async
     observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
 
     with pytest.raises(NonReplayableObservationError, match="scorer configuration"):
-        await _policy_judge(policy="B", requests=policy_b_requests).score_observation_async(
+        await _policy_judge(
+            policy="B", policy_option=policy_option, requests=policy_b_requests
+        ).score_observation_async(
             observation=observation,
             expectation=expectation,
         )
 
-    assert [request.headers["x-policy"] for request in policy_a_requests] == ["A"]
+    assert [_sent_policy(request) for request in policy_a_requests] == ["A"]
     assert policy_b_requests == []
+
+
+_QUERY_REQUEST = "POST {path} HTTP/1.1\nHost: example.com\nContent-Type: text/plain\n\n{{PROMPT}}"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "first, second",
+    [
+        ({"path": "/judge?policy=A"}, {"path": "/judge?policy=B"}),
+        ({"path": "/judge/strict"}, {"path": "/judge/lenient"}),
+        ({"path": "/judge", "params": {"policy": "A"}}, {"path": "/judge", "params": {"policy": "B"}}),
+        (
+            {"path": "/judge", "client": httpx.AsyncClient(params={"policy": "A"})},
+            {"path": "/judge", "client": httpx.AsyncClient(params={"policy": "B"})},
+        ),
+    ],
+    ids=["template-query", "path", "params-kwarg", "client-params"],
+)
+def test_identity_changes_with_the_request_path_and_query(first: dict[str, Any], second: dict[str, Any]):
+    def build(options: dict[str, Any]) -> HTTPTarget:
+        options = dict(options)
+        return _judge_with_request(request=_QUERY_REQUEST.format(path=options.pop("path")), **options)
+
+    policy_a, policy_b = build(first), build(second)
+
+    assert policy_a.get_identifier().hash != policy_b.get_identifier().hash
+    assert _target_eval_hash(policy_a) != _target_eval_hash(policy_b)
+    assert _scorer_eval_hash(policy_a) != _scorer_eval_hash(policy_b)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_identity_ignores_credential_query_parameters():
+    def build(**options: Any) -> HTTPTarget:
+        return _judge_with_request(request=_QUERY_REQUEST.format(path="/judge?policy=A"), **options)
+
+    template_key_1 = _judge_with_request(request=_QUERY_REQUEST.format(path="/judge?policy=A&api_key=secret-1"))
+    template_key_2 = _judge_with_request(request=_QUERY_REQUEST.format(path="/judge?policy=A&api_key=secret-2"))
+    client_key_1 = build(params={"policy": "A", "access_token": "secret-1"})
+    client_key_2 = build(params={"policy": "A", "access_token": "secret-2"})
+
+    assert _target_eval_hash(template_key_1) == _target_eval_hash(template_key_2)
+    assert client_key_1.get_identifier().hash == client_key_2.get_identifier().hash
+    assert "secret" not in str(client_key_1.get_identifier().params)
+
+
+async def test_cached_attack_results_are_not_shared_across_query_policies_async(sqlite_instance):
+    def attack_result_for(target: HTTPTarget) -> AttackResult:
+        attack = ComponentIdentifier(
+            class_name="PromptSendingAttack",
+            class_module="pyrit.executor.attack.single_turn.prompt_sending",
+            children={"objective_target": target.get_identifier()},
+        )
+        return AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective="test objective",
+            atomic_attack_identifier=AtomicAttackIdentifier.build(attack_identifier=attack),
+            outcome=AttackOutcome.SUCCESS,
+        )
+
+    policy_a = _judge_with_request(request=_QUERY_REQUEST.format(path="/judge?policy=A"))
+    policy_b = _judge_with_request(request=_QUERY_REQUEST.format(path="/judge?policy=B"))
+    saved = attack_result_for(policy_a)
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[saved])
+    technique_eval_hash = AtomicAttackEvaluationIdentifier(saved.atomic_attack_identifier).eval_hash
+
+    async def cached_for(target: HTTPTarget) -> list[AttackResult]:
+        return await get_cached_results_for_technique_async(
+            sqlite_instance,
+            technique_eval_hash=technique_eval_hash,
+            objective_target_eval_hash=_target_eval_hash(target),
+        )
+
+    assert [result.conversation_id for result in await cached_for(policy_a)] == [saved.conversation_id]
+    assert await cached_for(policy_b) == []
 
 
 @patch("httpx.AsyncClient.request")

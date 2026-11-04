@@ -42,6 +42,25 @@ def _httpx_default_headers() -> dict[str, str]:
         return dict(client.headers.items())
 
 
+def _url_as_sent(*, url: str, method: str, client_params: httpx.QueryParams) -> httpx.URL:
+    """
+    Resolve the URL a client with these query parameters sends for a request to ``url``.
+
+    httpx replaces the request's query with non-empty client parameters, so the parameters that reach
+    the endpoint depend on both.
+
+    Args:
+        url (str): The request URL from the template.
+        method (str): The request method.
+        client_params (httpx.QueryParams): The client's query parameters.
+
+    Returns:
+        httpx.URL: The URL the request is sent to.
+    """
+    with httpx.Client(params=client_params, transport=httpx.BaseTransport(), trust_env=False) as client:
+        return client.build_request(method, url).url
+
+
 class HTTPTarget(PromptTarget):
     """
     HTTP_Target is for endpoints that do not have an API and instead require HTTP request(s) to send a prompt.
@@ -59,6 +78,52 @@ class HTTPTarget(PromptTarget):
             "set-cookie",
         }
     )
+
+    _CREDENTIAL_QUERY_NAME_TOKENS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "key",
+            "keys",
+            "token",
+            "tokens",
+            "secret",
+            "secrets",
+            "password",
+            "passwords",
+            "passwd",
+            "pwd",
+            "auth",
+            "authorization",
+            "credential",
+            "credentials",
+            "sig",
+            "signature",
+            "signatures",
+            "jwt",
+            "assertion",
+            "assertions",
+            "bearer",
+            "apikey",
+            "oauth",
+        }
+    )
+
+    @classmethod
+    def _is_sensitive_query_param(cls, key: str) -> bool:
+        # Match credential parameter names by word, not by substring: `design`
+        # contains "sig" and `author` contains "auth", but neither is a
+        # credential, and stripping them collapses distinct URLs into one
+        # identifier. Splitting on non-alphanumeric separators and on camelCase
+        # word boundaries keeps compound credential names (`api_key`,
+        # `client_secret`, `access_token`, `accessToken`, `clientSecret`)
+        # sensitive while leaving unrelated names intact.
+        tokens = {
+            token.lower()
+            for token in re.split(r"[^a-zA-Z0-9]+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", key)
+            if token
+        }
+        if tokens & cls._CREDENTIAL_QUERY_NAME_TOKENS:
+            return True
+        return key.lower() in {"code", "pass"}
 
     def __init__(
         self,
@@ -144,21 +209,27 @@ class HTTPTarget(PromptTarget):
 
     def _http_request_fingerprint(self) -> str:
         """
-        Hash what every send asks the endpoint, without its destination or credentials.
+        Hash what every send asks the endpoint, without its deployment address or credentials.
 
-        The method, body and effective headers change how the endpoint responds, so they belong to
-        the target's identity and to its evaluation identity. Headers set on an injected client or
-        passed as ``headers`` in the client kwargs are merged under the template headers, the same
-        way a send combines them. Unchanged httpx defaults and the host are left out, and so is the
-        URL, which ``endpoint`` already covers, so the same request on another deployment keeps its
-        evaluation identity. Credential headers are left out so a secret never reaches the
-        identifier and rotating it does not change the identity.
+        The method, path, query, body and effective headers change how the endpoint responds, so
+        they belong to the target's identity and to its evaluation identity. Query parameters and
+        headers set on an injected client or passed as ``params`` and ``headers`` in the client
+        kwargs are merged with the template the same way a send combines them. The scheme, host and
+        port are left out, so the same request on another deployment keeps its evaluation identity,
+        and so are unchanged httpx default headers. Credential headers and credential query
+        parameters are left out so a secret never reaches the identifier and rotating it does not
+        change the identity.
 
         Returns:
             str: The first 16 hex characters of the SHA-256 of the canonical request.
         """
-        template_headers, body, _, method, _ = self.parse_raw_http_request(self.http_request)
-        headers = {} if self._client else dict(httpx.Headers(self.httpx_client_kwargs.get("headers")).items())
+        template_headers, body, url, method, _ = self.parse_raw_http_request(self.http_request)
+        if self._client:
+            headers: dict[str, str] = {}
+            client_params = self._client.params
+        else:
+            headers = dict(httpx.Headers(self.httpx_client_kwargs.get("headers")).items())
+            client_params = httpx.QueryParams(self.httpx_client_kwargs.get("params"))
         headers.update(template_headers)
         default_headers = _httpx_default_headers()
         kept_headers = {
@@ -166,9 +237,15 @@ class HTTPTarget(PromptTarget):
             for name, value in headers.items()
             if name != "host" and name not in self._CREDENTIAL_HEADERS and default_headers.get(name) != value
         }
+        sent_url = _url_as_sent(url=url, method=method, client_params=client_params)
+        kept_query = [
+            [name, value] for name, value in sent_url.params.multi_items() if not self._is_sensitive_query_param(name)
+        ]
         canonical = json.dumps(
             {
                 "method": method,
+                "path": sent_url.path,
+                "query": kept_query,
                 "headers": kept_headers,
                 "body": body if isinstance(body, str) else json.dumps(body, sort_keys=True),
             },
