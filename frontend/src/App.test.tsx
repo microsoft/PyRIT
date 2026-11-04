@@ -1385,6 +1385,11 @@ describe("App", () => {
       });
       renderApp(`${routePrefix}/owner/conversations/source?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&findingEvidenceId=123e4567-e89b-12d3-a456-426614174000`);
       expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+      expect(screen.getByText(/The requested evidence conversation/)).toBeInTheDocument();
+      expect(screen.getByText("source")).toBeInTheDocument();
+      expect(screen.getByText("owner")).toBeInTheDocument();
+      expect(screen.queryByText(/No attack matches the id/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "View parent attack" })).toBeInTheDocument();
       expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
     },
   );

@@ -756,10 +756,14 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   const chatElement = isAttackNotFound || isAttackError || isEvidenceConversationMissing ? (
     <AttackNotFound
       attackId={routeAttackId ?? ''}
-      variant={isAttackError ? 'error' : 'not-found'}
+      conversationId={isEvidenceConversationMissing ? routeConversationId : undefined}
+      variant={isAttackError ? 'error' : isEvidenceConversationMissing ? 'evidence-missing' : 'not-found'}
       findingEvidenceId={findingEvidenceId}
       onStartNew={handleNewAttack}
       onBackToHistory={() => navigate(HISTORY_ATTACKS_PATH + lastHistorySearch.current)}
+      onViewAttack={isEvidenceConversationMissing && routeAttackId ? () => {
+        navigate(`/attack/chat/${encodeURIComponent(routeAttackId)}`)
+      } : undefined}
     />
   ) : (
     <ChatWindow
