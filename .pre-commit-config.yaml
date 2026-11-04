@@ -47,6 +47,12 @@ repos:
         language: python
         files: ^pyrit/.*\.py$
         pass_filenames: false
+      - id: check-keyword-only-params
+        name: Enforce keyword-only parameters
+        entry: python -m build_scripts.check_keyword_only_params
+        language: python
+        files: ^(pyrit/.*\.py|build_scripts/(check_keyword_only_params\.py|keyword_only_baseline\.txt))$
+        pass_filenames: false
       - id: memory-migrations-check
         name: Check Memory Migrations
         entry: python -m build_scripts.memory_migrations check
