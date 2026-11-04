@@ -22,7 +22,13 @@ from pyrit.models import (
     SeedDataset,
     SeedObjective,
 )
-from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Scenario, ScenarioRequiredData
+from pyrit.scenario import (
+    CompoundDatasetAttackConfiguration,
+    DatasetAttackConfiguration,
+    DatasetSource,
+    Scenario,
+    ScenarioRequiredData,
+)
 from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, ScenarioTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetConstraintError, ResolvedDataset
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -354,14 +360,16 @@ class _TemplatesAndRecordsScenario(Scenario):
 
     BASELINE_ATTACK_POLICY = BaselineAttackPolicy.Forbidden
 
-    def __init__(self, *, templates: MagicMock, records: MagicMock) -> None:
+    def __init__(self, *, templates: MagicMock, records: MagicMock, compound: bool = False) -> None:
         self._templates = templates
+        population = DatasetAttackConfiguration(sources=[DatasetSource(name="records", provider=records)])
         super().__init__(
             version=1,
             technique_class=_Technique,
             objective_scorer=SubStringScorer(substring="yes"),
-            default_dataset_config=DatasetAttackConfiguration(
-                sources=[DatasetSource(name="records", provider=records)]
+            # A compound names its datasets through children, so its own ``sources`` is empty.
+            default_dataset_config=(
+                CompoundDatasetAttackConfiguration(configurations=[population]) if compound else population
             ),
         )
 
@@ -395,16 +403,21 @@ async def _stored_async(memory: SQLiteMemory, name: str) -> dict[str, str]:
     return {str(seed.id): str(seed.value) for seed in await memory.get_seeds_async(dataset_name=name)}
 
 
-async def _initialize_async(*, templates: SeedDataset, records: SeedDataset, overrides: dict[str, Any]) -> None:
-    scenario = _TemplatesAndRecordsScenario(templates=_provider(templates), records=_provider(records))
+async def _initialize_async(
+    *, templates: SeedDataset, records: SeedDataset, overrides: dict[str, Any], compound: bool = False
+) -> None:
+    scenario = _TemplatesAndRecordsScenario(
+        templates=_provider(templates), records=_provider(records), compound=compound
+    )
     scenario.set_params_from_args(args={"objective_target": MockPromptTarget(), "dataset_overrides": overrides})
     await scenario.initialize_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("records_stored", [False, True])
+@pytest.mark.parametrize("compound", [False, True])
 async def test_required_refresh_validates_with_population_candidates_async(
-    *, sqlite_instance: SQLiteMemory, records_stored: bool
+    *, sqlite_instance: SQLiteMemory, records_stored: bool, compound: bool
 ) -> None:
     # A templates refresh must see the records being fetched (or refreshed) in the same run, not
     # missing or stale records. Refreshing both to v2 together is a valid joint refresh.
@@ -416,6 +429,7 @@ async def test_required_refresh_validates_with_population_candidates_async(
         templates=_versioned("templates", "v2"),
         records=_versioned("records", "v2"),
         overrides={"fetch": "always"},
+        compound=compound,
     )
 
     assert sorted((await _stored_async(sqlite_instance, "templates")).values())[0].startswith("v2")
@@ -442,12 +456,15 @@ async def test_population_refresh_rejected_by_assembly_keeps_stored_rows_async(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("compound", [False, True])
 async def test_global_never_fetch_reaches_required_data_with_population_sources_async(
-    *, sqlite_instance: SQLiteMemory
+    *, sqlite_instance: SQLiteMemory, compound: bool
 ) -> None:
     await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[_versioned("records", "v1")], added_by="test")
     templates = _provider(_versioned("templates", "v1"))
-    scenario = _TemplatesAndRecordsScenario(templates=templates, records=_provider(_versioned("records", "v1")))
+    scenario = _TemplatesAndRecordsScenario(
+        templates=templates, records=_provider(_versioned("records", "v1")), compound=compound
+    )
     scenario.set_params_from_args(
         args={"objective_target": MockPromptTarget(), "dataset_overrides": {"fetch": "never"}}
     )
@@ -466,3 +483,23 @@ async def test_selecting_only_required_data_does_not_restore_the_default_populat
             records=_versioned("records", "v1"),
             overrides={"sources": [{"name": "templates"}]},
         )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_a_dataset_named_by_both_required_data_and_population_is_rejected_async(
+    *, sqlite_instance: SQLiteMemory
+) -> None:
+    required_provider = _provider(_dataset("shared"))
+    population_provider = _provider(_dataset("shared"))
+    required = ScenarioRequiredData(
+        sources=[DatasetSource(name="shared", provider=required_provider)], fetch=DatasetFetchPolicy.ALWAYS
+    )
+    population = DatasetAttackConfiguration(sources=[DatasetSource(name="shared", provider=population_provider)])
+
+    with pytest.raises(DatasetConstraintError, match=r"\['shared'\] are named by more than one configuration"):
+        await required.prepare_async(population=population)
+
+    # Rejected before any fetch, so neither batch can be committed unvalidated.
+    required_provider.fetch_dataset_async.assert_not_awaited()
+    population_provider.fetch_dataset_async.assert_not_awaited()
+    assert await sqlite_instance.get_seeds_async(dataset_name="shared") == []

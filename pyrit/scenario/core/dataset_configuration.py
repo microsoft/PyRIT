@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 import random
+from collections import Counter
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
@@ -91,8 +92,17 @@ async def prepare_configurations_async(
             configurations build together, such as a scenario's full assembly.
 
     Raises:
-        DatasetConstraintError: If a source cannot be fetched or the candidates fail validation.
+        DatasetConstraintError: If a dataset is named by more than one configuration, a source cannot
+            be fetched, or the candidates fail validation.
     """
+    # Candidates are keyed by name, so a shared name would validate one batch and commit both.
+    counts = Counter(name for config in configurations for name in dict.fromkeys(config.dataset_names))
+    shared = sorted(name for name, count in counts.items() if count > 1)
+    if shared:
+        raise DatasetConstraintError(
+            f"Datasets {shared} are named by more than one configuration prepared together, such as "
+            "required data and the population. List each dataset in one place."
+        )
     fetches = [(config, *await config._fetch_for_preparation_async(fetch=fetch)) for config in configurations]
     if not any(policies[name] is DatasetFetchPolicy.ALWAYS for _, fetched, policies in fetches for name in fetched):
         for config, fetched, _ in fetches:

@@ -941,12 +941,13 @@ class Scenario(ABC):
         """
         Read the required data with the population configuration's fetch policy and filters.
 
-        A configuration without sources of its own only limits assembled groups, so its fetch
-        policy and filters describe how the required data is loaded. Required sources keep their
-        own fetch settings.
+        A configuration that names no datasets only limits assembled groups, so its fetch policy
+        and filters describe how the required data is loaded. Required sources keep their own
+        fetch settings. A compound names datasets through its children, not ``sources``, and its
+        parent ``fetch`` isn't the requested one, so it leaves the required data's policy as resolved.
         """
         config = self._dataset_config
-        if self._required_data is None or config.sources or config.source_kind is DatasetSourceKind.INLINE:
+        if self._required_data is None or config.dataset_names or config.source_kind is DatasetSourceKind.INLINE:
             return
         self._required_data = self._required_data.with_sources(
             sources=self._required_data.sources, fetch=config.fetch, filters=config.filters
