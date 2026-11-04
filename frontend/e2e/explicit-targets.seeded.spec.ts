@@ -1,12 +1,34 @@
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 
+import type { RunScenarioRequest, ScenarioRunSummary, TargetInstance, TargetListResponse } from '../src/types'
 import { compatibilityHeaders } from './_compatibility'
 import { waitForAppReady } from './_runtime'
 
-test.use({ extraHTTPHeaders: compatibilityHeaders() })
+test.use({
+  // eslint-disable-next-line no-empty-pattern
+  extraHTTPHeaders: async ({}, runTest) => runTest(compatibilityHeaders()),
+})
+
+async function targetSnapshot(request: APIRequestContext): Promise<string[]> {
+  const identities: string[] = []
+  let cursor: string | null | undefined
+  do {
+    const response = await request.get('/api/targets', {
+      params: { limit: 200, ...(cursor ? { cursor } : {}) },
+    })
+    expect(response.ok(), await response.text()).toBe(true)
+    const targets: TargetListResponse = await response.json()
+    identities.push(...targets.items.map(target =>
+      JSON.stringify([target.target_registry_name, target.identifier.hash])))
+    if (!targets.pagination.has_more) break
+    expect(targets.pagination.next_cursor).toBeTruthy()
+    cursor = targets.pagination.next_cursor
+  } while (cursor)
+  return identities.sort()
+}
 
 async function capture(page: Page, name: string): Promise<void> {
   const directory = process.env.PYRIT_EVIDENCE_DIR || test.info().outputPath('explicit-targets')
@@ -19,14 +41,13 @@ for (const width of [1280, 390]) {
     test.setTimeout(180_000)
     page.setDefaultTimeout(15_000)
     await page.setViewportSize({ width, height: 900 })
+    const initialTargets = await targetSnapshot(request)
     const catalog = await request.get('/api/scenarios/catalog')
     expect(catalog.ok(), await catalog.text()).toBe(true)
     const typeCatalog = await (await request.get('/api/targets/types')).json()
     const openai = typeCatalog.items.find((entry: { target_type: string }) => entry.target_type === 'OpenAIChatTarget')
     expect(openai.parameters.find((parameter: { name: string }) => parameter.name === 'model_name').required).toBe(true)
-    const targets = await (await request.get('/api/targets')).json()
-    expect(targets.items.every((target: { identifier: { class_name: string } }) =>
-      target.identifier.class_name !== 'OpenAIChatTarget')).toBe(true)
+    expect(await targetSnapshot(request)).toEqual(initialTargets)
     const before = await (await request.get('/api/scenarios/runs')).json()
     await page.goto('/scanner/launch/technique.execute')
     await waitForAppReady(page)
@@ -56,6 +77,7 @@ for (const width of [1280, 390]) {
     await capture(page, `target-error-${width}`)
     await targetDialog.getByRole('button', { name: 'Cancel', exact: true }).click()
     await expect(objective).toHaveValue(`Offline explicit role acceptance ${width}`)
+    expect(await targetSnapshot(request)).toEqual(initialTargets)
 
     await page.getByRole('button', { name: 'Create objective target', exact: true }).click()
     await targetDialog.getByRole('combobox', { name: 'Target Type' }).click()
@@ -66,7 +88,12 @@ for (const width of [1280, 390]) {
     await targetDialog.getByRole('button', { name: 'Create Target', exact: true }).click()
     const targetResponse = await createdTargetResponse
     expect(targetResponse.ok(), await targetResponse.text()).toBe(true)
-    const target = await targetResponse.json()
+    const target: TargetInstance = await targetResponse.json()
+    expect(target.identifier.class_name).toBe('BrowserTarget')
+    const configuredTargets = [
+      ...initialTargets, JSON.stringify([target.target_registry_name, target.identifier.hash]),
+    ].sort()
+    expect(await targetSnapshot(request)).toEqual(configuredTargets)
     await expect(page.getByTestId('scenario-target-select')).toHaveValue(target.target_registry_name)
     await expect(page.getByLabel('Scan configuration issues')).toContainText('scoring_target')
     await capture(page, `launch-error-${width}`)
@@ -111,6 +138,21 @@ for (const width of [1280, 390]) {
     await expect.poll(async () => (await (await request.get(
       `/api/scenarios/runs/${run.scenario_result_id}`,
     )).json()).status, { timeout: 30_000 }).toBe('COMPLETED')
+    const completed: ScenarioRunSummary = await (await request.get(
+      `/api/scenarios/runs/${run.scenario_result_id}`,
+    )).json()
+    expect(completed.target?.target_type).toBe('BrowserTarget')
+    expect(completed.target?.identifier_hash).toBe(target.identifier.hash)
+    expect(completed.error).toBeNull()
+    const savedResponse = await request.get(`/api/scenarios/runs/${run.scenario_result_id}/launch-configuration`)
+    expect(savedResponse.ok(), await savedResponse.text()).toBe(true)
+    const saved: RunScenarioRequest = await savedResponse.json()
+    expect(saved.target_name).toBe(target.target_registry_name)
+    expect(saved.objective_scorer?.registry_name).toBe(`offline_explicit_${width}`)
+    expect(saved.scoring_target_name).toBeFalsy()
+    expect(saved.adversarial_target_name).toBeFalsy()
+    expect(saved.techniques).toEqual(['flip'])
+    expect(await targetSnapshot(request)).toEqual(configuredTargets)
 
     const imageScenario = (await catalog.json()).items.find(
       (entry: { scenario_name: string }) => entry.scenario_name.includes('fig'),
