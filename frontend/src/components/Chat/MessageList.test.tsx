@@ -2071,8 +2071,10 @@ describe("MessageList", () => {
       const user = userEvent.setup();
       const mockBlob = new Blob(["image"], { type: "image/png" });
       const mockObjectUrl = "blob:http://localhost/retry";
+      const failedResponseBlob = new Blob([JSON.stringify({ detail: "Not found" })], { type: "application/json" });
+      const failedBlob = jest.fn().mockResolvedValue(failedResponseBlob);
       global.fetch = jest.fn()
-        .mockResolvedValueOnce({ ok: false, status: 404 })
+        .mockResolvedValueOnce({ ok: false, status: 404, blob: failedBlob })
         .mockResolvedValueOnce({ ok: true, status: 200, blob: () => Promise.resolve(mockBlob) });
       global.URL.createObjectURL = jest.fn().mockReturnValue(mockObjectUrl);
       global.URL.revokeObjectURL = jest.fn();
@@ -2102,6 +2104,7 @@ describe("MessageList", () => {
 
       await user.click(downloadButton);
       expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
+      expect(failedBlob).not.toHaveBeenCalled();
       expect(global.URL.createObjectURL).not.toHaveBeenCalled();
       expect(clickSpy).not.toHaveBeenCalled();
 
@@ -2109,6 +2112,44 @@ describe("MessageList", () => {
       await waitFor(() => expect(clickSpy).toHaveBeenCalledTimes(1));
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(global.URL.revokeObjectURL).toHaveBeenCalledWith(mockObjectUrl);
+
+      jest.restoreAllMocks();
+    });
+
+    it("does not carry a failed download error into a different conversation", async () => {
+      const user = userEvent.setup();
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, blob: jest.fn() });
+      const firstMessages: Message[] = [{
+        role: "assistant",
+        content: "First conversation",
+        timestamp: "2026-11-04T10:00:00.000Z",
+        attachments: [{
+          type: "image",
+          name: "same.png",
+          url: "http://localhost/media/same.png",
+          mimeType: "image/png",
+          size: 1024,
+        }],
+      }];
+      const secondMessages: Message[] = [{
+        role: "assistant",
+        content: "Second conversation",
+        timestamp: "2026-11-04T10:01:00.000Z",
+        attachments: [{
+          type: "image",
+          name: "same.png",
+          url: "http://localhost/media/same.png",
+          mimeType: "image/png",
+          size: 1024,
+        }],
+      }];
+
+      const { rerender } = render(<TestWrapper><MessageList messages={firstMessages} /></TestWrapper>);
+      await user.click(screen.getByTestId("download-btn-0-0"));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
+
+      rerender(<TestWrapper><MessageList messages={secondMessages} /></TestWrapper>);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
       jest.restoreAllMocks();
     });
