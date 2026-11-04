@@ -137,7 +137,6 @@ project:
             - file: code/targets/1_openai_chat_target.ipynb
             - file: code/targets/2_openai_responses_target.ipynb
             - file: code/targets/3_openai_image_target.ipynb
-            - file: code/targets/4_openai_video_target.ipynb
             - file: code/targets/5_openai_tts_target.ipynb
             - file: code/targets/6_custom_targets.ipynb
             - file: code/targets/6_1_target_capabilities.ipynb
