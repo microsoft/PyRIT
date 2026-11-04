@@ -3000,6 +3000,8 @@ export default function ChatWindow({
           onUseAsTemplate={handleUseAsTemplate}
           attackOperator={isOperatorLocked ? attackOperator ?? undefined : undefined}
           onConfigureTarget={() => onNavigate?.('registry')}
+          onBrowseSeedPrompts={() => onNavigate?.('datasets')}
+          showSeedInspiration={!attackResultId && messages.length === 0 && !chatInputText.trim() && draftAttachments.length === 0}
           onToggleConverterPanel={() => setIsConverterPanelOpen(prev => !prev)}
           isConverterPanelOpen={isConverterPanelOpen}
           onInputChange={handleComposerInputChange}
