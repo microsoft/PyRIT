@@ -497,6 +497,22 @@ describe("parseWeight", () => {
 });
 
 describe("CreateTargetDialog", () => {
+  it("explains explicit manual model entry instead of promising environment fallback", async () => {
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [{ target_type: "OpenAIChatTarget", supported_auth_modes: ["api_key"],
+        parameters: OPENAI_COMMON_PARAMETERS.map((parameter) =>
+        parameter.name === "model_name" ? {
+          ...parameter, required: true, description: "If None, uses OPENAI_CHAT_MODEL from the environment.",
+        } : parameter) }],
+    });
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await selectTargetType("OpenAIChatTarget");
+    expect(await screen.findByText(/Enter the model or deployment name explicitly/)).toBeVisible();
+    expect(screen.queryByText(/If None, uses OPENAI_CHAT_MODEL/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Target" })).toBeDisabled();
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  });
+
   const defaultProps = {
     open: true,
     onClose: jest.fn(),

@@ -57,6 +57,20 @@ role issues without generating prompts. `initialize_async()` independently enfor
 the same rules. Scorers retain scenario-specific questions, refusal handling, and
 blocking policies; a missing role never disables scoring.
 
+An already registered default scorer owns its rubric and scoring target. If you
+also select a conflicting `scoring_target`, readiness rejects that configuration
+instead of silently ignoring the selection or rebuilding the rubric. Clear the
+target selection to keep the registered scorer, or select a scorer explicitly.
+
+Readiness uses each scenario's execution-time factory precedence and validates
+the actual selected generation consumers, including simulated conversations.
+Native requirements (such as RedTeaming/Crescendo system prompts) cannot be
+adapted; adaptable requirements use the target's configured capability policy.
+`AdversarialBenchmark` validates and binds its own `adversarial_targets` registry
+axis, without requiring an unrelated global generation default. Ordered additive
+converters and their nested targets are also included in saved dependency
+bindings, even for scenario-owned techniques.
+
 API clients can preview `POST /api/scenarios/catalog/{name}/readiness` using the
 same configuration as the estimate request, including `scoring_target_name` and
 `adversarial_target_name`. Suite clients can preview

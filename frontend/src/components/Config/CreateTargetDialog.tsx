@@ -882,7 +882,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasModelNameField && (
                     <Field
                       label="Model / Deployment Name"
-                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameParameter?.description || undefined}
+                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameRequired
+                        ? 'Enter the model or deployment name explicitly. To use environment configuration, select an initializer-registered target instead.'
+                        : modelNameParameter?.description || undefined}
                       required={modelNameRequired}
                       validationMessage={fieldErrors.modelName}
                       validationState={fieldErrors.modelName ? 'error' : 'none'}

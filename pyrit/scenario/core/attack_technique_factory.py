@@ -32,7 +32,7 @@ from pydantic import BaseModel
 from pyrit.common import REQUIRED_VALUE, get_global_default_values
 from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.executor.attack import AttackParameters, PromptSendingAttack
+from pyrit.executor.attack import AttackParameters, PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
     AttackAdversarialConfig,
@@ -443,6 +443,20 @@ class AttackTechniqueFactory(Identifiable):
             scorer_override_policy=scorer_override_policy,
             requirements=requirements or TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True)),
         )
+
+    def check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
+        """
+        Check the selected attack and any simulation's actual generation consumer.
+
+        Returns:
+            list[str]: Unsatisfied consumer requirements, without model traffic.
+        """
+        errors: list[str] = []
+        if self.uses_adversarial:
+            errors.extend(self.attack_class.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
+        if self.seed_technique is not None and self.seed_technique.has_simulated_conversation:
+            errors.extend(RedTeamingAttack.ADVERSARIAL_TARGET_REQUIREMENTS.check(target=target))
+        return list(dict.fromkeys(errors))
 
     def _derive_uses_adversarial(self) -> bool:
         """

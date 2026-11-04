@@ -549,6 +549,17 @@ class Scenario(ABC):
         # if the scenario has override composite scorer questions, use them to build a composite scorer
         composite_scorer_questions_paths = type(self)._get_additional_scoring_questions()
         if registry_default_scorer is not None and not composite_scorer_questions_paths:
+            selected = self.params.get("scoring_target")
+            if selected is not None:
+                if not isinstance(selected, PromptTarget):
+                    raise ValueError("scoring_target must be a PromptTarget.")
+                if chat_target is None or selected.get_identifier().hash != chat_target.get_identifier().hash:
+                    raise ValueError(
+                        "The registered default objective scorer does not use the selected scoring_target. "
+                        "Select an objective scorer explicitly, or clear scoring_target to keep the registered rubric."
+                    )
+            if chat_target is not None:
+                self._resolve_scoring_target(chat_target=chat_target)
             return self._apply_scorer_block_policy(scorer=registry_default_scorer)
         chat_target = self._resolve_scoring_target(chat_target=chat_target)
         if composite_scorer_questions_paths:
@@ -1059,6 +1070,15 @@ class Scenario(ABC):
             factories[local_factory.name] = local_factory
         return factories
 
+    def _check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
+        """
+        Check scenario-owned generation consumers in addition to the selected factories.
+
+        Returns:
+            list[str]: Unsatisfied scenario-owned consumer requirements.
+        """
+        return []
+
     def _requires_default_adversarial_target(self) -> bool:
         if self._supplied_adversarial_target is not None:
             return True
@@ -1089,6 +1109,9 @@ class Scenario(ABC):
 
         Returns:
             ScenarioReadiness: Effective bindings and actionable configuration issues.
+
+        Raises:
+            ValueError: If scenario parameters cannot be resolved.
         """
         self._resolve_runtime_configuration(require_objective_target=False, validate_objective_target=False)
         result = ScenarioReadiness()
@@ -1122,6 +1145,14 @@ class Scenario(ABC):
         compatible = 0
         known = 0
         for technique in self._scenario_techniques:
+            for index, converter in enumerate(self._technique_converters.get(technique.value, [])):
+                result.bindings.append(
+                    ScenarioRoleBinding(
+                        role=f"converter:{technique.value}:{index}",
+                        component=technique.value,
+                        identifier=converter.get_identifier(),
+                    )
+                )
             factory = factories.get(technique.value)
             if factory is None:
                 continue
@@ -1155,6 +1186,9 @@ class Scenario(ABC):
             ):
                 try:
                     validate_default_adversarial_target(factory.adversarial_chat)
+                    errors = factory.check_adversarial_target(target=factory.adversarial_chat)
+                    if errors:
+                        raise ValueError("; ".join(errors))
                 except ValueError as exc:
                     result.issues.append(
                         ScenarioConfigurationIssue(
@@ -1216,6 +1250,30 @@ class Scenario(ABC):
                     )
                 )
             else:
+                target = self._resolved_adversarial_target
+                errors = self._check_adversarial_target(target=target)
+                for technique in self._scenario_techniques:
+                    factory = factories.get(technique.value)
+                    if factory is None or not factory.uses_default_adversarial_target or not factory.uses_adversarial:
+                        continue
+                    if (
+                        self._objective_target is not None
+                        and self._incompatible_technique_policy is IncompatibleTechniquePolicy.SKIP
+                        and factory.requirements.check_target(
+                            target=self._objective_target, attack_class=factory.attack_class
+                        )
+                    ):
+                        continue
+                    errors.extend(factory.check_adversarial_target(target=target))
+                for reason in dict.fromkeys(errors):
+                    result.issues.append(
+                        ScenarioConfigurationIssue(
+                            role="adversarial_target",
+                            component=self.name,
+                            reason=reason,
+                            remediation="Select a generation target compatible with the selected consumers.",
+                        )
+                    )
                 result.bindings.append(
                     ScenarioRoleBinding(
                         role="adversarial_target",

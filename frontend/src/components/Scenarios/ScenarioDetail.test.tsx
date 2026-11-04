@@ -274,6 +274,47 @@ function renderDetail(
 }
 
 describe('ScenarioDetail', () => {
+  it('keeps an incompatible scoring selection editable even after choosing an explicit scorer', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))
+    jest.mocked(scenariosApi.readiness).mockImplementation(async (_name, request) =>
+      request.scoring_target_name ? { bindings: [], issues: [{
+        role: 'objective_scorer', component: 'rubric', reason: 'Incompatible scoring target.', remediation: 'Change it.',
+      }] } : { issues: [], bindings: [{ role: 'scoring_target', component: 'rubric',
+        identifier: { class_name: 'Judge', hash: 'configured-judge' } }] })
+    renderDetail('/scanner/launch/foundry.red_team_agent', { scorers: [{
+      scorer_registry_name: 'explicit', identifier: { class_name: 'SubStringScorer', hash: 'explicit-hash', scorer_type: 'true_false' },
+    }] })
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Scoring Target' }), 'target-b')
+    expect(await screen.findAllByText(/Incompatible scoring target/)).not.toHaveLength(0)
+    expect(screen.getByRole('combobox', { name: 'Scoring Target' })).toHaveValue('target-b')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Objective scorer' }), 'registered:explicit')
+    expect(screen.getByRole('combobox', { name: 'Scoring Target' })).toHaveValue('target-b')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Scoring Target' }), 'target-a')
+    await waitFor(() => expect(scenariosApi.readiness).toHaveBeenLastCalledWith(
+      expect.any(String), expect.objectContaining({ scoring_target_name: 'target-a' }), expect.anything(),
+    ))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Scoring Target' }), '')
+    await waitFor(() => expect(jest.mocked(scenariosApi.readiness).mock.calls.at(-1)?.[1]).not.toHaveProperty('scoring_target_name'))
+    expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-a')
+    expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it('confirms resolved scoring and generation roles, omitting unconsumed helpers', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true, uses_default_adversarial_target: true }))
+    jest.mocked(scenariosApi.readiness).mockResolvedValue({ issues: [], bindings: [
+      { role: 'objective_scorer', component: 'rubric', identifier: { class_name: 'ResolvedRubric', hash: 'rubric' } },
+      { role: 'scoring_target', component: 'rubric', identifier: makeTarget('target-b').identifier },
+    ] })
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    const dialog = await openRunPreview(user)
+    expect(within(dialog).getByText('Scoring Target')).toBeVisible()
+    expect(within(dialog).getByText('Configured: target-b')).toBeVisible()
+    expect(within(dialog).queryByText('Adversarial Target')).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('Use server default')).not.toBeInTheDocument()
+  })
+
   it('blocks admission on role issues and identifies the missing component', async () => {
     jest.mocked(scenariosApi.readiness).mockResolvedValue({ bindings: [], issues: [{
       role: 'scoring_target', component: 'scenario rubric', reason: 'No scoring target configured.',

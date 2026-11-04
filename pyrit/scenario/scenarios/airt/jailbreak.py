@@ -455,6 +455,9 @@ class Jailbreak(Scenario):
             note=f"{formula}{baseline_explanation}{capability_note}",
         )
 
+    def _get_readiness_factories(self) -> dict[str, AttackTechniqueFactory]:
+        return {**super()._get_readiness_factories(), **_extra_default_factories()}
+
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Build one atomic attack per (technique x jailbreak template x dataset x attempt).
@@ -492,7 +495,9 @@ class Jailbreak(Scenario):
         """
         num_attempts = self.params["num_jailbreak_attempts"]
 
-        technique_factories = resolve_technique_factories(context=context, extra_factories=_extra_default_factories())
+        technique_factories = resolve_technique_factories(
+            context=context, extra_factories=self._get_readiness_factories()
+        )
         technique_factories = {
             name: factory
             for name, factory in technique_factories.items()

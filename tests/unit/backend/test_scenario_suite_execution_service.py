@@ -21,6 +21,7 @@ from pyrit.backend.services.scenario_suite_execution_service import (
 )
 from pyrit.models import (
     SCENARIO_SUITE_EXECUTION_METADATA_KEY,
+    ComponentIdentifier,
     LaunchScenarioSuiteRequest,
     ScenarioRunState,
     ScenarioSuiteExecutionStatus,
@@ -36,7 +37,7 @@ from pyrit.models.catalog import (
     ScenarioSuite,
     ScenarioSuiteEntry,
 )
-from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness
+from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness, ScenarioRoleBinding
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioSuiteLaunchConflictError,
@@ -228,6 +229,24 @@ async def test_launch_queues_entries_in_order_and_stamps_versioned_metadata(
     """Test server-owned identity, launch propagation, ordering, and child metadata."""
     service, suite_registry, _, _, calls, _ = execution_context
     stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    bindings = [
+        [
+            ScenarioRoleBinding(
+                role=role, component=f"child-{index}", identifier=ComponentIdentifier(class_name=f"{role}-{index}")
+            )
+            for role in (
+                "objective_target",
+                "objective_scorer",
+                "scoring_target",
+                "adversarial_target",
+                "converter:flip:0",
+            )
+        ]
+        for index in (1, 2)
+    ]
+    _execution_mod.ScenarioConfigurationResolver.resolve_readiness.side_effect = [
+        ScenarioReadiness(bindings=child_bindings) for child_bindings in bindings
+    ]
 
     accepted = await service.launch_async(
         name="weekly",
@@ -251,6 +270,10 @@ async def test_launch_queues_entries_in_order_and_stamps_versioned_metadata(
         assert request.max_retries == 3
         assert request.operation_id == OPERATION_ID
         assert request.labels == {"team": "purple"}
+    for (_, metadata), child_bindings in zip(calls, bindings, strict=True):
+        assert metadata["scenario_expected_role_references_v1"] == {
+            f"{binding.role}_hash": binding.identifier.hash for binding in child_bindings
+        }
 
     first_metadata = calls[0][1][SCENARIO_SUITE_EXECUTION_METADATA_KEY]
     second_metadata = calls[1][1][SCENARIO_SUITE_EXECUTION_METADATA_KEY]

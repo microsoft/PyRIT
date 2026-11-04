@@ -141,6 +141,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
     DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH: Path = (
         Path(EXECUTOR_SEED_PROMPT_PATH) / "crescendo" / "crescendo_variant_1.yaml"
     )
+    ADVERSARIAL_TARGET_REQUIREMENTS = _ADVERSARIAL_REQUIREMENTS
     ADVERSARIAL_PROMPT_REQUIREMENTS = AdversarialPromptRequirements(
         default_system_prompt_path=DEFAULT_ADVERSARIAL_CHAT_SYSTEM_PROMPT_TEMPLATE_PATH,
         system_prompt_parameters=("objective", "max_turns"),
@@ -231,7 +232,7 @@ class CrescendoAttack(MultiTurnAttackStrategy[CrescendoAttackContext, CrescendoA
         # (The class-level ``TARGET_REQUIREMENTS`` only covers ``objective_target``;
         # this is a separate target.)
         try:
-            _ADVERSARIAL_REQUIREMENTS.validate(target=self._adversarial_chat)
+            type(self).ADVERSARIAL_TARGET_REQUIREMENTS.validate(target=self._adversarial_chat)
         except ValueError as exc:
             raise ValueError(f"CrescendoAttack {exc}") from exc
 

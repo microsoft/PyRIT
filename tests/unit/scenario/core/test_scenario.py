@@ -1535,6 +1535,7 @@ class TestGetDefaultObjectiveScorer:
         mock_scorer.__class__ = TrueFalseScorer
         # A scorer with no LLM-backed leaf returns itself rather than a copy.
         mock_scorer.with_scorer_block_policy.return_value = mock_scorer
+        mock_scorer.get_chat_target.return_value = None
 
         mock_entry = MagicMock()
         mock_entry.instance = mock_scorer
@@ -1546,6 +1547,7 @@ class TestGetDefaultObjectiveScorer:
         # Mock self with _get_additional_scoring_questions returning empty sequence
         mock_self = MagicMock()
         mock_self.RAISE_IF_DEFAULT_SCORER_BLOCKS = True
+        mock_self.params = {}
         mock_self._apply_scorer_block_policy = functools.partial(Scenario._apply_scorer_block_policy, mock_self)
         type(mock_self)._get_additional_scoring_questions = classmethod(lambda cls: [])
 
@@ -1595,6 +1597,7 @@ class TestGetDefaultObjectiveScorer:
 
         mock_self = MagicMock()
         mock_self.RAISE_IF_DEFAULT_SCORER_BLOCKS = raise_if_blocks
+        mock_self.params = {}
         mock_self._apply_scorer_block_policy = functools.partial(Scenario._apply_scorer_block_policy, mock_self)
         type(mock_self)._get_additional_scoring_questions = classmethod(lambda cls: [])
 

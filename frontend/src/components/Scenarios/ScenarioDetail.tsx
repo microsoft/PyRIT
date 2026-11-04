@@ -1711,7 +1711,7 @@ function ScenarioLaunchForm({
                   Create objective scorer
                 </Button>}
                 {roleIssues('objective_scorer')}
-                {!objectiveScorer && needsScoringTarget && <>
+                {(scoringTargetName !== '' || (!objectiveScorer && needsScoringTarget)) && <>
                   <TargetSelect label="Scoring Target" targets={availableTargets} value={scoringTargetName}
                     onChange={(target) => setScoringTargetName(target?.target_registry_name ?? '')}
                     placeholder={resolvedRoleLabel(readiness, 'scoring_target', availableTargets, 'No configured scoring target')}
@@ -2016,13 +2016,19 @@ function ScenarioLaunchForm({
                         <dd>{targetName}</dd>
                         {scenario.supports_objective_scorer && <>
                           <dt>Objective scorer</dt>
-                          <dd>{objectiveScorer?.registry_name ?? 'Use scenario default'}</dd>
+                          <dd>{objectiveScorer?.registry_name ?? (defaultScorer
+                            ? `${defaultScorer.identifier.class_name} (${defaultScorer.identifier.hash.slice(0, 8)})`
+                            : 'Not used')}</dd>
                         </>}
                       </>}
-                      {scenario.uses_default_adversarial_target && (
+                      {readiness?.bindings.some((binding) => binding.role === 'scoring_target') && <>
+                        <dt>Scoring Target</dt>
+                        <dd>{resolvedRoleLabel(readiness, 'scoring_target', availableTargets, 'Not used')}</dd>
+                      </>}
+                      {readiness?.bindings.some((binding) => binding.role === 'adversarial_target') && (
                         <>
                           <dt>Adversarial Target</dt>
-                          <dd>{adversarialTargetName || 'Use server default'}</dd>
+                          <dd>{resolvedRoleLabel(readiness, 'adversarial_target', availableTargets, 'Not used')}</dd>
                         </>
                       )}
                     </div>

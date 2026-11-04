@@ -156,9 +156,21 @@ export default function LaunchSuiteDialog({
     && selectionGeneration === runtime.generation && runtime.ready
   const usesRole = (role: string): boolean => readiness
     ? [...readiness.bindings, ...readiness.issues].some((entry) => entry.role === role) : false
-  const roleIssues = (role: string) => readiness?.issues.filter((issue) => issue.role === role)
-    .map((issue) => <Text key={`${issue.component}:${issue.reason}`} role="alert">
-      {issue.component}: {issue.reason} {issue.remediation}
+  const groupedIssues = new Map<string, {
+    role: string; reason: string; remediation: string; components: string[]
+  }>()
+  for (const issue of readiness?.issues ?? []) {
+    const key = JSON.stringify([issue.role, issue.reason, issue.remediation])
+    const existing = groupedIssues.get(key)
+    if (existing) {
+      if (!existing.components.includes(issue.component)) existing.components.push(issue.component)
+    } else {
+      groupedIssues.set(key, { ...issue, components: [issue.component] })
+    }
+  }
+  const roleIssues = (role: string) => [...groupedIssues.entries()].filter(([, issue]) => issue.role === role)
+    .map(([key, issue]) => <Text key={key} role="alert">
+      {issue.components.join(', ')}: {issue.reason} {issue.remediation}
     </Text>)
   const beginTargetCreation = (role: 'objective' | 'scoring' | 'adversarial'): void => {
     setCreationGeneration(runtime.generation)
@@ -244,7 +256,7 @@ export default function LaunchSuiteDialog({
                 Create objective scorer
               </Button>
               {roleIssues('objective_scorer')}
-              {usesRole('scoring_target') && <>
+              {(scoringTargetName !== '' || usesRole('scoring_target')) && <>
                 <TargetSelect targets={availableTargets} value={scoringTargetName}
                   onChange={(target) => setScoringTargetName(target?.target_registry_name ?? '')}
                   label="Scoring Target"
@@ -270,10 +282,14 @@ export default function LaunchSuiteDialog({
               </MessageBar>}
               {readiness && readiness.issues.length > 0 && <MessageBar intent="warning">
                 <MessageBarBody role="alert" aria-label="Suite configuration issues">
-                  No child can start until all suite entries are ready.
-                  <ul>{readiness.issues.map((issue) => <li key={`${issue.component}:${issue.role}:${issue.reason}`}>
-                    {issue.component}, {issue.role}: {issue.reason} {issue.remediation}
-                  </li>)}</ul>
+                  Resolve the highlighted fields before launching.
+                  Affected entries: {[...new Set(readiness.issues.map((issue) => issue.component))].join(', ')}.
+                  {[...groupedIssues.entries()]
+                    .filter(([, issue]) => !['objective_target', 'objective_scorer', 'scoring_target', 'adversarial_target']
+                      .includes(issue.role))
+                    .map(([key, issue]) => <Text key={key} block>
+                      {issue.components.join(', ')}: {issue.reason} {issue.remediation}
+                    </Text>)}
                 </MessageBarBody>
               </MessageBar>}
               <HelpField label="Max concurrency per run" help={HELP_DEFINITIONS.maxConcurrency}>

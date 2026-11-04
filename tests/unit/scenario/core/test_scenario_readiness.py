@@ -9,14 +9,22 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
-from pyrit.executor.attack import PromptSendingAttack
+from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunService
+from pyrit.converter import StringJoinConverter, TranslationConverter
+from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory
-from pyrit.models.catalog import ScenarioRunSizeEstimateRequest
+from pyrit.message_normalizer import HistorySquashNormalizer
+from pyrit.models.catalog import RunScenarioRequest, ScenarioRunSizeEstimateRequest
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
-from pyrit.prompt_target import TargetCapabilities
+from pyrit.prompt_target import CapabilityName, TargetCapabilities, TargetConfiguration
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory, override_default_adversarial_target
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.scenario.core.scenario import Scenario
+from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
+from pyrit.scenario.scenarios.airt.multilingual import Multilingual
+from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
+from pyrit.scenario.scenarios.garak.doctor import Doctor
 from pyrit.scenario.scenarios.technique.execute import Execute
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.scorers import ScorerInitializerTags
@@ -54,6 +62,12 @@ def configured_execute(*, technique: str = "prompt_sending", deterministic: bool
     )
     scenario._resolve_runtime_configuration(require_objective_target=False)
     return scenario
+
+
+def named_target(name: str) -> MockPromptTarget:
+    target = MockPromptTarget()
+    target.set_model_name(model_name=name)
+    return target
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -191,3 +205,273 @@ class TestScenarioReadiness:
         scenario = configured_execute()
         with pytest.raises(ValueError, match="changed after preflight"):
             ScenarioRunService._resolved_role_metadata(scenario, expected_references={"objective_target_hash": "stale"})
+
+    @pytest.mark.parametrize("same_target", [True, False])
+    def test_registered_model_default_respects_explicit_scoring_target(self, same_target: bool) -> None:
+        original_target = named_target("original-judge")
+        original = configured_execute(deterministic=False)
+        original.params["scoring_target"] = original_target
+        assert original.get_readiness().ready
+        original_scorer = original._objective_scorer
+        ScorerRegistry.get_registry_singleton().instances.register(
+            original_scorer, name="rubric", tags=[ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER]
+        )
+        configured_default = configured_execute(deterministic=False)
+        assert configured_default.get_readiness().ready
+        assert configured_default._resolved_scoring_target is original_target
+        scenario = configured_execute(deterministic=False)
+        scenario.params["scoring_target"] = original_target if same_target else named_target("other-judge")
+        readiness = scenario.get_readiness()
+        assert readiness.ready is same_target
+        assert not original_target.prompt_sent
+        if same_target:
+            assert scenario._objective_scorer is original_scorer
+            assert scenario._resolved_scoring_target is original_target
+        else:
+            assert any("does not use the selected scoring_target" in issue.reason for issue in readiness.issues)
+
+    @pytest.mark.parametrize("technique", ["red_teaming", "crescendo", "crescendo_simulated", "tap"])
+    @pytest.mark.parametrize("baked", [False, True])
+    def test_selected_consumer_requires_native_system_prompt(self, technique: str, baked: bool) -> None:
+        target = MockPromptTarget()
+        target.apply_capabilities(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True, supports_editable_history=True, supports_system_prompt=False
+            )
+        )
+        registry = AttackTechniqueRegistry.get_registry_singleton()
+        if baked:
+            factory = registry.get_factories()[technique]
+            registry.register_from_factories(
+                [
+                    AttackTechniqueFactory(
+                        name="native_consumer",
+                        attack_class=factory.attack_class,
+                        adversarial_chat=target,
+                        seed_technique=factory.seed_technique,
+                    )
+                ]
+            )
+        scenario = configured_execute(technique="native_consumer" if baked else technique)
+        with override_default_adversarial_target(target):
+            readiness = scenario.get_readiness()
+        assert not readiness.ready
+        assert any("system_prompt" in issue.reason for issue in readiness.issues)
+        assert not target.prompt_sent
+
+    @pytest.mark.parametrize(
+        ("scenario_class", "technique"),
+        [(Jailbreak, "prompt_sending"), (Multilingual, "prompt_sending"), (Doctor, "policy_puppetry")],
+    )
+    def test_scenario_local_factory_policy_matches_readiness(
+        self, scenario_class: type[Scenario], technique: str
+    ) -> None:
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+            [AttackTechniqueFactory(name=technique, attack_class=RedTeamingAttack)]
+        )
+        scenario = scenario_class(objective_scorer=SubStringScorer(substring="default"))
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "scenario_techniques": [scenario._technique_class(technique)],
+            }
+        )
+        with override_default_adversarial_target(MockPromptTarget()):
+            readiness = scenario.get_readiness()
+        factory = scenario._get_readiness_factories()[technique]
+        assert factory.attack_class is PromptSendingAttack
+        assert any(
+            binding.role == f"technique:{technique}" and binding.identifier.hash == factory.get_identifier().hash
+            for binding in readiness.bindings
+        )
+
+    @pytest.mark.parametrize("registered_factory", [True, False])
+    async def test_ordered_additive_converters_guard_resume_before_dataset_work_async(
+        self, registered_factory: bool
+    ) -> None:
+        scenario = configured_execute()
+        first, second = StringJoinConverter(join_value="-"), StringJoinConverter(join_value=".")
+        scenario.params["technique_converters"] = {"prompt_sending": [first, second]}
+        await scenario.initialize_async()
+        resumed = Execute(
+            scenario_result_id=scenario._scenario_result_id, objective_scorer=SubStringScorer(substring="default")
+        )
+        resumed.set_params_from_args(
+            args={**scenario.params, "technique_converters": {"prompt_sending": [second, first]}}
+        )
+        if not registered_factory:
+            # Keep the declared enum while removing the runtime factory, as with scenario-owned builders.
+            with patch.object(resumed, "_get_readiness_factories", return_value={}):
+                readiness = resumed.get_readiness()
+        else:
+            readiness = resumed.get_readiness()
+        assert [binding.identifier.hash for binding in readiness.bindings if binding.role.startswith("converter:")] == [
+            second.get_identifier().hash,
+            first.get_identifier().hash,
+        ]
+        with patch.object(resumed._dataset_config, "prepare_async", new_callable=AsyncMock) as prepare:
+            with pytest.raises(ValueError, match="saved scenario dependencies changed"):
+                await resumed.initialize_async()
+        prepare.assert_not_awaited()
+
+    def test_additive_converter_binding_includes_nested_generation_target(self) -> None:
+        identities: list[str] = []
+        for name in ("first", "replacement"):
+            scenario = configured_execute()
+            scenario.params["technique_converters"] = {
+                "prompt_sending": [TranslationConverter(converter_target=named_target(name), language="French")]
+            }
+            readiness = scenario.get_readiness()
+            identities.append(
+                next(
+                    binding.identifier.hash
+                    for binding in readiness.bindings
+                    if binding.role == "converter:prompt_sending:0"
+                )
+            )
+        assert identities[0] != identities[1]
+
+    @pytest.mark.parametrize("names", [[], ["missing"]])
+    async def test_benchmark_owned_targets_reject_before_dataset_work_async(self, names: list[str]) -> None:
+        scenario = AdversarialBenchmark(objective_scorer=SubStringScorer(substring="default"))
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "adversarial_targets": names,
+                "scenario_techniques": [scenario._technique_class("red_teaming")],
+            }
+        )
+        with patch.object(scenario._dataset_config, "prepare_async", new_callable=AsyncMock) as prepare:
+            with pytest.raises(ScenarioConfigurationError) as error:
+                await scenario.initialize_async()
+        assert {issue.role for issue in error.value.issues} == {"adversarial_targets"}
+        prepare.assert_not_awaited()
+
+    def test_benchmark_owns_targets_without_global_adversarial_default(self) -> None:
+        registry = TargetRegistry.get_registry_singleton()
+        target = MockPromptTarget(id="benchmark-generator")
+        registry.instances.register(target, name="generator")
+        scenario = AdversarialBenchmark(objective_scorer=SubStringScorer(substring="default"))
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "adversarial_targets": ["generator"],
+                "scenario_techniques": [scenario._technique_class("red_teaming")],
+            }
+        )
+        readiness = scenario.get_readiness()
+        assert readiness.ready
+        assert any(
+            binding.role == "adversarial_targets:0:generator"
+            and binding.identifier.hash == target.get_identifier().hash
+            for binding in readiness.bindings
+        )
+        assert not any(binding.role == "adversarial_target" for binding in readiness.bindings)
+        expected = {f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings}
+        registry.instances.register(named_target("replacement"), name="generator", replace=True)
+        with pytest.raises(ScenarioRunConflictError, match="changed after preflight"):
+            ScenarioRunService._resolved_role_metadata(scenario, expected_references=expected)
+
+    @pytest.mark.parametrize("configured_adapter", [False, True])
+    def test_translation_readiness_respects_configured_editable_history_adaptation(
+        self, configured_adapter: bool
+    ) -> None:
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=True, supports_editable_history=False),
+                normalizer_overrides={CapabilityName.EDITABLE_HISTORY: HistorySquashNormalizer()}
+                if configured_adapter
+                else None,
+            )
+        )
+        scenario = Multilingual(objective_scorer=SubStringScorer(substring="default"))
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "scenario_techniques": [scenario._technique_class("prompt_sending")],
+            }
+        )
+        with override_default_adversarial_target(target):
+            readiness = scenario.get_readiness()
+        assert readiness.ready is configured_adapter
+        if not configured_adapter:
+            assert any("editable_history" in issue.reason for issue in readiness.issues)
+        assert not target.prompt_sent
+
+    def test_skipped_attack_does_not_constrain_translation_only_target(self) -> None:
+        scenario = Multilingual(objective_scorer=SubStringScorer(substring="default"))
+        scenario.set_params_from_args(args={"objective_target": MockPromptTarget()})
+        scenario._resolve_runtime_configuration(require_objective_target=False)
+        scenario.params["scenario_techniques"] = [
+            scenario._technique_class(name) for name in ("crescendo", "prompt_sending")
+        ]
+        scenario._objective_target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=False))
+        helper = MockPromptTarget()
+        helper.apply_capabilities(
+            capabilities=TargetCapabilities(
+                supports_multi_turn=True, supports_editable_history=True, supports_system_prompt=False
+            )
+        )
+        with override_default_adversarial_target(helper):
+            readiness = scenario.get_readiness()
+        assert readiness.ready
+        assert any(binding.role == "adversarial_target" for binding in readiness.bindings)
+
+    def test_benchmark_technique_overrides_are_effective_readiness_bindings(self) -> None:
+        TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="generator")
+        scenario = AdversarialBenchmark(objective_scorer=SubStringScorer(substring="default"))
+        scenario.set_params_from_args(
+            args={
+                "objective_target": MockPromptTarget(),
+                "adversarial_targets": ["generator"],
+                "scenario_techniques": [scenario._technique_class("red_teaming")],
+                "technique_args": ["red_teaming.max_turns=2"],
+            }
+        )
+        readiness = scenario.get_readiness()
+        assert readiness.ready
+        override = scenario._get_technique_factory_overrides()["red_teaming"]
+        binding = next(binding for binding in readiness.bindings if binding.role == "technique:red_teaming")
+        assert binding.identifier.hash == override.get_identifier().hash
+        assert (
+            binding.identifier.hash
+            != AttackTechniqueRegistry.get_registry_singleton().get_factories()["red_teaming"].get_identifier().hash
+        )
+
+    @pytest.mark.parametrize("changed", [False, True])
+    async def test_real_suite_child_admission_enforces_nonempty_frozen_bindings_async(self, changed: bool) -> None:
+        scorer = SubStringScorer(substring="default")
+        ScorerRegistry.get_registry_singleton().instances.register(
+            scorer, name="default", tags=[ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER]
+        )
+        original = configured_execute()
+        expected = {f"{binding.role}_hash": binding.identifier.hash for binding in original.get_readiness().bindings}
+        assert {"objective_target_hash", "objective_scorer_hash", "technique:prompt_sending_hash"} <= expected.keys()
+        target = named_target("replacement") if changed else original._objective_target
+        request = RunScenarioRequest(
+            scenario_name="technique.execute", scenario_params={"objective": "Return a response"}
+        )
+        service = ScenarioRunService()
+        original_prepare = DatasetAttackConfiguration.prepare_async
+        try:
+            with patch.object(
+                DatasetAttackConfiguration, "prepare_async", autospec=True, side_effect=original_prepare
+            ) as prepare:
+                kwargs = {
+                    "request": request,
+                    "init_kwargs": {"objective_target": target, "scenario_techniques": original._scenario_techniques},
+                    "initial_metadata": {"scenario_expected_role_references_v1": expected},
+                }
+                if changed:
+                    with pytest.raises(ScenarioRunConflictError, match="changed after preflight"):
+                        await service._initialize_scenario_async(**kwargs)
+                    prepare.assert_not_awaited()
+                else:
+                    child = await service._initialize_scenario_async(**kwargs)
+                    prepare.assert_awaited_once()
+                    assert child._scenario_result_id
+            results = await CentralMemory.get_memory_instance().get_scenario_results_async()
+            assert len(results) == (0 if changed else 1)
+            assert not target.prompt_sent
+        finally:
+            await service.shutdown_async()

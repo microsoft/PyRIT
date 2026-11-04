@@ -9,8 +9,7 @@ import { waitForAppReady } from './_runtime'
 test.use({ extraHTTPHeaders: compatibilityHeaders() })
 
 async function capture(page: Page, name: string): Promise<void> {
-  const directory = process.env.PYRIT_EVIDENCE_DIR
-  if (!directory) throw new Error('Set PYRIT_EVIDENCE_DIR to preserve rendered explicit-target evidence.')
+  const directory = process.env.PYRIT_EVIDENCE_DIR || test.info().outputPath('explicit-targets')
   await mkdir(directory, { recursive: true })
   await page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true, animations: 'disabled' })
 }

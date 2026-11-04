@@ -142,6 +142,9 @@ class Doctor(Scenario):
             scenario_result_id=scenario_result_id,
         )
 
+    def _get_readiness_factories(self) -> dict[str, AttackTechniqueFactory]:
+        return {factory.name: factory for factory in DOCTOR_FACTORIES}
+
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Build the Doctor atomic attacks from the selected Policy Puppetry techniques.
@@ -160,7 +163,7 @@ class Doctor(Scenario):
         """
         selected_techniques = {technique.value for technique in context.scenario_techniques}
         technique_factories = {
-            factory.name: factory for factory in DOCTOR_FACTORIES if factory.name in selected_techniques
+            name: factory for name, factory in self._get_readiness_factories().items() if name in selected_techniques
         }
 
         builder = MatrixAtomicAttackBuilder(
