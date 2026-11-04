@@ -71,10 +71,11 @@ function makeDataset(
   }
 }
 
-function Harness({ initialPath }: { initialPath: string }) {
+function Harness({ initialPath, initialState }: { initialPath: string; initialState?: unknown }) {
+  const url = new URL(initialPath, 'http://localhost')
   return (
     <FluentProvider theme={webLightTheme}>
-      <MemoryRouter initialEntries={[initialPath]}>
+      <MemoryRouter initialEntries={[{ pathname: url.pathname, search: url.search, state: initialState }]}>
         <RefreshableRoutes />
       </MemoryRouter>
     </FluentProvider>
@@ -151,6 +152,21 @@ describe('DatasetCatalog', () => {
   afterEach(() => {
     expectOnlyLoadedDatasetGets()
     jest.restoreAllMocks()
+  })
+
+  it('preserves a Chat origin through the catalog and dataset detail route', async () => {
+    const user = userEvent.setup()
+    const chatOrigin = {
+      path: '/attack/chat/attack-1/conversations/conversation-1',
+      state: { fromScenarioHistory: true },
+      attackId: 'attack-1',
+      conversationId: 'conversation-1',
+    }
+    render(<Harness initialPath="/datasets" initialState={{ chatOrigin }} />)
+
+    const returnButton = await screen.findByRole('button', { name: 'Return to Chat' })
+    await user.click(returnButton)
+    expect(currentUrl().pathname).toBe(chatOrigin.path)
   })
 
   it('shows a loading state while the catalog request is in flight', () => {
