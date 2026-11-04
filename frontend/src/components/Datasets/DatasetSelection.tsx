@@ -4,7 +4,7 @@ import { MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-compo
 import { Link, useLocation, useSearchParams } from 'react-router'
 
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
-import { catalogPathFromNavigationState, selectionKeyFromSearchParams } from '@/utils/routeParams'
+import { catalogPathFromNavigationState, isChatPath, selectionKeyFromSearchParams } from '@/utils/routeParams'
 
 import DatasetCard from './DatasetCard'
 import { SeedExampleBrowserView } from './SeedExampleBrowser'
@@ -18,22 +18,39 @@ function shownSelectionKey(selectionKey: string): string {
   return `${selectionKey.slice(0, MAX_SHOWN_SELECTION_KEY_LENGTH - 1)}…`
 }
 
-interface DatasetSelectionProps {
-  activeAttackId?: string | null
-  activeConversationId?: string | null
+interface ChatOrigin {
+  path: string
+  state?: unknown
+  attackId: string | null
+  conversationId: string | null
+}
+
+function chatOriginFromNavigationState(state: unknown): ChatOrigin | null {
+  if (state == null || typeof state !== 'object' || !('chatOrigin' in state)) return null
+  const candidate = (state as { chatOrigin?: unknown }).chatOrigin
+  if (candidate == null || typeof candidate !== 'object' || !('path' in candidate)) return null
+  const origin = candidate as { path?: unknown; state?: unknown; attackId?: unknown; conversationId?: unknown }
+  if (typeof origin.path !== 'string' || !isChatPath(origin.path)) return null
+  return {
+    path: origin.path,
+    state: origin.state,
+    attackId: typeof origin.attackId === 'string' ? origin.attackId : null,
+    conversationId: typeof origin.conversationId === 'string' ? origin.conversationId : null,
+  }
 }
 
 /**
  * Selected dataset summary plus a read-only example table.
  * A missing or repeated selection key does not choose a dataset or request seeds.
  */
-export default function DatasetSelection({ activeAttackId, activeConversationId }: DatasetSelectionProps = {}) {
+export default function DatasetSelection() {
   const styles = useDatasetSelectionStyles()
   const headingRef = useRef<HTMLHeadingElement>(null)
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const selectionKey = selectionKeyFromSearchParams(searchParams)
   const catalogPath = catalogPathFromNavigationState(location.state)
+  const chatOrigin = chatOriginFromNavigationState(location.state)
   // Stay mounted while a catalog reload unmounts the table, so a runtime change
   // is still compared with the generation that owned the current page.
   const seedBrowser = useSeedExampleBrowserState(selectionKey ?? '')
@@ -56,6 +73,7 @@ export default function DatasetSelection({ activeAttackId, activeConversationId 
   return (
     <section className={styles.root} aria-labelledby="dataset-selection-title">
       <Link className={styles.backLink} to={catalogPath}>Back to datasets</Link>
+      {chatOrigin && <Link className={styles.backLink} to={chatOrigin.path} state={chatOrigin.state}>Return to Chat</Link>}
       <h1 id="dataset-selection-title" ref={headingRef} tabIndex={-1} className={styles.title}>
         {title}
       </h1>
@@ -72,8 +90,8 @@ export default function DatasetSelection({ activeAttackId, activeConversationId 
               dataset={dataset}
               onCatalogStale={refresh}
               browserState={seedBrowser}
-              activeAttackId={activeAttackId}
-              activeConversationId={activeConversationId}
+              activeAttackId={chatOrigin?.attackId ?? null}
+              activeConversationId={chatOrigin?.conversationId ?? null}
             />
           </div>
         </>
