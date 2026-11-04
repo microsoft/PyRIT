@@ -21,19 +21,6 @@ Each case checks the saved file's extension, verifies its encoded image format,
 and checks that the persisted target identifier retains `output_format`.
 Generation uses low quality to limit test cost.
 
-## Retired Sora integration
-
-The live Sora generation, remix, image-to-video, separate-file, and content-filter
-tests have been removed following [Sora's retirement](https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation).
-CI no longer requires `OPENAI_VIDEO_*` or `AZURE_OPENAI_VIDEO_*` credentials.
-Remove Sora-only entries from CI's external `env-global` Key Vault secret when
-they are no longer used by other consumers.
-
-`OpenAIVideoTarget` remains a compatibility adapter. Its unit and SDK-compatibility
-tests cover video generation, download, remix, image input, and error handling
-without calling a live video service. General video scorers and converters are
-unaffected.
-
 ## LiteLLM loopback integration tests
 
 `tests/integration/targets/test_litellm_trace_integration.py` checks the real
