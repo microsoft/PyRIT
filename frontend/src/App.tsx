@@ -607,8 +607,11 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     }
     if (view === 'datasets') {
       if (isChatPath(location.pathname)) {
-        navigate(VIEW_PATHS.datasets, {
+        const previousState = lastDatasetsLocation.current.state
+        const inheritedState = previousState !== null && typeof previousState === 'object' ? previousState : {}
+        navigate(lastDatasetsLocation.current.path || VIEW_PATHS.datasets, {
           state: {
+            ...inheritedState,
             chatOrigin: {
               path: location.pathname + location.search + location.hash,
               state: location.state,
