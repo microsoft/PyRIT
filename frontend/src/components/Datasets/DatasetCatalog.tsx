@@ -12,7 +12,7 @@ import {
   MessageBarBody,
 } from '@fluentui/react-components'
 import { SearchRegular } from '@fluentui/react-icons'
-import { useSearchParams } from 'react-router'
+import { useLocation, useNavigate, useSearchParams } from 'react-router'
 
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
@@ -60,6 +60,15 @@ function harmOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
 export default function DatasetCatalog() {
   const styles = useDatasetCatalogStyles()
   const titleId = useId()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const state = location.state
+  const candidate = state !== null && typeof state === 'object' && 'chatOrigin' in state
+    ? (state as { chatOrigin?: unknown }).chatOrigin : null
+  const chatOrigin = candidate !== null && typeof candidate === 'object' && 'path' in candidate
+    && typeof (candidate as { path?: unknown }).path === 'string'
+    && ((candidate as { path: string }).path === '/attack/chat' || (candidate as { path: string }).path.startsWith('/attack/chat/'))
+    ? candidate as { path: string; state?: unknown } : null
   const [searchParams, setSearchParams] = useSearchParams()
   const catalogSearch = searchParams.toString()
   const query = useMemo(
@@ -89,6 +98,8 @@ export default function DatasetCatalog() {
       <div className={styles.header}>
         <div className={styles.headerText}>
           <Text id={titleId} as="h1" size={600} weight="semibold">Datasets</Text>
+          {chatOrigin && <Button appearance="subtle" className={styles.touchTarget}
+            onClick={() => navigate(chatOrigin.path, { state: chatOrigin.state })}>Return to Chat</Button>}
           <Text size={300} className={styles.subtitle}>
             Loaded datasets in memory. Search, filters, and sort stay in the address bar.
             This view does not download datasets or list individual examples.
