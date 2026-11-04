@@ -30,7 +30,8 @@ export function fileToBase64(file: Blob): Promise<string> {
 /**
  * Map a frontend MIME type to the backend PromptDataType convention.
  */
-export function mimeTypeToDataType(mimeType: string): string {
+export function mimeTypeToDataType(mimeType?: string): string {
+  if (!mimeType) return 'binary_path'
   if (mimeType.startsWith('image/')) return 'image_path'
   if (mimeType.startsWith('audio/')) return 'audio_path'
   if (mimeType.startsWith('video/')) return 'video_path'

@@ -13,7 +13,7 @@ export interface ConversationLoadIssue {
 }
 
 interface ConversationLoadRequest {
-  attackResultId: string
+  attackResultId: string | null
   conversationId: string
   requestId: number
 }
@@ -51,6 +51,9 @@ function mergeTranscriptPage(
 }
 
 export interface UseConversationMessagesOptions {
+  readConversation?: (attackResultId: string, conversationId: string) => Promise<ConversationMessagesResponse>
+  readConversationById?: (conversationId: string) => Promise<ConversationMessagesResponse>
+  pollIntervalMs?: number
   attackResultId: string | null
   conversationId: string | null
   activeConversationId: string | null
@@ -84,7 +87,7 @@ export interface ConversationMessages {
   isLoadingMoreMessages: boolean
   messageContinuationIssue: { detail: string; restartRequired: boolean } | null
   loadMoreMessages: () => Promise<void>
-  loadConversation: (attackResultId: string, conversationId: string) => Promise<void>
+  loadConversation: (attackResultId: string | null, conversationId: string) => Promise<void>
   /** Refreshes scores without replacing saved evidence or its paging state. */
   refreshConversationScores: (attackResultId: string, conversationId: string) => Promise<void>
   /** Lets the next conversation change load even while that conversation is sending. */
@@ -102,6 +105,9 @@ export interface ConversationMessages {
 }
 
 export function useConversationMessages({
+  readConversation,
+  readConversationById,
+  pollIntervalMs,
   attackResultId,
   conversationId,
   activeConversationId,
@@ -133,6 +139,9 @@ export function useConversationMessages({
   }, [isSendInFlight, onConversationLoaded])
 
   const viewedConversationId = activeConversationId ?? conversationId
+  const isActiveConversationSending = Boolean(
+    activeConversationId && sendingConversations.has(activeConversationId),
+  )
   const isEvidenceUnavailable = Boolean(
     findingEvidenceId && conversationLoadIssue?.conversationId === viewedConversationId
     && conversationLoadIssue?.unavailable,
@@ -203,7 +212,7 @@ export function useConversationMessages({
   }, [])
 
   // Load messages for a given conversation
-  const loadConversation = useCallback(async (arId: string, convId: string, rejectOnFailure: boolean = false): Promise<void> => {
+  const loadConversation = useCallback(async (arId: string | null, convId: string, rejectOnFailure: boolean = false): Promise<void> => {
     const requestId = claimConversationRead(convId)
     const viewRevision = viewRevisionRef.current
     activeLoadRef.current = { attackResultId: arId, conversationId: convId, requestId }
@@ -213,14 +222,22 @@ export function useConversationMessages({
       && viewedAttackRef.current === arId && viewedConvRef.current === convId && viewRevisionRef.current === viewRevision
 
     try {
-      const incoming = messagePageSize === undefined
-        ? await attacksApi.getMessages(arId, convId)
-        : await attacksApi.getMessages(arId, convId, { limit: messagePageSize })
+      let incoming: ConversationMessagesResponse
+      if (messagePageSize !== undefined) {
+        if (!arId) throw new Error('An attack result ID is required to load saved transcript pages.')
+        incoming = await attacksApi.getMessages(arId, convId, { limit: messagePageSize })
+      } else if (readConversationById) {
+        incoming = await readConversationById(convId)
+      } else if (arId) {
+        incoming = await (readConversation ?? attacksApi.getMessages)(arId, convId)
+      } else {
+        throw new Error('An attack result ID is required to load this conversation.')
+      }
       // Discard superseded loads and responses invalidated by a send.
       if (!isCurrentLoad()) { return }
       const response = messagePageSize === undefined ? incoming : mergeTranscriptPage(null, incoming, convId)
       setMessageContinuationIssue(null)
-      if (messagePageSize !== undefined) {
+      if (messagePageSize !== undefined && arId) {
         saveTranscriptPage({ attackResultId: arId, conversationId: convId, pageSize: messagePageSize, response, consumedCursors: new Set() })
       }
       setConversationLoadIssue(
@@ -248,7 +265,7 @@ export function useConversationMessages({
         setMessageContinuationIssue(null)
         setMessages([])
         markConversationLoaded(convId)
-        if (messagePageSize !== undefined) {
+        if (messagePageSize !== undefined && arId) {
           saveTranscriptPage({
             attackResultId: arId, conversationId: convId, pageSize: messagePageSize, response: null, consumedCursors: new Set(),
           })
@@ -270,7 +287,10 @@ export function useConversationMessages({
         }
       }
     }
-  }, [claimConversationRead, isLatestConversationRead, markConversationLoaded, findingEvidenceId, messagePageSize, saveTranscriptPage])
+  }, [
+    claimConversationRead, isLatestConversationRead, markConversationLoaded,
+    findingEvidenceId, messagePageSize, saveTranscriptPage, readConversation, readConversationById,
+  ])
 
   const refreshConversationScores = useCallback(async (arId: string, convId: string): Promise<void> => {
     if (viewedAttackRef.current !== arId || viewedConvRef.current !== convId) return
@@ -387,15 +407,16 @@ export function useConversationMessages({
   const isTranscriptIncomplete = messagePageSize !== undefined && (!messagePagination || messagePagination.has_more)
   const loadedPieceCount = currentPage?.response?.messages.reduce((count, message) => count + message.message_pieces.length, 0) ?? 0
 
-  // Reload messages when activeConversationId changes
+  // Reload when the selected conversation changes or its send releases ownership.
   useEffect(() => {
-    if (!attackResultId || !activeConversationId) { return }
+    if ((!attackResultId && !readConversationById) || !activeConversationId) { return }
     // A created-attack route can commit after its first send completes.
     // Preserve that local result unless the user explicitly requests a refresh.
     const force = forceLoadRef.current
     forceLoadRef.current = false
     if (!force && (
-      sendCallbacksRef.current.isSendInFlight(activeConversationId)
+      isActiveConversationSending
+      || sendCallbacksRef.current.isSendInFlight(activeConversationId)
       || (
         loadedConversationIdRef.current === activeConversationId
         && (loadedAttackResultIdRef.current === null || loadedAttackResultIdRef.current === attackResultId)
@@ -408,7 +429,22 @@ export function useConversationMessages({
       )
     )) { return }
     loadConversation(attackResultId, activeConversationId)
-  }, [activeConversationId, attackResultId, loadConversation, messagePageSize])
+  }, [activeConversationId, attackResultId, isActiveConversationSending, loadConversation, messagePageSize, readConversationById])
+
+  useEffect(() => {
+    if (!pollIntervalMs || (!attackResultId && !readConversationById) || !activeConversationId) return
+    let active = true
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = (): void => {
+      if (!active) return
+      timer = setTimeout(() => {
+        if (activeLoadRef.current) schedule()
+        else void loadConversation(attackResultId, activeConversationId).finally(schedule)
+      }, pollIntervalMs)
+    }
+    schedule()
+    return () => { active = false; clearTimeout(timer) }
+  }, [pollIntervalMs, attackResultId, activeConversationId, loadConversation, readConversationById])
 
   // Synchronous loading derivation: if activeConversationId differs from the
   // conversation whose messages we've loaded, we're in a transition gap.

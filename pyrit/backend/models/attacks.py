@@ -376,6 +376,13 @@ class ConversationMessagesResponse(BaseModel):
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[MessageView] = Field(default_factory=list, description="All messages in order")
     scoring_failure: ScoringFailure | None = None
+    automated_score: ScoreView | None = None
+    outcome: AttackOutcome | None = Field(
+        default=None, description="Outcome for the latest response; a human score overrides the attack"
+    )
+    latest_response_id: str | None = Field(
+        default=None, description="First piece ID of the latest live assistant response"
+    )
     target_response_status: TargetResponseStatus | None = Field(
         default=None,
         description=(

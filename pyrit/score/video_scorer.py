@@ -6,6 +6,7 @@ import logging
 import random
 import tempfile
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 
 from pyrit.common.async_compatibility import run_legacy_sync_async
@@ -169,7 +170,7 @@ class VideoHelper:
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
         # Extract frames from video
-        frames = await asyncio.to_thread(self._extract_frames, video_path)
+        frames = await self._extract_video_frames_async(video_path)
         if not frames:
             raise ValueError("No frames extracted from video for scoring.")
 
@@ -210,6 +211,33 @@ class VideoHelper:
 
         return frame_scores, len(frames)
 
+    async def _extract_video_frames_async(self, video_path: str) -> list[str]:
+        """
+        Extract frames off-loop and clean up their files before propagating cancellation.
+
+        Returns:
+            list[str]: Temporary file paths for the extracted frames.
+
+        Raises:
+            asyncio.CancelledError: After extraction and temporary file cleanup finish.
+        """
+        frame_paths: list[str] = []
+
+        def extract_frames() -> list[str]:
+            nonlocal frame_paths
+            frame_paths = self._extract_frames(video_path)
+            return frame_paths
+
+        def remove_frames() -> None:
+            for frame_path in frame_paths:
+                Path(frame_path).unlink(missing_ok=True)
+
+        try:
+            return await run_legacy_sync_async(extract_frames)
+        except asyncio.CancelledError:
+            await run_legacy_sync_async(remove_frames)
+            raise
+
     def _extract_frames(self, video_path: str) -> list[str]:
         """
         Extract a specified number of image frames from a video file.
@@ -222,6 +250,7 @@ class VideoHelper:
 
         Raises:
             ModuleNotFoundError: If OpenCV is not installed.
+            OSError: If an extracted frame cannot be written. Files created by this extraction are removed on failure.
         """
         try:
             import cv2
@@ -232,31 +261,34 @@ class VideoHelper:
         frame_paths = []
         video_capture = cv2.VideoCapture(video_path)
 
-        try:
-            total_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
-            if total_frames > 0:
-                # Choose up to num_sampled_frames random unique frame indices
-                frame_indices = sorted(random.sample(range(total_frames), min(self.num_sampled_frames, total_frames)))
-                for frame_index in frame_indices:
-                    # Set the video position to the selected frame
-                    video_capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-                    ret, frame = video_capture.read()
-                    if not ret:
-                        logger.warning(f"Failed to read frame at index {frame_index}")
-                        continue
+        with ExitStack() as cleanup:
+            try:
+                total_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
+                if total_frames > 0:
+                    frame_indices = sorted(
+                        random.sample(range(total_frames), min(self.num_sampled_frames, total_frames))
+                    )
+                    for frame_index in frame_indices:
+                        video_capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+                        ret, frame = video_capture.read()
+                        if not ret:
+                            logger.warning(f"Failed to read frame at index {frame_index}")
+                            continue
 
-                    # Create a temporary file for the frame
-                    with tempfile.NamedTemporaryFile(suffix=f"_frame_{frame_index}.png", delete=False) as temp_file:
-                        # Encode and write frame to temporary file
                         ret, _ = cv2.imencode(".png", frame)
                         if not ret:
                             logger.warning(f"Failed to encode frame at index {frame_index}")
                             continue
 
-                        cv2.imwrite(temp_file.name, frame)
+                        with tempfile.NamedTemporaryFile(suffix=f"_frame_{frame_index}.png", delete=False) as temp_file:
+                            cleanup.callback(Path(temp_file.name).unlink, missing_ok=True)
+                        if not cv2.imwrite(temp_file.name, frame):
+                            raise OSError(f"Failed to write frame at index {frame_index}")
                         frame_paths.append(temp_file.name)
-        finally:
-            video_capture.release()
+            finally:
+                video_capture.release()
+            # Successful extraction transfers ownership to the caller.
+            cleanup.pop_all()
 
         return frame_paths
 

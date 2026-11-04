@@ -1298,6 +1298,7 @@ describe("api service", () => {
         scenario_names: ["first.scenario", "second.scenario"],
         run_statuses: ["IN_PROGRESS", "FAILED"],
         label: ["operator:alice", "operator:bob", "team:safety"],
+        sort_by: "activity",
       });
 
       expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs", {
@@ -1307,6 +1308,7 @@ describe("api service", () => {
           scenario_names: ["first.scenario", "second.scenario"],
           run_statuses: ["IN_PROGRESS", "FAILED"],
           label: ["operator:alice", "operator:bob", "team:safety"],
+          sort_by: "activity",
         },
         paramsSerializer: { indexes: null },
       });

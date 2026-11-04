@@ -5,11 +5,14 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import { apiClient } from '@/services/api'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
 import type { DatasetInfo } from '@/types'
 
 import { datasetDetailPath } from '@/utils/routeParams'
 
 import DatasetSelection from './DatasetSelection'
+
+installAutoRefreshTimers()
 
 let generation = ''
 let ready = true
@@ -195,17 +198,17 @@ describe('DatasetSelection', () => {
     expect(seedCalls()).toEqual([])
   })
 
-  it('focuses retry after a catalog error and can load again', async () => {
-    const user = userEvent.setup()
+  it('shows only the catalog error and recovers on the next automatic read', async () => {
     mockGet.mockRejectedValueOnce(new Error('Catalog unavailable'))
     renderSelection(datasetDetailPath(LOADED.selection_key))
 
     expect(await screen.findByText('Catalog unavailable')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toHaveFocus())
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 
     mockGet.mockResolvedValueOnce({ data: { items: [LOADED] } })
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await advanceAutoRefresh()
     expect(await screen.findByRole('heading', { level: 1, name: 'harmbench' })).toBeInTheDocument()
+    expect(screen.queryByText('Catalog unavailable')).not.toBeInTheDocument()
   })
 
   it('returns to the catalog from the back link', async () => {
