@@ -63,7 +63,7 @@ async def test_score_piece_async_text(*, text_message_piece: MessagePiece, sever
     mock_client = AsyncMock()
     mock_client.analyze_text.return_value = {"categoriesAnalysis": [{"severity": severity, "category": "Hate"}]}
     scorer._azure_cf_client = mock_client
-    scores = await scorer._score_piece_async(text_message_piece)
+    scores = await scorer._score_piece_with_expectation_async(text_message_piece, expectation=None)
     mock_client.analyze_text.assert_awaited_once()
     assert mock_client.analyze_text.await_args.args[0].output_type == "EightSeverityLevels"
     assert len(scores) == 1
@@ -89,7 +89,7 @@ async def test_score_piece_async_image(
     # Return a valid base64 string (represents a tiny 1x1 PNG image)
     valid_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
     with patch.object(scorer, "_get_base64_image_data_async", AsyncMock(return_value=valid_base64)):
-        scores = await scorer._score_piece_async(image_message_piece)
+        scores = await scorer._score_piece_with_expectation_async(image_message_piece, expectation=None)
     mock_client.analyze_image.assert_awaited_once()
     assert mock_client.analyze_image.await_args.args[0].output_type == "FourSeverityLevels"
     assert len(scores) == 1
@@ -297,7 +297,7 @@ async def test_shared_chunking_preserves_request_slices_async(length: int) -> No
     piece = MessagePiece(role="assistant", original_value=text)
     with patch.object(scorer._azure_cf_client, "analyze_text", new_callable=AsyncMock) as analyze:
         analyze.return_value = {"categoriesAnalysis": [{"severity": "2", "category": "Violence"}]}
-        scores = await scorer._score_piece_async(piece)
+        scores = await scorer._score_piece_with_expectation_async(piece, expectation=None)
     expected = [text[i : i + 10000] for i in range(0, length, 10000)] or [""]
     assert [call.args[0].text for call in analyze.await_args_list] == expected
     assert "".join(expected) == text
@@ -323,11 +323,8 @@ async def test_evaluate_async_raises_for_all_categories():
 
 
 async def test_evaluate_async_sets_file_mapping_for_single_category(patch_central_database):
-    """Test that evaluate_async sets evaluation_file_mapping for single category."""
+    """Test that a single-category scorer evaluates against its category's files."""
     scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[TextCategory.HATE])
-
-    # Initially no file mapping
-    assert scorer.evaluation_file_mapping is None
 
     # Mock the parent evaluate_async to avoid actual evaluation
     with patch.object(FloatScaleScorer, "evaluate_async", AsyncMock(return_value=None)) as mock_eval:
@@ -351,6 +348,36 @@ async def test_evaluate_async_uses_canonical_sexual_category(patch_central_datab
     assert scorer.evaluation_file_mapping is not None
     assert scorer.evaluation_file_mapping.harm_category == "SEXUAL_CONTENT"
     assert scorer.evaluation_file_mapping.result_file == "harm/sexual_metrics.jsonl"
+
+
+@pytest.mark.parametrize(
+    ("category", "harm_category"),
+    [
+        (TextCategory.HATE, "hate_speech"),
+        (TextCategory.SELF_HARM, "self_harm"),
+        (TextCategory.SEXUAL, "SEXUAL_CONTENT"),
+        (TextCategory.VIOLENCE, "violence"),
+    ],
+)
+def test_single_category_scorer_finds_its_metrics_without_evaluating(
+    *, category: TextCategory, harm_category: str
+) -> None:
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=[category])
+
+    metrics = scorer.get_scorer_metrics()
+
+    assert scorer.evaluation_file_mapping is not None
+    assert scorer.evaluation_file_mapping.harm_category == harm_category
+    assert metrics is not None
+    assert metrics.num_responses > 0
+
+
+@pytest.mark.parametrize("categories", [None, [TextCategory.HATE, TextCategory.VIOLENCE]])
+def test_multi_category_scorer_has_no_single_metrics(*, categories: list[TextCategory] | None) -> None:
+    scorer = AzureContentFilterScorer(api_key="foo", endpoint="bar", harm_categories=categories)
+
+    assert scorer.evaluation_file_mapping is None
+    assert scorer.get_scorer_metrics() is None
 
 
 def test_init_raises_runtime_error_when_api_key_not_string():
