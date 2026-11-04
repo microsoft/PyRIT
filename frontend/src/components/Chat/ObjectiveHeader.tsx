@@ -84,7 +84,14 @@ interface ObjectiveHeaderProps {
 
 function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'undetermined' {
   if (!score?.score_value) return 'undetermined'
-  return score.score_value.toLowerCase() === 'true' ? 'success' : 'failure'
+  // Non-boolean score types (e.g., float_scale, unknown) must not invent boolean verdicts
+  if (score.score_type && score.score_type !== 'true_false') {
+    return 'undetermined'
+  }
+  const normalized = score.score_value.trim().toLowerCase()
+  if (normalized === 'true') return 'success'
+  if (normalized === 'false') return 'failure'
+  return 'undetermined'
 }
 
 const RESULT_POPOVER_POSITIONING = {
@@ -100,6 +107,25 @@ function scoreLabel(score?: BackendScore | null): string {
   const verdict = scoreVerdict(score)
   if (!score) return 'Not set'
   return verdict === 'undetermined' ? 'Undetermined' : verdict === 'success' ? 'Success' : 'Failure'
+}
+
+/**
+ * Formats an automated score for presentation in Attack Result Details.
+ * For boolean (true_false) scores, returns 'Success', 'Failure', or 'Undetermined'.
+ * For non-boolean scores (unknown, float_scale, etc.), preserves and displays the
+ * raw score value or status without inventing a boolean verdict or applying
+ * artificial numeric thresholds.
+ */
+function automatedScoreLabel(score?: BackendScore | null): string {
+  if (!score) return 'Not set'
+  if (score.score_type === 'true_false') {
+    const verdict = scoreVerdict(score)
+    return verdict === 'undetermined' ? 'Undetermined' : verdict === 'success' ? 'Success' : 'Failure'
+  }
+  if (score.score_value != null && score.score_value !== '') {
+    return score.score_value
+  }
+  return score.status ? score.status : 'Undetermined'
 }
 
 export default function ObjectiveHeader({
@@ -349,11 +375,11 @@ export default function ObjectiveHeader({
                 className={styles.scoreValueButton}
                 onClick={() => setShowAutomatedDetails((visible) => !visible)}
                 aria-expanded={showAutomatedDetails}
-                aria-label={`${scoreLabel(automatedScore)} automated score. ${
+                aria-label={`${automatedScoreLabel(automatedScore)} automated score. ${
                   showAutomatedDetails ? 'Hide' : 'View'
                 } score details`}
               >
-                {scoreLabel(automatedScore)} · {showAutomatedDetails ? 'Hide details' : 'View details'}
+                {automatedScoreLabel(automatedScore)} · {showAutomatedDetails ? 'Hide details' : 'View details'}
               </Button>
             ) : (
               <Text className={styles.scoreValueText}>
@@ -366,6 +392,12 @@ export default function ObjectiveHeader({
           )}
           {showAutomatedDetails && automatedScore && (
             <div className={styles.scorerIdentity} data-testid="automated-score-details">
+              <Text size={200}><strong>Score type:</strong> {automatedScore.score_type}</Text>
+              {automatedScore.score_type !== 'true_false' && (
+                <Text size={200}>
+                  <strong>Value:</strong> {automatedScore.score_value ?? automatedScore.status ?? 'None'}
+                </Text>
+              )}
               <Text size={200}><strong>Scorer:</strong> {automatedScore.scorer_type}</Text>
               {automatedScore.scorer_class_identifier?.class_module && (
                 <Text size={200}>

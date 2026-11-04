@@ -96,6 +96,58 @@ describe('ObjectiveHeader', () => {
     expect(screen.getByRole('group', { name: 'Automated score', exact: true })).toHaveTextContent(label)
   })
 
+  it.each<{ scoreType: string; scoreValue: string | null; status: string; expectedLabel: string }>([
+    { scoreType: 'unknown', scoreValue: 'unknown', status: 'complete', expectedLabel: 'unknown' },
+    { scoreType: 'unknown', scoreValue: 'true', status: 'complete', expectedLabel: 'true' },
+    { scoreType: 'unknown', scoreValue: 'false', status: 'complete', expectedLabel: 'false' },
+    { scoreType: 'float_scale', scoreValue: '0.0', status: 'complete', expectedLabel: '0.0' },
+    { scoreType: 'float_scale', scoreValue: '0.85', status: 'complete', expectedLabel: '0.85' },
+    { scoreType: 'float_scale', scoreValue: null, status: 'undetermined', expectedLabel: 'undetermined' },
+  ])('displays raw value $expectedLabel for non-boolean score ($scoreType)', async ({ scoreType, scoreValue, status, expectedLabel }) => {
+    const user = userEvent.setup()
+    const score: BackendScore = {
+      id: 'non-bool-score',
+      message_piece_id: 'piece-1',
+      scorer_type: 'NonBooleanScorer',
+      score_type: scoreType,
+      score_value: scoreValue,
+      status,
+      timestamp: '',
+    }
+    render(<TestWrapper><ObjectiveHeader objective="Goal" automatedScore={score} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
+    const automatedGroup = screen.getByRole('group', { name: 'Automated score', exact: true })
+    expect(automatedGroup).toHaveTextContent(expectedLabel)
+    expect(automatedGroup).not.toHaveTextContent('Failure')
+    if (scoreValue !== 'true') {
+      expect(automatedGroup).not.toHaveTextContent('Success')
+    }
+  })
+
+  it('renders score type and raw value in automated score details for non-boolean scores', async () => {
+    const user = userEvent.setup()
+    const score: BackendScore = {
+      id: 'probe-score',
+      message_piece_id: 'piece-probe',
+      scorer_type: 'ProbeScorer',
+      score_type: 'unknown',
+      score_value: 'unknown',
+      score_rationale: 'Unknown-type display probe',
+      status: 'complete',
+      timestamp: '',
+    }
+    render(<TestWrapper><ObjectiveHeader objective="Goal" automatedScore={score} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
+
+    // Expand details
+    await user.click(screen.getByRole('button', { name: /unknown automated score\. view score details/i }))
+    const details = screen.getByTestId('automated-score-details')
+    expect(details).toHaveTextContent('Score type: unknown')
+    expect(details).toHaveTextContent('Value: unknown')
+    expect(details).toHaveTextContent('Scorer: ProbeScorer')
+    expect(details).toHaveTextContent('Rationale: Unknown-type display probe')
+  })
+
   it('retains the API explanation when scorer selection fails', async () => {
     const user = userEvent.setup()
     const explanation = 'The selected scorer changed. Reload the registry before selecting it again.'
