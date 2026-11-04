@@ -60,13 +60,15 @@ interface RestoreFailures {
   retry: () => Promise<void>
 }
 
-function useRestoreFailures(failed: boolean): RestoreFailures {
+function useRestoreFailures(failed: boolean, generation: string): RestoreFailures {
   const requestRuntimeRefresh = useContext(RuntimeRefreshContext)
   const [failures, setFailures] = useState<RestoreFailure[]>([])
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
   const listRevision = useRef(0)
   const retryInFlight = useRef(false)
+  // The generation changes only when the runtime becomes ready or the backend restarts, so a new one
+  // while failed means a later failure, even if no poll saw that happen.
   useEffect(() => {
     if (!failed) return
     let cancelled = false
@@ -96,7 +98,7 @@ function useRestoreFailures(failed: boolean): RestoreFailures {
       setFailures([])
       setRetryError(null)
     }
-  }, [failed])
+  }, [failed, generation])
   const retry = async (): Promise<void> => {
     if (retryInFlight.current) return
     retryInFlight.current = true
@@ -129,7 +131,7 @@ function describeFailure(failure: RestoreFailure): string {
 export function RuntimeBanner() {
   const runtime = useRuntime()
   const failed = runtime.state === RESTORE_FAILED_STATE
-  const { failures, retrying, retryError, retry } = useRestoreFailures(failed)
+  const { failures, retrying, retryError, retry } = useRestoreFailures(failed, runtime.generation)
   if (runtime.ready) return null
   if (failed) {
     return (
