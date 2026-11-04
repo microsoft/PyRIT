@@ -51,6 +51,10 @@ export function targetIdentifierHash(target: TargetInstance): string {
 }
 
 export function targetReference(target: TargetInstance): TargetReference {
+  if (target.binding) return {
+    registryName: target.binding.source_name,
+    identifierHash: target.binding.source_hash,
+  }
   return { registryName: target.target_registry_name, identifierHash: targetIdentifierHash(target) }
 }
 
@@ -65,7 +69,7 @@ export function resolveTargetReference(
 }
 
 export function resolveDefaultAdversarialTarget(
-  preferences: TargetPreferences, targets: TargetInstance[],
+  preferences: Pick<TargetPreferences, 'adversarial'>, targets: TargetInstance[],
 ): TargetInstance | null {
   const resolved = preferences.adversarial
     ? resolveTargetReference(preferences.adversarial, targets)
