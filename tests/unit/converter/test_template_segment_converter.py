@@ -171,7 +171,7 @@ async def test_template_segment_converter_invalid_input_type():
         await converter.convert_async(prompt="test", input_type="image_path")
 
 
-def test_template_segment_converter_identifier_includes_ordered_parameters():
+def test_template_segment_converter_identifier_includes_ordered_parameters() -> None:
     """Test that the converter identifier includes ordered parameter names."""
     template = SeedPrompt(value="{{ left }} and {{ right }}", parameters=["left", "right"])
     converter = TemplateSegmentConverter(prompt_template=template, seed=42)
@@ -183,7 +183,7 @@ def test_template_segment_converter_identifier_includes_ordered_parameters():
     assert "template_hash" in identifier.params
 
 
-def test_template_segment_converter_identifier_differs_when_parameters_reordered():
+def test_template_segment_converter_identifier_differs_when_parameters_reordered() -> None:
     """Reordering the template parameters changes binding behavior and must yield distinct hashes."""
     template = "LEFT[{{left}}] RIGHT[{{right}}]"
     first = TemplateSegmentConverter(
@@ -200,7 +200,7 @@ def test_template_segment_converter_identifier_differs_when_parameters_reordered
     assert second.get_identifier().params["parameters"] == ["right", "left"]
 
 
-async def test_template_segment_converter_reordered_parameters_coexist_in_registry():
+async def test_template_segment_converter_reordered_parameters_coexist_in_registry_async() -> None:
     """Distinct parameter bindings have distinct default registry names and register without conflict."""
     registry = ConverterRegistry()
     template = "LEFT[{{left}}] RIGHT[{{right}}]"
