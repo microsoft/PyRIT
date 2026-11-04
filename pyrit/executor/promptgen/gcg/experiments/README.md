@@ -34,13 +34,15 @@ character-to-token offsets. This is not a backend-neutral adapter interface.
 Before any worker starts, GCG checks the actual training and held-out prompts
 against the model's embedding rows. The initial control must also survive the
 same decode-and-render round trip used for candidate controls without changing
-its token IDs. An incompatible `control_init` raises an error identifying the
-model and control; choose a suffix that re-encodes to the same tokens.
+its token IDs. The shared control decoded by the first training prompt must
+also preserve those IDs in every training and held-out prompt. An incompatible
+`control_init` raises an error identifying the model and control; choose a
+suffix that re-encodes to the same tokens.
 
 Worker gradients are combined only when their shapes and token/id mappings
 within the embedding rows agree. These vocabulary fingerprints are cached for
-the lifetime of the candidate proposer, so tokenizers must not be modified
-during an optimization run.
+the lifetime of each loaded worker, across optimization steps and progressive
+phases, so its tokenizer must not be modified while that worker is in use.
 
 ### Running on Azure ML
 

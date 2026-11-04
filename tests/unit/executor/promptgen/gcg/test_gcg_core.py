@@ -4,6 +4,7 @@
 import json
 import pickle
 import threading
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -65,6 +66,7 @@ generator_mod = pytest.importorskip(
 GCGGenerator = generator_mod.GCGGenerator
 
 from unit.executor.promptgen.gcg.trajectory_stubs import (  # noqa: E402
+    IntTokenizer,
     RecordingGCGAttack,
     TrajectoryPromptManager,
     TrajectoryWorker,
@@ -1252,19 +1254,26 @@ class TestCheckGcgCapabilities:
         )
 
     @pytest.mark.parametrize("byte_level", [False, True])
-    def test_round_trip_check_leaves_the_prompt_unchanged(self, *, byte_level: bool) -> None:
+    @pytest.mark.parametrize("control_init", ["! !", "  hello", "hello  world"])
+    def test_round_trip_check_leaves_the_prompt_unchanged(self, *, byte_level: bool, control_init: str) -> None:
         tokenizer = _fast_tokenizer(byte_level=byte_level)
-        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="! !")
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init=control_init)
         control, input_ids, control_slice = prompt.control, prompt.input_ids.tolist(), prompt._control_slice
         model = _tiny_model("llama")
         model.resize_token_embeddings(len(tokenizer), mean_resizing=False)
 
-        attack_manager_mod._check_gcg_capabilities(
-            model=model,
-            tokenizer=tokenizer,
-            model_path="fake/model",
-            prompts=[prompt],
+        expectation = (
+            pytest.raises(ValueError, match="does not survive")
+            if byte_level and control_init == "  hello"
+            else nullcontext()
         )
+        with expectation:
+            attack_manager_mod._check_gcg_capabilities(
+                model=model,
+                tokenizer=tokenizer,
+                model_path="fake/model",
+                prompts=[prompt],
+            )
 
         assert (prompt.control, prompt.input_ids.tolist(), prompt._control_slice) == (
             control,
@@ -1284,6 +1293,20 @@ class TestCheckGcgCapabilities:
         preflight_workers[-1].tokenizer.backend_tokenizer.decoder = decoders.Fuse()
 
         with pytest.raises(ValueError, match="'fake/held-out-model'"):
+            attack_manager_mod.start_workers(params=preflight_params, workers=preflight_workers)
+
+        for worker in preflight_workers:
+            worker.start.assert_not_called()
+
+    def test_rejects_shared_control_that_changes_another_workers_tokens(
+        self, *, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+    ) -> None:
+        preflight_params.control_init = "hello  world"
+        worker = preflight_workers[-1]
+        worker.tokenizer = _fast_tokenizer(byte_level=True)
+        worker.model.resize_token_embeddings(len(worker.tokenizer), mean_resizing=False)
+
+        with pytest.raises(ValueError, match="'fake/held-out-model'.*shared control"):
             attack_manager_mod.start_workers(params=preflight_params, workers=preflight_workers)
 
         for worker in preflight_workers:
@@ -1563,6 +1586,7 @@ class _WorkerStub:
         self.model = MagicMock()
         self.model.device = "cpu"
         self.tokenizer = tokenizer
+        self._vocabulary_identities: dict[int, str] = {}
         self.results = _Queue([])
         self._gradient = gradient
         self._logits = logits
@@ -2310,6 +2334,15 @@ def _run_trajectory(
         "controls": log["controls"],
         "losses": [round(loss, 6) for loss in log["losses"]],
     }
+
+
+def test_vocabulary_cache_survives_real_steps_and_progressive_phases(tmp_path: Path) -> None:
+    get_vocab = IntTokenizer.get_vocab
+    with patch.object(IntTokenizer, "get_vocab", autospec=True, side_effect=get_vocab) as read_vocab:
+        result = _run_trajectory("progressive-goals-models-2w-2g", seed=42, logfile=tmp_path / "vocabulary-cache.json")
+
+    assert len([event for event in result["events"] if event[0] == "attack"]) > 1
+    assert read_vocab.call_count == 2
 
 
 class TestRandomSeedDeterminism:

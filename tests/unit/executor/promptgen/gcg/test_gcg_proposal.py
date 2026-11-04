@@ -29,6 +29,7 @@ from pyrit.executor.promptgen.gcg.extension_protocols import CandidateFilter, Sa
 def _create_mock_worker(gradient_shape: tuple[int, ...]) -> MagicMock:
     """Create a mock ModelWorker returning a gradient of the specified shape."""
     worker = MagicMock()
+    worker._vocabulary_identities = {}
     worker.tokenizer = MagicMock()
     worker.tokenizer.decode.side_effect = lambda ids, **kwargs: f"tok_{ids[0]}"
     worker.tokenizer.get_vocab.return_value = {f"tok_{i}": i for i in range(gradient_shape[-1])}
@@ -248,26 +249,30 @@ class TestGCGCandidateProposer:
         expected_norm = 3 - len(group_worker_indices)
         assert torch.allclose(norms, torch.full_like(norms, float(expected_norm)))
 
-    def test_vocabularies_are_read_once_per_worker_across_steps(self) -> None:
+    @pytest.mark.parametrize(("widths", "expected_reads"), [([4, 4, 4], 1), ([4, 5, 5], 2)])
+    def test_vocabularies_are_cached_across_proposers_by_embedding_rows(
+        self, *, widths: list[int], expected_reads: int
+    ) -> None:
         workers = [_create_mock_worker((1, 3, 4)), _create_mock_worker((1, 3, 4))]
+        for worker in workers:
+            worker.results.get.side_effect = [torch.ones((1, 3, width)) for width in widths]
         sampling = MagicMock(spec=SamplingStrategy)
         sampling.sample_candidates.return_value = torch.tensor([[10]])
         candidate_filter = MagicMock(spec=CandidateFilter)
         candidate_filter.filter_candidates.return_value = ["res"]
-        proposer = GCGCandidateProposer(
-            workers=workers,
-            prompts=[_create_mock_prompt_manager(), _create_mock_prompt_manager()],
-            sampling=sampling,
-            candidate_filter=candidate_filter,
-            main_device=torch.device("cpu"),
-        )
-
-        for _ in range(3):
+        for _ in widths:
+            proposer = GCGCandidateProposer(
+                workers=workers,
+                prompts=[_create_mock_prompt_manager(), _create_mock_prompt_manager()],
+                sampling=sampling,
+                candidate_filter=candidate_filter,
+                main_device=torch.device("cpu"),
+            )
             batch = proposer.propose_candidates(batch_size=1, topk=2, current_control_str="test")
             assert batch.group_worker_indices == [1]
 
         for worker in workers:
-            worker.tokenizer.get_vocab.assert_called_once_with()
+            assert worker.tokenizer.get_vocab.call_count == expected_reads
 
 
 @pytest.mark.parametrize(
@@ -302,6 +307,7 @@ def test_proposal_groups_by_vocabulary_within_embedding_rows(
         elif added_token is not None:
             tokenizer.add_tokens([added_token])
         worker = MagicMock(spec=ModelWorker)
+        worker._vocabulary_identities = {}
         worker.tokenizer = tokenizer
         gradient = torch.ones((1, embedding_rows))
         gradient[0, embedding_rows - 1 if index == 0 else 3] = -10.0 if index == 0 else -2.0
@@ -369,6 +375,7 @@ def test_proposal_uses_last_worker_in_each_group(
         gradient = torch.arange(1, 2 * vocab_size + 1, dtype=torch.float32).reshape(2, vocab_size)
         gradients.append(gradient / gradient.norm(dim=-1, keepdim=True))
         worker = MagicMock(spec=ModelWorker)
+        worker._vocabulary_identities = {}
         worker.results = MagicMock()
         worker.results.get.return_value = gradient
         worker.tokenizer = MagicMock()

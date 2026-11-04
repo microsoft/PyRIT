@@ -2312,6 +2312,7 @@ class ModelWorker:
         move_to_device = cast("Callable[[torch.device], PreTrainedModel]", model.to)
         self.model = move_to_device(torch.device(device)).eval()
         self.tokenizer = tokenizer
+        self._vocabulary_identities: dict[int, str] = {}
         self.tasks: mp.JoinableQueue[ModelWorkerTask | None] = mp.JoinableQueue()
         self.results: mp.JoinableQueue[Any] = mp.JoinableQueue()
         self.process: mp.Process | None = None
@@ -2394,7 +2395,12 @@ class ModelWorker:
 
 
 def _check_gcg_capabilities(
-    *, model: Any, tokenizer: Any, model_path: str, prompts: Iterable[AttackPrompt] = ()
+    *,
+    model: Any,
+    tokenizer: Any,
+    model_path: str,
+    prompts: Iterable[AttackPrompt] = (),
+    shared_control: str | None = None,
 ) -> None:
     """
     Check that GCG can optimize against a model and tokenizer before any worker starts.
@@ -2405,6 +2411,8 @@ def _check_gcg_capabilities(
         model_path (str): The model path, used in error messages.
         prompts (Iterable[AttackPrompt]): Actual initial prompts to check in addition
             to the tokenizer's base vocabulary, special tokens, and template probe.
+        shared_control (str | None): The first training prompt's decoded control,
+            reused across workers for evaluation and checkpoint restoration.
 
     Raises:
         ValueError: If the tokenizer is not fast, the model exposes no floating point
@@ -2453,24 +2461,42 @@ def _check_gcg_capabilities(
     for attack_prompt in prompts:
         # GCG decodes each accepted candidate as get_filtered_cands does and renders it again through
         # control_str, so the initial control must come back as the same tokens.
-        control, control_toks = attack_prompt.control, attack_prompt.control_toks
-        decoded_control = tokenizer.decode(control_toks, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+        _check_control_round_trip(prompt=attack_prompt, model_path=model_path, shared_control=shared_control)
+
+
+def _check_control_round_trip(*, prompt: AttackPrompt, model_path: str, shared_control: str | None) -> None:
+    """
+    Validate candidate and shared control rendering without modifying the original prompt.
+
+    Args:
+        prompt (AttackPrompt): The original model-specific prompt.
+        model_path (str): The model path used in validation errors.
+        shared_control (str | None): The control string reused across workers.
+
+    Raises:
+        ValueError: If a decoded or shared control cannot reproduce the original control tokens.
+    """
+    control, control_toks = prompt.control, prompt.control_toks
+    decoded_control = prompt.tokenizer.decode(
+        control_toks, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
+    controls = [(decoded_control, "decoded control")]
+    if shared_control is not None:
+        controls.append((shared_control, "shared control"))
+    for candidate_control, source in controls:
+        trial = copy(prompt)
         try:
-            attack_prompt.control_str = decoded_control
-            round_tripped = attack_prompt.control
-            same_tokens = torch.equal(attack_prompt.control_toks, control_toks)
+            trial.control_str = candidate_control
         except ValueError as exc:
             raise ValueError(
-                f"The initial control {control!r} decodes to {decoded_control!r} with the tokenizer "
+                f"The initial control {control!r} has {source} {candidate_control!r} with the tokenizer "
                 f"for {model_path!r}, which cannot be rendered as a GCG control. "
                 "Use a control_init that encodes back to the same tokens."
             ) from exc
-        finally:
-            attack_prompt.control_str = control
-        if not same_tokens:
+        if not torch.equal(trial.control_toks, control_toks):
             raise ValueError(
                 f"The initial control {control!r} does not survive a decode/encode round trip with the tokenizer "
-                f"for {model_path!r}: it comes back as {round_tripped!r}, so GCG would not optimize the "
+                f"for {model_path!r}: the {source} comes back as {trial.control!r}, so GCG would not optimize the "
                 "tokens it started from. Use a control_init that encodes back to the same tokens."
             )
 
@@ -2491,12 +2517,21 @@ def start_workers(*, params: Any, workers: list[ModelWorker]) -> None:
         *zip(params.goals, params.targets, strict=True),
         *zip(params.test_goals, params.test_targets, strict=True),
     ]
+    shared_control = None
     for model_path, worker in zip(params.model_paths, workers, strict=True):
-        prompts = (
+        prompts = [
             AttackPrompt(goal=goal, target=target, tokenizer=worker.tokenizer, control_init=params.control_init)
             for goal, target in goal_target_pairs
+        ]
+        if shared_control is None and prompts:
+            shared_control = prompts[0].control_str
+        _check_gcg_capabilities(
+            model=worker.model,
+            tokenizer=worker.tokenizer,
+            model_path=model_path,
+            prompts=prompts,
+            shared_control=shared_control,
         )
-        _check_gcg_capabilities(model=worker.model, tokenizer=worker.tokenizer, model_path=model_path, prompts=prompts)
     for worker in workers:
         worker.start()
 

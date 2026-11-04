@@ -96,8 +96,6 @@ class GCGCandidateProposer:
         self._sample_fn = sample_fn
         self._filter_fn = filter_fn
         self._main_device = main_device
-        # Vocabulary identity per (worker index, embedding rows), so each vocabulary is hashed once per run.
-        self._vocabulary_identities: dict[tuple[int, int], str] = {}
 
     def propose_candidates(
         self,
@@ -142,12 +140,12 @@ class GCGCandidateProposer:
             new_grad = new_grad / new_grad.norm(dim=-1, keepdim=True)
             # Each embedding row is a sampleable token ID, including added tokens.
             # Tokens outside the embedding matrix cannot be sampled and need not match.
-            key = (j, new_grad.shape[-1])
-            if key not in self._vocabulary_identities:
-                self._vocabulary_identities[key] = _hf_vocabulary_identity(
-                    tokenizer=worker.tokenizer, num_embeddings=new_grad.shape[-1]
-                )
-            new_vocab = self._vocabulary_identities[key]
+            # Workers outlive per-step proposers and progressive inner attacks.
+            identities = worker._vocabulary_identities
+            key = new_grad.shape[-1]
+            if key not in identities:
+                identities[key] = _hf_vocabulary_identity(tokenizer=worker.tokenizer, num_embeddings=new_grad.shape[-1])
+            new_vocab = identities[key]
 
             if grad is None:
                 grad = torch.zeros_like(new_grad)
