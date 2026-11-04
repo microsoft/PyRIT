@@ -169,6 +169,24 @@ describe('DatasetCatalog', () => {
     expect(currentUrl().pathname).toBe(chatOrigin.path)
   })
 
+  it('carries Chat origin into the selected dataset detail page', async () => {
+    const user = userEvent.setup()
+    const chatOrigin = {
+      path: '/attack/chat/attack-1/conversations/conversation-1',
+      state: { fromScenarioHistory: true },
+      attackId: 'attack-1',
+      conversationId: 'conversation-1',
+    }
+    render(<Harness initialPath="/datasets" initialState={{ chatOrigin }} />)
+
+    await user.click(await screen.findByRole('link', { name: 'harmbench' }))
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    const returnLink = screen.getByRole('link', { name: 'Return to Chat' })
+    expect(returnLink).toHaveAttribute('href', chatOrigin.path)
+    await user.click(returnLink)
+    expect(currentUrl().pathname).toBe(chatOrigin.path)
+  })
+
   it('shows a loading state while the catalog request is in flight', () => {
     mockGet.mockReturnValue(new Promise(() => {}))
     render(<Harness initialPath="/datasets" />)
