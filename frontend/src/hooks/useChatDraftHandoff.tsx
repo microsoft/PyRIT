@@ -25,6 +25,14 @@ function allDraftAttachments(draft?: ChatDraftContent | null): MessageAttachment
   ]
 }
 
+function draftKey(attackId: string | null = null, conversationId: string | null = null): string {
+  return `${attackId ?? ''}:${conversationId ?? ''}`
+}
+
+function allDraftsAttachments(drafts: Map<string, ChatDraftContextState>): MessageAttachment[] {
+  return Array.from(drafts.values()).flatMap((d: ChatDraftContextState) => allDraftAttachments(d.draft))
+}
+
 function allImportAttachments(payload?: Pick<PendingImportPayload, 'content' | 'conversation'> | null): MessageAttachment[] {
   if (!payload) return []
   return [
@@ -41,17 +49,20 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
   const [activeSequence, setActiveSequence] = useState(0)
   const sequenceRef = useRef(0)
   const preservedDraftRef = useRef<ChatDraftContextState | null>(null)
+  const preservedDraftsRef = useRef<Map<string, ChatDraftContextState>>(new Map())
   const pendingImportRef = useRef<PendingImportPayload | null>(null)
   const mountedRef = useRef(true)
 
   useEffect(() => {
     mountedRef.current = true
+    const preservedDrafts = preservedDraftsRef.current
     return () => {
       mountedRef.current = false
       revokeAttachmentUrls([
-        ...allDraftAttachments(preservedDraftRef.current?.draft),
+        ...allDraftsAttachments(preservedDrafts),
         ...allImportAttachments(pendingImportRef.current),
       ])
+      preservedDrafts.clear()
       preservedDraftRef.current = null
       pendingImportRef.current = null
     }
@@ -72,15 +83,17 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
       revokeAttachmentUrls(allDraftAttachments(state.draft))
       return
     }
+    const key = draftKey(state.originatingAttackId, state.originatingConversationId)
     // A new attack must not restore the old composer's unmount snapshot.
     if (expectedSequence !== undefined && expectedSequence !== sequenceRef.current) {
       releaseSupersededUrls(allDraftAttachments(state.draft), [
-        ...allDraftAttachments(preservedDraftRef.current?.draft),
+        ...allDraftsAttachments(preservedDraftsRef.current),
         ...allImportAttachments(pendingImportRef.current),
       ])
       return
     }
-    releaseSupersededUrls(allDraftAttachments(preservedDraftRef.current?.draft), [
+    const existingForConv = preservedDraftsRef.current.get(key)
+    releaseSupersededUrls(allDraftAttachments(existingForConv?.draft), [
       ...allDraftAttachments(state.draft),
       ...allImportAttachments(pendingImportRef.current),
     ])
@@ -89,17 +102,43 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
       savedAt: Date.now(),
       sequence: advanceSequence(),
     }
+    preservedDraftsRef.current.set(key, nextState)
     preservedDraftRef.current = nextState
     setPreservedDraft(nextState)
   }, [advanceSequence])
 
-  const clearPreservedDraft = useCallback((expectedSequence?: number) => {
+  const clearPreservedDraft = useCallback((
+    expectedSequence?: number,
+    targetAttackId?: string | null,
+    targetConversationId?: string | null,
+  ) => {
+    if (targetAttackId !== undefined) {
+      const key = draftKey(targetAttackId, targetConversationId)
+      const current = preservedDraftsRef.current.get(key)
+      if (!current) return
+      if (expectedSequence !== undefined && current.sequence !== expectedSequence) return
+      releaseSupersededUrls(
+        allDraftAttachments(current.draft),
+        allImportAttachments(pendingImportRef.current),
+      )
+      preservedDraftsRef.current.delete(key)
+      if (preservedDraftRef.current?.sequence === current.sequence) {
+        const remaining = Array.from(preservedDraftsRef.current.values())
+        const nextActive = remaining.length > 0 ? remaining[remaining.length - 1] : null
+        preservedDraftRef.current = nextActive
+        setPreservedDraft(nextActive)
+      }
+      advanceSequence()
+      return
+    }
+
     const current = preservedDraftRef.current
     if (expectedSequence !== undefined && current?.sequence !== expectedSequence) return
     releaseSupersededUrls(
-      allDraftAttachments(current?.draft),
+      allDraftsAttachments(preservedDraftsRef.current),
       allImportAttachments(pendingImportRef.current),
     )
+    preservedDraftsRef.current.clear()
     preservedDraftRef.current = null
     setPreservedDraft(null)
     advanceSequence()
@@ -112,14 +151,14 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
     const incomingAttachments = allImportAttachments(payload)
     if (!mountedRef.current || (expectedSequence !== undefined && expectedSequence !== sequenceRef.current)) {
       releaseSupersededUrls(incomingAttachments, [
-        ...allDraftAttachments(preservedDraftRef.current?.draft),
+        ...allDraftsAttachments(preservedDraftsRef.current),
         ...allImportAttachments(pendingImportRef.current),
       ])
       return null
     }
     releaseSupersededUrls(allImportAttachments(pendingImportRef.current), [
       ...incomingAttachments,
-      ...allDraftAttachments(preservedDraftRef.current?.draft),
+      ...allDraftsAttachments(preservedDraftsRef.current),
     ])
     const staged: PendingImportPayload = {
       ...payload,
@@ -142,7 +181,7 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
     if (id && current.id !== id) return null
     // Guard against stale asynchronous completion
     if (current.sequence < sequenceRef.current) {
-      releaseSupersededUrls(allImportAttachments(current), allDraftAttachments(preservedDraftRef.current?.draft))
+      releaseSupersededUrls(allImportAttachments(current), allDraftsAttachments(preservedDraftsRef.current))
       setPendingImport(null)
       pendingImportRef.current = null
       return null
@@ -162,7 +201,7 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
     if (id && current?.id !== id) return
     releaseSupersededUrls(
       allImportAttachments(current),
-      allDraftAttachments(preservedDraftRef.current?.draft),
+      allDraftsAttachments(preservedDraftsRef.current),
     )
     pendingImportRef.current = null
     setPendingImport(null)
@@ -174,16 +213,33 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
     currentConversationId: string | null = null,
     expectedSequence?: number,
   ): ChatDraftContent | null => {
-    const current = preservedDraftRef.current
+    const key = draftKey(currentAttackId, currentConversationId)
+    const current = preservedDraftsRef.current.get(key) ?? preservedDraftRef.current
     if (!current) return null
     if (expectedSequence !== undefined && current.sequence !== expectedSequence) return null
     if (!shouldApplyPreservedDraft(current, currentAttackId, currentConversationId)) {
       return null
     }
     // Return draft content without revoking attachments (ownership transfers to ChatWindow)
-    setPreservedDraft(null)
-    preservedDraftRef.current = null
+    preservedDraftsRef.current.delete(key)
+    if (preservedDraftRef.current?.sequence === current.sequence) {
+      const remaining = Array.from(preservedDraftsRef.current.values())
+      const nextActive = remaining.length > 0 ? remaining[remaining.length - 1] : null
+      preservedDraftRef.current = nextActive
+      setPreservedDraft(nextActive)
+    }
     return current.draft
+  }, [])
+
+  const getPreservedDraft = useCallback((
+    currentAttackId?: string | null,
+    currentConversationId?: string | null,
+  ): ChatDraftContextState | null => {
+    if (currentAttackId === undefined && currentConversationId === undefined) {
+      return preservedDraftRef.current
+    }
+    const key = draftKey(currentAttackId ?? null, currentConversationId ?? null)
+    return preservedDraftsRef.current.get(key) ?? null
   }, [])
 
   const value = useMemo<ChatDraftHandoffContextValue>(() => ({
@@ -196,6 +252,7 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
     consumePendingImport,
     dismissPendingImport,
     consumePreservedDraft,
+    getPreservedDraft,
     isDraftDirty: isChatDraftDirty,
   }), [
     preservedDraft,
@@ -207,6 +264,7 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
     consumePendingImport,
     dismissPendingImport,
     consumePreservedDraft,
+    getPreservedDraft,
   ])
 
   return (
@@ -226,6 +284,7 @@ const DEFAULT_CHAT_DRAFT_HANDOFF: ChatDraftHandoffContextValue = {
   consumePendingImport: () => null,
   dismissPendingImport: () => {},
   consumePreservedDraft: () => null,
+  getPreservedDraft: () => null,
   isDraftDirty: isChatDraftDirty,
 }
 

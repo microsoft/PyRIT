@@ -536,13 +536,14 @@ export default function ChatWindow({
   const draftAttackId = draftContext ? draftContext.originatingAttackId : attackResultId
   const draftConversationId = draftContext ? draftContext.originatingConversationId : viewedConversationId
   const draftHandoff = useChatDraftHandoff()
-  const matchingPreservedDraft = useMemo(() => (
-    draftHandoff.preservedDraft && shouldApplyPreservedDraft(
-      draftHandoff.preservedDraft,
+  const matchingPreservedDraft = useMemo(() => {
+    const candidate = draftHandoff.getPreservedDraft(draftAttackId, draftConversationId)
+    return candidate && shouldApplyPreservedDraft(
+      candidate,
       draftAttackId,
       draftConversationId,
-    ) ? draftHandoff.preservedDraft.draft : null
-  ), [draftHandoff.preservedDraft, draftAttackId, draftConversationId])
+    ) ? candidate.draft : null
+  }, [draftHandoff, draftAttackId, draftConversationId])
 
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
@@ -863,10 +864,11 @@ export default function ChatWindow({
     isActiveDraftDirtyRef.current = isActiveDraftDirty
     if (isDraftDestinationReady || isActiveDraftDirty) ownsDraftRef.current = true
     const savedDraft = { ...activeDraft, textMetadata: inputBoxRef.current?.getTextMetadata() }
+    const preservedForThis = draftHandoff.getPreservedDraft(draftAttackId, draftConversationId)
     const isWaitingForRestore = matchingPreservedDraft !== null
-      && handoffRestoredRef.current !== draftHandoff.preservedDraft?.sequence
+      && handoffRestoredRef.current !== preservedForThis?.sequence
       && !isActiveDraftDirty
-    const hasUnrelatedDraft = draftHandoff.preservedDraft !== null && matchingPreservedDraft === null
+    const hasUnrelatedDraft = preservedForThis === null && draftHandoff.preservedDraft !== null
     const hasEditedContent = isActiveDraftDirty || Boolean(pendingObjective.trim() || temperature) || draftScorer !== undefined
       || Object.values(activeDraft.converters?.pipelines ?? {}).some((stages: ConverterPipelineStage[]) => stages.length > 0)
     preserveOnUnmountRef.current = (): void => {
@@ -949,7 +951,7 @@ export default function ChatWindow({
       return
     }
     if (!runtime.ready || !isDraftDestinationReady || !inputBoxRef.current) return
-    const preserved = draftHandoff.preservedDraft
+    const preserved = draftHandoff.getPreservedDraft(draftAttackId, draftConversationId)
     const restoringPreserved = Boolean(matchingPreservedDraft && preserved
       && handoffRestoredRef.current !== preserved.sequence
       && !canApplyImportNow)
@@ -957,7 +959,7 @@ export default function ChatWindow({
     let focus = false
     if (restoringPreserved && preserved) {
       if (isActiveDraftDirty) {
-        draftHandoff.clearPreservedDraft(preserved.sequence)
+        draftHandoff.clearPreservedDraft(preserved.sequence, draftAttackId, draftConversationId)
         return
       }
       const consumed = draftHandoff.consumePreservedDraft(draftAttackId, draftConversationId, preserved.sequence)
@@ -1157,7 +1159,7 @@ export default function ChatWindow({
           })
         }
         if (preserved && (matchingPreservedDraft || (consumed.setup && consumed.replaceDirty))) {
-          draftHandoff.clearPreservedDraft(preserved.sequence)
+          draftHandoff.clearPreservedDraft(preserved.sequence, draftAttackId, draftConversationId)
         }
         draft = {
           ...setup,
@@ -1516,7 +1518,7 @@ export default function ChatWindow({
       setChatInputText('')
       setDraftAttachments([])
       converters.clearAll()
-      draftHandoff.clearPreservedDraft()
+      draftHandoff.clearPreservedDraft(undefined, draftAttackId, draftConversationId)
     }
     retireSend(operation)
   }
@@ -2887,7 +2889,7 @@ export default function ChatWindow({
           onDiscard={(navigatingAway) => {
             if (navigatingAway) {
               discardDraftOnUnmountRef.current = true
-              draftHandoff.clearPreservedDraft()
+              draftHandoff.clearPreservedDraft(undefined, draftAttackId, draftConversationId)
             } else {
               discardDraftOnUnmountRef.current = false
             }
@@ -2897,7 +2899,7 @@ export default function ChatWindow({
               setChatInputText('')
               setDraftAttachments([])
               inputBoxRef.current?.restoreDraft('', [])
-              draftHandoff.clearPreservedDraft()
+              draftHandoff.clearPreservedDraft(undefined, draftAttackId, draftConversationId)
             }
           }}
           saveDestination={attackResultId ? 'same_attack' : 'new_attack'}

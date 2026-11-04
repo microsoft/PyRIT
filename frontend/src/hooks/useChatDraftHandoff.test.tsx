@@ -687,5 +687,39 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       expect(result.current.preservedDraft?.draft.text).toBe('Newer draft')
       expect(revokeObjectURLSpy).not.toHaveBeenCalledWith(attachment.url)
     })
+
+    it('preserves multiple drafts per conversation without clobbering each other', () => {
+      const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
+      act(() => {
+        result.current.preserveDraft({
+          originatingAttackId: 'attack-1',
+          originatingConversationId: 'conv-1',
+          originatingPath: '/attack/chat/attack-1/conversations/conv-1',
+          draft: { text: 'Draft for conv 1', attachments: [] },
+        })
+        result.current.preserveDraft({
+          originatingAttackId: 'attack-2',
+          originatingConversationId: 'conv-2',
+          originatingPath: '/attack/chat/attack-2/conversations/conv-2',
+          draft: { text: 'Draft for conv 2', attachments: [] },
+        })
+      })
+
+      expect(result.current.getPreservedDraft('attack-1', 'conv-1')?.draft.text).toBe('Draft for conv 1')
+      expect(result.current.getPreservedDraft('attack-2', 'conv-2')?.draft.text).toBe('Draft for conv 2')
+
+      let consumed1: ChatDraftContent | null = null
+      act(() => {
+        consumed1 = result.current.consumePreservedDraft('attack-1', 'conv-1')
+      })
+      expect(consumed1?.text).toBe('Draft for conv 1')
+      expect(result.current.getPreservedDraft('attack-1', 'conv-1')).toBeNull()
+      expect(result.current.getPreservedDraft('attack-2', 'conv-2')?.draft.text).toBe('Draft for conv 2')
+
+      act(() => {
+        result.current.clearPreservedDraft(undefined, 'attack-2', 'conv-2')
+      })
+      expect(result.current.getPreservedDraft('attack-2', 'conv-2')).toBeNull()
+    })
   })
 })
