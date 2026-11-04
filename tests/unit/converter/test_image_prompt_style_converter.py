@@ -61,6 +61,17 @@ def test_init_no_filter_uses_configured_root_seed(mock_target) -> None:
         configure_random_seed(seed=None)
 
 
+def test_init_no_filter_is_identified_by_the_filter_it_draws(mock_target) -> None:
+    try:
+        for seed in range(10):
+            configure_random_seed(seed=seed)
+            converter = ImagePromptStyleConverter(converter_target=mock_target)
+
+            assert converter.get_identifier().params["filter_name"] == converter._filter_name
+    finally:
+        configure_random_seed(seed=None)
+
+
 def test_init_filter_path_custom_yaml(mock_target, tmp_path) -> None:
     custom_yaml = tmp_path / "custom_filter.yaml"
     custom_yaml.write_text("style_instructions: custom style\nvariations:\n  my_variation: description of variation\n")
