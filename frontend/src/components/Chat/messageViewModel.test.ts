@@ -12,12 +12,25 @@ describe('messageViewModel', () => {
     it('should leave scalar and malformed JSON as plain text', () => {
       expect(formatStructuredMessage('true')).toBeNull()
       expect(formatStructuredMessage('{not-json}')).toBeNull()
+      expect(formatStructuredMessage('{1:2}')).toBeNull()
+      expect(formatStructuredMessage('[1, 2,]')).toBeNull()
     })
 
     it('should preserve exact numeric lexemes and large integers without rounding', () => {
       expect(formatStructuredMessage('{"id":9007199254740993}')).toBe('{\n  "id": 9007199254740993\n}')
       expect(formatStructuredMessage('{"large":-9007199254740995}')).toBe('{\n  "large": -9007199254740995\n}')
       expect(formatStructuredMessage('[9007199254740994, 9007199254740997]')).toBe('[\n  9007199254740994,\n  9007199254740997\n]')
+    })
+
+    it('should not collide with placeholder-like string values, keys, or escaped sequences', () => {
+      const input = '{"literal":"__PYRIT_NUM_0__","id":42}'
+      expect(formatStructuredMessage(input)).toBe('{\n  "literal": "__PYRIT_NUM_0__",\n  "id": 42\n}')
+
+      const keyInput = '{"__PYRIT_NUM_0__":42}'
+      expect(formatStructuredMessage(keyInput)).toBe('{\n  "__PYRIT_NUM_0__": 42\n}')
+
+      const escapedInput = '{"\\u005f\\u005fPYRIT_NUM_0\\u005f\\u005f":"val","num":9007199254740993}'
+      expect(formatStructuredMessage(escapedInput)).toBe('{\n  "__PYRIT_NUM_0__": "val",\n  "num": 9007199254740993\n}')
     })
 
     it('should not alter numbers within string values', () => {
