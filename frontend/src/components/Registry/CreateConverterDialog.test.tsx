@@ -179,6 +179,51 @@ describe('CreateConverterDialog', () => {
     expect(onTemporary.mock.calls[0][1].hash).toBe('private-hash')
   })
 
+  it('keeps stage settings read-only while Apply Settings builds the converter', async () => {
+    // An edit made while the build was pending was dropped when it completed (#3865)
+    const user = userEvent.setup()
+    const onTemporary = jest.fn()
+    const converter = {
+      converter_id: 'source',
+      identifier: {
+        class_name: 'CaesarConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash', caesar_offset: 1,
+      },
+    }
+    let finishBuild: (value: Awaited<ReturnType<typeof convertersApi.buildConverter>>) => void = () => {}
+    mockedConvertersApi.buildConverter.mockReturnValue(new Promise((resolve) => { finishBuild = resolve }))
+    renderDialog({ editing: { converter }, onTemporary })
+    const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
+    await user.clear(offset)
+    await user.type(offset, '3')
+    await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
+    await waitFor(() => expect(mockedConvertersApi.buildConverter).toHaveBeenCalledTimes(1))
+
+    expect(offset).toHaveAttribute('readonly')
+    await user.type(offset, '7')
+    expect(offset).toHaveValue('3')
+
+    await act(async () => {
+      finishBuild({ identifier: { ...converter.identifier, hash: 'private-hash', caesar_offset: 3 } })
+    })
+    await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
+    expect(mockedConvertersApi.buildConverter).toHaveBeenCalledWith('CaesarConverter', {
+      source_name: 'source', source_hash: 'source-hash', params: { caesar_offset: 3 },
+    })
+  })
+
+  it('keeps the form read-only while Add Converter registers the converter', async () => {
+    const user = userEvent.setup()
+    mockedConvertersApi.createConverter.mockReturnValue(new Promise(() => {}))
+    renderDialog()
+    await submitCaesarConverter(user)
+    await waitFor(() => expect(mockedConvertersApi.createConverter).toHaveBeenCalledTimes(1))
+
+    expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toHaveAttribute('readonly')
+    expect(screen.getByRole('textbox', { name: /registry name/i })).toHaveAttribute('readonly')
+    expect(screen.getByRole('combobox', { name: /^converter type$/i })).toBeDisabled()
+  })
+
   it('loads converter classes from registry type metadata', async () => {
     const user = userEvent.setup()
     renderDialog()

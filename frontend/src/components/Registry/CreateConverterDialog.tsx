@@ -92,6 +92,8 @@ interface ParameterInputProps {
   onFiles: (files: File[], onReadSuccess?: () => void) => void
   allowUploads: boolean
   selectedFile?: SelectedFile
+  /** While the dialog submits; text inputs turn read-only so a focused one keeps focus. */
+  disabled: boolean
 }
 
 interface SelectedFile {
@@ -178,6 +180,7 @@ function ParameterInput({
   onFiles,
   allowUploads,
   selectedFile,
+  disabled,
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
   const pathInputRef = useRef<HTMLInputElement>(null)
@@ -215,7 +218,7 @@ function ParameterInput({
           : `Select a registered ${parameter.reference_type}.`}
         validationMessage={showError ? 'Required' : undefined}
       >
-        <Select value={value} onChange={(_, data) => onChange(data.value)}>
+        <Select value={value} disabled={disabled} onChange={(_, data) => onChange(data.value)}>
           <option value="">Select a registered {parameter.reference_type}</option>
           {referenceOptions.map((option) => (
             <option key={option.name} value={option.name}>
@@ -233,6 +236,7 @@ function ParameterInput({
       <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
         <Switch
           checked={checked}
+          disabled={disabled}
           label={checked ? 'True' : 'False'}
           onChange={(_, data) => onChange(data.checked ? 'true' : 'false')}
         />
@@ -243,7 +247,7 @@ function ParameterInput({
   if (parameter.choices?.length) {
     return (
       <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
-        <Select value={value || parameterDefaultValue(parameter)} onChange={(_, data) => onChange(data.value)}>
+        <Select value={value || parameterDefaultValue(parameter)} disabled={disabled} onChange={(_, data) => onChange(data.value)}>
           {parameter.required && !parameter.default && <option value="">Select a value</option>}
           {parameter.choices.map((choice) => (
             <option key={choice} value={choice}>{choice}</option>
@@ -284,7 +288,7 @@ function ParameterInput({
       validationMessage={showError ? 'Required' : undefined}
     >
       {(controlProps: FieldControlProps) => isFile ? (
-        <FileDropZone disabled={!allowUploads}
+        <FileDropZone disabled={!allowUploads || disabled}
           label="Drop file" onFiles={handleFiles}>
           <div {...(hasFileValue ? controlProps : {})} role={hasFileValue ? 'group' : undefined} className={styles.fileRow}>
             {hasFileValue ? <div className={styles.filePreview}>
@@ -299,6 +303,7 @@ function ParameterInput({
             </div> : <Input
               input={{ ref: pathInputRef }}
               disabled={!allowUploads}
+              readOnly={disabled}
               className={styles.fileInput}
               value={value}
               placeholder={defaultValue && !defaultValue.startsWith('data:') ? defaultValue : pathPlaceholder}
@@ -307,10 +312,10 @@ function ParameterInput({
                 onChange(data.value)
               }}
             />}
-            <Button ref={replaceButtonRef} type="button" className={styles.fileButton} disabled={!allowUploads} onClick={onBrowse}>
+            <Button ref={replaceButtonRef} type="button" className={styles.fileButton} disabled={!allowUploads || disabled} onClick={onBrowse}>
               {hasFileValue ? 'Replace' : 'Upload'}
             </Button>
-            {hasFileValue && <Button type="button" className={styles.fileButton} disabled={!allowUploads}
+            {hasFileValue && <Button type="button" className={styles.fileButton} disabled={!allowUploads || disabled}
               aria-label={`Remove ${imagePreview ? 'image' : 'file'} for ${parameter.name}`} onClick={() => {
                 focusPathInput.current = true
                 onChange('')
@@ -320,6 +325,7 @@ function ParameterInput({
       ) : (
         <Input
           value={value}
+          readOnly={disabled}
           placeholder={parameterDefaultValue(parameter) || undefined}
           onChange={(_, data) => onChange(data.value)}
         />
@@ -701,7 +707,7 @@ export default function CreateConverterDialog({
                     validationMessage={showValidation && !selectedType ? 'Select a converter type' : undefined}
                   >
                     <Dropdown
-                      disabled={Boolean(editing)}
+                      disabled={Boolean(editing) || submitting}
                       aria-label="Converter type"
                       className={styles.typeDropdown}
                       listbox={{ className: styles.typeListbox }}
@@ -779,6 +785,7 @@ export default function CreateConverterDialog({
                   >
                     <Input
                       value={registryName}
+                      readOnly={submitting}
                       onChange={(_, data) => {
                         setRegistryName(data.value)
                         setNameEdited(true)
@@ -827,6 +834,7 @@ export default function CreateConverterDialog({
                             readFiles(parameter.name, files, onReadSuccess)}
                           allowUploads={allowUploads}
                           selectedFile={selectedFiles[parameter.name]}
+                          disabled={submitting}
                         />}
                       </div>
                     ))}
