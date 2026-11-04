@@ -54,6 +54,12 @@ project:
       severity: ignore
       keys:
         - "https://crates.io"
+    # OpenAI's Sora retirement notice returns 403 to CI link checks.
+    # Keep the canonical source and exempt only this article.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation"
   toc:
     - file: index.md
     - file: security.md
