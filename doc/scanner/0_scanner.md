@@ -39,8 +39,7 @@ techniques and simulated conversations. These same options work in `pyrit_shell`
 They do not automatically reuse `--target`, and no missing role constructs OpenAI
 from ambient environment variables. A configured deterministic objective scorer
 needs no scoring model; techniques without generation need no adversarial model.
-See [explicit setup and migration](../code/setup/0_setup.md#explicit-scan-targets-and-migration)
-for both manual and environment-initializer workflows.
+See [scan targets](../code/setup/0_setup.md#scan-targets) for setup options.
 
 ### Connecting to CoPyRIT
 
