@@ -2,6 +2,8 @@
 # Licensed under the MIT license.
 
 import abc
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -45,3 +47,105 @@ def test_singleton_preserves_init_args():
     second = _Configured(value=99)
     assert first is second
     assert second.value == 42
+
+
+def test_singleton_concurrent_first_calls_construct_once():
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release = threading.Event()
+    count = 0
+    count_lock = threading.Lock()
+
+    class _ConcurrentSingleton(abc.ABC, metaclass=Singleton):
+        def __init__(self) -> None:
+            nonlocal count
+            with count_lock:
+                count += 1
+                current = count
+            (first_entered if current == 1 else second_entered).set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("Constructor timed out waiting for release.")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(_ConcurrentSingleton)
+        try:
+            assert first_entered.wait(timeout=5)
+            second = pool.submit(_ConcurrentSingleton)
+            assert not second_entered.wait(timeout=0.2)
+        finally:
+            release.set()
+        a, b = first.result(timeout=5), second.result(timeout=5)
+
+    assert count == 1
+    assert a is b
+
+
+def test_singleton_constructor_failure_and_retry():
+    should_fail = True
+
+    class _FlakySingleton(abc.ABC, metaclass=Singleton):
+        def __init__(self) -> None:
+            nonlocal should_fail
+            if should_fail:
+                should_fail = False
+                raise ValueError("Initialization failed transiently.")
+
+    with pytest.raises(ValueError, match="Initialization failed transiently."):
+        _FlakySingleton()
+
+    assert _FlakySingleton not in Singleton._instances
+
+    instance = _FlakySingleton()
+    assert instance is not None
+    assert _FlakySingleton in Singleton._instances
+    assert _FlakySingleton() is instance
+
+
+def test_singleton_subclass_isolation():
+    class _Base(abc.ABC, metaclass=Singleton):
+        pass
+
+    class _Sub1(_Base):
+        pass
+
+    class _Sub2(_Base):
+        pass
+
+    assert _Sub1._singleton_lock is not _Sub2._singleton_lock
+    assert _Sub1._singleton_lock is not _Base._singleton_lock
+
+    sub1 = _Sub1()
+    sub2 = _Sub2()
+    base = _Base()
+
+    assert sub1 is not sub2
+    assert sub1 is not base
+    assert sub2 is not base
+    assert _Sub1() is sub1
+    assert _Sub2() is sub2
+    assert _Base() is base
+
+
+def test_singleton_nested_different_class_construction():
+    class _Dependency(abc.ABC, metaclass=Singleton):
+        def __init__(self) -> None:
+            self.tag = "dep"
+
+    class _ParentSingleton(abc.ABC, metaclass=Singleton):
+        def __init__(self) -> None:
+            self.dependency = _Dependency()
+
+    parent = _ParentSingleton()
+    assert parent.dependency is _Dependency()
+    assert parent is _ParentSingleton()
+
+
+def test_singleton_same_class_recursive_construction_raises():
+    class _RecursiveSingleton(abc.ABC, metaclass=Singleton):
+        def __init__(self) -> None:
+            _RecursiveSingleton()
+
+    with pytest.raises(RuntimeError, match=r"Recursive construction of singleton class _RecursiveSingleton detected\."):
+        _RecursiveSingleton()
+
+    assert _RecursiveSingleton not in Singleton._instances
