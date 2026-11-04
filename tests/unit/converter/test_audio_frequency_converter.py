@@ -114,6 +114,25 @@ async def test_frequency_shift_uses_single_upper_sideband(tmp_path: Path) -> Non
 
 
 @pytest.mark.usefixtures("sqlite_instance")
+async def test_negative_frequency_shift_translates_content_downward(tmp_path: Path) -> None:
+    """A negative shift keeps only input frequencies that remain above zero after translation."""
+    sample_rate = 44100
+    input_frequency = 20440
+    shift_value = -20000
+    samples = np.sin(2 * np.pi * input_frequency * np.arange(sample_rate) / sample_rate).astype(np.float32)
+    source = tmp_path / "high_tone.wav"
+    await asyncio.to_thread(wavfile.write, source, sample_rate, samples)
+
+    result = await AudioFrequencyConverter(shift_value=shift_value).convert_async(prompt=str(source))
+    rate, output = await asyncio.to_thread(wavfile.read, result.output_text)
+
+    frequencies = np.fft.rfftfreq(len(output), d=1 / rate)
+    spectrum = np.abs(np.fft.rfft(output))
+
+    assert frequencies[np.argmax(spectrum)] == input_frequency + shift_value
+
+
+@pytest.mark.usefixtures("sqlite_instance")
 async def test_frequency_shift_removes_content_that_would_alias(tmp_path: Path) -> None:
     """Input content above the translated Nyquist limit must not fold into baseband."""
     sample_rate = 44100
