@@ -1,309 +1,364 @@
-/**
- * Copyright (c) Microsoft Corporation.
- * Licensed under the MIT license.
- */
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { MemoryRouter, useLocation } from 'react-router'
+import type { ReactNode } from 'react'
 
-import { render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { FluentProvider, webLightTheme } from "@fluentui/react-components";
-import { makeTarget } from "@/test-utils/targetFixtures";
-import Home from "./Home";
-import { attacksApi } from "../../services/api";
-import type { AttackSummary, TargetInstance } from "../../types";
+import { useRuntime } from '@/hooks/useRuntime'
+import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
+import type { AttackSummary, OperationListItem, ScenarioRunListItem, ScenarioRunState } from '@/types'
 
-jest.mock("../../services/api", () => ({
-  attacksApi: {
-    listAttacks: jest.fn(),
-  },
-}));
+import Home from './Home'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
 
-const mockListAttacks = attacksApi.listAttacks as jest.Mock;
+installAutoRefreshTimers()
 
-const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <FluentProvider theme={webLightTheme}>{children}</FluentProvider>
-);
+jest.mock('@/services/api', () => ({
+  attacksApi: { listAttacks: jest.fn() },
+  scenariosApi: { listRuns: jest.fn() },
+  operationsApi: { list: jest.fn() },
+}))
+jest.mock('@/hooks/useRuntime', () => ({ useRuntime: jest.fn() }))
 
-function makeAttack(overrides: Partial<AttackSummary> = {}): AttackSummary {
-  const attack: AttackSummary = {
-    attack_result_id: "ar-1",
-    conversation_id: "conv-1",
-    attack_type: "TestAttack",
-    objective: "Test objective",
-    converters: [],
-    outcome: "success",
-    last_message_preview: "preview",
-    message_count: 1,
-    related_conversation_ids: [],
-    operator: "alice",
-    operation: "op_alpha",
-    labels: {},
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    ...overrides,
-  };
-  // Like the API, name legacy activity by its stored operation text unless a current name is given.
-  return { operation_name: attack.operation, ...attack };
+const mockAttacks = jest.mocked(attacksApi.listAttacks)
+const mockScans = jest.mocked(scenariosApi.listRuns)
+const mockOperations = jest.mocked(operationsApi.list)
+const mockRuntime = jest.mocked(useRuntime)
+const PAGINATION = { limit: 5, has_more: false, next_cursor: null, prev_cursor: null }
+
+function Location() {
+  return <output aria-label="Current path">{useLocation().pathname}</output>
 }
 
-const defaultProps = {
-  activeTarget: null as TargetInstance | null,
-  onNavigate: jest.fn(),
-  onOpenAttack: jest.fn(),
-};
+function TestWrapper({ children }: { readonly children: ReactNode }) {
+  return <FluentProvider theme={webLightTheme}><MemoryRouter>{children}<Location /></MemoryRouter></FluentProvider>
+}
 
-describe("Home", () => {
+function attack(overrides: Partial<AttackSummary> = {}): AttackSummary {
+  return {
+    attack_result_id: 'attack-1', conversation_id: 'conversation-1', attack_type: 'ManualAttack',
+    objective: 'Check the support assistant', converters: [], outcome: 'undetermined', message_count: 2,
+    related_conversation_ids: [], labels: {}, created_at: '2026-10-28T10:00:00Z',
+    updated_at: '2026-10-28T11:00:00Z', operation_name: 'Current operation name', ...overrides,
+  }
+}
+
+function scan(overrides: Partial<ScenarioRunListItem> = {}): ScenarioRunListItem {
+  return {
+    scenario_result_id: 'run-1', scenario_name: 'Safety scan', scenario_version: 1, status: 'IN_PROGRESS',
+    created_at: '2026-10-28T09:00:00Z', updated_at: '2026-10-28T12:00:00Z', techniques_used: [],
+    total_attacks: null, completed_attacks: 0, objective_achieved_rate: 0, total_retries: 0,
+    labels: {}, operation_name: 'Saved scan operation', datasets_used: [], scenario_parameters: {},
+    planned_total_available: false, successful_attacks: 0, error_attacks: 0, attack_details_available: false,
+    ...overrides,
+  }
+}
+
+function operation(overrides: Partial<OperationListItem> = {}): OperationListItem {
+  return { id: 'saved-operation', name: 'Saved operation', description: 'A real saved engagement',
+    created_at: '2026-10-28T08:00:00Z', finding_counts: {}, ...overrides }
+}
+
+describe('Home', () => {
+  const defaultProps = {
+    selectedOperation: null, noRegisteredTargets: false,
+    onNavigate: jest.fn(), onNewAttack: jest.fn(), onOpenAttack: jest.fn(),
+    onOpenAttackHistory: jest.fn(), onOpenScannerHistory: jest.fn(),
+  }
+
   beforeEach(() => {
-    jest.clearAllMocks();
-    mockListAttacks.mockResolvedValue({
-      items: [],
-      pagination: { has_more: false, next_cursor: null },
-    });
-  });
+    jest.clearAllMocks()
+    mockRuntime.mockReturnValue({ ready: true, generation: 'first', state: 'ready' })
+    mockAttacks.mockResolvedValue({ items: [], pagination: PAGINATION })
+    mockScans.mockResolvedValue({ items: [], pagination: PAGINATION })
+    mockOperations.mockResolvedValue({ items: [] })
+  })
 
-  it("renders the welcome hero", async () => {
-    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(
-      screen.getByRole("heading", { level: 1, name: /welcome to co-pyrit/i })
-    ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Labels" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Default objective target" })).toBeInTheDocument();
-    expect(screen.getByText(/Use the bar above/)).toBeInTheDocument();
-    expect(screen.queryByTestId("labels-bar")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { level: 2, name: "Recent operations" })
-    ).toBeInTheDocument();
-    await waitFor(() => expect(mockListAttacks).toHaveBeenCalled());
-  });
+  afterEach(() => { jest.restoreAllMocks() })
 
-  it("shows an empty target hint when no target is set", async () => {
-    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(screen.getByTestId("home-target-empty")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /configure a target/i })).toBeInTheDocument();
-    await waitFor(() => expect(mockListAttacks).toHaveBeenCalled());
-  });
+  it('should prioritize workflows and only read summaries on entry', async () => {
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(screen.getAllByRole('heading', { level: 2 }).map((heading: HTMLElement) => heading.textContent))
+      .toEqual(['Attacks', 'Scans', 'Recent work', 'Operations'])
+    expect(screen.queryByRole('heading', { name: 'Default objective target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Labels' })).not.toBeInTheDocument()
+    await screen.findByText('Your recent work will appear here')
+    expect(mockAttacks).toHaveBeenCalledWith({ limit: 5, include_scenario_attacks: false })
+    expect(mockScans).toHaveBeenCalledWith({ limit: 5, sort_by: 'activity' })
+    expect(mockOperations).toHaveBeenCalledTimes(1)
+    for (const callback of [
+      defaultProps.onNavigate, defaultProps.onNewAttack, defaultProps.onOpenAttack,
+      defaultProps.onOpenAttackHistory, defaultProps.onOpenScannerHistory,
+    ]) expect(callback).not.toHaveBeenCalled()
+  })
 
-  it("renders active target summary and 'Manage targets' button when a target is set", async () => {
-    const target: TargetInstance = makeTarget({
-      target_registry_name: "my_target",
-      target_type: "OpenAIChatTarget",
-      endpoint: "https://example.com",
-      model_name: "gpt-test",
-    });
-    render(<TestWrapper><Home {...defaultProps} activeTarget={target} /></TestWrapper>);
-    expect(screen.getByTestId("home-target-active")).toHaveTextContent("gpt-test");
-    expect(screen.getByRole("button", { name: /manage targets/i })).toBeInTheDocument();
-    await waitFor(() => expect(mockListAttacks).toHaveBeenCalled());
-  });
+  it('should show a delayed scan from the activity-ordered refresh in All and Scans', async () => {
+    const user = userEvent.setup()
+    mockScans
+      .mockResolvedValueOnce({ items: [], pagination: PAGINATION })
+      .mockResolvedValueOnce({
+        items: [scan({ scenario_name: 'Delayed completion scan', updated_at: '2026-10-30T12:00:00Z' })],
+        pagination: PAGINATION,
+      })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await screen.findByText('Your recent work will appear here')
 
-  it("navigates to the registry when 'Configure a target' is clicked", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    render(<TestWrapper><Home {...defaultProps} onNavigate={onNavigate} /></TestWrapper>);
-    await user.click(screen.getByTestId("home-configure-target-btn"));
-    expect(onNavigate).toHaveBeenCalledWith("registry");
-  });
+    await advanceAutoRefresh()
+    const delayedScan = await screen.findByRole('button', { name: /Delayed completion scan/ })
+    await user.click(screen.getByRole('tab', { name: 'All', exact: true }))
+    expect(delayedScan).toBeVisible()
+    await user.click(screen.getByRole('tab', { name: 'Scans', exact: true }))
+    expect(delayedScan).toBeVisible()
+    expect(mockScans).toHaveBeenNthCalledWith(1, { limit: 5, sort_by: 'activity' })
+    expect(mockScans).toHaveBeenNthCalledWith(2, { limit: 5, sort_by: 'activity' })
+  })
 
-  it("shows the empty state when there are no attacks", async () => {
-    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(await screen.findByTestId("home-empty")).toBeInTheDocument();
-    expect(screen.getByText(/no attacks yet/i)).toBeInTheDocument();
-  });
+  it('should use the intentional new-attack action and each workflow history', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    expect(defaultProps.onNewAttack).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Attack history', exact: true }))
+    expect(defaultProps.onOpenAttackHistory).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Configure scan', exact: true }))
+    expect(defaultProps.onNavigate).toHaveBeenCalledWith('scenarios')
+    await user.click(screen.getByRole('button', { name: 'Scan history', exact: true }))
+    expect(defaultProps.onOpenScannerHistory).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'View operations', exact: true }))
+    expect(defaultProps.onNavigate).toHaveBeenCalledWith('operations')
+    await user.click(screen.getByRole('button', { name: 'Open Registry', exact: true }))
+    expect(defaultProps.onNavigate).toHaveBeenCalledWith('registry')
+    expect(defaultProps.onNavigate).not.toHaveBeenCalledWith('chat')
+  })
 
-  it("navigates to chat when 'Go to chat' is clicked from the empty state", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    render(<TestWrapper><Home {...defaultProps} onNavigate={onNavigate} /></TestWrapper>);
-    const btn = await screen.findByTestId("home-start-attack-btn");
-    await user.click(btn);
-    expect(onNavigate).toHaveBeenCalledWith("chat");
-  });
+  it('should reuse only the secondary setup action when zero registered targets are confirmed', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><Home {...defaultProps} noRegisteredTargets /></TestWrapper>)
+    const setup = within(screen.getByRole('contentinfo'))
+    await user.click(setup.getByRole('button', { name: 'Register a target', exact: true }))
+    expect(defaultProps.onNavigate).toHaveBeenCalledWith('registry')
+    expect(defaultProps.onNewAttack).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'New attack', exact: true })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Configure scan', exact: true })).toBeEnabled()
+  })
 
-  it("renders recent operations grouped by operation label", async () => {
-    const now = Date.now();
-    mockListAttacks.mockResolvedValue({
-      items: [
-        makeAttack({
-          attack_result_id: "ar-1",
-          operator: "alice",
-          operation: "op_alpha",
-          updated_at: new Date(now).toISOString(),
-        }),
-        makeAttack({
-          attack_result_id: "ar-2",
-          operator: "alice",
-          operation: "op_alpha",
-          updated_at: new Date(now - 60_000).toISOString(),
-        }),
-        makeAttack({
-          attack_result_id: "ar-3",
-          operator: "alice",
-          operation: "op_beta",
-          updated_at: new Date(now - 120_000).toISOString(),
-        }),
-      ],
-      pagination: { has_more: false, next_cursor: null },
-    });
+  it('should merge recent work by activity, filter without fetching, and open saved destinations', async () => {
+    const user = userEvent.setup()
+    mockAttacks.mockResolvedValue({ items: [attack()], pagination: PAGINATION })
+    mockScans.mockResolvedValue({ items: [scan({ scenario_result_id: 'run/one' })], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    const list = await screen.findByRole('list')
+    await waitFor(() => { expect(within(list).getAllByRole('button')).toHaveLength(2) })
+    expect(within(list).getAllByRole('button')[0]).toHaveTextContent('Safety scan')
+    expect(within(list).getByText('Executing')).toBeInTheDocument()
+    expect(within(list).getByText('undetermined')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'Attacks', exact: true }))
+    expect(within(list).queryByText('Safety scan')).not.toBeInTheDocument()
+    await user.click(within(list).getByRole('button'))
+    expect(defaultProps.onOpenAttack).toHaveBeenCalledWith('attack-1')
+    await user.click(screen.getByRole('tab', { name: 'Scans', exact: true }))
+    await user.click(within(list).getByRole('button'))
+    expect(screen.getByLabelText('Current path')).toHaveTextContent('/scanner/history/run%2Fone')
+    expect(mockAttacks).toHaveBeenCalledTimes(1)
+    expect(mockScans).toHaveBeenCalledTimes(1)
+  })
 
-    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(await screen.findByTestId("home-operation-op_alpha")).toBeInTheDocument();
-    expect(screen.getByTestId("home-operation-op_beta")).toBeInTheDocument();
-    // op_alpha has 2 attacks
-    expect(screen.getByTestId("home-operation-op_alpha")).toHaveTextContent(/2 attacks/i);
-    // op_beta has 1 attack
-    expect(screen.getByTestId("home-operation-op_beta")).toHaveTextContent(/1 attack/);
-  });
+  it('should limit the combined list and use meaningful title fallbacks', async () => {
+    mockAttacks.mockResolvedValue({ items: Array.from({ length: 5 }, (_, index: number) =>
+      attack({ attack_result_id: `attack-${index}`, objective: '', last_message_preview: `Preview ${index}` })),
+    pagination: PAGINATION })
+    mockScans.mockResolvedValue({ items: [scan()], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await screen.findByText('Preview 0')
+    const list = screen.getByRole('list')
+    expect(within(list).getAllByRole('button')).toHaveLength(5)
+    expect(within(list).getAllByRole('button')[0]).toHaveTextContent('Safety scan')
+  })
 
-  it("updates last-activity for newer attacks and formats hour/day/older timestamps", async () => {
-    const now = Date.now();
-    const HOUR = 60 * 60 * 1000;
-    const DAY = 24 * HOUR;
-    mockListAttacks.mockResolvedValue({
-      items: [
-        // Oldest first, so a later (newer) attack in the same operation updates
-        // the group's last-activity — exercising the "newer than current" branch.
-        makeAttack({
-          attack_result_id: "ar-old",
-          operator: "alice",
-          operation: "op_time",
-          last_message_preview: "older than a week",
-          updated_at: new Date(now - 10 * DAY).toISOString(),
-        }),
-        makeAttack({
-          attack_result_id: "ar-hours",
-          operator: "alice",
-          operation: "op_time",
-          last_message_preview: "a few hours ago",
-          updated_at: new Date(now - 3 * HOUR).toISOString(),
-        }),
-        makeAttack({
-          attack_result_id: "ar-days",
-          operator: "alice",
-          operation: "op_time",
-          last_message_preview: "a few days ago",
-          updated_at: new Date(now - 3 * DAY).toISOString(),
-        }),
-      ],
-      pagination: { has_more: false, next_cursor: null },
-    });
+  it.each<[AttackSummary['outcome'], string]>([
+    ['success', 'success'], ['failure', 'failure'], ['error', 'error'], ['undetermined', 'undetermined'],
+    [null, 'undetermined'], [undefined, 'undetermined'],
+  ])('should use the shared attack outcome label for %s', async (outcome: AttackSummary['outcome'], label: string) => {
+    mockAttacks.mockResolvedValue({ items: [attack({ outcome })], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    const row = await screen.findByRole('button', { name: /Check the support assistant/ })
+    expect(within(row).getByText(label, { exact: true })).toBeVisible()
+    expect(within(row).queryByText(/Objective achieved|Not achieved/)).not.toBeInTheDocument()
+  })
 
-    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
+  it.each<[number, string]>([
+    [60_000, 'Just now'],
+    [0, 'Just now'],
+    [-59_000, 'Just now'],
+    [-60_000, '1m ago'],
+    [-3_599_000, '59m ago'],
+    [-3_600_000, '1h ago'],
+    [-86_399_000, '23h ago'],
+    [-86_400_000, '1d ago'],
+    [-518_400_000, '6d ago'],
+  ])('should format an activity time offset of %s milliseconds as %s', async (offset: number, expected: string) => {
+    const now = Date.parse('2026-10-29T12:00:00Z')
+    jest.spyOn(Date, 'now').mockReturnValue(now)
+    mockAttacks.mockResolvedValue({
+      items: [attack({ updated_at: new Date(now + offset).toISOString() })], pagination: PAGINATION,
+    })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(await screen.findByText(expected, { exact: true })).toBeVisible()
+  })
 
-    const card = await screen.findByTestId("home-operation-op_time");
-    // All three attacks render, exercising the hour/day/older formatting paths.
-    expect(within(card).getByText("a few hours ago")).toBeInTheDocument();
-    expect(within(card).getByText("a few days ago")).toBeInTheDocument();
-    expect(within(card).getByText("older than a week")).toBeInTheDocument();
-    // The newer (3h-ago) attack wins as the group's most recent activity.
-    expect(within(card).getAllByText(/3h ago/).length).toBeGreaterThan(0);
-    expect(within(card).getAllByText(/3d ago/).length).toBeGreaterThan(0);
-  });
+  it('should show a local date for activity at least a week old', async () => {
+    jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-29T12:00:00Z'))
+    const timestamp = '2026-10-22T12:00:00Z'
+    mockAttacks.mockResolvedValue({ items: [attack({ updated_at: timestamp })], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(await screen.findByText(new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })))
+      .toBeVisible()
+  })
 
-  it("caps visible attacks and falls back for missing preview, outcome, and timestamp", async () => {
-    const now = Date.now();
-    mockListAttacks.mockResolvedValue({
-      items: [
-        makeAttack({
-          attack_result_id: "f1",
-          operator: "alice",
-          operation: "op_full",
-          outcome: "success",
-          last_message_preview: "first preview",
-          updated_at: new Date(now - 60_000).toISOString(),
-        }),
-        makeAttack({
-          attack_result_id: "f2",
-          operator: "alice",
-          operation: "op_full",
-          outcome: null, // unknown outcome -> default icon via the ?? 'undetermined' branch
-          last_message_preview: null, // missing preview -> falls back to attack_type
-          updated_at: new Date(now - 120_000).toISOString(),
-        }),
-        makeAttack({
-          attack_result_id: "f3",
-          operator: "alice",
-          operation: "op_full",
-          // Outcome not present in the icon map -> exercises the icon fallback branch.
-          outcome: "mystery" as unknown as AttackSummary["outcome"],
-          last_message_preview: "third preview",
-          updated_at: "not-a-date", // invalid -> empty relative time (NaN guard)
-        }),
-        makeAttack({
-          attack_result_id: "f4",
-          operator: "alice",
-          operation: "op_full",
-          last_message_preview: "fourth preview",
-          updated_at: new Date(now - 240_000).toISOString(),
-        }),
-      ],
-      pagination: { has_more: false, next_cursor: null },
-    });
+  it('should identify an invalid activity time without hiding its saved attack', async () => {
+    mockAttacks.mockResolvedValue({ items: [attack({ updated_at: 'not-a-date' })], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    const row = await screen.findByRole('button', { name: /Check the support assistant/ })
+    expect(within(row).getByText('Time unavailable', { exact: true })).toBeVisible()
+  })
 
-    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
+  it.each<[string, string]>([
+    ['Attacks', 'No recent attacks'], ['Scans', 'No recent scans'],
+  ])('should show the %s filter empty state when only the other kind has saved work', async (tab: string, message: string) => {
+    const user = userEvent.setup()
+    const availableTitle = tab === 'Attacks' ? 'Safety scan' : 'Check the support assistant'
+    if (tab === 'Attacks') mockScans.mockResolvedValue({ items: [scan()], pagination: PAGINATION })
+    else mockAttacks.mockResolvedValue({ items: [attack()], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await screen.findByRole('button', { name: new RegExp(availableTitle) })
+    await user.click(screen.getByRole('tab', { name: tab, exact: true }))
+    expect(await screen.findByText(message, { exact: true })).toBeVisible()
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+    expect(screen.queryByText('Your recent work will appear here')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'All', exact: true }))
+    expect(screen.getByRole('button', { name: new RegExp(availableTitle) })).toBeVisible()
+    expect(mockAttacks).toHaveBeenCalledTimes(1)
+    expect(mockScans).toHaveBeenCalledTimes(1)
+  })
 
-    const card = await screen.findByTestId("home-operation-op_full");
-    // Only the first three attacks render; the fourth is summarized as overflow.
-    expect(within(card).getByText("first preview")).toBeInTheDocument();
-    expect(within(card).getByText("third preview")).toBeInTheDocument();
-    expect(within(card).queryByText("fourth preview")).not.toBeInTheDocument();
-    expect(within(card).getByText(/\+1 more in history/)).toBeInTheDocument();
-    // f2 has no preview, so its row shows the attack type instead.
-    expect(within(card).getByText("TestAttack")).toBeInTheDocument();
-  });
+  it.each<[ScenarioRunState, string]>([
+    ['CREATED', 'Created'], ['QUEUED', 'Queued'], ['IN_PROGRESS', 'Executing'],
+    ['COMPLETED', 'Completed'], ['FAILED', 'Failed'], ['CANCELLED', 'Cancelled'],
+  ])('should show scan status %s without assuming completion', async (status: ScenarioRunState, label: string) => {
+    mockScans.mockResolvedValue({ items: [scan({ status })], pagination: PAGINATION })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(await screen.findByText(label)).toBeInTheDocument()
+  })
 
-  it("groups ID-linked attacks under their saved Operation's current name", async () => {
-    mockListAttacks.mockResolvedValue({
-      items: [
-        makeAttack({ attack_result_id: "ar-1", operation: null, operation_id: "id-1", operation_name: "Renamed" }),
-        makeAttack({ attack_result_id: "ar-2", operation: null, operation_id: "id-1", operation_name: "Renamed" }),
-      ],
-      pagination: { has_more: false, next_cursor: null },
-    });
+  it('should show saved Operations independently of attack labels, with encoded IDs and no invented totals', async () => {
+    const user = userEvent.setup()
+    mockAttacks.mockResolvedValue({ items: [attack({ operation_name: 'Legacy name only' })], pagination: PAGINATION })
+    mockOperations.mockResolvedValue({ items: [operation({ id: 'operation/one' }), operation({ id: 'two', name: 'Second' }),
+      operation({ id: 'three', name: 'Third' }), operation({ id: 'four', name: 'Fourth' })] })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    const section = screen.getByRole('region', { name: 'Operations' })
+    await within(section).findByText('Saved operation')
+    expect(within(section).queryByText('Legacy name only')).not.toBeInTheDocument()
+    expect(within(section).queryByText('Fourth')).not.toBeInTheDocument()
+    expect(within(section).queryByText(/attacks|total/i)).not.toBeInTheDocument()
+    await user.click(within(section).getByRole('button', { name: /Saved operation A real saved engagement/ }))
+    expect(screen.getByLabelText('Current path')).toHaveTextContent('/operations/operation%2Fone')
+  })
 
-    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(await screen.findByTestId("home-operation-Renamed")).toHaveTextContent(/2 attacks/i);
-    expect(screen.queryByTestId("home-operation-unlabeled")).not.toBeInTheDocument();
-  });
+  it('should place the selected saved ID first, then newest-created available operations without mutating the list', async () => {
+    const oldest = operation({ id: 'old', name: 'A oldest', created_at: '2026-10-01T00:00:00Z' })
+    const selected = operation({ id: 'selected', name: 'B selected', created_at: '2026-10-02T00:00:00Z' })
+    const recent = operation({ id: 'recent', name: 'Y newer', created_at: '2026-10-27T00:00:00Z' })
+    const newest = operation({ id: 'newest', name: 'Z newest', created_at: '2026-10-28T00:00:00Z' })
+    const items = [oldest, selected, recent, newest]
+    mockOperations.mockResolvedValue({ items })
+    const { rerender } = render(
+      <TestWrapper><Home {...defaultProps} selectedOperation={{ ...selected, name: 'Previous name' }} /></TestWrapper>,
+    )
+    const section = screen.getByRole('region', { name: 'Operations', exact: true })
+    await within(section).findByText('B selected')
+    const links = within(section).getAllByRole('button').slice(1)
+    expect(links).toHaveLength(3)
+    expect(links[0]).toHaveAccessibleName(/^B selected/)
+    expect(links[1]).toHaveAccessibleName(/^Z newest/)
+    expect(links[2]).toHaveAccessibleName(/^Y newer/)
+    expect(items.map((item: OperationListItem) => item.id)).toEqual(['old', 'selected', 'recent', 'newest'])
+    expect(within(section).queryByText(/last activity|attacks|total/i)).not.toBeInTheDocument()
+    rerender(<TestWrapper><Home {...defaultProps} selectedOperation={oldest} /></TestWrapper>)
+    expect(within(section).getAllByRole('button')[1]).toHaveAccessibleName(/^A oldest/)
+    rerender(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(within(section).getAllByRole('button')[1]).toHaveAccessibleName(/^Z newest/)
+    expect(mockOperations).toHaveBeenCalledTimes(1)
+  })
 
-  it("groups attacks with no operation label under '(no operation)'", async () => {
-    mockListAttacks.mockResolvedValue({
-      items: [
-        makeAttack({
-          attack_result_id: "ar-x",
-          operation: null,
-        }),
-      ],
-      pagination: { has_more: false, next_cursor: null },
-    });
+  it('should rank newest-created operations when no saved operation is selected', async () => {
+    mockOperations.mockResolvedValue({ items: [
+      operation({ id: 'old', name: 'A old', created_at: '2026-10-01T00:00:00Z' }),
+      operation({ id: 'new', name: 'Z new', created_at: '2026-10-28T00:00:00Z' }),
+    ] })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    const section = screen.getByRole('region', { name: 'Operations', exact: true })
+    await within(section).findByText('Z new')
+    const links = within(section).getAllByRole('button').slice(1)
+    expect(links[0]).toHaveAccessibleName(/^Z new/)
+    expect(links[1]).toHaveAccessibleName(/^A old/)
+  })
 
-    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(await screen.findByTestId("home-operation-unlabeled")).toHaveTextContent(/no operation/i);
-  });
+  it('should keep a newly saved selected operation available before the directory includes it', async () => {
+    const selected = operation({ id: 'newly-saved', name: 'Newly saved' })
+    mockOperations.mockResolvedValue({ items: [operation()] })
+    render(<TestWrapper><Home {...defaultProps} selectedOperation={selected} /></TestWrapper>)
+    const section = screen.getByRole('region', { name: 'Operations', exact: true })
+    await within(section).findByText('Saved operation')
+    const links = within(section).getAllByRole('button').slice(1)
+    expect(links[0]).toHaveAccessibleName(/^Newly saved/)
+    expect(links[1]).toHaveAccessibleName(/^Saved operation/)
+  })
 
-  it("calls onOpenAttack when a recent attack row is clicked", async () => {
-    const user = userEvent.setup();
-    const onOpenAttack = jest.fn();
-    mockListAttacks.mockResolvedValue({
-      items: [makeAttack({ attack_result_id: "ar-click" })],
-      pagination: { has_more: false, next_cursor: null },
-    });
+  it('should keep successful sources visible when another fails and recover automatically', async () => {
+    mockAttacks.mockRejectedValueOnce(new Error('Attack service unavailable'))
+    mockScans.mockResolvedValue({ items: [scan()], pagination: PAGINATION })
+    mockOperations.mockRejectedValueOnce(new Error('Operations unavailable'))
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(await screen.findByText('Attack service unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Safety scan')).toBeInTheDocument()
+    expect(await screen.findByText('Operations unavailable')).toBeInTheDocument()
+    expect(screen.queryByText('Your recent work will appear here')).not.toBeInTheDocument()
+    expect(screen.queryByText('Keep related work together')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Refresh Home|Retry/ })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
+    await screen.findByText('Keep related work together')
+    expect(mockAttacks).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('Attack service unavailable')).not.toBeInTheDocument()
+  })
 
-    render(<TestWrapper><Home {...defaultProps} onOpenAttack={onOpenAttack} /></TestWrapper>);
-    const row = await screen.findByTestId("home-open-attack-ar-click");
-    await user.click(row);
-    expect(onOpenAttack).toHaveBeenCalledWith("ar-click");
-  });
+  it('should show an identical source error only once', async () => {
+    mockAttacks.mockRejectedValueOnce(new Error('Recent service unavailable'))
+    mockScans.mockRejectedValueOnce(new Error('Recent service unavailable'))
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await screen.findByText('Recent service unavailable')
+    await waitFor(() => expect(screen.queryByText('Loading recent work...')).not.toBeInTheDocument())
+    expect(screen.getAllByText('Recent service unavailable')).toHaveLength(1)
+  })
 
-  it("renders error message when listAttacks fails", async () => {
-    mockListAttacks.mockRejectedValueOnce(new Error("boom"));
-    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>);
-    expect(await screen.findByTestId("home-error")).toBeInTheDocument();
-  });
+  it('should show loading rather than empty while summaries are pending and ignore stale runtime results', async () => {
+    let resolveOld: ((value: { items: AttackSummary[]; pagination: typeof PAGINATION }) => void) | undefined
+    mockAttacks.mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve }))
+    const { rerender } = render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(screen.getByText('Loading recent work...')).toBeInTheDocument()
+    expect(screen.queryByText('Your recent work will appear here')).not.toBeInTheDocument()
+    mockRuntime.mockReturnValue({ ready: true, generation: 'second', state: 'ready' })
+    rerender(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await screen.findByText('Your recent work will appear here')
+    await act(async () => { resolveOld?.({ items: [attack()], pagination: PAGINATION }) })
+    expect(screen.queryByText('Check the support assistant')).not.toBeInTheDocument()
+  })
 
-  it("navigates to history when 'View all history' is clicked", async () => {
-    const user = userEvent.setup();
-    const onNavigate = jest.fn();
-    render(<TestWrapper><Home {...defaultProps} onNavigate={onNavigate} /></TestWrapper>);
-    await user.click(screen.getByTestId("home-view-all-history-btn"));
-    expect(onNavigate).toHaveBeenCalledWith("history");
-  });
-});
+  it('should not fetch while the runtime is unavailable', () => {
+    mockRuntime.mockReturnValue({ ready: false, generation: '', state: 'connecting' })
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    expect(mockAttacks).not.toHaveBeenCalled()
+    expect(mockScans).not.toHaveBeenCalled()
+    expect(mockOperations).not.toHaveBeenCalled()
+  })
+})

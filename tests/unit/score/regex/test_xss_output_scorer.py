@@ -1,13 +1,23 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from html.parser import HTMLParser
+from time import perf_counter
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 
-from pyrit.memory import CentralMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.score import XSSOutputScorer
+
+
+class _HrefParser(HTMLParser):
+    href: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.href = dict(attrs).get("href")
 
 
 @pytest.mark.parametrize(
@@ -96,6 +106,176 @@ async def test_xss_garak_payloads_detected(text: str, patch_central_database):
     scorer = XSSOutputScorer()
     score = (await scorer.score_text_async(text))[0]
     assert score.get_value() is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<a href="jav&#x09;ascript:alert(1)">x</a>',
+        '<a href="jav&#9;ascript:alert(1)">x</a>',
+        '<a href="java\tscript:alert(1)">x</a>',
+        '<a href="java&#x0A;script:alert(1)">x</a>',
+        '<a href="java\r\nscript:alert(1)">x</a>',
+        '<a href="java&Tab;script:alert(1)">x</a>',
+        '<a href="java&NewLine;script:alert(1)">x</a>',
+        '<iframe src="jav&#x0D;ascript:alert(1)"></iframe>',
+        '<a href="&#106;avascript:alert(1)">x</a>',
+        '<a href="&#0000106&#0000097vascript:alert(1)">x</a>',
+        '<a href="&#x6A;&#x61;&#x76;&#x61;&#x73;&#x63;&#x72;&#x69;&#x70;&#x74;&#x3A;alert(1)">x</a>',
+        '<a href="javascript&colon;alert(1)">x</a>',
+        '<a href="javascript&#58;alert(1)">x</a>',
+        '<a href="&#x20;&#9;jav&#x09;ascript:alert(1)">x</a>',
+        "<IMG SRC=jav&#x09;ascript:alert('XSS')>",
+        '<button formaction="JaVa&#x09;ScRiPt:alert(1)">x</button>',
+    ],
+)
+async def test_xss_obfuscated_javascript_uri_detected(text: str, patch_central_database: MagicMock) -> None:
+    scorer = XSSOutputScorer()
+    score = (await scorer.score_text_async(text=text))[0]
+    assert score.get_value() is True
+    assert score.score_rationale == "Matched: JavaScript URI"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<a href="https://javascript.info/">x</a>',
+        '<a href="/docs/javascript.html">x</a>',
+        '<a href="java script:alert(1)">x</a>',
+        '<a href="java&#32;script:alert(1)">x</a>',
+        # Without a semicolon, the following hex digit or digit extends the reference to another character.
+        '<a href="&#x6Aavascript:alert(1)">x</a>',
+        '<a href="&#1066avascript:alert(1)">x</a>',
+        # Named references are case-sensitive, and &Colon; is not a colon.
+        '<a href="java&tab;script:alert(1)">x</a>',
+        '<a href="javascript&Colon;alert(1)">x</a>',
+        # HTML decodes &#0; to U+FFFD, which the URL parser does not strip.
+        '<a href="&#0;&#106;avascript&#58;0">x</a>',
+        # A vertical tab is not removed from inside the URL, so it splits the scheme.
+        '<a href="java&#11;script&#58;0">x</a>',
+        '<a href=\u00a0"&#106;avascript&#58;0">x</a>',
+        '<a href="javascript &#58;0">x</a>',
+        '<a href="javascript\f&#58;0">x</a>',
+    ],
+)
+async def test_xss_javascript_uri_lookalikes_not_detected(text: str, patch_central_database: MagicMock) -> None:
+    scorer = XSSOutputScorer()
+    score = (await scorer.score_text_async(text=text))[0]
+    assert score.get_value() is False
+
+
+@pytest.mark.parametrize("quote", ["", "'", '"'])
+@pytest.mark.parametrize("leading", ["\x00", "\x85", "\u00a0", "\u2003", "\u2028", "\u2029"])
+async def test_xss_javascript_uri_non_url_padding_not_detected(
+    *, quote: str, leading: str, patch_central_database: MagicMock
+) -> None:
+    text = f"<a href={quote}{leading}&#106;avascript&#58;0{quote}>text</a>"
+    score = (await XSSOutputScorer().score_text_async(text=text))[0]
+    assert score.get_value() is False
+    assert score.score_rationale == ""
+
+
+@pytest.mark.parametrize("quote", ["", "'", '"'])
+@pytest.mark.parametrize("template", ["java{separator}script&#58;0", "javascript{separator}&#58;0"])
+@pytest.mark.parametrize(
+    ("separator", "encoded"),
+    [
+        ("\t", False),
+        ("\n", False),
+        ("\r", False),
+        ("\f", False),
+        (" ", False),
+        ("&#9;", True),
+        ("&#10;", True),
+        ("&#13;", True),
+        ("&Tab;", True),
+        ("&NewLine;", True),
+    ],
+)
+async def test_xss_javascript_uri_attribute_whitespace(
+    *,
+    quote: str,
+    template: str,
+    separator: str,
+    encoded: bool,
+    patch_central_database: MagicMock,
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    value = template.format(separator=separator)
+    text = f"<a href={quote}{value}{quote}>text</a>"
+    expected = encoded or (bool(quote) and separator in "\t\n\r")
+    parser = _HrefParser()
+    parser.feed(text)
+    assert parser.href is not None
+    assert (urlsplit(parser.href).scheme == "javascript") is expected
+
+    score = (await XSSOutputScorer().score_text_async(text=text))[0]
+    persisted = await sqlite_instance.get_scores_async(score_ids=[str(score.id)])
+    assert score.get_value() is expected
+    assert score.score_rationale == ("Matched: JavaScript URI" if expected else "")
+    assert len(persisted) == 1
+    assert persisted[0].get_value() is expected
+    assert persisted[0].score_category == ["security"]
+    assert persisted[0].score_rationale == score.score_rationale
+    assert persisted[0].scorer_class_identifier == score.scorer_class_identifier
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<a href="&#74;avascript&#58;0">x</a>',
+        '<a href="&#x4a;avascript&#58;0">x</a>',
+        '<a href="&#X4A;&#65;&#86;&#65;&#83;&#67;&#82;&#73;&#80;&#84;&#58;0">x</a>',
+        '<a href="&#x4A;&#x41;&#x56;&#x41;&#x53;&#x43;&#x52;&#x49;&#x50;&#x54;&#x3a;0">x</a>',
+        '<a href="&#1;&#106;avascript&#58;0">x</a>',
+        '<a href="&#x1f;&#106;avascript&#58;0">x</a>',
+        '<a href="&#11;&#x0e;&#106;avascript&#58;0">x</a>',
+        '<a href="\x01\x1b&#106;avascript&#58;0">x</a>',
+        '<a href=\t\n"&#106;avascript&#58;0">x</a>',
+        "<a href=\t\n&#106;avascript&#58;0>x</a>",
+        "<a href=\x0b&#106;avascript&#58;0>x</a>",
+        '<a href="\x1f&#106;avascript&#58;0">x</a>',
+    ],
+)
+async def test_xss_uppercase_and_leading_control_references_detected(
+    text: str, patch_central_database: MagicMock
+) -> None:
+    scorer = XSSOutputScorer()
+    score = (await scorer.score_text_async(text=text))[0]
+    assert score.get_value() is True
+    assert score.score_rationale == "Matched: JavaScript URI"
+
+
+@pytest.mark.parametrize("length", [16, 20, 24])
+@pytest.mark.parametrize(
+    "template",
+    [
+        '<a href="javascript{run}x">text</a>',
+        '<a href="{run}x">text</a>',
+        "<a href={run}x>text</a>",
+        '<a href="&#106;ava{run}x">text</a>',
+    ],
+)
+async def test_xss_javascript_uri_near_miss_does_not_backtrack(
+    *, template: str, length: int, patch_central_database: MagicMock
+) -> None:
+    # Keep inputs bounded so regressing to overlapping repeated alternatives cannot hang the suite.
+    text = template.format(run="\t" * length)
+    scorer = XSSOutputScorer()
+    start = perf_counter()
+    matched = [name for name, pattern in scorer._compiled.items() if pattern.search(text)]
+    elapsed = perf_counter() - start
+    assert not matched
+    assert elapsed < 0.5, f"JavaScript URI near miss took {elapsed:.3f}s"
+
+    score = (await scorer.score_text_async(text=text))[0]
+    assert score.get_value() is False
+
+
+async def test_xss_custom_patterns_do_not_decode_javascript_uri(patch_central_database: MagicMock) -> None:
+    scorer = XSSOutputScorer(patterns={"JavaScript URI": r"(?i)href\s*=\s*[\"']?javascript:"})
+    score = (await scorer.score_text_async(text='<a href="jav&#x09;ascript:alert(1)">x</a>'))[0]
+    assert score.get_value() is False
 
 
 async def test_xss_scorer_rationale_includes_pattern_name(patch_central_database):

@@ -1,5 +1,6 @@
-import { test, expect, type Locator, type Page } from "./_fixtures";
+import { test, expect, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { mockVersion } from "./_compatibility";
+import { READY_RUNTIME } from "./_runtime";
 import { makeTarget } from "./_targets";
 import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
 
@@ -100,6 +101,9 @@ async function expectTourContainedAndActionable(
 
 test.describe("Accessibility", () => {
   test.beforeEach(async ({ page }) => {
+    await page.route("**/api/runtime", async (route) => {
+      await route.fulfill({ json: READY_RUNTIME });
+    });
     await page.goto("/");
   });
 
@@ -123,13 +127,7 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Save an objective default, then open a new chat with that target.
-    await page.getByTitle("Registry").click();
-    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
-    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
-    await objectiveDefault.selectOption({ index: 1 });
-    await page.getByTitle("Technique.execute").click();
+    await selectChatTarget(page, "a11y-form-target");
 
     // Input should be accessible
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
@@ -146,11 +144,11 @@ test.describe("Accessibility", () => {
 
   test("should have accessible sidebar navigation", async ({ page }) => {
     // Chat button
-    const chatBtn = page.getByTitle("Technique.execute");
+    const chatBtn = page.getByRole("button", { name: "Attacks", exact: true });
     await expect(chatBtn).toBeVisible();
 
     // Registry button
-    const configBtn = page.getByTitle("Registry");
+    const configBtn = page.getByRole("button", { name: "Registry", exact: true });
     await expect(configBtn).toBeVisible();
 
     // Theme toggle button (now a menu trigger with "Theme: <mode>" title)
@@ -192,7 +190,7 @@ test.describe("Accessibility", () => {
     // keyboard) to guarantee the document has focus when the keystroke fires.
     // Without both, Chromium sometimes leaves `:focus` empty under parallel
     // worker load.
-    await expect(page.getByTitle("Home")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Home", exact: true })).toBeVisible();
     await page.locator("body").press("Tab");
     const focused = page.locator(":focus");
     await expect(focused).toBeVisible();
@@ -231,7 +229,7 @@ test.describe("Accessibility", () => {
     });
     await page.reload();
 
-    await expect(page.getByTitle("Home")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Home", exact: true })).toBeVisible();
 
     const skipLink = page.getByRole("link", { name: "Skip to main content" });
     await expect(skipLink).not.toBeInViewport();
@@ -266,13 +264,7 @@ test.describe("Accessibility", () => {
       });
     });
 
-    // Save an objective default, then open a new chat with that target.
-    await page.getByTitle("Registry").click();
-    await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-    const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
-    await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
-    await objectiveDefault.selectOption({ index: 1 });
-    await page.getByTitle("Technique.execute").click();
+    await selectChatTarget(page, "a11y-focus-target");
 
     const input = page.getByRole("textbox", { name: "Type prompt here", exact: true });
     await expect(input).toBeEnabled({ timeout: 5000 });
@@ -313,7 +305,7 @@ test.describe("Accessibility", () => {
     });
 
     // Navigate to the registry
-    await page.getByTitle("Registry").click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     await expect(page.getByText("Target Registry")).toBeVisible();
 
     // Table should exist
@@ -327,7 +319,7 @@ test.describe("Accessibility", () => {
 
     await expect(navigation).toHaveCount(1);
     await expect(
-      page.getByRole("heading", { level: 1, name: "Welcome to Co-PyRIT" })
+      page.getByRole("heading", { level: 1, name: "Home", exact: true })
     ).toBeVisible();
     await expect(navigation.getByRole("button", { name: "Home" })).toHaveAttribute(
       "aria-current",
@@ -335,9 +327,9 @@ test.describe("Accessibility", () => {
     );
 
     const views = [
-      { button: "History", heading: "History" },
+      { button: "Scanner", heading: "Scanner" },
       { button: "Registry", heading: "Target Registry" },
-      { button: "Technique.execute", heading: "Chat" },
+      { button: "Attacks", heading: "Attacks" },
     ];
 
     for (const view of views) {
@@ -358,9 +350,20 @@ test.describe("Accessibility", () => {
 
     test("mobile audit controls provide 44px touch targets", async ({ page }) => {
       await page.setViewportSize(MOBILE_VIEWPORT);
+      await page.route(/\/api\/targets/, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            items: [],
+            pagination: { limit: 200, has_more: false, next_cursor: null, prev_cursor: null },
+          }),
+        });
+      });
+      await page.reload();
 
-      await expectMinimumTouchTarget(page.getByRole("button", { name: "Labels" }));
-      await expectMinimumTouchTarget(page.getByRole("button", { name: "Configure a target" }));
+      await expectMinimumTouchTarget(page.getByTestId("labels-icon-btn"));
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Register a target" }));
       await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
 
       await page.route(/\/api\/targets/, async (route) => {
@@ -380,13 +383,14 @@ test.describe("Accessibility", () => {
           }),
         });
       });
+      await page.reload();
+      await expectMinimumTouchTarget(page.getByRole("button", { name: "Open Registry" }));
 
-      await page.getByRole("button", { name: "Registry" }).click();
+      await page.getByRole("button", { name: "Registry", exact: true }).click();
       await expect(
         page.getByRole("heading", { level: 1, name: "Target Registry" })
       ).toBeVisible();
-      await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
-      await expectMinimumTouchTarget(page.getByRole("button", { name: "Refresh" }));
+      await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
       await expectMinimumTouchTarget(page.getByRole("button", { name: "New Target" }));
     });
 

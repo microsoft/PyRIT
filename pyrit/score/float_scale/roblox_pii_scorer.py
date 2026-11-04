@@ -9,7 +9,7 @@ import math
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoringExpectation
 from pyrit.score._classifiers.hugging_face import (
     _HuggingFaceSequenceClassificationResult,
     _HuggingFaceSequenceClassifier,
@@ -92,12 +92,10 @@ class RobloxPiiScorer(MessageFloatScaleScorer):
         """
         return self._create_identifier(params={"labels": list(self._LABELS)})
 
-    async def _score_piece_async(
-        self,
-        message_piece: MessagePiece,
-        *,
-        objective: str | None = None,
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
+        objective = expectation.objective if expectation else None
         context = await self._get_context_pieces_async(message_piece=message_piece)
         formatted_text, turn_count = self._format_context(message_piece=message_piece, context=context)
         result = await self._classifier.predict_logits_async(texts=[formatted_text])
