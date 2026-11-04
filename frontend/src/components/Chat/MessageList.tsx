@@ -718,7 +718,15 @@ export default function MessageList({
 
                   {/* Download: non-text media only */}
                   {!isUser && message.attachments && message.attachments.filter(a => a.type !== 'file' && a.url).map((att, ai) => {
-                    const downloadKey = `${index}-${ai}`
+                    // Key download state to the message and attachment, not their array positions.
+                    // MessageList can remain mounted while the user switches conversations.
+                    const downloadKey = JSON.stringify([
+                      message.timestamp,
+                      message.role,
+                      message.content,
+                      att.url,
+                      att.name,
+                    ])
                     return (
                       <div key={downloadKey}>
                         <Tooltip content={`Download ${att.name}`} relationship="label">
