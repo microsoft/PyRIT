@@ -10,7 +10,7 @@ from collections.abc import Callable, Generator
 from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread, current_thread
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -33,10 +33,10 @@ from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry.components.converter_registry import ConverterRegistry
 from pyrit.registry.components.target_registry import TargetRegistry
-from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
+from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.scenario import Scenario
 from pyrit.setup.configuration_loader import ConfigurationLoader
-from unit.mocks import make_scenario_result
+from unit.mocks import MockPromptTarget, make_scenario_result
 
 
 @pytest.fixture
@@ -986,6 +986,54 @@ async def test_startup_restores_an_entry_that_uses_a_startup_target_async(
     assert converter._converter_target is startup_chat
 
 
+class _LoopBoundTarget(MockPromptTarget):
+    """A target whose constructor needs the running event loop, as HuggingFaceChatTarget's does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.loop = asyncio.get_running_loop()
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_startup_builds_restored_entries_on_the_runtime_loop_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    TargetRegistry.get_registry_singleton().register_class(_LoopBoundTarget)
+    recipes = tmp_path / "recipes"
+    _save_recipe(
+        recipes,
+        kind="targets",
+        name="loop_bound",
+        document={"class_module": _LoopBoundTarget.__module__, "class_name": "_LoopBoundTarget", "params": {}},
+    )
+
+    await _start_with_recipes_async(runtime, recipes=recipes)
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    target = TargetRegistry.get_registry_singleton().instances.get("loop_bound")
+    assert isinstance(target, _LoopBoundTarget)
+    assert target.loop is asyncio.get_running_loop()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_startup_reads_saved_entries_off_the_runtime_loop_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    read = RegistryRecipeRestorer.read
+    read_threads: list[Thread] = []
+
+    def read_noting_thread(restorer: RegistryRecipeRestorer) -> SavedRecipes:
+        read_threads.append(current_thread())
+        return read(restorer)
+
+    with patch.object(RegistryRecipeRestorer, "read", read_noting_thread):
+        await _start_with_recipes_async(runtime, recipes=tmp_path / "recipes")
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    assert len(read_threads) == 1
+    assert read_threads[0] is not current_thread()
+
+
 @pytest.mark.usefixtures("patch_central_database")
 async def test_apply_restores_an_entry_that_uses_a_startup_target_async(
     runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
@@ -1116,7 +1164,7 @@ async def test_apply_with_an_unrestorable_entry_keeps_the_new_version_async(
 async def test_restore_cancellation_propagates_from_startup_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
     runtime.state = "initializing"
 
-    with patch.object(RegistryRecipeRestorer, "restore", side_effect=asyncio.CancelledError):
+    with patch.object(RegistryRecipeRestorer, "read", side_effect=asyncio.CancelledError):
         with pytest.raises(asyncio.CancelledError):
             await _start_with_recipes_async(runtime, recipes=tmp_path / "recipes")
 

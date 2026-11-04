@@ -141,7 +141,11 @@ class RuntimeLifecycle:
             bool: Whether every saved entry was restored.
         """
         restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
-        report = await asyncio.to_thread(restorer.restore)
+        # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, as
+        # the target API builds them, because a constructor such as HuggingFaceChatTarget's starts a task
+        # on it. A slow constructor holds the loop while it runs.
+        saved = await asyncio.to_thread(restorer.read)
+        report = restorer.restore(saved=saved)
         self.restore_failures, self.restore_ignored = report.failures, report.ignored
         if not report.failures:
             return True
