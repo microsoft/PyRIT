@@ -430,6 +430,24 @@ describe('ConverterRegistry', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  it('shows contextual message when 404 error detail is missing or generic', async () => {
+    mockedConvertersApi.deleteConverter.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 404, data: {} },
+    })
+    const user = userEvent.setup()
+    renderRegistry()
+    await screen.findByText('base64-default')
+
+    await user.click(screen.getByRole('button', { name: 'Remove base64-default' }))
+    const dialog = await screen.findByRole('dialog')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }))
+
+    const alert = await within(dialog).findByRole('alert')
+    expect(alert).toHaveTextContent('Converter "base64-default" was not found or has already been removed.')
+  })
+
   it('clears deletion error when reopening the removal dialog', async () => {
     mockedConvertersApi.deleteConverter.mockRejectedValueOnce(new Error('First attempt failed'))
     const user = userEvent.setup()

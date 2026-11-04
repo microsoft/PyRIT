@@ -231,7 +231,9 @@ export default function ConverterRegistry() {
     } catch (err) {
       const apiError = toApiError(err)
       if (apiError.status === 404) {
-        setRemoveError(apiError.detail || `Converter "${converterToRemove.converter_id}" was not found or has already been removed.`)
+        const fallback = `Converter "${converterToRemove.converter_id}" was not found or has already been removed.`
+        const isGeneric = !apiError.detail || apiError.detail === 'Server error (404)'
+        setRemoveError(isGeneric ? fallback : apiError.detail)
       } else {
         setRemoveError(apiError.detail || 'Failed to remove converter. Please try again.')
       }
