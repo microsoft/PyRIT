@@ -30,6 +30,14 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class SavedRecipes:
+    """What reading the saved recipes found: each folder that was read, and a failure for each one that wasn't."""
+
+    listings: tuple[RecipeListing, ...]
+    failures: tuple[RestoreFailure, ...]
+
+
+@dataclass(frozen=True)
 class _PlannedEntry:
     """A saved entry whose class and references checked out, waiting to be built."""
 
@@ -71,35 +79,15 @@ class RegistryRecipeRestorer:
         """
         self._storages = {kind: RegistryRecipeStorage(kind=kind, source=source) for kind in RegistryRecipeKind}
 
-    def restore(self) -> RegistryRestoreReport:
+    def read(self) -> SavedRecipes:
         """
-        Rebuild every saved entry that can be rebuilt and register it.
+        Read every registry's folder without building anything.
 
-        Call it when the registries hold only startup entries, as they do at startup and after an
-        apply resets them; an entry restored earlier would otherwise clash with itself by name. If
-        any registry's folder can't be read, nothing is built, since entries in the other folders
-        may name entries in the unread one.
+        Reading can wait on storage, so a caller on an event loop can run this in a worker thread and
+        pass the result to ``restore`` on the loop. A folder that can't be listed becomes a failure.
 
         Returns:
-            RegistryRestoreReport: What was restored, what failed and why, and which files were ignored.
-        """
-        listings, failures = self._read_all()
-        ignored = [file for listing in listings for file in listing.ignored]
-        failures.extend(failure for listing in listings for failure in listing.failures)
-        if len(listings) < len(self._storages):
-            return RegistryRestoreReport(failures=self._sorted(failures), ignored=ignored)
-        stored = {recipe.ref: recipe for listing in listings for recipe in listing.recipes.values()}
-        planned = self._plan_all(stored=stored, failures=failures)
-        restored = self._build_in_order(planned=planned, failures=failures)
-        return RegistryRestoreReport(restored=restored, failures=self._sorted(failures), ignored=ignored)
-
-    def _read_all(self) -> tuple[list[RecipeListing], list[RestoreFailure]]:
-        """
-        Read every registry's folder, turning a folder that can't be listed into a failure.
-
-        Returns:
-            tuple[list[RecipeListing], list[RestoreFailure]]: The folders that were read, and one
-                failure per folder that wasn't.
+            SavedRecipes: The folders that were read, and a failure for each one that wasn't.
         """
         listings: list[RecipeListing] = []
         failures: list[RestoreFailure] = []
@@ -111,7 +99,34 @@ class RegistryRecipeRestorer:
                 failures.append(
                     RestoreFailure(kind=kind, reason=RestoreFailureReason.UNREADABLE_STORAGE, message=message)
                 )
-        return listings, failures
+        return SavedRecipes(listings=tuple(listings), failures=tuple(failures))
+
+    def restore(self, *, saved: SavedRecipes | None = None) -> RegistryRestoreReport:
+        """
+        Rebuild every saved entry that can be rebuilt and register it.
+
+        Entries are built on the calling thread, as the target API builds them, because a constructor
+        can need the running event loop. Call it when the registries hold only startup entries, as they
+        do at startup and after an apply resets them; an entry restored earlier would otherwise clash
+        with itself by name. If any registry's folder can't be read, nothing is built, since entries
+        in the other folders may name entries in the unread one.
+
+        Args:
+            saved (SavedRecipes | None): What ``read`` returned. Defaults to reading now.
+
+        Returns:
+            RegistryRestoreReport: What was restored, what failed and why, and which files were ignored.
+        """
+        saved = saved if saved is not None else self.read()
+        listings, failures = list(saved.listings), list(saved.failures)
+        ignored = [file for listing in listings for file in listing.ignored]
+        failures.extend(failure for listing in listings for failure in listing.failures)
+        if len(listings) < len(self._storages):
+            return RegistryRestoreReport(failures=self._sorted(failures), ignored=ignored)
+        stored = {recipe.ref: recipe for listing in listings for recipe in listing.recipes.values()}
+        planned = self._plan_all(stored=stored, failures=failures)
+        restored = self._build_in_order(planned=planned, failures=failures)
+        return RegistryRestoreReport(restored=restored, failures=self._sorted(failures), ignored=ignored)
 
     def _plan_all(
         self, *, stored: Mapping[SavedEntryRef, StoredRecipe], failures: list[RestoreFailure]
