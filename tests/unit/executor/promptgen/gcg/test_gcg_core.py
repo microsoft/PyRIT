@@ -1227,6 +1227,23 @@ class TestModelAdapters:
 
 
 class TestCheckGcgCapabilities:
+    def test_round_trip_render_failure_restores_prompt_and_identifies_model(self) -> None:
+        tokenizer = _fast_tokenizer()
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="unknown_control")
+        control, input_ids, control_slice = prompt.control, prompt.input_ids.tolist(), prompt._control_slice
+
+        with pytest.raises(ValueError, match="'fake/model'.*cannot be rendered") as error:
+            attack_manager_mod._check_gcg_capabilities(
+                model=_tiny_model("llama"), tokenizer=tokenizer, model_path="fake/model", prompts=[prompt]
+            )
+
+        assert isinstance(error.value.__cause__, ValueError)
+        assert (prompt.control, prompt.input_ids.tolist(), prompt._control_slice) == (
+            control,
+            input_ids,
+            control_slice,
+        )
+
     def test_rejects_control_that_does_not_round_trip(self) -> None:
         from tokenizers import decoders
 

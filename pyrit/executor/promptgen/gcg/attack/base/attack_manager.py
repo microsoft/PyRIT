@@ -2432,12 +2432,19 @@ def _check_gcg_capabilities(
         # GCG decodes each accepted candidate as get_filtered_cands does and renders it again through
         # control_str, so the initial control must come back as the same tokens.
         control, control_toks = attack_prompt.control, attack_prompt.control_toks
-        attack_prompt.control_str = tokenizer.decode(
-            control_toks, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )
-        round_tripped = attack_prompt.control
-        same_tokens = torch.equal(attack_prompt.control_toks, control_toks)
-        attack_prompt.control_str = control
+        decoded_control = tokenizer.decode(control_toks, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+        try:
+            attack_prompt.control_str = decoded_control
+            round_tripped = attack_prompt.control
+            same_tokens = torch.equal(attack_prompt.control_toks, control_toks)
+        except ValueError as exc:
+            raise ValueError(
+                f"The initial control {control!r} decodes to {decoded_control!r} with the tokenizer "
+                f"for {model_path!r}, which cannot be rendered as a GCG control. "
+                "Use a control_init that encodes back to the same tokens."
+            ) from exc
+        finally:
+            attack_prompt.control_str = control
         if not same_tokens:
             raise ValueError(
                 f"The initial control {control!r} does not survive a decode/encode round trip with the tokenizer "
