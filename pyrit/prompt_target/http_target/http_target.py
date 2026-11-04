@@ -289,6 +289,10 @@ class HTTPTarget(PromptTarget):
         for framing_header in ("content-length", "transfer-encoding"):
             headers_dict.pop(framing_header, None)
 
+        # httpx decodes the response, so let it offer only the codings it can decode. A request copied from
+        # a browser offers br and zstd, and the response would otherwise stay compressed.
+        headers_dict.pop("accept-encoding", None)
+
         if len(request_parts) > 1:
             # Parse as JSON object if it can be parsed that way
             try:

@@ -642,3 +642,50 @@ async def test_send_prompt_async_sends_every_repeated_cookie(patch_central_datab
     await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
 
     assert captured_requests[0].headers["cookie"] == "session=abc; csrf=def"
+
+
+def test_parse_raw_http_request_drops_accept_encoding(patch_central_database):
+    request = "GET / HTTP/1.1\nHost: example.com\nAccept-Encoding: gzip, deflate, br, zstd\n\n"
+    target = HTTPTarget(http_request=request)
+
+    headers, _, _, _, _ = target.parse_raw_http_request(request)
+
+    assert "accept-encoding" not in headers
+
+
+@pytest.mark.parametrize("accept_encoding", ["gzip, deflate, br, zstd", "gzip, deflate, br"])
+async def test_send_prompt_async_stores_decoded_response_for_browser_accept_encoding(
+    accept_encoding, patch_central_database
+):
+    captured_requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        # Like most CDNs, answer with Brotli whenever the client offers it. These bytes are "ok" compressed.
+        if "br" in request.headers["accept-encoding"]:
+            return httpx.Response(200, content=b"\x8b\x00\x80ok\x03", headers={"Content-Encoding": "br"})
+        return httpx.Response(200, text="ok")
+
+    raw_request = f"POST / HTTP/1.1\nHost: example.com\nAccept-Encoding: {accept_encoding}\n\n{{PROMPT}}"
+    target = HTTPTarget(http_request=raw_request, transport=httpx.MockTransport(handle_request))
+
+    response = await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
+
+    assert captured_requests[0].headers["accept-encoding"] == httpx.AsyncClient().headers["accept-encoding"]
+    assert response[0].get_value() == "ok"
+
+
+async def test_send_prompt_async_keeps_accept_encoding_set_on_the_client(patch_central_database):
+    captured_requests: list[httpx.Request] = []
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        captured_requests.append(request)
+        return httpx.Response(200, text="ok")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request), headers={"Accept-Encoding": "identity"})
+    raw_request = "POST / HTTP/1.1\nHost: example.com\nAccept-Encoding: gzip, deflate, br\n\n{PROMPT}"
+    target = HTTPTarget(http_request=raw_request, client=client)
+
+    await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
+
+    assert captured_requests[0].headers["accept-encoding"] == "identity"
