@@ -157,6 +157,37 @@ class TestRestoreOrderAndRebuild:
         assert report.failures == []
         assert [ref.name for ref in report.restored] == ["contoso_gpt4o"]
 
+    def test_a_retry_builds_only_the_entries_that_did_not_come_back(self, tmp_path: Path) -> None:
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("contoso_gpt4o", "b_member"))
+        restorer = RegistryRecipeRestorer(source=str(tmp_path))
+        first = restorer.restore()
+        registry = TargetRegistry.get_registry_singleton()
+        kept = registry.instances.get("contoso_gpt4o")
+        assert [ref.name for ref in first.restored] == ["contoso_gpt4o"]
+        assert [failure.name for failure in first.failures] == ["a_pool"]
+
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "b_member", _IDENTITY_TARGET)
+        retry = restorer.restore(restored=first.restored)
+
+        assert retry.failures == []
+        assert [ref.name for ref in retry.restored] == ["b_member", "a_pool"]
+        assert registry.instances.get("contoso_gpt4o") is kept
+        pool = registry.instances.get("a_pool")
+        assert isinstance(pool, RoundRobinTarget)
+
+    def test_a_retry_leaves_a_restored_entry_alone_even_if_its_file_changed(self, tmp_path: Path) -> None:
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
+        restorer = RegistryRecipeRestorer(source=str(tmp_path))
+        first = restorer.restore()
+        kept = TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o")
+
+        _save_text(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", "not json")
+        retry = restorer.restore(restored=first.restored)
+
+        assert (retry.restored, retry.failures) == ([], [])
+        assert TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o") is kept
+
     def test_orders_entries_of_the_same_kind(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("b_member", "c_member"))
         _save(tmp_path, RegistryRecipeKind.TARGETS, "b_member", _IDENTITY_TARGET)

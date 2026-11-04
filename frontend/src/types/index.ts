@@ -2316,6 +2316,11 @@ export interface RestoreFailureList {
   items: RestoreFailure[]
 }
 
+export interface RestoreRetryResult extends RestoreFailureList {
+  state: string
+  outcome: string
+}
+
 export interface RuntimeStatus {
   state: string
   generation: string

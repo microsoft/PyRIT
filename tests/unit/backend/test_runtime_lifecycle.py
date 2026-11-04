@@ -1319,3 +1319,167 @@ async def test_restore_cancellation_propagates_from_startup_async(runtime: Runti
             await _start_with_recipes_async(runtime, recipes=tmp_path / "recipes")
 
     assert runtime.state == "initializing"
+
+
+_RESTORABLE_TARGET = {
+    "class_module": "pyrit.prompt_target.openai.openai_chat_target",
+    "class_name": "OpenAIChatTarget",
+    "params": {
+        "auth_mode": "identity",
+        "endpoint": "https://contoso.openai.azure.com/openai/v1",
+        "model_name": "gpt-4o",
+    },
+}
+_BROKEN_TARGET = {"class_module": "nowhere", "class_name": "Nope"}
+
+
+async def _retry_async(runtime: RuntimeLifecycle) -> httpx.Response:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        return await client.post("/api/restore-failures/retry")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_retry_restores_what_was_fixed_and_publishes_the_configuration_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_converter_using_startup_chat(recipes)
+    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
+    config = await runtime._load_async()
+    config.operator = "red_team_lead"
+    targets = TargetRegistry.get_registry_singleton()
+    await _start_with_recipes_async(
+        runtime, recipes=recipes, initialize=lambda **_: targets.instances.register(startup_chat, name="startup_chat")
+    )
+    assert (runtime.state, runtime.app.state.default_labels) == ("failed", {})
+    converter = ConverterRegistry.get_registry_singleton().instances.get("formal")
+    assert converter is not None
+
+    _save_recipe(recipes, kind="targets", name="ghost", document=_RESTORABLE_TARGET)
+    changed = ConfigurationLoader(memory_db_type="in_memory", env_files=[], operator="someone_else")
+    with patch.object(runtime, "_load_async", AsyncMock(return_value=changed)):
+        response = await _retry_async(runtime)
+
+    assert (response.status_code, response.json()) == (200, {"state": "ready", "outcome": "success", "items": []})
+    assert isinstance(targets.instances.get("ghost"), OpenAIChatTarget)
+    assert targets.instances.get("startup_chat") is startup_chat
+    assert ConverterRegistry.get_registry_singleton().instances.get("formal") is converter
+    assert runtime.app.state.default_labels == {"operator": "red_team_lead"}
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_retry_keeps_what_it_restored_while_other_entries_still_fail_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(recipes, kind="targets", name="first", document=_BROKEN_TARGET)
+    _save_recipe(recipes, kind="targets", name="second", document=_BROKEN_TARGET)
+    await _start_with_recipes_async(runtime, recipes=recipes)
+    targets = TargetRegistry.get_registry_singleton()
+
+    _save_recipe(recipes, kind="targets", name="first", document=_RESTORABLE_TARGET)
+    partial = await _retry_async(runtime)
+    first = targets.instances.get("first")
+    _save_recipe(recipes, kind="targets", name="second", document=_RESTORABLE_TARGET)
+    complete = await _retry_async(runtime)
+
+    assert (partial.status_code, partial.json()["state"], partial.json()["outcome"]) == (
+        200,
+        "failed",
+        "restore-failed",
+    )
+    assert [item["name"] for item in partial.json()["items"]] == ["second"]
+    assert isinstance(first, OpenAIChatTarget)
+    assert (complete.json()["state"], runtime.state) == ("ready", "ready")
+    assert targets.instances.get("first") is first
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_retry_hides_a_constructor_error_from_users_who_are_not_admins_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    TargetRegistry.get_registry_singleton().register_class(_SecretQuotingTarget)
+    recipes = tmp_path / "recipes"
+    _save_recipe(
+        recipes,
+        kind="targets",
+        name="quoting",
+        document={"class_module": _SecretQuotingTarget.__module__, "class_name": "_SecretQuotingTarget", "params": {}},
+    )
+    await _start_with_recipes_async(runtime, recipes=recipes)
+
+    response = await _retry_async(runtime)
+
+    assert (response.status_code, response.json()["state"]) == (200, "failed")
+    assert _SERVER_SECRET not in response.text
+    (item,) = response.json()["items"]
+    assert (item["reason"], item["message"]) == ("build_error", "It couldn't be built.")
+
+
+async def test_retry_is_refused_when_no_restore_failed_async(runtime: RuntimeLifecycle) -> None:
+    response = await _retry_async(runtime)
+
+    assert response.status_code == 409
+    assert runtime.state == "ready"
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_retry_is_refused_with_several_workers_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
+    await _start_with_recipes_async(runtime, recipes=recipes)
+    runtime.topology_supported = False
+
+    response = await _retry_async(runtime)
+
+    assert response.status_code == 409
+    assert "one backend worker" in response.json()["detail"]
+    assert runtime.state == "failed"
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_retry_is_refused_while_another_configuration_write_runs_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
+    await _start_with_recipes_async(runtime, recipes=recipes)
+    _save_recipe(recipes, kind="targets", name="ghost", document=_RESTORABLE_TARGET)
+
+    async with runtime.edit_lock:
+        response = await _retry_async(runtime)
+
+    assert response.status_code == 503
+    assert runtime.state == "failed"
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_a_retry_that_stops_partway_requires_a_restart_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
+    await _start_with_recipes_async(runtime, recipes=recipes)
+
+    with patch.object(RegistryRecipeRestorer, "restore", side_effect=RuntimeError("stopped partway")):
+        response = await _retry_async(runtime)
+
+    assert (response.status_code, response.json()["state"]) == (200, "restart-required")
+    assert runtime.state == "restart-required"
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_apply_after_a_retry_rebuilds_every_saved_entry_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(recipes, kind="targets", name="kept", document=_RESTORABLE_TARGET)
+    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
+    await _start_with_recipes_async(runtime, recipes=recipes)
+    _save_recipe(recipes, kind="targets", name="ghost", document=_RESTORABLE_TARGET)
+    assert (await _retry_async(runtime)).json()["state"] == "ready"
+    config = await runtime._load_async()
+    config.apply_prepared_reinitialization_async.side_effect = lambda **_: TargetRegistry.reset_registry_singleton()
+
+    await apply_async(runtime)
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    targets = TargetRegistry.get_registry_singleton()
+    assert isinstance(targets.instances.get("kept"), OpenAIChatTarget)
+    assert isinstance(targets.instances.get("ghost"), OpenAIChatTarget)
