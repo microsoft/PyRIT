@@ -23,6 +23,7 @@ import type {
   ScenarioPresetResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioRunSizeEstimateResponse,
+  ScenarioReadiness,
   TargetInstance,
   TechniqueConfiguration,
   TechniqueOverride,
@@ -43,6 +44,7 @@ jest.mock('@/services/api', () => ({
   })) }) },
   scenarioPresetsApi: { get: jest.fn() },
   scenariosApi: {
+    readiness: jest.fn(),
     estimateRun: jest.fn(),
     getScenario: jest.fn(),
     startRun: jest.fn(),
@@ -207,6 +209,7 @@ async function advanceTimers(milliseconds: number): Promise<void> {
 }
 
 async function openRunPreview(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
   await user.click(screen.getByRole('button', { name: 'Launch scan' }))
   const dialog = await screen.findByRole('dialog', { hidden: true }, { timeout: 5_000 })
   expect(within(dialog).getByText('Run preview')).toBeInTheDocument()
@@ -271,6 +274,77 @@ function renderDetail(
 }
 
 describe('ScenarioDetail', () => {
+  it('keeps an incompatible scoring selection editable even after choosing an explicit scorer', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true }))
+    jest.mocked(scenariosApi.readiness).mockImplementation(async (_name, request) =>
+      request.scoring_target_name ? { bindings: [], issues: [{
+        role: 'objective_scorer', component: 'rubric', reason: 'Incompatible scoring target.', remediation: 'Change it.',
+      }] } : { issues: [], bindings: [{ role: 'scoring_target', component: 'rubric',
+        identifier: { class_name: 'Judge', hash: 'configured-judge' } }] })
+    renderDetail('/scanner/launch/foundry.red_team_agent', { scorers: [{
+      scorer_registry_name: 'explicit', identifier: { class_name: 'SubStringScorer', hash: 'explicit-hash', scorer_type: 'true_false' },
+    }] })
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Scoring Target' }), 'target-b')
+    expect(await screen.findAllByText(/Incompatible scoring target/)).not.toHaveLength(0)
+    expect(screen.getByRole('combobox', { name: 'Scoring Target' })).toHaveValue('target-b')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Objective scorer' }), 'registered:explicit')
+    expect(screen.getByRole('combobox', { name: 'Scoring Target' })).toHaveValue('target-b')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Scoring Target' }), 'target-a')
+    await waitFor(() => expect(scenariosApi.readiness).toHaveBeenLastCalledWith(
+      expect.any(String), expect.objectContaining({ scoring_target_name: 'target-a' }), expect.anything(),
+    ))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Scoring Target' }), '')
+    await waitFor(() => expect(jest.mocked(scenariosApi.readiness).mock.calls.at(-1)?.[1]).not.toHaveProperty('scoring_target_name'))
+    expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-a')
+    expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it('confirms resolved scoring and generation roles, omitting unconsumed helpers', async () => {
+    const user = userEvent.setup()
+    mockGetScenario.mockResolvedValue(makeScenario({ supports_objective_scorer: true, uses_default_adversarial_target: true }))
+    jest.mocked(scenariosApi.readiness).mockResolvedValue({ issues: [], bindings: [
+      { role: 'objective_scorer', component: 'rubric', identifier: { class_name: 'ResolvedRubric', hash: 'rubric' } },
+      { role: 'scoring_target', component: 'rubric', identifier: makeTarget('target-b').identifier },
+    ] })
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    const dialog = await openRunPreview(user)
+    expect(within(dialog).getByText('Scoring Target')).toBeVisible()
+    expect(within(dialog).getByText('Configured: target-b')).toBeVisible()
+    expect(within(dialog).queryByText('Adversarial Target')).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('Use server default')).not.toBeInTheDocument()
+  })
+
+  it('blocks admission on role issues and identifies the missing component', async () => {
+    jest.mocked(scenariosApi.readiness).mockResolvedValue({ bindings: [], issues: [{
+      role: 'scoring_target', component: 'scenario rubric', reason: 'No scoring target configured.',
+      remediation: 'Create a scoring target or select a deterministic scorer.',
+    }] })
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    expect(await screen.findByLabelText('Scan configuration issues')).toHaveTextContent(
+      'Create a scoring target or select a deterministic scorer.',
+    )
+    expect(screen.getByTestId('launch-scenario-btn')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Create scoring target', exact: true })).toBeVisible()
+    expect(mockStartRun).not.toHaveBeenCalled()
+  })
+
+  it('ignores a late readiness result for a superseded target', async () => {
+    const user = userEvent.setup()
+    let resolveFirst: (response: ScenarioReadiness) => void = () => {}
+    jest.mocked(scenariosApi.readiness).mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve }))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await waitFor(() => expect(scenariosApi.readiness).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('launch-scenario-btn')).toBeDisabled()
+    await user.selectOptions(screen.getByTestId('scenario-target-select'), 'target-b')
+    await waitFor(() => expect(screen.getByTestId('launch-scenario-btn')).toBeEnabled())
+    await act(async () => { resolveFirst({ bindings: [], issues: [{
+      role: 'objective_target', component: 'old', reason: 'Stale failure.', remediation: 'Do not show.',
+    }] }) })
+    expect(screen.queryByText('Stale failure.')).not.toBeInTheDocument()
+    expect(screen.getByTestId('launch-scenario-btn')).toBeEnabled()
+  })
+
   it('uses the shared scorer picker for estimates and launch without changing the scenario default', async () => {
     const user = userEvent.setup()
     writeUserPreferences('local', { ...DEFAULT_USER_PREFERENCES, lastUsedChatScorer: null })
@@ -281,7 +355,7 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/launch/foundry.red_team_agent', { scorers: [scorer] })
     const picker = await screen.findByRole('combobox', { name: 'Objective scorer' })
     expect(picker).toHaveValue('')
-    expect(screen.getByRole('option', { name: 'Use scenario default' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'No configured default scorer' })).toBeInTheDocument()
     await user.selectOptions(picker, 'registered:custom')
     const reference = { registry_name: 'custom', identifier_hash: 'custom-hash' }
     await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
@@ -312,6 +386,13 @@ describe('ScenarioDetail', () => {
     mockListTargets.mockReset()
     mockStartRun.mockReset()
     mockGetScenario.mockResolvedValue(makeScenario())
+    jest.mocked(scenariosApi.readiness).mockImplementation(async () => {
+      const scenario = await mockGetScenario.mock.results.at(-1)?.value as RegisteredScenario
+      return { issues: [], bindings: scenario?.uses_default_adversarial_target ? [{
+        role: 'adversarial_target', component: scenario.scenario_name,
+        identifier: { class_name: 'ConfiguredGenerator', hash: 'configured-generator' },
+      }] : [] }
+    })
     mockEstimateRun.mockResolvedValue(makeEstimate(8))
     mockStartRun.mockResolvedValue({ scenario_result_id: 'sr-default' })
     mockTechniques.getConfiguration.mockReset()
@@ -562,7 +643,7 @@ describe('ScenarioDetail', () => {
       const launch = await screen.findByRole('button', { name: 'Launch scan' })
       const form = launch.closest('form')
       if (!form) throw new Error('Launch scan must submit the configuration form.')
-      expect(launch).toBeEnabled()
+      await waitFor(() => expect(launch).toBeEnabled())
       await user.click(screen.getByRole('button', { name: 'Edit conversation' }))
       expect(launch).toBeDisabled()
       await user.click(launch)
@@ -760,7 +841,9 @@ describe('ScenarioDetail', () => {
       await user.tab()
     }
     expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
-    expect(screen.getByRole('alert')).toHaveTextContent('Maximum objectives must be a positive integer')
+    expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes(
+      'Maximum objectives must be a positive integer',
+    ))).toBe(true)
 
     mockGetScenario.mockResolvedValue(makeScenario({
       supported_parameter_names: ['note'],
@@ -854,7 +937,7 @@ describe('ScenarioDetail', () => {
     expect(mockListTargets).not.toHaveBeenCalled()
   })
 
-  it('estimates without a target and directs to the registry before launch', async () => {
+  it('estimates without a target and keeps target setup in the scan form', async () => {
     jest.useFakeTimers()
     const onNavigate = jest.fn()
     mockEstimateRun.mockResolvedValueOnce(makeEstimate(8))
@@ -873,8 +956,9 @@ describe('ScenarioDetail', () => {
       expect.any(AbortSignal),
     )
     expect(within(screen.getByTestId('run-estimate')).getByText('8')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Configure target to launch' }))
-    expect(onNavigate).toHaveBeenCalledWith('registry')
+    expect(screen.getByRole('button', { name: 'Create objective target' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Launch scan' })).toBeDisabled()
+    expect(onNavigate).not.toHaveBeenCalled()
   })
 
   it('prefills the objective default when it is among the supplied targets', async () => {
@@ -922,7 +1006,7 @@ describe('ScenarioDetail', () => {
     const datasetsSection = screen.getByRole('region', { name: 'Datasets' })
     expect(within(datasetsSection).getByRole('table', { name: 'Selected datasets' })).toBeInTheDocument()
     expect(datasetsSection.compareDocumentPosition(parameters)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(fallback).toHaveAccessibleDescription(/The model used for adversarial chat/)
+    expect(fallback).toHaveAccessibleDescription(/explicitly selected or configured model for prompt generation/)
     expect(fallback).toHaveValue('adversary')
     expect(within(fallback).queryByRole('option', { name: 'target-a' })).not.toBeInTheDocument()
   })

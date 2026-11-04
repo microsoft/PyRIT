@@ -856,6 +856,15 @@ class TestAddScenarioParamsFromApi:
 class TestBuildRunRequest:
     """Tests for _build_run_request."""
 
+    def test_explicit_helper_roles_match_shell_parser(self) -> None:
+        flags = ["--scoring-target", "judge", "--adversarial-target", "generator"]
+        parsed = pyrit_scan.parse_args(["run", "test", "--target", "objective", *flags])
+        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
+        shell = parse_run_arguments(args_string="test --target objective " + " ".join(flags))
+        assert request.scoring_target_name == shell["scoring_target"] == "judge"
+        assert request.adversarial_target_name == shell["adversarial_target"] == "generator"
+        assert request.target_name == shell["target"] == "objective"
+
     @pytest.mark.parametrize("value", [None, "default", "all", "7", ""])
     def test_limit_presence_matches_shell_parser(self, value: str | None) -> None:
         flags = [] if value is None else ["--max-dataset-size", value]

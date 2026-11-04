@@ -1697,6 +1697,8 @@ export interface ScenarioSuiteLaunchEntrySnapshot {
 
 /** Launch-owned fields and optimistic preconditions for one suite execution. */
 export interface LaunchScenarioSuiteRequest {
+  scoring_target_name?: string | null
+  objective_scorer?: RegisteredComponentReference | null
   expected_version: string | null
   entries: ScenarioSuiteLaunchEntrySnapshot[]
   target_name: string
@@ -1707,6 +1709,10 @@ export interface LaunchScenarioSuiteRequest {
   max_retries?: number | null
   operation_id?: string | null
   labels?: Record<string, string> | null
+}
+
+export interface ScenarioSuiteReadinessRequest extends Omit<LaunchScenarioSuiteRequest, 'target_name'> {
+  target_name?: string | null
 }
 
 export type ScenarioSuiteExecutionStatus =
@@ -1755,6 +1761,7 @@ export interface ScenarioSuiteExecutionSummary {
 }
 
 export interface RunScenarioRequest {
+  scoring_target_name?: string | null
   objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
   target_name?: string | null
@@ -1825,6 +1832,7 @@ export interface ScenarioRunSizeEstimateResponse {
 }
 
 export interface ScenarioRunSizeEstimateRequest {
+  scoring_target_name?: string | null
   objective_scorer?: RegisteredComponentReference | null
   target_name?: string | null
   adversarial_target_name?: string | null
@@ -1836,6 +1844,11 @@ export interface ScenarioRunSizeEstimateRequest {
   datasets?: ScenarioDatasetRequest
   include_baseline?: boolean | null
   scenario_params?: Record<string, unknown> | null
+}
+
+export interface ScenarioReadiness {
+  bindings: Array<{ role: string; component: string; identifier: ComponentIdentifier }>
+  issues: Array<{ role: string; component: string; reason: string; remediation: string }>
 }
 
 export interface ScenarioRunEstimateComponent {

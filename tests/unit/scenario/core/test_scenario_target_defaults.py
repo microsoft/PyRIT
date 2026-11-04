@@ -90,20 +90,20 @@ class TestScopedAdversarialDefault:
             assert get_default_adversarial_target() is outer
 
     @pytest.mark.parametrize("registered", [False, True])
-    def test_none_preserves_registry_and_openai_fallbacks(self, registered: bool) -> None:
+    def test_none_preserves_only_configured_registry_default(self, registered: bool) -> None:
         target = MockPromptTarget()
         registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
         registry.instances.get.return_value = target if registered else None
         with (
             patch.object(TargetRegistry, "get_registry_singleton", return_value=registry),
-            patch.object(scenario_target_defaults, "OpenAIChatTarget", return_value=target) as fallback,
+            patch("pyrit.prompt_target.OpenAIChatTarget", side_effect=AssertionError("Implicit provider construction")),
             override_default_adversarial_target(None),
         ):
-            assert get_default_adversarial_target() is target
             if registered:
-                fallback.assert_not_called()
+                assert get_default_adversarial_target() is target
             else:
-                fallback.assert_called_once_with(temperature=1.2)
+                with pytest.raises(ValueError, match="adversarial_chat.*not configured"):
+                    get_default_adversarial_target()
 
     @pytest.mark.parametrize("invalid", [object(), "registered_name"])
     def test_invalid_types_rejected_without_replacing_outer_scope(self, invalid: object) -> None:
@@ -127,19 +127,22 @@ class TestScopedAdversarialDefault:
         with pytest.raises(ValueError, match="must be a PromptTarget"):
             scenario_target_defaults.validate_default_adversarial_target(invalid)
 
-    def test_openai_fallback_retained_outside_scope(self) -> None:
+    def test_unconfigured_outside_scope_never_constructs_openai(self, monkeypatch: pytest.MonkeyPatch) -> None:
         registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
         registry.instances.get.return_value = None
-        target, fallback = MockPromptTarget(), MockPromptTarget()
+        target = MockPromptTarget()
+        monkeypatch.setenv("OPENAI_CHAT_MODEL", "ambient-model")
+        monkeypatch.setenv("OPENAI_CHAT_ENDPOINT", "https://ambient.invalid")
         with (
             patch.object(TargetRegistry, "get_registry_singleton", return_value=registry),
-            patch.object(scenario_target_defaults, "OpenAIChatTarget", return_value=fallback) as create_fallback,
+            patch("pyrit.prompt_target.OpenAIChatTarget", side_effect=AssertionError("Implicit provider construction")),
         ):
             with override_default_adversarial_target(target):
                 assert get_default_adversarial_target() is target
-                create_fallback.assert_not_called()
-            assert get_default_adversarial_target() is fallback
-            create_fallback.assert_called_once_with(temperature=1.2)
+            with pytest.raises(ValueError, match="adversarial_chat.*not configured"):
+                get_default_adversarial_target()
+            with pytest.raises(ValueError, match="objective_scorer_chat.*not configured"):
+                get_default_scorer_target()
 
     def test_scenario_constructor_prefers_explicit_target(self) -> None:
         scoped, explicit = MockPromptTarget(), MockPromptTarget()
@@ -147,7 +150,7 @@ class TestScopedAdversarialDefault:
         with override_default_adversarial_target(scoped):
             default_scenario = Scam(objective_scorer=scorer)
             explicit_scenario = Scam(objective_scorer=scorer, adversarial_chat=explicit)
-        assert default_scenario._adversarial_chat is scoped
+        assert default_scenario._adversarial_chat is None
         assert explicit_scenario._adversarial_chat is explicit
 
     @pytest.mark.parametrize("selection", ["scoped", "baked", "create"])

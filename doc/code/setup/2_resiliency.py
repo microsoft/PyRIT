@@ -13,6 +13,8 @@
 #
 # PyRIT provides multiple layers of retry and resiliency mechanisms to handle failures gracefully during security testing. This notebook explains the different retry mechanisms, how they work together, and how to configure them for your use case.
 #
+# Recorded output below predates explicit scan roles. Historical "fallback default objective scorer" messages describe a scoring rubric, not automatic target provisioning. Configure each required model role explicitly, as in the example below.
+#
 # ## Overview: Different Levels of Retry Mechanisms
 #
 # PyRIT implements retries at multiple levels, each serving a different purpose:
@@ -122,7 +124,7 @@
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario.foundry import FoundryTechnique, RedTeamAgent
+from pyrit.scenario.scenarios.foundry.red_team_agent import FoundryTechnique, RedTeamAgent
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets, TechniqueInitializer
 
@@ -134,6 +136,7 @@ await initialize_pyrit_async(
 )  # type: ignore
 
 objective_target = OpenAIChatTarget()
+scoring_target = OpenAIChatTarget()
 
 # Create a scenario with retry configuration
 scenario = RedTeamAgent()
@@ -141,6 +144,7 @@ scenario = RedTeamAgent()
 scenario.set_params_from_args(  # type: ignore
     args={
         "objective_target": objective_target,
+        "scoring_target": scoring_target,
         "max_concurrency": 5,
         "max_retries": 3,
         "scenario_techniques": [FoundryTechnique.Base64],
@@ -210,6 +214,7 @@ print(f"Total results: {len(result.attack_results)}")
 # resumed_scenario.set_params_from_args(
 #     args={
 #         "objective_target": objective_target,
+#         "scoring_target": scoring_target,
 #         "scenario_techniques": [FoundryTechnique.Base64],
 #     }
 # )

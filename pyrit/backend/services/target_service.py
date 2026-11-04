@@ -455,6 +455,18 @@ class TargetService:
                 **self._registry.get_reconstruction_parameters(source),
                 **request.source.params,
             }
+        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, request.type)
+        if metadata is not None:
+            missing: list[str] = []
+            for parameter in self._project_target_parameters(target_type=request.type, parameters=metadata.parameters):
+                value = permission_params.get(parameter.name)
+                if parameter.required and (value is None or isinstance(value, str) and not value.strip()):
+                    missing.append(parameter.name)
+            if missing:
+                raise ValueError(
+                    f"Target type '{request.type}' requires explicit connection fields: {', '.join(missing)}. "
+                    "Supply these fields explicitly, or select an environment-initialized registered target."
+                )
         await self._enforce_code_execution_permission_async(
             target_type=request.type, params=permission_params, is_admin=is_admin
         )

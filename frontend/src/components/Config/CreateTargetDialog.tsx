@@ -201,7 +201,7 @@ function isAzureMlEndpoint(endpoint: string): boolean {
 interface CreateTargetDialogProps {
   open: boolean
   onClose: () => void
-  onCreated: () => void
+  onCreated: (target: TargetInstance) => void
   /** Existing targets, passed from the parent to avoid a redundant API call. */
   existingTargets?: TargetInstance[]
 }
@@ -386,7 +386,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     : defaultSupportsIdentity(targetType)
   const showAuthField = targetType !== '' && supportsIdentity
   const isIdentity = showAuthField && authMode === 'identity'
-  const endpointRequired = hasEndpointField
+  const endpointRequired = Boolean(endpointParameter?.required) || (metadataUnavailableForSelection && hasEndpointField)
   const modelNameRequired = Boolean(modelNameParameter?.required)
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
   const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity
@@ -520,7 +520,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       setError(null)
 
       try {
-        await targetsApi.createTarget({
+        const target = await targetsApi.createTarget({
           type: 'RoundRobinTarget',
           params: {
             targets: selectedInnerTargets.map((t) => t.registryName),
@@ -528,7 +528,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
           },
         })
         resetForm()
-        onCreated()
+        onCreated(target)
       } catch (err) {
         // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
         // messages) rather than the generic axios "Request failed with status code 400".
@@ -590,14 +590,14 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
       }
 
-      await targetsApi.createTarget({
+      const target = await targetsApi.createTarget({
         type: targetType,
         params,
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
       })
 
       resetForm()
-      onCreated()
+      onCreated(target)
     } catch (err) {
       // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
       // messages) rather than the generic axios "Request failed with status code 400".
@@ -882,7 +882,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasModelNameField && (
                     <Field
                       label="Model / Deployment Name"
-                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameParameter?.description || undefined}
+                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameRequired
+                        ? 'Enter the model or deployment name explicitly. To use environment configuration, select an initializer-registered target instead.'
+                        : modelNameParameter?.description || undefined}
                       required={modelNameRequired}
                       validationMessage={fieldErrors.modelName}
                       validationState={fieldErrors.modelName ? 'error' : 'none'}

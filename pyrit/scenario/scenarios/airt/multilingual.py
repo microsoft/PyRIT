@@ -22,6 +22,7 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     SeedDataset,
 )
+from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
@@ -222,9 +223,6 @@ class Multilingual(Scenario):
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
         self._adversarial_chat = adversarial_chat
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
         self._default_languages = self._get_default_languages()
         self._resolved_languages: list[str] = []
 
@@ -233,11 +231,12 @@ class Multilingual(Scenario):
         super().__init__(
             version=self.VERSION,
             uses_default_adversarial_target=adversarial_chat is None,
+            adversarial_target=adversarial_chat,
             technique_class=technique_class,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name=name) for name in ["harmbench"]], max_per_dataset="all", max_total=5
             ),
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
 
@@ -378,6 +377,12 @@ class Multilingual(Scenario):
         metadata[_LANGUAGES_METADATA_KEY] = list(self._resolved_languages)
         return metadata
 
+    def _get_readiness_factories(self) -> dict[str, AttackTechniqueFactory]:
+        return {**super()._get_readiness_factories(), **_extra_default_factories()}
+
+    def _check_adversarial_target(self, *, target: PromptTarget) -> list[str]:
+        return CHAT_TARGET_REQUIREMENTS.check(target=target)
+
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
         Build the technique x dataset x translation-strategy/language attack matrix.
@@ -405,7 +410,7 @@ class Multilingual(Scenario):
         strategies = set(self.params.get("translation_strategies") or [_TRANSLATION, _RANDOM_TRANSLATION])
         technique_factories = resolve_technique_factories(
             context=context,
-            extra_factories=_extra_default_factories(),
+            extra_factories=self._get_readiness_factories(),
         )
         builder = MatrixAtomicAttackBuilder(
             objective_target=context.objective_target,

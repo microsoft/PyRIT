@@ -130,9 +130,6 @@ class Doctor(Scenario):
                 (non-refusal). If not provided, defaults to the scenario's default objective scorer.
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-
         technique_class = _build_doctor_technique()
 
         super().__init__(
@@ -144,6 +141,9 @@ class Doctor(Scenario):
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+    def _get_readiness_factories(self) -> dict[str, AttackTechniqueFactory]:
+        return {factory.name: factory for factory in DOCTOR_FACTORIES}
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
@@ -163,7 +163,7 @@ class Doctor(Scenario):
         """
         selected_techniques = {technique.value for technique in context.scenario_techniques}
         technique_factories = {
-            factory.name: factory for factory in DOCTOR_FACTORIES if factory.name in selected_techniques
+            name: factory for name, factory in self._get_readiness_factories().items() if name in selected_techniques
         }
 
         builder = MatrixAtomicAttackBuilder(

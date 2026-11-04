@@ -217,6 +217,7 @@ if TYPE_CHECKING:
         ScenarioSuiteExecutionStatus,
         ScenarioSuiteExecutionSummary,
         ScenarioSuiteLaunchEntrySnapshot,
+        ScenarioSuiteReadinessRequest,
         ScenarioSuiteSubmissionState,
     )
     from pyrit.models.score import (
@@ -558,6 +559,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SCENARIO_SUITE_EXECUTION_METADATA_KEY": "pyrit.models.scenario_suite_execution",
     "SCENARIO_SUITE_EXECUTION_METADATA_VERSION": "pyrit.models.scenario_suite_execution",
     "LaunchScenarioSuiteRequest": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteReadinessRequest": "pyrit.models.scenario_suite_execution",
     "ScenarioSuiteExecutionEntryState": "pyrit.models.scenario_suite_execution",
     "ScenarioSuiteExecutionEntrySummary": "pyrit.models.scenario_suite_execution",
     "ScenarioSuiteExecutionMetadata": "pyrit.models.scenario_suite_execution",

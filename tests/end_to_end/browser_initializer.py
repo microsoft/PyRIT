@@ -4,14 +4,16 @@
 """Offline execution and historical data for browser acceptance tests."""
 
 import asyncio
+from uuid import UUID
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import AttackResult, Message, MessagePiece, SeedObjective
+from pyrit.models.catalog import ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
-from pyrit.registry import ScenarioRegistry, TargetRegistry
+from pyrit.registry import ScenarioPresetRegistry, ScenarioRegistry, ScenarioSuiteRegistry, TargetRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
@@ -98,8 +100,10 @@ class BrowserInitializer(PyRITInitializer):
 
     async def initialize_async(self) -> None:
         memory = CentralMemory.get_memory_instance()
+        TargetRegistry.get_registry_singleton().register_class(BrowserTarget)
         TargetRegistry.get_registry_singleton().instances.register(BrowserTarget(), name="browser_offline")
         ScenarioRegistry.get_registry_singleton().register_class(BrowserScenario, name="browser_offline")
+        await asyncio.to_thread(self._register_suites)
         await asyncio.to_thread(self._store_legacy_attack)
         await memory.add_message_to_memory_async(
             request=MessagePiece(
@@ -108,6 +112,38 @@ class BrowserInitializer(PyRITInitializer):
                 conversation_id="11111111-1111-4111-8111-111111111112",
             ).to_message()
         )
+
+    @staticmethod
+    def _register_suites() -> None:
+        presets = ScenarioPresetRegistry.get_registry_singleton()
+        suites = ScenarioSuiteRegistry.get_registry_singleton()
+        for width in (1280, 390):
+            preset_name = f"explicit_suite_preset_{width}"
+            image_name = f"explicit_image_{width}"
+            presets.register_preset(
+                preset=ScenarioPreset(
+                    name=preset_name,
+                    scenario_name="technique.execute",
+                    techniques=["flip"],
+                    include_baseline=False,
+                    scenario_params={"objective": f"Suite objective {width}"},
+                )
+            )
+            presets.register_preset(preset=ScenarioPreset(name=image_name, scenario_name="garak.figstep"))
+            entries = [
+                ScenarioSuiteEntry(
+                    entry_id=UUID(f"11111111-1111-4111-8111-{width * 10 + position:012d}"),
+                    preset_name=preset_name,
+                )
+                for position in (1, 2)
+            ]
+            suites.register_suite(suite=ScenarioSuite(name=f"explicit_suite_{width}", entries=entries))
+            suites.register_suite(
+                suite=ScenarioSuite(
+                    name=f"explicit_mixed_{width}",
+                    entries=[entries[0], entries[1].model_copy(update={"preset_name": image_name})],
+                )
+            )
 
     @staticmethod
     def _store_legacy_attack() -> None:

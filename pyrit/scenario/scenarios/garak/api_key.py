@@ -335,9 +335,7 @@ class ApiKey(Scenario):
                         attack=PromptSendingAttack(
                             objective_target=context.objective_target,
                             attack_converter_config=converter_config,
-                            attack_scoring_config=AttackScoringConfig(
-                                objective_scorer=cast("TrueFalseScorer", self._objective_scorer)
-                            ),
+                            attack_scoring_config=AttackScoringConfig(objective_scorer=self._objective_scorer),
                         )
                     ),
                     seed_groups=seed_groups,

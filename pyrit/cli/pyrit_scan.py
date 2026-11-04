@@ -296,6 +296,10 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
         help="Name of the scenario to run",
     )
     parser.add_argument("--target", type=str, help=ARG_HELP["target"])
+    parser.add_argument("--scoring-target", type=str, help="Registered target for the scenario scoring rubric")
+    parser.add_argument(
+        "--adversarial-target", type=str, help="Registered generation target; never inferred from --target"
+    )
     parser.add_argument(
         "--initializers",
         type=_parse_initializer_arg,
@@ -1005,6 +1009,10 @@ def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> RunScen
         "scenario_name": scenario_name,
         "target_name": parsed_args.target or "",
     }
+    for role in ("scoring", "adversarial"):
+        name = getattr(parsed_args, f"{role}_target", None)
+        if name:
+            kwargs[f"{role}_target_name"] = name
 
     if parsed_args.initializers:
         init_names: list[str] = []
