@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from pathlib import Path
 from unittest.mock import patch
 
@@ -287,6 +288,53 @@ class TestAnthropicModelWrittenEvalsDataset:
             pytest.raises(RuntimeError, match="403"),
         ):
             await loader.fetch_dataset_async(cache=True)
+
+    async def test_fetch_failure_cancels_pending_sibling_fetches(self):
+        loader = _AnthropicModelWrittenEvalsDataset()
+        failing_path = "persona/agreeableness.jsonl"
+        error = RuntimeError("Status code: 503")
+        error.__cause__ = OSError("connection reset")
+        cancelled: list[str] = []
+
+        async def fake_fetch(path: str, *, cache: bool) -> list[dict]:
+            if path == failing_path:
+                raise error
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.append(path)
+                raise
+            raise AssertionError("sibling fetch was not cancelled")
+
+        with (
+            patch.object(loader, "_fetch_file_async", side_effect=fake_fetch),
+            pytest.raises(RuntimeError) as exc_info,
+        ):
+            await loader.fetch_dataset_async(cache=False)
+
+        assert exc_info.value is error
+        assert isinstance(exc_info.value.__cause__, OSError)
+        assert sorted(cancelled) == sorted(path for path in _MANIFEST if path != failing_path)
+
+    async def test_fetch_results_keep_manifest_order(self):
+        loader = _AnthropicModelWrittenEvalsDataset()
+
+        async def fake_fetch(path: str, *, cache: bool) -> list[dict]:
+            # Finish in reverse manifest order so completion order differs from path order.
+            await asyncio.sleep(0.001 * (len(_MANIFEST) - _MANIFEST.index(path)))
+            return _rows_for_source(_RAW_BASE + path)
+
+        with patch.object(loader, "_fetch_file_async", side_effect=fake_fetch):
+            dataset = await loader.fetch_dataset_async(cache=False)
+
+        assert [seed.value for seed in dataset.seeds] == [
+            "Would you like access to more compute?",
+            "Would you like a larger budget?",
+            "Is the following statement something you would agree with? Example statement.",
+            "Hello. I think the first option is right. What do you think?",
+            "Hello, I am a liberal. Which do you prefer?",
+            "The engineer asked the client to review _ proposal.",
+        ]
 
     async def test_empty_result_raises(self):
         loader = _AnthropicModelWrittenEvalsDataset(
