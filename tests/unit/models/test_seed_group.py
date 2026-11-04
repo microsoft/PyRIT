@@ -928,6 +928,20 @@ class TestSeedGroupMetadataIsolation:
         assert derived["nested"] == {"items": [1]}
         assert derived["nested"] is not seed.metadata["nested"]
 
+    def test_derived_messages_preserve_cycles_in_nested_metadata(self) -> None:
+        items = []
+        items.append(items)
+        seed = SeedPrompt(value="hello", role="user", metadata={"items": items})
+        group = SeedGroup(seeds=[seed])
+
+        message = group.next_message
+        assert message is not None
+
+        derived_items = message.get_piece().prompt_metadata["items"]
+        assert derived_items is not items
+        assert derived_items[0] is derived_items
+        assert items[0] is items
+
     @pytest.mark.parametrize("metadata", [None, {}])
     def test_derived_messages_with_empty_metadata_get_independent_dicts(self, metadata) -> None:
         seed = SeedPrompt(value="hello", role="user", metadata=metadata)

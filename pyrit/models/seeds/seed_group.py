@@ -45,7 +45,7 @@ SeedUnion = Annotated[
 PROMPT_ONLY_SEED_KEYS = ("data_type", "role", "sequence", "parameters")
 
 
-def _copy_containers(value: Any) -> Any:
+def _copy_containers(value: Any, memo: dict[int, Any] | None = None) -> Any:
     """
     Copy nested dicts and lists so derived messages do not share containers with seeds.
 
@@ -54,15 +54,28 @@ def _copy_containers(value: Any) -> Any:
 
     Args:
         value: The metadata value to copy.
+        memo: Previously copied containers, keyed by their identity.
 
     Returns:
         A copy of ``value`` with every nested dict and list rebuilt.
 
     """
-    if isinstance(value, dict):
-        return {key: _copy_containers(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_copy_containers(item) for item in value]
+    if memo is None:
+        memo = {}
+    if isinstance(value, (dict, list)):
+        identity = id(value)
+        if identity in memo:
+            return memo[identity]
+        copied: dict[Any, Any] | list[Any]
+        if isinstance(value, dict):
+            copied = {}
+            memo[identity] = copied
+            copied.update((key, _copy_containers(item, memo)) for key, item in value.items())
+        else:
+            copied = []
+            memo[identity] = copied
+            copied.extend(_copy_containers(item, memo) for item in value)
+        return copied
     return value
 
 
