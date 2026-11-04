@@ -55,6 +55,7 @@ jest.mock('@/services/api', () => ({
   attacksApi: {
     listAttacks: jest.fn(),
     getAttack: jest.fn(),
+    getAttackMetadata: jest.fn(),
     getMessages: jest.fn(),
     getConversations: jest.fn(),
     updateAttack: jest.fn(),
@@ -438,13 +439,13 @@ describe('Shared new run labels', () => {
         }],
       }],
     })
-    jest.mocked(attacksApi.getAttack).mockResolvedValue({
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue({
       attack_result_id: 'old_attack', conversation_id: 'old_conversation',
-      attack_type: 'PromptSendingAttack', outcome: 'undetermined', labels: { team: 'original_team' },
-      objective: '', converters: [], message_count: 0, related_conversation_ids: [],
-      operator: 'original_user', operation: 'original_op',
+      outcome: 'undetermined', labels: { team: 'original_team' }, objective: '',
+      operator: 'original_user', execution_read_only: false,
+      last_response_message_piece_id: 'response_piece', related_conversation_count: 0,
+      selected_conversation_id: 'old_conversation', selected_conversation_valid: true,
       target: { target_type: 'OpenAIChatTarget', target_registry_name: 'test_target', identifier_hash: 'test_hash' },
-      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     })
     renderApp('/attack/chat/old_attack')
     expect(await screen.findByTestId('operator-locked-banner')).toBeInTheDocument()

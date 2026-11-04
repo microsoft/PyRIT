@@ -242,7 +242,9 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
-    if (saving) {
+    // While a newly picked scenario loads, `scenario` and `config` still hold the
+    // previous one, so saving now would store a preset for the wrong scenario.
+    if (saving || scenarioLoading) {
       return
     }
     setSaveError(null)
@@ -494,7 +496,7 @@ function ScenarioPresetEditorContent({ mode, presetName }: ScenarioPresetEditorC
             className={styles.touchTarget}
             appearance="primary"
             type="submit"
-            disabled={saving || !scenario}
+            disabled={saving || scenarioLoading || !scenario}
             data-testid="save-preset-btn"
           >
             {saving ? 'Saving...' : 'Save preset'}
