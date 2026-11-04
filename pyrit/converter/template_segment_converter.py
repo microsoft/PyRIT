@@ -18,6 +18,11 @@ class TemplateSegmentConverter(Converter):
 
     This converter is a generalized version of this:
     https://adversa.ai/blog/universal-llm-jailbreak-chatgpt-gpt-4-bard-bing-anthropic-and-beyond/
+
+    The converter identifier captures the ordered template parameter names alongside
+    the template hash, parameter count, and seed. Changing parameter ordering alters
+    segment binding, so differing parameter orders produce distinct identifier hashes
+    and registry names.
     """
 
     SUPPORTED_INPUT_TYPES = ("text",)
@@ -73,7 +78,7 @@ class TemplateSegmentConverter(Converter):
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
-        Build identifier with template parameters.
+        Build identifier with template hash, ordered parameter names, parameter count, and seed.
 
         Returns:
             ComponentIdentifier: The identifier for this converter.
@@ -82,6 +87,7 @@ class TemplateSegmentConverter(Converter):
         return self._create_identifier(
             params={
                 "template_hash": template_hash,
+                "parameters": list(self.prompt_template.parameters or []),
                 "number_parameters": self._number_parameters,
                 "seed": self._seed,
             }

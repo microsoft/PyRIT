@@ -6,6 +6,7 @@ import pytest
 
 from pyrit.converter import TemplateSegmentConverter
 from pyrit.models import SeedPrompt
+from pyrit.registry import ConverterRegistry
 
 
 def test_template_segment_converter_init_default():
@@ -168,3 +169,60 @@ async def test_template_segment_converter_invalid_input_type():
     converter = TemplateSegmentConverter()
     with pytest.raises(ValueError, match="Input type not supported"):
         await converter.convert_async(prompt="test", input_type="image_path")
+
+
+def test_template_segment_converter_identifier_includes_ordered_parameters():
+    """Test that the converter identifier includes ordered parameter names."""
+    template = SeedPrompt(value="{{ left }} and {{ right }}", parameters=["left", "right"])
+    converter = TemplateSegmentConverter(prompt_template=template, seed=42)
+    identifier = converter.get_identifier()
+
+    assert identifier.params["parameters"] == ["left", "right"]
+    assert identifier.params["number_parameters"] == 2
+    assert identifier.params["seed"] == 42
+    assert "template_hash" in identifier.params
+
+
+def test_template_segment_converter_identifier_differs_when_parameters_reordered():
+    """Reordering the template parameters changes binding behavior and must yield distinct hashes."""
+    template = "LEFT[{{left}}] RIGHT[{{right}}]"
+    first = TemplateSegmentConverter(
+        prompt_template=SeedPrompt(value=template, parameters=["left", "right"]),
+        seed=7,
+    )
+    second = TemplateSegmentConverter(
+        prompt_template=SeedPrompt(value=template, parameters=["right", "left"]),
+        seed=7,
+    )
+
+    assert first.get_identifier().hash != second.get_identifier().hash
+    assert first.get_identifier().params["parameters"] == ["left", "right"]
+    assert second.get_identifier().params["parameters"] == ["right", "left"]
+
+
+async def test_template_segment_converter_reordered_parameters_coexist_in_registry():
+    """Distinct parameter bindings have distinct default registry names and register without conflict."""
+    registry = ConverterRegistry()
+    template = "LEFT[{{left}}] RIGHT[{{right}}]"
+    first = registry.create_named_instance(
+        name="source",
+        type_name="TemplateSegmentConverter",
+        params={
+            "prompt_template": SeedPrompt(value=template, parameters=["left", "right"]),
+            "seed": 7,
+        },
+    )
+    second = registry.recreate_instance(
+        source=first,
+        params={"prompt_template": SeedPrompt(value=template, parameters=["right", "left"])},
+    )
+
+    res_first = await first.convert_async(prompt="alpha beta")
+    res_second = await second.convert_async(prompt="alpha beta")
+    assert res_first.output_text == "LEFT[alpha] RIGHT[beta]"
+    assert res_second.output_text == "LEFT[beta] RIGHT[alpha]"
+
+    automatic_names = ConverterRegistry()
+    automatic_names.instances.register(first)
+    automatic_names.instances.register(second)
+    assert len(automatic_names.instances) == 2
