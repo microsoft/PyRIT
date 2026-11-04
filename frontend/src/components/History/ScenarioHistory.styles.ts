@@ -9,6 +9,14 @@ import {
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
 export const useScenarioHistoryStyles = makeStyles({
+  lookupForm: {
+    flex: '2 1 28ch',
+    minWidth: 0,
+  },
+  lookupInput: {
+    width: '100%',
+    minWidth: 0,
+  },
   root: {
     display: 'flex',
     flexDirection: 'column',
@@ -35,6 +43,7 @@ export const useScenarioHistoryStyles = makeStyles({
     marginTop: tokens.spacingVerticalS,
   },
   filterDropdown: {
+    flex: '1 1 16ch',
     minWidth: '160px',
     ...mobileTouchTargetHeight,
     '& > input': {
@@ -49,6 +58,7 @@ export const useScenarioHistoryStyles = makeStyles({
   },
   table: {
     minWidth: '1080px',
+    tableLayout: 'auto',
     backgroundColor: tokens.colorNeutralBackground2,
   },
   clickableRow: {
@@ -91,6 +101,7 @@ export const useScenarioHistoryStyles = makeStyles({
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalXXS,
     maxWidth: '240px',
+    whiteSpace: 'nowrap',
   },
   target: {
     display: 'flex',
