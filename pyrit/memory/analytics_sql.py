@@ -70,7 +70,7 @@ class UnicodeCaseFold(FunctionElement[str]):
     """
     Fold text per character with Python casefold semantics for exact matching.
 
-    Unlike :class:`UnicodeLower`, every character maps on its own, so verbatim
+    Unlike ``UnicodeLower``, every character maps on its own, so verbatim
     text always matches regardless of context sensitive forms such as Greek
     final sigma, and ``ss`` matches the sharp s.
     """

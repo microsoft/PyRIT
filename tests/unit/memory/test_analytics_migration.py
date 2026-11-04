@@ -15,13 +15,14 @@ from alembic import command
 from alembic.config import Config
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
-from sqlalchemy import String, create_engine, inspect, text
+from sqlalchemy import String, UnicodeText, create_engine, inspect, literal, text
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateIndex, CreateTable
 
 from pyrit.memory.alembic.versions.e5f7a9c1b3d2_add_identifiers_tables import IdentifierGraphInserter
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
+from pyrit.memory.analytics_sql import UnicodeCaseFold
 from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import AtomicAttackIdentifier, AttackIdentifier, TargetIdentifier, compute_eval_hash
 
@@ -322,6 +323,16 @@ def test_analytics_migration_preserves_outcome_at_the_index_key_limit(tmp_path: 
             command.check(config)
     finally:
         engine.dispose()
+
+
+def test_unicode_casefold_compiles_per_dialect() -> None:
+    """SQLite keeps the registered casefold fallback and SQL Server uses LOWER."""
+    expression = UnicodeCaseFold(literal("CAFÉ", UnicodeText()))
+    sqlite_sql = str(expression.compile(dialect=sqlite.dialect()))
+    mssql_sql = str(expression.compile(dialect=mssql.dialect()))
+    assert "pyrit_analytics_casefold" in sqlite_sql
+    assert "lower(" in sqlite_sql  # the ASCII fast path stays plain lower
+    assert mssql_sql.startswith("LOWER(")
 
 
 @pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect()])
