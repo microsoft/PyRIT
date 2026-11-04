@@ -43,7 +43,10 @@ to new work; changes do not alter saved results.
 
 Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conversation
 workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
-and branch or edit conversations to try another approach. Add an objective and
+and branch or edit conversations to try another approach. In an empty new chat, use **Need inspiration? Browse seed prompts**
+to find examples already loaded in memory. Browsing does not download providers, create an attack, or send a prompt.
+When you open a dataset from Chat, **Return to Chat** takes you back to the originating draft or saved conversation.
+Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
 To score a saved response, open the objective outcome, expand **Automated scorer**,
