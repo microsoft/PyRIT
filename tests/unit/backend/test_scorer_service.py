@@ -117,6 +117,16 @@ async def test_types_are_metadata_only_and_empty_instance_list_is_valid() -> Non
     assert missing is None
 
 
+async def test_list_scorers_rejects_a_cursor_that_names_no_instance() -> None:
+    """A stale cursor must raise, not silently restart at the first page."""
+    registry = ScorerRegistry.get_registry_singleton()
+    registry.instances.register(SubStringScorer(substring="expected"), name="judge")
+    service = ScorerService()
+
+    with pytest.raises(ValueError, match="cursor is not valid"):
+        await service.list_scorers_async(cursor="removed-scorer", limit=10)
+
+
 async def test_chat_catalog_checks_response_contract_and_full_identity() -> None:
     registry = ScorerRegistry.get_registry_singleton()
     scorer = SubStringScorer(substring="expected")
@@ -253,7 +263,7 @@ async def test_list_scorers_uses_sorted_names_and_cursor_pages() -> None:
     assert second.pagination.next_cursor is None
 
 
-@pytest.mark.parametrize("cursor", [None, "a-first", "missing", "z-last"])
+@pytest.mark.parametrize("cursor", [None, "a-first", "z-last"])
 async def test_list_scorers_projects_only_requested_page(cursor: str | None) -> None:
     registry = ScorerRegistry.get_registry_singleton()
     registry.register_class(_ServiceScorer)
@@ -466,3 +476,15 @@ async def test_decision_scorer_builds_through_the_api_with_its_bundled_question(
 
     assert created.scorer_registry_name == "decision"
     assert ScorerRegistry.get_registry_singleton().instances.get("decision") is not None
+
+
+async def test_decision_scorer_unknown_parameter_does_not_list_its_question_path(chat_target: str) -> None:
+    with pytest.raises(ValueError, match="Unknown parameter 'nope' for 'DecisionScorer'") as error:
+        await ScorerService().create_scorer_async(
+            request=CreateScorerRequest(
+                name="decision", type="DecisionScorer", params={"chat_target": chat_target, "nope": 1}
+            )
+        )
+
+    assert "'chat_target'" in str(error.value)
+    assert "decision_question_path" not in str(error.value)

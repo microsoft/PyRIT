@@ -2,10 +2,12 @@
 # Licensed under the MIT license.
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from pyrit.exceptions import ScorerLLMResponseBlockedException
 from pyrit.models import (
+    Acquisition,
     ChatMessageRole,
     ComponentIdentifier,
     ContentScorable,
@@ -23,7 +25,7 @@ from pyrit.score.message_scorer import MessageScorer
 from pyrit.score.observation.conversation_source import ConversationSource
 from pyrit.score.observation.execution import _collect_observation, _ObservationEvidenceResolver
 from pyrit.score.observation.observation_source import ObservationSource
-from pyrit.score.scorer import Scorer
+from pyrit.score.scorer import Scorer, SnapshotParticipation, _read_snapshot_participation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer, TrueFalseScorer
 
@@ -60,6 +62,108 @@ class ConversationScorer(MessageScorer, ABC):
             PromptTarget | None: The configured scoring target, if any.
         """
         return self._get_wrapped_scorer().get_chat_target()
+
+    async def find_matching_scores_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None = None,
+    ) -> list[Score]:
+        """
+        Match the complete ordered snapshot that a fresh conversation evaluation would acquire.
+
+        Returns:
+            Scores for the exact captured evidence and effective expectation, newest first.
+        """
+        conversation_scorable = await self._get_conversation_scorable_async(scorable=scorable)
+        if conversation_scorable is None:
+            return []
+        prepared = self.prepare_expectation(expectation=expectation)
+        candidates = self.find_matching_scores(scores=scores, scorable=conversation_scorable, expectation=prepared)
+        if not candidates:
+            return []
+        return await self._filter_matching_scores_by_snapshot_async(
+            scores=candidates,
+            scorable=conversation_scorable,
+            expectation=prepared,
+            used_observation_ids={str(score.id): set() for score in candidates},
+            participation_by_score={str(score.id): _read_snapshot_participation(score) for score in candidates},
+        )
+
+    async def _get_conversation_scorable_async(self, *, scorable: Scorable) -> ConversationScorable | None:
+        """
+        Resolve a message trigger to its single complete conversation scope.
+
+        Returns:
+            ConversationScorable | None: The conversation scope, or None for an invalid trigger.
+        """
+        if isinstance(scorable, MessageScorable):
+            messages = await self._memory.get_message_pieces_async(prompt_ids=list(scorable.message_piece_ids))
+            if {piece.id for piece in messages} != set(scorable.message_piece_ids):
+                return None
+            conversation_ids = {piece.conversation_id for piece in messages}
+            if len(conversation_ids) != 1:
+                return None
+            conversation_id = messages[0].conversation_id
+            if conversation_id is None:
+                return None
+            scorable = ConversationScorable(conversation_id=conversation_id)
+        if not isinstance(scorable, ConversationScorable):
+            return None
+        return scorable
+
+    async def _filter_matching_scores_by_snapshot_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
+    ) -> list[Score]:
+        """
+        Require an unused linked observation of this branch's exact current conversation.
+
+        Returns:
+            list[Score]: Root candidates with a complete current snapshot for this participant.
+        """
+        conversation_scorable = await self._get_conversation_scorable_async(scorable=scorable)
+        if conversation_scorable is None:
+            return []
+        current = await self._source.acquire_async(scorable=conversation_scorable)
+        if current.acquisition != Acquisition.COMPLETE or not isinstance(
+            current.payload, ConversationObservationPayload
+        ):
+            return []
+        observation_ids = {
+            observation_id
+            for score in scores
+            for observation_id in score.observation_ids
+            if str(observation_id) not in used_observation_ids.setdefault(str(score.id), set())
+        }
+        if not observation_ids:
+            return []
+        observations = await self._memory.get_observations_async(observation_ids=list(observation_ids))
+        matching_ids = {
+            observation.id
+            for observation in observations
+            if observation.acquisition == Acquisition.COMPLETE
+            and observation.scorable == conversation_scorable
+            and observation.source_identifier == current.source_identifier
+            and observation.payload == current.payload
+        }
+        matched_scores = []
+        for score in scores:
+            available_ids = {
+                observation_id
+                for observation_id in score.observation_ids
+                if observation_id in matching_ids and str(observation_id) not in used_observation_ids[str(score.id)]
+            }
+            if available_ids:
+                used_observation_ids[str(score.id)].add(str(min(available_ids, key=str)))
+                matched_scores.append(score)
+        return matched_scores
 
     async def _score_message_scorable_async(
         self,
@@ -263,7 +367,9 @@ class ConversationScorer(MessageScorer, ABC):
             turn_index += 1
         return "".join(lines)
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Not used - ConversationScorer operates at conversation level via
         ``_score_prepared_message_async``.
