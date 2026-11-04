@@ -141,7 +141,7 @@ class TestLocalListingWithIssues:
         assert listing == DocumentListing(documents={"kept": b"kept"})
 
     @pytest.mark.parametrize("replacement", ["pipe", "folder", "dangling link"])
-    @pytest.mark.timeout(60)
+    @pytest.mark.timeout(60, method="thread")
     def test_reports_a_non_file_put_in_place_of_a_listed_document_without_reading_it(
         self, tmp_path: Path, replacement: str
     ) -> None:
@@ -175,6 +175,7 @@ class TestLocalListingWithIssues:
         assert _count_open_files() == open_files
 
     @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Named pipes need os.mkfifo")
+    @pytest.mark.timeout(60, method="thread")
     def test_checks_the_opened_file_rather_than_the_path(self, tmp_path: Path) -> None:
         document = tmp_path / "document.json"
         document.write_bytes(b"original")
@@ -190,6 +191,25 @@ class TestLocalListingWithIssues:
             listing = _local_storage(tmp_path)._list_documents_with_issues()
 
         assert listing == DocumentListing(documents={"document": b"original"})
+        assert document.is_fifo()
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Named pipes need os.mkfifo")
+    @pytest.mark.timeout(60, method="thread")
+    def test_checks_a_file_replaced_just_before_it_is_opened(self, tmp_path: Path) -> None:
+        (tmp_path / "document.json").write_bytes(b"original")
+        real_open = os.open
+
+        def replace_then_open(path: str, flags: int, *args: int) -> int:
+            os.unlink(path)
+            os.mkfifo(path)
+            return real_open(path, flags, *args)
+
+        with patch("pyrit.registry.file_document_storage.os.open", side_effect=replace_then_open):
+            listing = _local_storage(tmp_path)._list_documents_with_issues()
+
+        assert listing == DocumentListing(
+            unreadable=(UnreadableDocument(name="document", message="Not a regular file"),)
+        )
 
     def test_reports_entries_that_are_not_regular_files_without_reading_them(self, tmp_path: Path) -> None:
         (tmp_path / "folder.json").mkdir()
