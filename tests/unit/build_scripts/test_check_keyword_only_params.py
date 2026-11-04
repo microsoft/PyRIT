@@ -177,6 +177,55 @@ def test_scan_ignores_marker_inside_body(tmp_path: Path) -> None:
     assert _keys(tmp_path) == ["pyrit.mod:f"]
 
 
+def test_scan_ignores_marker_before_first_body_statement(tmp_path: Path) -> None:
+    _write_module(
+        tmp_path,
+        rel_path="pyrit/mod.py",
+        source="""
+        def f(a, b):
+            # pyrit-keyword-only-exempt
+            return a
+        """,
+    )
+    assert _keys(tmp_path) == ["pyrit.mod:f"]
+
+
+def test_scan_honours_exempt_marker_on_closing_line_with_inline_body(tmp_path: Path) -> None:
+    _write_module(
+        tmp_path,
+        rel_path="pyrit/mod.py",
+        source="""
+        def handler(
+            value: str,
+            other: str,
+        ): pass  # pyrit-keyword-only-exempt callback
+        """,
+    )
+    assert _keys(tmp_path) == []
+
+
+def test_scan_finds_header_end_past_colons_in_defaults_and_annotations(tmp_path: Path) -> None:
+    _write_module(
+        tmp_path,
+        rel_path="pyrit/mod.py",
+        source="""
+        class C:
+            def m(
+                self,
+                key=lambda item: item[1:2],
+                other: dict[str, int] = {"a": 1},
+            ) -> dict[str, int]:  # pyrit-keyword-only-exempt callback
+                # pyrit-keyword-only-exempt
+                return {}
+
+            def n(self, a=lambda item: item, b=1):
+                # pyrit-keyword-only-exempt
+                return {}
+        """,
+    )
+    assert _keys(tmp_path) == ["pyrit.mod:C.n"]
+
+
 def test_scan_only_covers_pyrit_package(tmp_path: Path) -> None:
     _write_module(tmp_path, rel_path="tests/test_mod.py", source="def test_f(fixture_a, fixture_b): ...\n")
     _write_module(tmp_path, rel_path="pyrit/mod.py", source="def f(a): ...\n")

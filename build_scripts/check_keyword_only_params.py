@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import ast
 import sys
+import tokenize
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,17 +140,34 @@ def _positional_params(node: ast.FunctionDef | ast.AsyncFunctionDef, *, is_metho
 
 
 def _header_has_noqa(node: ast.FunctionDef | ast.AsyncFunctionDef, *, source_lines: list[str]) -> bool:
-    """Return True if any line of the ``def`` header carries the exempt marker.
+    """Return True if a comment in the ``def`` header carries the exempt marker.
 
     The header spans ``node.lineno`` (the ``def`` line, after decorators) through the line
-    before the body starts, where the formatter may place the marker after splitting a
-    long signature across multiple lines.
+    holding the colon that ends the signature, so a marker the formatter moved onto a later
+    line of a multi-line signature still counts, including one on the closing line after an
+    inline body (``): pass  # marker``). Comments in the body never count.
     """
     start = node.lineno
-    end = max(start, node.body[0].lineno - 1) if node.body else start
-    return any(
-        _NOQA_MARKER in source_lines[lineno - 1] for lineno in range(start, end + 1) if lineno <= len(source_lines)
-    )
+    lines = iter(source_lines[start - 1 :])
+    depth = 0
+    colon_row: int | None = None
+    try:
+        for token in tokenize.generate_tokens(lambda: next(lines, "")):
+            row = token.start[0]
+            if colon_row is not None and row > colon_row:
+                break
+            if token.type == tokenize.COMMENT and _NOQA_MARKER in token.string:
+                return True
+            if colon_row is None and token.type == tokenize.OP:
+                if token.string in "([{":
+                    depth += 1
+                elif token.string in ")]}":
+                    depth -= 1
+                elif token.string == ":" and depth == 0:
+                    colon_row = row
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return False
+    return False
 
 
 class _SignatureVisitor(ast.NodeVisitor):
