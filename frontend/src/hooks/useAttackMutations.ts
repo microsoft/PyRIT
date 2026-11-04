@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import { attacksApi, scoresApi } from '@/services/api'
 import type { AttackOutcome, AttackSummary, BackendScore, RegisteredComponentReference } from '@/types'
@@ -12,7 +12,7 @@ export interface UseAttackMutationsOptions {
   lastResponseMessagePieceId?: string | null
   humanScore?: BackendScore | null
   isScoreLocked: boolean
-  loadConversation: (attackResultId: string, conversationId: string) => Promise<void>
+  refreshConversationScores: (attackResultId: string, conversationId: string) => Promise<void>
   getViewedConversationId: () => string | null
   onHumanScoreChange?: (score: BackendScore | null, outcome: AttackOutcome) => void
   onAttackChange?: (attack: AttackSummary) => void
@@ -38,7 +38,7 @@ export function useAttackMutations({
   lastResponseMessagePieceId,
   humanScore,
   isScoreLocked,
-  loadConversation,
+  refreshConversationScores,
   getViewedConversationId,
   onHumanScoreChange,
   onAttackChange,
@@ -46,6 +46,12 @@ export function useAttackMutations({
 }: UseAttackMutationsOptions): AttackMutations {
   const [pendingObjective, setPendingObjective] = useState('')
   const currentObjective = attackResultId ? objective : pendingObjective
+  const ownerRevisionRef = useRef(0)
+  const scoreMutationRevisionRef = useRef(0)
+  useLayoutEffect(() => {
+    ownerRevisionRef.current += 1
+    return () => { ownerRevisionRef.current += 1 }
+  }, [attackResultId, activeConversationId])
 
   const resetPendingObjective = useCallback((): void => { setPendingObjective('') }, [])
 
@@ -59,16 +65,25 @@ export function useAttackMutations({
       return
     }
 
-    const score = await scoresApi.createManualScore({
-      attack_result_id: attackResultId,
-      message_id: lastResponseMessagePieceId,
-      value,
-      rationale,
-      update_attack: true,
-    })
-    onHumanScoreChange?.(score, value ? 'success' : 'failure')
-    if (activeConversationId && getViewedConversationId() === activeConversationId) {
-      await loadConversation(attackResultId, activeConversationId)
+    const ownerRevision = ownerRevisionRef.current
+    const mutationRevision = ++scoreMutationRevisionRef.current
+    const isCurrentMutation = (): boolean => ownerRevisionRef.current === ownerRevision
+      && scoreMutationRevisionRef.current === mutationRevision
+    try {
+      const score = await scoresApi.createManualScore({
+        attack_result_id: attackResultId,
+        message_id: lastResponseMessagePieceId,
+        value,
+        rationale,
+        update_attack: true,
+      })
+      if (!isCurrentMutation()) return
+      if (activeConversationId && getViewedConversationId() === activeConversationId) {
+        await refreshConversationScores(attackResultId, activeConversationId)
+      }
+      if (isCurrentMutation()) onHumanScoreChange?.(score, value ? 'success' : 'failure')
+    } catch (cause: unknown) {
+      if (isCurrentMutation()) throw cause
     }
   }, [
     activeConversationId,
@@ -76,7 +91,7 @@ export function useAttackMutations({
     getViewedConversationId,
     isScoreLocked,
     lastResponseMessagePieceId,
-    loadConversation,
+    refreshConversationScores,
     onHumanScoreChange,
     currentObjective,
   ])
@@ -84,10 +99,19 @@ export function useAttackMutations({
   const removeHumanScore = useCallback(async (): Promise<void> => {
     if (!attackResultId || !humanScore || isScoreLocked) return
 
-    const attack = await attacksApi.removeHumanScore(attackResultId)
-    onHumanScoreChange?.(null, attack.outcome ?? 'undetermined')
-    if (activeConversationId && getViewedConversationId() === activeConversationId) {
-      await loadConversation(attackResultId, activeConversationId)
+    const ownerRevision = ownerRevisionRef.current
+    const mutationRevision = ++scoreMutationRevisionRef.current
+    const isCurrentMutation = (): boolean => ownerRevisionRef.current === ownerRevision
+      && scoreMutationRevisionRef.current === mutationRevision
+    try {
+      const attack = await attacksApi.removeHumanScore(attackResultId)
+      if (!isCurrentMutation()) return
+      if (activeConversationId && getViewedConversationId() === activeConversationId) {
+        await refreshConversationScores(attackResultId, activeConversationId)
+      }
+      if (isCurrentMutation()) onHumanScoreChange?.(null, attack.outcome ?? 'undetermined')
+    } catch (cause: unknown) {
+      if (isCurrentMutation()) throw cause
     }
   }, [
     activeConversationId,
@@ -95,7 +119,7 @@ export function useAttackMutations({
     getViewedConversationId,
     humanScore,
     isScoreLocked,
-    loadConversation,
+    refreshConversationScores,
     onHumanScoreChange,
   ])
 
