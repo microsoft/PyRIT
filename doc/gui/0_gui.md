@@ -101,23 +101,13 @@ corresponding Chat route while retaining query parameters and fragments.
 
 ### Temperature
 
-The thermometer sits directly below **Send** in the same column. A chevron
-indicates it is editable; a number appears only for an explicit override,
-including zero. Click to edit, press Enter to apply or Escape to cancel.
-Leave blank or choose **Use target default** to clear the override.
-Invalid values block sending. Unsupported targets show a muted icon without a
-chevron; hover or focus for the reason. Retained overrides can still be cleared.
+Click the thermometer below **Send** to set a temperature override. Leave it
+blank or choose **Use target default** to clear it.
 
-Settings apply to the whole outbound message, including attachments, and remain
-selected across sends until changed. They reset when you switch attacks or
-targets, or refresh the page. Controls are disabled while sending or editing
-history; repeated sends use the settings captured at submission. Overrides do
-not change target defaults, saved bindings, or earlier messages.
+The override resets when you switch attacks or targets, or refresh the page.
 
-Request and response footers show the saved parameter values and their sources.
-Select a footer for read-only details of requested overrides and values sent.
-**Provider default (unknown)** means no numeric value was submitted and the
-provider default is unknown; **not recorded** means no generation evidence was saved.
+Select a request or response footer to inspect the saved requested override,
+value sent, and its source.
 
 See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
 for SDK usage and supported target behavior.
