@@ -245,22 +245,32 @@ class FileDocumentStorage:
         """
         Read every stored document that the single-document operations can address.
 
-        A name is checked before its content is read, so a file this class cannot address
-        is never opened and cannot fail the listing on its way out.
+        The documents ``_list_documents_with_issues`` can't use are logged and left out. A storage
+        location that can't be listed at all raises instead of looking empty.
 
         Returns:
             dict[str, bytes]: Document content keyed by name.
         """
-        return self._list_blob_documents() if self._is_blob else self._list_local_documents()
+        listing = self._list_documents_with_issues()
+        for ignored in listing.ignored:
+            logger.warning(
+                f"Ignoring stored document '{ignored.file_name}' in {self.display_source}: {ignored.message}"
+            )
+        for unreadable in listing.unreadable:
+            logger.warning(
+                f"Skipping unreadable document '{unreadable.name}{self._extension}' in {self.display_source}: "
+                f"{unreadable.message}"
+            )
+        return listing.documents
 
     def _list_documents_with_issues(self) -> DocumentListing:
         """
         Read every stored document and report the ones that can't be used.
 
-        Unlike ``_list_documents``, nothing is skipped quietly: a document that can't be read
-        is reported as unreadable, and a file whose name breaks the naming rule is reported as
-        ignored without being read, because no single-document call could address it. A
-        storage location that can't be listed at all raises instead of looking empty.
+        A document that can't be read is reported as unreadable, and a file whose name breaks
+        the naming rule is reported as ignored without being read, because no single-document
+        call could address it. A storage location that can't be listed at all raises instead of
+        looking empty.
 
         Messages carry only a short reason, never a path or URL, so they can be shown to users
         without exposing server paths or a SAS token.
@@ -406,42 +416,6 @@ class FileDocumentStorage:
         except ValueError as error:
             return str(error)
         return None
-
-    def _list_local_documents(self) -> dict[str, bytes]:
-        """
-        Read addressable documents from the configured local directory.
-
-        Returns:
-            dict[str, bytes]: Document content keyed by file stem.
-        """
-        directory = self._local_directory(create=True)
-        documents: dict[str, bytes] = {}
-        for path in sorted(directory.glob(f"*{self._extension}")):
-            if not self._is_addressable_name(path.stem):
-                continue
-            try:
-                documents[path.stem] = path.read_bytes()
-            except OSError as error:
-                logger.warning(f"Skipping unreadable document '{path.name}' in {self.display_source}: {error}")
-        return documents
-
-    def _is_addressable_name(self, name: str) -> bool:
-        """
-        Return whether a discovered document name is one this storage can address.
-
-        Ordinary files such as ``__init__.py`` or ``My-Script.py`` can sit alongside
-        valid documents, and a caller that fed such a name back into a read, write, or
-        delete would get a ``ValueError`` it has no way to anticipate.
-
-        Returns:
-            bool: Whether the name is a legal registry name.
-        """
-        try:
-            validate_registry_name(name)
-        except ValueError as error:
-            logger.warning(f"Ignoring stored document '{name}{self._extension}' in {self.display_source}: {error}")
-            return False
-        return True
 
     def _read_document_bytes(self, name: str) -> bytes | None:
         """
@@ -769,32 +743,6 @@ class FileDocumentStorage:
         if create:
             directory.mkdir(parents=True, exist_ok=True)
         return directory
-
-    def _list_blob_documents(self) -> dict[str, bytes]:
-        """
-        Read addressable documents from the configured Azure Blob container.
-
-        Returns:
-            dict[str, bytes]: Document content keyed by blob stem.
-        """
-        from azure.core.exceptions import AzureError
-
-        documents: dict[str, bytes] = {}
-        with self._open_container_client() as client:
-            prefix = f"{self._blob_prefix}/" if self._blob_prefix else None
-            blobs = client.list_blobs(name_starts_with=prefix) if prefix else client.list_blobs()
-            blob_names = sorted(
-                blob.name for blob in blobs if self._is_direct_document_blob(blob_name=blob.name, prefix=prefix)
-            )
-            for blob_name in blob_names:
-                name = PurePosixPath(blob_name.removeprefix(prefix or "")).stem
-                if not self._is_addressable_name(name):
-                    continue
-                try:
-                    documents[name] = client.download_blob(blob_name).readall()
-                except AzureError as error:
-                    logger.warning(f"Skipping unreadable document '{blob_name}' in {self.display_source}: {error}")
-        return documents
 
     def _parse_blob_source(self) -> tuple[str, str]:
         """
