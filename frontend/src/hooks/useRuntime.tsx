@@ -7,6 +7,8 @@ import { runtimeApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { RegistryRecipeKind, RestoreFailure, RuntimeReadiness } from '@/types'
 
+import { useRuntimeBannerStyles } from './useRuntime.styles'
+
 const POLL_INTERVAL_MS = 2_000
 const RESTORE_FAILED_STATE = 'failed'
 const KIND_LABELS: Record<RegistryRecipeKind, string> = {
@@ -55,6 +57,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
 
 interface RestoreFailures {
   failures: RestoreFailure[]
+  listFailed: boolean
   retrying: boolean
   retryError: string | null
   retry: () => Promise<void>
@@ -63,6 +66,7 @@ interface RestoreFailures {
 function useRestoreFailures(failed: boolean, generation: string): RestoreFailures {
   const requestRuntimeRefresh = useContext(RuntimeRefreshContext)
   const [failures, setFailures] = useState<RestoreFailure[]>([])
+  const [listFailed, setListFailed] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const [retryError, setRetryError] = useState<string | null>(null)
   const listRevision = useRef(0)
@@ -80,9 +84,13 @@ function useRestoreFailures(failed: boolean, generation: string): RestoreFailure
       try {
         const list = await runtimeApi.getRestoreFailures()
         // A retry that started after this request has newer results.
-        if (!cancelled && revision === listRevision.current) setFailures(list.items)
+        if (!cancelled && revision === listRevision.current) {
+          setFailures(list.items)
+          setListFailed(false)
+        }
       } catch {
-        // Keep the last list; the next refresh tries again.
+        // Keep the last list and say it couldn't be refreshed; the next refresh tries again.
+        if (!cancelled && revision === listRevision.current) setListFailed(true)
       } finally {
         fetching = false
       }
@@ -96,6 +104,7 @@ function useRestoreFailures(failed: boolean, generation: string): RestoreFailure
       // A retry still in flight belongs to this failure, not to a later one.
       listRevision.current += 1
       setFailures([])
+      setListFailed(false)
       setRetryError(null)
     }
   }, [failed, generation])
@@ -108,7 +117,10 @@ function useRestoreFailures(failed: boolean, generation: string): RestoreFailure
     setRetryError(null)
     try {
       const result = await runtimeApi.retryRestore()
-      if (revision === listRevision.current) setFailures(result.items)
+      if (revision === listRevision.current) {
+        setFailures(result.items)
+        setListFailed(false)
+      }
     } catch (error) {
       if (revision === listRevision.current) setRetryError(toApiError(error).detail)
     } finally {
@@ -117,7 +129,7 @@ function useRestoreFailures(failed: boolean, generation: string): RestoreFailure
       requestRuntimeRefresh()
     }
   }
-  return { failures: failed ? failures : [], retrying, retryError, retry }
+  return { failures: failed ? failures : [], listFailed: failed && listFailed, retrying, retryError, retry }
 }
 
 function describeFailure(failure: RestoreFailure): string {
@@ -131,7 +143,8 @@ function describeFailure(failure: RestoreFailure): string {
 export function RuntimeBanner() {
   const runtime = useRuntime()
   const failed = runtime.state === RESTORE_FAILED_STATE
-  const { failures, retrying, retryError, retry } = useRestoreFailures(failed, runtime.generation)
+  const styles = useRuntimeBannerStyles()
+  const { failures, listFailed, retrying, retryError, retry } = useRestoreFailures(failed, runtime.generation)
   if (runtime.ready) return null
   if (failed) {
     return (
@@ -140,12 +153,14 @@ export function RuntimeBanner() {
           Some saved entries couldn&apos;t be restored, so new runs and sends are unavailable. Drafts are preserved.
           <div aria-live="polite">
             {failures.length > 0 && (
-              <ul aria-label="Saved entries that couldn't be restored">
+              // Focusable so the list can be scrolled from the keyboard.
+              <ul aria-label="Saved entries that couldn't be restored" className={styles.failureList} tabIndex={0}>
                 {failures.map((failure) => (
                   <li key={`${failure.kind}/${failure.name ?? ''}`}>{describeFailure(failure)}</li>
                 ))}
               </ul>
             )}
+            {listFailed && <div>The list of saved entries couldn&apos;t be loaded. Trying again.</div>}
           </div>
           An administrator can fix or delete these saved files, then select Retry. Retry rebuilds only these entries.
           {retryError && <div role="alert">{retryError}</div>}

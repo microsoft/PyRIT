@@ -108,10 +108,66 @@ describe('RuntimeBanner', () => {
       .mockResolvedValue({ items: [brokenTarget('ghost')] })
 
     render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+    expect(await screen.findByText(/list of saved entries couldn't be loaded/)).toBeInTheDocument()
     await act(async () => { jest.advanceTimersByTime(2_000) })
 
     expect(await screen.findByText('Target ghost: It is broken.')).toBeInTheDocument()
+    expect(screen.queryByText(/list of saved entries couldn't be loaded/)).not.toBeInTheDocument()
     jest.useRealTimers()
+  })
+
+  it('keeps the last list when a refresh fails', async () => {
+    jest.useFakeTimers()
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
+    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
+
+    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+    expect(await screen.findByText('Target ghost: It is broken.')).toBeInTheDocument()
+    jest.mocked(runtimeApi.getRestoreFailures).mockRejectedValue(new Error('Network Error'))
+    await act(async () => { jest.advanceTimersByTime(2_000) })
+
+    expect(await screen.findByText(/list of saved entries couldn't be loaded/)).toBeInTheDocument()
+    expect(screen.getByText('Target ghost: It is broken.')).toBeInTheDocument()
+    jest.useRealTimers()
+  })
+
+  it('does not report a list request that fails after a retry started', async () => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    const getRestoreFailures = jest.mocked(runtimeApi.getRestoreFailures)
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
+    getRestoreFailures.mockResolvedValue({ items: [brokenTarget('ghost')] })
+    let failList: (error: Error) => void = () => {}
+    let finishRetry: (result: RestoreRetryResult) => void = () => {}
+    jest.mocked(runtimeApi.retryRestore).mockImplementation(
+      () => new Promise<RestoreRetryResult>((resolve) => { finishRetry = resolve }),
+    )
+
+    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+    await screen.findByText('Target ghost: It is broken.')
+    getRestoreFailures.mockImplementation(() => new Promise((_resolve, reject) => { failList = reject }))
+    await act(async () => { jest.advanceTimersByTime(2_000) })
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    await act(async () => { failList(new Error('Network Error')) })
+
+    expect(screen.queryByText(/list of saved entries couldn't be loaded/)).not.toBeInTheDocument()
+    await act(async () => { finishRetry({ state: 'failed', outcome: 'restore-failed', items: [brokenTarget('ghost')] }) })
+    jest.useRealTimers()
+  })
+
+  it('lets a long list scroll on its own so Retry stays in reach', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
+    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
+      items: Array.from({ length: 40 }, (_, index) => brokenTarget(`entry_${index}`)),
+    })
+
+    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+
+    const list = await screen.findByRole('list', { name: "Saved entries that couldn't be restored" })
+    expect(within(list).getAllByRole('listitem')).toHaveLength(40)
+    expect(list).toHaveStyle({ maxHeight: '30vh', overflowY: 'auto' })
+    expect(list).toHaveAttribute('tabindex', '0')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
   })
 
   it('keeps the list current while the runtime stays failed', async () => {
