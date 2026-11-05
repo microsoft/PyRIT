@@ -9,6 +9,7 @@ import asyncio
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import httpx
@@ -735,6 +736,95 @@ async def test_list_targets_async(client, mock_httpx_client):
     assert len(result) == 1
     assert isinstance(result[0], TargetInstance)
     mock_httpx_client.get.assert_awaited_once_with("/api/targets", params={"limit": 7})
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "name_field", "payload"),
+    [
+        ("list_targets_async", "/api/targets", "target_registry_name", _target_payload()),
+        ("list_scenarios_async", "/api/scenarios/catalog", "scenario_name", _scenario_payload()),
+        ("list_initializers_async", "/api/initializers", "initializer_name", _initializer_payload()),
+    ],
+)
+async def test_catalog_list_follows_next_cursor_async(
+    *,
+    client: PyRITApiClient,
+    mock_httpx_client: MagicMock,
+    method: str,
+    path: str,
+    name_field: str,
+    payload: dict[str, Any],
+) -> None:
+    mock_httpx_client.get.side_effect = [
+        _make_response(
+            json_data={
+                "items": [payload | {name_field: "first"}],
+                "pagination": {"has_more": True, "next_cursor": "first"},
+            }
+        ),
+        _make_response(
+            json_data={
+                "items": [payload | {name_field: "second"}],
+                "pagination": {"has_more": False, "next_cursor": None},
+            }
+        ),
+    ]
+
+    result = await getattr(client, method)()
+
+    assert [getattr(item, name_field) for item in result] == ["first", "second"]
+    assert mock_httpx_client.get.await_args_list == [
+        call(path, params={"limit": 200}),
+        call(path, params={"limit": 200, "cursor": "first"}),
+    ]
+
+
+async def test_list_targets_respects_total_limit_async(*, client: PyRITApiClient, mock_httpx_client: MagicMock) -> None:
+    mock_httpx_client.get.side_effect = [
+        _make_response(
+            json_data={
+                "items": [_target_payload(target_registry_name="first")],
+                "pagination": {"has_more": True, "next_cursor": "first"},
+            }
+        ),
+        _make_response(
+            json_data={
+                "items": [_target_payload(target_registry_name="second")],
+                "pagination": {"has_more": True, "next_cursor": "second"},
+            }
+        ),
+    ]
+
+    result = await client.list_targets_async(limit=2)
+
+    assert [item.target_registry_name for item in result] == ["first", "second"]
+    assert mock_httpx_client.get.await_args_list == [
+        call("/api/targets", params={"limit": 2}),
+        call("/api/targets", params={"limit": 1, "cursor": "first"}),
+    ]
+
+
+@pytest.mark.parametrize("next_cursor", [None, "first"])
+async def test_list_targets_rejects_invalid_next_cursor_async(
+    *, client: PyRITApiClient, mock_httpx_client: MagicMock, next_cursor: str | None
+) -> None:
+    mock_httpx_client.get.side_effect = [
+        _make_response(
+            json_data={
+                "items": [_target_payload(target_registry_name="first")],
+                "pagination": {"has_more": True, "next_cursor": "first"},
+            }
+        ),
+        _make_response(
+            json_data={
+                "items": [_target_payload(target_registry_name="second")],
+                "pagination": {"has_more": True, "next_cursor": next_cursor},
+            }
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="cursor"):
+        await client.list_targets_async()
 
 
 async def test_list_converters_async(client, mock_httpx_client):
