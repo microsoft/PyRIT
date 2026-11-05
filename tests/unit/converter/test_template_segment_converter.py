@@ -178,11 +178,7 @@ def test_template_segment_converter_identity_includes_parameter_order():
     distinct and must not collide in the registry.
     """
     template = "LEFT[{{left}}] RIGHT[{{right}}]"
-    first = TemplateSegmentConverter(
-        prompt_template=SeedPrompt(value=template, parameters=["left", "right"]), seed=7
-    )
-    second = TemplateSegmentConverter(
-        prompt_template=SeedPrompt(value=template, parameters=["right", "left"]), seed=7
-    )
+    first = TemplateSegmentConverter(prompt_template=SeedPrompt(value=template, parameters=["left", "right"]), seed=7)
+    second = TemplateSegmentConverter(prompt_template=SeedPrompt(value=template, parameters=["right", "left"]), seed=7)
 
     assert first.get_identifier().hash != second.get_identifier().hash
