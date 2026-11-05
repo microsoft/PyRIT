@@ -10,6 +10,9 @@ import { deferred } from '@/test-utils/deferred'
 import type { ScenarioSuiteListResponse, ScenarioSuiteResponse } from '@/types'
 
 import ScenarioSuiteLibrary from './ScenarioSuiteLibrary'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   scenarioSuitesApi: {
@@ -262,7 +265,7 @@ describe('ScenarioSuiteLibrary', () => {
     await waitFor(() => expect(screen.getByTestId('edit-suite-nightly_suite')).toHaveFocus())
   })
 
-  it('focuses refresh when a conflicting suite is gone after reloading', async () => {
+  it('focuses New suite when a conflicting suite is gone after reloading', async () => {
     const user = userEvent.setup()
     mockList
       .mockResolvedValueOnce(listOf(makeSuite()))
@@ -276,8 +279,7 @@ describe('ScenarioSuiteLibrary', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
     expect(await screen.findByTestId('suite-empty-state')).toBeInTheDocument()
-    // JSDOM can leave Tabster's modal aria-hidden after the dialog unmounts.
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh suites', hidden: true })).toHaveFocus())
+    await waitFor(() => expect(screen.getByTestId('new-suite-btn')).toHaveFocus())
   })
 
   it('holds the confirmation until the server finishes deleting', async () => {
@@ -353,16 +355,15 @@ describe('ScenarioSuiteLibrary', () => {
     expect(mockRemove).not.toHaveBeenCalled()
   })
 
-  it('reports load failures and retries', async () => {
-    const user = userEvent.setup()
+  it('reports load failures and recovers automatically', async () => {
     mockList.mockRejectedValueOnce(new Error('suite storage unavailable'))
 
     renderLibrary()
 
-    const failure = await screen.findByTestId('suite-error-state')
-    expect(within(failure).getByText('suite storage unavailable')).toBeInTheDocument()
+    expect(await screen.findByText('suite storage unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
     mockList.mockResolvedValueOnce(listOf(makeSuite()))
-    await user.click(screen.getByTestId('retry-suites-btn'))
+    await advanceAutoRefresh()
 
     expect(await screen.findByTestId('suite-row-nightly_suite')).toBeInTheDocument()
     expect(screen.queryByTestId('suite-error-state')).not.toBeInTheDocument()

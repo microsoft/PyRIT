@@ -50,7 +50,7 @@ interface AuthProviderProps {
 }
 
 /**
- * True for root-relative paths ("/history") that are safe to restore after a
+ * True for root-relative paths ("/attack/history") that are safe to restore after a
  * login redirect. Rejects protocol-relative ("//evil.com") and backslash
  * variants ("/\evil.com", which browsers coerce to "//"), since a tampered MSAL
  * state value could otherwise become an open redirect to an external origin. The

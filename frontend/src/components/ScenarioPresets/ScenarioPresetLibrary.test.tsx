@@ -15,6 +15,9 @@ import type {
 } from '@/types'
 
 import ScenarioPresetLibrary from './ScenarioPresetLibrary'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   scenarioPresetsApi: {
@@ -209,7 +212,7 @@ describe('ScenarioPresetLibrary', () => {
 
     expect(await screen.findByTestId('preset-row-nightly_probe')).toBeInTheDocument()
     expect(
-      await screen.findByText('Run sizes could not be calculated: nightly_probe: sizing unavailable'),
+      await screen.findByText('nightly_probe: sizing unavailable'),
     ).toBeInTheDocument()
   })
 
@@ -258,13 +261,12 @@ describe('ScenarioPresetLibrary', () => {
     expect(within(screen.getByTestId('preset-run-size-broken_probe')).getByText('—')).toBeInTheDocument()
     expect(within(screen.getByTestId('preset-run-size-stale_probe')).getByText('—')).toBeInTheDocument()
     expect(screen.getByText(
-      'Run sizes could not be calculated: broken_probe: Invalid configuration.; stale_probe: Unknown technique.',
+      'broken_probe: Invalid configuration.; stale_probe: Unknown technique.',
     )).toBeInTheDocument()
     expect(mockList).toHaveBeenCalledTimes(1)
   })
 
-  it('does not replace a refreshed definition with an older pending estimate', async () => {
-    const user = userEvent.setup()
+  it('waits for pending estimates before automatically updating the definition', async () => {
     let complete: (value: ScenarioRunSizeEstimateResponse) => void = () => {}
     const updated = { ...NIGHTLY_PRESET, description: 'Updated configuration.' }
     mockList
@@ -281,17 +283,33 @@ describe('ScenarioPresetLibrary', () => {
 
     await waitFor(() => expect(mockEstimateRun).toHaveBeenCalledTimes(1))
     const signal: AbortSignal = mockEstimateRun.mock.calls[0][2]
-    await user.click(screen.getByRole('button', { name: 'Refresh presets' }))
+    await advanceAutoRefresh()
+    expect(mockList).toHaveBeenCalledTimes(1)
+    expect(signal.aborted).toBe(false)
+    await act(async () => { complete(makeRunSize(12)) })
+    await advanceAutoRefresh()
     const cell = await screen.findByTestId('preset-run-size-nightly_probe')
     expect(await within(cell).findByText('24 attacks')).toBeInTheDocument()
     expect(signal.aborted).toBe(true)
-
-    await act(async () => { complete(makeRunSize(12)) })
 
     expect(screen.getByText('Updated configuration.')).toBeInTheDocument()
     expect(within(cell).getByText('24 attacks')).toBeInTheDocument()
     expect(within(cell).queryByText('12 attacks')).not.toBeInTheDocument()
     expect(mockList).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the previous run size while an unchanged preset is re-estimated', async () => {
+    mockList.mockResolvedValue({ source: 'presets.yaml', items: [makeItem()] })
+    renderLibrary()
+    const cell = await screen.findByTestId('preset-run-size-nightly_probe')
+    expect(await within(cell).findByText('12 attacks')).toBeInTheDocument()
+    const estimate = deferred<ScenarioRunSizeEstimateResponse>()
+    mockEstimateRun.mockReturnValueOnce(estimate.promise)
+    await advanceAutoRefresh()
+    expect(within(cell).getByText('12 attacks')).toBeInTheDocument()
+    expect(within(cell).queryByText('—')).not.toBeInTheDocument()
+    await act(async () => { estimate.resolve(makeRunSize(24)) })
+    expect(within(cell).getByText('24 attacks')).toBeInTheDocument()
   })
 
   it('attributes a preset to its author and leaves the column blank without one', async () => {
@@ -435,7 +453,7 @@ describe('ScenarioPresetLibrary', () => {
     expect(await screen.findByText(
       "Preset 'nightly_probe' changed since it was loaded. Review it and try again.",
     )).toBeInTheDocument()
-    expect(await screen.findByRole('switch', { name: 'Add nightly_probe to scanner' })).not.toBeChecked()
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Add nightly_probe to scanner' })).not.toBeChecked())
     expect(mockList).toHaveBeenCalledTimes(2)
     expect(screen.queryByText('Version mismatch.')).not.toBeInTheDocument()
   })
@@ -513,17 +531,16 @@ describe('ScenarioPresetLibrary', () => {
     expect(screen.getByTestId('edit-preset-nightly_probe')).toBeEnabled()
   })
 
-  it('surfaces a load failure with a retry that refetches', async () => {
-    const user = userEvent.setup()
+  it('surfaces the error and recovers on the next automatic check', async () => {
     mockList.mockRejectedValueOnce(new Error('storage unavailable'))
 
     renderLibrary()
 
-    expect(await screen.findByTestId('error-state')).toBeInTheDocument()
-    expect(screen.getByText('storage unavailable')).toBeInTheDocument()
+    expect(await screen.findByText('storage unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
 
     mockList.mockResolvedValue({ source: 'presets.yaml', items: [makeItem()] })
-    await user.click(screen.getByTestId('retry-btn'))
+    await advanceAutoRefresh()
 
     expect(await screen.findByTestId('preset-row-nightly_probe')).toBeInTheDocument()
   })
@@ -553,7 +570,7 @@ describe('ScenarioPresetLibrary', () => {
     const user = userEvent.setup()
     mockList
       .mockResolvedValueOnce({ source: 'presets.yaml', items: [makeItem()] })
-      .mockResolvedValueOnce({ source: 'presets.yaml', items: [makeSavedItem(true, 'v2')] })
+      .mockResolvedValueOnce({ source: 'presets.yaml', items: [makeSavedItem(false, 'v2')] })
     mockRemove.mockRejectedValueOnce(httpError(409, 'Version mismatch.'))
 
     renderLibrary()
@@ -567,7 +584,9 @@ describe('ScenarioPresetLibrary', () => {
     )).toBeInTheDocument()
     expect(mockRemove).toHaveBeenCalledWith('nightly_probe', 'v1')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(await screen.findByRole('switch', { name: 'Add nightly_probe to scanner' })).toBeChecked()
+    await waitFor(() => expect(
+      screen.getByRole('switch', { name: 'Add nightly_probe to scanner' }),
+    ).not.toBeChecked())
     expect(screen.getByTestId('preset-row-nightly_probe')).toBeInTheDocument()
     expect(mockList).toHaveBeenCalledTimes(2)
     expect(onPresetDeleted).not.toHaveBeenCalled()
@@ -575,7 +594,7 @@ describe('ScenarioPresetLibrary', () => {
     await waitFor(() => expect(screen.getByTestId('edit-preset-nightly_probe')).toHaveFocus())
   })
 
-  it('focuses refresh when a conflicting preset is gone after reloading', async () => {
+  it('focuses New preset when a conflicting preset is gone after reloading', async () => {
     const user = userEvent.setup()
     mockList
       .mockResolvedValueOnce({ source: 'presets.yaml', items: [makeItem()] })
@@ -589,8 +608,7 @@ describe('ScenarioPresetLibrary', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
     expect(await screen.findByTestId('empty-state')).toBeInTheDocument()
-    // JSDOM can leave Tabster's modal aria-hidden after the dialog unmounts.
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh presets', hidden: true })).toHaveFocus())
+    await waitFor(() => expect(screen.getByTestId('new-preset-btn')).toHaveFocus())
   })
 
   it('deletes a stored preset with no version unconditionally', async () => {

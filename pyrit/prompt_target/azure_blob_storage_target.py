@@ -109,7 +109,11 @@ class AzureBlobStorageTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+
+        Raises:
+            ValueError: If ``auth_mode`` is set and is not one of ``supported_auth_modes``.
         """
+        self._validate_auth_mode(auth_mode)
         self._blob_content_type: str = blob_content_type.value
 
         self._container_url: str = default_values.get_required_value(
