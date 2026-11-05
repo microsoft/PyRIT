@@ -165,6 +165,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     const groupedAttempts = new Map<string, ScenarioProgressResult[]>()
     for (let index = state.results.length - 1; index >= 0; index -= 1) {
       const attempt = state.results[index]
+      if (!attempt) continue
       const existing = groupedAttempts.get(attempt.atomic_group_id)
       if (existing) {
         existing.push(attempt)
