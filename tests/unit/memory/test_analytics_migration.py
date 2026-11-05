@@ -15,7 +15,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
-from sqlalchemy import String, UnicodeText, create_engine, inspect, literal, text
+from sqlalchemy import String, UnicodeText, create_engine, inspect, literal, select, text
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateIndex, CreateTable
@@ -326,13 +326,28 @@ def test_analytics_migration_preserves_outcome_at_the_index_key_limit(tmp_path: 
 
 
 def test_unicode_casefold_compiles_per_dialect() -> None:
-    """SQLite keeps the registered casefold fallback and SQL Server uses LOWER."""
+    """SQLite keeps the registered casefold fallback and SQL Server uses LOWER exactly."""
     expression = UnicodeCaseFold(literal("CAFÉ", UnicodeText()))
     sqlite_sql = str(expression.compile(dialect=sqlite.dialect()))
     mssql_sql = str(expression.compile(dialect=mssql.dialect()))
     assert "pyrit_analytics_casefold" in sqlite_sql
     assert "lower(" in sqlite_sql  # the ASCII fast path stays plain lower
-    assert mssql_sql.startswith("LOWER(")
+    # Pinned exactly: a wrapper around the fallback would change Azure folding.
+    assert mssql_sql == "LOWER(:param_1)"
+
+
+def test_seed_value_search_folds_both_sides_in_the_compiled_statement() -> None:
+    """The real seed search folds column and pattern in SQL on both dialects."""
+    column = literal("probe value", UnicodeText())
+    statement = select(UnicodeCaseFold(column).like(UnicodeCaseFold(literal("%probe%", UnicodeText())), escape="\\"))
+    for dialect, fold_marker in (
+        (sqlite.dialect(), "pyrit_analytics_casefold"),
+        (mssql.dialect(), "LOWER"),
+    ):
+        compiled = str(statement.compile(dialect=dialect))
+        # Column and pattern both fold in SQL, so neither backend can mix
+        # foldings by lowering one side in Python.
+        assert compiled.count(fold_marker) == 2
 
 
 @pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect()])

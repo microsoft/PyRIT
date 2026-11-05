@@ -189,6 +189,20 @@ async def test_get_seed_examples_value_search_matches_greek_final_sigma(sqlite_i
     assert await _ids(sqlite_instance, value_search="ασ") == [astro]
 
 
+async def test_get_seed_examples_value_search_casefold_expansions_hold_on_sqlite(
+    sqlite_instance: MemoryInterface,
+):
+    """SQLite's registered casefold maps the sharp s to ss, so both spellings match."""
+    strasse = uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="Straße crossing signs", dataset_name=DATASET, prompt_group_id=strasse),
+    )
+
+    assert await _ids(sqlite_instance, value_search="STRASSE") == [strasse]
+    assert await _ids(sqlite_instance, value_search="straße") == [strasse]
+
+
 async def test_get_seed_examples_keeps_named_and_unnamed_scopes_apart(sqlite_instance: MemoryInterface):
     group = uuid4()
     named = SeedPrompt(value="named", dataset_name=DATASET, prompt_group_id=group)
