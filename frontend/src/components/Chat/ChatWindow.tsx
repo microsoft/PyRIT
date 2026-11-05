@@ -1382,6 +1382,9 @@ export default function ChatWindow({
           }
           viewedAttackRef.current = currentAttackResultId
           setViewedConversationId(currentConversationId)
+          // The lazy creation holds this conversation's optimistic transcript,
+          // so mark it loaded: returning to it must not refetch past the send.
+          markConversationLoaded(currentConversationId)
         }
         // Update sending tracker to use real ID instead of __pending__
         setSendingConversations(prev => {

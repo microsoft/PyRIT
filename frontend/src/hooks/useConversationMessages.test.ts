@@ -69,31 +69,36 @@ describe('useConversationMessages', () => {
     expect(result.current.awaitingConversationLoad).toBe(false)
   })
 
-  it('should not load or report a load gap for a conversation that is sending', () => {
+  it('should load a conversation that is sending when the hook holds nothing', () => {
     const { result } = renderMessages({ sendingConversations: new Set(['main']), isSendInFlight: () => true })
 
-    expect(getMessages).not.toHaveBeenCalled()
+    // Mounting into a sending conversation fetches server state; the send
+    // pipeline layers its pending messages on the loaded transcript.
+    expect(getMessages).toHaveBeenCalledWith('attack', 'main')
     expect(result.current.awaitingConversationLoad).toBe(false)
-    expect(result.current.isLoadingMessages).toBe(false)
   })
 
   it('should reload a sending conversation after another conversation has loaded', async () => {
-    const branchLoad = deferred<ConversationMessagesResponse>()
+    const mainLoad = deferred<ConversationMessagesResponse>()
     const returnLoad = deferred<ConversationMessagesResponse>()
     getMessages
-      .mockReturnValueOnce(branchLoad.promise)
+      .mockReturnValueOnce(mainLoad.promise)
       .mockReturnValueOnce(returnLoad.promise)
     const sendingConversations = new Set(['main'])
     const isSendInFlight = (conversationId: string): boolean => conversationId === 'main'
     const { result, rerender } = renderMessages({ sendingConversations, isSendInFlight })
 
-    // The sending conversation stays skipped on mount, so another conversation
-    // loads first and replaces whatever view the hook holds.
-    rerender({ activeConversationId: 'branch', sendingConversations, isSendInFlight })
-    await act(async () => { branchLoad.resolve(transcript('branch')) })
-    expect(result.current.loadedConversationId).toBe('branch')
-    expect(contents(result.current.messages)).toEqual(['branch:1'])
+    await act(async () => { mainLoad.resolve(transcript('main')) })
+    expect(result.current.loadedConversationId).toBe('main')
 
+    // Another conversation is held (marked loaded by the send flow or a
+    // completed load), replacing whatever view the hook held before.
+    act(() => { result.current.markConversationLoaded('branch') })
+    rerender({ activeConversationId: 'branch', sendingConversations, isSendInFlight })
+    expect(getMessages).toHaveBeenCalledTimes(1)
+
+    // Returning to the sending conversation must fetch server state: the
+    // hook holds branch, so the in flight send no longer owns the view.
     rerender({ activeConversationId: 'main', sendingConversations, isSendInFlight })
     await waitFor(() => expect(getMessages).toHaveBeenLastCalledWith('attack', 'main'))
     await act(async () => { returnLoad.resolve(transcript('main', [2])) })
@@ -178,7 +183,7 @@ describe('useConversationMessages', () => {
     expect(contents(result.current.messages)).toEqual(['branch:1'])
   })
 
-  it('should load a sending conversation when another one is loaded, and skip one already loaded', async () => {
+  it('should load a sending conversation when another one is loaded', async () => {
     getMessages.mockResolvedValueOnce(transcript('main')).mockResolvedValueOnce(transcript('branch'))
     const isSendInFlight = (conversationId: string): boolean => conversationId === 'branch'
     const sendingConversations = new Set(['branch'])
@@ -200,6 +205,30 @@ describe('useConversationMessages', () => {
     expect(getMessages).toHaveBeenCalledTimes(3)
     expect(getMessages).toHaveBeenLastCalledWith('attack', 'main')
     await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+  })
+
+  it('should not refetch a conversation the hook already holds', async () => {
+    getMessages.mockResolvedValueOnce(transcript('main'))
+    const { result, rerender } = renderMessages()
+    await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+
+    act(() => { result.current.markConversationLoaded('branch') })
+    rerender({ activeConversationId: 'branch' })
+
+    expect(getMessages).toHaveBeenCalledTimes(1)
+  })
+
+  it('should load a held conversation when a forced load is requested', async () => {
+    getMessages.mockResolvedValueOnce(transcript('main')).mockResolvedValueOnce(transcript('branch'))
+    const { result, rerender } = renderMessages()
+    await waitFor(() => expect(result.current.loadedConversationId).toBe('main'))
+
+    act(() => { result.current.markConversationLoaded('branch') })
+    act(() => { result.current.requestForcedLoad() })
+    rerender({ activeConversationId: 'branch' })
+
+    expect(getMessages).toHaveBeenCalledTimes(2)
+    expect(getMessages).toHaveBeenLastCalledWith('attack', 'branch')
   })
 
   it('should let a claimed send read supersede an older load and yield to a newer claim', async () => {
