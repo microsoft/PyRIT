@@ -883,10 +883,6 @@ describe('CreateConverterDialog', () => {
       const replacement = screen.getByRole('textbox', { name: 'replace *' })
       expect(replacement).toBeEnabled()
       await user.type(screen.getByRole('textbox', { name: 'pattern *' }), 'hello')
-      await user.click(screen.getByRole('button', { name: 'Add Converter' }))
-      expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
-      expect(screen.getByText('Required')).toBeInTheDocument()
-
       await user.type(replacement, 'world')
       await user.click(screen.getByRole('button', { name: 'Add Converter' }))
       expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
@@ -896,6 +892,99 @@ describe('CreateConverterDialog', () => {
       })
     },
   )
+
+  it('should create SearchReplaceConverter with an empty replacement', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'pattern', type_name: 'str', required: true },
+      { name: 'replace', type_name: 'str', required: true },
+    ], 'SearchReplaceConverter')
+    renderDialog()
+    await selectConverterType('SearchReplaceConverter')
+    await user.type(screen.getByRole('textbox', { name: 'pattern *' }), 'remove-me')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'SearchReplaceConverter',
+      type: 'SearchReplaceConverter',
+      params: { pattern: 'remove-me', replace: '' },
+    })
+    expect(screen.queryByText('Required')).not.toBeInTheDocument()
+  })
+
+  it('should create SearchReplaceConverter with an empty pattern', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'pattern', type_name: 'str', required: true },
+      { name: 'replace', type_name: 'str', required: true },
+    ], 'SearchReplaceConverter')
+    renderDialog()
+    await selectConverterType('SearchReplaceConverter')
+    await user.type(screen.getByRole('textbox', { name: 'replace *' }), 'replacement')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'SearchReplaceConverter',
+      type: 'SearchReplaceConverter',
+      params: { pattern: '', replace: 'replacement' },
+    })
+    expect(screen.queryByText('Required')).not.toBeInTheDocument()
+  })
+
+  it('does not show required errors for empty SearchReplace fields when another field is missing', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'pattern', type_name: 'str', required: true },
+      { name: 'replace', type_name: 'str', required: true },
+      { name: 'other_required', type_name: 'str', required: true },
+    ], 'SearchReplaceConverter')
+    renderDialog()
+    await selectConverterType('SearchReplaceConverter')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    expect(mockedConvertersApi.createConverter).not.toHaveBeenCalled()
+    expect(screen.getAllByText('Required')).toHaveLength(1)
+  })
+
+  it('preserves literal whitespace in SearchReplaceConverter parameters', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'pattern', type_name: 'str', required: true },
+      { name: 'replace', type_name: 'str', required: true },
+    ], 'SearchReplaceConverter')
+    renderDialog()
+    await selectConverterType('SearchReplaceConverter')
+    await user.type(screen.getByRole('textbox', { name: 'pattern *' }), ' ')
+    await user.type(screen.getByRole('textbox', { name: 'replace *' }), '_')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'SearchReplaceConverter',
+      type: 'SearchReplaceConverter',
+      params: { pattern: ' ', replace: '_' },
+    })
+    expect(screen.queryByText('Required')).not.toBeInTheDocument()
+  })
+
+  it('preserves a whitespace-only SearchReplaceConverter replacement', async () => {
+    const user = userEvent.setup()
+    mockConverterParameters([
+      { name: 'pattern', type_name: 'str', required: true },
+      { name: 'replace', type_name: 'str', required: true },
+    ], 'SearchReplaceConverter')
+    renderDialog()
+    await selectConverterType('SearchReplaceConverter')
+    await user.type(screen.getByRole('textbox', { name: 'pattern *' }), 'remove-me')
+    await user.type(screen.getByRole('textbox', { name: 'replace *' }), ' ')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'SearchReplaceConverter',
+      type: 'SearchReplaceConverter',
+      params: { pattern: 'remove-me', replace: ' ' },
+    })
+    expect(screen.queryByText('Required')).not.toBeInTheDocument()
+  })
 
   const adversarialTarget = makeTarget({
     target_registry_name: 'adversarial_chat',
