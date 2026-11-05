@@ -78,9 +78,10 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
             default_languages = SeedDataset.from_yaml_file(
                 RandomTranslationConverter._DEFAULT_LANGUAGES_SEED_PROMPT_PATH
             )
-            self.languages = [prompt.value for prompt in default_languages.prompts]
-        else:
-            self.languages = languages
+            languages = [prompt.value for prompt in default_languages.prompts]
+        # Seeded selection picks by position, so the pool uses the same order as the identifier.
+        # Otherwise two pools that differ only in order share an identity but choose different languages.
+        self.languages = sorted(languages, key=str.casefold)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
