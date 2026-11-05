@@ -1151,6 +1151,8 @@ class TestScenarioPartialAttackCompletion:
             )[0]
             assert failed_result.scenario_run_state == ScenarioRunState.FAILED
             assert failed_result.number_tries == 1
+            assert failed_result.error_type == "ExceptionGroup"
+            assert all(str(error) in failed_result.error_message for error in partial_failures.values())
 
             final_result = await scenario.run_async()
 
