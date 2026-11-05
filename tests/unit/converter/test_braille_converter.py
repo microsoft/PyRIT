@@ -276,3 +276,26 @@ async def test_braille_converter_hyphen_resets_number_mode(prompt, expected):
 
     result = await converter.convert_async(prompt=prompt, input_type="text")
     assert result.output_text == expected
+
+
+@pytest.mark.parametrize(
+    "prompt, expected",
+    [
+        ("and/or", "\u2801\u281d\u2819\u2838\u280c\u2815\u2817"),
+        ("km/h", "\u2805\u280d\u2838\u280c\u2813"),
+        ("a/1", "\u2801\u2838\u280c\u283c\u2801"),
+        ("./run", "\u2832\u2838\u280c\u2817\u2825\u281d"),
+        ("$5/kg", "\u2808\u280e\u283c\u2811\u2838\u280c\u2805\u281b"),
+        ("1/a", "\u283c\u2801\u2838\u280c\u2801"),
+        ("1/4", "\u283c\u2801\u280c\u2819"),
+    ],
+    ids=["between-words", "unit", "before-number", "path", "number-before-letters", "number-before-letter", "fraction"],
+)
+async def test_braille_converter_slash_is_oblique_stroke_outside_fractions(prompt, expected):
+    """A slash is the UEB oblique stroke (dots 456, 34) unless it stands between two
+    digits. The single cell dots 34 is the simple fraction line, which UEB uses only
+    inside a number; elsewhere it reads as the "st" groupsign."""
+    converter = BrailleConverter()
+
+    result = await converter.convert_async(prompt=prompt, input_type="text")
+    assert result.output_text == expected
