@@ -20,6 +20,7 @@ from pyrit.backend.models.attacks import (
     AddMessageResponse,
     AttackConversationsResponse,
     AttackListResponse,
+    AttackMetadata,
     AttackOptionsResponse,
     AttackSummary,
     ConversationMessagesResponse,
@@ -343,6 +344,40 @@ async def get_attack(attack_result_id: IdentifierStr) -> AttackSummary:  # pyrit
         )
 
     return attack
+
+
+@router.get(
+    "/{attack_result_id}/metadata",
+    response_model=AttackMetadata,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid metadata request"},
+        404: {"model": ProblemDetail, "description": "Attack not found"},
+    },
+)
+async def get_attack_metadata_async(
+    *,
+    attack_result_id: IdentifierStr,
+    conversation_id: IdentifierStr | None = Query(None, description="Selected main or pruned conversation to validate"),
+) -> AttackMetadata:
+    """
+    Get Chat metadata without downloading either complete conversation-reference array.
+
+    Membership is checked independently of reference paging. An invalid selection is
+    reported in the metadata rather than replacing it with the main conversation.
+    GET /attacks/{id} retains its full legacy summary.
+
+    Returns:
+        AttackMetadata: Metadata, pruned-reference count, and selected membership.
+    """
+    try:
+        metadata = await get_attack_service().get_attack_metadata_async(
+            attack_result_id=attack_result_id, conversation_id=conversation_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if metadata is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Attack '{attack_result_id}' not found")
+    return metadata
 
 
 @router.patch(
