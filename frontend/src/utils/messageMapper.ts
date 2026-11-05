@@ -381,10 +381,65 @@ export function backendMessageToFrontend(msg: BackendMessage): Message {
 }
 
 /**
+ * Merge saved piece pages without duplicating or splitting their conversation turns.
+ */
+export function mergeBackendMessages(previous: BackendMessage[], incoming: BackendMessage[]): BackendMessage[] {
+  const turns = new Map<number, { message: BackendMessage; pieces: Map<string, BackendMessagePiece> }>()
+  const pieceOwners = new Map<string, number>()
+  for (const message of [...previous, ...incoming]) {
+    let turn = turns.get(message.turn_number)
+    if (turn && turn.message.role !== message.role) {
+      throw new Error(`Saved turn ${message.turn_number} changed role. Restart transcript loading.`)
+    }
+    if (!turn) {
+      turn = { message, pieces: new Map() }
+      turns.set(message.turn_number, turn)
+    }
+    for (const piece of message.message_pieces) {
+      const owner = pieceOwners.get(piece.id)
+      if (owner !== undefined && owner !== message.turn_number) {
+        throw new Error('A saved piece changed turns. Restart transcript loading.')
+      }
+      pieceOwners.set(piece.id, message.turn_number)
+      const existing = turn.pieces.get(piece.id)
+      const scores = new Map<string, BackendScore>()
+      for (const score of [...(existing?.scores ?? []), ...piece.scores]) {
+        scores.set(score.id, score)
+      }
+      turn.pieces.set(piece.id, { ...existing, ...piece, scores: [...scores.values()] })
+    }
+  }
+  return [...turns.values()].sort((a, b) => a.message.turn_number - b.message.turn_number).map(({ message, pieces }) => {
+    const orderedPieces = [...pieces.values()]
+    if (orderedPieces.every((piece) => piece.timestamp !== undefined)) {
+      orderedPieces.sort((a: BackendMessagePiece, b: BackendMessagePiece): number => {
+        const firstTimestamp = a.timestamp ?? ''
+        const secondTimestamp = b.timestamp ?? ''
+        const millisecondOrder = Date.parse(firstTimestamp) - Date.parse(secondTimestamp)
+        if (millisecondOrder) return millisecondOrder
+        // Date truncates Python's microseconds; keep them ahead of the ID tie-break.
+        const firstFraction = firstTimestamp.match(/\.(\d+)/)?.[1] ?? ''
+        const secondFraction = secondTimestamp.match(/\.(\d+)/)?.[1] ?? ''
+        const precision = Math.max(firstFraction.length, secondFraction.length)
+        return firstFraction.padEnd(precision, '0').localeCompare(secondFraction.padEnd(precision, '0'))
+          || a.id.localeCompare(b.id)
+      })
+    }
+    return { ...message, created_at: orderedPieces[0]?.timestamp ?? message.created_at, message_pieces: orderedPieces }
+  })
+}
+
+/**
  * Convert all backend messages to frontend messages.
  */
-export function backendMessagesToFrontend(messages: BackendMessage[]): Message[] {
-  return messages.map(backendMessageToFrontend)
+export function backendMessagesToFrontend(messages: BackendMessage[], partialSequences?: readonly number[]): Message[] {
+  return messages.map((message) => ({
+    ...backendMessageToFrontend(message),
+    ...(partialSequences === undefined ? {} : {
+      sequence: message.turn_number,
+      isPartial: partialSequences.includes(message.turn_number),
+    }),
+  }))
 }
 
 /**
