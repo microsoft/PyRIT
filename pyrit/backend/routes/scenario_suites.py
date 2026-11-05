@@ -89,7 +89,7 @@ async def list_scenario_suites() -> ScenarioSuiteListResponse:  # pyrit-async-su
     """
     try:
         return await get_scenario_suite_service().list_suites_async()
-    except AzureError as exc:
+    except (AzureError, OSError) as exc:
         raise _storage_unavailable() from exc
 
 
