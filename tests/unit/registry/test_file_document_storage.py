@@ -68,30 +68,21 @@ class TestLocalListingWithIssues:
     def test_reports_unreadable_document_and_keeps_the_others(self, tmp_path: Path) -> None:
         (tmp_path / "first.json").write_bytes(b"one")
         (tmp_path / "second.json").write_bytes(b"two")
-        original_read_bytes = Path.read_bytes
 
         def read(path: str) -> bytes | None:
             if Path(path).name == "second.json":
                 raise PermissionError(13, "Permission denied", path)
             return _read_regular_file(path)
 
-        def read_bytes(path: Path) -> bytes:
-            if path.name == "second.json":
-                raise PermissionError(13, "Permission denied", str(path))
-            return original_read_bytes(path)
-
-        with (
-            patch("pyrit.registry.file_document_storage._read_regular_file", side_effect=read),
-            patch.object(Path, "read_bytes", autospec=True, side_effect=read_bytes),
-        ):
+        with patch("pyrit.registry.file_document_storage._read_regular_file", side_effect=read):
             listing = _local_storage(tmp_path)._list_documents_with_issues()
-            legacy = _local_storage(tmp_path)._list_documents()
+            documents = _local_storage(tmp_path)._list_documents()
 
         assert listing == DocumentListing(
             documents={"first": b"one"},
             unreadable=(UnreadableDocument(name="second", message="Permission denied"),),
         )
-        assert legacy == {"first": b"one"}
+        assert documents == {"first": b"one"}
 
     def test_reports_badly_named_files_as_ignored_without_reading_them(self, tmp_path: Path) -> None:
         (tmp_path / "valid_name.json").write_bytes(b"ok")
@@ -258,13 +249,13 @@ class TestLocalListingWithIssues:
         assert listing.documents == {"good": b"ok"}
         assert [issue.name for issue in listing.unreadable] == ["loop"]
 
-    def test_matches_extensions_like_the_legacy_listing(self, tmp_path: Path) -> None:
+    def test_matches_extensions_with_the_platform_case_rule(self, tmp_path: Path) -> None:
         (tmp_path / "lower.json").write_bytes(b"one")
         (tmp_path / "upper.JSON").write_bytes(b"two")
 
-        storage = _local_storage(tmp_path)
+        listing = _local_storage(tmp_path)._list_documents_with_issues()
 
-        assert storage._list_documents_with_issues().documents == storage._list_documents()
+        assert sorted(listing.documents) == sorted(path.stem for path in tmp_path.glob("*.json"))
 
     def test_creates_missing_directory_and_lists_nothing(self, tmp_path: Path) -> None:
         listing = _local_storage(tmp_path / "missing")._list_documents_with_issues()
@@ -350,6 +341,59 @@ class TestBlobListingWithIssues:
         with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
             with pytest.raises(HttpResponseError):
                 _blob_storage()._list_documents_with_issues()
+
+
+class TestListDocuments:
+    def test_logs_what_it_leaves_out_and_returns_the_rest(self, tmp_path: Path) -> None:
+        (tmp_path / "good.json").write_bytes(b"ok")
+        (tmp_path / "Bad-Name.json").write_bytes(b"never read")
+        (tmp_path / "folder.json").mkdir()
+
+        with patch("pyrit.registry.file_document_storage.logger") as log:
+            documents = _local_storage(tmp_path)._list_documents()
+
+        assert documents == {"good": b"ok"}
+        messages = [call.args[0] for call in log.warning.call_args_list]
+        assert len(messages) == 2
+        assert messages[0].startswith(f"Ignoring stored document 'Bad-Name.json' in {tmp_path}: ")
+        assert messages[1] == f"Skipping unreadable document 'folder.json' in {tmp_path}: Not a regular file"
+
+    @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Named pipes need os.mkfifo")
+    @pytest.mark.timeout(60, method="thread")
+    def test_leaves_out_a_pipe_named_like_a_document_without_blocking(self, tmp_path: Path) -> None:
+        (tmp_path / "good.json").write_bytes(b"ok")
+        os.mkfifo(tmp_path / "pipe.json")
+
+        assert _local_storage(tmp_path)._list_documents() == {"good": b"ok"}
+
+    def test_raises_when_the_directory_cannot_be_listed(self, tmp_path: Path) -> None:
+        with patch("pyrit.registry.file_document_storage.os.scandir", side_effect=PermissionError(13, "denied")):
+            with pytest.raises(PermissionError):
+                _local_storage(tmp_path)._list_documents()
+
+    def test_logs_an_unreadable_blob_without_exposing_the_url(self) -> None:
+        client = _blob_client(names=["saved/good.json", "saved/broken.json"])
+
+        def download_blob(blob_name: str) -> SimpleNamespace:
+            if blob_name == "saved/broken.json":
+                raise HttpResponseError(message=f"Forbidden: {_SAS_SOURCE}")
+            return SimpleNamespace(readall=lambda: b"content")
+
+        client.download_blob.side_effect = download_blob
+
+        with (
+            patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client),
+            patch("pyrit.registry.file_document_storage.logger") as log,
+        ):
+            documents = _blob_storage()._list_documents()
+
+        assert documents == {"good": b"content"}
+        message = log.warning.call_args.args[0]
+        assert message.startswith(
+            "Skipping unreadable document 'broken.json' in https://account.blob.core.windows.net/"
+        )
+        assert message.endswith(": HttpResponseError")
+        assert "secret-signature" not in message
 
 
 class TestDescribeReadError:
