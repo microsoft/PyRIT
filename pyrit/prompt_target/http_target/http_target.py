@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 import httpx
@@ -33,6 +33,8 @@ class HTTPTarget(PromptTarget):
     HTTP_Target is for endpoints that do not have an API and instead require HTTP request(s) to send a prompt.
 
     """
+
+    not_saveable_reason: ClassVar[str | None] = "Its raw HTTP request can carry credentials."
 
     def __init__(
         self,

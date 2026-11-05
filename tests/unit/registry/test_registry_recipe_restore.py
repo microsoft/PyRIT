@@ -8,7 +8,7 @@ import sys
 import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
-from types import ModuleType
+from types import MappingProxyType, ModuleType
 from typing import Any
 from unittest.mock import patch
 
@@ -25,7 +25,7 @@ from pyrit.models.catalog.registry_recipe import (
     TechniqueRecipe,
 )
 from pyrit.models.parameter import Parameter
-from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
+from pyrit.prompt_target import GitHubCopilotTarget, OpenAIChatTarget, RoundRobinTarget
 from pyrit.registry.components.attack_registry import AttackRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.components.converter_registry import ConverterRegistry
@@ -42,6 +42,7 @@ _IDENTITY_TARGET = {
     "params": {
         "auth_mode": "identity",
         "endpoint": "https://contoso.openai.azure.com/openai/v1",
+        "headers": "{}",
         "model_name": "gpt-4o",
     },
 }
@@ -377,6 +378,41 @@ class TestRestoreFailures:
         assert "sk-secret-value" not in failure.message
         assert [ref.name for ref in report.restored] == ["good"]
 
+    @pytest.mark.parametrize(
+        ("name", "params"),
+        [
+            ("server_key", {key: value for key, value in _IDENTITY_TARGET["params"].items() if key != "auth_mode"}),
+            ("server_headers", {key: value for key, value in _IDENTITY_TARGET["params"].items() if key != "headers"}),
+        ],
+    )
+    def test_refuses_a_target_that_would_use_this_servers_credentials(
+        self, tmp_path: Path, name: str, params: dict[str, Any]
+    ) -> None:
+        _save(tmp_path, RegistryRecipeKind.TARGETS, name, {**_IDENTITY_TARGET, "params": params})
+        server_settings = {"OPENAI_CHAT_KEY": "sk-server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"api-key": "k"}'}
+
+        with patch.dict(os.environ, server_settings):
+            report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == (name, RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
+        assert "sk-server-key" not in failure.message
+        assert name not in TargetRegistry.get_registry_singleton().instances
+
+    def test_refuses_a_target_that_signs_in_with_this_servers_account(self, tmp_path: Path) -> None:
+        _save(
+            tmp_path,
+            RegistryRecipeKind.TARGETS,
+            "copilot",
+            {"class_module": "pyrit.prompt_target.websocket_copilot_target", "class_name": "WebSocketCopilotTarget"},
+        )
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("copilot", RestoreFailureReason.UNSUPPORTED_CLASS)
+        assert "Copilot account" in failure.message
+
     def test_restores_a_class_whose_optional_credentials_are_left_empty(self, tmp_path: Path) -> None:
         _save(
             tmp_path,
@@ -459,7 +495,7 @@ class TestRestoreFailures:
         ],
     )
     def test_build_errors_drop_credentials_from_urls(self, tmp_path: Path, endpoint: str, shown: str | None) -> None:
-        no_endpoint = {**_IDENTITY_TARGET, "params": {"auth_mode": "identity", "model_name": "gpt-4o"}}
+        no_endpoint = {**_IDENTITY_TARGET, "params": {"auth_mode": "identity", "headers": "{}", "model_name": "gpt-4o"}}
         _save(tmp_path, RegistryRecipeKind.TARGETS, "server_endpoint", no_endpoint)
 
         with patch.dict(os.environ, {"OPENAI_CHAT_ENDPOINT": endpoint}):
@@ -476,7 +512,7 @@ class TestRestoreFailures:
             assert secret not in failure.message
 
     def test_build_errors_keep_text_without_a_credential(self, tmp_path: Path) -> None:
-        no_endpoint = {**_IDENTITY_TARGET, "params": {"auth_mode": "identity", "model_name": "gpt-4o"}}
+        no_endpoint = {**_IDENTITY_TARGET, "params": {"auth_mode": "identity", "headers": "{}", "model_name": "gpt-4o"}}
         _save(tmp_path, RegistryRecipeKind.TARGETS, "server_endpoint", no_endpoint)
 
         with patch.dict(os.environ, {"OPENAI_CHAT_ENDPOINT": "https://api.example.test/v1"}):
@@ -496,9 +532,8 @@ class TestRestoreFailures:
         report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
-        assert (failure.name, failure.reason) == ("malformed", RestoreFailureReason.BUILD_ERROR)
+        assert (failure.name, failure.reason) == ("malformed", RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
         assert failure.version
-        assert "could not be coerced" in failure.message
         assert "SECRET" not in failure.message
         assert [ref.name for ref in report.restored] == ["good"]
 
@@ -531,6 +566,13 @@ class TestRestoreFailures:
             ),
             ("?sig=SECRET", "ValueError (message hidden because it may include a credential)"),
             (" \t?sig=SECRET", "ValueError (message hidden because it may include a credential)"),
+            (
+                "could not be coerced to float: 'https://[x?sig=SECRET'",
+                (
+                    "ValueError: could not be coerced to float: 'https://[x "
+                    "(rest hidden because it may include a credential)"
+                ),
+            ),
             ("could not be coerced to float: 'hot'", "ValueError: could not be coerced to float: 'hot'"),
             (
                 "Missing required parameters: ['objective_target']",
@@ -752,7 +794,11 @@ class TestRestoreFailures:
             },
         )
 
-        with patch.dict(sys.modules, {"copilot": ModuleType("copilot")}):
+        with (
+            patch.dict(sys.modules, {"copilot": ModuleType("copilot")}),
+            # A token-less Copilot target would use the server's token, which saved entries refuse.
+            patch.object(GitHubCopilotTarget, "server_fallback_parameters", MappingProxyType({})),
+        ):
             report = RegistryRecipeRestorer(source=str(recipes)).restore()
 
         assert report.failures == []

@@ -5,7 +5,9 @@ import asyncio
 import json
 import logging
 import warnings
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import default_values
@@ -37,6 +39,7 @@ class HuggingFaceChatTarget(PromptTarget):
     )
 
     code_execution_parameter: ClassVar[str | None] = "trust_remote_code"
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"hf_access_token": None})
 
     # Class-level cache for model and tokenizer
     _cached_model: Any = None

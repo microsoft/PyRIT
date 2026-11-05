@@ -4,6 +4,7 @@
 import abc
 import logging
 from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 from typing import Any, ClassVar, final
 
 from pyrit.common.async_compatibility import legacy_sync_override
@@ -109,6 +110,16 @@ class PromptTarget(Identifiable):
     # cannot point the server's credentials at a caller-chosen resource; direct Python use is
     # unaffected.
     server_credential_parameter: ClassVar[str | None] = None
+
+    # Credential parameters that, left empty, let the target use a credential from this server
+    # instead (an environment variable, or the server's Azure identity), each mapped to the value
+    # that turns that off, or None when only an auth mode does: ``"identity"`` doesn't read a
+    # parameter mapped to None, and ``"none"`` reads none of them. A saved target must never use
+    # this server's credentials, so a saved entry that would is refused.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
+
+    # Why this target type can't be saved even without a credential, or None when it can.
+    not_saveable_reason: ClassVar[str | None] = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
