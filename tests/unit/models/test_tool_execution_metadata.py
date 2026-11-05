@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import copy
 import json
 from typing import Any, assert_type
 
@@ -31,7 +32,7 @@ def test_from_metadata_does_not_mutate_input() -> None:
         "unrelated": "retained",
         ToolExecutionMetadata.METADATA_KEY: {"invoked": False},
     }
-    original = metadata.copy()
+    original = copy.deepcopy(metadata)
 
     assert DerivedToolExecutionMetadata.from_metadata(metadata=metadata) is not None
     assert metadata == original
