@@ -375,7 +375,18 @@ class TestSampleControl:
 # The first three predate this generic path and must keep returning float16 from
 # get_embeddings; the rest were previously rejected outright.
 _HALF_PRECISION_ARCHITECTURES = ["gpt2", "gptj", "gpt_neox"]
-_OTHER_ARCHITECTURES = ["llama", "mistral", "mixtral", "phi3", "qwen3", "starcoder2"]
+_OTHER_ARCHITECTURES = [
+    "gemma2",
+    "gemma3_text",
+    "llama",
+    "mistral",
+    "mixtral",
+    "phi3",
+    "qwen2",
+    "qwen3",
+    "smollm3",
+    "starcoder2",
+]
 
 _TINY_CONFIG = {
     "hidden_size": 32,
@@ -391,6 +402,7 @@ _EXTRA_CONFIG = {
         "original_max_position_embeddings": 64,
         "pad_token_id": 0,
     },
+    "smollm3": {"pad_token_id": 0},
 }
 
 
