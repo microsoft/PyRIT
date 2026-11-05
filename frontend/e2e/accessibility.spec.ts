@@ -1,5 +1,6 @@
 import { test, expect, selectChatTarget, type Locator, type Page } from "./_fixtures";
 import { mockVersion } from "./_compatibility";
+import { READY_RUNTIME } from "./_runtime";
 import { makeTarget } from "./_targets";
 import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
 
@@ -100,6 +101,9 @@ async function expectTourContainedAndActionable(
 
 test.describe("Accessibility", () => {
   test.beforeEach(async ({ page }) => {
+    await page.route("**/api/runtime", async (route) => {
+      await route.fulfill({ json: READY_RUNTIME });
+    });
     await page.goto("/");
   });
 
@@ -358,7 +362,7 @@ test.describe("Accessibility", () => {
       });
       await page.reload();
 
-      await expectMinimumTouchTarget(page.getByRole("button", { name: "Labels" }));
+      await expectMinimumTouchTarget(page.getByTestId("labels-icon-btn"));
       await expectMinimumTouchTarget(page.getByRole("button", { name: "Register a target" }));
       await expectMinimumTouchTarget(page.getByRole("button", { name: "Take a tour" }));
 
@@ -386,8 +390,7 @@ test.describe("Accessibility", () => {
       await expect(
         page.getByRole("heading", { level: 1, name: "Target Registry" })
       ).toBeVisible();
-      await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
-      await expectMinimumTouchTarget(page.getByRole("button", { name: "Refresh" }));
+      await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
       await expectMinimumTouchTarget(page.getByRole("button", { name: "New Target" }));
     });
 
