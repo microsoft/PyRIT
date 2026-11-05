@@ -12,7 +12,7 @@ class Singleton(abc.ABCMeta):
     """
 
     _instances: dict[type, object] = {}
-    _lock: threading.Lock = threading.Lock()
+    _lock: threading.RLock = threading.RLock()
 
     def __call__(cls, *args: object, **kwargs: object) -> object:
         """
