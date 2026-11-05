@@ -128,6 +128,15 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 # Image, TTS, Video, and Realtime targets do not expose runtime temperature.
 # Realtime's GA API removed temperature; legacy beta settings are not supported here.
 #
+# `capabilities.temperature_range` gives the inclusive bounds for supported targets.
+# OpenAI-compatible text targets default to 0 through 2; `Mistral-Large-3` is limited
+# to 0 through 1. Validation and the GUI use the same model-specific bounds.
+# These runtime capability fields do not change target configuration identities.
+#
+# `RoundRobinTarget` supports runtime temperature only when every child supports it,
+# exposes the intersection of their ranges, and validates against every child before
+# sending. A request override survives retries and fallback without changing child defaults.
+#
 # Reasoning defaults follow OpenAI's [GPT-5.5](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.5) and
 # [GPT-5.6](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6) guides.
 

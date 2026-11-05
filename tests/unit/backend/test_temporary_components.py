@@ -59,6 +59,7 @@ from pyrit.prompt_target import (
     OpenAICompletionTarget,
     OpenAIResponseTarget,
     PromptTarget,
+    RoundRobinTarget,
 )
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
@@ -306,6 +307,34 @@ class TestTemporaryComponents:
             await first.cleanup_target_async()
             await second.cleanup_target_async()
             await source.cleanup_target_async()
+
+    @pytest.mark.parametrize(
+        "model, supported, maximum", [("gpt-4o", True, 2), ("Mistral-Large-3", True, 1), ("o3", False, 2)]
+    )
+    @pytest.mark.parametrize("wrapped", [False, True])
+    async def test_gui_generation_capabilities_match_target_and_children_async(
+        self, *, model: str, supported: bool, maximum: float, wrapped: bool
+    ) -> None:
+        async with httpx.AsyncClient() as client:
+            children = [
+                OpenAIChatTarget(
+                    model_name=model,
+                    endpoint="https://example.test/v1",
+                    api_key="test-only-key",
+                    httpx_client_kwargs={"http_client": client},
+                )
+                for _ in range(2 if wrapped else 1)
+            ]
+            target = RoundRobinTarget(targets=children) if wrapped else children[0]
+            descriptor = target_object_to_instance("target", target)
+            assert descriptor.capabilities.supports_temperature is supported
+            assert descriptor.capabilities.temperature_range == (0, maximum)
+            assert descriptor.model_dump(mode="json")["capabilities"]["temperature_range"] == [0, maximum]
+            if wrapped:
+                children[1].apply_capabilities(
+                    capabilities=children[1].capabilities.model_copy(update={"supports_temperature": False})
+                )
+                assert not target_object_to_instance("target", target).capabilities.supports_temperature
 
     @pytest.mark.parametrize("client_setting", ["default", "none", "custom"])
     @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])

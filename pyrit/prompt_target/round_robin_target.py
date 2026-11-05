@@ -8,9 +8,12 @@ from typing import Any
 from pyrit.models import (
     TARGET_EVAL_PARAM_FALLBACKS,
     TARGET_EVAL_PARAMS,
+    CapabilityName,
     ComponentIdentifier,
     Message,
+    RequestGenerationConfig,
     RequestGenerationInfo,
+    TargetCapabilities,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
@@ -48,6 +51,8 @@ class RoundRobinTarget(PromptTarget):
     Not thread-safe. Safe for concurrent use within a single asyncio event loop
     (all mutable state is modified in synchronous code blocks).
     """
+
+    _SUPPORTED_GENERATION_CAPABILITIES = frozenset({CapabilityName.TEMPERATURE})
 
     def __init__(
         self,
@@ -111,6 +116,7 @@ class RoundRobinTarget(PromptTarget):
         # pipeline that actually runs matches what the user configured on their targets.
         _validate_configuration_consistency(targets)
 
+        self._targets = targets
         # The first target's configuration is representative since we've validated they are all identical.
         super().__init__(
             custom_configuration=targets[0].configuration,
@@ -123,7 +129,6 @@ class RoundRobinTarget(PromptTarget):
         # Ensure that for LLM scoring evaluation purposes, the inner targets have the equivalent behavioral params
         _validate_behavioral_consistency(targets)
 
-        self._targets = targets
         self._weights = weights
 
         # Build rotation sequence from weights.
@@ -145,6 +150,34 @@ class RoundRobinTarget(PromptTarget):
             list[PromptTarget]: A copy of the inner targets.
         """
         return list(self._targets)
+
+    @property
+    def capabilities(self) -> TargetCapabilities:
+        """The wrapper capabilities restricted to temperature support shared by every child."""
+        capabilities = super().capabilities
+        children = [target.capabilities for target in self._targets]
+        minimum = max(child.temperature_range[0] for child in children)
+        maximum = min(child.temperature_range[1] for child in children)
+        supported = capabilities.supports_temperature and all(child.supports_temperature for child in children)
+        return capabilities.model_copy(
+            update={
+                "supports_temperature": supported and minimum <= maximum,
+                "temperature_range": (minimum, maximum) if minimum <= maximum else capabilities.temperature_range,
+            }
+        )
+
+    def validate_request_generation_config(self, message: Message) -> RequestGenerationConfig:
+        """
+        Validate overrides against every child before selecting a target or performing I/O.
+
+        Returns:
+            RequestGenerationConfig: Options accepted by every child.
+        """
+        config = super().validate_request_generation_config(message)
+        if config.required_capabilities:
+            for target in self._targets:
+                target.validate_request_generation_config(message)
+        return config
 
     def _next_target(self) -> PromptTarget:
         """
@@ -181,11 +214,13 @@ class RoundRobinTarget(PromptTarget):
             Exception: If all unique inner targets fail.
             RuntimeError: If no targets are available to try (should be unreachable).
         """
+        self.validate_request_generation_config(normalized_conversation[-1])
         first_target = self._next_target()
         targets_to_try = [first_target] + [t for t in self._targets if t is not first_target]
         last_exception: BaseException | None = None
 
         for target in targets_to_try:
+            self.validate_request_generation_config(normalized_conversation[-1])
             try:
                 # Each child resolves its own defaults; only its internal retries share evidence.
                 for piece in normalized_conversation[-1].message_pieces:

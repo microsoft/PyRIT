@@ -153,7 +153,7 @@ describe("MessageList", () => {
           },
         }],
       };
-      render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} /></TestWrapper>);
+      render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} showGenerationInfo /></TestWrapper>);
       if (expected === undefined) {
         expect(screen.queryByText(/^Temperature:/)).not.toBeInTheDocument();
       } else {
@@ -173,11 +173,31 @@ describe("MessageList", () => {
           } },
         }],
       };
-      render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} /></TestWrapper>);
+      render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} showGenerationInfo /></TestWrapper>);
       await user.click(screen.getByRole("button", { name: "Generation details: Temperature: 0 (request override)" }));
       const details = screen.getByRole("dialog", { name: "Saved generation details" });
       expect(details).toHaveTextContent("Requested override: 0. Sent parameter: 0. Source: request override.");
       expect(within(details).queryByRole("spinbutton")).not.toBeInTheDocument();
+    });
+
+    it.each([false, undefined])("hides temperature markers without confirmed support (%s) and preserves the evidence", (
+      showGenerationInfo: boolean | undefined,
+    ) => {
+      const messages: Message[] = mockMessages.slice(0, 2).map((message: Message) => ({
+        ...message,
+        generationDescription: "Temperature: provider default (unknown)",
+        generationDetails: "Temperature. Requested override: none. Sent parameter: not specified (provider default unknown). Source: provider default.",
+      }));
+      const rendered = render(<TestWrapper><MessageList messages={messages}
+        showGenerationInfo={showGenerationInfo} /></TestWrapper>);
+      expect(screen.queryAllByRole("button", { name: /^Generation details:/ })).toHaveLength(0);
+      expect(screen.queryByText(/^Temperature:/)).not.toBeInTheDocument();
+
+      rendered.rerender(<TestWrapper><MessageList messages={messages} showGenerationInfo savedEvidence /></TestWrapper>);
+      expect(screen.getAllByRole("button", {
+        name: "Generation details: Temperature: provider default (unknown)",
+      })).toHaveLength(2);
+      expect(messages[0].generationDetails).toContain("provider default unknown");
     });
   });
 

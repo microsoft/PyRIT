@@ -55,6 +55,8 @@ interface MessageListProps {
   autoScroll?: boolean
   /** Saved evidence uses one scroll surface with its controls on narrow screens. */
   savedEvidence?: boolean
+  /** Only show temperature evidence when the viewed target supports runtime temperature. */
+  showGenerationInfo?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
 }
@@ -445,7 +447,7 @@ export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   copyConversationDisabledReason,
   newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
-  isLoading, autoScroll = true, savedEvidence = false, globalMarkdown = false, onEditConversation,
+  isLoading, autoScroll = true, savedEvidence = false, showGenerationInfo = false, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -741,7 +743,7 @@ export default function MessageList({
                     </Tooltip>
                   )}
                   <Text className={styles.role}>{message.role}</Text>
-                  {message.generationDescription && (message.generationDetails ? (
+                  {showGenerationInfo && message.generationDescription && (message.generationDetails ? (
                     <Popover positioning="above-end">
                       <PopoverTrigger disableButtonEnhancement>
                         <Button appearance="transparent" size="small" className={styles.messageActionButton}

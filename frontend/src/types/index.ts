@@ -453,6 +453,7 @@ export interface TargetCapabilities {
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
   supports_temperature?: boolean
+  temperature_range?: readonly [number, number]
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }

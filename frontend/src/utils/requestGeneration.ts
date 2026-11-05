@@ -16,6 +16,14 @@ export const GENERATION_FIELDS: ReadonlyArray<{
   { name: 'temperature', label: 'Temperature', capability: 'supports_temperature', min: 0, max: 2, step: 0.1 },
 ]
 
+export function generationFieldRange(
+  name: keyof RequestGenerationConfig, capabilities?: TargetCapabilities | null,
+): readonly [number, number] {
+  const field = GENERATION_FIELDS.find((entry) => entry.name === name)
+  if (!field) throw new Error(`Unknown generation option: ${name}`)
+  return capabilities?.temperature_range ?? [field.min, field.max]
+}
+
 export function generationFieldError(
   name: keyof RequestGenerationConfig, input: string | undefined, capabilities?: TargetCapabilities | null,
 ): string | undefined {
@@ -23,9 +31,10 @@ export function generationFieldError(
   const field = GENERATION_FIELDS.find((entry) => entry.name === name)
   if (!field) throw new Error(`Unknown generation option: ${name}`)
   if (!capabilities?.[field.capability]) return `This target does not support runtime ${name}.`
+  const [minimum, maximum] = generationFieldRange(name, capabilities)
   if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(input.trim())
-    || !Number.isFinite(Number(input)) || Number(input) < field.min || Number(input) > field.max) {
-    return `${field.label} must be a finite number between ${field.min} and ${field.max}.`
+    || !Number.isFinite(Number(input)) || Number(input) < minimum || Number(input) > maximum) {
+    return `${field.label} must be a finite number between ${minimum} and ${maximum}.`
   }
   return undefined
 }

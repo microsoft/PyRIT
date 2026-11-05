@@ -82,20 +82,26 @@ response = await PromptNormalizer().send_prompt_async(message=message, target=ta
 
 - Set metadata on the current outbound message, not conversation history.
   One piece is sufficient; values on multiple pieces must agree.
-- Values must be finite numbers, not booleans or numeric strings. OpenAI Chat,
-  Completions, and Responses accept 0 through 2 in supported model modes.
+- Values must be finite numbers, not booleans or numeric strings, within
+  `target.capabilities.temperature_range`. OpenAI Chat, Completions, and Responses
+  normally accept 0 through 2; `Mistral-Large-3` accepts 0 through 1.
   Invalid, conflicting, or known unsupported overrides fail
   before provider I/O.
 - Overrides take precedence over target defaults and provider passthrough settings.
   Missing or null overrides preserve existing behavior. Transport retries reuse
   the resolved value.
+- `RoundRobinTarget` enables overrides only when every child supports them and
+  exposes their shared range. It validates against all children before sending.
+  Overrides survive fallback;
+  without an override, each child resolves its own default.
 
 `PromptNormalizer` saves evidence with the request and its responses.
 Read it using `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)`.
 `info.temperature` records the `requested` override, `resolved` value sent, and
 `source` (`request`, `target_default`, or `provider_default`). Unknown provider
 defaults remain `None`; messages without evidence return `None`.
-The GUI omits temperature labels for messages without evidence. Edited or newly
+The GUI omits temperature labels for messages without evidence or without a
+selected target that supports runtime temperature. Edited or newly
 inserted history does not acquire evidence; unchanged source copies retain it.
 
 ## Chat-style targets vs general targets
@@ -291,6 +297,7 @@ A `TargetConfiguration` composes three concerns:
 | `supports_json_output`           | The target supports a "json" response format that guarantees valid JSON output.                                                          |
 | `supports_json_schema`           | The target supports constraining output to a caller-provided JSON schema.                                                                |
 | `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides. This does not change the target's default or identity. |
+| `temperature_range`              | Inclusive minimum and maximum for runtime temperature when `supports_temperature` is true.                                              |
 | `input_modalities`               | The set of input modality combinations the target accepts (e.g. `{text}`, `{text, image_path}`).                                         |
 | `output_modalities`              | The set of output modality combinations the target produces.                                                                             |
 

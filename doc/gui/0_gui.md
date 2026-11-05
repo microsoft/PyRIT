@@ -102,12 +102,14 @@ corresponding Chat route while retaining query parameters and fragments.
 ### Temperature
 
 Click the thermometer below **Send** to set a temperature override. Leave it
-blank or choose **Use target default** to clear it.
+blank or choose **Use target default** to clear it. The control shows and enforces
+the selected target's range; for example, `Mistral-Large-3` accepts 0 through 1.
 
 The override resets when you switch attacks or targets, or refresh the page.
 
-Select a request or response footer to inspect the saved requested override,
-value sent, and its source.
+Temperature footers appear only when the selected target supports runtime
+temperature. Select a request or response footer to inspect the saved requested
+override, value sent, and its source.
 
 See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
 for SDK usage and supported target behavior.

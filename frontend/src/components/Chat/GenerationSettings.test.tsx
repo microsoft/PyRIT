@@ -118,6 +118,26 @@ describe('GenerationSettings', () => {
     expect(onChange).toHaveBeenLastCalledWith({})
   })
 
+  it('should describe and enforce the target-specific temperature range', async () => {
+    const user = userEvent.setup()
+    const mistral = makeTarget({
+      model_name: 'Mistral-Large-3',
+      capabilities: { supports_temperature: true, temperature_range: [0, 1] },
+    })
+    render(<TestWrapper><SettingsHarness selectedTarget={mistral} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    const input = screen.getByRole('textbox', { name: 'Temperature' })
+    expect(input).toHaveAccessibleDescription(expect.stringContaining('Enter 0 through 1.'))
+    await user.type(input, '2')
+    expect(screen.getByText('Temperature must be a finite number between 0 and 1.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Apply temperature' })).toBeDisabled()
+    await user.clear(input)
+    await user.type(input, '1')
+    expect(screen.getByRole('button', { name: 'Apply temperature' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Apply temperature' }))
+    expect(screen.getByRole('button', { name: 'Adjust temperature: 1' })).toBeInTheDocument()
+  })
+
   it('should explain unsupported temperature on focus without opening an unusable form', async () => {
     const user = userEvent.setup()
     render(<TestWrapper><SettingsHarness selectedTarget={{ ...target, capabilities: { supports_temperature: false } }} /></TestWrapper>)

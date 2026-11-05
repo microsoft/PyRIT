@@ -1182,6 +1182,127 @@ async def test_nested_passthrough_precedence_at_http_boundary_async(patch_centra
     assert extras == original
 
 
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAIResponseTarget])
+async def test_round_robin_runtime_temperature_rotation_preserves_evidence_async(
+    *,
+    patch_central_database: Any,
+    sqlite_instance: SQLiteMemory,
+    target_type: type[OpenAIChatTarget | OpenAIResponseTarget],
+) -> None:
+    attempts: list[tuple[str, float]] = []
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        attempts.append((http_request.url.host, json.loads(http_request.content)["temperature"]))
+        response = (
+            openai_response_json_dict() if target_type is OpenAIResponseTarget else openai_chat_response_json_dict()
+        )
+        return httpx.Response(200, json=response)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        children = [
+            target_type(
+                model_name="gpt-4o",
+                endpoint=f"https://{host}.example.test/v1",
+                api_key="test-only-key",
+                temperature=0.2,
+                extra_body_parameters={"extra_body": {"temperature": default}},
+                httpx_client_kwargs={"http_client": client},
+            )
+            for host, default in [("first", 0.3), ("second", 0.8)]
+        ]
+        target = RoundRobinTarget(targets=children)
+        identifier = target.get_identifier()
+        child_identifiers = [child.get_identifier() for child in children]
+        assert target.capabilities.supports_temperature
+        for temperature, expected in [(0, 0), (1.1, 1.1), (None, 0.3)]:
+            result = await PromptNormalizer().send_prompt_async(message=request(temperature), target=target)
+            saved = await sqlite_instance.get_conversation_messages_async(
+                conversation_id=result.get_piece().conversation_id
+            )
+            assert len(saved) == 2
+            for stored in saved:
+                info = RequestGenerationInfo.from_metadata(metadata=stored.get_piece().prompt_metadata)
+                assert info is not None
+                assert info.temperature.requested == temperature
+                assert info.temperature.resolved == expected
+                assert info.temperature.source == ("target_default" if temperature is None else "request")
+                assert info.request_piece_ids == (str(saved[0].get_piece().id),)
+            assert target.get_identifier() is identifier
+            assert all(child._temperature == 0.2 for child in children)
+            assert all(
+                child.get_identifier() is expected_id
+                for child, expected_id in zip(children, child_identifiers, strict=True)
+            )
+        assert attempts == [
+            ("first.example.test", 0),
+            ("second.example.test", 1.1),
+            ("first.example.test", 0.3),
+        ]
+
+
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAIResponseTarget])
+@pytest.mark.parametrize("disabled_child", [0, 1])
+async def test_round_robin_temperature_requires_every_child_async(
+    *,
+    patch_central_database: Any,
+    target_type: type[OpenAIChatTarget | OpenAIResponseTarget],
+    disabled_child: int,
+) -> None:
+    send = AsyncMock()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
+        children = [
+            target_type(
+                model_name="gpt-4o",
+                endpoint="https://example.test/v1",
+                api_key="test-only-key",
+                httpx_client_kwargs={"http_client": client},
+            )
+            for _ in range(2)
+        ]
+        child = children[disabled_child]
+        child.apply_capabilities(capabilities=child.capabilities.model_copy(update={"supports_temperature": False}))
+        target = RoundRobinTarget(targets=children)
+        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_temperature": True}))
+        assert not target.capabilities.supports_temperature
+        with pytest.raises(ValueError, match="does not support runtime temperature"):
+            await target.send_prompt_async(message=request(0))
+        assert target._counter == 0
+        send.assert_not_called()
+
+
+@pytest.mark.parametrize("change", ["capability", "mode", "range"])
+async def test_round_robin_validates_all_children_before_selection_async(
+    *, patch_central_database: Any, change: str
+) -> None:
+    send = AsyncMock()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
+        children = [
+            OpenAIChatTarget(
+                model_name="gpt-4o",
+                endpoint="https://example.test/v1",
+                api_key="test-only-key",
+                httpx_client_kwargs={"http_client": client},
+            )
+            for _ in range(2)
+        ]
+        target = RoundRobinTarget(targets=children)
+        assert target.capabilities.supports_temperature
+        if change == "capability":
+            children[1].apply_capabilities(
+                capabilities=children[1].capabilities.model_copy(update={"supports_temperature": False})
+            )
+            assert not target.capabilities.supports_temperature
+        elif change == "mode":
+            children[1]._extra_body_parameters = {"reasoning_effort": "high"}
+        message = request(2.1 if change == "range" else 0)
+        with pytest.raises(ValueError, match="temperature"):
+            await target.send_prompt_async(message=message)
+        assert target._counter == 0
+        send.assert_not_called()
+        assert RequestGenerationInfo.METADATA_KEY not in message.get_piece().prompt_metadata
+
+
+@pytest.mark.parametrize("temperature", [None, 0, 1.1])
 @pytest.mark.parametrize("fallback_temperature", [0, 0.8, None])
 @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAIResponseTarget])
 async def test_round_robin_fallback_resolves_its_own_temperature_async(
@@ -1189,6 +1310,7 @@ async def test_round_robin_fallback_resolves_its_own_temperature_async(
     patch_central_database: Any,
     sqlite_instance: SQLiteMemory,
     fallback_temperature: float | None,
+    temperature: float | None,
     target_type: type[OpenAIChatTarget | OpenAIResponseTarget],
 ) -> None:
     attempts: list[tuple[str, dict[str, Any]]] = []
@@ -1224,7 +1346,7 @@ async def test_round_robin_fallback_resolves_its_own_temperature_async(
             httpx_client_kwargs={"http_client": client, "max_retries": 0},
         )
         target = RoundRobinTarget(targets=[first, second])
-        message = request()
+        message = request(temperature)
         message.get_piece().prompt_metadata["custom"] = "preserved"
         transport = (
             first._send_model_request_async
@@ -1244,14 +1366,16 @@ async def test_round_robin_fallback_resolves_its_own_temperature_async(
             result = await PromptNormalizer().send_prompt_async(
                 message=message, target=target, conversation_id=message.get_piece().conversation_id
             )
+        expected_first = temperature if temperature is not None else 0.3
+        expected_fallback = temperature if temperature is not None else fallback_temperature
         assert [(host, body.get("temperature")) for host, body in attempts] == [
-            ("first.example.test", 0.3),
-            ("first.example.test", 0.3),
-            ("second.example.test", fallback_temperature),
+            ("first.example.test", expected_first),
+            ("first.example.test", expected_first),
+            ("second.example.test", expected_fallback),
         ]
         first_resolve.assert_called_once()
         second_resolve.assert_called_once()
-        if fallback_temperature is None:
+        if expected_fallback is None:
             assert "temperature" not in attempts[-1][1]
         assert result.get_piece().prompt_metadata["inner_target_identifier"] == second.get_identifier().hash
         saved = await sqlite_instance.get_conversation_messages_async(
@@ -1262,10 +1386,14 @@ async def test_round_robin_fallback_resolves_its_own_temperature_async(
         for stored in saved:
             info = RequestGenerationInfo.from_metadata(metadata=stored.get_piece().prompt_metadata)
             assert info is not None
-            assert info.temperature.requested is None
-            assert info.temperature.resolved == fallback_temperature
+            assert info.temperature.requested == temperature
+            assert info.temperature.resolved == expected_fallback
             assert info.temperature.source == (
-                "target_default" if fallback_temperature is not None else "provider_default"
+                "request"
+                if temperature is not None
+                else "target_default"
+                if fallback_temperature is not None
+                else "provider_default"
             )
             assert info.request_piece_ids == (str(saved[0].get_piece().id),)
 
@@ -1448,11 +1576,115 @@ async def test_normalizer_error_response_retains_evidence_without_request_option
     assert response_info == request_info
 
 
-def test_new_capability_does_not_change_existing_identifier_projection() -> None:
+@pytest.mark.parametrize("temperature_range", [(0, 1), (0, 2)])
+def test_new_capability_does_not_change_existing_identifier_projection(temperature_range: tuple[float, float]) -> None:
     before = TargetConfiguration(capabilities=TargetCapabilities())
-    after = TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True))
+    after = TargetConfiguration(
+        capabilities=TargetCapabilities(supports_temperature=True, temperature_range=temperature_range)
+    )
     assert after.as_identifier_params() == before.as_identifier_params()
     assert "supports_temperature" not in after.as_identifier_params()["capabilities"]
+    assert "temperature_range" not in after.as_identifier_params()["capabilities"]
+
+
+@pytest.mark.parametrize("temperature_range", [(1, 0), (float("nan"), 1), (0, float("inf"))])
+def test_temperature_capabilities_reject_invalid_ranges(temperature_range: tuple[float, float]) -> None:
+    with pytest.raises(ValueError):
+        TargetCapabilities(temperature_range=temperature_range)
+
+
+def test_temperature_capability_range_round_trip() -> None:
+    capabilities = TargetCapabilities(supports_temperature=True, temperature_range=(0, 1))
+    assert TargetCapabilities.model_validate_json(capabilities.model_dump_json()) == capabilities
+    assert TargetCapabilities.model_validate({"supports_temperature": True}).temperature_range == (0, 2)
+
+
+@pytest.mark.parametrize("model", ["Mistral-Large-3", "mistral-large-3", "Mistral-Large-3-2026-01-01"])
+def test_mistral_temperature_range(model: str) -> None:
+    assert _OpenAIModelSampling.supports_temperature(model_name=model)
+    assert _OpenAIModelSampling.temperature_range(model) == (0, 1)
+    assert _OpenAIModelSampling.temperature_range("private-deployment") == (0, 2)
+
+
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
+@pytest.mark.parametrize("temperature", [None, 0, 0.7, 1, 1.01, 2])
+async def test_mistral_range_is_advertised_and_enforced_before_io_async(
+    *,
+    patch_central_database: Any,
+    target_type: type[OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget],
+    temperature: float | None,
+) -> None:
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        assert json.loads(http_request.content)["temperature"] == (1.5 if temperature is None else temperature)
+        response = (
+            openai_chat_response_json_dict()
+            if target_type is OpenAIChatTarget
+            else generation_response(http_request.url.path)
+        )
+        return httpx.Response(200, json=response)
+
+    send = AsyncMock(side_effect=respond_async)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
+        target = target_type(
+            model_name="Mistral-Large-3",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature=1.5,
+            httpx_client_kwargs={"http_client": client},
+        )
+        assert target.capabilities.supports_temperature
+        assert target.capabilities.temperature_range == (0, 1)
+        identifier = target.get_identifier()
+        if temperature is not None and temperature > 1:
+            with pytest.raises(ValueError, match="between 0 and 1"):
+                await target.send_prompt_async(message=request(temperature))
+            send.assert_not_called()
+        else:
+            await target.send_prompt_async(message=request(temperature))
+            send.assert_called_once()
+        assert target.get_identifier() is identifier
+        assert target._temperature == 1.5
+
+
+@pytest.mark.parametrize("source", ["model", "underlying_model", "passthrough"])
+async def test_mistral_bounds_use_effective_model_async(*, patch_central_database: Any, source: str) -> None:
+    target = OpenAIChatTarget(
+        model_name="Mistral-Large-3" if source == "model" else "private-deployment",
+        underlying_model="Mistral-Large-3" if source == "underlying_model" else None,
+        extra_body_parameters={"extra_body": {"model": "Mistral-Large-3"}} if source == "passthrough" else None,
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+    )
+    try:
+        assert target.capabilities.temperature_range == (0, 1)
+        with pytest.raises(ValueError, match="between 0 and 1"):
+            target.validate_request_generation_config(request(2))
+        if source == "model":
+            target.set_model_name(model_name="gpt-4o")
+            assert target.capabilities.temperature_range == (0, 2)
+            assert target.validate_request_generation_config(request(2)).temperature == 2
+    finally:
+        await target.cleanup_target_async()
+
+
+async def test_round_robin_exposes_intersected_child_ranges_async(patch_central_database: Any) -> None:
+    async with httpx.AsyncClient() as client:
+        children = [
+            OpenAIChatTarget(
+                model_name="shared-model",
+                endpoint="https://example.test/v1",
+                api_key="test-only-key",
+                extra_body_parameters={"extra_body": {"model": model}},
+                httpx_client_kwargs={"http_client": client},
+            )
+            for model in ["gpt-4o", "Mistral-Large-3"]
+        ]
+        target = RoundRobinTarget(targets=children)
+        assert target.capabilities.supports_temperature
+        assert target.capabilities.temperature_range == (0, 1)
+        assert target.validate_request_generation_config(request(1)).temperature == 1
+        with pytest.raises(ValueError, match="between 0 and 1"):
+            target.validate_request_generation_config(request(2))
 
 
 async def test_no_override_preserves_request_body_async(target: OpenAIChatTarget) -> None:

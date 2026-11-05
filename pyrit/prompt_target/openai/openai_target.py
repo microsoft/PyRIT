@@ -80,6 +80,17 @@ class _OpenAIModelSampling:
     _SNAPSHOT_SUFFIX: ClassVar[re.Pattern[str]] = re.compile(r"-\d{4}-\d{2}-\d{2}$")
 
     @classmethod
+    def temperature_range(cls, model_name: object) -> tuple[float, float]:
+        """
+        Return the model's inclusive runtime temperature bounds.
+
+        Returns:
+            tuple[float, float]: Provider parameter minimum and maximum.
+        """
+        model = cls._SNAPSHOT_SUFFIX.sub("", model_name).lower() if isinstance(model_name, str) else ""
+        return (0.0, 1.0) if model == "mistral-large-3" else (0.0, 2.0)
+
+    @classmethod
     def supports_temperature(
         cls, *, model_name: object, reasoning_effort: object = None, declared_support: bool | None = None
     ) -> bool:
@@ -305,19 +316,24 @@ class OpenAITarget(PromptTarget):
             )
             and not parameters.get("stream", False)
         )
-        return capabilities.model_copy(update={"supports_temperature": temperature_supported})
+        return capabilities.model_copy(
+            update={
+                "supports_temperature": temperature_supported,
+                "temperature_range": _OpenAIModelSampling.temperature_range(parameters["model"]),
+            }
+        )
 
     def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
         if config.temperature is None:
             return
-        if not self._generation_capabilities_for_mode(self.capabilities).includes(
-            capability=CapabilityName.TEMPERATURE
-        ):
+        capabilities = self._generation_capabilities_for_mode(self.capabilities)
+        if not capabilities.includes(capability=CapabilityName.TEMPERATURE):
             raise ValueError(
                 f"Runtime temperature is not supported for this {type(self).__name__} model configuration."
             )
-        if not 0 <= config.temperature <= 2:
-            raise ValueError("OpenAI request temperature must be between 0 and 2 inclusive.")
+        minimum, maximum = capabilities.temperature_range
+        if not minimum <= config.temperature <= maximum:
+            raise ValueError(f"OpenAI request temperature must be between {minimum:g} and {maximum:g} inclusive.")
 
     def _prepare_request_generation(self, *, body: dict[str, Any], request: Message) -> None:
         # Public sends and wrapper dispatch clear incoming evidence. Retries and tool

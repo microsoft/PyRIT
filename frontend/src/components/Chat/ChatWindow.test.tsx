@@ -4099,6 +4099,35 @@ describe("ChatWindow Integration", () => {
     expect(target.identifier.temperature).toBe(0.8);
   });
 
+  it.each([true, false, undefined])("shows saved temperature markers only with confirmed target support (%s)", async (
+    supportsTemperature: boolean | undefined,
+  ) => {
+    const target: TargetInstance = {
+      ...mockTarget, capabilities: buildCapabilities({ supports_temperature: supportsTemperature }),
+    };
+    const messages: BackendMessage[] = (["user", "assistant"] as const).map((role: "user" | "assistant", index: number) => ({
+      turn_number: index, role, created_at: "2026-02-15T00:00:00Z",
+      message_pieces: [{
+        id: `piece-${index}`, original_value_data_type: "text", converted_value_data_type: "text",
+        original_value: `Saved ${role} message`, converted_value: `Saved ${role} message`, scores: [],
+        prompt_metadata: { _pyrit_generation: {
+          temperature: { requested: null, resolved: null, source: "provider_default" }, request_piece_ids: ["piece-0"],
+        } },
+      }],
+    }));
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "conversation", messages, target_response_status: null,
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      attackResultId="existing" conversationId="conversation" activeConversationId="conversation" /></TestWrapper>);
+
+    expect(await screen.findByText("Saved assistant message")).toBeInTheDocument();
+    expect(screen.getByText("Saved user message")).toBeInTheDocument();
+    expect(screen.queryAllByRole("button", {
+      name: "Generation details: Temperature: provider default (unknown)",
+    })).toHaveLength(supportsTemperature ? 2 : 0);
+  });
+
   it("does not infer runtime temperature support from a target default", async () => {
     const user = userEvent.setup();
     const target = {

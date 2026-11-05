@@ -22,7 +22,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import cast
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, computed_field, field_serializer, field_validator
 
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 
@@ -111,6 +111,9 @@ class TargetCapabilities(BaseModel):
     #: Whether this adapter and model mode support request-local temperature overrides.
     supports_temperature: bool = False
 
+    #: Inclusive bounds for runtime temperature, used only when supports_temperature is true.
+    temperature_range: tuple[FiniteFloat, FiniteFloat] = (0.0, 2.0)
+
     #: Whether web search is configured and available to this target.
     supports_web_search: bool = False
 
@@ -122,6 +125,22 @@ class TargetCapabilities(BaseModel):
     #: The output modalities supported by the target, as combinations of data types.
     #: Serialized as a sorted list of sorted lists — see ``_sorted_modality_combinations``.
     output_modalities: frozenset[frozenset[PromptDataType]] = Field(default=_DEFAULT_TEXT_MODALITIES)
+
+    @field_validator("temperature_range")
+    @classmethod
+    def _validate_temperature_range(cls, value: tuple[float, float]) -> tuple[float, float]:
+        """
+        Reject reversed runtime temperature bounds.
+
+        Returns:
+            tuple[float, float]: Inclusive minimum and maximum.
+
+        Raises:
+            ValueError: The minimum exceeds the maximum.
+        """
+        if value[0] > value[1]:
+            raise ValueError("Temperature minimum must not exceed maximum.")
+        return value
 
     @field_serializer("input_modalities", "output_modalities")
     def _sorted_modality_combinations(self, combinations: frozenset[frozenset[PromptDataType]]) -> list[list[str]]:

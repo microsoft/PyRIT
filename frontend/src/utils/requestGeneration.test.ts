@@ -43,6 +43,18 @@ describe('request temperature', () => {
     expect(() => parseGenerationConfig({ temperature: '0' })).toThrow(/does not support runtime temperature/)
   })
 
+  it.each(['0', '0.7', '1'])('accepts %s within the target temperature range', (temperature: string) => {
+    expect(parseGenerationConfig({ temperature }, {
+      supports_temperature: true, temperature_range: [0, 1],
+    })).toEqual({ temperature: Number(temperature) })
+  })
+
+  it.each(['1.01', '2', '-0.1'])('rejects %s outside the target temperature range', (temperature: string) => {
+    expect(() => parseGenerationConfig({ temperature }, {
+      supports_temperature: true, temperature_range: [0, 1],
+    })).toThrow('Temperature must be a finite number between 0 and 1.')
+  })
+
   it.each([
     [0, 'request', 'Temperature: 0 (request override)'],
     [0.2, 'target_default', 'Temperature: 0.2 (target default)'],

@@ -8,7 +8,7 @@ import { CheckmarkRegular, ChevronDownRegular, DismissRegular, TemperatureRegula
 
 import HelpField from '@/components/HelpField'
 import type { RequestGenerationDraft, TargetInstance } from '@/types'
-import { generationFieldError } from '@/utils/requestGeneration'
+import { generationFieldError, generationFieldRange } from '@/utils/requestGeneration'
 
 import { useGenerationSettingsStyles } from './GenerationSettings.styles'
 
@@ -27,7 +27,8 @@ interface TemperatureEdit {
 export default function GenerationSettings(props: GenerationSettingsProps) {
   const { target, disabled } = props
   return <TemperatureControl key={JSON.stringify([
-    target?.target_registry_name, target?.identifier.hash, target?.capabilities?.supports_temperature, disabled,
+    target?.target_registry_name, target?.identifier.hash, target?.capabilities?.supports_temperature,
+    target?.capabilities?.temperature_range, disabled,
   ])} {...props} />
 }
 
@@ -40,6 +41,7 @@ function TemperatureControl({ value, onChange, target, disabled }: GenerationSet
   const supported = Boolean(target?.capabilities?.supports_temperature)
   const editable = supported && !disabled
   const error = generationFieldError('temperature', input, target?.capabilities)
+  const [minimum, maximum] = generationFieldRange('temperature', target?.capabilities)
   const defaultValue = target?.binding?.temperature ?? target?.identifier.temperature
   const reason = !target ? 'Select a target to adjust temperature.'
     : !supported ? 'This target does not support runtime temperature.'
@@ -95,7 +97,7 @@ function TemperatureControl({ value, onChange, target, disabled }: GenerationSet
         }}>
           <HelpField label="Temperature" validationState={error ? 'error' : 'none'} validationMessage={error}
             hint="Blank uses target default."
-            help={`Enter 0 through 2. Zero is valid. Configured default: ${defaultValue ?? 'not specified; provider default unknown'}. Applies to subsequent sends until changed; target defaults and earlier messages are unchanged.`}>
+            help={`Enter ${minimum} through ${maximum}. Zero is valid. Configured default: ${defaultValue ?? 'not specified; provider default unknown'}. Applies to subsequent sends until changed; target defaults and earlier messages are unchanged.`}>
             <Input autoFocus type="text" inputMode="decimal" value={input ?? ''} placeholder="Default" disabled={!editable}
               onChange={(_event: ChangeEvent<HTMLInputElement>, data: InputOnChangeData) => {
                 const next = data.value.trim() ? data.value : undefined
