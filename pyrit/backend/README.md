@@ -39,12 +39,16 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets/{id}` - Get target details
 - `POST /api/targets` - Create a target
 
-A created target is Temporary: it is gone when the backend restarts. With `"persist": true` and a name of
-lowercase letters, digits, and underscores, the target is saved under `registry_recipes_source` and restored at
-every start, and the signed-in user is recorded as the one who saved it. A saved target can't hold or use a key:
-it authenticates with Microsoft Entra ID (`"auth_mode": "identity"`) or needs no key, and a request that would
-save a key, use one of this server's credentials, or use a Temporary target receives **400** and can be sent
-again without `persist`. A name that a target or saved file already has receives **409**, and storage that
+A created target is Temporary: it is gone when the backend restarts. With `"persist": true`, `register` left on,
+and a name that starts with a lowercase letter and has at most 64 lowercase letters, digits, and underscores
+(otherwise **422**), the target is saved under `registry_recipes_source` and restored at every start, and the
+signed-in user is recorded as the one who saved it. A saved target can't hold or use a key: it authenticates with
+Microsoft Entra ID (`"auth_mode": "identity"`) or needs no key. A parameter left empty that would take a server
+setting is first set to the value that turns that off, so a saved OpenAI target gets `"headers": "{}"` and doesn't
+send this server's `OPENAI_ADDITIONAL_REQUEST_HEADERS`. Settings the OpenAI SDK reads by itself
+(`OPENAI_CUSTOM_HEADERS`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) still apply. After the usual permission checks, a
+request that would save a key, use one of this server's keys, or use a Temporary target receives **400** and can
+be sent again without `persist`. A name that a target or saved file already has receives **409**, and storage that
 can't be written receives **503**; the server log names the file in case the write reached storage anyway, since
 the target would then come back at the next start. Each listed target's `origin` is `saved`, `configuration`
 (registered by the server's startup scripts), or `temporary` (gone after a restart, such as a target created
