@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-import { Button, MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-components'
-import { ArrowSyncRegular } from '@fluentui/react-icons'
+import { MessageBar, MessageBarBody, Spinner, Text } from '@fluentui/react-components'
 import { Link, useLocation, useSearchParams } from 'react-router'
 
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
@@ -19,14 +18,18 @@ function shownSelectionKey(selectionKey: string): string {
   return `${selectionKey.slice(0, MAX_SHOWN_SELECTION_KEY_LENGTH - 1)}…`
 }
 
+interface DatasetSelectionProps {
+  activeAttackId?: string | null
+  activeConversationId?: string | null
+}
+
 /**
  * Selected dataset summary plus a read-only example table.
  * A missing or repeated selection key does not choose a dataset or request seeds.
  */
-export default function DatasetSelection() {
+export default function DatasetSelection({ activeAttackId, activeConversationId }: DatasetSelectionProps = {}) {
   const styles = useDatasetSelectionStyles()
   const headingRef = useRef<HTMLHeadingElement>(null)
-  const retryRef = useRef<HTMLButtonElement>(null)
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const selectionKey = selectionKeyFromSearchParams(searchParams)
@@ -34,27 +37,21 @@ export default function DatasetSelection() {
   // Stay mounted while a catalog reload unmounts the table, so a runtime change
   // is still compared with the generation that owned the current page.
   const seedBrowser = useSeedExampleBrowserState(selectionKey ?? '')
-  const { datasets, loading, error, retry, refresh } = useLoadedDatasets()
+  const { datasets, loading, error, refresh } = useLoadedDatasets()
   const dataset = selectionKey == null
     ? undefined
     : datasets.find((item) => item.selection_key === selectionKey)
 
   useEffect(() => {
     if (loading) return
-    if (error) {
-      retryRef.current?.focus()
-      return
-    }
     headingRef.current?.focus()
-  }, [loading, error, selectionKey, dataset?.selection_key])
+  }, [loading, selectionKey, dataset?.selection_key])
 
   const title = loading
     ? 'Loading dataset'
-    : error
-      ? 'Could not load datasets'
-      : dataset
+    : dataset
         ? dataset.name
-        : 'Dataset not found'
+        : error ? 'Datasets' : 'Dataset not found'
 
   return (
     <section className={styles.root} aria-labelledby="dataset-selection-title">
@@ -62,27 +59,25 @@ export default function DatasetSelection() {
       <h1 id="dataset-selection-title" ref={headingRef} tabIndex={-1} className={styles.title}>
         {title}
       </h1>
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {loading ? (
         <Spinner label="Loading datasets..." />
-      ) : error ? (
-        <div className={styles.centeredState}>
-          <MessageBar intent="error">
-            <MessageBarBody>{error}</MessageBarBody>
-          </MessageBar>
-          <Button ref={retryRef} appearance="primary" icon={<ArrowSyncRegular />} onClick={retry}>
-            Retry
-          </Button>
-        </div>
       ) : dataset ? (
         <>
           <div className={styles.summary}>
             <DatasetCard dataset={dataset} linked={false} />
           </div>
           <div className={styles.browser}>
-            <SeedExampleBrowserView dataset={dataset} onCatalogStale={refresh} browserState={seedBrowser} />
+            <SeedExampleBrowserView
+              dataset={dataset}
+              onCatalogStale={refresh}
+              browserState={seedBrowser}
+              activeAttackId={activeAttackId}
+              activeConversationId={activeConversationId}
+            />
           </div>
         </>
-      ) : (
+      ) : !error && (
         <>
           <Text size={300}>No loaded dataset matches this selection.</Text>
           {selectionKey ? <p className={styles.selectionKey}>{shownSelectionKey(selectionKey)}</p> : null}

@@ -1266,7 +1266,7 @@ async def test_file_backed_scenario_writes_wait_for_another_connections_lock_asy
         connection_key = id(connection_record)
 
         def trace_statement(statement: str) -> None:
-            if statement.startswith(("INSERT", "UPDATE")):
+            if statement.startswith(("BEGIN IMMEDIATE", "INSERT", "UPDATE")):
                 loop.call_soon_threadsafe(record_write, connection_key)
 
         dbapi_connection.run_async(lambda driver: driver.set_trace_callback(trace_statement))
