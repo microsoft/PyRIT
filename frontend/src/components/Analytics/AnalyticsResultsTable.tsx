@@ -28,7 +28,7 @@ interface AnalyticsResultsTableProps {
 
 /**
  * Present one independent rows-only read alongside the report's cohort size.
- * Failed page requests keep the last displayed page/time. Row activation delegates
+ * Failed page requests keep the last displayed page. Row activation delegates
  * to the normal attack loader so analytics never bypasses its read-only guards.
  */
 export default function AnalyticsResultsTable({
@@ -101,11 +101,7 @@ export default function AnalyticsResultsTable({
           </TableBody>
         </Table>
       </div>
-      {results.items.length === 0 && <Text>No results on this page. Return to the first page or reload the report.</Text>}
-      <Text size={200} className={styles.secondary}>
-        Page read: <time dateTime={results.computed_at}>{formatAnalyticsTime(results.computed_at)}</time>.
-        {' '}Each page is a fresh read; saved results may change between requests.
-      </Text>
+      {results.items.length === 0 && <Text>No results on this page. Return to the first page.</Text>}
       <HistoryPagination
         page={page}
         disabled={disabled || loading}

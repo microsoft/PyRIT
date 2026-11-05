@@ -1,11 +1,14 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { makeTarget } from '@/test-utils/targetFixtures'
+import { deferred } from '@/test-utils/deferred'
 import AttackHistory from './AttackHistory'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 
+installAutoRefreshTimers()
 jest.mock('../../services/api', () => ({
   attacksApi: {
     listAttacks: jest.fn(),
@@ -93,7 +96,7 @@ describe('AttackHistory', () => {
     )
 
     expect(screen.getByRole('heading', { level: 1, name: 'Attack History' })).toBeInTheDocument()
-    expect(screen.getByTestId('refresh-btn')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument()
     expect(screen.getByTestId('outcome-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
@@ -106,7 +109,7 @@ describe('AttackHistory', () => {
     })
   })
 
-  it('should guide users without an active target to configuration', async () => {
+  it('should guide users without an active target to Chat', async () => {
     const user = userEvent.setup()
     const onNavigate = jest.fn()
     mockedAttacksApi.listAttacks.mockResolvedValue({
@@ -124,14 +127,14 @@ describe('AttackHistory', () => {
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
     expect(screen.getByText('No attacks found')).toBeInTheDocument()
-    expect(screen.getByText('Set an objective default in the registry, or select a target directly in Chat.')).toBeInTheDocument()
+    expect(screen.getByText('Select a target in Chat to start an attack.')).toBeInTheDocument()
 
-    const configureTargetButton = screen.getByRole('button', { name: 'Configure target' })
-    expect(configureTargetButton).toBeEnabled()
+    const openChatButton = screen.getByRole('button', { name: 'Open Chat' })
+    expect(openChatButton).toBeEnabled()
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
 
-    await user.click(configureTargetButton)
-    expect(onNavigate).toHaveBeenCalledWith('registry')
+    await user.click(openChatButton)
+    expect(onNavigate).toHaveBeenCalledWith('chat')
   })
 
   it('should guide users with an active target to start an attack', async () => {
@@ -155,7 +158,7 @@ describe('AttackHistory', () => {
     const startAttackButton = await screen.findByRole('button', { name: 'Start attack' })
     expect(startAttackButton).toBeEnabled()
     expect(screen.getByText('Start an attack to see it here.')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Chat' })).not.toBeInTheDocument()
 
     await user.click(startAttackButton)
     expect(onNavigate).toHaveBeenCalledWith('chat')
@@ -172,7 +175,7 @@ describe('AttackHistory', () => {
 
     expect(screen.getByText('Loading attacks...')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Chat' })).not.toBeInTheDocument()
   })
 
   it('should render attack table rows', async () => {
@@ -364,7 +367,7 @@ describe('AttackHistory', () => {
     })
   })
 
-  it('should show refresh button and call listAttacks on click', async () => {
+  it('should update the visible history after one minute', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
       pagination: { limit: 25, has_more: false },
@@ -382,7 +385,7 @@ describe('AttackHistory', () => {
 
     expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
 
-    fireEvent.click(screen.getByTestId('refresh-btn'))
+    await advanceAutoRefresh()
     await waitFor(() => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(2)
     })
@@ -485,15 +488,30 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('error-state')).toBeInTheDocument()
+      expect(screen.getByText('Internal server error')).toBeInTheDocument()
     })
     expect(screen.getByText('Internal server error')).toBeInTheDocument()
-    expect(screen.getByTestId('retry-btn')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Chat' })).not.toBeInTheDocument()
   })
 
-  it('should retry on clicking retry button', async () => {
+  it('should not keep old rows under changed filters after an automatic check', async () => {
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: sampleAttacks, pagination: { limit: 25, has_more: false },
+    })
+    const rendered = render(<TestWrapper><AttackHistory {...defaultProps} /></TestWrapper>)
+    await screen.findByTestId('attacks-table')
+    await advanceAutoRefresh()
+    mockedAttacksApi.listAttacks.mockRejectedValueOnce(new Error('Different cohort unavailable'))
+    rendered.rerender(<TestWrapper><AttackHistory {...defaultProps}
+      filters={{ ...defaultProps.filters, outcome: 'error' }} /></TestWrapper>)
+    expect(await screen.findByText('Different cohort unavailable')).toBeInTheDocument()
+    expect(screen.queryByTestId('attacks-table')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('attack-row-ar-conv-1')).not.toBeInTheDocument()
+  })
+
+  it('should recover on the next automatic check', async () => {
     const axiosError = {
       isAxiosError: true,
       response: { status: 500, data: { detail: 'Internal server error' } },
@@ -507,20 +525,37 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('error-state')).toBeInTheDocument()
+      expect(screen.getByText('Internal server error')).toBeInTheDocument()
     })
 
-    // Now make it succeed on retry
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: sampleAttacks,
       pagination: { limit: 25, has_more: false },
     })
 
-    fireEvent.click(screen.getByTestId('retry-btn'))
+    await advanceAutoRefresh()
 
     await waitFor(() => {
       expect(screen.getByTestId('attacks-table')).toBeInTheDocument()
     })
+  })
+
+  it('should keep an options error visible until all option reads succeed', async () => {
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: sampleAttacks, pagination: { limit: 25, has_more: false },
+    })
+    mockedAttacksApi.getAttackOptions.mockRejectedValueOnce(new Error('Options unavailable'))
+    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
+    mockedLabelsApi.getLabels.mockResolvedValue({ labels: {} })
+    mockedOperationsApi.list.mockResolvedValue({ items: [] })
+    render(<TestWrapper><AttackHistory {...defaultProps} /></TestWrapper>)
+    expect(await screen.findByText('Options unavailable')).toBeInTheDocument()
+    const recovery = deferred<Awaited<ReturnType<typeof attacksApi.getAttackOptions>>>()
+    mockedAttacksApi.getAttackOptions.mockReturnValueOnce(recovery.promise)
+    await advanceAutoRefresh()
+    expect(screen.getByText('Options unavailable')).toBeInTheDocument()
+    await act(async () => { recovery.resolve({ attack_types: [] }) })
+    expect(screen.queryByText('Options unavailable')).not.toBeInTheDocument()
   })
 
   it('should show network error message for network failures', async () => {
@@ -537,7 +572,7 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByTestId('error-state')).toBeInTheDocument()
+      expect(screen.getByText(/network error/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/network error/i)).toBeInTheDocument()
   })
@@ -667,7 +702,7 @@ describe('AttackHistory', () => {
     const filteredRequest = mockedAttacksApi.listAttacks.mock.calls[2][0]
     expect(filteredRequest).toEqual(expect.objectContaining({ outcome: 'success' }))
     expect(filteredRequest).not.toHaveProperty('cursor')
-    expect(screen.getByText('Page 1')).toBeInTheDocument()
+    expect(await screen.findByText('Page 1')).toBeInTheDocument()
 
     history.rerender(
       <TestWrapper>
@@ -766,7 +801,7 @@ describe('AttackHistory', () => {
     })
     expect(screen.getByText('Try adjusting your filters.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Start attack' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Configure target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Open Chat' })).not.toBeInTheDocument()
   })
 
   it('should show reset filters button when a filter is active', async () => {
