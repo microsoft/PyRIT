@@ -416,7 +416,7 @@ async def test_from_seed_group_async_rejects_plain_seed_group():
 
 
 class TestPositionalConstructorCompatibility:
-    """The released positional constructor order must survive new keyword-only fields."""
+    """The released positional constructor order must remain unchanged."""
 
     @pytest.mark.parametrize(
         "params_type",
@@ -426,16 +426,13 @@ class TestPositionalConstructorCompatibility:
             AttackParameters.excluding("next_message"),
         ],
     )
-    def test_continue_final_assistant_message_is_keyword_only(self, params_type: type[AttackParameters]) -> None:
-        field = next(f for f in dataclasses.fields(params_type) if f.name == "continue_final_assistant_message")
-
-        assert field.kw_only is True
+    def test_continuation_is_not_an_attack_parameter(self, params_type: type[AttackParameters]) -> None:
+        assert "continue_final_assistant_message" not in {field.name for field in dataclasses.fields(params_type)}
 
     def test_fourth_positional_argument_is_memory_labels(self) -> None:
         params = AttackParameters("objective", None, None, {"run": "example"})
 
         assert params.memory_labels == {"run": "example"}
-        assert params.continue_final_assistant_message is False
 
     def test_reduced_type_keeps_positional_order(self) -> None:
         reduced = AttackParameters.excluding("next_message")
@@ -443,4 +440,3 @@ class TestPositionalConstructorCompatibility:
         params = reduced("objective", None, {"run": "example"})
 
         assert params.memory_labels == {"run": "example"}
-        assert params.continue_final_assistant_message is False

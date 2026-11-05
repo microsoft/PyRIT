@@ -17,6 +17,7 @@ from pyrit.models import (
     JsonResponseConfig,
     Message,
     MessagePiece,
+    PromptDataType,
 )
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
@@ -301,20 +302,26 @@ class OpenAIChatTarget(OpenAITarget):
             prefer_transcript_for_history=prefer_transcript_for_history,
         )
 
-    def _is_omitted_history_piece(self, *, message_piece: MessagePiece, has_text_piece: bool) -> bool:
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
         """
-        Accept stored audio only when the Chat Completions adapter omits it.
+        Match the Chat Completions adapter's text errors and omitted audio history.
 
         Args:
             message_piece: Historical message piece to check.
             has_text_piece: Whether its message contains a text piece.
 
         Returns:
-            bool: Whether the adapter skips this historical piece.
+            PromptDataType | None: The wire modality, or None for omitted audio.
         """
-        return self._should_skip_sending_audio(
+        if self._should_skip_sending_audio(
             message_piece=message_piece, is_last_message=False, has_text_piece=has_text_piece
-        )
+        ):
+            return None
+        if message_piece.converted_value_data_type == "error":
+            return "text"
+        return message_piece.converted_value_data_type
 
     async def _construct_message_from_response_async(self, response: ChatCompletion, request: MessagePiece) -> Message:
         """

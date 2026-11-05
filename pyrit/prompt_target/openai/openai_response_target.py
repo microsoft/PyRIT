@@ -402,6 +402,25 @@ class OpenAIResponseTarget(OpenAITarget):
             "output": output,
         }
 
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Match the Responses adapter's text refusals and omitted reasoning history.
+
+        Args:
+            message_piece: Historical message piece to check.
+            has_text_piece: Whether its message contains a text piece.
+
+        Returns:
+            PromptDataType | None: The wire modality, or None for omitted reasoning.
+        """
+        if message_piece.converted_value_data_type == "reasoning":
+            return None
+        if message_piece.api_role == "assistant" and message_piece.structured_refusal is not None:
+            return "text"
+        return message_piece.converted_value_data_type
+
     async def _serialize_piece_async(self, *, piece: MessagePiece, message_index: int) -> _SerializedPiece | None:
         data_type = piece.converted_value_data_type
         if data_type == "reasoning":

@@ -500,26 +500,32 @@ class LiteLLMChatTarget(PromptTarget):
             conversation, prefer_transcript_for_history=prefer_transcript_for_history
         )
 
-    def _is_omitted_history_piece(self, *, message_piece: MessagePiece, has_text_piece: bool) -> bool:
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
         """
-        Accept stored audio only when the Chat Completions message builder omits it.
+        Match the shared Chat Completions builder's historical wire modalities.
 
         Args:
             message_piece: Historical message piece to check.
             has_text_piece: Whether its message contains a text piece.
 
         Returns:
-            bool: Whether the message builder skips this historical piece.
+            PromptDataType | None: The wire modality, or None for omitted audio.
         """
         prefer_transcript_for_history = bool(
             self._audio_response_config and self._audio_response_config.prefer_transcript_for_history
         )
-        return should_skip_audio_piece(
+        if should_skip_audio_piece(
             message_piece=message_piece,
             is_last_message=False,
             has_text_piece=has_text_piece,
             prefer_transcript_for_history=prefer_transcript_for_history,
-        )
+        ):
+            return None
+        if message_piece.converted_value_data_type == "error":
+            return "text"
+        return message_piece.converted_value_data_type
 
     def _construct_request_body(
         self,

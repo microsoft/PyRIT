@@ -152,6 +152,70 @@ def test_prefill_requires_target_capability() -> None:
         _atomic(_prefill_factory(), _NoPrefillTarget())
 
 
+async def test_direct_simulated_assistant_request_preserves_prefix_without_flag_async() -> None:
+    target = _RecordingTarget()
+    attack = PromptSendingAttack(
+        objective_target=target,
+        attack_converter_config=AttackConverterConfig(
+            request_converters=[ConverterConfiguration(converters=[Base64Converter()])]
+        ),
+    )
+    await attack.execute_async(
+        objective=OBJECTIVE,
+        next_message=Message.from_prompt(prompt=PREFIX, role="simulated_assistant"),
+        prepended_conversation=[Message.from_prompt(prompt=OBJECTIVE, role="user")],
+    )
+    assert target.received == [[("user", "VGVzdCBvYmplY3RpdmU="), ("assistant", PREFIX)]]
+
+
+@pytest.mark.parametrize(
+    "capability", [CapabilityName.PREFILL, CapabilityName.MULTI_TURN, CapabilityName.EDITABLE_HISTORY]
+)
+async def test_direct_prefix_requires_native_target_capabilities_async(capability: CapabilityName) -> None:
+    target = _RecordingTarget()
+    target.apply_capabilities(capabilities=target.capabilities.model_copy(update={capability.value: False}))
+    attack = PromptSendingAttack(objective_target=target)
+    with pytest.raises(RuntimeError, match=f"natively support '{capability.value}'") as error:
+        await attack.execute_async(
+            objective=OBJECTIVE,
+            next_message=Message.from_prompt(prompt=PREFIX, role="simulated_assistant"),
+            prepended_conversation=[Message.from_prompt(prompt=OBJECTIVE, role="user")],
+        )
+    assert isinstance(error.value.__cause__, ValueError)
+    assert not target.received
+
+
+@pytest.mark.parametrize("explicit_next", [False, True])
+async def test_user_request_after_completed_assistant_history_keeps_conversion_async(explicit_next: bool) -> None:
+    target = _NoPrefillTarget()
+    attack = PromptSendingAttack(
+        objective_target=target,
+        attack_converter_config=AttackConverterConfig(
+            request_converters=[ConverterConfiguration(converters=[Base64Converter()])]
+        ),
+    )
+    await attack.execute_async(
+        objective=OBJECTIVE,
+        next_message=Message.from_prompt(prompt=OBJECTIVE, role="user") if explicit_next else None,
+        prepended_conversation=[Message.from_prompt(prompt="Completed reply", role="simulated_assistant")],
+    )
+    assert target.received == [[("assistant", "Completed reply"), ("user", "VGVzdCBvYmplY3RpdmU=")]]
+
+
+async def test_non_simulated_assistant_request_still_uses_request_converters_async() -> None:
+    target = _NoPrefillTarget()
+    attack = PromptSendingAttack(
+        objective_target=target,
+        attack_converter_config=AttackConverterConfig(
+            request_converters=[ConverterConfiguration(converters=[Base64Converter()])]
+        ),
+    )
+    await attack.execute_async(
+        objective=OBJECTIVE, next_message=Message.from_prompt(prompt=OBJECTIVE, role="assistant")
+    )
+    assert target.received == [[("assistant", "VGVzdCBvYmplY3RpdmU=")]]
+
+
 def test_prefill_rejects_simulated_conversation_in_technique() -> None:
     with pytest.raises(ValidationError, match="Assistant continuation requires"):
         AttackTechniqueSeedGroup(
@@ -179,7 +243,7 @@ async def test_continuation_survives_serialization_and_reduced_parameters() -> N
     assert technique.model_dump() == original
     reduced = AttackParameters.excluding("memory_labels")
     params = await reduced.from_seed_group_async(seed_group=restored)
-    assert params.continue_final_assistant_message
+    assert params.next_message.is_simulated
     assert params.next_message.api_role == "assistant"
     assert params.next_message.get_value() == PREFIX
     assert params.prepended_conversation is not None

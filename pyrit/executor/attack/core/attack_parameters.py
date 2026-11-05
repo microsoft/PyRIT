@@ -56,11 +56,6 @@ class AttackParameters:
     # Per-execution scoring criteria, supplied directly or by seed preparation.
     expectation: ScoringExpectation | None = None
 
-    # Explicit contract for a caller-authored, open assistant prefix.
-    # Ordinary assistant-ending histories retain their extraction semantics.
-    # Keyword-only so the released positional constructor signature is unchanged.
-    continue_final_assistant_message: bool = field(default=False, kw_only=True)
-
     def __str__(self) -> str:
         """Return a nicely formatted string representation of the attack parameters."""
         lines = [f"{self.__class__.__name__}:"]
@@ -216,9 +211,6 @@ class AttackParameters:
             params["next_message"] = extraction_group.get_next_message(
                 include_final_assistant=seed_group.continue_final_assistant_message
             )
-
-        if "continue_final_assistant_message" in valid_fields:
-            params["continue_final_assistant_message"] = seed_group.continue_final_assistant_message
 
         if "prepended_conversation" in valid_fields:
             params["prepended_conversation"] = extraction_group.get_prepended_conversation(

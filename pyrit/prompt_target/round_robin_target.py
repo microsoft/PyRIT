@@ -10,6 +10,8 @@ from pyrit.models import (
     TARGET_EVAL_PARAMS,
     ComponentIdentifier,
     Message,
+    MessagePiece,
+    PromptDataType,
 )
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_requirements import CHAT_TARGET_REQUIREMENTS
@@ -144,6 +146,27 @@ class RoundRobinTarget(PromptTarget):
             list[PromptTarget]: A copy of the inner targets.
         """
         return list(self._targets)
+
+    def _get_history_piece_data_type(
+        self, *, message_piece: MessagePiece, has_text_piece: bool
+    ) -> PromptDataType | None:
+        """
+        Use the shared wire modality when every possible receiving target agrees.
+
+        Args:
+            message_piece: The historical piece to validate.
+            has_text_piece: Whether the historical message also contains text.
+
+        Returns:
+            The shared wire modality, or the stored modality when adapters disagree.
+        """
+        data_types = {
+            target._get_history_piece_data_type(message_piece=message_piece, has_text_piece=has_text_piece)
+            for target in self._targets
+        }
+        if len(data_types) == 1:
+            return next(iter(data_types))
+        return message_piece.converted_value_data_type
 
     def _next_target(self) -> PromptTarget:
         """
