@@ -49,6 +49,15 @@ Saving from the scanner creates a copy through `POST /api/attacks/save-conversat
 it does not change the source or send to a target.
 
 For on-demand saved-result browsing, use
+`GET /api/attacks/{attack_result_id}/metadata?conversation_id={conversation_id}`
+for initial Chat metadata. It returns `related_conversation_count` (pruned
+references, excluding main) and `selected_conversation_valid`, independently of
+reference paging. An omitted conversation ID selects main. This response omits
+both complete reference arrays, transcript bodies, and result hierarchies; the
+stored SDK result and reference JSON are still materialized server-side.
+`GET /api/attacks/{attack_result_id}` keeps its full legacy summary contract.
+
+Use
 `GET /api/attacks/{attack_result_id}/conversations?limit=50` to page main and pruned
 references in saved-reference order. This reads counts
 and previews, not conversation bodies. The limit is 1-200; follow
@@ -57,7 +66,8 @@ and previews, not conversation bodies. The limit is 1-200; follow
 Load only the selected conversation with
 `GET /api/attacks/{attack_result_id}/messages?conversation_id={conversation_id}&limit=100`.
 Here the limit is 1-500 **message pieces**, not turns or bytes. Results use the
-canonical message, piece, and score views, ordered by sequence, timestamp, and ID.
+canonical message, piece, and score views, ordered by sequence, full timestamp
+(including fractional seconds), and ID.
 A page can split a multimodal turn: `partial_message_sequences` identifies partial
 turns. Append pieces by ID to their turn across pages, and follow
 `pagination.next_cursor`. A page does not infer a final target-response status
@@ -71,6 +81,15 @@ full-transcript behavior.
 Both paged and unpaged reads expose only main and pruned conversations.
 Adversarial and preparation contexts are excluded from lists, reference totals,
 and transcript reads, including hierarchy node expansion.
+
+The saved Scenario Chat viewer consumes these bounded reads with independent
+reference/message continuation controls. It merges stable piece IDs into their
+ordered turns and reconciles page-local partial-sequence markers against the
+accumulated prefix, rather than treating a leading partial marker as a new turn.
+Loaded evidence remains available after a continuation failure. Invalid cursors
+offer a bounded restart. Copy/branch, manual continuation, export and assessment
+stay disabled until the selected transcript is complete; legacy active/manual
+read behavior is unchanged.
 
 ### Scenario result hierarchy
 
@@ -89,7 +108,7 @@ Clicking a result with a main conversation opens the existing chat view and
 preserves scenario-run provenance for its return breadcrumb. Conversationless
 compound results expand their children instead. A separate Details action reuses
 the existing metadata dialog. Hierarchy requests do not load transcript bodies;
-new bounded conversation-evidence rendering remains separate follow-up work.
+the Chat viewer loads saved evidence through the bounded conversation reads above.
 
 `GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
 bounded tree preview grouped by atomic attack group. Roots are saved results with
@@ -175,10 +194,13 @@ enums when registered factories change; it does not create attacks.
 Selections from an earlier enum remain valid in the same scenario and registry
 generation if their factories are unchanged. Earlier aggregate selections retain
 their original members; they do not gain newly registered techniques.
-Responses include `creation_statement`, a Python-style display of the factory's
+Responses include `identifier`, the canonical factory identity shown inline in
+the Registry. It can contain raw prompt and seed values, including nested
+technique seeds. This JSON is not a redacted or hash-only view.
+Responses also include `creation_statement`, a Python-style display of the factory's
 supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable
-or lossless source. Responses do not include identifier or expanded seed JSON.
+or lossless source. The GUI displays identity JSON, not the creation statement.
 
 ### Manual Messages
 
@@ -238,6 +260,10 @@ and no stage guarantees that retrying delivery is safe. Stored target errors and
 Terminal states are published only after finalization and ownership release. Progress also
 includes the `request_turn_number` assigned during preparation, so clients can distinguish
 this send's response from a later turn written by another client.
+Each conversation receipt also retains `target_invoked`, set only at the target
+invocation boundary. It remains false during preparation and retains its value
+after interruption. An allocated request turn alone is not evidence of target use,
+and an invocation does not guarantee successful delivery.
 
 The optional `wait_ms` query parameter (0-1000) waits for completion, returning immediately
 if the operation settles. Cancelling this read, disconnecting, or navigating away does not
@@ -330,7 +356,9 @@ API callers are trusted operators, so these are intentional exceptions:
   the deployment instead.
 - Some targets use this server's credentials when the caller gives no key: an API key from the
   server's environment, sent even to an endpoint the caller chose, or a token for the server's
-  Azure identity, sent to the Azure endpoint or container the caller chose.
+  Azure identity, sent to the Azure endpoint or container the caller chose. For an
+  OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
+  of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
   created them.
 - Prompt content is not filtered; it is adversarial test data by design.

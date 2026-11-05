@@ -139,6 +139,7 @@ class TestBeaverTailsDataset:
         """Test all BeaverTails category leaves map to canonical PyRIT harm category names."""
         loader = _BeaverTailsDataset()
         expected_mappings = {
+            "adult_content": ["SEXUAL_CONTENT"],
             "aiding_and_abetting": ["COORDINATION_HARM"],
             "animal_abuse": ["OTHER"],
             "banned_substance": ["DRUG_USE", "REGULATED_GOODS"],
@@ -175,6 +176,24 @@ class TestBeaverTailsDataset:
                 )
                 == expected
             )
+
+
+async def test_fetch_dataset_does_not_add_other_for_adult_content():
+    """The upstream key "sexually_explicit,adult_content" should map to SEXUAL_CONTENT only."""
+    rows = [
+        {
+            "prompt": "Explicit prompt",
+            "response": "a",
+            "category": {"sexually_explicit,adult_content": True},
+            "is_safe": False,
+        },
+    ]
+    loader = _BeaverTailsDataset()
+
+    with patch.object(loader, "_fetch_from_huggingface_async", new=AsyncMock(return_value=rows)):
+        dataset = await loader.fetch_dataset_async()
+
+    assert dataset.seeds[0].harm_categories == ["SEXUAL_CONTENT"]
 
 
 async def test_fetch_dataset_merges_repeated_prompts():

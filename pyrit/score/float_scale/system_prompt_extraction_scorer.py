@@ -9,7 +9,7 @@ import re
 
 from pyrit.analytics.text_matching import ApproximateTextMatching
 from pyrit.memory.central_memory import CentralMemory
-from pyrit.models import ComponentIdentifier, MessagePiece, Score
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoringExpectation
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 
@@ -156,17 +156,20 @@ class SystemPromptExtractionScorer(MessageFloatScaleScorer):
 
         return system_prompt in response or response in system_prompt
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score how much of the conversation's system prompt is present in the response.
 
         Args:
             message_piece (MessagePiece): The assistant response piece to score.
-            objective (str | None): The objective to associate with the score. Defaults to None.
+            expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
 
         Returns:
             list[Score]: A single float_scale Score in [0, 1] measuring system-prompt leakage.
         """
+        objective = expectation.objective if expectation else None
         response = message_piece.converted_value
         system_prompt = await self._get_system_prompt_async(message_piece.conversation_id)
 

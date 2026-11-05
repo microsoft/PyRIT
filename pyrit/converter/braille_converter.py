@@ -144,7 +144,8 @@ class BrailleConverter(Converter):
             "0": "\u281a",
             " ": " ",
         }
-        number_punctuations = [".", ",", "-", "/"]
+        # Symbols that keep numeric mode (UEB rule 6.2.1); a hyphen ends it (rule 6.3.1).
+        number_punctuations = [".", ",", "/"]
         digit_letters = "abcdefghij"
 
         output = ""
