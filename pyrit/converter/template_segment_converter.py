@@ -75,14 +75,21 @@ class TemplateSegmentConverter(Converter):
         """
         Build identifier with template parameters.
 
+        The ordered parameter list is included so that two converters using
+        the same template but different parameter orderings (which changes
+        which prompt segment fills which placeholder) produce distinct
+        identities.
+
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
         template_hash = hashlib.sha256(str(self.prompt_template.value).encode("utf-8")).hexdigest()[:16]
+        ordered_params = list(self.prompt_template.parameters or [])
         return self._create_identifier(
             params={
                 "template_hash": template_hash,
                 "number_parameters": self._number_parameters,
+                "ordered_parameters": ordered_params,
                 "seed": self._seed,
             }
         )

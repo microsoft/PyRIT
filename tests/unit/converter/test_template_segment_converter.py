@@ -168,3 +168,56 @@ async def test_template_segment_converter_invalid_input_type():
     converter = TemplateSegmentConverter()
     with pytest.raises(ValueError, match="Input type not supported"):
         await converter.convert_async(prompt="test", input_type="image_path")
+
+
+
+def test_template_segment_converter_different_param_order_different_identity():
+    """Different parameter orderings must produce different identifiers.
+
+    Reversing the parameter list changes which prompt segment fills which
+    placeholder, so the two configurations are semantically different and
+    must not share the same identity.
+    """
+    template_text = "LEFT[{{left}}] RIGHT[{{right}}]"
+    converter_a = TemplateSegmentConverter(
+        prompt_template=SeedPrompt(value=template_text, parameters=["left", "right"]),
+        seed=7,
+    )
+    converter_b = TemplateSegmentConverter(
+        prompt_template=SeedPrompt(value=template_text, parameters=["right", "left"]),
+        seed=7,
+    )
+    id_a = converter_a.get_identifier()
+    id_b = converter_b.get_identifier()
+    assert id_a != id_b, (
+        "Converters with different parameter orderings must have different identifiers"
+    )
+
+
+def test_template_segment_converter_same_param_order_same_identity():
+    """Identical configuration must produce the same identifier."""
+    template_text = "LEFT[{{left}}] RIGHT[{{right}}]"
+    converter_a = TemplateSegmentConverter(
+        prompt_template=SeedPrompt(value=template_text, parameters=["left", "right"]),
+        seed=7,
+    )
+    converter_b = TemplateSegmentConverter(
+        prompt_template=SeedPrompt(value=template_text, parameters=["left", "right"]),
+        seed=7,
+    )
+    id_a = converter_a.get_identifier()
+    id_b = converter_b.get_identifier()
+    assert id_a == id_b, (
+        "Converters with the same configuration must have the same identifier"
+    )
+
+
+def test_template_segment_converter_identity_includes_ordered_parameters():
+    """The identifier params must contain the ordered_parameters key."""
+    template_text = "A[{{a}}] B[{{b}}] C[{{c}}]"
+    converter = TemplateSegmentConverter(
+        prompt_template=SeedPrompt(value=template_text, parameters=["a", "b", "c"]),
+    )
+    identifier = converter.get_identifier()
+    assert "ordered_parameters" in identifier.params
+    assert identifier.params["ordered_parameters"] == ["a", "b", "c"]
