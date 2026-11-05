@@ -402,7 +402,9 @@ class TestClassMetadata:
 class TestRegistrationGate:
     """The identifier blueprint must line up with a resolvable contract for every target."""
 
-    CREDENTIAL_NAME_PATTERN = re.compile(r"token|secret|password|credential|api_key", re.IGNORECASE)
+    CREDENTIAL_NAME_PATTERN = re.compile(
+        r"token|secret|password|credential|api_key|_key$|cookie|session_id", re.IGNORECASE
+    )
     NON_CREDENTIAL_PARAMETER_NAMES = frozenset(
         {
             "api_key_header",
