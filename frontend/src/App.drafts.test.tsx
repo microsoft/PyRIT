@@ -11,7 +11,7 @@ import { makeTarget } from '@/test-utils/targetFixtures'
 import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import { computeAttachmentSignature } from '@/utils/chatDraft'
 import type {
-  AttackSummary, BackendMessage, ConverterInstance, ConverterPreviewResponse, MessageSendStatus, SaveConversationRequest, ScorerInstance,
+  AttackMetadata, AttackSummary, BackendMessage, ConverterInstance, ConverterPreviewResponse, MessageSendStatus, SaveConversationRequest, ScorerInstance,
 } from '@/types'
 import { targetReference } from '@/utils/targetIdentity'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
@@ -209,6 +209,7 @@ jest.mock('@/services/api', () => ({
     getAttackOptions: jest.fn(),
     getConverterOptions: jest.fn(),
     getAttack: jest.fn(),
+    getAttackMetadata: jest.fn(),
     getMessages: jest.fn(),
     getConversations: jest.fn(),
     saveConversation: jest.fn(),
@@ -274,6 +275,15 @@ function savedAttack(id = 'saved'): AttackSummary {
     objective: '', converters: [], message_count: 0, labels: {}, operator: null,
     related_conversation_ids: ['branch', 'new-conv-id'], target: null, target_unbound: true,
     created_at: '', updated_at: '',
+  }
+}
+
+function savedMetadata(id: string = 'saved', conversationId: string = 'main'): AttackMetadata {
+  return {
+    attack_result_id: id, conversation_id: 'main', objective: '', labels: {}, operator: null,
+    target: null, target_unbound: true, execution_read_only: false, last_response_message_piece_id: null,
+    related_conversation_count: 1, selected_conversation_id: conversationId,
+    selected_conversation_valid: conversationId === 'main' || conversationId === 'branch',
   }
 }
 
@@ -343,6 +353,9 @@ describe('App draft handoff with the real chat and composer', () => {
     })
     jest.mocked(targetsApi.getTarget).mockResolvedValue(TARGET)
     jest.mocked(attacksApi.getAttack).mockImplementation(async (id: string) => savedAttack(id))
+    jest.mocked(attacksApi.getAttackMetadata).mockImplementation(
+      async (id: string, conversationId?: string) => savedMetadata(id, conversationId),
+    )
     jest.mocked(attacksApi.listAttacks).mockResolvedValue({
       items: [{
         ...savedAttack('other'),
@@ -694,11 +707,11 @@ describe('App draft handoff with the real chat and composer', () => {
     await user.upload(screen.getByTestId('file-input'), new File(['image'], 'draft.png', { type: 'image/png' }))
     const url = jest.mocked(URL.createObjectURL).mock.results[0].value
     await visitDatasets(user)
-    const attackLoad = deferred<AttackSummary>()
-    jest.mocked(attacksApi.getAttack).mockReturnValueOnce(attackLoad.promise)
+    const attackLoad = deferred<AttackMetadata>()
+    jest.mocked(attacksApi.getAttackMetadata).mockReturnValueOnce(attackLoad.promise)
     await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
     expect(screen.queryByDisplayValue('Saved attack draft')).not.toBeInTheDocument()
-    await act(async () => { attackLoad.resolve(savedAttack()) })
+    await act(async () => { attackLoad.resolve(savedMetadata('saved', 'branch')) })
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/branch')
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Saved attack draft')
@@ -707,16 +720,55 @@ describe('App draft handoff with the real chat and composer', () => {
   })
 
   it('should keep the historical conversation shell mounted while metadata loads', async () => {
-    const attackLoad = deferred<AttackSummary>()
-    jest.mocked(attacksApi.getAttack).mockReturnValueOnce(attackLoad.promise)
+    const attackLoad = deferred<AttackMetadata>()
+    jest.mocked(attacksApi.getAttackMetadata).mockReturnValueOnce(attackLoad.promise)
     renderChat('/attack/chat/saved')
     const toggle = await screen.findByTestId('toggle-panel-btn')
     expect(toggle).toBeDisabled()
     expect(screen.getByText('Loading conversation...', { exact: true })).toBeInTheDocument()
     expect(screen.getByPlaceholderText('Type prompt here')).toBeDisabled()
-    await act(async () => { attackLoad.resolve(savedAttack()) })
+    await act(async () => { attackLoad.resolve(savedMetadata()) })
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     expect(screen.getByTestId('toggle-panel-btn')).toBe(toggle)
+  })
+
+  it('should start an off-page saved transcript without reference arrays or a loaded sidebar page', async () => {
+    const metadata: AttackMetadata = {
+      ...savedMetadata('saved', 'off-page'), execution_read_only: true,
+      related_conversation_count: 700, selected_conversation_valid: true,
+    }
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue(metadata)
+    jest.mocked(attacksApi.getConversations).mockImplementation(() => new Promise(() => {}))
+    jest.mocked(attacksApi.getMessages).mockResolvedValue({
+      conversation_id: 'off-page',
+      messages: [{
+        role: 'assistant', turn_number: 1, created_at: '',
+        message_pieces: [{
+          id: 'selected-response', original_value_data_type: 'text', original_value: 'Selected saved evidence',
+          converted_value_data_type: 'text', converted_value: 'Selected saved evidence',
+          scores: [], response_error: 'none',
+        }],
+      }],
+      pagination: { limit: 100, has_more: true, next_cursor: 'saved-next' },
+    })
+    renderChat('/attacks/saved/conversations/off-page')
+
+    await screen.findByText('Selected saved evidence')
+    expect(attacksApi.getAttackMetadata).toHaveBeenCalledWith('saved', 'off-page')
+    expect(attacksApi.getMessages).toHaveBeenCalledWith('saved', 'off-page', { limit: 100 })
+    expect(attacksApi.getAttack).not.toHaveBeenCalled()
+    expect(metadata).not.toHaveProperty('related_conversations')
+    expect(metadata).not.toHaveProperty('related_conversation_ids')
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/off-page')
+    expect(screen.getByPlaceholderText('Type prompt here')).toBeDisabled()
+  })
+
+  it('should keep a manual transcript unpaged even with Scenario provenance in its URL', async () => {
+    renderChat('/attacks/saved/conversations/main?scenarioResultId=123e4567-e89b-12d3-a456-426614174000')
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(attacksApi.getAttackMetadata).toHaveBeenCalledWith('saved', 'main')
+    expect(attacksApi.getMessages).toHaveBeenCalledWith('saved', 'main')
+    expect(attacksApi.getAttack).not.toHaveBeenCalled()
   })
 
   it('should retain a recovered failed prompt while branching to a new attack', async () => {
@@ -738,8 +790,8 @@ describe('App draft handoff with the real chat and composer', () => {
     jest.mocked(attacksApi.createAttack).mockResolvedValue({
       attack_result_id: 'recovered', conversation_id: 'recovered-main', created_at: '',
     })
-    jest.mocked(attacksApi.getAttack).mockImplementation(async (id: string) => ({
-      ...savedAttack(id),
+    jest.mocked(attacksApi.getAttackMetadata).mockImplementation(async (id: string, conversationId?: string) => ({
+      ...savedMetadata(id, conversationId),
       conversation_id: id === 'recovered' ? 'recovered-main' : 'main',
       target_unbound: false,
       target: {
@@ -819,9 +871,9 @@ describe('App draft handoff with the real chat and composer', () => {
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Keep until editable')
     await visitDatasets(user)
     const lockedAttack = lock === 'operator'
-      ? { ...savedAttack(), operator: 'another-operator' }
-      : { ...savedAttack(), execution_read_only: true }
-    jest.mocked(attacksApi.getAttack).mockResolvedValue(lockedAttack)
+      ? { ...savedMetadata(), operator: 'another-operator' }
+      : { ...savedMetadata(), execution_read_only: true }
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue(lockedAttack)
     await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
     if (lock === 'operator') {
       await screen.findByTestId('operator-locked-banner')
@@ -829,7 +881,9 @@ describe('App draft handoff with the real chat and composer', () => {
       await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeDisabled())
     }
     expect(screen.queryByDisplayValue('Keep until editable')).not.toBeInTheDocument()
-    jest.mocked(attacksApi.getAttack).mockImplementation(async (id: string) => savedAttack(id))
+    jest.mocked(attacksApi.getAttackMetadata).mockImplementation(
+      async (id: string, conversationId?: string) => savedMetadata(id, conversationId),
+    )
     await visitDatasets(user)
     await returnToChat(user)
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Keep until editable'))
@@ -841,7 +895,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Retry this destination')
     await visitDatasets(user)
-    jest.mocked(attacksApi.getAttack).mockRejectedValueOnce({
+    jest.mocked(attacksApi.getAttackMetadata).mockRejectedValueOnce({
       isAxiosError: true, response: { status: 404, data: { detail: 'Missing' } },
     })
     await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
@@ -857,7 +911,7 @@ describe('App draft handoff with the real chat and composer', () => {
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Discard this missing destination')
     await visitDatasets(user)
-    jest.mocked(attacksApi.getAttack).mockRejectedValueOnce({
+    jest.mocked(attacksApi.getAttackMetadata).mockRejectedValueOnce({
       isAxiosError: true, response: { status: 404, data: { detail: 'Missing' } },
     })
     await user.click(screen.getByRole('button', { name: 'Chat', exact: true }))
@@ -1053,6 +1107,9 @@ describe('App draft handoff with the real chat and composer', () => {
     }]
     const empty = { conversation_id: 'main', messages: [], target_response_status: null }
     jest.mocked(attacksApi.getAttack).mockResolvedValue(attack)
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue({
+      ...savedMetadata(), target: attack.target, target_unbound: false,
+    })
     jest.mocked(attacksApi.getMessages).mockResolvedValue({ ...empty, messages: source })
     jest.mocked(attacksApi.saveConversation).mockResolvedValue({ attack, messages: empty })
     jest.mocked(attacksApi.submitMessageSend).mockImplementation(() => new Promise(() => {}))
@@ -1742,8 +1799,8 @@ describe('App draft handoff with the real chat and composer', () => {
       const promptInput = screen.getAllByPlaceholderText('Type prompt here')[0]
       await user.type(promptInput, ' modified')
 
-      // Attempt navigation to Datasets
-      await user.click(await screen.findByRole('button', { name: 'Datasets', exact: true }))
+      // Other workspaces still require explicit discard.
+      await user.click(await screen.findByRole('button', { name: 'Scanner', exact: true }))
 
       // Confirmation dialog opens
       expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
@@ -1753,7 +1810,7 @@ describe('App draft handoff with the real chat and composer', () => {
       await user.click(screen.getByRole('button', { name: 'Keep editing' }))
       expect(screen.queryByRole('dialog', { name: 'Discard conversation draft?' })).not.toBeInTheDocument()
       expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
-      expect(screen.queryByRole('heading', { name: 'Datasets' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Scanner launch' })).not.toBeInTheDocument()
       expect(screen.getByDisplayValue('Original turn 1 modified')).toBeInTheDocument()
     })
 
@@ -1779,19 +1836,42 @@ describe('App draft handoff with the real chat and composer', () => {
       const promptInput = screen.getAllByPlaceholderText('Type prompt here')[0]
       await user.type(promptInput, ' modified')
 
-      // Attempt navigation to Datasets
-      await user.click(await screen.findByRole('button', { name: 'Datasets', exact: true }))
+      // Other workspaces still require explicit discard.
+      await user.click(await screen.findByRole('button', { name: 'Scanner', exact: true }))
       expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
 
-      // Choosing "Discard draft" completes navigation to Datasets
+      // Choosing "Discard draft" completes navigation to Scanner
       await user.click(screen.getByRole('button', { name: 'Discard draft' }))
-      await screen.findByRole('heading', { name: 'Datasets' })
+      await screen.findByRole('heading', { name: 'Scanner launch' })
 
       // Navigating back to Chat confirms editor is closed and dirty draft was cleared
       await returnToChat(user)
       expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument()
       expect(screen.getByText('Original turn 1')).toBeInTheDocument()
       expect(screen.queryByText('Original turn 1 modified')).not.toBeInTheDocument()
+    })
+
+    it('preserves a normal editor draft while browsing datasets without requiring discard', async () => {
+      const user = userEvent.setup()
+      const source: BackendMessage[] = [{
+        turn_number: 0, role: 'user', created_at: '2026-01-01T00:00:00Z',
+        message_pieces: [{ id: 'p1', original_value_data_type: 'text', original_value: 'Original turn',
+          converted_value_data_type: 'text', converted_value: 'Original turn', scores: [], response_error: 'none' }],
+      }]
+      jest.mocked(attacksApi.getMessages).mockResolvedValue({ conversation_id: 'main', messages: source, target_response_status: null })
+      renderChat('/attacks/saved/conversations/main')
+      await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+      await screen.findByRole('region', { name: 'Message 1' })
+      await user.type(screen.getAllByPlaceholderText('Type prompt here')[0], ' edited')
+      await user.click(screen.getByRole('button', { name: 'Datasets', exact: true }))
+      await screen.findByRole('heading', { name: 'Datasets' })
+      expect(screen.queryByRole('dialog', { name: 'Discard conversation draft?' })).not.toBeInTheDocument()
+      await returnToChat(user)
+      expect(await screen.findByTestId('conversation-editor')).toBeInTheDocument()
+      expect(screen.getByDisplayValue('Original turn edited')).toBeInTheDocument()
+      expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+      expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
     })
 
     it('preserves imported conversation edits across navigation without losing unsaved content', async () => {
@@ -1906,8 +1986,8 @@ describe('App draft handoff with the real chat and composer', () => {
     it('sets initialObjective to persisted objective A and objective to imported B, sending both in Save payload', async () => {
       const user = userEvent.setup()
       let savedPayload: SaveConversationRequest | null = null
-      jest.mocked(attacksApi.getAttack).mockImplementation(async (id: string) => ({
-        ...savedAttack(id),
+      jest.mocked(attacksApi.getAttackMetadata).mockImplementation(async (id: string, conversationId?: string) => ({
+        ...savedMetadata(id, conversationId),
         objective: 'Objective A',
       }))
       jest.mocked(attacksApi.saveConversation).mockImplementation(async (req) => {
@@ -1946,8 +2026,8 @@ describe('App draft handoff with the real chat and composer', () => {
     it('retains destination objective A when imported example has no objective', async () => {
       const user = userEvent.setup()
       let savedPayload: SaveConversationRequest | null = null
-      jest.mocked(attacksApi.getAttack).mockImplementation(async (id: string) => ({
-        ...savedAttack(id),
+      jest.mocked(attacksApi.getAttackMetadata).mockImplementation(async (id: string, conversationId?: string) => ({
+        ...savedMetadata(id, conversationId),
         objective: 'Objective A',
       }))
       jest.mocked(attacksApi.saveConversation).mockImplementation(async (req) => {

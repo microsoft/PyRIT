@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
@@ -167,6 +167,21 @@ describe('DatasetCatalog', () => {
     const returnButton = await screen.findByRole('button', { name: 'Return to Chat' })
     await user.click(returnButton)
     expect(currentUrl().pathname).toBe(chatOrigin.path)
+  })
+
+  it('retains the return action after filtering, opening an example and returning to the catalog', async () => {
+    const user = userEvent.setup()
+    const chatOrigin = { path: '/attack/chat', attackId: null, conversationId: null }
+    render(<Harness initialPath="/datasets" initialState={{ chatOrigin }} />)
+    await user.type(await screen.findByRole('textbox', { name: 'Search datasets' }), 'harmbench')
+    await user.click(screen.getByRole('link', { name: 'harmbench', exact: true }))
+    await screen.findByRole('heading', { level: 1, name: 'harmbench' })
+    // Runtime binding writes navigation state on mount, before any interaction.
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Return to Chat' })).toBeInTheDocument())
+    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
+    expect(screen.getByRole('textbox', { name: 'Search datasets' })).toHaveValue('harmbench')
+    await user.click(screen.getByRole('button', { name: 'Return to Chat' }))
+    expect(currentUrl().pathname).toBe('/attack/chat')
   })
 
   it('carries Chat origin into the selected dataset detail page', async () => {

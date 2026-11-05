@@ -35,11 +35,14 @@ describe('ChatInputArea seed inspiration', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('does not show the callout when the chat is not empty', () => {
+  it('keeps the composer entry keyboard accessible for a nonempty draft without sending', async () => {
+    const user = userEvent.setup()
+    const onBrowseSeedPrompts = jest.fn()
+    const onSend = jest.fn().mockResolvedValue({ status: 'sent', clearDraft: false })
     render(
       <FluentProvider theme={webLightTheme}>
         <ChatInputArea
-          onSend={jest.fn().mockResolvedValue({ status: 'sent', clearDraft: false })}
+          onSend={onSend}
           onToggleConverterPanel={jest.fn()}
           isConverterPanelOpen={false}
           onInputChange={jest.fn()}
@@ -47,7 +50,8 @@ describe('ChatInputArea seed inspiration', () => {
           onClearConversion={jest.fn()}
           onConvertedValueChange={jest.fn()}
           onClearMediaConversion={jest.fn()}
-          onBrowseSeedPrompts={jest.fn()}
+          onBrowseSeedPrompts={onBrowseSeedPrompts}
+          initialText="Keep this draft"
           showSeedInspiration={false}
           fileDropEnabled={false}
         />
@@ -55,5 +59,11 @@ describe('ChatInputArea seed inspiration', () => {
     )
 
     expect(screen.queryByTestId('seed-inspiration-callout')).not.toBeInTheDocument()
+    const browse = screen.getByRole('button', { name: 'Browse seed prompts from composer' })
+    browse.focus()
+    await user.keyboard('{Enter}')
+    expect(onBrowseSeedPrompts).toHaveBeenCalledTimes(1)
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Keep this draft')
   })
 })

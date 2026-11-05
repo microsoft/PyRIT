@@ -17,6 +17,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { useLoadedDatasets } from '@/hooks/useLoadedDatasets'
 import type { DatasetInfo, FilterOption } from '@/types'
+import { chatOriginFromNavigationState } from '@/utils/routeParams'
 
 import DatasetCard from './DatasetCard'
 import { useDatasetCatalogStyles } from './DatasetCatalog.styles'
@@ -62,13 +63,7 @@ export default function DatasetCatalog() {
   const titleId = useId()
   const location = useLocation()
   const navigate = useNavigate()
-  const state = location.state
-  const candidate = state !== null && typeof state === 'object' && 'chatOrigin' in state
-    ? (state as { chatOrigin?: unknown }).chatOrigin : null
-  const chatOrigin = candidate !== null && typeof candidate === 'object' && 'path' in candidate
-    && typeof (candidate as { path?: unknown }).path === 'string'
-    && ((candidate as { path: string }).path === '/attack/chat' || (candidate as { path: string }).path.startsWith('/attack/chat/'))
-    ? candidate as { path: string; state?: unknown } : null
+  const chatOrigin = chatOriginFromNavigationState(location.state)
   const [searchParams, setSearchParams] = useSearchParams()
   const catalogSearch = searchParams.toString()
   const query = useMemo(
@@ -83,7 +78,7 @@ export default function DatasetCatalog() {
   const filtersActive = !catalogQueryIsDefault(query)
 
   const updateQuery = (next: DatasetCatalogQuery): void => {
-    setSearchParams(catalogQueryToSearchParams(next), { replace: true })
+    setSearchParams(catalogQueryToSearchParams(next), { replace: true, state: location.state })
   }
 
   const resultLabel = filtered.length === 1 ? '1 dataset' : `${filtered.length} datasets`

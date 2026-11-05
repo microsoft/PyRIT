@@ -4,12 +4,13 @@
 """Offline execution and historical data for browser acceptance tests."""
 
 import asyncio
+from pathlib import Path
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import AttackResultEntry
-from pyrit.models import AttackResult, Message, MessagePiece, SeedObjective
+from pyrit.models import AttackResult, Message, MessagePiece, SeedGroup, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import ScenarioRegistry, TargetRegistry
 from pyrit.scenario.core import (
@@ -100,6 +101,47 @@ class BrowserInitializer(PyRITInitializer):
         memory = CentralMemory.get_memory_instance()
         TargetRegistry.get_registry_singleton().instances.register(BrowserTarget(), name="browser_offline")
         ScenarioRegistry.get_registry_singleton().register_class(BrowserScenario, name="browser_offline")
+        # A controlled, local conversation exercises linked media without providers.
+        image = Path(__file__).resolve().parents[2] / "pyrit/datasets/seed_datasets/local/examples/blank_canvas.png"
+        dataset = "browser_seed_journeys"
+        await memory.add_seed_groups_to_memory_async(
+            prompt_groups=[
+                SeedGroup(
+                    seeds=[
+                        SeedPrompt(
+                            value="Browser seed first turn.",
+                            role="user",
+                            sequence=0,
+                            dataset_name=dataset,
+                            name="Browser conversation with media",
+                        ),
+                        SeedPrompt(
+                            value=str(image),
+                            data_type="image_path",
+                            role="user",
+                            sequence=0,
+                            dataset_name=dataset,
+                            name="browser-seed.png",
+                        ),
+                        SeedPrompt(
+                            value="Browser seed simulated reply.", role="assistant", sequence=1, dataset_name=dataset
+                        ),
+                        SeedPrompt(
+                            value="Browser seed final unsent turn.", role="user", sequence=2, dataset_name=dataset
+                        ),
+                        SeedPrompt(
+                            value=str(image),
+                            data_type="image_path",
+                            role="user",
+                            sequence=2,
+                            dataset_name=dataset,
+                            name="browser-seed.png",
+                        ),
+                    ]
+                )
+            ],
+            added_by="browser-acceptance",
+        )
         await asyncio.to_thread(self._store_legacy_attack)
         await memory.add_message_to_memory_async(
             request=MessagePiece(

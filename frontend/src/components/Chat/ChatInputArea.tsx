@@ -327,6 +327,10 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               </Caption1>
             </div>}
             actions={<>
+              {onBrowseSeedPrompts && <Button appearance="subtle" className={styles.touchTarget}
+                aria-label="Browse seed prompts from composer" onClick={onBrowseSeedPrompts}>
+                Seed prompts
+              </Button>}
               <MultiSendSettings options={effectiveSendOptions} disabled={disabled || sendDisabled}
                 disabledReason={repeatDisabledReason} onChange={setSendOptions} />
               {activeTarget?.capabilities?.supports_multi_turn === false && <Tooltip

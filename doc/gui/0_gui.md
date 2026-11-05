@@ -44,8 +44,11 @@ to new work; changes do not alter saved results.
 Select **Attacks** in the sidebar to open Chat (`/attack/chat`), the manual conversation
 workspace. Select a target and write the messages yourself. You can attach media, transform content with converters,
 and branch or edit conversations to try another approach. In an empty new chat, use **Need inspiration? Browse seed prompts**
-to find examples already loaded in memory. Browsing does not download providers, create an attack, or send a prompt.
-When you open a dataset from Chat, **Return to Chat** takes you back to the originating draft or saved conversation.
+to find examples already loaded in memory. The **Seed prompts** action beside the composer is also available
+when you have a draft or saved conversation. Browsing does not download providers, create an attack, or send a prompt.
+When you open a dataset from Chat, **Return to Chat** takes you back to the originating draft or saved conversation,
+including unsent conversation turns and their media. Filters, pagination, and the selected example survive the round trip.
+Opening Datasets from another workspace does not select an unrelated Chat destination.
 Add an objective and
 select a chat scorer if you want automated assessment of responses.
 
