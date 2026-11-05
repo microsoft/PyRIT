@@ -36,7 +36,7 @@ const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
 function createSeededBackendConfigFile(): string {
   const folder = mkdtempSync(path.join(tmpdir(), "pyrit-seeded-backend-"));
   const configFile = path.join(folder, "browser_config.yaml");
-  const config = readFileSync(path.resolve("../tests/end_to_end/browser_config.yaml"), "utf-8");
+  const config = readFileSync(new URL("../tests/end_to_end/browser_config.yaml", import.meta.url), "utf-8");
   const recipesSource = JSON.stringify(path.join(folder, "registry_recipes"));
   writeFileSync(configFile, `${config}\nregistry_recipes_source: ${recipesSource}\n`);
   return configFile;

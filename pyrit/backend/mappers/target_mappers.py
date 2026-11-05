@@ -20,7 +20,7 @@ from pyrit.models.catalog.target import TargetInstance, TargetOrigin
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
 from pyrit.registry import TargetRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, TEMPORARY_ENTRY_METADATA_KEY
+from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry import Reconstructable
 from pyrit.registry.resolution import derive_parameters
 
@@ -66,14 +66,15 @@ def target_origin(metadata: Mapping[str, Any]) -> TargetOrigin:
         metadata: The target's registry entry metadata.
 
     Returns:
-        TargetOrigin: Saved when rebuilt from a saved recipe, temporary when a user created it through the API
-            without saving it, and configuration otherwise, since only the server's own scripts register the rest.
+        TargetOrigin: Saved when rebuilt from a saved recipe, configuration when the server's startup scripts
+            registered it, and temporary otherwise, such as a target created through the API without saving it
+            or one a scan's launch scripts registered.
     """
     if SAVED_ENTRY_METADATA_KEY in metadata:
         return TargetOrigin.SAVED
-    if metadata.get(TEMPORARY_ENTRY_METADATA_KEY):
-        return TargetOrigin.TEMPORARY
-    return TargetOrigin.CONFIGURATION
+    if metadata.get(CONFIGURATION_ENTRY_METADATA_KEY):
+        return TargetOrigin.CONFIGURATION
+    return TargetOrigin.TEMPORARY
 
 
 def target_object_to_instance(

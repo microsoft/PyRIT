@@ -39,8 +39,9 @@ T = TypeVar("T", bound=Identifiable)  # The type of items stored
 #: Entry metadata naming the kind of saved recipe an entry was rebuilt from, such as ``"targets"``.
 SAVED_ENTRY_METADATA_KEY = "saved_recipe_kind"
 
-#: Entry metadata marking an entry a user created through the API without saving it, so it is gone after a restart.
-TEMPORARY_ENTRY_METADATA_KEY = "temporary_entry"
+#: Entry metadata marking an entry that the server's startup scripts registered, so its name is registered again
+#: after a restart. Entries with neither this nor the saved marker are gone after a restart.
+CONFIGURATION_ENTRY_METADATA_KEY = "configuration_entry"
 
 _saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
 
@@ -175,6 +176,10 @@ class InstanceRegistry(Protocol[T]):
 
     def get_all_instances(self) -> list[RegistryEntry[T]]:
         """Return all entries sorted by name."""
+        ...
+
+    def mark_configuration_entries(self) -> None:
+        """Mark every entry not rebuilt from a saved recipe as registered by the server's startup scripts."""
         ...
 
     def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
@@ -371,10 +376,22 @@ class DefaultInstanceRegistry(Generic[T]):
             if not replace:
                 self.validate_name_available(name)
             else:
-                refuse_saved_entry(self._registry_items.get(name))
+                replaced = self._registry_items.get(name)
+                refuse_saved_entry(replaced)
+                # The startup scripts register this name again after a restart, whatever replaced it since.
+                if replaced is not None and CONFIGURATION_ENTRY_METADATA_KEY in replaced.metadata:
+                    entry.metadata = {**entry.metadata, CONFIGURATION_ENTRY_METADATA_KEY: True}
             self._registry_items[name] = entry
             self._metadata_cache = None
             self._instance_version += 1
+
+    def mark_configuration_entries(self) -> None:
+        """Mark every entry that wasn't rebuilt from a saved recipe as one the server's startup scripts registered."""
+        with self._lock:
+            for entry in self._registry_items.values():
+                if SAVED_ENTRY_METADATA_KEY not in entry.metadata:
+                    entry.metadata = {**entry.metadata, CONFIGURATION_ENTRY_METADATA_KEY: True}
+            self._metadata_cache = None
 
     def get(self, name: str) -> T | None:
         """

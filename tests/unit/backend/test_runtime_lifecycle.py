@@ -31,9 +31,10 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
 from pyrit.models.catalog.registry_recipe import ComponentRecipe
 from pyrit.models.catalog.scenario import RunScenarioRequest
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target import OpenAIChatTarget, TextTarget
 from pyrit.registry.components.converter_registry import ConverterRegistry
 from pyrit.registry.components.target_registry import TargetRegistry
+from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.scenario import Scenario
@@ -994,6 +995,26 @@ async def test_startup_restores_an_entry_that_uses_a_startup_target_async(
     converter = ConverterRegistry.get_registry_singleton().instances.get("formal")
     assert converter is not None
     assert converter._converter_target is startup_chat
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_startup_marks_the_targets_its_scripts_register_but_not_saved_ones_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
+) -> None:
+    recipes = tmp_path / "recipes"
+    text_target = {"class_module": TextTarget.__module__, "class_name": "TextTarget", "params": {}}
+    _save_recipe(recipes, kind="targets", name="saved_text", document=text_target)
+    targets = TargetRegistry.get_registry_singleton()
+
+    await _start_with_recipes_async(
+        runtime, recipes=recipes, initialize=lambda **_: targets.instances.register(startup_chat, name="startup_chat")
+    )
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    startup_entry, saved_entry = targets.instances.get_entry("startup_chat"), targets.instances.get_entry("saved_text")
+    assert startup_entry is not None and saved_entry is not None
+    assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
+    assert CONFIGURATION_ENTRY_METADATA_KEY not in saved_entry.metadata
 
 
 class _LoopBoundTarget(MockPromptTarget):

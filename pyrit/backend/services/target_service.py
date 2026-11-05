@@ -41,7 +41,7 @@ from pyrit.models.parameter import ComponentType, Parameter
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.file_document_storage import DocumentConflictError
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, TEMPORARY_ENTRY_METADATA_KEY
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
@@ -513,7 +513,7 @@ class TargetService:
             try:
                 self._registry.instances.validate_name_available(target_registry_name)
             except ValueError as error:
-                if request.persist:
+                if request.persist and target_registry_name in self._registry.instances:
                     raise SavedTargetConflictError(str(error)) from error
                 raise
         if (
@@ -545,6 +545,7 @@ class TargetService:
             if request.persist:
                 return await self._save_and_register_async(
                     name=target_registry_name,
+                    type_name=request.type,
                     target_cls=target_cls,
                     target_obj=target_obj,
                     params=params,
@@ -554,9 +555,7 @@ class TargetService:
             target = self._build_instance_from_object(
                 target_registry_name=target_registry_name, target_obj=target_obj, origin=TargetOrigin.TEMPORARY
             )
-            self._registry.instances.register(
-                target_obj, name=target_registry_name, metadata={TEMPORARY_ENTRY_METADATA_KEY: True}
-            )
+            self._registry.instances.register(target_obj, name=target_registry_name)
             return target
         except Exception:
             await release_component_async(target_obj)
@@ -610,6 +609,7 @@ class TargetService:
         self,
         *,
         name: str,
+        type_name: str,
         target_cls: type[PromptTarget],
         target_obj: PromptTarget,
         params: dict[str, Any],
@@ -620,50 +620,66 @@ class TargetService:
         Save the target's recipe, then register the target as a saved entry.
 
         The recipe is written only if no saved target has the name, so of two saves under one name
-        only one succeeds. If registering then fails, the recipe is deleted again.
+        only one succeeds. If registering then fails, the recipe is deleted again. The recipe names
+        the class by the registry name the request used, which restore looks up.
 
         Returns:
             TargetInstance: The saved target.
 
         Raises:
             SavedTargetConflictError: If a saved or registered target already has the name.
-            SavedTargetStorageError: If the recipe can't be written.
+            SavedTargetStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
         target = self._build_instance_from_object(
             target_registry_name=name, target_obj=target_obj, origin=TargetOrigin.SAVED
         )
-        recipe = ComponentRecipe(
-            class_module=target_cls.__module__, class_name=target_cls.__name__, params=params, owner=owner
-        )
+        recipe = ComponentRecipe(class_module=target_cls.__module__, class_name=type_name, params=params, owner=owner)
         storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=recipes_source)
         try:
             await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)
         except DocumentConflictError as error:
             raise SavedTargetConflictError(f"A saved target named '{name}' already exists.") from error
         except (OSError, AzureError) as error:
+            logger.error(
+                "Saved target '%s' couldn't be written to %s (%s). If the write reached storage anyway, the "
+                "target is restored at the next start.",
+                name,
+                storage.display_source,
+                type(error).__name__,
+            )
             raise SavedTargetStorageError("Saved targets can't be written right now.") from error
         try:
             self._registry.instances.register(
                 target_obj, name=name, metadata={SAVED_ENTRY_METADATA_KEY: RegistryRecipeKind.TARGETS.value}
             )
         except Exception as error:
-            await self._delete_recipe_async(storage=storage, name=name)
+            if not await self._delete_recipe_async(storage=storage, name=name):
+                raise SavedTargetStorageError("Saved targets can't be written right now.") from error
             if isinstance(error, ValueError):
                 raise SavedTargetConflictError(str(error)) from error
             raise
         return target
 
     @staticmethod
-    async def _delete_recipe_async(*, storage: RegistryRecipeStorage, name: str) -> None:
-        """Delete a recipe whose target couldn't be registered, logging when that fails too."""
+    async def _delete_recipe_async(*, storage: RegistryRecipeStorage, name: str) -> bool:
+        """
+        Delete a recipe whose target couldn't be registered.
+
+        Returns:
+            bool: False if the recipe couldn't be deleted, which is logged for an operator to fix.
+        """
         try:
             await asyncio.to_thread(storage.delete_recipe, name)
-        except Exception:
-            logger.exception(
-                "Saved target '%s' couldn't be registered, and its saved recipe couldn't be deleted either. "
-                "Delete it from the saved targets folder, or it will be restored at the next start.",
+        except Exception as error:
+            logger.error(
+                "Saved target '%s' couldn't be registered, and its saved recipe in %s couldn't be deleted (%s). "
+                "Delete it there, or the target is restored at the next start.",
                 name,
+                storage.display_source,
+                type(error).__name__,
             )
+            return False
+        return True
 
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool

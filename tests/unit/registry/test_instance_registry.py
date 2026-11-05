@@ -17,6 +17,7 @@ import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
 from pyrit.registry.instance_registry import (
+    CONFIGURATION_ENTRY_METADATA_KEY,
     SAVED_ENTRY_METADATA_KEY,
     DefaultInstanceRegistry,
     InstanceRegistry,
@@ -124,6 +125,24 @@ class TestRegistration:
 
         assert refusals == [("converters", "name")]
         assert registry.get("other") == "other"
+
+    def test_marks_startup_entries_and_keeps_the_mark_when_one_is_replaced(
+        self, registry: DefaultInstanceRegistry[_TestItem]
+    ):
+        startup_metadata = {"supports_tool_calls": True}
+        registry.register(_item("startup"), name="startup", metadata=startup_metadata)
+        registry.register(_item("saved"), name="saved", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
+
+        registry.mark_configuration_entries()
+        registry.register(_item("relaunched"), name="startup", replace=True)
+        registry.register(_item("launched"), name="launched", replace=True)
+
+        marked = {
+            entry.name: CONFIGURATION_ENTRY_METADATA_KEY in entry.metadata for entry in registry.get_all_instances()
+        }
+        assert marked == {"launched": False, "saved": False, "startup": True}
+        assert registry.get("startup") == "relaunched"
+        assert startup_metadata == {"supports_tool_calls": True}
 
     def test_register_rejects_reserved_name(self):
         registry: DefaultInstanceRegistry[_TestItem] = DefaultInstanceRegistry(reserved_names={"types"})

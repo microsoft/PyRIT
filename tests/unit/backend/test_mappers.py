@@ -44,7 +44,7 @@ from pyrit.models.catalog.target import TargetOrigin
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, TextTarget, WebsocketTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, TEMPORARY_ENTRY_METADATA_KEY
+from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, SAVED_ENTRY_METADATA_KEY
 from unit.mocks import MockPromptTarget
 
 # ============================================================================
@@ -1532,9 +1532,10 @@ class TestTargetOrigin:
         ("metadata", "origin"),
         [
             ({SAVED_ENTRY_METADATA_KEY: "targets"}, TargetOrigin.SAVED),
-            ({TEMPORARY_ENTRY_METADATA_KEY: True}, TargetOrigin.TEMPORARY),
-            ({}, TargetOrigin.CONFIGURATION),
-            ({"supports_tool_calls": True}, TargetOrigin.CONFIGURATION),
+            ({SAVED_ENTRY_METADATA_KEY: "targets", CONFIGURATION_ENTRY_METADATA_KEY: True}, TargetOrigin.SAVED),
+            ({CONFIGURATION_ENTRY_METADATA_KEY: True}, TargetOrigin.CONFIGURATION),
+            ({}, TargetOrigin.TEMPORARY),
+            ({"supports_tool_calls": True}, TargetOrigin.TEMPORARY),
         ],
     )
     def test_tells_where_a_registered_target_comes_from(

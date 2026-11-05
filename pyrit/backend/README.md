@@ -45,8 +45,11 @@ every start, and the signed-in user is recorded as the one who saved it. A saved
 it authenticates with Microsoft Entra ID (`"auth_mode": "identity"`) or needs no key, and a request that would
 save a key, use one of this server's credentials, or use a Temporary target receives **400** and can be sent
 again without `persist`. A name that a target or saved file already has receives **409**, and storage that
-can't be written receives **503**. Each listed target's `origin` is `saved`, `configuration` (registered by the
-server's startup scripts), or `temporary`.
+can't be written receives **503**; the server log names the file in case the write reached storage anyway, since
+the target would then come back at the next start. Each listed target's `origin` is `saved`, `configuration`
+(registered by the server's startup scripts), or `temporary` (gone after a restart, such as a target created
+without `persist` or registered by a scan's launch scripts). A saved target can only use targets that come back
+after a restart.
 
 ### Saved conversations
 

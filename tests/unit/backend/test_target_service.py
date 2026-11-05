@@ -27,7 +27,7 @@ from pyrit.models import ComponentIdentifier
 from pyrit.models.catalog.registry_recipe import ComponentRecipe, RegistryRecipeKind, SavedEntryOwner
 from pyrit.models.catalog.target import TargetInstance, TargetOrigin
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities
+from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities, TextTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
@@ -1859,11 +1859,16 @@ class TestSaveTarget:
 
         with (
             patch.object(RegistryRecipeStorage, "create_recipe", side_effect=error),
+            patch("pyrit.backend.services.target_service.logger") as log,
             pytest.raises(SavedTargetStorageError, match="Saved targets can't be written right now."),
         ):
             await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
 
         assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
+        message = log.error.call_args.args[0] % log.error.call_args.args[1:]
+        assert f"'contoso_gpt4o' couldn't be written to {tmp_path / 'targets'} ({type(error).__name__})" in message
+        assert str(error) not in message
+        assert log.error.call_args.kwargs.get("exc_info") is None
 
     async def test_two_saves_of_one_name_save_one_target(self, tmp_path: Path) -> None:
         service = TargetService()
@@ -1879,29 +1884,76 @@ class TestSaveTarget:
         registered = service.get_target_object(target_registry_name="contoso_gpt4o")
         assert _saved_document(tmp_path, "contoso_gpt4o")["params"]["model_name"] == registered._model_name
 
-    async def test_refuses_to_save_a_round_robin_over_a_temporary_target(self, tmp_path: Path) -> None:
+    async def test_saves_a_round_robin_only_over_targets_that_come_back_after_a_restart(self, tmp_path: Path) -> None:
         service = TargetService()
-        await service.create_target_async(request=_save_request(name="temporary_member", persist=False))
-        for name in ("saved_one", "saved_two"):
-            await service.create_target_async(request=_save_request(name=name), recipes_source=str(tmp_path))
+        for name in ("startup_one", "startup_two"):
+            await service.create_target_async(request=_save_request(name=name, persist=False))
+        service._registry.instances.mark_configuration_entries()
+        await service.create_target_async(request=_save_request(name="launch_member", persist=False))
+        await service.create_target_async(request=_save_request(name="saved_member"), recipes_source=str(tmp_path))
 
-        def pool(*members: str) -> CreateTargetRequest:
+        def pool(name: str, *members: str) -> CreateTargetRequest:
             return CreateTargetRequest(
-                name="pool", type="RoundRobinTarget", params={"targets": list(members)}, persist=True
+                name=name, type="RoundRobinTarget", params={"targets": list(members)}, persist=True
             )
 
-        with pytest.raises(ValueError, match="Uses temporary target 'temporary_member'"):
+        with pytest.raises(ValueError, match="Uses temporary target 'launch_member'"):
             await service.create_target_async(
-                request=pool("saved_one", "temporary_member"), recipes_source=str(tmp_path)
+                request=pool("pool", "startup_one", "launch_member"), recipes_source=str(tmp_path)
             )
-        target = await service.create_target_async(request=pool("saved_one", "saved_two"), recipes_source=str(tmp_path))
+        startup_pool = await service.create_target_async(
+            request=pool("startup_pool", "startup_one", "startup_two"), recipes_source=str(tmp_path)
+        )
+        mixed_pool = await service.create_target_async(
+            request=pool("mixed_pool", "startup_one", "saved_member"), recipes_source=str(tmp_path)
+        )
 
-        assert target.origin is TargetOrigin.SAVED
-        assert _saved_document(tmp_path, "pool")["params"] == {"targets": ["saved_one", "saved_two"]}
+        assert (startup_pool.origin, mixed_pool.origin) == (TargetOrigin.SAVED, TargetOrigin.SAVED)
+        assert _saved_document(tmp_path, "mixed_pool")["params"] == {"targets": ["startup_one", "saved_member"]}
+        assert not (tmp_path / "targets" / "pool.json").exists()
+
+    async def test_saves_a_class_registered_under_another_name_so_restore_finds_it(self, tmp_path: Path) -> None:
+        class AliasedTextTarget(TextTarget):
+            pass
+
+        TargetRegistry.get_registry_singleton().register_class(AliasedTextTarget, name="contoso_text")
+        request = CreateTargetRequest(name="aliased", type="contoso_text", params={}, persist=True)
+
+        await TargetService().create_target_async(request=request, recipes_source=str(tmp_path))
+
+        assert _saved_document(tmp_path, "aliased")["class_name"] == "contoso_text"
+        TargetRegistry.reset_registry_singleton()
+        TargetRegistry.get_registry_singleton().register_class(AliasedTextTarget, name="contoso_text")
+        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+
+    async def test_reports_storage_trouble_when_a_failed_save_cant_be_undone(self, tmp_path: Path) -> None:
+        service = TargetService()
+
+        with (
+            patch.object(service._registry.instances, "register", side_effect=ValueError("taken")),
+            patch.object(RegistryRecipeStorage, "delete_recipe", side_effect=OSError("disk gone")),
+            patch("pyrit.backend.services.target_service.logger") as log,
+            pytest.raises(SavedTargetStorageError),
+        ):
+            await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
+
+        assert (tmp_path / "targets" / "contoso_gpt4o.json").exists()
+        message = log.error.call_args.args[0] % log.error.call_args.args[1:]
+        assert "'contoso_gpt4o'" in message
+        assert "couldn't be deleted (OSError)" in message
+        assert "disk gone" not in message
+
+    async def test_a_reserved_name_is_refused_as_invalid_not_as_taken(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="reserved") as refusal:
+            await TargetService().create_target_async(request=_save_request(name="types"), recipes_source=str(tmp_path))
+
+        assert not isinstance(refusal.value, SavedTargetConflictError)
 
     async def test_lists_where_each_target_comes_from(self, tmp_path: Path) -> None:
         service = TargetService()
         service._registry.instances.register(MockPromptTarget(), name="from_startup_script")
+        service._registry.instances.mark_configuration_entries()
+        service._registry.instances.register(MockPromptTarget(), name="from_launch_script")
         await service.create_target_async(request=_save_request(name="temporary_one", persist=False))
         await service.create_target_async(request=_save_request(name="saved_one"), recipes_source=str(tmp_path))
 
@@ -1909,6 +1961,7 @@ class TestSaveTarget:
 
         assert {item.target_registry_name: item.origin for item in listed.items} == {
             "from_startup_script": TargetOrigin.CONFIGURATION,
+            "from_launch_script": TargetOrigin.TEMPORARY,
             "temporary_one": TargetOrigin.TEMPORARY,
             "saved_one": TargetOrigin.SAVED,
         }
