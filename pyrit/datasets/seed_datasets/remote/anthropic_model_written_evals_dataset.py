@@ -392,11 +392,35 @@ class _AnthropicModelWrittenEvalsDataset(_RemoteDatasetLoader):
 
         Raises:
             ValueError: If filtering leaves no prompts.
+            Exception: The first file-fetch error, unwrapped from the task group. Fetches
+                still queued at that point are cancelled.
         """
         paths = self._list_jsonl_paths()
         logger.info("Loading %s Anthropic model-written eval files", len(paths))
 
-        file_rows = await asyncio.gather(*(self._fetch_file_async(path, cache=cache) for path in paths))
+        async def fetch_files_async() -> list[list[dict[str, Any]]]:
+            """
+            Fetch files, cancelling sibling fetches on failure.
+
+            Returns:
+                File rows in manifest order.
+            """
+            fetch_tasks: list[asyncio.Task[list[dict[str, Any]]]] = []
+            fetch_error: Exception | None = None
+            try:
+                async with asyncio.TaskGroup() as task_group:
+                    fetch_tasks.extend(
+                        task_group.create_task(self._fetch_file_async(path, cache=cache)) for path in paths
+                    )
+            except ExceptionGroup as group:
+                fetch_error = group.exceptions[0]
+            if fetch_error is not None:
+                # Preserve the original error without adding the group's exception context.
+                raise fetch_error
+            return [task.result() for task in fetch_tasks]
+
+        # Isolate TaskGroup's internal cancellation count on Python 3.11/3.12.
+        file_rows = await asyncio.create_task(fetch_files_async())
 
         seeds: list[SeedUnion] = []
         for path, rows in zip(paths, file_rows, strict=True):

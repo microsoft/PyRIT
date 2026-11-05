@@ -35,12 +35,14 @@ import type {
   LabelOptionsResponse,
   CreateAttackResponse,
   AttackSummary,
+  AttackMetadata,
   AttackListResponse,
   DatasetListResponse,
   SeedExampleDetailResponse,
   SeedExampleListParams,
   SeedExampleListResponse,
   ConversationMessagesResponse,
+  ConversationPageParams,
   AddMessageRequest,
   AddMessageResponse,
   MessageSendRequest,
@@ -492,6 +494,14 @@ export const attacksApi = {
     return response.data
   },
 
+  getAttackMetadata: async (attackResultId: string, conversationId?: string): Promise<AttackMetadata> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/metadata`
+    const response = conversationId === undefined
+      ? await apiClient.get(url)
+      : await apiClient.get(url, { params: { conversation_id: conversationId } })
+    return response.data
+  },
+
   updateAttack: async (attackResultId: string, request: UpdateAttackRequest): Promise<AttackSummary> => {
     const response = await apiClient.patch(`/attacks/${encodeURIComponent(attackResultId)}`, request)
     return response.data
@@ -509,10 +519,12 @@ export const attacksApi = {
     return response.data
   },
 
-  getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
+  getMessages: async (
+    attackResultId: string, conversationId: string, params?: ConversationPageParams,
+  ): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
-      { params: { conversation_id: conversationId } }
+      { params: { conversation_id: conversationId, ...params } }
     )
     return response.data
   },
@@ -542,10 +554,11 @@ export const attacksApi = {
     return response.data
   },
 
-  getConversations: async (attackResultId: string): Promise<AttackConversationsResponse> => {
-    const response = await apiClient.get(
-      `/attacks/${encodeURIComponent(attackResultId)}/conversations`
-    )
+  getConversations: async (
+    attackResultId: string, params?: ConversationPageParams,
+  ): Promise<AttackConversationsResponse> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/conversations`
+    const response = params ? await apiClient.get(url, { params }) : await apiClient.get(url)
     return response.data
   },
 
@@ -701,6 +714,7 @@ export const scenariosApi = {
     return response.data
   },
 
+  /** Lists scenario runs by creation time by default or by activity when requested. */
   listRuns: async (params?: {
     limit?: number
     cursor?: string
@@ -709,6 +723,7 @@ export const scenariosApi = {
     label?: string[]
     operation_id?: string[]
     reference_id?: string
+    sort_by?: 'created_at' | 'activity'
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,

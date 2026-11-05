@@ -10,7 +10,6 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
-  Field,
   Radio,
   MessageBar,
   MessageBarBody,
@@ -29,12 +28,14 @@ import {
   ArrowSyncRegular,
   ChevronDownRegular,
   ChevronRightRegular,
-  InfoRegular,
   SettingsRegular,
 } from '@fluentui/react-icons'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 
 import MarkdownContent from '@/components/Markdown/MarkdownContent'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import HelpField from '@/components/HelpField'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import ConversationEditor, { type ConversationEditorHandle } from '@/components/Chat/ConversationEditor'
 import TargetSelect from '@/components/Config/TargetSelect'
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
@@ -1322,7 +1323,7 @@ function ScenarioLaunchForm({
     : null
   const techniquesWithoutCheckbox = selectedTechniques.filter((name) => presetTokens.has(name)
     && !techniqueOptions.some((technique) => technique.name === name))
-  const displayedEstimateNotes = estimateNotes(estimateState)
+  const displayedEstimateNotes = estimateState.status === 'unavailable' ? null : estimateNotes(estimateState)
   const displayedEstimate = estimateFromState(estimateState)
   const selectedTechniqueCount = (supportsTechniques ? selectedTechniques.length : 0)
     + (supportsBaseline && baselineChecked && !isBaselineForbidden ? 1 : 0)
@@ -1473,8 +1474,10 @@ function ScenarioLaunchForm({
 
             {(supportsTechniques || supportsBaseline) && (
             <section className={styles.section} aria-labelledby="techniques-section-title">
-              <Text id="techniques-section-title" as="h2" size={400} weight="semibold">
-                Techniques
+              <Text id="techniques-section-title" as="h2" aria-label="Techniques" size={400} weight="semibold">
+                <ContextualHelpLabel term="Techniques" labelProps={{ weight: 'semibold' }}>
+                  {HELP_DEFINITIONS.technique}
+                </ContextualHelpLabel>
               </Text>
               {supportsTechniques && <Text size={200} className={styles.hint}>
                 {singleTechnique
@@ -1610,9 +1613,13 @@ function ScenarioLaunchForm({
 
             {(supportsObjectiveTarget || objectiveParameters.length > 0 || scenario.supports_objective_scorer) && (
               <section className={styles.section} aria-labelledby="objective-section-title">
-                <Text id="objective-section-title" as="h2" size={400} weight="semibold">Objective</Text>
+                <Text id="objective-section-title" as="h2" aria-label="Objective" size={400} weight="semibold">
+                  <ContextualHelpLabel term="Objective" labelProps={{ weight: 'semibold' }}>
+                    The behavior you want to test for. A clear goal lets the attack and scorer work toward the same result.
+                  </ContextualHelpLabel>
+                </Text>
                 {supportsObjectiveTarget && <>
-                  <Field label="Objective Target" required hint="The registered target this scenario will run against.">
+                  <HelpField label="Objective Target" required help={HELP_DEFINITIONS.objectiveTarget}>
                     <Select
                       className={styles.control}
                       value={targetName}
@@ -1631,7 +1638,7 @@ function ScenarioLaunchForm({
                         </option>
                       ))}
                     </Select>
-                  </Field>
+                  </HelpField>
                   {targets.length === 0 && (
                     <Button className={styles.touchTarget} appearance="secondary" icon={<SettingsRegular />}
                       type="button" onClick={() => onNavigate('registry')}>
@@ -1688,7 +1695,11 @@ function ScenarioLaunchForm({
 
             {(supportsDatasets || datasetDefaults.sources.length > 0) && (
             <section className={styles.section} aria-labelledby="datasets-section-title">
-              <Text id="datasets-section-title" as="h2" size={400} weight="semibold">Datasets</Text>
+              <Text id="datasets-section-title" as="h2" aria-label="Datasets" size={400} weight="semibold">
+                <ContextualHelpLabel term="Datasets" labelProps={{ weight: 'semibold' }}>
+                  Seed examples used by this scan. Limits and filters control which examples are selected.
+                </ContextualHelpLabel>
+              </Text>
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
@@ -1721,12 +1732,12 @@ function ScenarioLaunchForm({
                       setAdversarialTargetName(target?.target_registry_name ?? '')
                     }}
                     label="Adversarial Target"
-                    hint="The registered target this scenario uses to generate attacks."
+                    help={HELP_DEFINITIONS.adversarialTarget}
                     placeholder="Use server default"
                     disabled={submitting}
                   />
                 )}
-                {supportsConcurrency && <Field label="Max concurrency">
+                {supportsConcurrency && <HelpField label="Max concurrency" help={HELP_DEFINITIONS.maxConcurrency}>
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxConcurrency}
@@ -1736,8 +1747,8 @@ function ScenarioLaunchForm({
                     onChange={(_, data) => setMaxConcurrency(resolveSpinButtonValue(data, maxConcurrency))}
                     data-testid="max-concurrency-input"
                   />
-                </Field>}
-                {supportsRetries && <Field label="Max retries">
+                </HelpField>}
+                {supportsRetries && <HelpField label="Max retries" help={HELP_DEFINITIONS.maxRetries}>
                   <SingleStepSpinButton
                     className={styles.numberInput}
                     value={maxRetries}
@@ -1747,7 +1758,7 @@ function ScenarioLaunchForm({
                     onChange={(_, data) => setMaxRetries(resolveSpinButtonValue(data, maxRetries))}
                     data-testid="max-retries-input"
                   />
-                </Field>}
+                </HelpField>}
               </div>
             </section>
             )}
@@ -1758,37 +1769,31 @@ function ScenarioLaunchForm({
               data-testid="run-estimate"
             >
               <div className={styles.estimateHeader}>
-                <Text id="run-estimate-title" as="h2" size={400} weight="semibold">
-                  Run estimate
+                <Text id="run-estimate-title" as="h2" aria-label="Run estimate" size={400} weight="semibold">
+                  <ContextualHelpLabel term="Run estimate" labelProps={{ weight: 'semibold' }}>
+                    {`Estimated work in this scan, not its cost or duration.${displayedEstimateNotes ? ` ${displayedEstimateNotes}` : ''}`}
+                  </ContextualHelpLabel>
                 </Text>
-                {displayedEstimateNotes && (
-                  <Tooltip
-                    content={displayedEstimateNotes}
-                    relationship="description"
-                    positioning="above"
-                  >
-                    <Button
-                      appearance="subtle"
-                      icon={<InfoRegular />}
-                      aria-label="Estimate notes"
-                      size="small"
-                    />
-                  </Tooltip>
-                )}
               </div>
               <dl className={styles.costEstimateList}>
                 <div className={mergeClasses(styles.costEstimateRow, styles.totalEstimateRow)}>
-                  <dt>Total atomic attacks</dt>
+                  <dt><ContextualHelpLabel term="Total atomic attacks">
+                    Individual attack executions in this scan, across its objectives and techniques.
+                  </ContextualHelpLabel></dt>
                   <dd>{formatAtomicAttackCount(estimateState)}</dd>
                 </div>
                 {supportsDatasets && <div className={styles.costEstimateRow}>
-                  <dt>Dataset size</dt>
+                  <dt><ContextualHelpLabel term="Dataset selection limit">
+                    The configured maximum number of examples to select. The actual selection may be smaller after filtering or because fewer examples are available.
+                  </ContextualHelpLabel></dt>
                   <dd>
                     {datasetSizeLabel}
                   </dd>
                 </div>}
                 {(supportsTechniques || supportsBaseline) && <div className={styles.costEstimateRow}>
-                  <dt>Number techniques</dt>
+                  <dt><ContextualHelpLabel term="Number techniques">
+                    How many techniques are included. Each technique can produce multiple individual attacks.
+                  </ContextualHelpLabel></dt>
                   <dd>{selectedTechniqueCount}</dd>
                 </div>}
                 {dynamicParameters.map((parameter) => (
@@ -1804,6 +1809,12 @@ function ScenarioLaunchForm({
                   </div>
                 ))}
               </dl>
+              {estimateState.status === 'unavailable' && (
+                <Text size={200} className={styles.warningText} role="status">
+                  {estimateState.label}
+                  {estimateState.note && estimateState.note !== estimateState.label ? ` ${estimateState.note}` : ''}
+                </Text>
+              )}
               {estimateState.status === 'refreshing' && (
                 <div className={styles.inlineStatus}>
                   <Spinner size="tiny" />
@@ -1952,7 +1963,7 @@ function ScenarioLaunchForm({
                           </Text>
                           <Text size={200} className={styles.hint}>
                             {previewDatasets.length > 0 ? 'Custom override' : 'Scenario defaults'}
-                            {` - dataset size: ${datasetSizeLabel}`}
+                            {` - dataset selection limit: ${datasetSizeLabel}`}
                           </Text>
                         </div>
                       </dd>

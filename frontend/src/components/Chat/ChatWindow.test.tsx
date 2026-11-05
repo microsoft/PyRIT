@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import { createMemoryRouter, MemoryRouter, RouterProvider, Route, Routes, useLocation } from "react-router";
@@ -16,6 +16,7 @@ import {
   AttackTargetResolutionStatus,
   ConverterInstance,
   ConversationMessagesResponse,
+  ConversationPageParams,
   CreateConversationResponse,
   Message,
   MessageAttachment,
@@ -337,6 +338,20 @@ describe("ChatWindow Integration", () => {
     labels: { operator: 'testuser', operation: 'test_op' },
   };
 
+  it("should accept file drops across the chat and composer without duplicate attachments or lost text", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
+    await user.type(screen.getByTestId("chat-input"), "Unsent draft");
+    const image = new File(["image"], "photo.png", { type: "image/png" });
+    fireEvent.drop(screen.getByTestId("chat-area"), { dataTransfer: { types: ["Files"], files: [image] } });
+    expect(screen.getAllByRole("button", { name: "Remove photo.png" })).toHaveLength(1);
+    fireEvent.drop(screen.getByTestId("chat-input"), { dataTransfer: { types: ["Files"], files: [image] } });
+    expect(screen.getAllByRole("button", { name: "Remove photo.png" })).toHaveLength(2);
+    expect(screen.getByTestId("chat-input")).toHaveValue("Unsent draft");
+    expect(mockedAttacksApi.createAttack).not.toHaveBeenCalled();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+  });
+
   async function chooseCount(
     user: ReturnType<typeof userEvent.setup>,
     count: number,
@@ -384,7 +399,10 @@ describe("ChatWindow Integration", () => {
   it("keeps an automated result read-only until Continue manually creates a separate attack", async () => {
     const user = userEvent.setup();
     const original = makeTextResponse("Original automated response").messages;
-    mockedAttacksApi.getMessages.mockResolvedValue(original);
+    mockedAttacksApi.getMessages.mockResolvedValue(original).mockResolvedValueOnce({
+      ...original, conversation_id: "original",
+      pagination: { limit: 100, has_more: false, next_cursor: null }, partial_message_sequences: [],
+    });
     mockedAttacksApi.saveConversation.mockResolvedValue({
       attack: {
         attack_result_id: "manual-copy", conversation_id: "manual-conversation", attack_type: "ManualAttack",
@@ -403,9 +421,15 @@ describe("ChatWindow Integration", () => {
     await screen.findByText("Original automated response", { exact: true });
     expect(screen.getByRole("button", { name: "Edit Conversation", exact: true })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
+    const file = new File(["image"], "locked.png", { type: "image/png" });
+    fireEvent.dragEnter(screen.getByTestId("chat-area"), { dataTransfer: { types: ["Files"], files: [file] } });
+    expect(screen.getByText("Automated results are read-only. Choose Continue manually.", { exact: true })).toBeVisible();
+    fireEvent.drop(screen.getByTestId("chat-area"), { dataTransfer: { types: ["Files"], files: [file] } });
+    expect(screen.queryByRole("button", { name: "Remove locked.png" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit objective" })).not.toBeInTheDocument();
     expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     expect(screen.getByRole("button", { name: "Add", exact: true })).toBeEnabled();
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Continue manually", exact: true }));
@@ -517,10 +541,10 @@ describe("ChatWindow Integration", () => {
     window.localStorage.clear();
     mockMatchMedia(false);
     // Default: panel API returns empty conversations
-    mockedAttacksApi.getConversations.mockResolvedValue({
-      conversations: [],
-      main_conversation_id: null,
-    });
+    mockedAttacksApi.getConversations.mockImplementation(async (attackId: string, params?: ConversationPageParams) => ({
+      attack_result_id: attackId, conversations: [], main_conversation_id: null,
+      ...(params ? { total_count: 0, pagination: { limit: params.limit ?? 50, has_more: false, next_cursor: null } } : {}),
+    }));
     // Default: getMessages never resolves so loadConversation won't trigger
     // state updates outside act(). Tests that need it override this mock.
     mockedAttacksApi.getMessages.mockImplementation(() => new Promise(() => {}));
@@ -532,6 +556,327 @@ describe("ChatWindow Integration", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  describe("bounded saved evidence", () => {
+    const props = {
+      ...defaultProps, attackResultId: "saved-attack", conversationId: "saved-main",
+      activeConversationId: "saved-main", executionReadOnly: true, objective: "Saved objective",
+      lastResponseMessagePieceId: "p-img2",
+    };
+    const request: BackendMessage = {
+      turn_number: 0, role: "user", created_at: "2026-01-01T00:00:00Z",
+      message_pieces: [{
+        id: "saved-request", original_value: "Saved request", converted_value: "Saved request",
+        original_value_data_type: "text", converted_value_data_type: "text", scores: [], response_error: "none",
+      }],
+    };
+    const reply = makeMultiModalResponse().messages.messages[0];
+    function page(
+      messages: BackendMessage[], cursor: string | null, conversationId = props.activeConversationId,
+      partialSequences: number[] = [],
+    ): ConversationMessagesResponse {
+      return {
+        conversation_id: conversationId, messages, target_response_status: null,
+        pagination: { limit: 100, has_more: cursor !== null, next_cursor: cursor },
+        partial_message_sequences: partialSequences,
+      };
+    }
+    const first = page([request, { ...reply, message_pieces: [reply.message_pieces[0]] }], "message-cursor", props.activeConversationId, [1]);
+    const final = page([reply], null, props.activeConversationId, [1]);
+    const unavailable = { isAxiosError: true, response: { status: 503, data: { detail: "Saved read temporarily unavailable" } } };
+    const incompleteReason = /Load the complete saved transcript before continuing, copying, exporting, or assessing this result\./;
+
+    it("should wait for saved metadata, bound every read, and complete a split multimodal turn without enabling partial-history actions", async () => {
+      const user = userEvent.setup();
+      let finishPage: (response: ConversationMessagesResponse) => void = () => { throw new Error("No pending saved page"); };
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockImplementationOnce(
+        () => new Promise<ConversationMessagesResponse>((resolve) => { finishPage = resolve; }),
+      );
+      const rendered = render(<TestWrapper><ChatWindow {...props} attackResultId={null} isLoadingAttack /></TestWrapper>);
+      expect(mockedAttacksApi.getMessages).not.toHaveBeenCalled();
+      rendered.rerender(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      expect(await screen.findByText("Saved request", { exact: true })).toBeInTheDocument();
+      const originalBubble = screen.getByTestId("message-bubble-0");
+      expect(screen.getByText("Incomplete turn")).toBeVisible();
+      expect(within(screen.getByRole("region", { name: "Saved transcript paging" })).getByRole("status"))
+        .toHaveTextContent(/^2 message pieces loaded\. Transcript incomplete\.$/);
+      expect(mockedAttacksApi.getMessages.mock.calls).toEqual([["saved-attack", "saved-main", { limit: 100 }]]);
+      expect(screen.getByRole("button", { name: "Continue manually" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Continue manually" })).toHaveAccessibleDescription(incompleteReason);
+      expect(screen.getByRole("button", { name: "Export conversation" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Export conversation" })).toHaveAccessibleDescription(incompleteReason);
+      expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "true");
+      await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
+      for (const name of ["Copy to next message", "Branch conversation", "Branch attack", "Use in scan"]) {
+        const item = screen.getByRole("menuitem", { name, exact: true });
+        expect(item).toHaveAttribute("aria-disabled", "true");
+        expect(item).toHaveAccessibleDescription(/Load the complete saved transcript/);
+        await user.click(item);
+      }
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+      expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
+      expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+      await user.keyboard("{Escape}");
+      screen.getByRole("button", { name: "Load more message pieces" }).focus();
+      await user.keyboard("{Enter}");
+      const loadingButton = screen.getByRole("button", { name: "Loading more message pieces..." });
+      expect(loadingButton).toBeDisabled();
+      const pagingStatus = within(screen.getByRole("region", { name: "Saved transcript paging" })).getByRole("status");
+      expect(pagingStatus).toHaveFocus();
+      await user.click(loadingButton);
+      expect(mockedAttacksApi.getMessages.mock.calls[1]).toEqual(["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }]);
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2);
+      expect(screen.getByText("Saved request", { exact: true })).toBeVisible();
+      await act(async () => { finishPage(final); });
+      expect(screen.getByRole("region", { name: "Saved transcript paging" })).toHaveTextContent("End of saved transcript. 3 message pieces loaded.");
+      expect(screen.queryByText("Incomplete turn")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Load more message pieces" })).not.toBeInTheDocument();
+      expect(screen.getAllByTestId(/message-bubble-/)).toHaveLength(2);
+      expect(screen.getByTestId("message-bubble-0")).toBe(originalBubble);
+      expect(screen.getByText("Here is the result:", { exact: true })).toBeVisible();
+      expect(screen.getByAltText("generated.jpeg")).toHaveAttribute("src", "/api/media?path=generated.jpeg");
+      expect(screen.getByRole("button", { name: "Continue manually" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Continue manually" })).not.toHaveAccessibleDescription(incompleteReason);
+      expect(screen.getByRole("button", { name: "Export conversation" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Export conversation" })).not.toHaveAccessibleDescription(incompleteReason);
+      expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "false");
+      expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("should keep incomplete paging status concise across pages and explain blocked actions on demand", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockResolvedValueOnce(
+        page([reply], "next-message-cursor", props.activeConversationId, [1]),
+      );
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      const more = await screen.findByRole("button", { name: "Load more message pieces" });
+      const status = within(screen.getByRole("region", { name: "Saved transcript paging" })).getByRole("status");
+      expect(status).toHaveTextContent(/^2 message pieces loaded\. Transcript incomplete\.$/);
+      expect(screen.getByRole("button", { name: "Send message" })).toHaveAccessibleDescription(incompleteReason);
+      await user.click(screen.getByLabelText("Why the prompt box is disabled"));
+      expect(within(screen.getByLabelText("Prompt input is disabled")).getByText(incompleteReason)).toBeVisible();
+      await user.keyboard("{Escape}");
+      await user.click(more);
+      await waitFor(() => expect(status).toHaveTextContent(/^3 message pieces loaded\. Transcript incomplete\.$/));
+      expect(screen.getByRole("button", { name: "Load more message pieces" })).toBeEnabled();
+      for (const name of ["Continue manually", "Export conversation"]) {
+        const action = screen.getByRole("button", { name, exact: true });
+        expect(action).toBeDisabled();
+        expect(action).toHaveAccessibleDescription(incompleteReason);
+      }
+      expect(screen.getByTestId("finding-evidence-dialog")).toHaveAttribute("data-disabled", "true");
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(2);
+      expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
+      expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+    });
+
+    it.each(["{Enter}", " "])("should retain keyboard focus when the final transcript button disappears after %s", async (key: string) => {
+      const user = userEvent.setup();
+      let finishPage: (response: ConversationMessagesResponse) => void = () => { throw new Error("No pending final transcript page"); };
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockImplementationOnce(
+        () => new Promise<ConversationMessagesResponse>((resolve) => { finishPage = resolve; }),
+      );
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      const button = await screen.findByRole("button", { name: "Load more message pieces" });
+      button.focus();
+      await user.keyboard(key);
+      const status = within(screen.getByRole("region", { name: "Saved transcript paging" })).getByRole("status");
+      expect(status).toHaveFocus();
+      await act(async () => { finishPage(final); });
+      expect(screen.queryByRole("button", { name: "Load more message pieces" })).not.toBeInTheDocument();
+      expect(status).toHaveTextContent("End of saved transcript. 3 message pieces loaded.");
+      expect(status).toHaveFocus();
+    });
+
+    it.each([
+      ["continuation", "success"], ["continuation", "error"],
+      ["retry", "success"], ["retry", "error"],
+      ["restart", "success"], ["restart", "error"],
+    ])("should announce pending paging for transcript %s and settle %s without stealing focus", async (phase: string, outcome: string) => {
+      const user = userEvent.setup();
+      let finishPage: (response: ConversationMessagesResponse) => void = () => { throw new Error("No pending transcript page"); };
+      let failPage: (cause: unknown) => void = () => { throw new Error("No pending transcript page"); };
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first);
+      if (phase !== "continuation") {
+        mockedAttacksApi.getMessages.mockRejectedValueOnce(phase === "restart"
+          ? { isAxiosError: true, response: { status: 400, data: { detail: "Saved message cursor expired" } } }
+          : unavailable);
+      }
+      mockedAttacksApi.getMessages.mockImplementationOnce(
+        () => new Promise<ConversationMessagesResponse>((resolve, reject) => { finishPage = resolve; failPage = reject; }),
+      );
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      let button = await screen.findByRole("button", { name: "Load more message pieces" });
+      if (phase !== "continuation") {
+        button.focus();
+        await user.keyboard("{Enter}");
+        button = await screen.findByRole("button", {
+          name: phase === "restart" ? "Restart transcript loading" : "Retry more message pieces",
+        });
+      }
+      const status = within(screen.getByRole("region", { name: "Saved transcript paging" })).getByRole("status");
+      const focusStatus = jest.spyOn(status, "focus");
+      const area = screen.getByTestId("chat-area");
+      area.scrollTop = 300;
+      const loadedBubble = screen.getByTestId("message-bubble-0");
+      button.focus();
+      await user.keyboard("{Enter}");
+      expect(status).toHaveFocus();
+      expect(focusStatus).toHaveBeenCalledWith({ preventScroll: true });
+      expect(status).toHaveAttribute("aria-live", "polite");
+      expect(status).toHaveTextContent(phase === "restart" ? "Loading saved transcript..." : "Loading more message pieces...");
+      expect(status).toHaveTextContent("2 message pieces loaded.");
+      expect(status).toHaveTextContent("Transcript incomplete.");
+      expect(status).not.toHaveTextContent(incompleteReason);
+      if (phase !== "restart") expect(loadedBubble).toBeVisible();
+      expect(button).toBeDisabled();
+      expect(area.scrollTop).toBe(300);
+      expect(mockedAttacksApi.getMessages.mock.calls.at(-1)).toEqual([
+        "saved-attack", "saved-main", phase === "restart" ? { limit: 100 } : { limit: 100, cursor: "message-cursor" },
+      ]);
+      await user.tab({ shift: true });
+      const movedFocus = document.activeElement;
+      expect(movedFocus).not.toBe(status);
+      expect(movedFocus).not.toBe(document.body);
+      await act(async () => {
+        if (outcome === "error") failPage(unavailable);
+        else finishPage(phase === "restart" ? page([request, reply], null) : final);
+      });
+      expect(status).not.toHaveTextContent(/Loading (more|saved)/);
+      if (outcome === "error") {
+        expect(status).toHaveTextContent(/^2 message pieces loaded\. Transcript incomplete\.$/);
+        expect(screen.getByText("Saved request", { exact: true })).toBeVisible();
+        expect(screen.getByRole("button", {
+          name: phase === "restart" ? "Restart transcript loading" : "Retry more message pieces",
+        })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Continue manually" })).toBeDisabled();
+        expect(screen.getByText(phase === "restart"
+          ? /Could not load conversation: Saved read temporarily unavailable/
+          : /Could not load more messages: Saved read temporarily unavailable/)).toBeVisible();
+      } else {
+        expect(status).toHaveTextContent("End of saved transcript. 3 message pieces loaded.");
+        expect(screen.queryByRole("button", { name: "Load more message pieces" })).not.toBeInTheDocument();
+      }
+      if (phase !== "restart") expect(screen.getByTestId("message-bubble-0")).toBe(loadedBubble);
+      expect(movedFocus).toHaveFocus();
+      expect(focusStatus).toHaveBeenCalledTimes(1);
+      expect(area.scrollTop).toBe(300);
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+      expect(Element.prototype.scrollTo).not.toHaveBeenCalled();
+    });
+
+    it("should preserve saved reading position for continuation but reset it for a new saved owner and when leaving saved mode", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockResolvedValueOnce(final)
+        .mockResolvedValueOnce(page([request], null, "saved-pruned"));
+      const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      const more = await screen.findByRole("button", { name: "Load more message pieces" });
+      const area = screen.getByTestId("chat-area");
+      area.scrollTop = 300;
+      await user.click(more);
+      expect(await screen.findByText("End of saved transcript. 3 message pieces loaded.")).toBeVisible();
+      expect(area.scrollTop).toBe(300);
+      area.scrollTop = 500;
+      rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="saved-pruned" /></TestWrapper>);
+      expect(await screen.findByText("End of saved transcript. 1 message piece loaded.")).toBeVisible();
+      expect(screen.getByTestId("chat-area")).toBe(area);
+      expect(area.scrollTop).toBe(0);
+      area.scrollTop = 200;
+      rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="saved-pruned" executionReadOnly={false} /></TestWrapper>);
+      expect(area.scrollTop).toBe(0);
+      area.scrollTop = 100;
+      rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="manual-other" executionReadOnly={false} /></TestWrapper>);
+      expect(area.scrollTop).toBe(100);
+    });
+
+    it("should keep loaded evidence and retry only the failed continuation cursor", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockRejectedValueOnce(unavailable).mockResolvedValueOnce(final);
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      await user.click(await screen.findByRole("button", { name: "Load more message pieces" }));
+      expect(await screen.findByText(/Could not load more messages: Saved read temporarily unavailable/)).toBeVisible();
+      expect(screen.getByText("Saved request", { exact: true })).toBeVisible();
+      expect(screen.getByRole("button", { name: "Continue manually" })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "Retry more message pieces" }));
+      expect(await screen.findByText("End of saved transcript. 3 message pieces loaded.")).toBeVisible();
+      expect(mockedAttacksApi.getMessages.mock.calls).toEqual([
+        ["saved-attack", "saved-main", { limit: 100 }],
+        ["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }],
+        ["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }],
+      ]);
+    });
+
+    it("should page references separately and retain those pages while loading only the selected saved transcript", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockResolvedValueOnce(final)
+        .mockResolvedValueOnce(page([request], null, "saved-pruned"));
+      mockedAttacksApi.getConversations.mockResolvedValueOnce({
+        attack_result_id: props.attackResultId, main_conversation_id: props.conversationId,
+        conversations: [{ conversation_id: props.conversationId, conversation_type: "main", message_count: 3 }],
+        total_count: 2, pagination: { limit: 50, has_more: true, next_cursor: "only-reference-cursor" },
+      }).mockResolvedValueOnce({
+        attack_result_id: props.attackResultId, main_conversation_id: props.conversationId,
+        conversations: [{ conversation_id: "saved-pruned", conversation_type: "pruned", message_count: 1 }],
+        total_count: 2, pagination: { limit: 50, has_more: false, next_cursor: null },
+      });
+      const rendered = render(<TestWrapper><ChatWindow {...props} relatedConversationCount={1} /></TestWrapper>);
+      await user.click(await screen.findByRole("button", { name: "Load more conversations" }));
+      expect(await screen.findByRole("button", { name: "Select conversation saved-pruned" })).toBeVisible();
+      expect(mockedAttacksApi.getMessages).toHaveBeenCalledTimes(1);
+      await user.click(screen.getByRole("button", { name: "Load more message pieces" }));
+      expect(await screen.findByText("End of saved transcript. 3 message pieces loaded.")).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Select conversation saved-pruned" }));
+      rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="saved-pruned" relatedConversationCount={1} /></TestWrapper>);
+      expect(await screen.findByText("End of saved transcript. 1 message piece loaded.")).toBeVisible();
+      expect(mockedAttacksApi.getConversations.mock.calls).toEqual([
+        ["saved-attack", { limit: 50 }], ["saved-attack", { limit: 50, cursor: "only-reference-cursor" }],
+      ]);
+      expect(mockedAttacksApi.getMessages.mock.calls).toEqual([
+        ["saved-attack", "saved-main", { limit: 100 }],
+        ["saved-attack", "saved-main", { limit: 100, cursor: "message-cursor" }],
+        ["saved-attack", "saved-pruned", { limit: 100 }],
+      ]);
+      expect(screen.getByRole("region", { name: "Saved conversation references" })).toHaveTextContent("2 of 2 saved conversations loaded.");
+    });
+
+    it("should restart a rejected cursor with a bounded initial read and retain evidence if that restart fails", async () => {
+      const user = userEvent.setup();
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockRejectedValueOnce({
+        isAxiosError: true, response: { status: 400, data: { detail: "Saved message cursor expired" } },
+      }).mockRejectedValueOnce(unavailable).mockResolvedValueOnce(page([request, reply], null));
+      render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      await user.click(await screen.findByRole("button", { name: "Load more message pieces" }));
+      await user.click(await screen.findByRole("button", { name: "Restart transcript loading" }));
+      expect(await screen.findByText(/Could not load conversation: Saved read temporarily unavailable/)).toBeVisible();
+      expect(screen.getByText("Saved request", { exact: true })).toBeVisible();
+      expect(screen.getByRole("button", { name: "Continue manually" })).toBeDisabled();
+      expect(screen.queryByRole("button", { name: "Retry more message pieces" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Restart transcript loading" }));
+      expect(await screen.findByText("End of saved transcript. 3 message pieces loaded.")).toBeVisible();
+      expect(mockedAttacksApi.getMessages.mock.calls.slice(2)).toEqual([
+        ["saved-attack", "saved-main", { limit: 100 }], ["saved-attack", "saved-main", { limit: 100 }],
+      ]);
+    });
+
+    it("should discard late continuation evidence after a rapid conversation switch and never reuse its cursor", async () => {
+      const user = userEvent.setup();
+      let finishOld: (response: ConversationMessagesResponse) => void = () => { throw new Error("No old saved read"); };
+      mockedAttacksApi.getMessages.mockResolvedValueOnce(first).mockImplementationOnce(
+        () => new Promise<ConversationMessagesResponse>((resolve) => { finishOld = resolve; }),
+      ).mockResolvedValueOnce(page([{
+        ...request, message_pieces: [{ ...request.message_pieces[0], id: "other-request", original_value: "Other saved request", converted_value: "Other saved request" }],
+      }], null, "other-saved"));
+      const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+      await user.click(await screen.findByRole("button", { name: "Load more message pieces" }));
+      rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="other-saved" /></TestWrapper>);
+      expect(await screen.findByText("Other saved request", { exact: true })).toBeVisible();
+      await act(async () => { finishOld(final); });
+      expect(screen.queryByText("Saved request", { exact: true })).not.toBeInTheDocument();
+      expect(screen.queryByAltText("generated.jpeg")).not.toBeInTheDocument();
+      expect(screen.getByRole("region", { name: "Saved transcript paging" })).toHaveTextContent("End of saved transcript. 1 message piece loaded.");
+      expect(mockedAttacksApi.getMessages.mock.calls[2]).toEqual(["saved-attack", "other-saved", { limit: 100 }]);
+    });
   });
 
   it.each([false, true])("keeps first-send evidence across delayed route commits (settled read: %s)", async (settledRead) => {
@@ -1081,7 +1426,7 @@ describe("ChatWindow Integration", () => {
         class_name: "SubStringScorer", class_module: "pyrit.score", hash: "hash", scorer_type: "true_false",
       } }]} /></TestWrapper>);
     await screen.findByText("Saved response");
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     expect(mockedAttacksApi.applyScorer).not.toHaveBeenCalled();
     expect(readUserPreferences("local").lastUsedChatScorer).toBeUndefined();
@@ -1138,11 +1483,14 @@ describe("ChatWindow Integration", () => {
     mockedAttacksApi.getMessages.mockResolvedValue({
       ...makeTextResponse("Saved response").messages, conversation_id: "score-conv",
       automated_score: null, outcome: projected, latest_response_id: "p-resp",
+      pagination: { limit: 100, has_more: false, next_cursor: null },
+      partial_message_sequences: [],
     });
     render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="score-attack" conversationId="score-conv"
       activeConversationId="score-conv" objective="Goal" outcome={attackOutcome} executionReadOnly /></TestWrapper>);
     await screen.findByText("Saved response");
     expect(screen.getByRole("button", { name: `Objective achieved outcome: ${projected}` })).toBeInTheDocument();
+    expect(mockedAttacksApi.getMessages).toHaveBeenCalledWith("score-attack", "score-conv", { limit: 100 });
   });
 
   it.each([false, true])("should invalidate the header after objective changes even if refresh fails (%s)", async (refreshFails) => {
@@ -1208,7 +1556,7 @@ describe("ChatWindow Integration", () => {
 
     async function openScorerPane(user: ReturnType<typeof userEvent.setup>): Promise<void> {
       await screen.findByText("Saved response");
-      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
       await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     }
 
@@ -1344,7 +1692,7 @@ describe("ChatWindow Integration", () => {
         class_name: "SubStringScorer", class_module: "pyrit.score", hash: "hash", scorer_type: "true_false",
       } }]} /></TestWrapper>);
     await screen.findByText("Saved response");
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     await user.click(screen.getByRole("button", { name: "Apply scorer", exact: true }));
     const pane = screen.getByRole("region", { name: "Automated scorer selection" });
@@ -1393,7 +1741,7 @@ describe("ChatWindow Integration", () => {
       act(() => { jest.advanceTimersByTime(8500); });
       expect(screen.queryByText(notice)).not.toBeInTheDocument();
       expect(screen.getByText("Delivered response")).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
       await user.click(screen.getByRole("button", { name: /scoring error.*view details/i }));
       expect(screen.getByText(/objective scorer was unavailable/)).toBeInTheDocument();
       expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2);
@@ -1417,7 +1765,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Add objective" }));
     await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "Goal");
     await user.click(within(screen.getByTestId("objective-header")).getByRole("button", { name: "Save", exact: true }));
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     const picker = screen.getByRole("combobox", { name: "Chat scorer" });
     expect(picker).toHaveValue("registered:judge");
@@ -1472,7 +1820,7 @@ describe("ChatWindow Integration", () => {
     await user.type(screen.getByRole("textbox", { name: "Attack objective" }), "Temporary objective");
     await user.click(screen.getByRole("button", { name: "Save", exact: true }));
     if (chooseOff) {
-      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
       await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
       await user.selectOptions(screen.getByRole("combobox", { name: "Chat scorer", exact: true }), "");
       await user.keyboard("{Escape}");
@@ -1567,7 +1915,7 @@ describe("ChatWindow Integration", () => {
     render(<TestWrapper><ChatWindow {...defaultProps} attackResultId="scan" conversationId="scan"
       objective="Goal" outcome="success" chatScorer={original} chatScorerInherited
       defaultChatScorer={{ registry_name: "personal", identifier_hash: "personal-hash" }} availableScorers={catalog} /></TestWrapper>);
-    await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+    await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
     await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
     expect(screen.getByRole("combobox", { name: "Chat scorer" })).toHaveValue(
       "registered:scan-judge",
@@ -1661,7 +2009,7 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByRole("button", { name: "Copy or Branch" }));
       expect(screen.getByRole("menuitem", { name: "Branch conversation", exact: true })).not.toHaveAttribute("aria-disabled", "true");
       await user.keyboard("{Escape}");
-      await user.selectOptions(screen.getByRole("combobox", { name: "Chat target" }), "editable");
+      await user.selectOptions(screen.getByRole("combobox", { name: "Objective target" }), "editable");
       expect(screen.getByRole("button", { name: "Send message", exact: true })).not.toHaveAttribute("aria-disabled");
       expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
     });
@@ -1724,7 +2072,7 @@ describe("ChatWindow Integration", () => {
       await user.click(screen.getByTestId("conversation-editor"));
       expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
       expect(screen.getByTestId("conversation-editor")).toBeInTheDocument();
-      await user.selectOptions(screen.getByRole("combobox", { name: "Chat target" }), "editable-history");
+      await user.selectOptions(screen.getByRole("combobox", { name: "Objective target" }), "editable-history");
       expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Save to new attack", exact: true })).toBeEnabled();
       await user.click(screen.getByRole("button", { name: "Save to new attack", exact: true }));
@@ -2095,7 +2443,7 @@ describe("ChatWindow Integration", () => {
       expect(screen.getByRole("button", { name: "Objective achieved outcome: undetermined" })).toBeInTheDocument();
       expect(screen.queryByText("Accepted result")).not.toBeInTheDocument();
       expect(screen.getByPlaceholderText("Type prompt here")).toHaveValue("Original prompt");
-      await user.click(screen.getByRole("button", { name: /objective achieved outcome/i }));
+      await user.click(screen.getByRole("button", { name: /^objective achieved outcome:/i }));
       await user.click(screen.getByRole("button", { name: /^automated scorer:/i }));
       expect(screen.getByRole("button", { name: "Apply scorer", exact: true })).toBeDisabled();
       expect(screen.queryByText("Original saved verdict")).not.toBeInTheDocument();
@@ -2880,7 +3228,7 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Save to new attack" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
-    const picker = await screen.findByRole("combobox", { name: "Chat target" });
+    const picker = await screen.findByRole("combobox", { name: "Objective target" });
     await user.selectOptions(picker, "");
     await user.click(screen.getByRole("button", { name: "Insert message at start" }));
     const message = screen.getByRole("region", { name: "Message 1" });
@@ -2941,7 +3289,7 @@ describe("ChatWindow Integration", () => {
     render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
       <RouterProvider router={router} />
     </UserPreferencesProvider></FluentProvider>);
-    const targetPicker = screen.getByRole("combobox", { name: "Chat target" });
+    const targetPicker = screen.getByRole("combobox", { name: "Objective target" });
     const editButton = screen.getByRole("button", { name: "Edit Conversation" });
     expect(targetPicker.compareDocumentPosition(editButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(editButton);
@@ -3209,7 +3557,10 @@ describe("ChatWindow Integration", () => {
     async (targetResolutionStatus) => {
     const user = userEvent.setup();
     const onHumanScoreChange = jest.fn();
-    mockedAttacksApi.getMessages.mockResolvedValue(makeTextResponse("Forked response") as never);
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      ...makeTextResponse("Forked response").messages,
+      conversation_id: "forked-conversation-id",
+    });
     mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
     mockedScoresApi.createManualScore.mockResolvedValue({
       id: "manual-score-id",
@@ -3270,6 +3621,10 @@ describe("ChatWindow Integration", () => {
         "success",
       );
     });
+    expect(mockedAttacksApi.getMessages.mock.calls).toEqual([
+      ["attack-result-id", "forked-conversation-id"],
+      ["attack-result-id", "forked-conversation-id"],
+    ]);
   });
 
   it.each<AttackTargetResolutionStatus>(["resolved", "unavailable", "ambiguous", "legacy", "error"])(
@@ -3474,7 +3829,7 @@ describe("ChatWindow Integration", () => {
       </TestWrapper>
     );
 
-    expect(screen.getByRole("combobox", { name: "Chat target" })).toHaveValue("");
+    expect(screen.getByRole("combobox", { name: "Objective target" })).toHaveValue("");
     expect(screen.queryByTestId("no-target-banner")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Configure Target" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /add objective/i })).toBeEnabled();
@@ -3737,10 +4092,17 @@ describe("ChatWindow Integration", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     if (interaction === "hover") await user.hover(input);
     else {
-      await user.click(screen.getByRole("combobox", { name: "Chat target" }));
+      await user.click(screen.getByRole("combobox", { name: "Objective target" }));
+      await user.tab();
+      const information = screen.getByRole("button", { name: /Temperature.*information/i });
+      expect(information).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(await screen.findByRole("note")).toHaveTextContent("Controls variation in generated responses.");
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(information).toHaveFocus());
       await user.tab();
     }
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(explanation);
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(explanation));
     expect(targetsApi.buildTarget).not.toHaveBeenCalled();
   });
 

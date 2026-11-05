@@ -7,6 +7,9 @@ import { readUserPreferences } from '@/utils/userPreferences'
 import type { ScorerInstance } from '@/types'
 
 import ScorerRegistry from './ScorerRegistry'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 const scorers: ScorerInstance[] = [
   { scorer_registry_name: 'judge', identifier: { class_name: 'SubStringScorer', class_module: 'pyrit.score', hash: 'judge-hash', scorer_type: 'true_false' } },
@@ -35,7 +38,8 @@ describe('ScorerRegistry', () => {
     expect(screen.queryByRole('option', { name: /criteria/ })).not.toBeInTheDocument()
     expect(screen.getByText('ScaleScorer')).toBeVisible()
     expect(screen.queryByText(/personal to this account and browser/)).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
     expect(onRefresh).toHaveBeenCalledTimes(1)
     const selector = screen.getByRole('combobox', { name: 'Default objective scorer for chats' })
     expect(selector).toHaveValue('last-used')

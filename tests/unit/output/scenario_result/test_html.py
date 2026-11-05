@@ -2,9 +2,11 @@
 # Licensed under the MIT license.
 
 import json
+import re
 import uuid
 from typing import Any
 
+import pytest
 from unit.mocks import make_scenario_result
 
 from pyrit.models import (
@@ -271,37 +273,161 @@ async def test_html_report_renders_role_aware_accounting():
     assert "Orchestration attempts" in html
 
 
-async def test_html_report_labels_converted_media_by_converted_type():
+def _set_piece(payload: dict[str, Any], piece: dict[str, Any]) -> None:
+    payload["conversations"][0]["messages"][0]["pieces"][0] = {"response_error": None, **piece}
+
+
+def _flatten(html: str) -> str:
+    return re.sub(r">\s+<", "><", html)
+
+
+async def test_html_report_labels_original_and_converted_when_they_differ():
     payload = _payload()
-    payload["conversations"][0]["messages"][0]["pieces"][0] = {
-        "data_type": "text",
-        "original_value_data_type": "text",
-        "converted_value_data_type": "image_path",
-        "original_value": "draw a cat",
-        "converted_value": "media/cat.png",
-        "response_error": None,
-    }
+    _set_piece(payload, {"data_type": "text", "original_value": "plain ask", "converted_value": "cGxhaW4gYXNr"})
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">plain ask</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece">cGxhaW4gYXNr</div>' in html
+
+
+async def test_html_report_shows_value_once_when_converted_matches_original():
+    payload = _payload()
+    _set_piece(payload, {"data_type": "text", "original_value": "same text", "converted_value": "same text"})
 
     html = await HtmlScenarioReportPrinter().render_async(payload)
 
-    assert '<div class="piece media">[image_path] media/cat.png</div>' in html
+    assert html.count("same text") == 1
+    assert "Original:" not in html
+    assert "Converted:" not in html
+
+
+async def test_html_report_labels_empty_converted_text():
+    payload = _payload()
+    _set_piece(payload, {"data_type": "text", "original_value": "ORIGINAL_WAS_REMOVED", "converted_value": ""})
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">ORIGINAL_WAS_REMOVED</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece"></div>' in html
+
+
+async def test_html_report_labels_empty_converted_media():
+    payload = _payload()
+    _set_piece(payload, {"data_type": "image_path", "original_value": "media/original.png", "converted_value": ""})
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert (
+        '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/original.png</div>' in html
+    )
+    assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] </div>' in html
+
+
+@pytest.mark.parametrize("piece_extra", [{"converted_value": None}, {}])
+async def test_html_report_falls_back_to_original_when_converted_value_missing(piece_extra: dict[str, Any]):
+    payload = _payload()
+    _set_piece(payload, {"data_type": "text", "original_value": "only-original", **piece_extra})
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert '<div class="piece">only-original</div>' in html
+    assert "Original:" not in html
+
+
+async def test_html_report_escapes_original_and_converted_values():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "text",
+            "original_value": "<script>alert('o')</script>",
+            "converted_value": '<img src=x onerror="alert(1)">',
+        },
+    )
+
+    html = await HtmlScenarioReportPrinter().render_async(payload)
+
+    assert "<script>alert" not in html
+    assert "<img src=x" not in html
+    assert "&lt;script&gt;alert(&#39;o&#39;)&lt;/script&gt;" in html
+    assert "&lt;img src=x onerror=&#34;alert(1)&#34;&gt;" in html
+
+
+async def test_html_report_labels_converted_piece_from_real_builders():
+    attack = AttackResult(conversation_id=str(uuid.uuid4()), objective="obj", outcome=AttackOutcome.SUCCESS)
+    result = make_scenario_result(attack_results={"tech": [attack]})
+    overview = JsonScenarioResultPrinter().build(result, view="overview")
+    piece = MessagePiece(
+        role="user", original_value="ORIGINAL_WAS_REMOVED", converted_value="", conversation_id=attack.conversation_id
+    )
+    messages = await JsonConversationPrinter(source=_StubConversationSource({})).build_async(
+        [Message(message_pieces=[piece])]
+    )
+    payload = build_scenario_full_payload(result=result, overview=overview, entries=[("tech", attack, messages)])
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">ORIGINAL_WAS_REMOVED</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece"></div>' in html
+
+
+async def test_html_report_labels_converted_media_by_converted_type():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "text",
+            "original_value_data_type": "text",
+            "converted_value_data_type": "image_path",
+            "original_value": "draw a cat",
+            "converted_value": "media/cat.png",
+        },
+    )
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece">draw a cat</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] media/cat.png</div>' in html
 
 
 async def test_html_report_renders_converted_text_of_media_original_as_text():
     payload = _payload()
-    payload["conversations"][0]["messages"][0]["pieces"][0] = {
-        "data_type": "image_path",
-        "original_value_data_type": "image_path",
-        "converted_value_data_type": "text",
-        "original_value": "media/cat.png",
-        "converted_value": "a cat on a mat",
-        "response_error": None,
-    }
+    _set_piece(
+        payload,
+        {
+            "data_type": "image_path",
+            "original_value_data_type": "image_path",
+            "converted_value_data_type": "text",
+            "original_value": "media/cat.png",
+            "converted_value": "a cat on a mat",
+        },
+    )
+
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
+
+    assert '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/cat.png</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece">a cat on a mat</div>' in html
+    assert "[image_path] a cat on a mat" not in html
+
+
+async def test_html_report_labels_unchanged_value_by_converted_type():
+    payload = _payload()
+    _set_piece(
+        payload,
+        {
+            "data_type": "text",
+            "original_value_data_type": "text",
+            "converted_value_data_type": "url",
+            "original_value": "https://example.com",
+            "converted_value": "https://example.com",
+        },
+    )
 
     html = await HtmlScenarioReportPrinter().render_async(payload)
 
-    assert '<div class="piece">a cat on a mat</div>' in html
-    assert "[image_path]" not in html
+    assert '<div class="piece media">[url] https://example.com</div>' in html
+    assert "Original:" not in html
 
 
 async def test_html_report_labels_converted_types_from_real_builders():
@@ -331,7 +457,9 @@ async def test_html_report_labels_converted_types_from_real_builders():
     payload = _payload()
     payload["conversations"][0]["messages"] = messages
 
-    html = await HtmlScenarioReportPrinter().render_async(payload)
+    html = _flatten(await HtmlScenarioReportPrinter().render_async(payload))
 
-    assert '<div class="piece media">[image_path] media/cat.png</div>' in html
-    assert '<div class="piece">a dog on a log</div>' in html
+    assert '<div class="piece-label">Original:</div><div class="piece">draw a cat</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece media">[image_path] media/cat.png</div>' in html
+    assert '<div class="piece-label">Original:</div><div class="piece media">[image_path] media/dog.png</div>' in html
+    assert '<div class="piece-label">Converted:</div><div class="piece">a dog on a log</div>' in html
