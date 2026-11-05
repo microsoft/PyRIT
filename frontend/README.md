@@ -266,9 +266,10 @@ checks the actual storage source, document, and lock paths. The report retains
 these containment checks alongside the real estimate responses.
 `PYRIT_E2E_DATASETS_PORT` overrides the default port, 18612.
 
-The journeys cover keyboard dataset search and limit editing, saved-preset
-reloads, estimates without a target, target-required launch, inherited and
-per-source caps, and the persisted launch configuration. Configured budgets
+The journeys cover keyboard preset creation, scenario and target selection,
+dataset search and limit editing, saved-preset reloads, estimates without a
+target, target-required launch, inherited and per-source caps, and the persisted
+launch configuration. Configured budgets
 remain approximate, not selected population counts. An unlimited configuration
 is genuinely unavailable before initialization; the production benchmark's
 cached-results policy supplies the tested conditional range. Exact counts are
@@ -277,9 +278,11 @@ An additional real-handler launch removes the combined cap and verifies source
 overrides and the inherited per-dataset cap against locally delivered objectives.
 
 Loading and error evidence uses explicitly labeled, one-shot backend holds and
-failures. Successful requests still use the real handlers, and guards reject
-dataset preparation during estimates or any provider lookup. Screenshots and
-JSON estimate/launch evidence are attached to the Playwright report for both
+failures. Dataset checking has a visible status outside the table's responsive
+columns, including while cached metadata is refreshed. Successful requests still
+use the real handlers, and guards reject dataset preparation during estimates or
+any provider lookup. Screenshots and JSON estimate/launch evidence are attached
+to the Playwright report for both
 viewports. The dedicated CI projects share the existing report merge and failure
 gate; the normal E2E configuration excludes this fixture-only spec.
 

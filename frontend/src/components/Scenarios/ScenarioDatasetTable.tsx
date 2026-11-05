@@ -142,6 +142,9 @@ export default function ScenarioDatasetTable({
 
   return (
     <div className={styles.root}>
+      {selected.length > 0 && (loading || preparing) && <Text role="status" size={200} className={styles.loadingHint}>
+        {preparing ? 'Loading datasets...' : 'Checking dataset details...'}
+      </Text>}
       {!allLoaded && selected.length > 0 && <div className={styles.toolbar}>
         {onLoad && <Button appearance="primary" className={styles.button}
           disabled={busy || loading || !loadEnabled || hasMissingRefresh || requiresImport
@@ -201,7 +204,7 @@ export default function ScenarioDatasetTable({
                   <Badge appearance="outline" color="subtle">Unlabeled</Badge>
                 </Tooltip>}
                 {metadata.harm_categories.length === 0 && metadata.modalities.length === 0 && <Text size={200}>No metadata labels.</Text>}
-              </div> : <Text size={200} role={loading || preparing ? 'status' : undefined}>
+              </div> : <Text size={200}>
                 {loading || preparing ? 'Loading...' : metadataError ? 'Details unavailable' : 'Not stored in memory'}
               </Text>}</TableCell>
               <TableCell className={styles.actionsCell}>
