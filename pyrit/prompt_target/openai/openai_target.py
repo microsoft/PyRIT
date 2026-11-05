@@ -68,6 +68,7 @@ class OpenAITarget(PromptTarget):
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType(
         {"api_key": None, "headers": "{}"}
     )
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
 
     model_name_environment_variable: str
     endpoint_environment_variable: str

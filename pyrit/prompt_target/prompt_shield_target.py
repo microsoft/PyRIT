@@ -60,6 +60,7 @@ class PromptShieldTarget(PromptTarget):
     # provider for a recognized Azure Content Safety endpoint instead.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"api_key": None})
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
 
     _endpoint: str
     _api_key: str | Callable[[], str] | None

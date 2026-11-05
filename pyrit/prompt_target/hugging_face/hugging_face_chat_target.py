@@ -40,6 +40,9 @@ class HuggingFaceChatTarget(PromptTarget):
 
     code_execution_parameter: ClassVar[str | None] = "trust_remote_code"
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"hf_access_token": None})
+    not_saveable_reason: ClassVar[str | None] = (
+        "It needs a Hugging Face token or model files on this server, and saved targets can hold neither yet."
+    )
 
     # Class-level cache for model and tokenizer
     _cached_model: Any = None

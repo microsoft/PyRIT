@@ -111,12 +111,20 @@ class PromptTarget(Identifiable):
     # unaffected.
     server_credential_parameter: ClassVar[str | None] = None
 
-    # Credential parameters that, left empty, let the target use a credential from this server
-    # instead (an environment variable, or the server's Azure identity), each mapped to the value
+    # Credential parameters that, left empty, let the target fall back to a credential from this
+    # server (an environment variable, or the server's Azure identity), each mapped to the value
     # that turns that off, or None when only an auth mode does: ``"identity"`` doesn't read a
-    # parameter mapped to None, and ``"none"`` reads none of them. A saved target must never use
-    # this server's credentials, so a saved entry that would is refused.
+    # parameter mapped to None, and ``"none"`` reads none of them. A saved target never falls back
+    # to this server's credentials, so a saved entry that would is refused. Choosing ``"identity"``
+    # isn't a fallback.
     server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
+
+    # Parameters that say where the target sends requests (a URL, or a path the target adds to
+    # one), each mapped to whether an empty value takes this server's setting. A saved target sets
+    # each one that would, since a server setting can carry a credential, and none can carry a
+    # credential itself: a user name or password, a SAS token, a fragment, or a query other than
+    # ``api-version``.
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({})
 
     # Why this target type can't be saved even without a credential, or None when it can.
     not_saveable_reason: ClassVar[str | None] = None

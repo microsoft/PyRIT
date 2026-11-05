@@ -379,23 +379,26 @@ class TestRestoreFailures:
         assert [ref.name for ref in report.restored] == ["good"]
 
     @pytest.mark.parametrize(
-        ("name", "params"),
-        [
-            ("server_key", {key: value for key, value in _IDENTITY_TARGET["params"].items() if key != "auth_mode"}),
-            ("server_headers", {key: value for key, value in _IDENTITY_TARGET["params"].items() if key != "headers"}),
-        ],
+        ("name", "left_out"),
+        [("server_key", "auth_mode"), ("server_headers", "headers"), ("server_endpoint", "endpoint")],
     )
     def test_refuses_a_target_that_would_use_this_servers_credentials(
-        self, tmp_path: Path, name: str, params: dict[str, Any]
+        self, tmp_path: Path, name: str, left_out: str
     ) -> None:
+        params = {key: value for key, value in _IDENTITY_TARGET["params"].items() if key != left_out}
         _save(tmp_path, RegistryRecipeKind.TARGETS, name, {**_IDENTITY_TARGET, "params": params})
-        server_settings = {"OPENAI_CHAT_KEY": "sk-server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"api-key": "k"}'}
+        server_settings = {
+            "OPENAI_CHAT_KEY": "sk-server-key",
+            "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"api-key": "sk-server-key"}',
+            "OPENAI_CHAT_ENDPOINT": "https://operator:sk-server-key@contoso.openai.azure.com/openai/v1",
+        }
 
         with patch.dict(os.environ, server_settings):
             report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
         assert (failure.name, failure.reason) == (name, RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
+        assert f"'{left_out if left_out != 'auth_mode' else 'api_key'}' is empty" in failure.message
         assert "sk-server-key" not in failure.message
         assert name not in TargetRegistry.get_registry_singleton().instances
 
@@ -464,7 +467,10 @@ class TestRestoreFailures:
 
         report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
-        assert [failure.name for failure in report.failures] == ["malformed"]
+        assert [(failure.name, failure.reason) for failure in report.failures] == [
+            ("malformed", RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
+        ]
+        assert "only supports auth_mode" in report.failures[0].message
         assert [ref.name for ref in report.restored] == ["good"]
 
     def test_a_planning_error_fails_only_that_entry(self, tmp_path: Path) -> None:
@@ -481,42 +487,14 @@ class TestRestoreFailures:
         assert failure.message == "RuntimeError: unexpected"
         assert [ref.name for ref in report.restored] == ["b_second"]
 
-    @pytest.mark.parametrize(
-        ("endpoint", "shown"),
-        [
-            ("https://evil.example/openai/v1?sig=SYNTHETIC-SAS#frag", "'https://evil.example/openai/v1"),
-            ("https://evil.example/openai/v1'part?sig=SYNTHETIC-SAS", "'https://evil.example/openai/v1'part"),
-            ("https://evil.example/openai/v1?sig=SYNTH\tETIC-SAS", "'https://evil.example/openai/v1"),
-            ("evil.example/openai/v1?api-version=1 &sig=SYNTHETIC-SAS", "'evil.example/openai/v1"),
-            ("https://evil.example/openai/v1#SYNTHETIC-SAS", "'https://evil.example/openai/v1"),
-            ("https://user:hunter2@evil.example/openai/v1?sig=SYNTHETIC-SAS", None),
-            ("https://user:hun\nter2@evil.example/openai/v1", None),
-            ("//user:hunter2@evil.example/openai/v1", None),
-        ],
-    )
-    def test_build_errors_drop_credentials_from_urls(self, tmp_path: Path, endpoint: str, shown: str | None) -> None:
-        no_endpoint = {**_IDENTITY_TARGET, "params": {"auth_mode": "identity", "headers": "{}", "model_name": "gpt-4o"}}
-        _save(tmp_path, RegistryRecipeKind.TARGETS, "server_endpoint", no_endpoint)
-
-        with patch.dict(os.environ, {"OPENAI_CHAT_ENDPOINT": endpoint}):
-            report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
-
-        (failure,) = report.failures
-        assert failure.reason is RestoreFailureReason.BUILD_ERROR
-        if shown is None:
-            assert failure.message == "ValueError (message hidden because it may include a credential)"
-        else:
-            assert failure.message.startswith("ValueError: Identity-based authentication requires")
-            assert failure.message.endswith(f"{shown} (rest hidden because it may include a credential)")
-        for secret in ("hunter2", "hun", "ter2", "SYNTHETIC", "SYNTH", "ETIC", "frag"):
-            assert secret not in failure.message
-
     def test_build_errors_keep_text_without_a_credential(self, tmp_path: Path) -> None:
-        no_endpoint = {**_IDENTITY_TARGET, "params": {"auth_mode": "identity", "headers": "{}", "model_name": "gpt-4o"}}
-        _save(tmp_path, RegistryRecipeKind.TARGETS, "server_endpoint", no_endpoint)
+        not_azure = {
+            **_IDENTITY_TARGET,
+            "params": {**_IDENTITY_TARGET["params"], "endpoint": "https://api.example.test/v1"},
+        }
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "not_azure", not_azure)
 
-        with patch.dict(os.environ, {"OPENAI_CHAT_ENDPOINT": "https://api.example.test/v1"}):
-            report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
         assert "'https://api.example.test/v1'. Pass auth_mode" in failure.message
@@ -532,8 +510,9 @@ class TestRestoreFailures:
         report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
-        assert (failure.name, failure.reason) == ("malformed", RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
+        assert (failure.name, failure.reason) == ("malformed", RestoreFailureReason.BUILD_ERROR)
         assert failure.version
+        assert "could not be coerced" in failure.message
         assert "SECRET" not in failure.message
         assert [ref.name for ref in report.restored] == ["good"]
 
@@ -566,13 +545,6 @@ class TestRestoreFailures:
             ),
             ("?sig=SECRET", "ValueError (message hidden because it may include a credential)"),
             (" \t?sig=SECRET", "ValueError (message hidden because it may include a credential)"),
-            (
-                "could not be coerced to float: 'https://[x?sig=SECRET'",
-                (
-                    "ValueError: could not be coerced to float: 'https://[x "
-                    "(rest hidden because it may include a credential)"
-                ),
-            ),
             ("could not be coerced to float: 'hot'", "ValueError: could not be coerced to float: 'hot'"),
             (
                 "Missing required parameters: ['objective_target']",

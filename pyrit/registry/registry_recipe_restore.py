@@ -55,10 +55,12 @@ class RegistryRecipeRestorer:
     create one, so a restored entry passes the same checks. A file never chooses what gets
     imported: classes and attack types are looked up among the ones already registered. Server
     paths are refused as they are for API input, and ``check_saved_entry_params`` refuses a recipe
-    that holds a credential or would let its entry use one from this server. Entries that can't
-    come back are reported with the reason instead of being skipped.
+    that stores a credential, or a target recipe that would let its target use one from this server
+    or send requests where this server's settings say. Entries that can't come back are reported
+    with the reason instead of being skipped.
 
-    Stored files are otherwise trusted the way configuration is.
+    Stored files are otherwise trusted the way configuration is. Converters and scorers don't
+    declare the credentials they read from server settings yet, so those rules cover targets only.
     """
 
     _RESERVED_TECHNIQUE_NAMES: ClassVar[frozenset[str]] = frozenset({"all", "default", "types"})

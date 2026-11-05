@@ -5,9 +5,10 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 
 from pyrit.models.catalog.registry_recipe import RestoreFailureReason
 
@@ -16,8 +17,10 @@ if TYPE_CHECKING:
 
     from pyrit.models.parameter import Parameter
 
+_URL_SCHEMES = frozenset({"http", "https", "ws", "wss"})
 _URL_QUERY_KEYS = frozenset({"api-version"})
-_MAX_URL_DECODES = 3
+_QUERY_SEPARATORS = re.compile(r"[&;]")
+_MAX_URL_READINGS = 8
 
 
 class SavedEntryRefusedError(ValueError):
@@ -41,8 +44,9 @@ def check_saved_entry_params(*, cls: type, parameters: Sequence[Parameter], para
 
     A saved entry is rebuilt from its recipe at every startup, so the recipe can't hold a credential
     and can't leave the entry to use one from this server: an empty key the class would read from the
-    server's settings or identity, extra headers the server adds, or a credential inside a URL. A saved
-    target authenticates with Microsoft Entra ID (``auth_mode`` ``"identity"``) or needs no key.
+    server's settings or identity, extra headers the server adds, a destination the server's settings
+    choose, or a credential inside a URL. A saved target authenticates with Microsoft Entra ID
+    (``auth_mode`` ``"identity"``) or needs no key.
 
     Args:
         cls (type): The class the recipe builds.
@@ -55,7 +59,7 @@ def check_saved_entry_params(*, cls: type, parameters: Sequence[Parameter], para
     _check_class(cls)
     _check_stored_credentials(parameters=parameters, params=params)
     _check_server_fallbacks(cls=cls, params=params)
-    _check_urls(params)
+    _check_destinations(cls=cls, params=params)
 
 
 def _check_class(cls: type) -> None:
@@ -99,10 +103,20 @@ def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any]) -> None:
     Refuse values that would let the entry use a credential from this server.
 
     Raises:
-        SavedEntryRefusedError: If a parameter the class reads from the server is left empty in an auth
-            mode that reads it, or holds a value other than the one that turns the server's value off.
+        SavedEntryRefusedError: If the class doesn't support the auth mode, or a parameter the class reads
+            from the server is left empty in an auth mode that reads it, or holds a value other than the
+            one that turns the server's value off.
     """
-    auth_mode = params.get("auth_mode") or "api_key"
+    auth_mode = params.get("auth_mode")
+    if auth_mode is None:
+        auth_mode = "api_key"
+    supported_auth_modes = getattr(cls, "supported_auth_modes", None)
+    if supported_auth_modes is not None and auth_mode not in supported_auth_modes:
+        modes = ", ".join(f"'{mode}'" for mode in supported_auth_modes)
+        raise SavedEntryRefusedError(
+            reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,
+            message=f"'{cls.__name__}' only supports auth_mode {modes}.",
+        )
     fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
     for name, turned_off in fallbacks.items():
         value = params.get(name)
@@ -120,19 +134,28 @@ def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any]) -> None:
             )
 
 
-def _check_urls(params: Mapping[str, Any]) -> None:
+def _check_destinations(*, cls: type, params: Mapping[str, Any]) -> None:
     """
-    Refuse a URL that can carry a credential.
+    Refuse a destination that this server's settings would choose, or one that can carry a credential.
 
     Raises:
-        SavedEntryRefusedError: If a value holds a SAS token anywhere, or a URL with a user name,
-            password, fragment, or query other than ``api-version``.
+        SavedEntryRefusedError: If a destination that would take this server's setting is empty, or a
+            destination holds a user name, password, SAS token, fragment, or query other than ``api-version``.
     """
-    for name, value in params.items():
-        texts = value if isinstance(value, list) else [value]
-        if any(isinstance(text, str) and _can_carry_credential(text) for text in texts):
+    destinations: Mapping[str, bool] = getattr(cls, "destination_parameters", {})
+    for name, takes_server_setting in destinations.items():
+        value = params.get(name)
+        if value in (None, ""):
+            if takes_server_setting:
+                message = (
+                    f"'{name}' is empty, so '{cls.__name__}' would send requests where this server's settings "
+                    "say, with any credential in them. A saved target sets it."
+                )
+                raise SavedEntryRefusedError(reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL, message=message)
+            continue
+        if not isinstance(value, str) or _can_carry_credential(value):
             message = (
-                f"'{name}' can carry a credential in a URL, which saved entries can't hold. A saved URL has "
+                f"'{name}' can carry a credential in a URL, which saved entries can't hold. A saved URL or path has "
                 "no user name, password, SAS token, or fragment, and no query except 'api-version'."
             )
             raise SavedEntryRefusedError(reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL, message=message)
@@ -140,39 +163,52 @@ def _check_urls(params: Mapping[str, Any]) -> None:
 
 def _can_carry_credential(text: str) -> bool:
     """
-    Return whether text holds a SAS token, or is a URL that can carry a credential.
+    Return whether a URL or path can carry a credential, in any reading of it.
 
-    Percent-encoded and look-alike characters are read too, since an encoded or mistyped SAS token is
-    still usable. A URL that can't be parsed counts as one that can carry a credential.
-
-    Returns:
-        bool: True when the text holds a SAS token or a URL with user info, a fragment, or another query.
-    """
-    for form in _readings(text):
-        if "sig=" in form.casefold():
-            return True
-        try:
-            parts = urlsplit(form.strip())
-            if not parts.netloc:
-                continue
-            if parts.username is not None or parts.password is not None or parts.fragment:
-                return True
-        except ValueError:
-            return True
-        if any(key.casefold() not in _URL_QUERY_KEYS for key, _ in parse_qsl(parts.query, keep_blank_values=True)):
-            return True
-    return False
-
-
-def _readings(text: str) -> list[str]:
-    """
-    List the text as written, percent-decoded, and with look-alike characters replaced.
+    A value whose percent-encoding or look-alike characters don't settle within a few readings counts as
+    one that can, since an encoded token is still usable.
 
     Returns:
-        list[str]: Each distinct reading of the text.
+        bool: True when a reading holds a SAS token, user info, a fragment, a query other than
+            ``api-version``, or isn't a plain web address or path.
     """
-    decoded = [text]
-    while len(decoded) <= _MAX_URL_DECODES and unquote(decoded[-1]) != decoded[-1]:
-        decoded.append(unquote(decoded[-1]))
-    normalized = [unicodedata.normalize("NFKC", form) for form in decoded]
-    return list(dict.fromkeys(decoded + normalized))
+    readings = _readings(text)
+    return readings is None or any(_reading_can_carry_credential(reading) for reading in readings)
+
+
+def _reading_can_carry_credential(text: str) -> bool:
+    """
+    Return whether one reading of a URL or path can carry a credential.
+
+    Returns:
+        bool: True when the reading holds a SAS token, user info, a fragment, a query other than
+            ``api-version``, or is a URL that isn't a plain http(s) or ws(s) address.
+    """
+    if "sig=" in text.casefold():
+        return True
+    try:
+        parts = urlsplit(text.strip())
+    except ValueError:
+        return True
+    if parts.scheme and (parts.scheme not in _URL_SCHEMES or not parts.netloc):
+        return True
+    if "@" in parts.netloc or parts.fragment:
+        return True
+    keys = (segment.split("=", 1)[0].strip().casefold() for segment in _QUERY_SEPARATORS.split(parts.query))
+    return any(key and key not in _URL_QUERY_KEYS for key in keys)
+
+
+def _readings(text: str) -> list[str] | None:
+    """
+    List the text as written and as each round of look-alike replacement and percent-decoding reads it.
+
+    Returns:
+        list[str] | None: The readings until they stop changing, or None if they still change after the limit.
+    """
+    readings = [text]
+    while len(readings) <= _MAX_URL_READINGS:
+        reading = unquote(unicodedata.normalize("NFKC", readings[-1]))
+        if reading == readings[-1]:
+            return readings
+        readings.append(reading)
+    return None

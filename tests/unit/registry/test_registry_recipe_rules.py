@@ -3,10 +3,12 @@
 
 from collections.abc import Iterator
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
 from pyrit.models.catalog.registry_recipe import RestoreFailureReason
+from pyrit.registry.components.converter_registry import ConverterRegistry
 from pyrit.registry.components.target_registry import TargetRegistry
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 
@@ -24,9 +26,11 @@ _OPENAI_CLASSES = (
 
 @pytest.fixture(autouse=True)
 def isolated_target_registry() -> Iterator[None]:
-    TargetRegistry.reset_registry_singleton()
+    for registry in (TargetRegistry, ConverterRegistry):
+        registry.reset_registry_singleton()
     yield
-    TargetRegistry.reset_registry_singleton()
+    for registry in (TargetRegistry, ConverterRegistry):
+        registry.reset_registry_singleton()
 
 
 def _check(class_name: str, params: dict[str, Any]) -> None:
@@ -82,7 +86,6 @@ def test_check_saved_entry_params_refuses_an_openai_target_without_a_key_or_iden
         ("PromptShieldTarget", {"endpoint": "https://contoso.cognitiveservices.azure.com/"}, "api_key"),
         ("AzureBlobStorageTarget", {"container_url": "https://contoso.blob.core.windows.net/prompts"}, "sas_token"),
         ("GitHubCopilotTarget", {"model_name": "gpt-4o"}, "github_token"),
-        ("HuggingFaceChatTarget", {"model_id": "microsoft/Phi-3-mini-4k-instruct"}, "hf_access_token"),
         ("HackAPromptTarget", {"challenge_slug": "pathogen", "competition_slug": "cbrne"}, "session_id"),
         ("LiteLLMChatTarget", {"model_name": "gpt-4o"}, "api_key"),
         ("LiteLLMDecisionTarget", {"model_name": "gpt-4o"}, "api_key"),
@@ -120,6 +123,7 @@ def test_check_saved_entry_params_refuses_headers_that_can_carry_a_credential(au
         ("WebSocketCopilotTarget", "Copilot account"),
         ("HTTPTarget", "raw HTTP request"),
         ("HTTPXAPITarget", "uploads files"),
+        ("HuggingFaceChatTarget", "Hugging Face token or model files"),
     ],
 )
 def test_check_saved_entry_params_refuses_a_class_that_cant_be_saved(class_name: str, phrase: str) -> None:
@@ -157,6 +161,12 @@ def test_check_saved_entry_params_accepts_a_url_without_a_credential(url: str) -
         "https://contoso.example/v1?code=SECRET",
         "https://contoso.example/v1\uff1fcode=SECRET",
         "https://[contoso.example/v1?key=SECRET",
+        "https:/contoso.example/v1?code=SECRET",
+        "https:/user:SECRET@contoso.example/v1",
+        "https://contoso.example/v1?api-version=2024-10-21;code=SECRET",
+        "https://contoso.example/v1%2525253Fsig%2525253DSECRET",
+        "https://contoso.example/v1\uff053Fsig\uff053DSECRET",
+        "ftp://contoso.example/v1",
     ],
 )
 def test_check_saved_entry_params_refuses_a_url_that_can_carry_a_credential(url: str) -> None:
@@ -167,7 +177,71 @@ def test_check_saved_entry_params_refuses_a_url_that_can_carry_a_credential(url:
     assert "SECRET" not in str(refusal)
 
 
-def test_check_saved_entry_params_reads_every_url_in_a_list() -> None:
-    refusal = _refusal("RoundRobinTarget", {"targets": ["contoso_gpt4o", "https://user:SECRET@contoso.example"]})
+def test_check_saved_entry_params_refuses_a_url_it_cant_finish_reading() -> None:
+    endpoint = _ENDPOINT
+    for _ in range(10):
+        endpoint = quote(endpoint, safe="")
 
-    assert str(refusal).startswith("'targets' can carry a credential in a URL")
+    refusal = _refusal("OpenAIChatTarget", {"auth_mode": "identity", "endpoint": endpoint, "headers": "{}"})
+
+    assert str(refusal).startswith("'endpoint' can carry a credential in a URL")
+
+
+@pytest.mark.parametrize(
+    ("class_name", "params", "name"),
+    [
+        ("OpenAIChatTarget", {"auth_mode": "identity", "headers": "{}"}, "endpoint"),
+        ("AzureMLChatTarget", {"auth_mode": "identity"}, "endpoint"),
+        ("PromptShieldTarget", {"auth_mode": "identity"}, "endpoint"),
+        ("AzureBlobStorageTarget", {"auth_mode": "identity"}, "container_url"),
+    ],
+)
+def test_check_saved_entry_params_refuses_a_destination_left_to_this_server(
+    class_name: str, params: dict[str, Any], name: str
+) -> None:
+    refusal = _refusal(class_name, params)
+
+    assert refusal.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
+    assert str(refusal).startswith(f"'{name}' is empty, so '{class_name}' would send requests where this server's")
+
+
+@pytest.mark.parametrize("card_path", [None, "/.well-known/agent-card.json", "agents/redteam/card.json"])
+def test_check_saved_entry_params_accepts_an_agent_card_path_without_a_credential(card_path: str | None) -> None:
+    params = {"endpoint": "https://agent.example.test"} | ({"agent_card_path": card_path} if card_path else {})
+
+    _check("A2ATarget", params)
+
+
+@pytest.mark.parametrize(
+    "card_path", ["card?access_token=SECRET", "/.well-known/agent.json?api_key=SECRET", "card#SECRET", "//SECRET@h"]
+)
+def test_check_saved_entry_params_refuses_an_agent_card_path_that_can_carry_a_credential(card_path: str) -> None:
+    refusal = _refusal("A2ATarget", {"endpoint": "https://agent.example.test", "agent_card_path": card_path})
+
+    assert str(refusal).startswith("'agent_card_path' can carry a credential in a URL")
+    assert "SECRET" not in str(refusal)
+
+
+@pytest.mark.parametrize(
+    ("class_name", "params"),
+    [
+        ("AzureMLChatTarget", {"auth_mode": "none", "endpoint": "https://contoso.inference.ml.azure.com/score"}),
+        ("GitHubCopilotTarget", {"auth_mode": "identity", "model_name": "gpt-4o"}),
+        ("OpenAIChatTarget", {"auth_mode": ["identity"], "endpoint": _ENDPOINT, "headers": "{}"}),
+    ],
+)
+def test_check_saved_entry_params_refuses_an_auth_mode_the_class_doesnt_support(
+    class_name: str, params: dict[str, Any]
+) -> None:
+    refusal = _refusal(class_name, params)
+
+    assert refusal.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
+    assert f"'{class_name}' only supports auth_mode" in str(refusal)
+
+
+def test_check_saved_entry_params_leaves_text_that_isnt_a_destination_alone() -> None:
+    registry = ConverterRegistry.get_registry_singleton()
+    cls = registry.get_class("PromptTemplateConverter")
+    params = {"template": "https://example.com/search?q={{ prompt }}&sig=1#top"}
+
+    check_saved_entry_params(cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=params)
