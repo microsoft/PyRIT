@@ -137,7 +137,7 @@ async def list_custom_initializers(request: Request) -> CustomInitializerListRes
     _check_custom_initializers_allowed(request)
     try:
         return await get_initializer_service().list_custom_initializers_async()
-    except AzureError as exc:
+    except (AzureError, OSError) as exc:
         raise _custom_storage_unavailable() from exc
 
 
@@ -240,7 +240,7 @@ async def unregister_initializer(  # pyrit-async-suffix-exempt
 
     try:
         await service.unregister_initializer_async(initializer_name=initializer_name)
-    except AzureError as exc:
+    except (AzureError, OSError) as exc:
         raise _custom_storage_unavailable() from exc
     except ValueError as e:
         raise HTTPException(
