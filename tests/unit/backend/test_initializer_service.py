@@ -489,6 +489,27 @@ class TestCustomInitializerRoutes:
         assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
         assert response.json()["detail"] == "Custom initializer storage is temporarily unavailable"
 
+    @pytest.mark.parametrize("operation", ["list", "delete"])
+    def test_custom_initializer_routes_return_503_for_a_folder_that_cant_be_read(
+        self,
+        client_with_custom_initializers_enabled: TestClient,
+        operation: str,
+    ) -> None:
+        error = PermissionError(13, "Permission denied", "/srv/secret/initializers")
+        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_custom_initializers_async = AsyncMock(side_effect=error)
+            mock_service.unregister_initializer_async = AsyncMock(side_effect=error)
+            mock_get_service.return_value = mock_service
+            if operation == "list":
+                response = client_with_custom_initializers_enabled.get("/api/initializers/custom")
+            else:
+                response = client_with_custom_initializers_enabled.delete("/api/initializers/custom")
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["detail"] == "Custom initializer storage is temporarily unavailable"
+        assert "/srv/secret" not in response.text
+
     def test_post_root_still_registers_runtime_initializer(
         self, client_with_custom_initializers_enabled: TestClient
     ) -> None:
