@@ -43,6 +43,7 @@ from pyrit.memory.memory_models import (
     CustomUUID,
     PromptMemoryEntry,
     ScenarioResultEntry,
+    UTCDateTime,
 )
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import AzureBlobStorageIO
@@ -728,24 +729,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                         ORDER BY p2.sequence DESC, p2.id DESC
                     ) AS latest
                     """
-                )
+                ).columns(created_at=UTCDateTime())
 
                 rows = session.execute(sql, params).fetchall()
 
                 for row in rows:
-                    conv_id, msg_count, last_preview, last_data_type, raw_created_at = row
-
-                    created_at = None
-                    if raw_created_at is not None:
-                        if isinstance(raw_created_at, str):
-                            created_at = datetime.fromisoformat(raw_created_at)
-                        else:
-                            created_at = raw_created_at
-                        # The raw MIN(timestamp) aggregate bypasses UTCDateTime's result
-                        # processor, so reattach the UTC offset every other read path returns.
-                        if created_at.tzinfo is None:
-                            created_at = created_at.replace(tzinfo=UTC)
-
+                    conv_id, msg_count, last_preview, last_data_type, created_at = row
                     result[conv_id] = ConversationStats(
                         message_count=msg_count,
                         last_message_preview=last_preview,

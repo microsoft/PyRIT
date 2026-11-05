@@ -874,8 +874,7 @@ async def test_get_conversation_stats_returns_aware_utc_created_at(sqlite_instan
     result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
 
     created_at = result[conv_id].created_at
-    assert created_at is not None
-    assert created_at.tzinfo is not None
+    assert created_at == piece.timestamp
     assert created_at.utcoffset() == UTC.utcoffset(None)
 
 
