@@ -77,7 +77,7 @@ seeds:
             dataset = await loader.fetch_dataset_async()
 
         assert dataset is expected
-        to_thread_mock.assert_awaited_once_with(load_mock, file_path)
+        to_thread_mock.assert_awaited_once_with(load_mock, file_path, default_dataset_name="test_dataset")
         load_mock.assert_not_called()
 
     async def test_fetch_dataset_rejects_conflicting_origin_async(self, tmp_path: Path) -> None:
@@ -147,6 +147,10 @@ seeds:
   - value: explicitly named prompt
     data_type: text
     origin: local
+  - value: separately named prompt
+    data_type: text
+    origin: local
+    dataset_name: other_dataset
 """
 
     async def test_filename_fallback_is_assigned_to_seeds_and_queryable_async(
@@ -181,7 +185,7 @@ seeds:
 
         assert len(await sqlite_instance.get_seeds_async(dataset_name="filename_only")) == 2
 
-    async def test_explicit_dataset_name_is_unchanged_async(
+    async def test_explicit_dataset_and_seed_names_are_unchanged_async(
         self, tmp_path: Path, sqlite_instance: MemoryInterface
     ) -> None:
         file_path = tmp_path / "explicit.yaml"
@@ -190,7 +194,7 @@ seeds:
         dataset = await _LocalDatasetLoader(file_path=file_path).fetch_dataset_async()
 
         assert dataset.dataset_name == "explicit_dataset"
-        assert dataset.seeds[0].dataset_name == "explicit_dataset"
+        assert [seed.dataset_name for seed in dataset.seeds] == ["explicit_dataset", "other_dataset"]
 
         await sqlite_instance.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="test")
         assert len(await sqlite_instance.get_seeds_async(dataset_name="explicit_dataset")) == 1
