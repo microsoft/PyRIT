@@ -84,7 +84,7 @@ import { sameTarget, targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { ScenarioRunEstimateDetails } from './ScenarioRunEstimate'
-import { scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
+import { datasetTotalLimit, scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { carriedPresetScenarioParams, seedPresetTechniques, untouchedPresetScenarioParams } from './scenarioPresetSeed'
 import { mapScenarioRunEstimate } from './scenarioRunEstimateAdapter'
@@ -998,8 +998,9 @@ function ScenarioLaunchForm({
     [isBaselineForbidden, supportsBaseline, supportsTechniques, techniqueOptions],
   )
   const techniques = selectedTechniques
+  const datasetSelectionLimit = datasetTotalLimit(datasetEdits, datasetDefaults)
   const datasetSizeLabel = !datasetOptions.total_limit ? 'Not applicable'
-    : effectiveDatasets.max_total === 'all' ? 'No total limit' : String(effectiveDatasets.max_total)
+    : datasetSelectionLimit === 'all' ? 'No total limit' : String(datasetSelectionLimit)
   const estimateResult = useMemo(
     () => buildEstimateRequest({
       scenario,
@@ -1816,14 +1817,14 @@ function ScenarioLaunchForm({
                 </Text>
               )}
               {estimateState.status === 'refreshing' && (
-                <div className={styles.inlineStatus}>
+                <div className={styles.inlineStatus} role="status">
                   <Spinner size="tiny" />
                   <Text size={200} className={styles.hint}>Updating estimate...</Text>
                 </div>
               )}
               {estimateState.status === 'stale' && (
-                <Text size={200} className={styles.warningText}>
-                  {estimateState.error}
+                <Text size={200} className={styles.warningText} role="status">
+                  {estimateState.label} {estimateState.error}
                 </Text>
               )}
             </section>

@@ -14,7 +14,7 @@ import type {
 } from '@/types'
 
 import DatasetLimitControl from './DatasetLimitControl'
-import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, parseCaseLimit } from './datasetPresentation'
+import { canEditDatasetLoading, datasetChoices, datasetFacts, datasetNameWithOrigin, datasetPolicies, datasetSize, datasetTotalLimit, parseCaseLimit } from './datasetPresentation'
 import { useScenarioDatasetTableStyles } from './ScenarioDatasetTable.styles'
 
 interface ScenarioDatasetTableProps {
@@ -52,8 +52,7 @@ export default function ScenarioDatasetTable({
   const canAdd = options.max_selected == null || selected.length < options.max_selected
   const replaceSingleSource = options.max_selected === 1
   const busy = disabled || preparing
-  const total = typeof request.max_total === 'number' || request.max_total === 'all'
-    ? request.max_total : defaults.max_total
+  const total = datasetTotalLimit(request, defaults)
   const filters = { ...defaults.filters, ...request.filters }
   const candidates = datasetChoices(datasets, defaults.sources, options)
     .filter((name) => !selected.some((source) => source.name === name) && name.toLowerCase().includes(search.toLowerCase()))
