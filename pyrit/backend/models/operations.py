@@ -21,6 +21,9 @@ from pyrit.models import (
 from pyrit.models.harm_category import HarmCategory
 from pyrit.models.operation import OperationName
 
+# Ten pages of the export dialog; the dashboard keeps its selection within this.
+MAX_EXPORT_FINDINGS = 1_000
+
 
 class FindingOptionsResponse(BaseModel):
     """Harm categories a finding can use."""
@@ -165,7 +168,9 @@ class FindingExportRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    finding_ids: list[UUID] = Field(min_length=1, description="Distinct findings of the operation to include")
+    finding_ids: list[UUID] = Field(
+        min_length=1, max_length=MAX_EXPORT_FINDINGS, description="Distinct findings of the operation to include"
+    )
     format: FindingExportFormat = FindingExportFormat.DOCX
     dashboard_origin: AnyHttpUrl = Field(description="The dashboard's origin, which evidence links open")
 
