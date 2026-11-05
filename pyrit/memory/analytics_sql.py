@@ -49,8 +49,7 @@ class UnicodeLower(FunctionElement[str]):
     inherit_cache = True
 
 
-@compiles(UnicodeLower, "sqlite")
-def _sqlite_fold_case(value: str, fallback_function: str) -> str:
+def _sqlite_fold_case(*, value: str, fallback_function: str) -> str:
     """
     Keep ASCII text in SQLite as plain ``lower`` and use a registered fold otherwise.
 
@@ -68,6 +67,7 @@ def _sqlite_fold_case(value: str, fallback_function: str) -> str:
     )
 
 
+@compiles(UnicodeLower, "sqlite")
 def _sqlite_unicode_lower(element: UnicodeLower, compiler: Any, **kwargs: Any) -> str:
     """
     Keep ASCII text in SQLite and use the registered Unicode function otherwise.
@@ -76,7 +76,7 @@ def _sqlite_unicode_lower(element: UnicodeLower, compiler: Any, **kwargs: Any) -
         str: Exact Unicode-aware lowercasing without a Python/GIL callback for ASCII text.
     """
     value = _arguments(element, compiler, **kwargs)[0]
-    return _sqlite_fold_case(value, UnicodeLower.SQLITE_FUNCTION_NAME)
+    return _sqlite_fold_case(value=value, fallback_function=UnicodeLower.SQLITE_FUNCTION_NAME)
 
 
 class UnicodeCaseFold(FunctionElement[str]):
@@ -104,7 +104,7 @@ def _sqlite_unicode_casefold(element: UnicodeCaseFold, compiler: Any, **kwargs: 
         str: The compiled per character fold expression.
     """
     value = _arguments(element, compiler, **kwargs)[0]
-    return _sqlite_fold_case(value, UnicodeCaseFold.SQLITE_FUNCTION_NAME)
+    return _sqlite_fold_case(value=value, fallback_function=UnicodeCaseFold.SQLITE_FUNCTION_NAME)
 
 
 @compiles(UnicodeCaseFold, "mssql")
