@@ -2,11 +2,39 @@
 # Licensed under the MIT license.
 
 import json
+from typing import Any, assert_type
 
 import pytest
 from pydantic import ValidationError
 
 from pyrit.models import ToolExecutionMetadata
+
+
+class DerivedToolExecutionMetadata(ToolExecutionMetadata):
+    """Subclass used to verify that metadata reconstruction preserves the caller type."""
+
+
+def test_from_metadata_preserves_subclass_type() -> None:
+    metadata: dict[str, Any] = {ToolExecutionMetadata.METADATA_KEY: {"invoked": True}}
+
+    restored = DerivedToolExecutionMetadata.from_metadata(metadata=metadata)
+
+    assert_type(restored, DerivedToolExecutionMetadata | None)
+    assert restored is not None
+    assert_type(restored, DerivedToolExecutionMetadata)
+    assert type(restored) is DerivedToolExecutionMetadata
+    assert restored.invoked is True
+
+
+def test_from_metadata_does_not_mutate_input() -> None:
+    metadata: dict[str, Any] = {
+        "unrelated": "retained",
+        ToolExecutionMetadata.METADATA_KEY: {"invoked": False},
+    }
+    original = metadata.copy()
+
+    assert DerivedToolExecutionMetadata.from_metadata(metadata=metadata) is not None
+    assert metadata == original
 
 
 @pytest.mark.parametrize("invoked", [True, False])
