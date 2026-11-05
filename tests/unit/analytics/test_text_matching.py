@@ -189,3 +189,44 @@ class TestApproximateTextMatchingNValidation:
     @pytest.mark.parametrize("n", [1, 3, 4, 50])
     def test_init_accepts_positive_integer_n(self, n):
         assert ApproximateTextMatching(n=n).get_overlap_score(target="abc", text="abc") >= 0.0
+
+
+class TestApproximateTextMatchingOccurrenceSensitive:
+    """Regression tests for issue #3912: occurrence-insensitive n-gram scoring."""
+
+    def test_repeated_target_ngrams_not_inflated(self):
+        # A highly repetitive target collapsed to very few distinct n-grams,
+        # letting a tiny response receive full credit.
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        target = "abc" * 50  # 150 chars, 148 trigram windows but only 3 distinct
+        text = "abcabca"  # 7 chars, 5 trigram windows
+        score = matcher.get_overlap_score(target=target, text=text)
+        # Should be approximately 5/148 = 0.034, NOT close to 1.0
+        assert score < 0.05
+        assert matcher.is_match(target=target, text=text) is False
+
+    def test_exact_match_still_scores_one(self):
+        # Exact substring should still receive full credit.
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        assert matcher.get_overlap_score(target="hello", text="hello world") == 1.0
+
+    def test_identical_repeated_text_scores_one(self):
+        # When target and text are identical (even with repeats), score should be 1.0.
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        assert matcher.get_overlap_score(target="abcabc", text="abcabc") == 1.0
+
+    def test_occurrence_sensitive_partial_overlap(self):
+        # Target "aaaa" has trigrams: ["aaa", "aaa"] (count: {"aaa": 2}).
+        # Text "aaa" has trigrams: ["aaa"] (count: {"aaa": 1}).
+        # Overlap: min(2,1)/2 = 0.5
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        score = matcher.get_overlap_score(target="aaaa", text="aaa")
+        assert score == 0.5
+
+    def test_partial_match_normal_text(self):
+        # Non-degenerate partial match should still work correctly.
+        matcher = ApproximateTextMatching(threshold=0.3, n=3, case_sensitive=False)
+        assert matcher.is_match(target="hello", text="hallo") is True
+
+        matcher_high = ApproximateTextMatching(threshold=0.8, n=3, case_sensitive=False)
+        assert matcher_high.is_match(target="hello", text="hallo") is False

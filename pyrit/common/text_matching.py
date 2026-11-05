@@ -9,6 +9,7 @@ and n-gram based approximate matching through a unified TextMatching interface.
 """
 
 import math
+from collections import Counter
 from typing import Any, Protocol
 
 
@@ -166,13 +167,16 @@ class ApproximateTextMatching(TextMatching):
         target_str = target if self._case_sensitive else target.lower()
         text_str = text if self._case_sensitive else text.lower()
 
-        target_ngrams = {target_str[i : i + self._n] for i in range(len(target_str) - (self._n - 1))}
+        target_ngrams = Counter(target_str[i : i + self._n] for i in range(len(target_str) - (self._n - 1)))
 
-        if not target_ngrams:
+        total_target = sum(target_ngrams.values())
+        if total_target == 0:
             return 0.0
 
-        matching_ngrams = sum(int(ngram in text_str) for ngram in target_ngrams)
-        return matching_ngrams / len(target_ngrams)
+        text_ngrams = Counter(text_str[i : i + self._n] for i in range(len(text_str) - (self._n - 1)))
+
+        matching_ngrams = sum(min(target_ngrams[g], text_ngrams[g]) for g in target_ngrams)
+        return matching_ngrams / total_target
 
     def get_overlap_score(self, *, target: str, text: str) -> float:
         """
