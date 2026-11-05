@@ -31,6 +31,7 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
   .msg { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border-radius: 6px; background: #fafafa; border: 1px solid #eee; }
   .msg .role { font-weight: 600; font-size: 0.75rem; text-transform: uppercase; color: #444; }
   .piece { white-space: pre-wrap; margin: 0.25rem 0; }
+  .piece-label { font-size: 0.75rem; font-weight: 600; color: #666; }
   .media { color: #666; font-style: italic; }
   .reasoning { color: #555; border-left: 3px solid #ccc; padding-left: 0.5rem; }
   .score { font-size: 0.85rem; color: #444; margin-top: 0.25rem; }
@@ -104,12 +105,19 @@ _REPORT_TEMPLATE = """<!DOCTYPE html>
     <div class="msg">
       <div class="role">{{ m.role }}{% if m.is_simulated %} (simulated){% endif %}</div>
       {% for p in m.pieces %}
+        {% set has_converted = p.converted_value is defined and p.converted_value is not none %}
+        {% set media_prefix = "" if p.data_type == "text" else "[" ~ p.data_type ~ "] " %}
+        {% set piece_class = "piece" if p.data_type == "text" else "piece media" %}
+        {% set shown_value = p.converted_value if has_converted else p.original_value %}
         {% if p.data_type == "reasoning" %}
           <div class="piece reasoning">{{ p.reasoning_summary }}</div>
-        {% elif p.data_type == "text" %}
-          <div class="piece">{{ p.converted_value or p.original_value }}</div>
+        {% elif has_converted and p.converted_value != p.original_value %}
+          <div class="piece-label">Original:</div>
+          <div class="{{ piece_class }}">{{ media_prefix }}{{ p.original_value }}</div>
+          <div class="piece-label">Converted:</div>
+          <div class="{{ piece_class }}">{{ media_prefix }}{{ p.converted_value }}</div>
         {% else %}
-          <div class="piece media">[{{ p.data_type }}] {{ p.converted_value or p.original_value }}</div>
+          <div class="{{ piece_class }}">{{ media_prefix }}{{ shown_value }}</div>
         {% endif %}
         {% if p.response_error and p.response_error != "none" %}
           <div class="piece err">error: {{ p.response_error }}</div>
