@@ -10,7 +10,9 @@ import { MemoryRouter, parsePath, useLocation, useNavigate } from "react-router"
 import App from "./App";
 
 import { attacksApi, operationsApi, targetsApi } from "./services/api";
+import { deferred } from "./test-utils/deferred";
 import { makeTarget } from "./test-utils/targetFixtures";
+import type { AttackMetadata } from "./types";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
 import { DEFAULT_ANALYTICS_VIEW, analyticsViewToHash } from "./utils/attackAnalytics";
 
@@ -78,6 +80,7 @@ jest.mock("./services/api", () => ({
   },
   attacksApi: {
     getAttack: jest.fn(),
+    getAttackMetadata: jest.fn(),
     listAttacks: jest.fn(),
     createAttack: jest.fn(),
     deleteAttack: jest.fn(),
@@ -107,7 +110,7 @@ jest.mock("./services/api", () => ({
 
 const mockedVersionApi = jest.requireMock("./services/api").versionApi;
 
-const mockGetAttack = attacksApi.getAttack as jest.Mock;
+const mockGetAttack = attacksApi.getAttackMetadata as jest.Mock;
 const mockGetOperation = operationsApi.get as jest.Mock;
 const mockListTargets = targetsApi.listTargets as jest.Mock;
 const mockGetTarget = targetsApi.getTarget as jest.Mock;
@@ -206,6 +209,9 @@ jest.mock("./components/Chat/ChatWindow", () => {
     labels,
     scenarioResultId,
     isLoadingAttack,
+    executionReadOnly,
+    relatedConversationCount,
+    lastResponseMessagePieceId,
   }: {
     activeTarget: unknown;
     draftContext?: Pick<import("./types").ChatDraftContextState, "originatingAttackId" | "originatingConversationId">;
@@ -223,6 +229,9 @@ jest.mock("./components/Chat/ChatWindow", () => {
     labels: Record<string, string>;
     scenarioResultId?: string | null;
     isLoadingAttack?: boolean;
+    executionReadOnly?: boolean;
+    relatedConversationCount?: number;
+    lastResponseMessagePieceId?: string | null;
   }) => {
     const location = useLocation();
     const draftHandoff = useChatDraftHandoff();
@@ -308,6 +317,9 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="scenario-result-id">{scenarioResultId ?? "none"}</span>
+        <span data-testid="execution-read-only">{String(executionReadOnly)}</span>
+        <span data-testid="related-conversation-count">{relatedConversationCount}</span>
+        <span data-testid="last-response-id">{lastResponseMessagePieceId ?? "none"}</span>
         <span data-testid="route-location" data-navigation-state={JSON.stringify(location.state)}>
           {`${location.pathname}${location.search}`}
         </span>
@@ -1382,6 +1394,7 @@ describe("App", () => {
       mockGetAttack.mockResolvedValue({
         attack_result_id: "owner", conversation_id: "main", related_conversation_ids: [],
         labels: {}, objective: "", outcome: "undetermined",
+        related_conversation_count: 0, selected_conversation_id: "source", selected_conversation_valid: false,
       });
       const user = userEvent.setup();
       renderApp(
@@ -1415,7 +1428,9 @@ describe("App", () => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: attackId,
       conversation_id: "main-conversation",
-      related_conversation_ids: conversationId ? [conversationId] : [],
+      related_conversation_count: conversationId ? 1 : 0,
+      selected_conversation_id: conversationId ?? "main-conversation",
+      selected_conversation_valid: true,
       labels: {},
       objective: "",
       outcome: "undetermined",
@@ -1428,7 +1443,9 @@ describe("App", () => {
       </MemoryRouter>
     );
 
-    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith(attackId));
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith(
+      ...(conversationId ? [attackId, conversationId] : [attackId]),
+    ));
     await waitFor(() => expect(screen.getByLabelText("Current URL")).toHaveTextContent(canonicalUrl));
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
     if (conversationId) {
@@ -1504,6 +1521,37 @@ describe("App", () => {
     );
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("attack-conv-2");
     expect(screen.getByTestId("draft-conversation-id")).toHaveTextContent("attack-conv-2");
+  });
+
+  it("reloads the previous attack when returning before another metadata request finishes", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<AttackMetadata>();
+    const metadata: AttackMetadata = {
+      attack_result_id: "ar-attack-1", conversation_id: "first-main", objective: "", labels: {},
+      execution_read_only: true, related_conversation_count: 0, last_response_message_piece_id: null,
+      selected_conversation_id: "first-main", selected_conversation_valid: true,
+    };
+    mockGetAttack.mockImplementation((id: string) => (
+      id === "ar-attack-2" ? pending.promise : Promise.resolve(metadata)
+    ));
+    function DirectAttackNavigation() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate("/attacks/ar-attack-2")}>Open next attack directly</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/attacks/ar-attack-1"]}>
+        <App /><RouterProbe /><DirectAttackNavigation />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main"));
+    await user.click(screen.getByRole("button", { name: "Open next attack directly" }));
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-attack-2"));
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("none");
+    await user.click(screen.getByRole("button", { name: "Back", exact: true }));
+    await waitFor(() => expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main"));
+    expect(mockGetAttack.mock.calls.filter((call: unknown[]) => call[0] === "ar-attack-1")).toHaveLength(2);
+    await act(async () => { pending.resolve({ ...metadata, attack_result_id: "ar-attack-2", conversation_id: "other-main" }); });
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main");
   });
 
   it("merges default labels from backend version API", async () => {
@@ -1768,20 +1816,22 @@ describe("App", () => {
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       labels: {},
-      related_conversation_ids: ["conv-related"],
-      related_conversations: [
-        {
-          conversation_id: "conv-related",
-          conversation_type: "pruned",
-          description: "Previous main conversation",
-        },
-      ],
+      related_conversation_count: 700,
+      selected_conversation_id: "conv-related",
+      selected_conversation_valid: true,
+      execution_read_only: true,
+      last_response_message_piece_id: "last-response",
     });
     renderApp("/attack/chat/ar-1/conversations/conv-related");
 
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-related")
     );
+    expect(mockGetAttack).toHaveBeenCalledWith("ar-1", "conv-related");
+    expect(screen.getByTestId("related-conversation-count")).toHaveTextContent("700");
+    expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+    expect(screen.getByTestId("last-response-id")).toHaveTextContent("last-response");
+    expect(attacksApi.getAttack).not.toHaveBeenCalled();
   });
 
   it("falls back to the main conversation when the deep-linked conversation is unknown", async () => {
@@ -1789,7 +1839,9 @@ describe("App", () => {
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       labels: {},
-      related_conversation_ids: ["conv-related"],
+      related_conversation_count: 1,
+      selected_conversation_id: "bogus",
+      selected_conversation_valid: false,
     });
     renderApp("/attack/chat/ar-1/conversations/bogus");
 
@@ -1799,25 +1851,22 @@ describe("App", () => {
     );
   });
 
-  it("does not activate a preparation conversation from a deep link", async () => {
+  it.each(["preparation", "adversarial"])("does not activate a %s conversation from a deep link", async (kind: string) => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       labels: {},
-      related_conversation_ids: ["conv-preparation"],
-      related_conversations: [
-        {
-          conversation_id: "conv-preparation",
-          conversation_type: "preparation",
-          description: "Simulated preparation",
-        },
-      ],
+      related_conversation_count: 0,
+      selected_conversation_id: `conv-${kind}`,
+      selected_conversation_valid: false,
     });
-    renderApp("/attack/chat/ar-1/conversations/conv-preparation");
+    renderApp(`/attack/chat/ar-1/conversations/conv-${kind}`);
 
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
     );
+    expect(mockGetAttack).toHaveBeenCalledWith("ar-1", `conv-${kind}`);
+    expect(attacksApi.getAttack).not.toHaveBeenCalled();
   });
 
   it("retains validated provenance while canonicalizing an unknown conversation route", async () => {
@@ -1827,6 +1876,9 @@ describe("App", () => {
       conversation_id: "conv-main",
       labels: {},
       related_conversation_ids: [],
+      related_conversation_count: 0,
+      selected_conversation_id: "bogus",
+      selected_conversation_valid: false,
     });
     const returnContext = { fromScenarioHistory: true, scenarioHistorySearch: "?status=COMPLETED" };
     renderApp(`/attack/chat/ar-1/conversations/bogus?scenarioResultId=${scenarioResultId}`, returnContext);
