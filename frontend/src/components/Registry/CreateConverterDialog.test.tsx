@@ -377,6 +377,19 @@ describe('CreateConverterDialog', () => {
     expect(screen.queryByTestId('converter-type-option-SelectiveTextConverter')).not.toBeInTheDocument()
   })
 
+  it('masks sensitive parameters and leaves the others plain', async () => {
+    mockConverterParameters([
+      { name: 'azure_speech_key', type_name: 'str', required: false, default: null, sensitive: true },
+      { name: 'azure_speech_region', type_name: 'str', required: false, default: null, sensitive: false },
+    ], 'AzureSpeechTextToAudioConverter')
+    renderDialog()
+
+    await selectConverterType('AzureSpeechTextToAudioConverter')
+
+    expect(screen.getByLabelText('azure_speech_key')).toHaveAttribute('type', 'password')
+    expect(screen.getByLabelText('azure_speech_region')).toHaveAttribute('type', 'text')
+  })
+
   it('keeps converter types with optional unsupported parameters', async () => {
     mockConverterParameters([{
       name: 'runtime_dependency',

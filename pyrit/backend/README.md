@@ -356,7 +356,9 @@ API callers are trusted operators, so these are intentional exceptions:
   the deployment instead.
 - Some targets use this server's credentials when the caller gives no key: an API key from the
   server's environment, sent even to an endpoint the caller chose, or a token for the server's
-  Azure identity, sent to the Azure endpoint or container the caller chose.
+  Azure identity, sent to the Azure endpoint or container the caller chose. For an
+  OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
+  of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
   created them.
 - Prompt content is not filtered; it is adversarial test data by design.
