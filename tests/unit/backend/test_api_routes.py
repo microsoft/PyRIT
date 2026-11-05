@@ -1276,6 +1276,16 @@ class TestTargetRoutes:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_list_target_types_marks_hack_a_prompt_credentials_sensitive(self, client: TestClient) -> None:
+        response = client.get("/api/targets/types")
+
+        assert response.status_code == status.HTTP_200_OK
+        entry = next(item for item in response.json()["items"] if item["target_type"] == "HackAPromptTarget")
+        sensitive = {parameter["name"]: parameter["sensitive"] for parameter in entry["parameters"]}
+        assert sensitive["cookie"] is True
+        assert sensitive["session_id"] is True
+        assert sensitive["challenge_slug"] is False
+
     def test_create_target_success(self, client: TestClient) -> None:
         """Test successful target creation."""
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
@@ -1539,6 +1549,18 @@ class TestConverterRoutes:
         response = client.get("/api/converters/catalog")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.parametrize("converter_type", ["AzureSpeechAudioToTextConverter", "AzureSpeechTextToAudioConverter"])
+    def test_list_converter_types_marks_azure_speech_key_sensitive(
+        self, client: TestClient, converter_type: str
+    ) -> None:
+        response = client.get("/api/converters/types")
+
+        assert response.status_code == status.HTTP_200_OK
+        entry = next(item for item in response.json()["items"] if item["converter_type"] == converter_type)
+        sensitive = {parameter["name"]: parameter["sensitive"] for parameter in entry["parameters"]}
+        assert sensitive["azure_speech_key"] is True
+        assert sensitive["azure_speech_region"] is False
 
     def test_create_converter_success(self, client: TestClient) -> None:
         """Test successful converter instance creation."""

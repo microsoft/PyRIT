@@ -89,6 +89,38 @@ reported without replacing the previous field value.
 Blocked chat file drags show the existing disabled-input reason only during the
 drag. Converter file fields retain the first file and report ignored extras.
 
+## Saved Scenario conversation evidence
+
+Saved Scenario results reuse Chat's read-only viewer. Initial Chat metadata
+reports a server reference count and validates the selected conversation without
+downloading complete reference arrays. The conversation selector initially loads
+50 main/pruned references, and the viewer requests 100 **message
+pieces**, not turns, from only the selected conversation. **Load more
+conversations** and **Load more message pieces** follow separate server cursors.
+Reference totals come from the server; selecting a conversation outside the
+loaded reference page does not replace it with the main conversation.
+
+Split multimodal turns stay together as pieces arrive, retaining their order,
+original/converted media and saved scores. **Incomplete turn** describes an
+unfinished turn, while the paging footer describes the whole loaded transcript.
+Continuation failures keep the loaded evidence available with **Retry** or
+**Restart** controls. A restart begins a new bounded read rather than reusing a
+stale cursor. **End of saved transcript** means the server has no further pieces;
+it does not infer a final target-response status. The reference and transcript
+status regions announce pending page loads, including retries and restarts.
+
+Load the complete transcript before continuing manually, copying/branching,
+exporting, or assessing/attaching its evidence. Adding or removing a human score
+refreshes scores on the loaded pieces without discarding evidence, pagination,
+or completeness. Existing live/manual Chat reads, drafts and send/edit/recovery
+workflows are unchanged, and manual conversation-list refreshes retain keyed
+rows and keyboard focus. Selected conversation URLs, return-to-scan links and
+the originating History filters survive paging and reloads.
+On narrow screens, the saved viewer scrolls as one surface so loaded evidence
+and continuation controls remain reachable without squeezing the transcript.
+Selecting another saved conversation starts at its beginning; continuation
+keeps the current reading position.
+
 ## Dataset catalog
 
 Chat drafts stay in memory while you visit Datasets and return. Text, attachments,
@@ -195,6 +227,22 @@ Set `PYRIT_ANALYTICS_SCREENSHOT_DIR` to an artifact directory to also capture th
 verified overview in light/dark, a heatmap drill-down, and narrow controls/report views.
 The browser checks do not mock analytics APIs. They do not repeat the separate
 100,000-result backend performance workload.
+
+### Isolated Scenario evidence browser checks
+
+From `frontend`, use the existing hierarchy fixture:
+
+```powershell
+$env:PYRIT_PYTHON = uv run --no-sync python -c "import sys; print(sys.executable)"
+npm run test:e2e:scenario-hierarchy
+```
+
+It builds the current frontend and serves real application routes over private,
+disposable SQLite data without providers or user configuration. Its saved
+evidence includes 222 pieces, a split scored multimodal turn, overlapping stable
+piece IDs and 121 references. Journeys cover bounded requests, continuation
+retry/restart failures, pending-reader ownership, URL/History context and
+keyboard/touch use. `PYRIT_E2E_HIERARCHY_PORT` overrides the loopback port.
 
 ## Development
 
