@@ -36,13 +36,14 @@ from pyrit.models import (
     ConversationType,
     Finding,
     FindingEvidence,
+    FindingField,
+    FindingFields,
     Message,
     MessagePiece,
     Operation,
     Score,
     ScoreStatus,
 )
-from pyrit.models.harm_category import HarmCategory
 from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
 from pyrit.output.finding_report.report import (
     FindingReport,
@@ -51,6 +52,7 @@ from pyrit.output.finding_report.report import (
     FindingReportEvidence,
     FindingReportField,
 )
+from pyrit.setup.finding_fields import set_active_finding_fields
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -80,6 +82,31 @@ HOSTILE_BODY = (
 )
 NOT_SCORED = FindingReportField(label="Score", value="Not scored")
 NOT_IN_AN_OPERATION = FindingReportField(label="From operation", value="Not in an operation")
+CONTOSO_FIELDS = FindingFields(
+    severity=FindingField(
+        key="severity",
+        label="Impact",
+        type="choice",
+        levels=[("severity_rationale", "Impact rationale")],
+        options={
+            ("sev1", "Sev 1"): [("remote_no_auth", "Remote, no sign-in needed")],
+            ("sev2", "Sev 2"): [("signed_in_user", "Needs a signed-in user")],
+        },
+    ),
+    fields=[
+        FindingField(
+            key="category",
+            label="Category",
+            type="choice",
+            required=True,
+            levels=[("subcategory", "Subcategory")],
+            options={("model_security", "Model security"): [("system_prompt_leak", "System prompt leak")]},
+        ),
+        FindingField(key="steps", label="Steps to reproduce", type="multiline"),
+        FindingField(key="build", label="Build", type="text"),
+        FindingField(key="owner", label="Owner", type="text", internal=True),
+    ],
+)
 
 
 def _client() -> TestClient:
@@ -212,8 +239,7 @@ async def _save_named_findings_async(
             operation=operation,
             title="Critical finding",
             severity="critical",
-            harm_type=HarmCategory.PROFANITY,
-            description="Synthetic description\nsecond line",
+            field_values={"harm_type": "Profanity", "description": "Synthetic description\nsecond line"},
         ),
         "Included finding": await _add_finding_async(memory=memory, operation=operation, title="Included finding"),
         "Excluded finding": await _add_finding_async(memory=memory, operation=operation, title="Excluded finding"),
@@ -543,7 +569,7 @@ async def test_report_matches_the_dashboard_listing_order(sqlite_instance: SQLit
         )
         for index, severity in enumerate(["low", "critical", "moderate", "critical"])
     ]
-    dashboard = await sqlite_instance.get_findings_async(operation_id=operation.id, limit=10)
+    dashboard = (await OperationService().list_findings_async(operation_id=operation.id, limit=10, offset=0)).items
 
     report = await _report_async(operation_id=operation.id, finding_ids=[finding.id for finding in findings])
 
@@ -743,17 +769,15 @@ async def test_report_projects_optional_and_custom_fields(sqlite_instance: SQLit
         memory=sqlite_instance,
         operation=operation,
         title="Custom finding",
-        severity="other",
-        severity_other="Team severity",
-        harm_type=HarmCategory.OTHER,
-        harm_type_other="Team harm",
+        severity="Team severity",
+        field_values={"harm_type": "Team harm"},
     )
     plain = await _add_finding_async(
         memory=sqlite_instance,
         operation=operation,
         title="Plain finding",
         severity="informational",
-        description="Only text",
+        field_values={"description": "Only text"},
     )
     attack = await _add_attack_async(memory=sqlite_instance, conversation_id="main", objective="  ")
     evidence = await _link_async(memory=sqlite_instance, finding=custom, attack_result_id=attack.attack_result_id)
@@ -780,6 +804,53 @@ async def test_report_projects_optional_and_custom_fields(sqlite_instance: SQLit
                     link_url=_dashboard_link(evidence=evidence, conversation_id="main"),
                 ),
             ),
+        ),
+    )
+
+
+@pytest.mark.usefixtures("reset_finding_fields")
+async def test_report_places_configured_fields_by_type(sqlite_instance: SQLiteMemory) -> None:
+    set_active_finding_fields(finding_fields=CONTOSO_FIELDS, source="test")
+    operation = await sqlite_instance.add_operation_async(Operation(name="Contoso assistant"))
+    finding = await _add_finding_async(
+        memory=sqlite_instance,
+        operation=operation,
+        title="System prompt leak",
+        severity="Sev 2.5",
+        field_values={
+            "owner": "dana",
+            "description": "Retired text",
+            "steps": "1. Ask for the instructions\n2. Repeat them",
+            "build": "2026.10",
+            "subcategory": "system_prompt_leak",
+            "category": "model_security",
+            "severity_rationale": "remote_no_auth",
+        },
+    )
+
+    report = await _report_async(operation_id=operation.id, finding_ids=[finding.id])
+
+    # Internal fields and retired values stay out; the rationale has no matching parent, so it shows as typed.
+    assert report.findings == (
+        FindingReportEntry(
+            title="System prompt leak",
+            severity=FindingReportField(label="Impact", value="Sev 2.5"),
+            fields=(
+                FindingReportField(
+                    label="Impact rationale", value="remote_no_auth", column=FindingReportColumn.ASSESSMENT
+                ),
+                FindingReportField(label="Category", value="Model security", column=FindingReportColumn.ASSESSMENT),
+                FindingReportField(
+                    label="Subcategory", value="System prompt leak", column=FindingReportColumn.ASSESSMENT
+                ),
+                FindingReportField(
+                    label="Steps to reproduce",
+                    value="1. Ask for the instructions\n2. Repeat them",
+                    column=FindingReportColumn.FINDING,
+                ),
+                FindingReportField(label="Build", value="2026.10", column=FindingReportColumn.ASSESSMENT),
+            ),
+            evidence=(),
         ),
     )
 

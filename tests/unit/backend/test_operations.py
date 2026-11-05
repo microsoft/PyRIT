@@ -18,6 +18,7 @@ from pyrit.backend.services.operation_service import FindingNotFoundError, Opera
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.memory_models import AttackResultEntry, Base, PromptMemoryEntry
 from pyrit.models import (
+    DEFAULT_FINDING_FIELDS,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
@@ -25,12 +26,15 @@ from pyrit.models import (
     ConversationType,
     Finding,
     FindingEvidence,
+    FindingField,
+    FindingFields,
     Message,
     MessagePiece,
     Operation,
     Score,
 )
-from pyrit.models.harm_category import HarmCategory
+from pyrit.setup.finding_fields import reset_active_finding_fields, set_active_finding_fields
+from unit.backend.mocks import read_finding_async
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -139,7 +143,7 @@ def test_findings_are_created_and_listed_under_an_operation(compatibility_header
     assert created.status_code == 201
     finding = created.json()
     assert finding["operation_id"] == operation_id
-    assert finding["description"] == ""
+    assert finding["field_values"] == {}
     client.post(f"/api/operations/{other_id}/findings", json={"title": "Elsewhere", "severity": "low"})
     listed = client.get(f"/api/operations/{operation_id}/findings", params={"limit": 1}).json()
     assert listed == {"items": [{**finding, "evidence_count": 0}], "has_more": False, "next_offset": None}
@@ -147,48 +151,75 @@ def test_findings_are_created_and_listed_under_an_operation(compatibility_header
     assert counts == {"Case": {"informational": 1}, "Other": {"low": 1}}
 
 
-def test_finding_options_exposes_canonical_harm_types(compatibility_headers: dict[str, str]) -> None:
+@pytest.mark.usefixtures("contoso_finding_fields")
+async def test_findings_list_in_the_active_severity_order_async(
+    sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str]
+) -> None:
     client = TestClient(app, headers=compatibility_headers)
-    response = client.get("/api/operations/finding-options")
-    assert response.status_code == 200
-    assert response.json() == {"harm_types": [category.value for category in HarmCategory]}
-    assert response.json()["harm_types"].count("Other") == 1
-    assert TestClient(app).get("/api/operations/finding-options").status_code != 200
+    operation_id = client.post("/api/operations", json={"name": "Contoso"}).json()["id"]
+    path = f"/api/operations/{operation_id}/findings"
+    steps = {"steps": "1. Open"}
+    assert client.post(path, json={"title": "Second", "severity": "sev2", "field_values": steps}).status_code == 201
+    await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=UUID(operation_id), title="Unmatched", severity="Sev 2.5", field_values=steps)
+    )
+    assert client.post(path, json={"title": "First", "severity": "sev1", "field_values": steps}).status_code == 201
+    listed = client.get(path).json()["items"]
+    assert [item["severity"] for item in listed] == ["sev1", "sev2", "Sev 2.5"]
 
 
-def test_finding_api_round_trips_optional_and_custom_classifications(compatibility_headers: dict[str, str]) -> None:
+def test_finding_fields_returns_the_active_fields(
+    compatibility_headers: dict[str, str], contoso_finding_fields: FindingFields
+) -> None:
     client = TestClient(app, headers=compatibility_headers)
-    operation_id = client.post("/api/operations", json={"name": "Classifications"}).json()["id"]
+    assert FindingFields.model_validate(client.get("/api/operations/finding-fields").json()) == contoso_finding_fields
+    reset_active_finding_fields()
+    assert FindingFields.model_validate(client.get("/api/operations/finding-fields").json()) == DEFAULT_FINDING_FIELDS
+    assert client.get("/api/operations/finding-options").status_code != 200
+    assert TestClient(app).get("/api/operations/finding-fields").status_code != 200
+
+
+@pytest.mark.usefixtures("contoso_finding_fields")
+def test_finding_create_is_checked_against_the_active_fields(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation_id = client.post("/api/operations", json={"name": "Contoso"}).json()["id"]
+    path = f"/api/operations/{operation_id}/findings"
+    rejected = client.post(path, json={"title": "Leak", "severity": "sev1"})
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"] == "Steps to reproduce is required."
+    assert client.get(path).json()["items"] == []
+    created = client.post(path, json={"title": "Leak", "severity": "sev1", "field_values": {"steps": "1. Open"}})
+    assert created.status_code == 201
+
+
+def test_finding_api_round_trips_field_values_and_drops_blanks(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation_id = client.post("/api/operations", json={"name": "Field values"}).json()["id"]
     path = f"/api/operations/{operation_id}/findings"
     body = {
         "title": "Custom",
-        "severity": "other",
-        "severity_other": "  Team severity  ",
-        "harm_type": "Other",
-        "harm_type_other": "  Team harm  ",
+        "severity": "  Team severity  ",
+        "field_values": {"harm_type": "Malware", "description": " "},
     }
     response = client.post(path, json=body)
     assert response.status_code == 201
     finding = response.json()
-    assert {key: finding[key] for key in body} == body
+    assert finding["severity"] == "Team severity"
+    assert finding["field_values"] == {"harm_type": "Malware"}
     assert client.get(path).json()["items"] == [{**finding, "evidence_count": 0}]
-    updated = client.put(f"{path}/{finding['id']}", json={"title": "Edited", "severity": "low", "harm_type": "Malware"})
+    updated = client.put(f"{path}/{finding['id']}", json={"title": "Edited", "severity": "low"})
     assert updated.status_code == 200
-    assert updated.json()["harm_type"] == "Malware"
-    assert updated.json()["severity_other"] is None
-    assert updated.json()["harm_type_other"] is None
+    assert updated.json()["field_values"] == {}
     assert updated.json()["id"] == finding["id"]
     assert updated.json()["created_at"] == finding["created_at"]
     for invalid in [
-        {"severity": "other"},
-        {"severity": "low", "severity_other": "Stray"},
-        {"severity": "low", "harm_type": "Other"},
-        {"severity": "low", "harm_type": "Unknown"},
+        {"severity": " "},
+        {"severity": "low", "harm_type": "Malware"},
+        {"severity": "low", "field_values": {"harm_type": 3}},
     ]:
         assert client.post(path, json={"title": "Invalid", **invalid}).status_code == 422
         assert client.put(f"{path}/{finding['id']}", json={"title": "Invalid", **invalid}).status_code == 422
-    cleared = client.put(f"{path}/{finding['id']}", json={"title": "No harm type", "severity": "moderate"})
-    assert cleared.json()["harm_type"] is None
+    assert client.get(path).json()["items"] == [{**updated.json(), "evidence_count": 0}]
 
 
 def test_findings_require_an_existing_operation(compatibility_headers: dict[str, str]) -> None:
@@ -265,7 +296,8 @@ def test_finding_create_saves_nothing_when_its_evidence_cannot_be_linked(
         ("/api/operations", {"name": " "}),
         ("/api/operations", {"name": "😀" * 65}),
         ("findings", {"title": "", "severity": "low"}),
-        ("findings", {"title": "Assessment", "severity": "urgent"}),
+        ("findings", {"title": "Assessment", "severity": " "}),
+        ("findings", {"title": "Assessment", "severity": "low", "description": "x"}),
         ("findings", {"title": "Assessment", "severity": "low", "operation": "Case"}),
     ],
 )
@@ -297,9 +329,16 @@ def test_finding_update_and_delete_preserve_identity_and_operation(
     path = f"/api/operations/{operation['id']}/findings"
     original = client.post(path, json={"title": "Original", "severity": "low"}).json()
     finding_path = f"{path}/{original['id']}"
-    edited = client.put(finding_path, json={"title": "Edited", "severity": "critical", "description": "Notes"})
+    edited = client.put(
+        finding_path, json={"title": "Edited", "severity": "critical", "field_values": {"description": "Notes"}}
+    )
     assert edited.status_code == 200
-    assert edited.json() == {**original, "title": "Edited", "severity": "critical", "description": "Notes"}
+    assert edited.json() == {
+        **original,
+        "title": "Edited",
+        "severity": "critical",
+        "field_values": {"description": "Notes"},
+    }
     assert client.get(path).json()["items"] == [{**edited.json(), "evidence_count": 0}]
     deleted = client.delete(finding_path)
     assert deleted.status_code == 204
@@ -326,7 +365,8 @@ def test_finding_mutations_reject_wrong_operations_and_invalid_fields(
     finding_path = f"{path}/{original['id']}"
     for invalid in [
         {**body, "title": " "},
-        {**body, "severity": "urgent"},
+        {"title": "Assessment", "severity": " "},
+        {"title": "Assessment", "severity": "low", "description": "x"},
         {**body, "operation_id": other_id},
         {**body, "created_at": original["created_at"]},
     ]:
@@ -334,6 +374,105 @@ def test_finding_mutations_reject_wrong_operations_and_invalid_fields(
     assert TestClient(app).put(finding_path, json=body).status_code != 200
     assert TestClient(app).delete(finding_path).status_code != 204
     assert client.get(path).json()["items"] == [{**original, "evidence_count": 0}]
+
+
+async def test_update_keeps_an_unchanged_retired_value_async(
+    sqlite_instance: SQLiteMemory, retired_value_finding_async: Finding, compatibility_headers: dict[str, str]
+) -> None:
+    finding = retired_value_finding_async
+    response = TestClient(app, headers=compatibility_headers).put(
+        f"/api/operations/{finding.operation_id}/findings/{finding.id}",
+        json={"title": "Leak", "severity": "sev1", "field_values": {"steps": "1. Open", "description": "Old text"}},
+    )
+    assert response.status_code == 200
+    stored = await read_finding_async(memory=sqlite_instance, finding=finding)
+    assert stored.field_values == {"steps": "1. Open", "description": "Old text"}
+
+
+async def test_update_rejects_a_changed_retired_value_async(
+    sqlite_instance: SQLiteMemory, retired_value_finding_async: Finding, compatibility_headers: dict[str, str]
+) -> None:
+    finding = retired_value_finding_async
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{finding.operation_id}/findings"
+    body = {"title": "Leak", "severity": "sev1", "field_values": {"steps": "1. Open", "description": "New text"}}
+    response = client.put(f"{path}/{finding.id}", json=body)
+    assert response.status_code == 422
+    assert (
+        response.json()["detail"]
+        == "Finding field 'description' is no longer configured, so its saved value can't change."
+    )
+    stored = await read_finding_async(memory=sqlite_instance, finding=finding)
+    assert stored.field_values == {"steps": "1. Open", "description": "Old text"}
+    assert client.put(f"{path}/{MISSING_ID}", json=body).status_code == 404
+
+
+async def test_update_removes_a_listed_retired_value_async(
+    sqlite_instance: SQLiteMemory, retired_value_finding_async: Finding, compatibility_headers: dict[str, str]
+) -> None:
+    finding = retired_value_finding_async
+    response = TestClient(app, headers=compatibility_headers).put(
+        f"/api/operations/{finding.operation_id}/findings/{finding.id}",
+        json={
+            "title": "Leak",
+            "severity": "sev1",
+            "field_values": {"steps": "1. Open"},
+            "remove_retired_keys": ["description"],
+        },
+    )
+    assert response.status_code == 200
+    assert (await read_finding_async(memory=sqlite_instance, finding=finding)).field_values == {"steps": "1. Open"}
+
+
+async def test_update_keeps_a_current_value_that_a_stale_client_resends_async(
+    sqlite_instance: SQLiteMemory,
+    retired_value_finding_async: Finding,
+    contoso_finding_fields: FindingFields,
+    compatibility_headers: dict[str, str],
+) -> None:
+    finding = retired_value_finding_async
+    # A live apply makes ``description`` current again, while the client still shows it as retired.
+    reset_active_finding_fields()
+    description = FindingField(key="description", label="Description", type="multiline")
+    set_active_finding_fields(
+        finding_fields=FindingFields(
+            severity=contoso_finding_fields.severity, fields=[*contoso_finding_fields.fields, description]
+        ),
+        source="test",
+    )
+    response = TestClient(app, headers=compatibility_headers).put(
+        f"/api/operations/{finding.operation_id}/findings/{finding.id}",
+        json={"title": "Leak", "severity": "sev1", "field_values": {"steps": "1. Open", "description": "Old text"}},
+    )
+    assert response.status_code == 200
+    stored = await read_finding_async(memory=sqlite_instance, finding=finding)
+    assert stored.field_values == {"steps": "1. Open", "description": "Old text"}
+
+
+async def test_update_keeps_an_unchanged_severity_that_is_no_longer_an_option_async(
+    sqlite_instance: SQLiteMemory, unmatched_severity_finding_async: Finding, compatibility_headers: dict[str, str]
+) -> None:
+    finding = unmatched_severity_finding_async
+    response = TestClient(app, headers=compatibility_headers).put(
+        f"/api/operations/{finding.operation_id}/findings/{finding.id}",
+        json={"title": "Leak", "severity": "low", "field_values": {"steps": "1. Open"}},
+    )
+    assert response.status_code == 200
+    assert response.json()["severity"] == "low"
+    assert (await read_finding_async(memory=sqlite_instance, finding=finding)).severity == "low"
+
+
+async def test_update_rejects_changing_to_another_severity_that_is_not_an_option_async(
+    sqlite_instance: SQLiteMemory, unmatched_severity_finding_async: Finding, compatibility_headers: dict[str, str]
+) -> None:
+    finding = unmatched_severity_finding_async
+    response = TestClient(app, headers=compatibility_headers).put(
+        f"/api/operations/{finding.operation_id}/findings/{finding.id}",
+        json={"title": "Leak", "severity": "medium", "field_values": {"steps": "1. Open"}},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Severity has no option 'medium'."
+    assert (await read_finding_async(memory=sqlite_instance, finding=finding)).severity == "low"
 
 
 @pytest.fixture

@@ -1,14 +1,16 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
 import { operationsApi } from '@/services/api'
-import type { Operation, OperationListItem } from '@/types'
+import { deferred } from '@/test-utils/deferred'
+import { DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtures'
+import type { FindingFields, Operation, OperationListItem } from '@/types'
 import OperationsPage from './OperationsPage'
 
 jest.mock('@/services/api', () => ({
-  operationsApi: { list: jest.fn(), create: jest.fn() },
+  operationsApi: { list: jest.fn(), create: jest.fn(), getFindingFields: jest.fn() },
 }))
 
 const OPERATION: OperationListItem = {
@@ -42,6 +44,7 @@ function conflict(existing: Operation): unknown {
 beforeEach(() => {
   jest.clearAllMocks()
   jest.mocked(operationsApi.list).mockResolvedValue({ items: [OPERATION] })
+  jest.mocked(operationsApi.getFindingFields).mockResolvedValue(DEFAULT_FINDING_FIELDS_FIXTURE)
 })
 
 it('lists operations as links to their pages', async () => {
@@ -51,19 +54,39 @@ it('lists operations as links to their pages', async () => {
   expect(screen.getByTestId('location')).toHaveTextContent('/operations/op-1')
 })
 
-it('summarizes finding counts by severity in severity order', async () => {
+it('summarizes finding counts in the configured order with one Other badge', async () => {
   jest.mocked(operationsApi.list).mockResolvedValue({
     items: [
-      { ...OPERATION, finding_counts: { low: 1, critical: 2 } },
+      { ...OPERATION, finding_counts: { low: 1, 'Team severity': 1, critical: 2, sev3: 2 } },
       { ...OPERATION, id: 'op-2', name: 'Operation B' },
     ],
   })
   renderPage()
   const rowA = (await screen.findByRole('link', { name: /Operation A/ })).closest('tr') as HTMLElement
-  const badges = within(rowA).getAllByText(/^\d+ /)
-  expect(badges.map(badge => badge.textContent)).toEqual(['2 Critical', '1 Low'])
+  const badges = await within(rowA).findAllByText(/^\d+ /)
+  expect(badges.map(badge => badge.textContent)).toEqual(['2 Critical', '1 Low', '3 Other'])
+  expect(badges[0]).not.toHaveAccessibleDescription()
+  expect(badges[2]).toHaveAccessibleDescription('sev3: 2, Team severity: 1')
   const rowB = screen.getByRole('link', { name: /Operation B/ }).closest('tr') as HTMLElement
   expect(within(rowB).getByText('No findings')).toBeInTheDocument()
+})
+
+it('waits for the finding fields before showing counts and offers Retry on failure', async () => {
+  const user = userEvent.setup()
+  const fields = deferred<FindingFields>()
+  jest.mocked(operationsApi.getFindingFields).mockReturnValueOnce(fields.promise)
+  jest.mocked(operationsApi.list).mockResolvedValue({ items: [{ ...OPERATION, finding_counts: { critical: 2 } }] })
+  renderPage()
+  const row = (await screen.findByRole('link', { name: /Operation A/ })).closest('tr') as HTMLElement
+  expect(within(row).getByRole('progressbar', { name: 'Loading finding counts' })).toBeInTheDocument()
+  expect(within(row).queryByText('2 Critical')).not.toBeInTheDocument()
+
+  await act(async () => { fields.reject(new Error('Fields offline')) })
+  expect(await screen.findByText(/Could not load finding fields: Fields offline/)).toBeInTheDocument()
+  expect(within(row).queryByText('2 Critical')).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Retry finding fields' }))
+  expect(await within(row).findByText('2 Critical')).toBeInTheDocument()
+  expect(screen.queryByText(/Could not load finding fields/)).not.toBeInTheDocument()
 })
 
 it('shows an empty state when no operations exist', async () => {

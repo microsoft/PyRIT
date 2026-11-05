@@ -2,24 +2,9 @@
 # Licensed under the MIT license.
 
 from datetime import UTC, datetime
-from enum import Enum
-from typing import Self
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from pyrit.models.harm_category import HarmCategory
-
-
-class FindingSeverity(str, Enum):
-    """Operator-selected severity, ordered from highest to lowest."""
-
-    CRITICAL = "critical"
-    IMPORTANT = "important"
-    MODERATE = "moderate"
-    LOW = "low"
-    INFORMATIONAL = "informational"
-    OTHER = "other"
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
 
 class FindingCreate(BaseModel):
@@ -28,39 +13,16 @@ class FindingCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str
-    description: str = ""
-    severity: FindingSeverity
-    severity_other: str | None = None
-    harm_type: HarmCategory | None = None
-    harm_type_other: str | None = None
-
-    @model_validator(mode="after")
-    def _validate_classifications(self) -> Self:
-        """
-        Require custom text only for an Other selection.
-
-        Returns:
-            Self: The validated finding.
-
-        Raises:
-            ValueError: If custom text is missing, blank, or has no Other selection.
-        """
-        for field, is_other, text in [
-            ("severity", self.severity == FindingSeverity.OTHER, self.severity_other),
-            ("harm_type", self.harm_type == HarmCategory.OTHER, self.harm_type_other),
-        ]:
-            if is_other:
-                if text is None or not text.strip():
-                    raise ValueError(f"{field}_other must not be blank when {field} is Other.")
-            elif text is not None:
-                raise ValueError(f"{field}_other is only allowed when {field} is Other.")
-        return self
+    severity: str = Field(description="The key of a severity option, or Other text; surrounding whitespace is removed")
+    field_values: dict[str, str] = Field(
+        {}, description="Values by field or level key, each an option's key or text; blank values are dropped"
+    )
 
     @field_validator("title")
     @classmethod
     def _reject_blank(cls, value: str) -> str:
         """
-        Reject a blank title without normalizing its contents.
+        Reject blank text without normalizing its contents.
 
         Returns:
             str: The original value.
@@ -71,6 +33,34 @@ class FindingCreate(BaseModel):
         if not value.strip():
             raise ValueError("Must not be blank.")
         return value
+
+    @field_validator("severity")
+    @classmethod
+    def _strip_severity(cls, value: str) -> str:
+        """
+        Remove surrounding whitespace and reject blank text.
+
+        Returns:
+            str: The severity without surrounding whitespace.
+
+        Raises:
+            ValueError: If the severity is blank.
+        """
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Must not be blank.")
+        return stripped
+
+    @field_validator("field_values")
+    @classmethod
+    def _drop_blank_values(cls, value: dict[str, str]) -> dict[str, str]:
+        """
+        Drop empty and whitespace-only values, keeping other text exactly as entered.
+
+        Returns:
+            dict[str, str]: The non-blank values.
+        """
+        return {key: text for key, text in value.items() if text.strip()}
 
 
 class Finding(FindingCreate):

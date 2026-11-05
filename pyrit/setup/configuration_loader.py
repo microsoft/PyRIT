@@ -24,7 +24,7 @@ from pyrit.common.text_helper import is_non_empty_string
 from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.common.yaml_loadable import YamlLoadable
-from pyrit.models import class_name_to_snake_case
+from pyrit.models import FindingFields, class_name_to_snake_case
 from pyrit.setup.environment_loading import validate_env_akv_strict
 from pyrit.setup.initialization import AZURE_SQL, IN_MEMORY, SQLITE, initialize_pyrit_async, reinitialize_pyrit_async
 
@@ -89,6 +89,37 @@ class _ConfigurationLayer:
     top_level_extension_fields: frozenset[str]
     nested_extension_fields: frozenset[str]
     reset_extensions: bool
+
+
+def _check_findings_initializers(initializers: Sequence["PyRITInitializer"]) -> None:
+    """
+    Check the finding fields that ``FindingsInitializer`` subclasses would set, without making them active.
+
+    Code that calls ``set_active_finding_fields`` directly isn't checked.
+
+    Args:
+        initializers (Sequence[PyRITInitializer]): The initializers of the replacement setup pass.
+
+    Raises:
+        ValueError: If two or more ``FindingsInitializer`` subclasses are configured, or the configured one
+            returns invalid fields or something other than ``FindingFields``.
+    """
+    from pyrit.setup.initializers import FindingsInitializer
+
+    setters = [initializer for initializer in initializers if isinstance(initializer, FindingsInitializer)]
+    if len(setters) > 1:
+        first, second = (type(setter).__name__ for setter in setters[:2])
+        raise ValueError(
+            f"{first} and {second} both set the finding fields. Use one FindingsInitializer per deployment."
+        )
+    if not setters:
+        return
+    initializer = setters[0]
+    result = initializer.get_finding_fields()
+    if not isinstance(result, FindingFields):
+        raise ValueError(
+            f"{type(initializer).__name__}.get_finding_fields() must return FindingFields, not {type(result).__name__}."
+        )
 
 
 @dataclass
@@ -706,7 +737,9 @@ class ConfigurationLoader(YamlLoadable):
             PreparedReinitialization: Immutable inputs ready for the mutation phase.
 
         Raises:
-            ValueError: If an initializer is invalid or a required environment value is missing.
+            ValueError: If an initializer is invalid, a required environment value is missing, more than one
+                ``FindingsInitializer`` subclass is configured, or the configured one returns invalid finding
+                fields. Code that calls ``set_active_finding_fields`` directly isn't checked.
         """
         from pyrit.registry import InitializerRegistry
         from pyrit.setup.initializers.targets import TargetInitializer
@@ -744,6 +777,7 @@ class ConfigurationLoader(YamlLoadable):
                 raise ValueError(
                     f"Initializer '{type(initializer).__name__}' has missing required environment variables."
                 )
+        _check_findings_initializers(initializers)
 
         return PreparedReinitialization(
             environment_values=dict(environment_values),

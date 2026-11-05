@@ -2,21 +2,48 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import {
   Badge, Button, MessageBar, MessageBarBody, Spinner, Table, TableBody, TableCell, TableHeader,
-  TableHeaderCell, TableRow, Text,
+  TableHeaderCell, TableRow, Text, Tooltip,
 } from '@fluentui/react-components'
 
+import { useFindingFields } from '@/hooks/useFindingFields'
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { FindingSeverity, OperationListItem } from '@/types'
-import { FINDING_SEVERITY_LABELS, findingSeverityColor } from '@/utils/findingSeverity'
+import type { FindingFields, OperationListItem } from '@/types'
+import { severityCountBadges, type SeverityCountBadge } from '@/utils/findingFields'
 import { useOperationsStyles } from './Operations.styles'
 import OperationCreateDialog from './OperationCreateDialog'
 
-const SEVERITY_ORDER = Object.keys(FINDING_SEVERITY_LABELS) as FindingSeverity[]
+interface FindingCountsProps {
+  fields: FindingFields
+  counts: Record<string, number>
+}
+
+function FindingCounts({ fields, counts }: FindingCountsProps) {
+  const styles = useOperationsStyles()
+  const badges = severityCountBadges(fields, counts)
+  if (badges.length === 0) return <Text size={200} className={styles.muted}>No findings</Text>
+  return (
+    <div className={styles.badgeGroup}>
+      {badges.map((badge: SeverityCountBadge) => {
+        const text = `${badge.count} ${badge.label}`
+        // The Other badge's key can match an option key, so option badges and it use separate key spaces.
+        if (badge.tooltip === null) {
+          return <Badge key={`option-${badge.key}`} appearance="tint" color={badge.color}>{text}</Badge>
+        }
+        return (
+          <Tooltip key="unmatched" relationship="description" content={badge.tooltip}>
+            <Badge appearance="tint" color={badge.color} tabIndex={0}>{text}</Badge>
+          </Tooltip>
+        )
+      })}
+    </div>
+  )
+}
 
 export default function OperationsPage() {
   const styles = useOperationsStyles()
   const navigate = useNavigate()
+  const { fields, error: fieldsError, retry: retryFields } = useFindingFields()
   const [operations, setOperations] = useState<OperationListItem[]>([])
   const [settledRevision, setSettledRevision] = useState(-1)
   const [revision, setRevision] = useState(0)
@@ -41,6 +68,10 @@ export default function OperationsPage() {
         />
       </header>
       <Text>Engagements that group human findings.</Text>
+      {fieldsError && <MessageBar intent="error"><MessageBarBody>
+        Could not load finding fields: {fieldsError}{' '}
+        <Button className={styles.button} aria-label="Retry finding fields" onClick={retryFields}>Retry</Button>
+      </MessageBarBody></MessageBar>}
       {loading ? <Spinner label="Loading operations…" /> : error ? (
         <MessageBar intent="error"><MessageBarBody>
           Could not load operations: {error}{' '}
@@ -58,35 +89,23 @@ export default function OperationsPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {operations.map(operation => {
-              const counts = SEVERITY_ORDER.flatMap(severity => {
-                const count = operation.finding_counts[severity]
-                return count ? [{ severity, count }] : []
-              })
-              return (
-                <TableRow key={operation.id}>
-                  <TableCell>
-                    <Link to={`/operations/${encodeURIComponent(operation.id)}`} className={styles.link}
-                      translate="no">{operation.name}</Link>
-                  </TableCell>
-                  <TableCell>
-                    {counts.length > 0 ? (
-                      <div className={styles.badgeGroup}>
-                        {counts.map(({ severity, count }) => (
-                          <Badge key={severity} appearance="tint" color={findingSeverityColor(severity)}>
-                            {count} {FINDING_SEVERITY_LABELS[severity]}
-                          </Badge>
-                        ))}
-                      </div>
-                    ) : <Text size={200} className={styles.muted}>No findings</Text>}
-                  </TableCell>
-                  <TableCell>
-                    <Text size={200}><time dateTime={operation.created_at}>
-                      {new Date(operation.created_at).toLocaleString()}</time></Text>
-                  </TableCell>
-                </TableRow>
-              )
-            })}
+            {operations.map(operation => (
+              <TableRow key={operation.id}>
+                <TableCell>
+                  <Link to={`/operations/${encodeURIComponent(operation.id)}`} className={styles.link}
+                    translate="no">{operation.name}</Link>
+                </TableCell>
+                <TableCell>
+                  {fields !== null ? <FindingCounts fields={fields} counts={operation.finding_counts} />
+                    : fieldsError ? <Text size={200} className={styles.muted}>Counts unavailable</Text>
+                      : <Spinner size="extra-tiny" aria-label="Loading finding counts" />}
+                </TableCell>
+                <TableCell>
+                  <Text size={200}><time dateTime={operation.created_at}>
+                    {new Date(operation.created_at).toLocaleString()}</time></Text>
+                </TableCell>
+              </TableRow>
+            ))}
           </TableBody>
         </Table>
       )}

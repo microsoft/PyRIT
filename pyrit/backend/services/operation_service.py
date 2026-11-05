@@ -14,6 +14,7 @@ from pyrit.backend.models.operations import (
     FindingEvidenceListResponse,
     FindingListItem,
     FindingListResponse,
+    FindingUpdateRequest,
     OperationDetail,
     OperationListItem,
     OperationUpdateRequest,
@@ -25,9 +26,12 @@ from pyrit.models import (
     Finding,
     FindingCreate,
     FindingEvidence,
+    FindingFields,
+    FindingValuesError,
     Operation,
     OperationCreate,
 )
+from pyrit.setup.finding_fields import get_active_finding_fields
 
 # Keeps every ID list a batch reads within SQL Server's 2100-parameter limit.
 _EVIDENCE_BATCH_SIZE = 500
@@ -162,8 +166,10 @@ class OperationService:
 
         Raises:
             FindingConflictError: If the ID already belongs to a different finding.
+            FindingValuesError: If the values do not fit the active finding fields.
         """
         await self.get_async(operation_id)
+        get_active_finding_fields().check_values(severity=request.severity, field_values=request.field_values)
         finding = Finding(
             operation_id=operation_id,
             id=request.id or uuid4(),
@@ -196,7 +202,11 @@ class OperationService:
         """
         await self.get_async(operation_id)
         findings = await CentralMemory.get_memory_instance().get_findings_async(
-            operation_id=operation_id, limit=limit + 1, offset=offset, title_query=title_query
+            operation_id=operation_id,
+            limit=limit + 1,
+            offset=offset,
+            title_query=title_query,
+            severity_order=get_active_finding_fields().severity_order,
         )
         has_more = len(findings) > limit
         page = findings[:limit]
@@ -269,7 +279,11 @@ class OperationService:
         """
         await self.get_async(operation_id)
         memory = CentralMemory.get_memory_instance()
-        findings = await memory.get_findings_by_ids_async(operation_id=operation_id, finding_ids=finding_ids)
+        findings = await memory.get_findings_by_ids_async(
+            operation_id=operation_id,
+            finding_ids=finding_ids,
+            severity_order=get_active_finding_fields().severity_order,
+        )
         found = {finding.id for finding in findings}
         missing = next((finding_id for finding_id in finding_ids if finding_id not in found), None)
         if missing is not None:
@@ -422,23 +436,64 @@ class OperationService:
         if not any(stat.message_count > 0 for stat in stats.values()):
             raise FindingEvidenceNotFoundError("The attack result has no saved messages.")
 
-    async def update_finding_async(self, *, operation_id: UUID, finding_id: UUID, request: FindingCreate) -> Finding:
+    async def update_finding_async(
+        self, *, operation_id: UUID, finding_id: UUID, request: FindingUpdateRequest
+    ) -> Finding:
         """
-        Replace a finding's editable fields within an existing operation.
+        Replace a finding's current field values within an existing operation.
+
+        A current field left out is cleared. Values of fields that are no longer configured are kept and can't
+        change; list them in ``remove_retired_keys`` to delete them. Values that haven't changed may use options
+        that no longer exist.
 
         Returns:
             Finding: The updated finding.
 
         Raises:
             FindingNotFoundError: If the finding is missing or belongs to another operation.
+            FindingValuesError: If ``remove_retired_keys`` lists a key that isn't a retired value of the finding
+                or that is also sent, or the values do not fit the active finding fields.
         """
         await self.get_async(operation_id)
+        stored = await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
+        fields = get_active_finding_fields()
+        values = self._merge_retired_values(fields=fields, stored=stored, request=request)
+        fields.check_values(
+            severity=request.severity,
+            field_values=values,
+            previous_severity=stored.severity,
+            previous_values=stored.field_values,
+        )
+        replacement = FindingCreate(title=request.title, severity=request.severity, field_values=values)
         try:
             return await CentralMemory.get_memory_instance().update_finding_async(
-                operation_id=operation_id, finding_id=finding_id, request=request
+                operation_id=operation_id, finding_id=finding_id, request=replacement
             )
         except LookupError as exc:
             raise FindingNotFoundError(str(exc)) from exc
+
+    @staticmethod
+    def _merge_retired_values(
+        *, fields: FindingFields, stored: Finding, request: FindingUpdateRequest
+    ) -> dict[str, str]:
+        """
+        Add the stored values of fields that are no longer configured to the sent values.
+
+        Returns:
+            dict[str, str]: The sent values, plus each retired value not listed in ``remove_retired_keys``.
+
+        Raises:
+            FindingValuesError: If ``remove_retired_keys`` lists a key that isn't a retired value of the finding
+                or that is also sent.
+        """
+        retired = dict(fields.describe_values(severity=stored.severity, field_values=stored.field_values).retired)
+        for key in request.remove_retired_keys:
+            if key not in retired:
+                raise FindingValuesError(f"{key!r} is not a retired value of this finding.")
+            if key in request.field_values:
+                raise FindingValuesError(f"{key!r} can't be both sent and removed.")
+        kept = {key: value for key, value in retired.items() if key not in request.remove_retired_keys}
+        return {**kept, **request.field_values}
 
     async def delete_finding_async(self, *, operation_id: UUID, finding_id: UUID) -> None:
         """
