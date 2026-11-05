@@ -323,7 +323,9 @@ function ParameterInput({
         </FileDropZone>
       ) : (
         <Input
-          disabled={disabled}
+          // Read-only, not disabled: a disabled input drops focus to <body>
+          // when the form is submitted with Enter, and Escape stops closing the dialog.
+          readOnly={disabled}
           value={value}
           placeholder={parameterDefaultValue(parameter) || undefined}
           onChange={(_, data) => onChange(data.value)}
@@ -706,7 +708,7 @@ export default function CreateConverterDialog({
                     validationMessage={showValidation && !selectedType ? 'Select a converter type' : undefined}
                   >
                     <Dropdown
-                      disabled={Boolean(editing)}
+                      disabled={Boolean(editing) || submitting}
                       aria-label="Converter type"
                       className={styles.typeDropdown}
                       listbox={{ className: styles.typeListbox }}
@@ -783,6 +785,7 @@ export default function CreateConverterDialog({
                     }
                   >
                     <Input
+                      readOnly={submitting}
                       value={registryName}
                       onChange={(_, data) => {
                         setRegistryName(data.value)

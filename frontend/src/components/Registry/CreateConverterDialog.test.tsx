@@ -199,11 +199,62 @@ describe('CreateConverterDialog', () => {
     await user.type(offset, '3')
     await user.click(screen.getByRole('button', { name: 'Apply Settings' }))
 
-    await waitFor(() => expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toBeDisabled())
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toHaveAttribute('readonly'))
 
     finishBuild({ identifier: { ...converter.identifier, hash: 'private-hash', caesar_offset: 3 } })
     await waitFor(() => expect(onTemporary).toHaveBeenCalledTimes(1))
     expect(mockedConvertersApi.buildConverter).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps Escape working after Enter submits Apply Settings and locks the input read-only', async () => {
+    const user = userEvent.setup()
+    const onClose = jest.fn()
+    const converter = {
+      converter_id: 'source',
+      identifier: {
+        class_name: 'CaesarConverter', class_module: 'pyrit.converter',
+        pyrit_version: 'test', hash: 'source-hash', caesar_offset: 1,
+      },
+    }
+    mockedConvertersApi.buildConverter.mockReturnValue(new Promise(() => {}))
+    renderDialog({ editing: { converter }, onTemporary: jest.fn(), onClose })
+    const offset = await screen.findByRole('textbox', { name: /caesar_offset/i })
+    await user.clear(offset)
+    await user.type(offset, '3{Enter}')
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toHaveAttribute('readonly'))
+    expect(screen.getByRole('textbox', { name: /caesar_offset/i })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('locks registry name and converter type while Add Converter is pending', async () => {
+    const user = userEvent.setup()
+    let finishCreate: (value: Awaited<ReturnType<typeof convertersApi.createConverter>>) => void = () => {}
+    mockedConvertersApi.createConverter.mockReturnValue(
+      new Promise((resolve) => { finishCreate = resolve }),
+    )
+    const onCreated = jest.fn()
+    renderDialog({ onCreated })
+    await selectConverterType('CaesarConverter')
+    const nameInput = screen.getByRole('textbox', { name: /registry name/i })
+    await user.clear(nameInput)
+    await user.type(nameInput, 'first')
+    await user.type(screen.getByRole('textbox', { name: /caesar_offset/i }), '5')
+    await user.click(screen.getByRole('button', { name: 'Add Converter' }))
+
+    await waitFor(() => expect(screen.getByRole('textbox', { name: /registry name/i })).toHaveAttribute('readonly'))
+    expect(screen.getByRole('combobox', { name: /converter type/i })).toBeDisabled()
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledTimes(1)
+    expect(mockedConvertersApi.createConverter).toHaveBeenCalledWith({
+      name: 'first', type: 'CaesarConverter', params: { caesar_offset: 5 },
+    })
+
+    finishCreate({
+      converter_id: 'first',
+      identifier: { class_name: 'CaesarConverter', class_module: 'pyrit.converter', hash: 'h', pyrit_version: '0' },
+    })
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('first', true))
   })
 
   it('loads converter classes from registry type metadata', async () => {
