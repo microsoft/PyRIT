@@ -196,7 +196,7 @@ A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredentia
 
 ### `registry_recipes_source`
 
-Stores saved targets, converters, scorers, and techniques in a local directory or Azure Blob container, so they come back when the backend restarts. An Azure URI may include a blob-name prefix:
+Stores saved targets, converters, scorers, and techniques in a local directory or Azure Blob container, so they come back when the backend restarts. Targets created through `POST /api/targets` with `"persist": true` are saved here. An Azure URI may include a blob-name prefix:
 
 ```yaml
 registry_recipes_source: https://account.blob.core.windows.net/pyrit-storage/registry-recipes

@@ -22,20 +22,23 @@ import pyrit.backend.services.runtime_lifecycle as lifecycle_module
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
-from pyrit.backend.routes import configuration, health
+from pyrit.backend.routes import configuration, health, targets
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import ScenarioRunService, _PreparedRun
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
+from pyrit.models.catalog.registry_recipe import ComponentRecipe
 from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry.components.converter_registry import ConverterRegistry
 from pyrit.registry.components.target_registry import TargetRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
+from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.scenario import Scenario
 from pyrit.setup.configuration_loader import ConfigurationLoader
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, make_scenario_result
 
 
@@ -626,11 +629,17 @@ async def test_management_publishes_target_upload_directory(tmp_path: Path) -> N
     app = FastAPI()
     with patch.dict(os.environ, {}, clear=True):
         service = RuntimeLifecycle(app=app, source=ConfigurationFileService(config_file_value=None))
-    config = ConfigurationLoader(memory_db_type="in_memory", env_files=[], target_upload_directory=str(tmp_path))
+    config = ConfigurationLoader(
+        memory_db_type="in_memory",
+        env_files=[],
+        target_upload_directory=str(tmp_path),
+        registry_recipes_source=str(tmp_path / "recipes"),
+    )
 
     await service._management_async(config)
 
     assert app.state.target_upload_directory == str(tmp_path)
+    assert app.state.registry_recipes_source == str(tmp_path / "recipes")
 
 
 async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repair(tmp_path: Path) -> None:
@@ -643,6 +652,7 @@ async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repai
     assert service.state == "restart-required"
     assert not app.state.allow_custom_initializers
     assert app.state.target_upload_directory is None
+    assert app.state.registry_recipes_source is None
     assert app.state.environment_file_service is None
     content, version = await source.read_with_version_async()
     assert content == "broken: ["
@@ -1169,3 +1179,36 @@ async def test_restore_cancellation_propagates_from_startup_async(runtime: Runti
             await _start_with_recipes_async(runtime, recipes=tmp_path / "recipes")
 
     assert runtime.state == "initializing"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_a_target_save_in_flight_makes_apply_busy_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+    TargetRegistry.reset_registry_singleton()
+    writing, finish_writing = Event(), Event()
+    create_recipe = RegistryRecipeStorage.create_recipe
+
+    def create_recipe_slowly(storage: RegistryRecipeStorage, *, name: str, recipe: ComponentRecipe) -> str:
+        writing.set()
+        finish_writing.wait(TEST_WATCHDOG_SECONDS)
+        return create_recipe(storage, name=name, recipe=recipe)
+
+    runtime.app.include_router(targets.router, prefix="/api")
+    runtime.app.state.registry_recipes_source = str(tmp_path / "recipes")
+    body = {"name": "saved_text", "type": "TextTarget", "params": {}, "persist": True}
+    try:
+        with patch.object(RegistryRecipeStorage, "create_recipe", create_recipe_slowly):
+            transport = httpx.ASGITransport(app=runtime.app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                save = asyncio.create_task(client.post("/api/targets", json=body))
+                assert await asyncio.to_thread(writing.wait, TEST_WATCHDOG_SECONDS)
+                await apply_async(runtime)
+                assert (runtime.outcome, runtime.state, runtime.generation) == ("busy", "ready", "original")
+                finish_writing.set()
+                response = await save
+
+        assert response.status_code == 201
+        assert (tmp_path / "recipes" / "targets" / "saved_text.json").exists()
+        lifecycle_module.close_services_async.assert_not_awaited()
+    finally:
+        finish_writing.set()
+        TargetRegistry.reset_registry_singleton()

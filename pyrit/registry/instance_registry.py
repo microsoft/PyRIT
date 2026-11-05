@@ -39,6 +39,9 @@ T = TypeVar("T", bound=Identifiable)  # The type of items stored
 #: Entry metadata naming the kind of saved recipe an entry was rebuilt from, such as ``"targets"``.
 SAVED_ENTRY_METADATA_KEY = "saved_recipe_kind"
 
+#: Entry metadata marking an entry a user created through the API without saving it, so it is gone after a restart.
+TEMPORARY_ENTRY_METADATA_KEY = "temporary_entry"
+
 _saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
 
 

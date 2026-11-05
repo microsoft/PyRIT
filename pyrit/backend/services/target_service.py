@@ -15,10 +15,13 @@ Targets can be:
 import asyncio
 import logging
 import uuid
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from typing import Any
 
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
+from azure.core.exceptions import AzureError
+
+from pyrit.backend.mappers.target_mappers import target_object_to_instance, target_origin
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.backend.models.targets import (
     CreateTargetRequest,
@@ -31,11 +34,16 @@ from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.common.auth_mode import AUTH_MODES, AuthMode
 from pyrit.models import TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.catalog.registry_recipe import ComponentRecipe, RegistryRecipeKind, SavedEntryOwner
+from pyrit.models.catalog.target import TargetInstance, TargetOrigin
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.models.parameter import Parameter
+from pyrit.models.parameter import ComponentType, Parameter
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
+from pyrit.registry.file_document_storage import DocumentConflictError
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, TEMPORARY_ENTRY_METADATA_KEY
+from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +60,14 @@ _ENV_BACKED_REQUIRED_PARAMETERS: dict[str, frozenset[str]] = {
 _AUTH_MODE_PARAM = "auth_mode"
 
 
+class SavedTargetConflictError(ValueError):
+    """A target can't be saved under a name that a registered or saved target already has."""
+
+
+class SavedTargetStorageError(RuntimeError):
+    """Saved targets can't be written right now."""
+
+
 class TargetService:
     """
     Service for managing target instances.
@@ -65,14 +81,16 @@ class TargetService:
         """Initialize the target service."""
         self._registry = TargetRegistry.get_registry_singleton()
 
-    def _build_instance_from_object(self, *, target_registry_name: str, target_obj: Any) -> TargetInstance:
+    def _build_instance_from_object(
+        self, *, target_registry_name: str, target_obj: Any, origin: TargetOrigin | None = None
+    ) -> TargetInstance:
         """
         Build a TargetInstance from a registry object.
 
         Returns:
             TargetInstance with metadata derived from the object.
         """
-        return target_object_to_instance(target_registry_name, target_obj)
+        return target_object_to_instance(target_registry_name, target_obj, origin=origin)
 
     async def list_targets_async(
         self,
@@ -91,7 +109,9 @@ class TargetService:
             TargetListResponse containing paginated targets.
         """
         items = [
-            self._build_instance_from_object(target_registry_name=entry.name, target_obj=entry.instance)
+            self._build_instance_from_object(
+                target_registry_name=entry.name, target_obj=entry.instance, origin=target_origin(entry.metadata)
+            )
             for entry in self._registry.instances.get_all_instances()
         ]
         page, has_more = self._paginate(items=items, cursor=cursor, limit=limit)
@@ -132,10 +152,12 @@ class TargetService:
         Returns:
             TargetInstance if found, None otherwise.
         """
-        obj = self._registry.instances.get(target_registry_name)
-        if obj is None:
+        entry = self._registry.instances.get_entry(target_registry_name)
+        if entry is None:
             return None
-        return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=obj)
+        return self._build_instance_from_object(
+            target_registry_name=target_registry_name, target_obj=entry.instance, origin=target_origin(entry.metadata)
+        )
 
     def get_target_object(self, *, target_registry_name: str) -> Any | None:
         """
@@ -352,7 +374,13 @@ class TargetService:
         params[parameter_name] = upload_directory
 
     async def create_target_async(
-        self, *, request: CreateTargetRequest, upload_directory: str | None = None, is_admin: bool = False
+        self,
+        *,
+        request: CreateTargetRequest,
+        upload_directory: str | None = None,
+        is_admin: bool = False,
+        owner: SavedEntryOwner | None = None,
+        recipes_source: str | None = None,
     ) -> TargetInstance | UnregisteredTarget:
         """
         Create a new target instance from API request.
@@ -375,7 +403,8 @@ class TargetService:
         repository code, or that would authenticate with this server's stored
         credentials, is built only for an administrator. The response is built
         before the target is registered, so a failed request leaves no registered
-        target.
+        target. With ``persist``, the target is saved so it is restored at every
+        start; otherwise it is Temporary.
 
         Args:
             request: The create target request with type, params, and auth_mode.
@@ -383,6 +412,8 @@ class TargetService:
                 or None when the server configures none.
             is_admin: Whether the caller may create a target that runs model repository code or
                 authenticates with this server's stored credentials.
+            owner: The signed-in user, recorded on a saved target, or None when sign-in is off.
+            recipes_source: Where saved entries are stored, or None for the default folder.
 
         Returns:
             TargetInstance with the new target's details.
@@ -392,11 +423,14 @@ class TargetService:
                 ``auth_mode`` that conflicts with the request-level choice, identity or
                 no-key auth is requested but unsupported by the target type, or a target that
                 uploads local files is requested with its upload folder or while
-                the server configures none. Construction errors (unknown params,
+                the server configures none, or a target to save would hold or use a credential
+                or names a Temporary target. Construction errors (unknown params,
                 incompatible inner targets, unrecognized identity endpoints) are
                 raised by the registry / target classes.
             PermissionError: If a non-administrator enables a target's model code execution, or
                 creates a target that would authenticate with this server's stored credentials.
+            SavedTargetConflictError: If a target to save has the name of a registered or saved target.
+            SavedTargetStorageError: If a target to save can't be written to storage.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -467,12 +501,21 @@ class TargetService:
         self._enforce_server_credential_permission(
             target_type=request.type, params=permission_params, is_admin=is_admin
         )
+        if request.persist:
+            params = await self._prepare_saved_params_async(
+                target_type=request.type, target_cls=target_cls, params=params
+            )
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
         if request.register:
-            self._registry.instances.validate_name_available(target_registry_name)
+            try:
+                self._registry.instances.validate_name_available(target_registry_name)
+            except ValueError as error:
+                if request.persist:
+                    raise SavedTargetConflictError(str(error)) from error
+                raise
         if (
             request.source
             and type(
@@ -499,12 +542,128 @@ class TargetService:
             finally:
                 await release_component_async(target_obj)
         try:
-            target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
-            self._registry.instances.register(target_obj, name=target_registry_name)
+            if request.persist:
+                return await self._save_and_register_async(
+                    name=target_registry_name,
+                    target_cls=target_cls,
+                    target_obj=target_obj,
+                    params=params,
+                    owner=owner,
+                    recipes_source=recipes_source,
+                )
+            target = self._build_instance_from_object(
+                target_registry_name=target_registry_name, target_obj=target_obj, origin=TargetOrigin.TEMPORARY
+            )
+            self._registry.instances.register(
+                target_obj, name=target_registry_name, metadata={TEMPORARY_ENTRY_METADATA_KEY: True}
+            )
             return target
         except Exception:
             await release_component_async(target_obj)
             raise
+
+    async def _prepare_saved_params_async(
+        self, *, target_type: str, target_cls: type[PromptTarget], params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Turn off the server values a target to save would read, then refuse what it still can't hold.
+
+        Returns:
+            dict[str, Any]: The parameters to build and save the target with.
+
+        Raises:
+            ValueError: If the target would hold or use a credential, or names a Temporary target.
+        """
+        saved_params = dict(params)
+        for name, turned_off in target_cls.server_fallback_parameters.items():
+            if turned_off is not None and saved_params.get(name) in (None, ""):
+                saved_params[name] = turned_off
+        metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, target_type)
+        parameters = metadata.parameters if metadata is not None else ()
+        try:
+            check_saved_entry_params(cls=target_cls, parameters=parameters, params=saved_params)
+        except SavedEntryRefusedError as error:
+            raise ValueError(f"{error} It can still be created without saving it.") from error
+        self._refuse_temporary_references(parameters=parameters, params=saved_params)
+        return saved_params
+
+    def _refuse_temporary_references(self, *, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
+        """
+        Refuse a target to save that uses a Temporary target, which won't exist after a restart.
+
+        Raises:
+            ValueError: If a target parameter names a Temporary target.
+        """
+        for parameter in parameters:
+            if parameter.reference is None or parameter.reference.component_type is not ComponentType.TARGET:
+                continue
+            value = params.get(parameter.name)
+            for name in value if isinstance(value, list) else [value]:
+                entry = self._registry.instances.get_entry(name) if isinstance(name, str) else None
+                if entry is not None and target_origin(entry.metadata) is TargetOrigin.TEMPORARY:
+                    raise ValueError(
+                        f"Uses temporary target '{name}', which won't exist after a restart. "
+                        "It can still be created without saving it."
+                    )
+
+    async def _save_and_register_async(
+        self,
+        *,
+        name: str,
+        target_cls: type[PromptTarget],
+        target_obj: PromptTarget,
+        params: dict[str, Any],
+        owner: SavedEntryOwner | None,
+        recipes_source: str | None,
+    ) -> TargetInstance:
+        """
+        Save the target's recipe, then register the target as a saved entry.
+
+        The recipe is written only if no saved target has the name, so of two saves under one name
+        only one succeeds. If registering then fails, the recipe is deleted again.
+
+        Returns:
+            TargetInstance: The saved target.
+
+        Raises:
+            SavedTargetConflictError: If a saved or registered target already has the name.
+            SavedTargetStorageError: If the recipe can't be written.
+        """
+        target = self._build_instance_from_object(
+            target_registry_name=name, target_obj=target_obj, origin=TargetOrigin.SAVED
+        )
+        recipe = ComponentRecipe(
+            class_module=target_cls.__module__, class_name=target_cls.__name__, params=params, owner=owner
+        )
+        storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=recipes_source)
+        try:
+            await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)
+        except DocumentConflictError as error:
+            raise SavedTargetConflictError(f"A saved target named '{name}' already exists.") from error
+        except (OSError, AzureError) as error:
+            raise SavedTargetStorageError("Saved targets can't be written right now.") from error
+        try:
+            self._registry.instances.register(
+                target_obj, name=name, metadata={SAVED_ENTRY_METADATA_KEY: RegistryRecipeKind.TARGETS.value}
+            )
+        except Exception as error:
+            await self._delete_recipe_async(storage=storage, name=name)
+            if isinstance(error, ValueError):
+                raise SavedTargetConflictError(str(error)) from error
+            raise
+        return target
+
+    @staticmethod
+    async def _delete_recipe_async(*, storage: RegistryRecipeStorage, name: str) -> None:
+        """Delete a recipe whose target couldn't be registered, logging when that fails too."""
+        try:
+            await asyncio.to_thread(storage.delete_recipe, name)
+        except Exception:
+            logger.exception(
+                "Saved target '%s' couldn't be registered, and its saved recipe couldn't be deleted either. "
+                "Delete it from the saved targets folder, or it will be restored at the next start.",
+                name,
+            )
 
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool

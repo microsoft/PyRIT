@@ -51,6 +51,15 @@ class _RegistryRecipe(BaseModel):
     )
 
 
+class SavedEntryOwner(BaseModel):
+    """The signed-in user who saved an entry."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    oid: _Identifier = Field(..., min_length=1, description="The user's Microsoft Entra object ID")
+    name: _Identifier = Field(..., description="The user's display name, or email when no name is set")
+
+
 class ComponentRecipe(_RegistryRecipe):
     """How to rebuild one saved target, converter, or scorer."""
 
@@ -63,6 +72,7 @@ class ComponentRecipe(_RegistryRecipe):
         max_length=MAX_ITEMS,
         description="Constructor parameters as the API accepted them; other entries are named, never embedded",
     )
+    owner: SavedEntryOwner | None = Field(None, description="Who saved the entry; None when sign-in is off")
 
 
 class TechniqueRecipe(_RegistryRecipe):
