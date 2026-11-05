@@ -536,12 +536,14 @@ export default function ChatWindow({
   const draftAttackId = draftContext ? draftContext.originatingAttackId : attackResultId
   const draftConversationId = draftContext ? draftContext.originatingConversationId : viewedConversationId
   const draftHandoff = useChatDraftHandoff()
-  const matchingCandidate = draftHandoff.getPreservedDraft(draftAttackId, draftConversationId)
-  const matchingPreservedDraft = matchingCandidate && shouldApplyPreservedDraft(
-    matchingCandidate,
-    draftAttackId,
-    draftConversationId,
-  ) ? matchingCandidate.draft : null
+  const matchingPreservedDraft = useMemo(() => {
+    const candidate = draftHandoff.getPreservedDraft(draftAttackId, draftConversationId)
+    return candidate && shouldApplyPreservedDraft(
+      candidate,
+      draftAttackId,
+      draftConversationId,
+    ) ? candidate.draft : null
+  }, [draftHandoff, draftAttackId, draftConversationId])
 
   const [chatInputText, setChatInputText] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
@@ -604,7 +606,6 @@ export default function ChatWindow({
   const [panelRefreshKey, setPanelRefreshKey] = useState(0)
   const inputBoxRef = useRef<ChatInputAreaHandle>(null)
   const recoveryInFlightRef = useRef(false)
-  const restoringBranchRef = useRef(false)
   useEffect(() => {
     if (editDraft && (editDraft.sourceConversationId !== viewedConversationId || editDraft.sourceAttackId !== attackResultId)) {
       discardEditor()
@@ -873,24 +874,23 @@ export default function ChatWindow({
       const prevDraft = lastActiveDraftRef.current
       const wasDirty = isChatDraftDirty(prevDraft)
       const isSendingPrev = prevConvId ? sendingConvIdsRef.current.has(prevConvId) : false
-      const isRestoringBranch = restoringBranchRef.current
-      restoringBranchRef.current = false
 
       lastConversationIdentityRef.current = currentConversationIdentity
       lastDraftAttackIdRef.current = draftAttackId
       lastDraftConversationIdRef.current = draftConversationId
 
-      if (wasDirty && !isSendingPrev && !isSending && !isRestoringBranch && !copyingRef.current && !undoInFlight.current && !recoveryInFlightRef.current) {
-        draftHandoff.preserveDraft({
-          originatingAttackId: prevAttackId,
-          originatingConversationId: prevConvId,
-          originatingPath: lastLocationRef.current.pathname + lastLocationRef.current.search + lastLocationRef.current.hash,
-          originatingState: lastLocationRef.current.state,
-          draft: prevDraft,
-        })
-      }
+      const isDirectSwitch = Boolean(prevConvId) && Boolean(draftConversationId) && prevConvId !== draftConversationId
 
-      if (!isRestoringBranch && !copyingRef.current && !undoInFlight.current && !recoveryInFlightRef.current) {
+      if (isDirectSwitch && !isSendingPrev && !isSending && !copyingRef.current && !undoInFlight.current && !recoveryInFlightRef.current) {
+        if (wasDirty) {
+          draftHandoff.preserveDraft({
+            originatingAttackId: prevAttackId,
+            originatingConversationId: prevConvId,
+            originatingPath: lastLocationRef.current.pathname + lastLocationRef.current.search + lastLocationRef.current.hash,
+            originatingState: lastLocationRef.current.state,
+            draft: prevDraft,
+          })
+        }
         setChatInputText('')
         setDraftAttachments([])
         setSystemPrompt('')
@@ -2406,7 +2406,6 @@ export default function ChatWindow({
             ? { chat_scorer: defaultChatScorer } : {}),
         })
         if (getViewedConversationId() !== sourceId || inputBoxRef.current?.getDraftRevision() !== draftRevision) return
-        restoringBranchRef.current = true
         onConversationCreated(response.attack_result_id, response.conversation_id, objective, target)
         restoreRecoverableDraft()
         setIsPanelOpen(true)
@@ -2445,12 +2444,8 @@ export default function ChatWindow({
       }
       else onConversationCreated(response.attack.attack_result_id, response.messages.conversation_id, response.attack.objective, target)
       onAttackChange?.(response.attack)
-      if (isFailedPrompt) {
-        restoringBranchRef.current = true
-        restoreRecoverableDraft()
-      }
+      if (isFailedPrompt) restoreRecoverableDraft()
       if (restoredPrompt && promptSnapshot) {
-        restoringBranchRef.current = true
         restoreEditorPrompt(restoredPrompt, promptSnapshot)
         setUndoableSend(null)
       }
