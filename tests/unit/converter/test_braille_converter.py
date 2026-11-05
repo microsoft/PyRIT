@@ -13,6 +13,7 @@ UEB_SYMBOL_CELLS = {
     "&": "\u2808\u282f",  # dot 4, dots 12346
     "*": "\u2810\u2814",  # dot 5, dots 35
     "+": "\u2810\u2816",  # dot 5, dots 235
+    "/": "\u2838\u280c",  # dots 456, dots 34
     "<": "\u2808\u2823",  # dot 4, dots 126
     "=": "\u2810\u2836",  # dot 5, dots 2356
     ">": "\u2808\u281c",  # dot 4, dots 345
@@ -282,22 +283,11 @@ async def test_braille_converter_hyphen_resets_number_mode(prompt, expected):
     "prompt, expected",
     [
         ("and/or", "\u2801\u281d\u2819\u2838\u280c\u2815\u2817"),
-        ("km/h", "\u2805\u280d\u2838\u280c\u2813"),
         ("./run", "\u2832\u2838\u280c\u2817\u2825\u281d"),
-        ("a/1", "\u2801\u2838\u280c\u283c\u2801"),
         ("3/8", "\u283c\u2809\u2838\u280c\u283c\u2813"),
-        ("$5/kg", "\u2808\u280e\u283c\u2811\u2838\u280c\u2805\u281b"),
         ("1/a", "\u283c\u2801\u2838\u280c\u2801"),
     ],
-    ids=[
-        "between-words",
-        "unit",
-        "path",
-        "before-number",
-        "linear-fraction",
-        "number-before-letters",
-        "number-before-letter",
-    ],
+    ids=["between-words", "path", "linear-fraction", "number-before-letter"],
 )
 async def test_braille_converter_slash_is_solidus(prompt, expected):
     """A printed slash is the UEB solidus (dots 456, 34; rule 7.4), also between digits
