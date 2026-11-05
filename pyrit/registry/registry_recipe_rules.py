@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 _URL_SCHEMES = frozenset({"http", "https", "ws", "wss"})
 _URL_QUERY_KEYS = frozenset({"api-version"})
 _QUERY_SEPARATORS = re.compile(r"[&;]")
+_QUERY_VALUE = re.compile(r"[A-Za-z0-9._-]*")
+_PATH_PARAMETERS = re.compile(r"[;&=]")
 _MAX_URL_READINGS = 8
 
 
@@ -139,13 +141,13 @@ def _check_destinations(*, cls: type, params: Mapping[str, Any]) -> None:
     Refuse a destination that this server's settings would choose, or one that can carry a credential.
 
     Raises:
-        SavedEntryRefusedError: If a destination that would take this server's setting is empty, or a
-            destination holds a user name, password, SAS token, fragment, or query other than ``api-version``.
+        SavedEntryRefusedError: If a destination that would take this server's setting is empty or isn't an
+            http(s) or ws(s) address, or a destination can carry a credential.
     """
     destinations: Mapping[str, bool] = getattr(cls, "destination_parameters", {})
     for name, takes_server_setting in destinations.items():
         value = params.get(name)
-        if value in (None, ""):
+        if value is None or (isinstance(value, str) and not value.strip()):
             if takes_server_setting:
                 message = (
                     f"'{name}' is empty, so '{cls.__name__}' would send requests where this server's settings "
@@ -153,36 +155,66 @@ def _check_destinations(*, cls: type, params: Mapping[str, Any]) -> None:
                 )
                 raise SavedEntryRefusedError(reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL, message=message)
             continue
-        if not isinstance(value, str) or _can_carry_credential(value):
+        if takes_server_setting and not (isinstance(value, str) and _is_web_address(value)):
+            raise SavedEntryRefusedError(
+                reason=RestoreFailureReason.INVALID_RECIPE,
+                message=f"'{name}' must be a full http(s) or ws(s) address in a saved target.",
+            )
+        if not isinstance(value, str) or _can_carry_credential(value, address=takes_server_setting):
             message = (
-                f"'{name}' can carry a credential in a URL, which saved entries can't hold. A saved URL or path has "
-                "no user name, password, SAS token, or fragment, and no query except 'api-version'."
+                f"'{name}' can carry a credential in a URL, which saved entries can't hold: a user name, "
+                "password, SAS token, fragment, ';', '&' or '=' in the path, or a query other than 'api-version'."
             )
             raise SavedEntryRefusedError(reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL, message=message)
 
 
-def _can_carry_credential(text: str) -> bool:
+def _is_web_address(text: str) -> bool:
+    """
+    Return whether text, as written, is an http(s) or ws(s) address with a host.
+
+    Returns:
+        bool: True for an address such as ``https://contoso.openai.azure.com/openai/v1``.
+    """
+    try:
+        parts = urlsplit(text.strip())
+    except ValueError:
+        return False
+    return parts.scheme in _URL_SCHEMES and bool(parts.netloc)
+
+
+def _can_carry_credential(text: str, *, address: bool) -> bool:
     """
     Return whether a URL or path can carry a credential, in any reading of it.
 
     A value whose percent-encoding or look-alike characters don't settle within a few readings counts as
     one that can, since an encoded token is still usable.
 
+    Args:
+        text (str): The URL or path.
+        address (bool): Whether it must be a full http(s) or ws(s) address rather than a path.
+
     Returns:
-        bool: True when a reading holds a SAS token, user info, a fragment, a query other than
-            ``api-version``, or isn't a plain web address or path.
+        bool: True when a reading isn't a plain address or path, or holds a SAS token, user info, a
+            fragment, a path parameter, or a query other than ``api-version``.
     """
     readings = _readings(text)
-    return readings is None or any(_reading_can_carry_credential(reading) for reading in readings)
+    return readings is None or any(_reading_can_carry_credential(reading, address=address) for reading in readings)
 
 
-def _reading_can_carry_credential(text: str) -> bool:
+def _reading_can_carry_credential(text: str, *, address: bool) -> bool:
     """
     Return whether one reading of a URL or path can carry a credential.
 
+    An address has an http(s) or ws(s) scheme and a host without user info. A path has neither, and no
+    query. Neither may have a fragment or ';', '&' or '=' in its path, and an address's query may hold
+    only ``api-version``.
+
+    Args:
+        text (str): One reading of the URL or path.
+        address (bool): Whether it must be a full address rather than a path.
+
     Returns:
-        bool: True when the reading holds a SAS token, user info, a fragment, a query other than
-            ``api-version``, or is a URL that isn't a plain http(s) or ws(s) address.
+        bool: True when the reading isn't a plain address or path, or can carry a credential.
     """
     if "sig=" in text.casefold():
         return True
@@ -190,12 +222,25 @@ def _reading_can_carry_credential(text: str) -> bool:
         parts = urlsplit(text.strip())
     except ValueError:
         return True
-    if parts.scheme and (parts.scheme not in _URL_SCHEMES or not parts.netloc):
+    if address or parts.scheme or parts.netloc:
+        if parts.scheme not in _URL_SCHEMES or not parts.netloc or "@" in parts.netloc:
+            return True
+    elif parts.query:
         return True
-    if "@" in parts.netloc or parts.fragment:
+    if parts.fragment or _PATH_PARAMETERS.search(parts.path):
         return True
-    keys = (segment.split("=", 1)[0].strip().casefold() for segment in _QUERY_SEPARATORS.split(parts.query))
-    return any(key and key not in _URL_QUERY_KEYS for key in keys)
+    return not all(_is_version_query(segment) for segment in _QUERY_SEPARATORS.split(parts.query) if segment)
+
+
+def _is_version_query(segment: str) -> bool:
+    """
+    Return whether one query segment is ``api-version`` with a version-shaped value.
+
+    Returns:
+        bool: True for ``api-version=2024-10-21`` and similar.
+    """
+    key, _, value = segment.partition("=")
+    return key.strip().casefold() in _URL_QUERY_KEYS and _QUERY_VALUE.fullmatch(value.strip()) is not None
 
 
 def _readings(text: str) -> list[str] | None:

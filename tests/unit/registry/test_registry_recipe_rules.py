@@ -155,18 +155,17 @@ def test_check_saved_entry_params_accepts_a_url_without_a_credential(url: str) -
         "https://contoso.blob.core.windows.net/prompts&sig=SECRET",
         "https://user:SECRET@contoso.example/v1",
         "https://SECRET@contoso.example/v1",
-        "//user:SECRET@contoso.example/v1",
-        "https://user:SECRET\uff20contoso.example/v1",
         "https://contoso.example/v1#access_token=SECRET",
         "https://contoso.example/v1?code=SECRET",
         "https://contoso.example/v1\uff1fcode=SECRET",
-        "https://[contoso.example/v1?key=SECRET",
-        "https:/contoso.example/v1?code=SECRET",
-        "https:/user:SECRET@contoso.example/v1",
         "https://contoso.example/v1?api-version=2024-10-21;code=SECRET",
         "https://contoso.example/v1%2525253Fsig%2525253DSECRET",
         "https://contoso.example/v1\uff053Fsig\uff053DSECRET",
-        "ftp://contoso.example/v1",
+        "https://contoso.example/v1?=SECRET",
+        "https://contoso.example/v1?api-version=2024-10-21&=SECRET",
+        "https://contoso.example/v1?api-version=2024-10-21?code=SECRET",
+        "https://contoso.example/v1;code=SECRET",
+        "https://contoso.example/v1/key=SECRET",
     ],
 )
 def test_check_saved_entry_params_refuses_a_url_that_can_carry_a_credential(url: str) -> None:
@@ -177,20 +176,21 @@ def test_check_saved_entry_params_refuses_a_url_that_can_carry_a_credential(url:
     assert "SECRET" not in str(refusal)
 
 
-def test_check_saved_entry_params_refuses_a_url_it_cant_finish_reading() -> None:
-    endpoint = _ENDPOINT
+def test_check_saved_entry_params_refuses_a_path_it_cant_finish_reading() -> None:
+    card_path = "%41"
     for _ in range(10):
-        endpoint = quote(endpoint, safe="")
+        card_path = quote(card_path, safe="")
 
-    refusal = _refusal("OpenAIChatTarget", {"auth_mode": "identity", "endpoint": endpoint, "headers": "{}"})
+    refusal = _refusal("A2ATarget", {"endpoint": "https://agent.example.test", "agent_card_path": card_path})
 
-    assert str(refusal).startswith("'endpoint' can carry a credential in a URL")
+    assert str(refusal).startswith("'agent_card_path' can carry a credential in a URL")
 
 
 @pytest.mark.parametrize(
     ("class_name", "params", "name"),
     [
         ("OpenAIChatTarget", {"auth_mode": "identity", "headers": "{}"}, "endpoint"),
+        ("OpenAIChatTarget", {"auth_mode": "identity", "endpoint": "   ", "headers": "{}"}, "endpoint"),
         ("AzureMLChatTarget", {"auth_mode": "identity"}, "endpoint"),
         ("PromptShieldTarget", {"auth_mode": "identity"}, "endpoint"),
         ("AzureBlobStorageTarget", {"auth_mode": "identity"}, "container_url"),
@@ -213,7 +213,16 @@ def test_check_saved_entry_params_accepts_an_agent_card_path_without_a_credentia
 
 
 @pytest.mark.parametrize(
-    "card_path", ["card?access_token=SECRET", "/.well-known/agent.json?api_key=SECRET", "card#SECRET", "//SECRET@h"]
+    "card_path",
+    [
+        "card?access_token=SECRET",
+        "/.well-known/agent.json?api_key=SECRET",
+        "card#SECRET",
+        "//SECRET@h",
+        "card.json&access_token=SECRET",
+        "card.json;session=SECRET",
+        "card.json?api-version=1",
+    ],
 )
 def test_check_saved_entry_params_refuses_an_agent_card_path_that_can_carry_a_credential(card_path: str) -> None:
     refusal = _refusal("A2ATarget", {"endpoint": "https://agent.example.test", "agent_card_path": card_path})
@@ -245,3 +254,25 @@ def test_check_saved_entry_params_leaves_text_that_isnt_a_destination_alone() ->
     params = {"template": "https://example.com/search?q={{ prompt }}&sig=1#top"}
 
     check_saved_entry_params(cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=params)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "contoso.openai.azure.com/openai/v1",
+        "/openai/v1",
+        "//contoso.openai.azure.com/openai/v1",
+        "//user:SECRET@contoso.example/v1",
+        "https://[contoso.example/v1?key=SECRET",
+        "https:/contoso.example/v1?code=SECRET",
+        "https:/user:SECRET@contoso.example/v1",
+        "ftp://contoso.example/v1",
+        "contoso.example/v1?code=SECRET",
+        "https://user:SECRET\uff20contoso.example/v1",
+    ],
+)
+def test_check_saved_entry_params_refuses_an_endpoint_that_isnt_a_full_address(endpoint: str) -> None:
+    refusal = _refusal("OpenAIChatTarget", {"auth_mode": "identity", "endpoint": endpoint, "headers": "{}"})
+
+    assert refusal.reason is RestoreFailureReason.INVALID_RECIPE
+    assert str(refusal) == "'endpoint' must be a full http(s) or ws(s) address in a saved target."

@@ -81,6 +81,7 @@ class A2ATarget(PromptTarget):
     `input-required` tasks are extracted from the task status message.
     """
 
+    # The endpoint has no server setting to fall back to, and the card path has a fixed default.
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType(
         {"endpoint": False, "agent_card_path": False}
     )
