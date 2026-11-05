@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.backend.models.common import PaginationInfo
 from pyrit.models import PromptDataType, SeedRecord, SeedType
@@ -87,7 +87,23 @@ class DatasetUploadManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
     name: str = Field(min_length=1, max_length=256)
-    seeds: list[dict[str, Any]] = Field(min_length=1)
+    mode: Literal["create", "update"] = "create"
+    expected_version: str | None = Field(None, min_length=64, max_length=64)
+    seeds: list[dict[str, Any]]
+    delete_seed_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_operations(self) -> "DatasetUploadManifest":
+        if self.mode == "create":
+            if not self.seeds or self.delete_seed_ids or self.expected_version is not None:
+                raise ValueError("Create requires seeds and forbids deletions and expected_version.")
+        elif not self.expected_version or not (self.seeds or self.delete_seed_ids):
+            raise ValueError("Update requires expected_version and at least one operation.")
+        ids = [str(UUID(value)) for value in self.delete_seed_ids]
+        if len(set(ids)) != len(ids):
+            raise ValueError("Duplicate delete record IDs.")
+        self.delete_seed_ids = ids
+        return self
 
     @field_validator("name")
     @classmethod
@@ -112,8 +128,30 @@ class DatasetDeletionResponse(BaseModel):
     deletion_id: UUID
     status: Literal["pending", "completed"]
     deleted_seeds: int
-    pending_media: int
+    pending_media: int | None = Field(..., description="Unknown only if committed cleanup status could not be read")
     error: str | None = None
+
+
+class DatasetSeedResult(BaseModel):
+    """Exact persisted record identity correlated to the manifest's seed index."""
+
+    index: int
+    id: UUID
+    operation: Literal["added", "updated"]
+
+
+class DatasetMutationResponse(DatasetUploadResponse):
+    """A committed batch, even when physical cleanup still needs retrying."""
+
+    dataset_exists: bool
+    version: str | None
+    added: int
+    updated: int
+    deleted: int
+    seeds: list[DatasetSeedResult]
+    delete_seed_ids: list[UUID]
+    cleanup: DatasetDeletionResponse
+    cleanup_location: str
 
 
 class ScenarioDatasetLoadResponse(BaseModel):
@@ -136,6 +174,7 @@ class SeedExampleSummary(BaseModel):
     objective_count: int
     harm_categories: list[str]
     has_unlabeled_harm: bool = Field(..., description="Whether any member has no harm category")
+    editable_seeds: list[dict[str, Any]] | None = Field(None, description="Opt-in submit-ready seed replacements")
 
 
 class SeedExampleListResponse(BaseModel):
@@ -144,6 +183,7 @@ class SeedExampleListResponse(BaseModel):
     items: list[SeedExampleSummary]
     pagination: PaginationInfo
     total: int = Field(..., description="Number of logical examples that match the filters")
+    version: str | None = Field(None, description="Opt-in token from the same snapshot as editable_seeds")
 
 
 class SeedMemberView(SeedRecord):
@@ -168,3 +208,4 @@ class SeedExampleDetailResponse(SeedExampleSummary):
             "Media members include value_url for display; value is the stored reference."
         ),
     )
+    version: str | None = Field(None, description="Opt-in token from the same snapshot as editable_seeds")

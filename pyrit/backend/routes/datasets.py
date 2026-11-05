@@ -24,6 +24,7 @@ from pyrit.backend.models.common import (
 from pyrit.backend.models.datasets import (
     DatasetDeletionResponse,
     DatasetListResponse,
+    DatasetMutationResponse,
     DatasetUploadResponse,
     SeedExampleDetailResponse,
     SeedExampleListResponse,
@@ -39,17 +40,21 @@ _SELECTION_KEY_DESCRIPTION = "The selection_key of a dataset from GET /datasets"
 
 @router.post(
     "",
-    response_model=DatasetUploadResponse,
+    response_model=DatasetUploadResponse | DatasetMutationResponse,
     status_code=201,
     responses={
-        code: {"model": ProblemDetail, "description": description}
-        for code, description in {
-            409: "Dataset name already stored or reserved",
-            413: "Request, manifest, or prompt count exceeds configured limits",
-            415: "Use multipart/form-data",
-            422: "Invalid manifest, prompt, or multipart reference",
-            503: "Upload failed and cleanup remains pending; see Location",
-        }.items()
+        200: {"model": DatasetMutationResponse, "description": "Atomic batch committed; cleanup may be pending"},
+        404: {"model": ProblemDetail, "description": "Update dataset or exact record ID not found"},
+        **{
+            code: {"model": ProblemDetail, "description": description}
+            for code, description in {
+                409: "Dataset name already stored/reserved, or stale expected_version",
+                413: "Request, manifest, or prompt count exceeds configured limits",
+                415: "Use multipart/form-data",
+                422: "Invalid manifest, prompt, or multipart reference",
+                503: "Upload failed and cleanup remains pending; see Location",
+            }.items()
+        },
     },
     openapi_extra={
         "requestBody": {
@@ -67,6 +72,10 @@ _SELECTION_KEY_DESCRIPTION = "The selection_key of a dataset from GET /datasets"
                                     '"data_type":"binary_path","value":"upload:document"}]}. '
                                     "Other named parts contain referenced files. Defaults: 100 MiB request, "
                                     "10 MiB JSON, 10,000 prompts. Each file part must be referenced."
+                                    " Default mode=create; mode=update requires expected_version and "
+                                    "seeds (no ID=add, ID=replace) and/or delete_seed_ids (record UUIDs). "
+                                    "Omitted records stay unchanged. GET seeds with editable=true supplies "
+                                    "snapshot-consistent version and editable_seeds with retained media handles."
                                 ),
                             }
                         },
@@ -77,14 +86,20 @@ _SELECTION_KEY_DESCRIPTION = "The selection_key of a dataset from GET /datasets"
         }
     },
 )
-async def upload_dataset_route_async(request: Request) -> DatasetUploadResponse:
+async def upload_dataset_route_async(
+    request: Request, response: Response
+) -> DatasetUploadResponse | DatasetMutationResponse:
     """
     Create a dataset atomically from a JSON manifest and inert media file parts.
 
     Returns:
         DatasetUploadResponse: The committed dataset name and actual population counts.
     """
-    return await upload_dataset_async(request)
+    result = await upload_dataset_async(request)
+    if isinstance(result, DatasetMutationResponse):
+        response.status_code = 200
+        response.headers["Location"] = result.cleanup_location
+    return result
 
 
 @router.delete(
@@ -174,6 +189,7 @@ async def list_seed_examples(  # pyrit-async-suffix-exempt
         None, max_length=MAX_ITEMS, description="Whole harm categories, case-insensitive, OR-matched"
     ),
     seed_type: list[SeedType] | None = Query(None, max_length=MAX_ITEMS, description="Seed types, OR-matched"),
+    editable: bool = Query(False, description="Include submit-ready replacements and a snapshot-consistent version"),
 ) -> SeedExampleListResponse:
     """
     List one page of the stored logical seed examples of a dataset.
@@ -192,6 +208,7 @@ async def list_seed_examples(  # pyrit-async-suffix-exempt
         data_types=modality,
         harm_categories=harm_category,
         seed_types=seed_type,
+        editable=editable,
     )
 
 
@@ -206,6 +223,7 @@ async def list_seed_examples(  # pyrit-async-suffix-exempt
 async def get_seed_example(  # pyrit-async-suffix-exempt
     example_id: UUID,
     selection_key: str = Query(..., max_length=MAX_CURSOR_LENGTH, description=_SELECTION_KEY_DESCRIPTION),
+    editable: bool = Query(False, description="Include submit-ready replacements and a snapshot-consistent version"),
 ) -> SeedExampleDetailResponse:
     """
     Get one stored logical seed example with all of its members.
@@ -216,7 +234,9 @@ async def get_seed_example(  # pyrit-async-suffix-exempt
     Raises:
         HTTPException: If the dataset does not contain the example.
     """
-    example = await get_dataset_service().get_seed_example_async(selection_key=selection_key, example_id=example_id)
+    example = await get_dataset_service().get_seed_example_async(
+        selection_key=selection_key, example_id=example_id, editable=editable
+    )
     if example is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Seed example '{example_id}' not found")
     return example

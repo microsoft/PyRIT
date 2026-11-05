@@ -235,7 +235,9 @@ async def _finish_storage_write_async(write: Awaitable[None]) -> None:
         raise
 
 
-async def reserve_upload_async(*, memory: MemoryInterface, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+async def reserve_upload_async(
+    *, memory: MemoryInterface, dataset_name: str, paths: Sequence[str], mutation: bool = False
+) -> uuid.UUID:
     """
     Durably journal every generated asset path before any bytes are written.
 
@@ -251,14 +253,16 @@ async def reserve_upload_async(*, memory: MemoryInterface, dataset_name: str, pa
         raise DatasetNameConflictError("The upload identifier is already active.")
     memory._dataset_upload_leases[upload_id] = lease
     try:
-        return await _reserve_upload_async(memory=memory, upload_id=upload_id, dataset_name=dataset_name, paths=paths)
+        return await _reserve_upload_async(
+            memory=memory, upload_id=upload_id, dataset_name=dataset_name, paths=paths, mutation=mutation
+        )
     except BaseException:
         await memory.release_dataset_upload_async(upload_id)
         raise
 
 
 async def _reserve_upload_async(
-    *, memory: MemoryInterface, upload_id: uuid.UUID, dataset_name: str, paths: Sequence[str]
+    *, memory: MemoryInterface, upload_id: uuid.UUID, dataset_name: str, paths: Sequence[str], mutation: bool = False
 ) -> uuid.UUID:
     keys = await asyncio.to_thread(lambda: [media_key(path, storage=memory.results_storage_io) for path in paths])
     async with await memory.get_session_async() as session:
@@ -269,11 +273,21 @@ async def _reserve_upload_async(
             .where(DatasetLifecycleEntry.status == "staging", DatasetLifecycleEntry.dataset_name == dataset_name)
             .limit(1)
         )
-        if stored is not None or staging is not None:
+        if staging is not None or (stored is not None and not mutation):
             raise DatasetNameConflictError("A stored dataset or upload already uses this name.")
+        if mutation:
+            names = (
+                await session.scalars(select(SeedEntry.dataset_name).where(SeedEntry.dataset_name == dataset_name))
+            ).all()
+            if dataset_name not in names:
+                raise LookupError("No stored dataset has this exact name.")
         session.add(
             DatasetLifecycleEntry(
-                id=upload_id, dataset_name=dataset_name, kind="upload", status="staging", deleted_seeds=0
+                id=upload_id,
+                dataset_name=dataset_name,
+                kind="mutation" if mutation else "upload",
+                status="staging",
+                deleted_seeds=0,
             )
         )
         await session.flush()
@@ -352,10 +366,14 @@ async def delete_dataset_async(*, memory: MemoryInterface, dataset_name: str) ->
         for entry in entries:
             await session.delete(entry)
         uploads = (
-            await session.scalars(select(DatasetLifecycleEntry).where(DatasetLifecycleEntry.kind == "upload"))
+            await session.scalars(
+                select(DatasetLifecycleEntry).where(DatasetLifecycleEntry.kind.in_(["upload", "mutation"]))
+            )
         ).all()
         upload_ids = {upload.id for upload in uploads if upload.dataset_name == dataset_name}
-        assets = (await session.scalars(select(DatasetMediaEntry).where(DatasetMediaEntry.status == "live"))).all()
+        assets = (
+            await session.scalars(select(DatasetMediaEntry).where(DatasetMediaEntry.status.in_(["live", "retained"])))
+        ).all()
         for asset in assets:
             if asset.upload_id in upload_ids:
                 asset.cleanup_id = deletion_id

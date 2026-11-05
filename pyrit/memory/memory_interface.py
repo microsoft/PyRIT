@@ -62,6 +62,7 @@ from pyrit.common.pagination import DecodedKeysetCursor
 from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonArrayValue, JsonContainer, JsonScalar, UuidHex
 
 if TYPE_CHECKING:
+    from pyrit.memory.dataset_mutation import DatasetEditingSnapshot
     from pyrit.memory.dataset_upload_lease import DatasetUploadLease
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
@@ -5033,6 +5034,58 @@ class MemoryInterface(abc.ABC):
         from pyrit.memory.dataset_lifecycle import reserve_upload_async
 
         return await reserve_upload_async(memory=self, dataset_name=dataset_name, paths=paths)
+
+    async def reserve_dataset_mutation_async(self, *, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+        """
+        Journal new media for an existing exact-name population before writing bytes.
+
+        Returns:
+            uuid.UUID: Durable operation ID.
+        """
+        from pyrit.memory.dataset_lifecycle import reserve_upload_async
+
+        return await reserve_upload_async(memory=self, dataset_name=dataset_name, paths=paths, mutation=True)
+
+    async def get_dataset_editing_snapshot_async(self, dataset_name: str) -> "DatasetEditingSnapshot":
+        """
+        Read records and a complete content token from one participating-writer snapshot.
+
+        Returns:
+            DatasetEditingSnapshot: Inert records and their content token.
+        """
+        from pyrit.memory.dataset_mutation import editing_snapshot_async
+
+        return await editing_snapshot_async(memory=self, dataset_name=dataset_name)
+
+    async def commit_dataset_mutation_async(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        expected_version: str,
+        delete_ids: Sequence[uuid.UUID],
+        prepare_seeds: Callable[[dict[uuid.UUID, SeedRecord]], list[SeedUnion]],
+        write_media: Callable[[list[SeedUnion]], Awaitable[None]],
+        max_records: int,
+        max_bytes: int,
+    ) -> dict[str, Any]:
+        """
+        Commit exact inserts/replacements/deletions with final-group and state validation.
+
+        Returns:
+            dict[str, Any]: Exact committed counts, IDs, population and version.
+        """
+        from pyrit.memory.dataset_mutation import commit_mutation_async
+
+        return await commit_mutation_async(
+            memory=self,
+            upload_id=upload_id,
+            expected_version=expected_version,
+            delete_ids=delete_ids,
+            prepare_seeds=prepare_seeds,
+            write_media=write_media,
+            max_records=max_records,
+            max_bytes=max_bytes,
+        )
 
     async def commit_dataset_upload_async(
         self,

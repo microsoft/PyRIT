@@ -38,6 +38,38 @@ from unit.async_utils import TEST_WATCHDOG_SECONDS
 URL = "/api/datasets"
 
 
+async def _editable_async(client: AsyncClient, name: str = "upload") -> dict[str, Any]:
+    response = await client.get(f"{URL}/seeds", params={"selection_key": f"dataset:named:{name}", "editable": True})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def _update_async(
+    client: AsyncClient,
+    *,
+    snapshot: dict[str, Any],
+    seeds: list[dict[str, Any]] | None = None,
+    deletes: list[str] | None = None,
+    name: str = "upload",
+    files: dict[str, tuple[str, bytes]] | None = None,
+) -> Any:
+    return await _upload(
+        client,
+        manifest={
+            "name": name,
+            "mode": "update",
+            "expected_version": snapshot["version"],
+            "seeds": seeds or [],
+            "delete_seed_ids": deletes or [],
+        },
+        files=files,
+    )
+
+
+def _editable_rows(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    return [seed for item in snapshot["items"] for seed in item["editable_seeds"]]
+
+
 @pytest.fixture
 async def client(patch_central_database: Any, compatibility_headers: dict[str, str]) -> AsyncIterator[AsyncClient]:
     async with AsyncClient(
@@ -120,6 +152,660 @@ async def test_text_upload_browsing_metadata_groups_and_exact_delete(
     assert [entry.dataset_name for entry in await _seeds(sqlite_instance)] == ["abother"]
 
 
+async def test_atomic_mixed_batch_exact_ids_counts_provenance_and_omitted_rows(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    assert (
+        await _upload(
+            client,
+            manifest=_manifest(seeds=[{"data_type": "text", "value": value} for value in ("one", "two", "three")]),
+        )
+    ).status_code == 201
+    originals = {str(row.id): row.get_seed_record().model_dump(mode="json") for row in await _seeds(sqlite_instance)}
+    snapshot = await _editable_async(client)
+    edit, deleted, omitted = _editable_rows(snapshot)
+    edit["value"] = "changed"
+    response = await _update_async(
+        client,
+        snapshot=snapshot,
+        seeds=[edit, {"seed_type": "prompt", "data_type": "text", "value": "changed"}],
+        deletes=[deleted["id"]],
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert (result["added"], result["updated"], result["deleted"], result["seed_pieces"]) == (1, 1, 1, 3)
+    assert result["seeds"][0] == {"index": 0, "id": edit["id"], "operation": "updated"}
+    assert result["seeds"][1]["index"] == 1 and result["seeds"][1]["operation"] == "added"
+    assert result["seeds"][1]["id"] not in originals
+    assert result["delete_seed_ids"] == [deleted["id"]]
+    assert result["dataset_exists"] and result["version"] != snapshot["version"]
+    assert result["cleanup"]["status"] == "completed"
+    persisted = {str(row.id): row.get_seed_record().model_dump(mode="json") for row in await _seeds(sqlite_instance)}
+    assert persisted[omitted["id"]] == originals[omitted["id"]]
+    assert persisted[edit["id"]]["value"] == "changed"
+    for key in ("date_added", "added_by", "origin", "dataset_name", "prompt_group_id", "seed_type"):
+        assert persisted[edit["id"]][key] == originals[edit["id"]][key]
+    assert deleted["id"] not in persisted
+    fresh = await _editable_async(client)
+    assert fresh["version"] == result["version"]
+    unchanged = await _update_async(client, snapshot=fresh, seeds=[_editable_rows(fresh)[0]])
+    assert unchanged.status_code == 200 and unchanged.json()["updated"] == 1
+    assert unchanged.json()["version"] == fresh["version"]
+
+
+@pytest.mark.parametrize("count", [1, 4])
+async def test_update_one_and_n_additions_edits_and_deletion_only_final_removal(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, count: int
+) -> None:
+    await _upload(client)
+    snapshot = await _editable_async(client)
+    addition = await _update_async(
+        client, snapshot=snapshot, seeds=[{"data_type": "text", "value": "duplicate"}] * count
+    )
+    assert addition.status_code == 200 and addition.json()["added"] == count
+    snapshot = await _editable_async(client)
+    rows = _editable_rows(snapshot)
+    for row in rows[:count]:
+        row["value"] = "edited"
+    edited = await _update_async(client, snapshot=snapshot, seeds=rows[:count])
+    assert edited.status_code == 200 and edited.json()["updated"] == count
+    snapshot = await _editable_async(client)
+    rows = _editable_rows(snapshot)
+    deleted = await _update_async(client, snapshot=snapshot, deletes=[row["id"] for row in rows])
+    assert deleted.status_code == 200, deleted.text
+    result = deleted.json()
+    assert result["deleted"] == count + 1 and result["seed_pieces"] == 0
+    assert not result["dataset_exists"] and result["version"] is None
+    assert not await _seeds(sqlite_instance)
+    assert (
+        await client.get(f"{URL}/seeds", params={"selection_key": "dataset:named:upload", "editable": True})
+    ).status_code == 404
+    assert (await _upload(client)).status_code == 201
+
+
+@pytest.mark.parametrize(
+    "kind,status",
+    [
+        ("unknown_edit", 404),
+        ("foreign_edit", 404),
+        ("unknown_delete", 404),
+        ("foreign_delete", 404),
+        ("duplicate_edit", 422),
+        ("duplicate_delete", 422),
+        ("overlap", 422),
+        ("group_id_as_record", 404),
+        ("missing_dataset", 404),
+        ("stale", 409),
+        ("no_op", 422),
+        ("create_deletes", 422),
+        ("missing_version", 422),
+    ],
+)
+async def test_invalid_mutation_targets_are_atomic(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, kind: str, status: int
+) -> None:
+    await _upload(client, manifest=_manifest(seeds=[{"data_type": "text", "value": "same", "prompt_group_alias": "g"}]))
+    await _upload(client, manifest=_manifest(name="other"))
+    snapshot = await _editable_async(client)
+    row = _editable_rows(snapshot)[0]
+    foreign = _editable_rows(await _editable_async(client, "other"))[0]
+    unknown = str(uuid4())
+    before = {str(entry.id): entry.get_seed_record().model_dump(mode="json") for entry in await _seeds(sqlite_instance)}
+    manifest: dict[str, Any] = {
+        "name": "upload",
+        "mode": "update",
+        "expected_version": snapshot["version"],
+        "seeds": [{"data_type": "text", "value": "must not be added"}, {**row, "value": "must not change"}],
+        "delete_seed_ids": [],
+    }
+    if kind in {"unknown_edit", "foreign_edit"}:
+        manifest["seeds"][1]["id"] = unknown if kind == "unknown_edit" else foreign["id"]
+    elif kind in {"unknown_delete", "foreign_delete", "group_id_as_record"}:
+        manifest["delete_seed_ids"] = [
+            unknown
+            if kind == "unknown_delete"
+            else foreign["id"]
+            if kind == "foreign_delete"
+            else row["prompt_group_id"]
+        ]
+    elif kind == "duplicate_edit":
+        manifest["seeds"].append(row)
+    elif kind == "duplicate_delete":
+        manifest["seeds"] = []
+        manifest["delete_seed_ids"] = [row["id"], row["id"]]
+    elif kind == "overlap":
+        manifest["delete_seed_ids"] = [row["id"]]
+    elif kind == "missing_dataset":
+        manifest["name"] = "provider-only"
+    elif kind == "stale":
+        manifest["expected_version"] = "0" * 64
+    elif kind == "no_op":
+        manifest["seeds"] = []
+    elif kind == "create_deletes":
+        manifest["mode"] = "create"
+        manifest.pop("expected_version")
+        manifest["delete_seed_ids"] = [row["id"]]
+    elif kind == "missing_version":
+        manifest.pop("expected_version")
+    response = await _upload(client, manifest=manifest)
+    assert response.status_code == status, response.text
+    after = {str(entry.id): entry.get_seed_record().model_dump(mode="json") for entry in await _seeds(sqlite_instance)}
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("seed_type", "objective"),
+        ("dataset_name", "other"),
+        ("prompt_group_id", None),
+        ("prompt_group_alias", "new"),
+        ("added_by", "forged"),
+        ("origin", "remote"),
+        ("date_added", "2000-01-01T00:00:00Z"),
+    ],
+)
+async def test_edited_identity_and_creation_attribution_are_immutable(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, field: str, value: Any
+) -> None:
+    await _upload(client, manifest=_manifest(seeds=[{"data_type": "text", "value": "old", "prompt_group_alias": "g"}]))
+    snapshot = await _editable_async(client)
+    row = {**_editable_rows(snapshot)[0], field: value}
+    response = await _update_async(client, snapshot=snapshot, seeds=[row])
+    assert response.status_code == 422, response.text
+    assert (await _seeds(sqlite_instance))[0].value == "old"
+
+
+async def test_apply_whole_batch_before_validating_surviving_group_and_preserve_siblings(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(
+            seeds=[
+                {"data_type": "text", "value": "one", "prompt_group_alias": "g", "role": "user", "sequence": 0},
+                {"data_type": "text", "value": "two", "prompt_group_alias": "g", "role": "user", "sequence": 0},
+                {"data_type": "text", "value": "sibling", "prompt_group_alias": "g", "role": None, "sequence": 0},
+            ]
+        ),
+    )
+    snapshot = await _editable_async(client)
+    rows = _editable_rows(snapshot)
+    first, second = [row for row in rows if row["value"] != "sibling"]
+    sibling = next(row for row in rows if row["value"] == "sibling")
+    # A single role change is invalid, but changing both sequence-zero members is valid.
+    invalid = await _update_async(client, snapshot=snapshot, seeds=[{**first, "role": "assistant"}])
+    assert invalid.status_code == 422
+    valid = await _update_async(
+        client, snapshot=snapshot, seeds=[{**first, "role": "assistant"}, {**second, "role": "assistant"}]
+    )
+    assert valid.status_code == 200, valid.text
+    stored_sibling = next(entry for entry in await _seeds(sqlite_instance) if str(entry.id) == sibling["id"])
+    assert stored_sibling.role is None
+    snapshot = await _editable_async(client)
+    rows = _editable_rows(snapshot)
+    deleted = await _update_async(client, snapshot=snapshot, deletes=[sibling["id"]])
+    assert deleted.status_code == 200 and deleted.json()["deleted"] == 1
+    assert len(await _seeds(sqlite_instance)) == 2
+
+
+async def test_all_variants_edit_typed_fields_and_attach_new_or_existing_groups(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(
+            seeds=[
+                {
+                    "seed_type": "objective",
+                    "value": "goal",
+                    "conditions": [{"condition_type": "matches_objective"}],
+                    "prompt_group_alias": "g",
+                    "metadata": {
+                        "adversarial_prompts": {
+                            "system_prompt": {"data_type": "text", "value": "guide", "parameters": ["objective"]}
+                        }
+                    },
+                },
+                {**_simulation(), "prompt_group_alias": "g"},
+                {
+                    "seed_type": "prompt",
+                    "data_type": "text",
+                    "value": "next",
+                    "sequence": 4,
+                    "role": "user",
+                    "prompt_group_alias": "g",
+                    "response_json_schema": {"type": "object"},
+                },
+            ]
+        ),
+    )
+    snapshot = await _editable_async(client)
+    rows = _editable_rows(snapshot)
+    group = rows[0]["prompt_group_id"]
+    objective = next(row for row in rows if row["seed_type"] == "objective")
+    simulation = next(row for row in rows if row["seed_type"] == "simulated_conversation")
+    prompt = next(row for row in rows if row["seed_type"] == "prompt")
+    objective["value"] = "new goal"
+    objective["conditions"] = []
+    objective["metadata"]["adversarial_prompts"]["system_prompt"]["value"] = "new guide"
+    simulation["num_turns"] = 3
+    simulation["next_message_system_prompt"] = {"data_type": "text", "value": "next generator"}
+    prompt["sequence"] = 7
+    prompt["response_json_schema"] = {"type": "string"}
+    response = await _update_async(
+        client,
+        snapshot=snapshot,
+        seeds=[
+            objective,
+            simulation,
+            prompt,
+            {"data_type": "text", "value": "existing group", "prompt_group_id": group, "sequence": 8, "role": "user"},
+            {"seed_type": "objective", "value": "fresh objective", "prompt_group_alias": "fresh"},
+            {"data_type": "text", "value": "fresh prompt", "prompt_group_alias": "fresh", "role": "user"},
+        ],
+    )
+    assert response.status_code == 200, response.text
+    assert (response.json()["added"], response.json()["updated"], response.json()["logical_examples"]) == (3, 3, 2)
+    entries = {str(row.id): row for row in await _seeds(sqlite_instance)}
+    assert entries[objective["id"]].conditions is None
+    assert entries[objective["id"]].get_seed().metadata["adversarial_prompts"]["system_prompt"]["value"] == "new guide"
+    restored = entries[simulation["id"]].get_seed()
+    assert restored.num_turns == 3 and restored.next_message_system_prompt.value == "next generator"
+    assert entries[prompt["id"]].get_seed().response_json_schema == {"type": "string"}
+    snapshot = await _editable_async(client)
+    # Partial deletion may not remove the required objective from a surviving attack group.
+    invalid = await _update_async(client, snapshot=snapshot, deletes=[objective["id"]])
+    assert invalid.status_code == 422
+    group_ids = [row["id"] for row in _editable_rows(snapshot) if row["prompt_group_id"] == group]
+    deleted = await _update_async(client, snapshot=snapshot, deletes=group_ids)
+    assert deleted.status_code == 200 and deleted.json()["logical_examples"] == 1
+
+
+async def test_snapshot_token_notices_metadata_membership_conditions_and_sdk_writes(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="loaded", dataset_name="sdk")], added_by="sdk"
+    )
+    snapshot = await _editable_async(client, "sdk")
+    row = _editable_rows(snapshot)[0]
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(
+            update(SeedEntry).values(
+                description="SDK metadata edit", conditions=[{"condition_type": "matches_objective"}]
+            )
+        )
+        await session.commit()
+    response = await _update_async(client, name="sdk", snapshot=snapshot, seeds=[row])
+    assert response.status_code == 409
+    fresh = await _editable_async(client, "sdk")
+    assert fresh["version"] != snapshot["version"]
+    detail = await client.get(
+        f"{URL}/seeds/{fresh['items'][0]['example_id']}",
+        params={"selection_key": "dataset:named:sdk", "editable": True},
+    )
+    assert detail.json()["version"] == fresh["version"]
+    assert detail.json()["editable_seeds"] == fresh["items"][0]["editable_seeds"]
+    valid = await _update_async(client, name="sdk", snapshot=fresh, seeds=[_editable_rows(fresh)[0]])
+    assert valid.status_code == 200
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("data_type", ["image_path", "audio_path", "video_path", "binary_path"])
+async def test_retained_replaced_deleted_and_shared_owned_media(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, nested: bool, data_type: str
+) -> None:
+    raw = {"data_type": data_type, "value": "upload:a"}
+    seed = _simulation(adversarial_chat_system_prompt=raw) if nested else raw
+    await _upload(client, manifest=_manifest(seeds=[seed]), files={"a": ("first.bin", b"first")})
+    old_entry = (await _seeds(sqlite_instance))[0]
+    old_path = Path(
+        json.loads(old_entry.value)["adversarial_chat_system_prompt"]["value"] if nested else old_entry.value
+    )
+    snapshot = await _editable_async(client)
+    row = _editable_rows(snapshot)[0]
+    handle = row["adversarial_chat_system_prompt"]["value"] if nested else row["value"]
+    assert handle.startswith("retain:") and str(old_path) not in json.dumps(row)
+    retained = await _update_async(client, snapshot=snapshot, seeds=[row])
+    assert retained.status_code == 200, retained.text
+    assert old_path.read_bytes() == b"first"
+    assert retained.json()["version"] == snapshot["version"]
+    # Sharing outside the dataset protects the old asset on replacement.
+    async with await sqlite_instance.get_session_async() as session:
+        session.add(
+            SeedEntry(entry=SeedPrompt(value=str(old_path), data_type=data_type, dataset_name="shared", added_by="sdk"))
+        )
+        await session.commit()
+    row = _editable_rows(await _editable_async(client))[0]
+    if nested:
+        row["adversarial_chat_system_prompt"]["value"] = "upload:b"
+    else:
+        row["value"] = "upload:b"
+    replaced = await _update_async(client, snapshot=snapshot, seeds=[row], files={"b": ("second.bin", b"second")})
+    assert replaced.status_code == 200, replaced.text
+    assert old_path.exists()
+    entry = next(entry for entry in await _seeds(sqlite_instance) if entry.dataset_name == "upload")
+    new_path = Path(json.loads(entry.value)["adversarial_chat_system_prompt"]["value"] if nested else entry.value)
+    assert new_path.read_bytes() == b"second" and new_path != old_path
+    current = await _editable_async(client)
+    deleted = await _update_async(client, snapshot=current, deletes=[row["id"]])
+    assert deleted.status_code == 200 and not new_path.exists() and old_path.exists()
+
+
+async def test_mutation_cleanup_pending_is_success_and_old_token_cannot_duplicate_additions(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(seeds=[{"data_type": "binary_path", "value": "upload:a"}]),
+        files={"a": ("a.bin", b"old")},
+    )
+    snapshot = await _editable_async(client)
+    row = _editable_rows(snapshot)[0]
+    with patch.object(sqlite_instance.results_storage_io, "delete_file_async", side_effect=OSError("offline")):
+        response = await _update_async(
+            client,
+            snapshot=snapshot,
+            seeds=[{**row, "data_type": "text", "value": "replacement"}, {"data_type": "text", "value": "added"}],
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["cleanup"]["status"] == "pending"
+    assert response.json()["cleanup"]["pending_media"] == 1
+    retry = await _update_async(client, snapshot=snapshot, seeds=[{"data_type": "text", "value": "added"}])
+    assert retry.status_code == 409 and len(await _seeds(sqlite_instance)) == 2
+    cleanup = await client.get(response.headers["Location"])
+    assert cleanup.status_code == 200 and cleanup.json()["status"] == "completed"
+
+
+async def test_retention_handles_cannot_move_between_record_dataset_or_nested_slots(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(seeds=[{"data_type": "binary_path", "value": "upload:a"}] * 2),
+        files={"a": ("a.bin", b"a")},
+    )
+    snapshot = await _editable_async(client)
+    first, second = _editable_rows(snapshot)
+    assert first["value"] != second["value"]
+    bad = await _update_async(client, snapshot=snapshot, seeds=[{**second, "value": first["value"]}])
+    assert bad.status_code == 422
+    bad = await _update_async(client, snapshot=snapshot, seeds=[{"data_type": "binary_path", "value": first["value"]}])
+    assert bad.status_code == 422
+    assert len(await _seeds(sqlite_instance)) == 2
+
+
+async def test_mutation_failure_rolls_back_rows_and_only_new_staged_media(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(seeds=[{"data_type": "binary_path", "value": "upload:a"}]),
+        files={"a": ("a.bin", b"old")},
+    )
+    old = (await _seeds(sqlite_instance))[0]
+    snapshot = await _editable_async(client)
+    row = {**_editable_rows(snapshot)[0], "value": "upload:b"}
+    with patch.object(sqlite_instance.results_storage_io, "write_stream_async", side_effect=OSError("storage failure")):
+        response = await _update_async(client, snapshot=snapshot, seeds=[row], files={"b": ("b.bin", b"new")})
+    assert response.status_code == 503
+    assert (await _seeds(sqlite_instance))[0].value == old.value and Path(old.value).read_bytes() == b"old"
+    assert (await _editable_async(client))["version"] == snapshot["version"]
+
+
+async def test_update_limits_count_deletes_and_affected_complete_groups(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(
+            seeds=[
+                {"data_type": "text", "value": str(index), "prompt_group_alias": "g", "role": "user"}
+                for index in range(3)
+            ]
+        ),
+    )
+    snapshot = await _editable_async(client)
+    rows = _editable_rows(snapshot)
+    with patch.object(DatasetUploadLimits, "from_environment", return_value=DatasetUploadLimits(prompts=2)):
+        response = await _update_async(client, snapshot=snapshot, seeds=[rows[0]])
+        assert response.status_code == 413
+        response = await _update_async(client, snapshot=snapshot, deletes=[row["id"] for row in rows])
+        assert response.status_code == 413
+    assert len(await _seeds(sqlite_instance)) == 3
+
+
+@pytest.mark.parametrize(
+    "slot",
+    [
+        "adversarial_chat_system_prompt",
+        "simulated_target_system_prompt",
+        "next_message_system_prompt",
+    ],
+)
+async def test_update_recursive_trust_rejection_and_retention_slot_binding(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, slot: str
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(
+            seeds=[
+                _simulation(
+                    **{
+                        slot: {"data_type": "binary_path", "value": "upload:a"},
+                    }
+                )
+            ]
+        ),
+        files={"a": ("a.bin", b"bytes")},
+    )
+    snapshot = await _editable_async(client)
+    row = _editable_rows(snapshot)[0]
+    with (
+        patch.object(Seed, "_render_trusted_template_value", side_effect=AssertionError("rendered")),
+        patch.object(SeedPrompt, "from_yaml_file", side_effect=AssertionError("read client file")),
+    ):
+        for changes in (
+            {slot + "_path": "C:\\secret.yaml"},
+            {slot: {**row[slot], "is_jinja_template": True}},
+            {slot: {"data_type": "binary_path", "value": "C:\\secret"}},
+        ):
+            invalid = await _update_async(client, snapshot=snapshot, seeds=[{**row, **changes}])
+            assert invalid.status_code == 422, invalid.text
+        other_slot = (
+            "next_message_system_prompt" if slot != "next_message_system_prompt" else "adversarial_chat_system_prompt"
+        )
+        invalid = await _update_async(
+            client,
+            snapshot=snapshot,
+            seeds=[
+                {
+                    **row,
+                    other_slot: {"data_type": "binary_path", "value": row[slot]["value"]},
+                }
+            ],
+        )
+        assert invalid.status_code == 422
+    valid = await _update_async(client, snapshot=snapshot, seeds=[row])
+    assert valid.status_code == 200
+    assert valid.json()["version"] == snapshot["version"]
+
+
+async def test_historical_config_is_inert_on_editable_reads_and_affected_group_validation(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(
+            seeds=[
+                {**_simulation(), "prompt_group_alias": "g"},
+                {"data_type": "text", "value": "next", "sequence": 4, "role": "user", "prompt_group_alias": "g"},
+            ]
+        ),
+    )
+    snapshot = await _editable_async(client)
+    row = next(row for row in _editable_rows(snapshot) if row["seed_type"] == "prompt")
+    simulation = next(entry for entry in await _seeds(sqlite_instance) if entry.seed_type == "simulated_conversation")
+    async with await sqlite_instance.get_session_async() as session:
+        await session.execute(
+            update(SeedEntry)
+            .where(SeedEntry.id == simulation.id)
+            .values(value=json.dumps({"num_turns": 2, "adversarial_chat_system_prompt_path": "C:\\private.yaml"}))
+        )
+        await session.commit()
+    with patch.object(SeedPrompt, "from_yaml_file", side_effect=AssertionError("loaded historical file")):
+        ordinary = await client.get(
+            f"{URL}/seeds/{simulation.prompt_group_id}", params={"selection_key": "dataset:named:upload"}
+        )
+        assert ordinary.status_code == 200
+        editable = await client.get(f"{URL}/seeds", params={"selection_key": "dataset:named:upload", "editable": True})
+        assert editable.status_code == 422
+        current = await sqlite_instance.get_dataset_editing_snapshot_async("upload")
+        response = await _update_async(client, snapshot={"version": current.version}, seeds=[{**row, "value": "new"}])
+        assert response.status_code == 422
+    assert next(entry for entry in await _seeds(sqlite_instance) if entry.seed_type == "prompt").value == "next"
+
+
+async def test_cancelled_mutation_drains_new_storage_and_preserves_old_rows_and_media(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(seeds=[{"data_type": "binary_path", "value": "upload:a"}]),
+        files={"a": ("a.bin", b"old")},
+    )
+    snapshot = await _editable_async(client)
+    old = (await _seeds(sqlite_instance))[0]
+    original = sqlite_instance.results_storage_io.write_stream_async
+    written, release = asyncio.Event(), asyncio.Event()
+
+    async def delayed_write_async(**kwargs: Any) -> None:
+        await original(**kwargs)
+        written.set()
+        await release.wait()
+
+    with patch.object(sqlite_instance.results_storage_io, "write_stream_async", side_effect=delayed_write_async):
+        task = asyncio.create_task(
+            _update_async(
+                client,
+                snapshot=snapshot,
+                seeds=[{**_editable_rows(snapshot)[0], "value": "upload:b"}],
+                files={"b": ("b.bin", b"cancelled")},
+            )
+        )
+        try:
+            await asyncio.wait_for(written.wait(), TEST_WATCHDOG_SECONDS)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, TEST_WATCHDOG_SECONDS)
+    assert (await _seeds(sqlite_instance))[0].value == old.value
+    assert Path(old.value).read_bytes() == b"old"
+    assert list(Path(sqlite_instance.results_path).rglob("*.bin")) == [Path(old.value)]
+    assert (await _editable_async(client))["version"] == snapshot["version"]
+
+
+async def test_committed_cleanup_read_failure_still_returns_success_with_explicit_location(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(client)
+    snapshot = await _editable_async(client)
+    with patch.object(sqlite_instance, "cleanup_dataset_media_async", side_effect=OSError("database unavailable")):
+        response = await _update_async(client, snapshot=snapshot, seeds=[{"data_type": "text", "value": "new"}])
+    assert response.status_code == 200, response.text
+    assert response.json()["added"] == 1 and response.json()["cleanup"]["status"] == "pending"
+    assert response.json()["cleanup"]["pending_media"] is None
+    assert response.headers["Location"] == response.json()["cleanup_location"]
+    assert len(await _seeds(sqlite_instance)) == 2
+    assert (await client.get(response.headers["Location"])).json()["status"] == "completed"
+
+
+async def test_only_replaced_asset_is_cleaned_not_all_assets_from_original_upload(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(
+            seeds=[
+                {"data_type": "binary_path", "value": "upload:a"},
+                {"data_type": "binary_path", "value": "upload:b"},
+            ]
+        ),
+        files={"a": ("a.bin", b"first"), "b": ("b.bin", b"untouched")},
+    )
+    original = {str(entry.id): entry for entry in await _seeds(sqlite_instance)}
+    snapshot = await _editable_async(client)
+    edit, omitted = _editable_rows(snapshot)
+    result = await _update_async(client, snapshot=snapshot, seeds=[{**edit, "data_type": "text", "value": "replaced"}])
+    assert result.status_code == 200, result.text
+    assert not Path(original[edit["id"]].value).exists()
+    assert Path(original[omitted["id"]].value).exists()
+    unowned = Path(sqlite_instance.results_path) / "external.bin"
+    unowned.write_bytes(b"external")
+    async with await sqlite_instance.get_session_async() as session:
+        session.add(
+            SeedEntry(
+                entry=SeedPrompt(value=str(unowned), data_type="binary_path", dataset_name="external", added_by="sdk")
+            )
+        )
+        await session.commit()
+    external = await _editable_async(client, "external")
+    result = await _update_async(
+        client, name="external", snapshot=external, deletes=[_editable_rows(external)[0]["id"]]
+    )
+    assert result.status_code == 200 and unowned.exists()
+
+
+async def test_database_failure_after_dirty_edit_and_delete_rolls_back_entire_batch_and_new_media(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(
+        client,
+        manifest=_manifest(
+            seeds=[
+                {"data_type": "text", "value": "old"},
+                {"data_type": "binary_path", "value": "upload:a"},
+            ]
+        ),
+        files={"a": ("a.bin", b"old")},
+    )
+    snapshot = await _editable_async(client)
+    before = {str(entry.id): entry.get_seed_record().model_dump(mode="json") for entry in await _seeds(sqlite_instance)}
+    rows = _editable_rows(snapshot)
+    edit = next(row for row in rows if row["data_type"] == "text")
+    deleted = next(row for row in rows if row["data_type"] == "binary_path")
+    async with await sqlite_instance.get_session_async() as session:
+        engine = session.bind.sync_engine
+
+    def fail_insert(*args: Any) -> None:
+        if args[2].startswith('INSERT INTO "SeedPromptEntries"'):
+            raise RuntimeError("injected database failure")
+
+    event.listen(engine, "before_cursor_execute", fail_insert)
+    try:
+        response = await _update_async(
+            client,
+            snapshot=snapshot,
+            seeds=[
+                {**edit, "value": "dirty replacement"},
+                {"data_type": "binary_path", "value": "upload:b"},
+            ],
+            deletes=[deleted["id"]],
+            files={"b": ("b.bin", b"new")},
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", fail_insert)
+    assert response.status_code == 503
+    after = {str(entry.id): entry.get_seed_record().model_dump(mode="json") for entry in await _seeds(sqlite_instance)}
+    assert before == after
+    assert list(Path(sqlite_instance.results_path).rglob("*.bin")) == [Path(before[deleted["id"]]["value"])]
+    assert (await _editable_async(client))["version"] == snapshot["version"]
+
+
 @pytest.mark.parametrize("data_type", ["image_path", "audio_path", "video_path", "binary_path"])
 async def test_arbitrary_media_bytes_round_trip_and_owned_cleanup(
     client: AsyncClient, sqlite_instance: SQLiteMemory, data_type: str
@@ -148,6 +834,77 @@ async def test_arbitrary_media_bytes_round_trip_and_owned_cleanup(
     status = await client.get(deleted.headers["Location"])
     assert status.json()["status"] == "completed"
     assert (await client.delete(URL, params={"selection_key": "dataset:named:upload"})).status_code == 404
+
+
+async def test_inert_metadata_and_schema_fields_are_not_template_constructor_inputs(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    raw = {
+        "data_type": "text",
+        "value": "literal",
+        "metadata": {"is_jinja_template": True, "next_message_system_prompt_path": "inert source metadata"},
+        "response_json_schema": {"type": "object", "properties": {"is_jinja_template": {"type": "boolean"}}},
+    }
+    with patch.object(Seed, "_render_trusted_template_value", side_effect=AssertionError("rendered")):
+        created = await _upload(client, manifest=_manifest(seeds=[raw]))
+        assert created.status_code == 201
+        snapshot = await _editable_async(client)
+        result = await _update_async(client, snapshot=snapshot, seeds=[_editable_rows(snapshot)[0]])
+        assert result.status_code == 200, result.text
+    assert (await _seeds(sqlite_instance))[0].prompt_metadata["is_jinja_template"] is True
+
+
+async def test_whole_dataset_delete_includes_assets_owned_by_later_mutations(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(client)
+    snapshot = await _editable_async(client)
+    result = await _update_async(
+        client,
+        snapshot=snapshot,
+        seeds=[{"data_type": "binary_path", "value": "upload:a"}],
+        files={"a": ("a.bin", b"mutation-owned")},
+    )
+    assert result.status_code == 200
+    path = Path(next(entry.value for entry in await _seeds(sqlite_instance) if entry.data_type == "binary_path"))
+    assert path.exists()
+    deleted = await client.delete(URL, params={"selection_key": "dataset:named:upload"})
+    assert deleted.status_code == 200 and deleted.json()["deleted_seeds"] == 2
+    assert not path.exists() and not await _seeds(sqlite_instance)
+
+
+@pytest.mark.parametrize(
+    "invalid", ["objective_cardinality", "simulation_cardinality", "sequence_overlap", "foreign_group"]
+)
+async def test_invalid_additions_validate_complete_existing_groups_atomically(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, invalid: str
+) -> None:
+    created = await _upload(
+        client,
+        manifest=_manifest(
+            seeds=[
+                {"seed_type": "objective", "value": "goal", "prompt_group_alias": "g"},
+                {**_simulation(), "prompt_group_alias": "g"},
+            ]
+        ),
+    )
+    assert created.status_code == 201
+    snapshot = await _editable_async(client)
+    group = _editable_rows(snapshot)[0]["prompt_group_id"]
+    if invalid == "objective_cardinality":
+        addition = {"seed_type": "objective", "value": "second goal", "prompt_group_id": group}
+    elif invalid == "simulation_cardinality":
+        addition = {**_simulation(), "prompt_group_id": group}
+    elif invalid == "sequence_overlap":
+        addition = {"data_type": "text", "value": "overlap", "prompt_group_id": group, "sequence": 1}
+    else:
+        addition = {"data_type": "text", "value": "foreign", "prompt_group_id": str(uuid4())}
+    result = await _update_async(
+        client, snapshot=snapshot, seeds=[{"data_type": "text", "value": "must rollback"}, addition]
+    )
+    assert result.status_code == 422
+    assert len(await _seeds(sqlite_instance)) == 2
+    assert (await _editable_async(client))["version"] == snapshot["version"]
 
 
 @pytest.mark.parametrize(

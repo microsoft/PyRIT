@@ -38,7 +38,7 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
-### Dataset upload and deletion
+### Dataset creation, batch mutation, and deletion
 
 `POST /api/datasets` creates a named dataset synchronously from multipart form data.
 Send exactly one `manifest` part containing JSON (a form field or a JSON file), plus
@@ -126,7 +126,121 @@ are assigned by the server. Attribution uses the authenticated object ID, or
 recorded as `upload_filename` and `upload_content_type` metadata. Trusted Jinja
 templates are rejected before constructing any seed or nested prompt; literal
 template syntax stays literal. Client paths are never used to load prompt files.
-These are imports, not a new export/round-trip serialization contract.
+Create mode remains an import, not a raw stored-record round-trip contract.
+
+#### Updating an existing stored dataset
+
+The same multipart `POST /api/datasets` also accepts explicit `"mode":"update"`.
+The default `"mode":"create"` retains the create-only behavior and `201` response.
+Update mode returns `200` and never implicitly creates or loads a dataset.
+Named populations already stored by the SDK or a provider are eligible; provider
+files/registrations are not modified. The unnamed aggregate cannot be mutated.
+
+First browse `GET /api/datasets/seeds?selection_key=dataset:named:my_dataset&editable=true`
+or the existing `/seeds/{example_id}` detail with `editable=true`. These responses
+include `version` and `editable_seeds`: submit-ready subtype replacements, not raw
+`members` storage records. Logical `example_id`/`prompt_group_id` identifies an
+example; **`editable_seeds[].id` is the record UUID** used for edits/deletions.
+Records, projections, and the version originate from one database snapshot.
+Ordinary listing/detail requests do not compute editing state or scan other
+datasets for content tokens.
+
+```json
+{
+  "name": "my_dataset",
+  "mode": "update",
+  "expected_version": "<64-character version from editable browsing>",
+  "seeds": [
+    {"data_type": "text", "value": "An addition"},
+    {"id": "<existing record UUID>", "seed_type": "prompt",
+     "data_type": "text", "value": "Replacement text"},
+    {"seed_type": "objective", "value": "New objective", "prompt_group_alias": "new_example",
+     "conditions": [{"condition_type": "matches_objective"}]},
+    {"seed_type": "simulated_conversation", "prompt_group_alias": "new_example",
+     "num_turns": 3, "sequence": 0,
+     "adversarial_chat_system_prompt": {"data_type": "text", "value": "Literal guidance"},
+     "simulated_target_system_prompt": {"data_type": "text", "value": "Literal target guidance"}},
+    {"seed_type": "prompt", "data_type": "text", "value": "After simulation",
+     "prompt_group_alias": "new_example", "sequence": 6, "role": "user"}
+  ],
+  "delete_seed_ids": ["<different existing record UUID>"]
+}
+```
+
+No `id` adds a server-identified seed; an `id` replaces that exact record.
+`delete_seed_ids` defaults to `[]`. Omitted records are **untouched**, never
+implicitly deleted. Deletion-only updates send `"seeds":[]` with nonempty
+`delete_seed_ids`; a true no-op is rejected. Create mode forbids deletions and
+`expected_version`. Unknown/foreign record UUIDs return `404`; duplicate IDs,
+edit/delete overlap, invalid immutable fields, and invalid final groups return
+`422`. All additions, edits, and deletions are applied before validating copied
+complete affected groups. A whole group can disappear; a surviving attack group
+must retain its required objective. Validation never persists normalized roles,
+metadata, or grouping on omitted siblings.
+
+In update mode, a new seed's `prompt_group_id` explicitly attaches to an existing
+group in **this dataset**. A `prompt_group_alias` instead creates a fresh group
+shared by that batch's matching aliases; aliases are not existing-group lookups.
+Do not supply both. Edited records retain their original group (including null),
+type, dataset, record ID, origin, `date_added`, and `added_by`. These immutable
+fields may be omitted; supplied conflicting values are rejected. Checksums and
+simulation `value` are recomputed server-side. Original creation attribution
+remains unchanged; additions use the request's normal ingestion attribution.
+
+Each edit is a **full replacement of client-editable fields**, not a recursive
+patch. Use the editable projection when preserving optional fields:
+
+| Editable fields | Omission/default and null rules |
+|---|---|
+| All subtypes: `name`, `description`, `source` | Omitted or null clears the field. |
+| All subtypes: `authors`, `groups`, `harm_categories`, `metadata` | Omitted uses canonical empty collections; null is accepted. Include prior metadata to preserve it. |
+| Prompt: `value`, `data_type` | Required string and explicit supported type; null is rejected. |
+| Prompt: `role`, `sequence`, `parameters`, `response_json_schema` | Defaults: null, 0, [], null. Null accepted except for sequence. Final group role constraints still apply. |
+| Objective: `value`, `conditions` | Text value required; conditions defaults to [], [] clears, null is rejected. Typed conditions and text-only `metadata.adversarial_prompts` use canonical validation. |
+| Simulation: `num_turns`, `sequence`, `adversarial_chat_system_prompt` | Defaults: 3 and 0; integers must be positive/nonnegative. The adversarial prompt is required and non-null. |
+| Simulation: `simulated_target_system_prompt`, `next_message_system_prompt`, `pyrit_version` | Omitted/null target uses the trusted built-in compliant default; omitted/null next prompt removes it; omitted/null version uses the installed PyRIT version. |
+
+Objectives and simulations default to text-only `data_type`; any explicit type
+must also be text. Inline prompts require explicit types and string values.
+Simulation configuration stores nested behavioral value/type/parameters/response
+schema, not nested descriptive fields, exactly as canonical SDK persistence does.
+No submitted legacy `*_system_prompt_path` or trusted-template flag can trigger
+filesystem loading/rendering, including in historical configuration. Historical
+records that are not safely submit-ready remain inspectable through ordinary
+reads; editing an affected invalid group fails without changing its siblings.
+
+For retained media, leave the projection's `retain:<opaque handle>` in its
+original media slot. The server binds it to the dataset, record UUID, exact
+top-level/nested slot, and expected snapshot. It cannot be moved to another seed
+or slot, used for an addition, or replaced with an arbitrary server path. To
+replace media, use `upload:<part-name>` with a new file part. All four existing
+media types and all three inline simulation prompt slots are supported.
+
+`expected_version` is a deterministic token of the **complete persisted dataset
+state**, including IDs, membership, metadata, conditions, and configuration.
+It excludes signed media URL parameters and display URLs. SDK/provider writes
+through memory participate in the same comparison lock; stale state returns
+`409` before any mutation or media write. This is not a monotonic history
+counter: an equivalent-state ABA is accepted. Fetch another editable snapshot
+after a conflict; never blindly retry an addition with a changed version.
+
+The response includes `added`, `updated`, `deleted`, indexed `seeds` results
+(`index`, record `id`, `operation`), exact `delete_seed_ids`, final population
+counts, `dataset_exists`, `version`, and `cleanup`/`cleanup_location`. An unchanged
+submitted edit still counts as updated. Deleting the final record returns
+`dataset_exists:false`, zero population, and `version:null`; no empty-dataset
+registry or new editable token is created.
+
+Fresh paths are durably journaled before bytes are written. Failed validation,
+stale state, rollback, storage failure, cancellation, and restart recovery preserve
+old rows/media and clean only the new staged assets. After commit, only replaced
+or explicitly deleted API-owned assets without any remaining seed, message, or
+scorer reference are cleaned. Other files from the original upload stay intact;
+external/unowned and shared assets are not removed. **A committed mutation with
+pending cleanup still returns `200`**, not a retry-shaped `503`, with an explicit
+status resource in `Location` and `cleanup_location`. An unavailable cleanup
+status has `pending_media:null` rather than an invented count. That resource
+retries durable cleanup without replaying the batch.
 
 | Environment variable | Default |
 |---|---|
@@ -140,6 +254,10 @@ types return `415`; malformed manifests, unsafe template flags, and invalid
 prompt/reference fields return `422`, without echoing prompt content. Media is
 spooled during parsing and streamed to the configured disk/blob results store.
 No seed rows become visible until the complete import commits.
+For updates, the record limit bounds additions + edits + deletions together,
+and complete affected-group work (including deleted and surviving members).
+The manifest byte limit also bounds the copied affected stored state and submitted
+replacements. Exceeding these work budgets returns `413` without partial changes.
 
 Use the existing `GET /api/datasets`, `/api/datasets/seeds`,
 `/api/datasets/seeds/{example_id}`, and media URLs to browse uploaded datasets.

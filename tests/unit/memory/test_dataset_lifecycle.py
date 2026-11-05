@@ -10,16 +10,19 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import event, select, update
 
+from pyrit.backend.models.datasets import DatasetUploadManifest
+from pyrit.backend.services.dataset_upload_service import _validated_seeds
 from pyrit.common.singleton import Singleton
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
+from pyrit.memory.dataset_mutation import DatasetVersionConflictError, dataset_version, editable_seed
 from pyrit.memory.memory_models import DatasetLifecycleEntry, SeedEntry
-from pyrit.models import SeedPrompt
+from pyrit.models import SeedPrompt, SeedRecord, SeedUnion
 from pyrit.setup import SQLITE, initialize_pyrit_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -63,6 +66,229 @@ async def _create_media_dataset_async(memory: SQLiteMemory) -> Path:
 
     await memory.commit_dataset_upload_async(upload_id=upload_id, seeds=[seed], write_media=write_async)
     return path
+
+
+async def _mutate_async(
+    memory: SQLiteMemory, *, version: str, raw: list[dict[str, Any]], deletes: list[UUID] | None = None
+) -> dict[str, Any]:
+    operation_id = await memory.reserve_dataset_mutation_async(dataset_name="owned", paths=[])
+    manifest = DatasetUploadManifest(
+        name="owned",
+        mode="update",
+        expected_version=version,
+        seeds=raw,
+        delete_seed_ids=[str(value) for value in deletes or []],
+    )
+
+    def prepare(records: dict[UUID, SeedRecord]) -> list[SeedUnion]:
+        return _validated_seeds(manifest=manifest, files={}, added_by="mutation", records=records)
+
+    async def write_async(seeds: list[SeedUnion]) -> None:
+        for seed in seeds:
+            seed.value_sha256 = hashlib.sha256(seed.value.encode("utf-8")).hexdigest()
+
+    try:
+        result = await memory.commit_dataset_mutation_async(
+            upload_id=operation_id,
+            expected_version=version,
+            delete_ids=deletes or [],
+            prepare_seeds=prepare,
+            write_media=write_async,
+            max_records=10000,
+            max_bytes=10000000,
+        )
+    except BaseException:
+        await memory.cleanup_dataset_media_async(operation_id=operation_id, abandon_upload=True)
+        raise
+    finally:
+        await memory.release_dataset_upload_async(operation_id)
+    await memory.cleanup_dataset_media_async(operation_id=operation_id)
+    return result
+
+
+async def test_independent_file_connections_serialize_mutations_and_reject_stale_state(
+    memories: tuple[SQLiteMemory, SQLiteMemory],
+) -> None:
+    first, second = memories
+    await first.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="old", data_type="text", dataset_name="owned")], added_by="sdk"
+    )
+    snapshot = await first.get_dataset_editing_snapshot_async("owned")
+    results = await asyncio.gather(
+        *(
+            _mutate_async(memory, version=snapshot.version, raw=[{"data_type": "text", "value": "new"}])
+            for memory in memories
+        ),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(result, dict) for result in results) == 1
+    assert sum(isinstance(result, (DatasetNameConflictError, DatasetVersionConflictError)) for result in results) == 1
+    current = await second.get_dataset_editing_snapshot_async("owned")
+    assert len(current.records) == 2
+    with pytest.raises(DatasetVersionConflictError):
+        await _mutate_async(first, version=snapshot.version, raw=[{"data_type": "text", "value": "retry"}])
+    assert len((await second.get_dataset_editing_snapshot_async("owned")).records) == 2
+
+
+async def test_editing_snapshot_waits_for_sdk_write_and_matches_its_committed_rows(
+    memories: tuple[SQLiteMemory, SQLiteMemory],
+) -> None:
+    first, second = memories
+    await first.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="old", data_type="text", dataset_name="owned")], added_by="sdk"
+    )
+    original = await second.get_dataset_editing_snapshot_async("owned")
+    identifier = original.records[0].id
+    async with await first.get_session_async() as session:
+        await session.execute(
+            update(SeedEntry).where(SeedEntry.id == identifier).values(value="new", description="metadata")
+        )
+        waiting = asyncio.create_task(second.get_dataset_editing_snapshot_async("owned"))
+        await session.commit()
+    snapshot = await asyncio.wait_for(waiting, TEST_WATCHDOG_SECONDS)
+    assert snapshot.records[0].value == "new" and snapshot.records[0].description == "metadata"
+    assert snapshot.version != original.version
+    assert snapshot.version == (await first.get_dataset_editing_snapshot_async("owned")).version
+    with pytest.raises(DatasetVersionConflictError):
+        await _mutate_async(second, version=original.version, raw=[{"data_type": "text", "value": "stale"}])
+
+
+async def test_mutation_and_exact_dataset_delete_race_cannot_resurrect_population(
+    memories: tuple[SQLiteMemory, SQLiteMemory],
+) -> None:
+    first, second = memories
+    await first.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="old", data_type="text", dataset_name="owned")], added_by="sdk"
+    )
+    snapshot = await first.get_dataset_editing_snapshot_async("owned")
+    results = await asyncio.gather(
+        _mutate_async(first, version=snapshot.version, raw=[{"data_type": "text", "value": "new"}]),
+        second.delete_dataset_async(dataset_name="owned"),
+        return_exceptions=True,
+    )
+    assert isinstance(results[1], UUID)
+    assert isinstance(results[0], (dict, LookupError))
+    await second.cleanup_dataset_media_async(operation_id=results[1])
+    with pytest.raises(LookupError):
+        await first.get_dataset_editing_snapshot_async("owned")
+
+
+async def test_mutation_restart_recovers_only_new_staging_and_preserves_old_owned_assets(tmp_path: Path) -> None:
+    db_path = tmp_path / "mutation.db"
+    memory = await _open_memory_async(db_path)
+    try:
+        original = await _create_media_dataset_async(memory)
+        staged = tmp_path / "new.bin"
+        operation_id = await memory.reserve_dataset_mutation_async(dataset_name="owned", paths=[str(staged)])
+        await memory.results_storage_io.write_file_async(staged, b"partial")
+        # A second runtime may recover abandoned operations but must skip a native live owner.
+        other = await _open_memory_async(db_path)
+        try:
+            await other.recover_dataset_cleanup_async()
+            assert original.exists() and staged.exists()
+        finally:
+            await other.dispose_engine_async()
+    finally:
+        await memory.dispose_engine_async()
+    recovered = await _open_memory_async(db_path)
+    try:
+        await recovered.recover_dataset_cleanup_async()
+        assert original.exists() and not staged.exists()
+        snapshot = await recovered.get_dataset_editing_snapshot_async("owned")
+        assert len(snapshot.records) == 1 and snapshot.records[0].value == str(original)
+        status = await recovered.cleanup_dataset_media_async(operation_id=operation_id)
+        assert status["status"] == "completed"
+    finally:
+        await recovered.dispose_engine_async()
+
+
+async def test_complete_state_token_accepts_equivalent_aba_but_not_membership(
+    memories: tuple[SQLiteMemory, SQLiteMemory],
+) -> None:
+    first, second = memories
+    await first.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="old", data_type="text", dataset_name="owned")], added_by="sdk"
+    )
+    original = await first.get_dataset_editing_snapshot_async("owned")
+    identifier = original.records[0].id
+    async with await second.get_session_async() as session:
+        await session.execute(update(SeedEntry).where(SeedEntry.id == identifier).values(description="temporary"))
+        await session.commit()
+        await session.execute(update(SeedEntry).where(SeedEntry.id == identifier).values(description=None))
+        await session.commit()
+    assert (await first.get_dataset_editing_snapshot_async("owned")).version == original.version
+    response = await _mutate_async(
+        first, version=original.version, raw=[editable_seed(record=original.records[0], version=original.version)]
+    )
+    assert response["updated"] == 1 and response["version"] == original.version
+    async with await second.get_session_async() as session:
+        await session.execute(update(SeedEntry).where(SeedEntry.id == identifier).values(prompt_group_id=uuid4()))
+        await session.commit()
+    with pytest.raises(DatasetVersionConflictError):
+        await _mutate_async(first, version=original.version, raw=[{"data_type": "text", "value": "new"}])
+
+
+def test_content_token_and_retention_handle_ignore_signed_display_url_parameters() -> None:
+    entry = SeedEntry(
+        entry=SeedPrompt(
+            value="https://account.blob.core.windows.net/container/item.bin?sig=old",
+            data_type="binary_path",
+            dataset_name="owned",
+            added_by="sdk",
+            value_sha256="stored-bytes-hash",
+        )
+    )
+    version = dataset_version(entries=[entry], storage=None)
+    projected = editable_seed(record=entry.get_seed_record(), version=version)
+    entry.value = "https://account.blob.core.windows.net/container/item.bin?sig=new&se=later"
+    assert dataset_version(entries=[entry], storage=None) == version
+    assert editable_seed(record=entry.get_seed_record(), version=version) == projected
+
+
+async def test_restart_completes_committed_mutation_cleanup_without_removing_new_live_media(tmp_path: Path) -> None:
+    db_path = tmp_path / "committed-mutation.db"
+    memory = await _open_memory_async(db_path)
+    try:
+        old_path = await _create_media_dataset_async(memory)
+        original = await memory.get_dataset_editing_snapshot_async("owned")
+        new_path = tmp_path / "new-live.bin"
+        operation_id = await memory.reserve_dataset_mutation_async(dataset_name="owned", paths=[str(new_path)])
+        seed = SeedPrompt(
+            value=str(new_path),
+            data_type="binary_path",
+            dataset_name="owned",
+            added_by="mutation",
+            value_sha256=hashlib.sha256(b"new").hexdigest(),
+        )
+
+        async def write_async(seeds: list[SeedUnion]) -> None:
+            await memory.results_storage_io.write_file_async(new_path, b"new")
+
+        result = await memory.commit_dataset_mutation_async(
+            upload_id=operation_id,
+            expected_version=original.version,
+            delete_ids=[original.records[0].id],
+            prepare_seeds=lambda records: [seed],
+            write_media=write_async,
+            max_records=10000,
+            max_bytes=10000000,
+        )
+        await memory.release_dataset_upload_async(operation_id)
+        with patch.object(memory.results_storage_io, "delete_file_async", side_effect=OSError("offline")):
+            status = await memory.cleanup_dataset_media_async(operation_id=operation_id)
+        assert status["status"] == "pending" and result["added"] == result["deleted"] == 1
+        assert old_path.exists() and new_path.exists()
+    finally:
+        await memory.dispose_engine_async()
+    recovered = await _open_memory_async(db_path)
+    try:
+        await recovered.recover_dataset_cleanup_async()
+        assert not old_path.exists() and new_path.read_bytes() == b"new"
+        snapshot = await recovered.get_dataset_editing_snapshot_async("owned")
+        assert len(snapshot.records) == 1 and snapshot.records[0].id == seed.id
+        assert snapshot.version == result["version"]
+    finally:
+        await recovered.dispose_engine_async()
 
 
 async def test_independent_connections_cannot_reserve_the_same_dataset(
