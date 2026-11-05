@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import uuid
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 
     from pyrit.memory.memory_interface import MemoryInterface
     from pyrit.memory.storage import StorageIO
-    from pyrit.models import SeedPrompt
+    from pyrit.models import SeedUnion
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +101,14 @@ def lock_dataset_lifecycle(session: Session) -> None:
 
 
 def _entry_media_values(entry: object) -> list[str]:
-    if isinstance(entry, (SeedEntry, ScorableContentEntry)):
+    if isinstance(entry, SeedEntry):
+        try:
+            return _seed_media_values(seed_type=entry.seed_type, value=entry.value, data_type=entry.data_type)
+        except ValueError:
+            # Legacy raw configurations remain inspectable; cleanup still fails closed.
+            logger.warning("Seed %s has an invalid configuration; media cleanup requires repair.", entry.id)
+            return []
+    if isinstance(entry, ScorableContentEntry):
         return [entry.value] if entry.data_type in MEDIA_PATH_DATA_TYPES else []
     if isinstance(entry, PromptMemoryEntry):
         return [
@@ -112,6 +120,25 @@ def _entry_media_values(entry: object) -> list[str]:
             if value and data_type in MEDIA_PATH_DATA_TYPES
         ]
     return []
+
+
+def _seed_media_values(*, seed_type: str, value: str, data_type: str) -> list[str]:
+    if data_type in MEDIA_PATH_DATA_TYPES:
+        return [value]
+    if seed_type != "simulated_conversation":
+        return []
+    config = json.loads(value)
+    if not isinstance(config, dict):
+        raise ValueError("A simulated conversation requires a stored configuration object.")
+    values = []
+    for field in ("adversarial_chat_system_prompt", "simulated_target_system_prompt", "next_message_system_prompt"):
+        prompt = config.get(field)
+        if isinstance(prompt, dict) and prompt.get("data_type") in MEDIA_PATH_DATA_TYPES:
+            path = prompt.get("value")
+            if not isinstance(path, str):
+                raise ValueError(f"Stored {field} requires a media path.")
+            values.append(path)
+    return values
 
 
 def validate_dataset_reference_writes(*, session: Session, entries: Sequence[object]) -> None:
@@ -164,8 +191,17 @@ def stored_media_keys(session: Session) -> set[str]:
         set[str]: Canonical identities of the referenced media.
     """
     values: list[str] = []
-    for model in (SeedEntry, ScorableContentEntry):
-        values.extend(session.scalars(select(model.value).where(model.data_type.in_(MEDIA_PATH_DATA_TYPES))).all())
+    for seed_type, value, data_type in session.execute(
+        select(SeedEntry.seed_type, SeedEntry.value, SeedEntry.data_type).where(
+            (SeedEntry.data_type.in_(MEDIA_PATH_DATA_TYPES)) | (SeedEntry.seed_type == "simulated_conversation")
+        )
+    ):
+        values.extend(_seed_media_values(seed_type=seed_type, value=value, data_type=data_type))
+    values.extend(
+        session.scalars(
+            select(ScorableContentEntry.value).where(ScorableContentEntry.data_type.in_(MEDIA_PATH_DATA_TYPES))
+        ).all()
+    )
     for value_column, type_column in (
         (PromptMemoryEntry.original_value, PromptMemoryEntry.original_value_data_type),
         (PromptMemoryEntry.converted_value, PromptMemoryEntry.converted_value_data_type),
@@ -253,7 +289,7 @@ async def commit_upload_async(
     *,
     memory: MemoryInterface,
     upload_id: uuid.UUID,
-    seeds: Sequence[SeedPrompt],
+    seeds: Sequence[SeedUnion],
     write_media: Callable[[], Awaitable[None]],
 ) -> None:
     """

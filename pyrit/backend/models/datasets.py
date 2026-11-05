@@ -83,7 +83,7 @@ class DatasetUploadLimits:
 
 
 class DatasetUploadManifest(BaseModel):
-    """Untrusted JSON; prompt construction happens only after trust and reference checks."""
+    """Untrusted JSON; canonical seed construction follows trust and reference checks."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
     name: str = Field(min_length=1, max_length=256)

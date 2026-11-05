@@ -42,7 +42,7 @@ API keys do not authenticate incoming GUI users.
 
 `POST /api/datasets` creates a named dataset synchronously from multipart form data.
 Send exactly one `manifest` part containing JSON (a form field or a JSON file), plus
-named file parts referenced by its prompts. For example, `manifest.json`:
+named file parts referenced by its seeds. For example, `manifest.json`:
 
 ```json
 {
@@ -68,13 +68,44 @@ authentication or build compatibility. A successful response is `201`:
 {"name":"my_dataset","selection_key":"dataset:named:my_dataset","seed_pieces":2,"logical_examples":2}
 ```
 
-Each seed requires an explicit `data_type` and a string `value`. Imports accept
-`SeedPrompt` records only. File-valued prompts (`image_path`, `audio_path`,
+Imports use the canonical discriminated seed union: `prompt` (`SeedPrompt`),
+`objective` (`SeedObjective`), and `simulated_conversation`
+(`SeedSimulatedConversation`). Omitted `seed_type` remains `prompt` for existing
+clients. Prompts require an explicit `data_type` and string `value`; objectives
+accept their canonical text-only default and preserve typed `conditions`.
+Simulated conversations accept canonical inline prompt configuration, positive
+`num_turns`, and nonnegative `sequence`; their text `value` is computed by the model,
+not imported as a file or opaque serialized configuration.
+
+Seeds sharing a `prompt_group_id` or `prompt_group_alias` remain one logical
+example with a fresh server group ID. Mixed objective, simulated-conversation,
+and prompt groups use canonical group cardinality, role, and sequence-overlap
+validation. Objective metadata retains canonical `adversarial_prompts`
+associations. For example, an objective and its follow-up prompt can be supplied as:
+
+```json
+{"name":"mixed","seeds":[
+  {"seed_type":"objective","value":"Example objective","prompt_group_alias":"example",
+   "conditions":[{"condition_type":"matches_objective"}]},
+  {"seed_type":"prompt","data_type":"text","value":"Example prompt",
+   "prompt_group_alias":"example","role":"user","sequence":0}
+]}
+```
+
+File-valued prompts (`image_path`, `audio_path`,
 `video_path`, `binary_path`) must use `upload:<part-name>`; server paths, remote
 file fetching, and base64 ingestion are not supported. Part names use 1-128 ASCII
 letters, digits, underscores, or hyphens. Multiple prompts may share one part;
 missing, duplicate, non-file, and unreferenced media parts are rejected. Media
-bytes need not decode successfully as their declared modality. Files use
+in any of a simulated conversation's three inline system-prompt fields follows
+the same explicit-type, multipart, ownership, and shared-reference rules. Those
+fields remain canonical `SeedPrompt` objects, not arbitrary configuration files.
+Nested prompt types must be explicit, and deprecated simulation `*_system_prompt_path`
+inputs are rejected before construction. Simulation configuration persists nested
+prompt values, types, parameters, and response schemas using its canonical serializer,
+not nested descriptive metadata. Adversarial association prompts remain text-only
+under their canonical model.
+Media bytes need not decode successfully as their declared modality. Files use
 server-generated storage names and are never executed. Blob uploads are opaque
 attachments; local retrieval uses the existing media route's safe inline allowlist.
 
@@ -87,20 +118,21 @@ when legacy datasets contain collated aliases. Seed and journal names use Unicod
 storage on SQL Server, including databases with non-UTF-8 collations.
 A provider-only name is allowed; its provider registration remains unchanged.
 Descriptive metadata, response schema, roles, sequence numbers, and grouping are
-preserved. Complete remapped groups must satisfy the canonical `SeedGroup` role
-and conversation rules before any name reservation or media write. Validation
+preserved. Complete remapped groups must satisfy canonical `SeedGroup` and
+`AttackSeedGroup` rules before any name reservation or media write. Validation
 does not mutate the supplied roles. Seed/group IDs, checksums, timestamps, origin, and ingestion attribution
 are assigned by the server. Attribution uses the authenticated object ID, or
 `dataset-api` in local mode. Original multipart filename and content type are
 recorded as `upload_filename` and `upload_content_type` metadata. Trusted Jinja
-templates are rejected before constructing prompts; literal template syntax stays
-literal. These are imports, not a new export/round-trip serialization contract.
+templates are rejected before constructing any seed or nested prompt; literal
+template syntax stays literal. Client paths are never used to load prompt files.
+These are imports, not a new export/round-trip serialization contract.
 
 | Environment variable | Default |
 |---|---|
 | `PYRIT_DATASET_MAX_REQUEST_BYTES` | `104857600` (100 MiB, including multipart framing) |
 | `PYRIT_DATASET_MAX_MANIFEST_BYTES` | `10485760` (10 MiB JSON) |
-| `PYRIT_DATASET_MAX_PROMPTS` | `10000` |
+| `PYRIT_DATASET_MAX_PROMPTS` | `10000` seed records of any supported variant (legacy variable name retained) |
 
 Limits must be positive integers. Actual incoming bytes are bounded even without
 `Content-Length`; exceeding a byte/count limit returns `413`. Unsupported content

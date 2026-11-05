@@ -155,6 +155,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedRecord,
     SeedType,
+    SeedUnion,
     TargetIdentifier,
     config_hash,
     group_conversation_message_pieces_by_sequence,
@@ -5037,10 +5038,10 @@ class MemoryInterface(abc.ABC):
         self,
         *,
         upload_id: uuid.UUID,
-        seeds: Sequence[SeedPrompt],
+        seeds: Sequence[SeedUnion],
         write_media: Callable[[], Awaitable[None]],
     ) -> None:
-        """Atomically publish all storage-ready prompts without deduplication or replacement."""
+        """Atomically publish all storage-ready seeds without deduplication or replacement."""
         from pyrit.memory.dataset_lifecycle import commit_upload_async
 
         await commit_upload_async(memory=self, upload_id=upload_id, seeds=seeds, write_media=write_media)

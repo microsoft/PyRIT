@@ -32,7 +32,7 @@ from pyrit.memory.memory_models import (
     ScorableContentEntry,
     SeedEntry,
 )
-from pyrit.models import MessagePiece, SeedPrompt
+from pyrit.models import AttackSeedGroup, MessagePiece, Seed, SeedObjective, SeedPrompt, SeedSimulatedConversation
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 URL = "/api/datasets"
@@ -161,7 +161,7 @@ async def test_arbitrary_media_bytes_round_trip_and_owned_cleanup(
         {"data_type": "text", "value": "text", "is_jinja_template": True},
         {"data_type": "text", "value": "text", "is_jinja_template": "false"},
         {"data_type": "text", "value": "text", "dataset_name": "other"},
-        {"data_type": "text", "value": "text", "seed_type": "objective"},
+        {"data_type": "binary_path", "value": "text", "seed_type": "objective"},
         {"data_type": "text", "value": "text", "prompt_group_id": "bad"},
         {"data_type": "text", "value": "text", "unknown": "field"},
     ],
@@ -184,6 +184,288 @@ async def test_duplicate_names_and_concurrent_uploads(client: AsyncClient, sqlit
     assert sorted([first.status_code, second.status_code]) == [201, 409]
     assert len(await _seeds(sqlite_instance)) == 1
     assert (await _upload(client)).status_code == 409
+
+
+def _simulation(**changes: Any) -> dict[str, Any]:
+    return {
+        "seed_type": "simulated_conversation",
+        "data_type": "text",
+        "num_turns": 2,
+        "sequence": 0,
+        "adversarial_chat_system_prompt": {"data_type": "text", "value": "literal {{ objective }}"},
+        "simulated_target_system_prompt": {"data_type": "text", "value": "literal target"},
+        **changes,
+    }
+
+
+@pytest.mark.parametrize(
+    "raw,model",
+    [
+        ({"seed_type": "prompt", "data_type": "text", "value": "literal"}, SeedPrompt),
+        (
+            {
+                "seed_type": "objective",
+                "data_type": "text",
+                "value": "literal {{ objective }}",
+                "conditions": [{"condition_type": "matches_objective"}],
+            },
+            SeedObjective,
+        ),
+        (
+            {key: value for key, value in _simulation(value="ignored").items() if key != "data_type"},
+            SeedSimulatedConversation,
+        ),
+    ],
+)
+async def test_all_seed_variants_upload_round_trip(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, raw: dict[str, Any], model: type
+) -> None:
+    response = await _upload(client, manifest=_manifest(seeds=[raw]))
+    assert response.status_code == 201, response.text
+    entry = (await _seeds(sqlite_instance))[0]
+    restored = entry.get_seed()
+    assert isinstance(restored, model)
+    assert restored.seed_type == raw["seed_type"]
+    assert entry.value_sha256 == hashlib.sha256(entry.value.encode("utf-8")).hexdigest()
+    if isinstance(restored, SeedObjective):
+        assert restored.conditions[0].condition_type == "matches_objective"
+        assert restored.value == raw["value"]
+    if isinstance(restored, SeedSimulatedConversation):
+        assert restored.num_turns == 2
+        assert restored.adversarial_chat_system_prompt.value == "literal {{ objective }}"
+        assert restored.value != "ignored"
+    page = await client.get(f"{URL}/seeds", params={"selection_key": "dataset:named:upload"})
+    assert page.status_code == 200 and page.json()["total"] == 1
+    detail = await client.get(
+        f"{URL}/seeds/{page.json()['items'][0]['example_id']}",
+        params={"selection_key": "dataset:named:upload"},
+    )
+    assert detail.status_code == 200
+    assert detail.json()["members"][0]["seed_type"] == raw["seed_type"]
+    deleted = await client.delete(URL, params={"selection_key": "dataset:named:upload"})
+    assert deleted.status_code == 200 and deleted.json()["deleted_seeds"] == 1
+
+
+async def test_all_seed_mixed_group_preserves_conditions_associations_and_config(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    alias = "shared"
+    association = {
+        "system_prompt": {
+            "data_type": "text",
+            "value": "literal {{ objective }}",
+            "parameters": ["objective"],
+            "response_json_schema": {"type": "object"},
+        }
+    }
+    raw = [
+        {
+            "seed_type": "objective",
+            "value": "goal",
+            "conditions": [{"condition_type": "matches_objective"}],
+            "metadata": {"adversarial_prompts": association, "custom": {"typed": [1, True]}},
+        },
+        _simulation(sequence=2, next_message_system_prompt={"data_type": "text", "value": "next"}),
+        {"data_type": "text", "value": "follow up", "sequence": 7, "role": "user"},
+    ]
+    response = await _upload(
+        client, manifest=_manifest(seeds=[{**seed, "prompt_group_alias": alias, "id": str(uuid4())} for seed in raw])
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["seed_pieces"] == 3 and response.json()["logical_examples"] == 1
+    stored = await _seeds(sqlite_instance)
+    assert len({seed.prompt_group_id for seed in stored}) == 1
+    group = AttackSeedGroup(seeds=[seed.get_seed() for seed in stored])
+    assert group.objective.conditions[0].condition_type == "matches_objective"
+    assert group.objective.metadata["custom"] == {"typed": [1, True]}
+    assert group.adversarial_prompts.system_prompt.response_json_schema == {"type": "object"}
+    assert group.adversarial_prompts.system_prompt.value == "literal {{ objective }}"
+    assert group.simulated_conversation_config.sequence == 2
+    assert group.simulated_conversation_config.next_message_system_prompt.value == "next"
+    page = await client.get(f"{URL}/seeds", params={"selection_key": "dataset:named:upload"})
+    assert page.json()["total"] == 1
+    detail = await client.get(
+        f"{URL}/seeds/{page.json()['items'][0]['example_id']}",
+        params={"selection_key": "dataset:named:upload"},
+    )
+    assert {member["seed_type"] for member in detail.json()["members"]} == {
+        "prompt",
+        "objective",
+        "simulated_conversation",
+    }
+    assert (await _upload(client, manifest=_manifest(seeds=raw))).status_code == 409
+
+
+@pytest.mark.parametrize(
+    "seeds",
+    [
+        [{"seed_type": "unknown", "value": "private"}],
+        [{"seed_type": "objective", "value": "private", "data_type": "image_path"}],
+        [{"seed_type": "objective", "value": "private", "is_general_technique": True}],
+        [{"seed_type": "objective", "value": "private", "conditions": [{"condition_type": "unknown"}]}],
+        [{"seed_type": "objective", "value": "private", "role": "user"}],
+        [_simulation(num_turns=0)],
+        [_simulation(sequence=-1)],
+        [_simulation(data_type="binary_path")],
+        [_simulation(unknown="field")],
+        [
+            {"seed_type": "objective", "value": "a", "prompt_group_alias": "same"},
+            {"seed_type": "objective", "value": "b", "prompt_group_alias": "same"},
+        ],
+        [_simulation(prompt_group_alias="same"), _simulation(prompt_group_alias="same")],
+        [
+            _simulation(prompt_group_alias="same"),
+            {"data_type": "text", "value": "overlap", "sequence": 1, "prompt_group_alias": "same"},
+        ],
+        [
+            {
+                "seed_type": "objective",
+                "value": "private",
+                "metadata": {
+                    "adversarial_prompts": {"system_prompt": {"data_type": "binary_path", "value": "upload:part"}}
+                },
+            }
+        ],
+        [
+            {
+                "seed_type": "objective",
+                "value": "private",
+                "metadata": {"adversarial_prompts": {"unknown": {"data_type": "text", "value": "bad"}}},
+            }
+        ],
+    ],
+)
+async def test_all_seed_invalid_subtypes_and_groups_leave_no_reservation(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, seeds: list[dict[str, Any]]
+) -> None:
+    response = await _upload(client, manifest=_manifest(seeds=seeds))
+    assert response.status_code == 422, response.text
+    assert "private" not in response.text
+    async with await sqlite_instance.get_session_async() as session:
+        assert not (await session.scalars(select(SeedEntry))).all()
+        assert not (await session.scalars(select(DatasetLifecycleEntry))).all()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"seed_type": "objective", "value": "{{ secret }}", "is_jinja_template": True},
+        _simulation(is_jinja_template=True),
+        *[
+            _simulation(**{name: {"value": "{{ secret }}", "data_type": "text", "is_jinja_template": True}})
+            for name in (
+                "adversarial_chat_system_prompt",
+                "simulated_target_system_prompt",
+                "next_message_system_prompt",
+            )
+        ],
+        *[
+            _simulation(**{name + "_path": "C:\\client\\secret.yaml"})
+            for name in (
+                "adversarial_chat_system_prompt",
+                "simulated_target_system_prompt",
+                "next_message_system_prompt",
+            )
+        ],
+        _simulation(adversarial_chat_system_prompt={"value": "C:\\client\\secret.yaml"}),
+        _simulation(adversarial_chat_system_prompt={"value": "C:\\client\\secret.yaml", "data_type": "binary_path"}),
+        {
+            "seed_type": "objective",
+            "value": "goal",
+            "metadata": {
+                "adversarial_prompts": {
+                    "system_prompt": {"value": "{{ secret }}", "data_type": "text", "is_jinja_template": True}
+                }
+            },
+        },
+    ],
+)
+async def test_all_seed_trust_is_checked_before_template_and_file_constructors(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, raw: dict[str, Any]
+) -> None:
+    with (
+        patch.object(Seed, "_render_trusted_template_value", side_effect=AssertionError("rendered")),
+        patch.object(SeedPrompt, "from_yaml_file", side_effect=AssertionError("loaded client file")),
+        patch("pyrit.models.seeds.seed_prompt.Path.is_file", side_effect=AssertionError("filesystem inference")),
+    ):
+        response = await _upload(client, manifest=_manifest(seeds=[raw]))
+    assert response.status_code == 422, response.text
+    assert not await _seeds(sqlite_instance)
+
+
+@pytest.mark.parametrize(
+    "field", ["adversarial_chat_system_prompt", "simulated_target_system_prompt", "next_message_system_prompt"]
+)
+@pytest.mark.parametrize("data_type", ["image_path", "audio_path", "video_path", "binary_path"])
+async def test_all_seed_nested_media_is_owned_and_shared_references_are_guarded(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, field: str, data_type: str
+) -> None:
+    response = await _upload(
+        client,
+        manifest=_manifest(seeds=[_simulation(**{field: {"value": "upload:part", "data_type": data_type}})]),
+        files={"part": ("inert.bin", b"\x00\xff")},
+    )
+    assert response.status_code == 201, response.text
+    entry = (await _seeds(sqlite_instance))[0]
+    restored = entry.get_seed()
+    path = Path(getattr(restored, field).value)
+    assert path.read_bytes() == b"\x00\xff"
+    assert (await client.get("/api/media", params={"path": str(path)})).content == b"\x00\xff"
+    shared = SeedSimulatedConversation(
+        **{**_simulation(), field: {"value": str(path), "data_type": data_type}},
+        dataset_name="shared",
+        added_by="sdk",
+    )
+    async with await sqlite_instance.get_session_async() as session:
+        session.add(SeedEntry(entry=shared))
+        await session.commit()
+    deleted = await client.delete(URL, params={"selection_key": "dataset:named:upload"})
+    assert deleted.status_code == 200 and path.exists()
+    # A separate, unshared nested asset is removed and cannot be reattached by Core DML.
+    response = await _upload(
+        client,
+        manifest=_manifest(
+            name="unshared", seeds=[_simulation(**{field: {"value": "upload:part", "data_type": data_type}})]
+        ),
+        files={"part": ("inert.bin", b"unshared")},
+    )
+    assert response.status_code == 201, response.text
+    owned = next(seed for seed in await _seeds(sqlite_instance) if seed.dataset_name == "unshared")
+    owned_path = Path(getattr(owned.get_seed(), field).value)
+    await client.delete(URL, params={"selection_key": "dataset:named:unshared"})
+    assert not owned_path.exists()
+    async with await sqlite_instance.get_session_async() as session:
+        with pytest.raises(ValueError, match="removed"):
+            await session.execute(
+                update(SeedEntry.__table__).where(SeedEntry.id == shared.id).values(value=owned.value)
+            )
+        await session.commit()
+    async with await sqlite_instance.get_session_async() as session:
+        assert (await session.get(SeedEntry, shared.id)).value == shared.value
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["not-json", "[]", '{"adversarial_chat_system_prompt": {"data_type": "binary_path"}}'],
+)
+async def test_all_seed_corrupt_legacy_config_remains_inspectable_and_cleanup_fails_closed(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, value: str
+) -> None:
+    corrupt = SeedEntry(entry=SeedPrompt(value=value, dataset_name="legacy", added_by="sdk"))
+    corrupt.seed_type = "simulated_conversation"
+    async with await sqlite_instance.get_session_async() as session:
+        session.add(corrupt)
+        await session.commit()
+    response = await _upload(
+        client,
+        manifest=_manifest(seeds=[{"data_type": "binary_path", "value": "upload:part"}]),
+        files={"part": ("inert.bin", b"owned")},
+    )
+    assert response.status_code == 201, response.text
+    path = Path(next(seed for seed in await _seeds(sqlite_instance) if seed.dataset_name == "upload").value)
+    deleted = await client.delete(URL, params={"selection_key": "dataset:named:upload"})
+    assert deleted.status_code == 202
+    assert deleted.json()["pending_media"] == 1 and path.exists()
 
 
 @pytest.mark.parametrize("roles,sequences", [(["user", "assistant"], [0, 0]), ([None, None], [0, 1])])
@@ -396,6 +678,17 @@ async def test_manifest_and_prompt_count_limits(client: AsyncClient):
         assert (
             await _upload(client, manifest=_manifest(name="over", seeds=[{"data_type": "text", "value": "x"}] * 2))
         ).status_code == 413
+        assert (
+            await _upload(
+                client, manifest=_manifest(name="objective-limit", seeds=[{"seed_type": "objective", "value": "x"}])
+            )
+        ).status_code == 201
+        assert (
+            await _upload(
+                client,
+                manifest=_manifest(name="all-over", seeds=[{"seed_type": "objective", "value": "x"}, _simulation()]),
+            )
+        ).status_code == 413
 
 
 @pytest.mark.parametrize("with_length", [True, False])
@@ -460,7 +753,10 @@ def test_upload_limits_configuration_is_explicit():
             DatasetUploadLimits.from_environment()
 
 
-async def test_db_failure_rolls_back_seed_batch_and_owned_media(client: AsyncClient, sqlite_instance: SQLiteMemory):
+@pytest.mark.parametrize("mixed", [False, True])
+async def test_db_failure_rolls_back_seed_batch_and_owned_media(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, mixed: bool
+):
     async with await sqlite_instance.get_session_async() as session:
         engine = session.bind.sync_engine
 
@@ -475,7 +771,11 @@ async def test_db_failure_rolls_back_seed_batch_and_owned_media(client: AsyncCli
         response = await _upload(
             client,
             manifest=_manifest(
-                seeds=[{"data_type": "text", "value": "first"}, {"data_type": "binary_path", "value": "upload:file"}]
+                seeds=[
+                    {"data_type": "text", "value": "first"},
+                    {"data_type": "binary_path", "value": "upload:file"},
+                    *([{"seed_type": "objective", "value": "goal"}, _simulation()] if mixed else []),
+                ]
             ),
             files={"file": ("file.bin", b"rollback")},
         )
