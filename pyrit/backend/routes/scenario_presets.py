@@ -106,7 +106,7 @@ async def list_scenario_presets(  # pyrit-async-suffix-exempt
     """
     try:
         return await get_scenario_preset_service().list_presets_async(include_estimates=include_estimates)
-    except AzureError as exc:
+    except (AzureError, OSError) as exc:
         raise _storage_unavailable() from exc
 
 

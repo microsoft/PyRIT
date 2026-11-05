@@ -147,8 +147,14 @@ class TestListPresets:
 
         assert anonymous_client.get("/api/scenario-presets").status_code == 200
 
-    def test_storage_failure_is_reported_without_sdk_detail(self, client: TestClient, service: MagicMock) -> None:
-        service.list_presets_async = AsyncMock(side_effect=AzureError("container 'x' key=secret"))
+    @pytest.mark.parametrize(
+        "error",
+        [AzureError("container 'x' key=secret"), PermissionError(13, "Permission denied", "/srv/secret/presets")],
+    )
+    def test_storage_failure_is_reported_without_sdk_detail(
+        self, client: TestClient, service: MagicMock, error: Exception
+    ) -> None:
+        service.list_presets_async = AsyncMock(side_effect=error)
 
         response = client.get("/api/scenario-presets")
 
