@@ -1407,7 +1407,7 @@ export default function ChatWindow({
         const createRequest: CreateAttackRequest = {
           target_registry_name: activeTarget.target_registry_name,
           ...(selectedTarget.binding ? { target_binding: selectedTarget.binding } : {}),
-          name: pendingObjective || undefined,
+          objective: pendingObjective || undefined,
           // TODO(PyRIT 1.4): Pass only dedicated attribution after legacy label aliases are removed.
           // The create-attack API normalizes these aliases through _AttackAttributionInput.
           labels,
@@ -2055,7 +2055,7 @@ export default function ChatWindow({
       if (isFailedPrompt && copiedMessages.length === 0 && !executionReadOnly) {
         const response = await attacksApi.createAttack({
           target_registry_name: target?.target_registry_name,
-          name: objective || undefined,
+          objective: objective || undefined,
           labels,
           ...(defaultChatScorer === null || objective.trim() && defaultChatScorer
             ? { chat_scorer: defaultChatScorer } : {}),

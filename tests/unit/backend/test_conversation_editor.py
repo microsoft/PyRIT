@@ -1115,9 +1115,11 @@ class TestConversationEditor:
                 await sqlite_instance.get_conversation_metadata_async(conversation_id=conversation_id)
             ).target_identifier is None
 
-    async def test_targetless_save_and_retry_async(self, sqlite_instance: SQLiteMemory) -> None:
+    @pytest.mark.parametrize("objective", ["", "Original objective"])
+    async def test_targetless_save_and_retry_async(self, *, sqlite_instance: SQLiteMemory, objective: str) -> None:
         service = AttackService()
         request = draft()
+        request.objective = objective
         with patch.object(service, "_get_save_target_async", new_callable=AsyncMock, return_value=None):
             first = await service.save_conversation_async(request=request)
             second = await service.save_conversation_async(request=request)
@@ -1125,6 +1127,9 @@ class TestConversationEditor:
         assert first.attack.target is None
         assert first.attack.outcome.value == "undetermined"
         assert first.attack.attack_result_id == second.attack.attack_result_id
+        assert first.attack.objective == second.attack.objective == objective
+        assert first.attack.attack_type == second.attack.attack_type == "ManualAttack"
+        assert first.attack.get_attack_strategy_identifier() == second.attack.get_attack_strategy_identifier()
         assert first.messages.conversation_id == str(request.save_id)
         assert len(await sqlite_instance.get_message_pieces_async(conversation_id=str(request.save_id))) == 1
         assert first.messages.messages[0].message_pieces[0].id == second.messages.messages[0].message_pieces[0].id
@@ -1155,6 +1160,8 @@ class TestConversationEditor:
         saved = await service.save_conversation_async(request=request)
         assert saved.attack.conversation_id == first.attack.conversation_id
         assert saved.attack.objective == "Changed objective"
+        assert saved.attack.attack_type == "ManualAttack"
+        assert saved.attack.get_attack_strategy_identifier() == first.attack.get_attack_strategy_identifier()
         assert saved.attack.outcome.value == "undetermined"
         assert saved.messages.messages[0].role == "simulated_assistant"
         pieces = await sqlite_instance.get_message_pieces_async(conversation_id=str(request.save_id))

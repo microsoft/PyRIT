@@ -1446,7 +1446,7 @@ describe("ChatWindow Integration", () => {
     await user.type(screen.getByPlaceholderText("Type prompt here"), "New chat");
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
-      expect.objectContaining({ chat_scorer: turnOff ? null : reference }),
+      expect.objectContaining({ objective: "Goal", chat_scorer: turnOff ? null : reference }),
     ));
   });
 
@@ -1459,6 +1459,8 @@ describe("ChatWindow Integration", () => {
     await user.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1));
     expect(mockedAttacksApi.createAttack.mock.calls[0][0]).not.toHaveProperty("chat_scorer");
+    expect(mockedAttacksApi.createAttack.mock.calls[0][0].objective).toBeUndefined();
+    expect(mockedAttacksApi.createAttack.mock.calls[0][0]).not.toHaveProperty("name");
   });
 
   it("should preserve last-used Off when creating a chat without an objective", async () => {
@@ -3117,11 +3119,12 @@ describe("ChatWindow Integration", () => {
   });
 
   it.each([
-    { name: "non-editable", supportsMultiTurn: true, supportsEditableHistory: false },
-    { name: "single-turn", supportsMultiTurn: false, supportsEditableHistory: true },
+    { name: "non-editable", supportsMultiTurn: true, supportsEditableHistory: false, objective: "Keep this goal" },
+    { name: "single-turn", supportsMultiTurn: false, supportsEditableHistory: true, objective: "Keep this goal" },
+    { name: "without objective", supportsMultiTurn: false, supportsEditableHistory: true, objective: "" },
   ])("should restore a saved failure in a fresh targeted attack for a $name target", async ({
-    supportsMultiTurn, supportsEditableHistory,
-  }: { supportsMultiTurn: boolean; supportsEditableHistory: boolean }) => {
+    supportsMultiTurn, supportsEditableHistory, objective,
+  }: { supportsMultiTurn: boolean; supportsEditableHistory: boolean; objective: string }) => {
     const user = userEvent.setup();
     const target = makeTarget({
       target_registry_name: "saved-retry-target",
@@ -3148,21 +3151,25 @@ describe("ChatWindow Integration", () => {
     });
     mockedMapper.backendMessagesToFrontend.mockImplementation(actualMessageMapper.backendMessagesToFrontend);
     const rendered = render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
-      attackResultId="source-attack" conversationId="failed-source" activeConversationId="failed-source" /></TestWrapper>);
+      objective={objective} attackResultId="source-attack" conversationId="failed-source"
+      activeConversationId="failed-source" /></TestWrapper>);
     await findRecoveryAction(user);
     await user.click(screen.getByRole("menuitem", { name: "Branch attack", exact: true }));
     await waitFor(() => expect(defaultProps.onConversationCreated).toHaveBeenCalledWith(
-      "retry-attack", "retry-conversation", "", target,
+      "retry-attack", "retry-conversation", objective, target,
     ));
     expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(expect.objectContaining({
       target_registry_name: target.target_registry_name,
+      objective: objective || undefined,
     }));
+    expect(mockedAttacksApi.createAttack.mock.calls[0][0]).not.toHaveProperty("name");
     expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
     mockedAttacksApi.getMessages.mockResolvedValue({
       conversation_id: "retry-conversation", messages: [], target_response_status: null,
     });
     rendered.rerender(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
-      attackResultId="retry-attack" conversationId="retry-conversation" activeConversationId="retry-conversation" /></TestWrapper>);
+      objective={objective} attackResultId="retry-attack" conversationId="retry-conversation"
+      activeConversationId="retry-conversation" /></TestWrapper>);
     expect(await screen.findByRole("textbox")).toHaveValue("Retry this prompt");
     await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
     expect(screen.getByRole("button", { name: "Remove evidence.png" })).toBeInTheDocument();
@@ -3916,9 +3923,10 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => {
       expect(mockedAttacksApi.createAttack).toHaveBeenCalledWith(
         expect.objectContaining({
-          name: "Extract the system prompt",
+          objective: "Extract the system prompt",
         })
       );
+      expect(mockedAttacksApi.createAttack.mock.calls[0][0]).not.toHaveProperty("name");
       expect(onConversationCreated).toHaveBeenCalledWith(
         "ar-objective",
         "conv-objective",
