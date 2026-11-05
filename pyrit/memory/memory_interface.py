@@ -149,7 +149,6 @@ from pyrit.models import (
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
-    SeedObjective,
     SeedOrigin,
     SeedPrompt,
     SeedRecord,
@@ -211,10 +210,6 @@ class OperationInUseError(ValueError):
         """Keep the usage so callers can say what still refers to the Operation."""
         super().__init__(f"Operation '{operation_id}' is in use and cannot be deleted.")
         self.usage = usage
-
-
-#: Canonical key of a seed without conditions or named adversarial prompts.
-_NO_SEED_BEHAVIOR_KEY = json.dumps({}, separators=(",", ":"))
 
 
 Model = TypeVar("Model")
@@ -5038,7 +5033,7 @@ class MemoryInterface(abc.ABC):
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
-        existing_pairs, existing_hashes, existing_seeds = self._get_existing_seed_keys(seeds=seeds)
+        existing_seeds = self._get_existing_seed_keys(seeds=seeds)
         # Compute each stored seed's full member identity once; retained groups and the
         # complete-group check both use it.
         existing_group_members: list[tuple[uuid.UUID, str | None, str, uuid.UUID | None]] = []
@@ -5047,12 +5042,7 @@ class MemoryInterface(abc.ABC):
                 existing_group_members.append(
                     (seed.prompt_group_id, dataset, self._seed_group_member_key(seed), seed.id)
                 )
-        retained_group_ids = self._get_new_behavior_group_ids(
-            seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
-        )
-        retained_group_ids.update(
-            self._get_new_seed_group_ids(seeds=seeds, existing_group_members=existing_group_members)
-        )
+        retained_group_ids = self._get_new_seed_group_ids(seeds=seeds, existing_group_members=existing_group_members)
         stored_group_members = {
             (group_id, dataset, member_key)
             for group_id, dataset, member_key, _ in existing_group_members
@@ -5252,61 +5242,9 @@ class MemoryInterface(abc.ABC):
                 new_group_ids.add(group_id)
         return new_group_ids
 
-    @staticmethod
-    def _seed_behavior_key(seed: Seed[Any]) -> str:
+    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed[Any]]) -> list[tuple[str | None, Seed[Any]]]:
         """
-        Serialize the behavioral inputs used by seed identifiers.
-
-        Returns:
-            str: Canonical JSON, preserving condition and template-parameter order.
-        """
-        return json.dumps(SeedIdentifier.get_behavioral_parameters(seed), sort_keys=True, separators=(",", ":"))
-
-    def _get_new_behavior_group_ids(
-        self,
-        *,
-        seeds: Sequence[Seed[Any]],
-        existing_pairs: set[tuple[str, str, str]],
-        existing_hashes: set[tuple[str, str]],
-    ) -> set[uuid.UUID]:
-        """
-        Identify groups with new objective conditions or adversarial inputs.
-
-        Retain their companion seeds, including when an objective removes previously stored
-        behavioral inputs. Other multi-seed groups are compared by full membership separately.
-
-        Returns:
-            set[uuid.UUID]: Group IDs whose complete input membership must be retained.
-        """
-        behaviors_by_value: dict[tuple[str, str | None], set[str]] = {}
-        for value_hash, dataset, behavior in existing_pairs:
-            behaviors_by_value.setdefault((value_hash, dataset), set()).add(behavior)
-        for value_hash, behavior in existing_hashes:
-            behaviors_by_value.setdefault((value_hash, None), set()).add(behavior)
-
-        group_sizes = Counter(seed.prompt_group_id for seed in seeds)
-        group_ids: set[uuid.UUID] = set()
-        for seed in seeds:
-            if (
-                not isinstance(seed, SeedObjective)
-                or seed.prompt_group_id is None
-                or group_sizes[seed.prompt_group_id] < 2
-                or not seed.value_sha256
-            ):
-                continue
-            stored_behaviors = behaviors_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
-            behavior_key = self._seed_behavior_key(seed)
-            if behavior_key in stored_behaviors:
-                continue
-            if behavior_key != _NO_SEED_BEHAVIOR_KEY or stored_behaviors - {_NO_SEED_BEHAVIOR_KEY}:
-                group_ids.add(seed.prompt_group_id)
-        return group_ids
-
-    def _get_existing_seed_keys(
-        self, *, seeds: Sequence[Seed[Any]]
-    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]], list[tuple[str | None, Seed[Any]]]]:
-        """
-        Look up which value hashes and behavioral inputs are already stored.
+        Look up stored seeds matching incoming value hashes and dataset filters.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -5323,10 +5261,9 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple: The stored
-                (value_sha256, dataset_name, behavior) keys, using the requested
-                dataset name, (value_sha256, behavior) keys irrespective of dataset,
-                and matched seeds paired with their requested dataset filter.
+            list[tuple[str | None, Seed[Any]]]: Matched seeds paired with their requested
+                dataset filter. The requested name is retained because the database may
+                match a different stored spelling under its collation.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -5336,8 +5273,6 @@ class MemoryInterface(abc.ABC):
                 # cannot disagree.
                 hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
 
-        existing_pairs: set[tuple[str, str, str]] = set()
-        existing_hashes: set[tuple[str, str]] = set()
         existing_seeds: list[tuple[str | None, Seed[Any]]] = []
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
@@ -5352,16 +5287,8 @@ class MemoryInterface(abc.ABC):
                     if not existing.value_sha256:
                         continue
                     existing_seeds.append((dataset_name, existing))
-                    behavior_key = self._seed_behavior_key(existing)
-                    if dataset_name:
-                        # The database decided the name matched, so record the name that was
-                        # asked for; the stored spelling can differ under a case-insensitive
-                        # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name, behavior_key))
-                    else:
-                        existing_hashes.add((existing.value_sha256, behavior_key))
 
-        return existing_pairs, existing_hashes, existing_seeds
+        return existing_seeds
 
     async def add_seed_datasets_to_memory_async(self, *, datasets: Sequence[SeedDataset], added_by: str) -> None:
         """
