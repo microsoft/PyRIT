@@ -57,7 +57,7 @@ export const useOperationsStyles = makeStyles({
     gap: tokens.spacingHorizontalM,
     marginTop: tokens.spacingVerticalS,
   },
-  description: { whiteSpace: 'pre-wrap', maxWidth: '75ch', marginBottom: 0 },
+  description: { whiteSpace: 'pre-wrap', marginBottom: 0 },
   values: {
     display: 'flex',
     flexDirection: 'column',
@@ -75,7 +75,7 @@ export const useOperationsStyles = makeStyles({
     gap: tokens.spacingVerticalXS,
   },
   retiredKey: { fontFamily: tokens.fontFamilyMonospace, fontSize: tokens.fontSizeBase200 },
-  retiredValue: { margin: 0, whiteSpace: 'pre-wrap', maxWidth: '75ch' },
+  retiredValue: { margin: 0, whiteSpace: 'pre-wrap' },
   notice: { flexShrink: 0 },
   table: {
     minWidth: '100%',
