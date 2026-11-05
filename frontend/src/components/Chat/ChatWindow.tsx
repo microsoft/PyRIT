@@ -1,11 +1,8 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react'
-import type { ChangeEvent } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useId } from 'react'
+import type { ChangeEvent, MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Button,
-  Breadcrumb,
-  BreadcrumbDivider,
-  BreadcrumbItem,
   Input,
   Drawer,
   Menu,
@@ -128,6 +125,9 @@ import { CHAT_NOTICE_FADE_DURATION_MS, useChatWindowStyles } from './ChatWindow.
 
 const RETRYABLE_TARGET_RESPONSE_ERROR = 'processing'
 const CHAT_NOTICE_VISIBLE_DURATION_MS = 5_000
+const SAVED_MESSAGE_PAGE_SIZE = 100
+const SAVED_REFERENCE_PAGE_SIZE = 50
+const INCOMPLETE_TRANSCRIPT_REASON = 'Load the complete saved transcript before continuing, copying, exporting, or assessing this result.'
 
 interface ChatInfoNotice {
   readonly id: string
@@ -444,6 +444,11 @@ export default function ChatWindow({
   findingEvidenceId,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
+  const transcriptStatusId = useId()
+  const transcriptDisabledReasonId = useId()
+  const transcriptStatusRef = useRef<HTMLSpanElement>(null)
+  const chatAreaRef = useRef<HTMLDivElement>(null)
+  const wasSavedEvidenceRef = useRef(executionReadOnly)
   const restoreFocusTargetAttributes = useRestoreFocusTarget()
   const restoreFocusSourceAttributes = useRestoreFocusSource()
   const navigate = useNavigate()
@@ -533,6 +538,11 @@ export default function ChatWindow({
   const globalMarkdown = preferences.chatMarkdown
   const location = useLocation()
   const viewedConversationId = activeConversationId ?? conversationId
+  useLayoutEffect(() => {
+    const area = chatAreaRef.current
+    if (area && (executionReadOnly || wasSavedEvidenceRef.current)) area.scrollTop = 0
+    wasSavedEvidenceRef.current = executionReadOnly
+  }, [executionReadOnly, attackResultId, viewedConversationId])
   const draftAttackId = draftContext ? draftContext.originatingAttackId : attackResultId
   const draftConversationId = draftContext ? draftContext.originatingConversationId : viewedConversationId
   const draftHandoff = useChatDraftHandoff()
@@ -689,7 +699,14 @@ export default function ChatWindow({
     awaitingConversationLoad,
     conversationLoadIssue,
     isEvidenceUnavailable,
+    messagePagination,
+    loadedPieceCount,
+    isTranscriptIncomplete,
+    isLoadingMoreMessages,
+    messageContinuationIssue,
+    loadMoreMessages,
     loadConversation,
+    refreshConversationScores,
     requestForcedLoad,
     markConversationLoaded,
     resetConversationMessages,
@@ -704,10 +721,13 @@ export default function ChatWindow({
     conversationId,
     activeConversationId,
     findingEvidenceId,
+    messagePageSize: executionReadOnly ? SAVED_MESSAGE_PAGE_SIZE : undefined,
     sendingConversations,
     isSendInFlight,
     onConversationLoaded: handleConversationLoaded,
   })
+  const incompleteTranscriptReason = isTranscriptIncomplete ? INCOMPLETE_TRANSCRIPT_REASON : undefined
+  const loadedPieceSummary = `${loadedPieceCount} message ${loadedPieceCount === 1 ? 'piece' : 'pieces'} loaded.`
   const savedRecovery = viewedConversationId
     ? recoverableSends[viewedConversationId]
     : undefined
@@ -783,13 +803,14 @@ export default function ChatWindow({
     && !targetInfoMatchesTarget(attackTarget, activeTarget),
   )
   // Any failed invariant keeps all mutation controls and handlers read-only.
-  const isMutationLocked = executionReadOnly || isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked || isEvidenceUnavailable
+  const isMutationLocked = executionReadOnly || isOperatorLocked || isCrossTargetLocked || isTargetResolutionLocked
+    || isEvidenceUnavailable || isTranscriptIncomplete
   const isDraftDestinationReady = !isLoadingAttack && !isLoadingMessages && !awaitingConversationLoad && !isSending
     && conversationLoadIssue?.conversationId !== viewedConversationId
     && !isMutationLocked && !editDraft && (attackResultId === null || viewedConversationId !== null)
 
   const isScoreLocked = isOperatorLocked || Boolean(isLoadingAttack) || isLoadingMessages
-    || awaitingConversationLoad || isEvidenceUnavailable
+    || awaitingConversationLoad || isEvidenceUnavailable || isTranscriptIncomplete
   const {
     pendingObjective,
     currentObjective,
@@ -805,7 +826,7 @@ export default function ChatWindow({
     lastResponseMessagePieceId,
     humanScore,
     isScoreLocked,
-    loadConversation,
+    refreshConversationScores,
     getViewedConversationId,
     onHumanScoreChange,
     onAttackChange,
@@ -926,7 +947,7 @@ export default function ChatWindow({
   }
 
   const isFindingActionDisabled = Boolean(editDraft !== null || !attackResultId || !activeConversationId
-    || isEvidenceUnavailable || isLoadingAttack || isLoadingMessages || awaitingConversationLoad)
+    || isEvidenceUnavailable || isLoadingAttack || isLoadingMessages || awaitingConversationLoad || isTranscriptIncomplete)
 
   const pending = draftHandoff.pendingImport
   const canApplyImportNow = Boolean(
@@ -2005,11 +2026,12 @@ export default function ChatWindow({
 
   /** 1. Copy the clicked message's content/attachments into the current conversation's input box */
   const handleCopyToInput = useCallback((messageIndex: number) => {
+    if (isTranscriptIncomplete) return
     if (activeTarget?.capabilities?.supports_multi_turn === false && messages.some((message: Message) => message.role === 'user')) return
     const msg = messages[messageIndex]
     if (!msg) { return }
     copyMessageToInput(msg)
-  }, [activeTarget, copyMessageToInput, messages])
+  }, [activeTarget, copyMessageToInput, messages, isTranscriptIncomplete])
 
   const handleChangeMainConversation = useCallback(async (convId: string) => {
     if (
@@ -2110,7 +2132,7 @@ export default function ChatWindow({
   const beginEdit = async (
     target: TargetInstance | null = activeTarget,
   ): Promise<void> => {
-    if (executionReadOnly || editDraft || isSending || isLoadingEdit || isLoadingMessages || isLoadingAttack || awaitingConversationLoad) return
+    if (executionReadOnly || isTranscriptIncomplete || editDraft || isSending || isLoadingEdit || isLoadingMessages || isLoadingAttack || awaitingConversationLoad) return
     const sourceId = viewedConversationId
     setIsLoadingEdit(true)
     setEditorError(null)
@@ -2272,7 +2294,8 @@ export default function ChatWindow({
   const copyConversation = async (
     messageIndex: number, destination: ConversationCopyDestination,
   ): Promise<void> => {
-    if (!attackResultId || !viewedConversationId || copyingRef.current || isSending || isLoadingEdit) return
+    if (!attackResultId || !viewedConversationId || copyingRef.current || isSending || isLoadingEdit
+      || isLoadingMessages || awaitingConversationLoad || isTranscriptIncomplete) return
     if (destination === 'same_attack' && isMutationLocked) return
     if (destination !== 'same_attack' && (!runtime.ready || !defaultsReady || !scorerSelectionReady)) return
     if (destination === 'same_attack' && recoverableSend
@@ -2545,6 +2568,7 @@ export default function ChatWindow({
   const hasProcessingError = Boolean(recoverableSend)
   const inputDisabledReasons = [
     ...(singleTurnDisabledReason ? [singleTurnDisabledReason] : []),
+    ...(incompleteTranscriptReason ? [incompleteTranscriptReason] : []),
     ...(executionReadOnly ? ['Automated results are read-only. Choose Continue manually.'] : []),
     ...(isUndoingSend ? ['The previous send is being restored. Wait for undo to finish.'] : []),
     ...(!runtime.ready ? ['The runtime is not ready. Wait for initialization to finish.'] : []),
@@ -2578,7 +2602,7 @@ export default function ChatWindow({
   const { canExport: canExportConversation, isExporting, exportAs } = useConversationExport({
     messages,
     conversationId: activeConversationId ?? conversationId,
-    blocked: isSending || Boolean(isLoadingAttack) || isLoadingMessages || awaitingConversationLoad,
+    blocked: isSending || Boolean(isLoadingAttack) || isLoadingMessages || awaitingConversationLoad || isTranscriptIncomplete,
   })
 
   // Chat owns these handlers and states even when the layout hosts the controls.
@@ -2683,13 +2707,14 @@ export default function ChatWindow({
         </Tooltip>
         <Menu>
           <MenuTrigger disableButtonEnhancement>
-            <Tooltip content="Export conversation" relationship="label">
+            <Tooltip content={incompleteTranscriptReason ?? 'Export conversation'} relationship="description">
               <Button
                 appearance="subtle"
                 className={styles.ribbonAction}
                 icon={isExporting ? <Spinner size="tiny" /> : <ArrowDownloadRegular />}
                 disabled={!canExportConversation}
                 aria-label="Export conversation"
+                aria-describedby={messagePagination && isTranscriptIncomplete ? transcriptDisabledReasonId : undefined}
                 data-testid="export-conversation-btn"
               />
             </Tooltip>
@@ -2753,43 +2778,26 @@ export default function ChatWindow({
   return (
     <div className={styles.root}>
       <h2 className={styles.pageHeading}>Chat</h2>
+      {incompleteTranscriptReason && <span id={transcriptDisabledReasonId} hidden>{incompleteTranscriptReason}</span>}
       {isConverterPanelOpen && (
         <ConverterPanel
           onClose={() => setIsConverterPanelOpen(false)}
           controller={converters}
         />
       )}
-      <FileDropZone className={styles.chatArea} testId="chat-area"
+      <FileDropZone ref={chatAreaRef} className={mergeClasses(styles.chatArea, executionReadOnly && styles.savedChatArea)} testId="chat-area"
         disabled={inputDisabledReasons.length > 0}
         disabledReason={inputDisabledReasons.join(' ')}
         onFiles={(files: File[]) => inputBoxRef.current?.addFiles(files)}>
-        {scenarioResultId && (
-          <div className={styles.breadcrumbBar}>
-            <Breadcrumb aria-label="Attack provenance" size="small">
-              <BreadcrumbItem>
-                <Text size={200}>Scanner History</Text>
-              </BreadcrumbItem>
-              <BreadcrumbDivider />
-              <BreadcrumbItem>
-                <Link
-                  className={styles.breadcrumbLink}
-                  to={scenarioRunRoutePath(scenarioResultId)}
-                  state={location.state}
-                  aria-label={`Return to scenario run ${scenarioResultId}`}
-                >
-                  Scenario run {scenarioResultId.slice(0, 8)}
-                </Link>
-              </BreadcrumbItem>
-            </Breadcrumb>
-          </div>
-        )}
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         {executionReadOnly && <MessageBar intent="info">
           <MessageBarBody>
             This automated result is read-only. Continue in a separate manual attack to keep the original execution unchanged.
           </MessageBarBody>
           <MessageBarActions><Button className={styles.ribbonAction}
-            disabled={isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad || Boolean(newAttackDisabledReason)}
+            disabled={isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad
+              || isTranscriptIncomplete || Boolean(newAttackDisabledReason)}
+            aria-describedby={messagePagination && isTranscriptIncomplete ? transcriptDisabledReasonId : undefined}
             onClick={() => { void copyConversation(recoverableSend?.failedRequestMessageIndex ?? messages.length - 1, 'new_attack') }}>
             {isLoadingEdit ? 'Creating continuation...' : 'Continue manually'}
           </Button></MessageBarActions>
@@ -2910,7 +2918,8 @@ export default function ChatWindow({
           <MessageBar intent={conversationLoadIssue.unavailable ? 'warning' : 'error'}>
             <MessageBarBody>{conversationLoadIssue.detail}{' '}
               {(!conversationLoadIssue.unavailable || !findingEvidenceId) && attackResultId && viewedConversationId && (
-                <Button onClick={() => { void loadConversation(attackResultId, viewedConversationId) }}>
+                <Button className={styles.ribbonAction} disabled={isLoadingMessages || isLoadingMoreMessages}
+                  onClick={() => { void loadConversation(attackResultId, viewedConversationId) }}>
                   Retry conversation load
                 </Button>
               )}
@@ -2920,20 +2929,55 @@ export default function ChatWindow({
         {editDraft === null && <MessageList
           messages={isEvidenceUnavailable ? [] : messages}
           onCopyToInput={handleCopyToInput}
-          copyToInputDisabledReason={singleTurnDisabledReason}
+          copyToInputDisabledReason={incompleteTranscriptReason ?? singleTurnDisabledReason}
           onCopyToNewConversation={(index: number) => { void copyConversation(index, 'same_attack') }}
           onCopyToNewAttack={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'new_attack') }}
           onUseInTechnique={newAttackDisabledReason ? undefined : (index: number) => { void copyConversation(index, 'technique') }}
           copyConversationDisabled={isSending || isLoadingEdit || isRecoveringProcessingError || Boolean(sendIssue?.blocking)}
+          copyConversationDisabledReason={incompleteTranscriptReason}
           newConversationDisabledReason={isMutationLocked ? "This attack is read-only. Copy to a new attack instead." : undefined}
           getBranchConversationDisabledReason={branchConversationDisabledReason}
           getBranchConversationDescription={(index: number) => activeTarget && canBranchFirstPrompt(activeTarget, messages, index)
             ? 'Restore this prompt as an unsent draft in a new conversation in the same attack. The response is not copied.'
             : undefined}
           isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
+          autoScroll={!executionReadOnly}
+          savedEvidence={executionReadOnly}
           globalMarkdown={globalMarkdown}
           onEditConversation={executionReadOnly ? undefined : () => { void beginEdit() }}
         />}
+        {editDraft === null && executionReadOnly && messagePagination && !isEvidenceUnavailable && (
+          <section className={styles.savedTranscriptControls} aria-label="Saved transcript paging">
+            {messageContinuationIssue && (
+              <MessageBar intent="error"><MessageBarBody>
+                {messageContinuationIssue.detail} Loaded evidence is still shown.
+              </MessageBarBody></MessageBar>
+            )}
+            <div className={styles.savedTranscriptActions}>
+              <Text ref={transcriptStatusRef} tabIndex={-1} id={transcriptStatusId} role="status" aria-live="polite" size={200}>
+                {isLoadingMessages || awaitingConversationLoad ? 'Loading saved transcript... '
+                  : isLoadingMoreMessages ? 'Loading more message pieces... ' : ''}
+                {isTranscriptIncomplete
+                  ? `${loadedPieceSummary} Transcript incomplete.`
+                  : `End of saved transcript. ${loadedPieceSummary}`}
+              </Text>
+              {messagePagination.has_more && (
+                <Button className={styles.ribbonAction} disabled={isLoadingMoreMessages || isLoadingMessages || awaitingConversationLoad}
+                  icon={isLoadingMoreMessages ? <Spinner size="tiny" /> : undefined}
+                  onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                    if (event.currentTarget === document.activeElement) transcriptStatusRef.current?.focus({ preventScroll: true })
+                    if (messageContinuationIssue?.restartRequired && attackResultId && viewedConversationId) {
+                      void loadConversation(attackResultId, viewedConversationId)
+                    } else { void loadMoreMessages() }
+                  }}>
+                  {isLoadingMoreMessages ? 'Loading more message pieces...'
+                    : messageContinuationIssue?.restartRequired ? 'Restart transcript loading'
+                    : messageContinuationIssue ? 'Retry more message pieces' : 'Load more message pieces'}
+                </Button>
+              )}
+            </div>
+          </section>
+        )}
         {repeatSends.filter((view: RepeatSendView) => view.progress.attack_result_id === attackResultId).map(
           (view: RepeatSendView) => (
             <MultiSendProgress
@@ -3046,13 +3090,15 @@ export default function ChatWindow({
       >
         <ConversationPanel
           attackResultId={attackResultId}
+          referencePageSize={executionReadOnly ? SAVED_REFERENCE_PAGE_SIZE : undefined}
           activeConversationId={activeConversationId}
           onSelectConversation={handlePanelSelectConversation}
           onNewConversation={handleNewConversation}
           onChangeMainConversation={handleChangeMainConversation}
           onClose={() => setIsPanelOpen(false)}
           lockedReason={
-            !activeTarget ? 'Configure a target to enable this action.'
+            executionReadOnly ? 'Automated results are read-only. Choose Continue manually.'
+            : !activeTarget ? 'Configure a target to enable this action.'
             : isOperatorLocked ? 'Cannot modify — attack belongs to a different operator.'
             : isCrossTargetLocked ? 'Cannot modify — attack was created with a different target.'
             : isTargetResolutionLocked ? 'Cannot modify — the attack target could not be safely resolved.'
