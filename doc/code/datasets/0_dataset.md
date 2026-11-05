@@ -45,26 +45,13 @@ For example, a seed group might include:
 
 **Note**: In most attacks, if no `SeedPrompt` is specified, the `SeedObjective` serves as the default prompt.
 
-### Logical group identity and upgrading to 1.2.0
+### Logical group identity
 
-`AttackSeedGroup.logical_id` hashes the ordered seed content hashes. Changing only
-the PyRIT version or evaluation-hash metadata does not change it. Seed content,
-dataset, conditions, and named adversarial prompts remain identity-bearing.
-This logical ID is distinct from the stored seed UUID and `prompt_group_id`.
-
-The 1.2.0 correction changes logical IDs produced by 1.1.0 and earlier 1.2.0
-development builds, whose group hashing accidentally included storage metadata.
-Individual seed/component content hashes, stored UUIDs, and database seed
-deduplication are unchanged. Existing records are not rewritten; no schema
-migration is required.
-
-Finish or resume an old scenario run with the same pre-correction build that
-created it, then start a new run after upgrading. Saved run plans and explicit
-result attribution retain their original IDs for historical reporting, but they
-cannot be matched to newly computed group IDs for resume or cross-build joins.
-Identifier-only legacy results recompute logical IDs on read; do not combine
-those recomputed keys with pre-correction saved IDs. Rollback likewise requires
-the build that created the run. There is no automatic saved-plan ID migration.
+`AttackSeedGroup.logical_id` hashes ordered seed content hashes, excluding PyRIT
+version and evaluation metadata. Before 1.2.0, version changes also changed group
+IDs. This correction changes existing logical IDs; resume pre-fix runs with their
+original build. Legacy-ID compatibility is deferred to follow-up work. Stored
+UUIDs, seed/component hashes, and database deduplication are unchanged.
 
 ## Seed Datasets
 
