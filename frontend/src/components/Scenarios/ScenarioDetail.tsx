@@ -764,6 +764,8 @@ function ScenarioLaunchForm({
 }: ScenarioLaunchFormProps) {
   const identityStyles = useRegistryIdentityRowStyles()
   const identityId = useId()
+  const techniqueLimitDescriptionId = `${identityId}-technique-limit`
+  const baselineUnavailableId = `${identityId}-baseline-unavailable`
   const [expandedIdentities, setExpandedIdentities] = useState<Set<string>>(new Set())
   const runtime = useRuntime()
   const { rememberScanTargets } = useUserPreferences()
@@ -1484,6 +1486,12 @@ function ScenarioLaunchForm({
                   ? 'Select exactly one technique. Baseline comparison is optional and separate.'
                   : 'Select individual techniques, or use a tag to select or clear all techniques with that tag.'}
               </Text>}
+              {supportsTechniques && !singleTechnique && scenario.max_concrete_techniques != null && (
+                <Text id={techniqueLimitDescriptionId} size={200} className={styles.hint}>
+                  Select at most {scenario.max_concrete_techniques} concrete techniques.
+                  {' '}Clear a selected technique or choose a smaller tag.
+                </Text>
+              )}
               {techniqueSelectionError && (
                 <Text className={styles.errorText} role="alert">
                   {techniqueSelectionError}
@@ -1521,6 +1529,9 @@ function ScenarioLaunchForm({
               <div className={styles.techniqueList} role="group" aria-label="Techniques">
                 {selectableTechniques.map((technique) => {
                   const selected = isTechniqueSelected(technique)
+                  const limited = !technique.isBaseline && !selected
+                    && scenario.max_concrete_techniques != null
+                    && selectedTechniques.length >= scenario.max_concrete_techniques
                   const expanded = expandedIdentities.has(technique.name)
                   const regionId = `${identityId}-${encodeURIComponent(technique.name)}`
                   return (
@@ -1540,9 +1551,9 @@ function ScenarioLaunchForm({
                       className={styles.selectionControl}
                       label={technique.name}
                       checked={selected}
-                      disabled={submitting || technique.disabled || (!technique.isBaseline && !selected
-                        && scenario.max_concrete_techniques != null
-                        && selectedTechniques.length >= scenario.max_concrete_techniques)}
+                      disabled={submitting || technique.disabled || limited}
+                      aria-describedby={technique.disabled ? baselineUnavailableId
+                        : limited ? techniqueLimitDescriptionId : undefined}
                       onChange={(_, data) => handleTechniqueChange(technique, data.checked === true)}
                       data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
                     />}
@@ -1573,6 +1584,8 @@ function ScenarioLaunchForm({
                                 appearance="outline"
                                 checked={tagSelected}
                                 disabled={submitting || tagMembers.length === 0 || (!tagSelected && exceedsLimit)}
+                                aria-describedby={tagMembers.length === 0 ? baselineUnavailableId
+                                  : !tagSelected && exceedsLimit ? techniqueLimitDescriptionId : undefined}
                                 onClick={() => handleTagChange(tag)}
                                 aria-label={`${tagSelected ? 'Clear' : 'Select'} ${techniqueSetName(tag)} techniques`}
                               >
@@ -1583,7 +1596,7 @@ function ScenarioLaunchForm({
                         </div>
                       )}
                       {technique.disabled && (
-                        <Text size={200} className={styles.hint}>
+                        <Text id={baselineUnavailableId} size={200} className={styles.hint}>
                           This scenario does not support a baseline comparison.
                         </Text>
                       )}
@@ -1816,13 +1829,13 @@ function ScenarioLaunchForm({
                 </Text>
               )}
               {estimateState.status === 'refreshing' && (
-                <div className={styles.inlineStatus}>
+                <div className={styles.inlineStatus} role="status">
                   <Spinner size="tiny" />
                   <Text size={200} className={styles.hint}>Updating estimate...</Text>
                 </div>
               )}
               {estimateState.status === 'stale' && (
-                <Text size={200} className={styles.warningText}>
+                <Text size={200} className={styles.warningText} role="status">
                   {estimateState.error}
                 </Text>
               )}
@@ -2026,6 +2039,7 @@ function ScenarioLaunchForm({
                 </DialogContent>
                 <DialogActions>
                   <Button
+                    className={styles.touchTarget}
                     appearance="secondary"
                     disabled={submitting}
                     onClick={handleDismissPreview}
@@ -2033,6 +2047,7 @@ function ScenarioLaunchForm({
                     Cancel
                   </Button>
                   <Button
+                    className={styles.touchTarget}
                     appearance="primary"
                     disabled={submitting || conversationBusy || !runtime.ready || !defaultsReady || !requestResult.ok || checkingRefreshPolicies}
                     onClick={() => void handleLaunchConfirmed()}
