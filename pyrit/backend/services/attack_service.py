@@ -865,7 +865,7 @@ class AttackService:
             attack_result_id = str(request.attack_result_id)
             results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
             if not results:
-                raise ValueError("The destination attack does not exist")
+                raise LookupError("The destination attack does not exist")
             attack = results[0]
             get_chat_scoring_service().require_manual(attack)
             if request.operation_id is not None and request.operation_id != attack.operation_id:
