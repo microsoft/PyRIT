@@ -1,5 +1,5 @@
 import React from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatInputArea from "./ChatInputArea";
@@ -52,6 +52,40 @@ describe("ChatInputArea", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("should pass dropped files through the existing attachment pipeline in order without changing the text draft", () => {
+    const files = [
+      new File(["image"], "photo.png", { type: "image/png" }),
+      new File(["audio"], "clip.wav", { type: "audio/wav" }),
+    ];
+    render(<TestWrapper><ChatInputArea {...defaultProps} initialText="Keep this draft" /></TestWrapper>);
+    fireEvent.drop(screen.getByTestId("prompt-editor"), { dataTransfer: { types: ["Files"], files } });
+    expect(defaultProps.onAttachmentsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ file: files[0], name: "photo.png", type: "image", mimeType: "image/png", size: 5 }),
+      expect.objectContaining({ file: files[1], name: "clip.wav", type: "audio", mimeType: "audio/wav", size: 5 }),
+    ]);
+    expect(screen.getByRole("textbox")).toHaveValue("Keep this draft");
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
+  });
+
+  it.each(["picker", "drop"])("should preserve broad %s ingestion and the existing target checks without enforcing chooser hints", async (method: string) => {
+    // Model a chooser's All files override, not a new application allowlist.
+    const user = userEvent.setup({ applyAccept: false });
+    const file = new File(["value"], "sample.csv", { type: "text/csv" });
+    render(<TestWrapper><ChatInputArea {...defaultProps} activeTarget={makeTarget({
+      capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
+    })} /></TestWrapper>);
+    const picker = screen.getByTestId("file-input");
+    expect(picker).toHaveAttribute("accept", "image/*,audio/*,video/*,.pdf,.doc,.docx,.txt");
+    if (method === "picker") await user.upload(picker, file);
+    else fireEvent.drop(screen.getByTestId("prompt-editor"), { dataTransfer: { types: ["Files"], files: [file] } });
+    expect(defaultProps.onAttachmentsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ file, name: "sample.csv", type: "file", mimeType: "text/csv", size: 5 }),
+    ]);
+    expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent("This target does not support file attachments. Remove them to send.");
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
   });
 
   it("should render input area and send button", () => {
