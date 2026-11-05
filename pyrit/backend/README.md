@@ -186,6 +186,10 @@ type, dataset, record ID, origin, `date_added`, and `added_by`. These immutable
 fields may be omitted; supplied conflicting values are rejected. Checksums and
 simulation `value` are recomputed server-side. Original creation attribution
 remains unchanged; additions use the request's normal ingestion attribution.
+Embedded adversarial prompts are metadata, not stored dataset records: their
+independent IDs, group IDs/aliases, dataset labels, and creation provenance remain
+canonical nested fields on replacement and do not authorize top-level group
+attachment or move the objective's stored group.
 
 Each edit is a **full replacement of client-editable fields**, not a recursive
 patch. Use the editable projection when preserving optional fields:
@@ -241,6 +245,9 @@ pending cleanup still returns `200`**, not a retry-shaped `503`, with an explici
 status resource in `Location` and `cleanup_location`. An unavailable cleanup
 status has `pending_media:null` rather than an invented count. That resource
 retries durable cleanup without replaying the batch.
+Native lease-release errors after commit are logged and likewise return the
+committed `200` result with pending cleanup and its status location; they do not
+hide a committed batch behind a retry-shaped failure.
 
 | Environment variable | Default |
 |---|---|

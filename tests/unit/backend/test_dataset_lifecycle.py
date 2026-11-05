@@ -193,6 +193,121 @@ async def test_atomic_mixed_batch_exact_ids_counts_provenance_and_omitted_rows(
     assert unchanged.json()["version"] == fresh["version"]
 
 
+@pytest.mark.parametrize("loaded_sdk", [False, True])
+async def test_objective_embedded_group_identity_round_trips_independently_of_record_group(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, loaded_sdk: bool
+) -> None:
+    outer_group, embedded_group = uuid4(), uuid4()
+    embedded = SeedPrompt(
+        value="guide",
+        data_type="text",
+        prompt_group_id=embedded_group,
+        prompt_group_alias="embedded alias",
+        dataset_name="embedded source" if loaded_sdk else "upload",
+        added_by="original embedded author",
+        origin="remote",
+        date_added=datetime(2020, 1, 1, tzinfo=UTC),
+        metadata={"descriptive": "retained"},
+    )
+    if loaded_sdk:
+        objective = SeedObjective(
+            value="goal",
+            dataset_name="upload",
+            prompt_group_id=outer_group,
+            metadata={"adversarial_prompts": {"system_prompt": embedded.model_dump(mode="json")}},
+        )
+        await sqlite_instance.add_seeds_to_memory_async(seeds=[objective], added_by="sdk")
+    else:
+        created = await _upload(
+            client,
+            manifest=_manifest(
+                seeds=[
+                    {
+                        "seed_type": "objective",
+                        "value": "goal",
+                        "prompt_group_id": str(outer_group),
+                        "metadata": {
+                            "adversarial_prompts": {
+                                "system_prompt": embedded.model_dump(mode="json", exclude={"prompt_group_alias"})
+                            }
+                        },
+                    }
+                ]
+            ),
+        )
+        assert created.status_code == 201, created.text
+    original = (await _seeds(sqlite_instance))[0].get_seed_record().model_dump(mode="json")
+    snapshot = await _editable_async(client)
+    row = _editable_rows(snapshot)[0]
+    saved_embedded = row["metadata"]["adversarial_prompts"]["system_prompt"].copy()
+    assert saved_embedded["prompt_group_id"] != row["prompt_group_id"]
+    unchanged = await _update_async(client, snapshot=snapshot, seeds=[row])
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["updated"] == 1 and unchanged.json()["added"] == unchanged.json()["deleted"] == 0
+    assert unchanged.json()["version"] == snapshot["version"]
+    persisted = (await _seeds(sqlite_instance))[0].get_seed_record().model_dump(mode="json")
+    assert persisted == original
+    fresh = await _editable_async(client)
+    changed_row = _editable_rows(fresh)[0]
+    changed_row["metadata"]["adversarial_prompts"]["system_prompt"]["value"] = "changed guide"
+    changed = await _update_async(client, snapshot=fresh, seeds=[changed_row])
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["seeds"] == [{"index": 0, "id": row["id"], "operation": "updated"}]
+    persisted = (await _seeds(sqlite_instance))[0].get_seed_record().model_dump(mode="json")
+    assert persisted["metadata"]["adversarial_prompts"]["system_prompt"] == {**saved_embedded, "value": "changed guide"}
+    for field in ("id", "prompt_group_id", "dataset_name", "date_added", "added_by", "origin"):
+        assert persisted[field] == original[field]
+
+
+async def test_postcommit_native_lease_close_failure_returns_exact_success_and_pending_cleanup(
+    client: AsyncClient, sqlite_instance: SQLiteMemory
+) -> None:
+    await _upload(client)
+    snapshot = await _editable_async(client)
+    committed = asyncio.Event()
+    original_commit = sqlite_instance.commit_dataset_mutation_async
+    original_release = sqlite_instance.release_dataset_upload_async
+
+    async def commit_async(**kwargs: Any) -> dict[str, Any]:
+        result = await original_commit(**kwargs)
+        committed.set()
+        return result
+
+    async def release_async(operation_id: Any) -> None:
+        assert committed.is_set()
+        lease = sqlite_instance._dataset_upload_leases[operation_id]
+        original_close = lease.close_async
+
+        async def fail_close_async() -> None:
+            await original_close()
+            raise OSError("native close failure")
+
+        with patch.object(lease, "close_async", side_effect=fail_close_async):
+            await original_release(operation_id)
+
+    with (
+        patch.object(sqlite_instance, "commit_dataset_mutation_async", side_effect=commit_async),
+        patch.object(sqlite_instance, "release_dataset_upload_async", side_effect=release_async),
+    ):
+        response = await _update_async(client, snapshot=snapshot, seeds=[{"data_type": "text", "value": "committed"}])
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert (result["added"], result["updated"], result["deleted"], result["seed_pieces"]) == (1, 0, 0, 2)
+    assert result["cleanup"]["status"] == "pending" and result["cleanup"]["pending_media"] is None
+    assert response.headers["Location"] == result["cleanup_location"]
+    entries = {str(entry.id): entry for entry in await _seeds(sqlite_instance)}
+    assert entries[result["seeds"][0]["id"]].value == "committed"
+    assert result["version"] == (await _editable_async(client))["version"]
+    assert "native close failure" not in response.text
+    assert (await client.get(response.headers["Location"])).json()["status"] == "completed"
+    with patch.object(sqlite_instance, "commit_dataset_mutation_async", side_effect=RuntimeError("precommit failure")):
+        failed = await _update_async(
+            client, snapshot={"version": result["version"]}, seeds=[{"data_type": "text", "value": "not committed"}]
+        )
+    assert failed.status_code == 503
+    assert {str(entry.id) for entry in await _seeds(sqlite_instance)} == set(entries)
+
+
 @pytest.mark.parametrize("count", [1, 4])
 async def test_update_one_and_n_additions_edits_and_deletion_only_final_removal(
     client: AsyncClient, sqlite_instance: SQLiteMemory, count: int

@@ -182,7 +182,10 @@ def _validated_seeds(
         seed_type = raw.get("seed_type", "prompt")
         if prompt_only and seed_type != "prompt":
             raise _invalid_manifest(field=field, message="A nested prompt must be a SeedPrompt.")
-        if raw.get("dataset_name", manifest.name) not in (None, manifest.name):
+        if not (records is not None and prompt_only) and raw.get("dataset_name", manifest.name) not in (
+            None,
+            manifest.name,
+        ):
             raise _invalid_manifest(field=field, message="Seeds must belong to the manifest dataset.")
         if seed_type == "prompt":
             if raw.get("data_type") not in get_args(PromptDataType) or not isinstance(raw.get("value"), str):
@@ -215,20 +218,21 @@ def _validated_seeds(
         if records is not None and prompt_only and raw.get("id") is not None:
             data["id"] = UUID(str(raw["id"]))
         if records is not None and prompt_only:
-            for key in ("date_added", "added_by", "origin"):
+            for key in ("date_added", "added_by", "origin", "dataset_name"):
                 if key in raw:
                     data[key] = raw[key]
-        if raw.get("prompt_group_id") is not None and raw.get("prompt_group_alias") is not None:
+        embedded_update = records is not None and prompt_only
+        if not embedded_update and raw.get("prompt_group_id") is not None and raw.get("prompt_group_alias") is not None:
             raise _invalid_manifest(field=field, message="Choose an existing group ID or a fresh group alias.")
         if raw.get("prompt_group_id") is not None:
             original_group = UUID(str(raw["prompt_group_id"]))
             if records is not None:
-                if original_group not in existing_groups:
+                if not prompt_only and original_group not in existing_groups:
                     raise _invalid_manifest(field=field, message="The group ID does not belong to this dataset.")
                 data["prompt_group_id"] = original_group
             else:
                 data["prompt_group_id"] = groups.setdefault(original_group, uuid4())
-        elif isinstance(raw.get("prompt_group_alias"), str) and raw["prompt_group_alias"]:
+        elif not embedded_update and isinstance(raw.get("prompt_group_alias"), str) and raw["prompt_group_alias"]:
             data["prompt_group_id"] = aliases.setdefault(raw["prompt_group_alias"], uuid4())
         if seed_type == "simulated_conversation":
             for name in (
@@ -537,6 +541,8 @@ async def _persist_mutation_async(
                     prompt.value_sha256 = original.value_sha256 if prompt is seed else None
         _refresh_seed_values(seeds)
 
+    result: dict[str, Any] | None = None
+    release_failed = False
     try:
         if cancelled:
             raise asyncio.CancelledError
@@ -587,12 +593,23 @@ async def _persist_mutation_async(
         logger.exception("Dataset mutation failed for operation %s", upload_id)
         raise DatasetAPIException(status_code=503, message="Dataset mutation could not be stored.") from error
     finally:
-        await memory.release_dataset_upload_async(upload_id)
-    try:
-        cleanup_result = await memory.cleanup_dataset_media_async(operation_id=upload_id)
-        cleanup_status = DatasetDeletionResponse.model_validate(cleanup_result)
-    except Exception:
-        logger.exception("Committed mutation cleanup pending: %s", upload_id)
+        try:
+            await memory.release_dataset_upload_async(upload_id)
+        except Exception:
+            if result is None:
+                raise
+            logger.exception("Committed mutation native lease release failed: %s", upload_id)
+            release_failed = True
+    if result is None:
+        raise RuntimeError("Dataset mutation did not return a committed result.")
+    cleanup_status = None
+    if not release_failed:
+        try:
+            cleanup_result = await memory.cleanup_dataset_media_async(operation_id=upload_id)
+            cleanup_status = DatasetDeletionResponse.model_validate(cleanup_result)
+        except Exception:
+            logger.exception("Committed mutation cleanup pending: %s", upload_id)
+    if cleanup_status is None:
         cleanup_status = DatasetDeletionResponse(
             deletion_id=upload_id,
             status="pending",
