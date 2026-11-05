@@ -230,3 +230,25 @@ class TestApproximateTextMatchingOccurrenceSensitive:
 
         matcher_high = ApproximateTextMatching(threshold=0.8, n=3, case_sensitive=False)
         assert matcher_high.is_match(target="hello", text="hallo") is False
+
+
+class TestApproximateTextMatchingMetricVersion:
+    """Tests for metric versioning in scorer identifiers."""
+
+    def test_metric_version_in_identifier_params(self):
+        matcher = ApproximateTextMatching(threshold=0.5, n=3)
+        params = matcher.get_identifier_params()
+        assert "metric_version" in params
+        assert params["metric_version"] == ApproximateTextMatching.METRIC_VERSION
+
+    def test_metric_version_is_current(self):
+        # Counter-based occurrence-sensitive overlap is version 2.
+        assert ApproximateTextMatching.METRIC_VERSION == 2
+
+    def test_metric_version_distinguishes_algorithm(self):
+        # Two matchers with the same config should have the same identifier params,
+        # including the metric version.
+        a = ApproximateTextMatching(threshold=0.5, n=3)
+        b = ApproximateTextMatching(threshold=0.5, n=3)
+        assert a.get_identifier_params() == b.get_identifier_params()
+        assert a.get_identifier_params()["metric_version"] == 2

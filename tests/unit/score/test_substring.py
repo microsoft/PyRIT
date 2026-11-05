@@ -195,3 +195,13 @@ async def test_substring_scorer_no_category():
         await scorer.score_text_async(text="string")
 
         memory.add_scores_to_memory_async.assert_called_once()
+
+
+def test_approximate_matcher_metric_version_in_scorer_identifier(
+    patch_central_database: MemoryInterface,
+) -> None:
+    scorer = SubStringScorer(substring="hello", text_matcher=ApproximateTextMatching(threshold=0.5, n=3))
+    identifier = scorer.get_identifier()
+    matcher_params = identifier.params["text_matcher_params"]
+    assert "metric_version" in matcher_params
+    assert matcher_params["metric_version"] == 2

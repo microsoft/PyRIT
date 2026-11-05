@@ -97,6 +97,15 @@ class ApproximateTextMatching(TextMatching):
     content, or text with variations.
     """
 
+    #: Metric algorithm version.  Bump this when the overlap formula changes
+    #: so that scorer identifiers produced by different algorithm versions are
+    #: never confused.
+    #:
+    #: History:
+    #:   1 - original set-based overlap (distinct n-grams only)
+    #:   2 - Counter-based occurrence-sensitive overlap (counts each n-gram occurrence)
+    METRIC_VERSION: int = 2
+
     def __init__(self, *, threshold: float = 0.5, n: int = 3, case_sensitive: bool = False) -> None:
         """
         Initialize the approximate text matching strategy.
@@ -126,7 +135,7 @@ class ApproximateTextMatching(TextMatching):
         Returns:
             dict[str, Any]: Behavioral parameters for scorer identifiers.
         """
-        return {"threshold": self._threshold, "n": self._n, "case_sensitive": self._case_sensitive}
+        return {"metric_version": self.METRIC_VERSION, "threshold": self._threshold, "n": self._n, "case_sensitive": self._case_sensitive}
 
     def is_match(self, *, target: str, text: str) -> bool:
         """
