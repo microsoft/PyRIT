@@ -470,11 +470,12 @@ def get_azure_openai_auth(endpoint: str) -> Callable[[], Awaitable[str]]:
     return get_azure_async_token_provider(scope)
 
 
-def validate_speech_region(region: str) -> str:
+def validate_speech_region_shape(region: str) -> str:
     """
-    Check that a value is an Azure region name, such as ``eastus``.
+    Check that a value has the shape of an Azure region name, such as ``eastus``.
 
-    The Speech SDK builds the service's host name from the region, so only a region name is accepted.
+    The Speech SDK builds the service's host name from the region, so only letters and digits are accepted.
+    This checks the form of the name only, not whether a region by that name exists.
 
     Args:
         region (str): The region to check.

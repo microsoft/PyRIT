@@ -16,7 +16,7 @@ from pyrit.auth.azure_auth import (
     get_speech_config_from_default_azure_credential,
     is_azure_ml_endpoint,
     is_azure_openai_endpoint,
-    validate_speech_region,
+    validate_speech_region_shape,
 )
 
 curr_epoch_time = int(time.time())
@@ -190,17 +190,17 @@ def test_get_speech_config_insufficient_info_raises_error() -> None:
     ("region", "expected"),
     [("eastus", "eastus"), ("EastUS", "EastUS"), ("usgovvirginia", "usgovvirginia"), (" westus2\n", "westus2")],
 )
-def test_validate_speech_region_accepts_region_names(region: str, expected: str) -> None:
-    assert validate_speech_region(region) == expected
+def test_validate_speech_region_shape_accepts_region_names(region: str, expected: str) -> None:
+    assert validate_speech_region_shape(region) == expected
 
 
 @pytest.mark.parametrize(
     "region",
     ["example.com#", "example.com/x?", "user@example.com", "eastus.example.com", "east us", "east-us", "east_us", ""],
 )
-def test_validate_speech_region_rejects_anything_else(region: str) -> None:
+def test_validate_speech_region_shape_rejects_anything_else(region: str) -> None:
     with pytest.raises(ValueError, match="azure_speech_region must be an Azure region name"):
-        validate_speech_region(region)
+        validate_speech_region_shape(region)
 
 
 def test_get_access_token_from_interactive_login_returns_token():
