@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react'
+import type { MouseEvent } from 'react'
 import {
   tokens,
   Button,
@@ -18,10 +19,38 @@ import {
   StarRegular,
   StarFilled,
 } from '@fluentui/react-icons'
-import { attacksApi } from '../../services/api'
-import { toApiError } from '../../services/errors'
-import type { ConversationSummary } from '../../types'
+import { attacksApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
+import type { AttackConversationsResponse, ConversationSummary } from '@/types'
 import { useConversationPanelStyles } from './ConversationPanel.styles'
+
+interface SavedReferencePage {
+  attackResultId: string
+  pageSize: number
+  refreshKey?: number
+  response: AttackConversationsResponse
+  consumedCursors: ReadonlySet<string>
+}
+
+function mergeReferencePage(
+  previous: AttackConversationsResponse | null, incoming: AttackConversationsResponse, attackResultId: string,
+  cursor?: string, consumedCursors?: ReadonlySet<string>,
+): AttackConversationsResponse {
+  const pagination = incoming.pagination
+  if (incoming.attack_result_id !== attackResultId || !pagination || typeof pagination.has_more !== 'boolean'
+    || !Number.isInteger(pagination.limit) || pagination.limit < 1 || pagination.limit > 200
+    || !Number.isInteger(incoming.total_count) || (incoming.total_count ?? -1) < 0
+    || (pagination.has_more && (!pagination.next_cursor || pagination.next_cursor === cursor
+      || consumedCursors?.has(pagination.next_cursor)))
+    || (previous && (previous.main_conversation_id !== incoming.main_conversation_id || previous.total_count !== incoming.total_count))) {
+    throw new Error('The server returned changed or invalid conversation references. Restart reference loading.')
+  }
+  const conversations = new Map<string, ConversationSummary>()
+  for (const conversation of [...(previous?.conversations ?? []), ...incoming.conversations]) {
+    conversations.set(conversation.conversation_id, conversation)
+  }
+  return { ...incoming, conversations: [...conversations.values()] }
+}
 
 interface ConversationPanelProps {
   attackResultId: string | null
@@ -34,6 +63,8 @@ interface ConversationPanelProps {
   lockedReason?: string
   /** Increment to trigger a conversation list refresh (e.g. after sending a message) */
   refreshKey?: number
+  /** Saved evidence pages references independently from the selected transcript. */
+  referencePageSize?: number
 }
 
 export default function ConversationPanel({
@@ -45,10 +76,18 @@ export default function ConversationPanel({
   onClose,
   lockedReason,
   refreshKey,
+  referencePageSize,
 }: ConversationPanelProps) {
   const styles = useConversationPanelStyles()
-  const [conversations, setConversations] = useState<ConversationSummary[]>([])
-  const [mainConversationId, setMainConversationId] = useState<string | null>(null)
+  const [unpagedConversations, setUnpagedConversations] = useState<ConversationSummary[]>([])
+  const [unpagedMainConversationId, setUnpagedMainConversationId] = useState<string | null>(null)
+  const [savedReferencePage, setSavedReferencePage] = useState<SavedReferencePage | null>(null)
+  const savedReferencePageRef = useRef<SavedReferencePage | null>(null)
+  const activeReadRef = useRef<number | null>(null)
+  const nextReadIdRef = useRef(0)
+  const pagingStatusRef = useRef<HTMLSpanElement>(null)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [continuationIssue, setContinuationIssue] = useState<{ detail: string; restartRequired: boolean } | null>(null)
   // Initialize to `true` only when we will actually fetch on mount so the spinner
   // shows during the initial fetch without needing a synchronous setState inside
   // the effect body (which `react-hooks/set-state-in-effect` would flag).
@@ -58,6 +97,20 @@ export default function ConversationPanel({
   // Counter used by the retry button to re-trigger the fetch effect without
   // calling setState synchronously in an effect body.
   const [retryCount, setRetryCount] = useState(0)
+  const selectionRefreshId = referencePageSize === undefined ? activeConversationId : null
+
+  const saveReferencePage = useCallback((page: SavedReferencePage): void => {
+    savedReferencePageRef.current = page
+    setSavedReferencePage(page)
+  }, [])
+
+  useLayoutEffect(() => {
+    const page = savedReferencePageRef.current
+    if (page?.attackResultId !== attackResultId || page?.pageSize !== referencePageSize || page?.refreshKey !== refreshKey) {
+      savedReferencePageRef.current = null
+    }
+    return () => { activeReadRef.current = null }
+  }, [attackResultId, referencePageSize, refreshKey, retryCount, selectionRefreshId])
 
   useEffect(() => {
     if (!attackResultId) {
@@ -65,53 +118,104 @@ export default function ConversationPanel({
     }
 
     let cancelled = false
-    attacksApi.getConversations(attackResultId)
+    const readId = ++nextReadIdRef.current
+    activeReadRef.current = readId
+    const request = referencePageSize === undefined
+      ? attacksApi.getConversations(attackResultId)
+      : attacksApi.getConversations(attackResultId, { limit: referencePageSize })
+    request
       .then((response) => {
-        if (cancelled) return
-        setConversations(response.conversations)
-        setMainConversationId(response.main_conversation_id)
+        if (cancelled || activeReadRef.current !== readId) return
+        if (referencePageSize === undefined) {
+          setUnpagedConversations(response.conversations)
+          setUnpagedMainConversationId(response.main_conversation_id)
+        } else {
+          saveReferencePage({
+            attackResultId, pageSize: referencePageSize, refreshKey,
+            response: mergeReferencePage(null, response, attackResultId), consumedCursors: new Set(),
+          })
+        }
+        setContinuationIssue(null)
         setError(null)
       })
-      .catch((err) => {
-        if (cancelled) return
-        setConversations([])
-        setMainConversationId(null)
+      .catch((err: unknown) => {
+        if (cancelled || activeReadRef.current !== readId) return
         setError(toApiError(err).detail)
       })
       .finally(() => {
-        if (cancelled) return
+        if (cancelled || activeReadRef.current !== readId) return
+        activeReadRef.current = null
         setIsLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [attackResultId, activeConversationId, refreshKey, retryCount])
+  }, [attackResultId, referencePageSize, selectionRefreshId, refreshKey, retryCount, saveReferencePage])
 
-  // Reset local state when the attack is unloaded so stale data from a prior
-  // attack doesn't briefly appear when the user opens a new one. Uses the
-  // "adjust state during render" pattern instead of a useEffect to satisfy
-  // react-hooks/set-state-in-effect.
-  const [prevAttackResultId, setPrevAttackResultId] = useState<string | null>(attackResultId ?? null)
-  if (attackResultId !== prevAttackResultId) {
-    setPrevAttackResultId(attackResultId ?? null)
-    // Any switch of attack invalidates the loaded list: without this the
-    // previous attack's conversations render under the new attack's header
-    // until the fetch resolves, and rows clicked in that window hand the wrong
-    // conversation ids to the new attack's context.
-    setConversations([])
-    setMainConversationId(null)
+  // Reset attack/paging identity, but retain keyed rows during manual background
+  // refreshes so keyboard focus survives. Adjust state during render instead of
+  // an effect to satisfy react-hooks/set-state-in-effect.
+  const [previousSource, setPreviousSource] = useState({ attackResultId, referencePageSize, refreshKey })
+  if (attackResultId !== previousSource.attackResultId || referencePageSize !== previousSource.referencePageSize
+    || (referencePageSize !== undefined && refreshKey !== previousSource.refreshKey)) {
+    setPreviousSource({ attackResultId, referencePageSize, refreshKey })
+    setUnpagedConversations([])
+    setUnpagedMainConversationId(null)
+    setSavedReferencePage(null)
     setError(null)
-    setIsLoading(attackResultId != null)
+    setContinuationIssue(null)
+    setIsLoadingMore(false)
+    setIsLoading(Boolean(attackResultId))
   }
 
   const handleRetry = useCallback(() => {
+    if (activeReadRef.current !== null) return
     setIsLoading(true)
     setError(null)
     setRetryCount((c) => c + 1)
   }, [])
 
-  // Expose refresh via a data attribute on the root element so parent can call it
-  // Actually, we'll handle refresh via the attackConversationId dependency
+  const loadMore = async (): Promise<void> => {
+    const page = savedReferencePageRef.current
+    const cursor = page?.response.pagination?.next_cursor
+    if (activeReadRef.current !== null || continuationIssue?.restartRequired || !page || !cursor || !page.response.pagination?.has_more
+      || page.attackResultId !== attackResultId || page.pageSize !== referencePageSize || page.refreshKey !== refreshKey) return
+    const readId = ++nextReadIdRef.current
+    activeReadRef.current = readId
+    setIsLoadingMore(true)
+    setContinuationIssue(null)
+    let restartRequired = false
+    const isCurrentRead = (): boolean => activeReadRef.current === readId && savedReferencePageRef.current === page
+    try {
+      const incoming = await attacksApi.getConversations(page.attackResultId, { limit: page.pageSize, cursor })
+      if (!isCurrentRead()) return
+      restartRequired = true
+      const response = mergeReferencePage(page.response, incoming, page.attackResultId, cursor, page.consumedCursors)
+      saveReferencePage({ ...page, response, consumedCursors: new Set([...page.consumedCursors, cursor]) })
+      setError(null)
+    } catch (cause: unknown) {
+      if (!isCurrentRead()) return
+      const error = toApiError(cause)
+      setContinuationIssue({
+        detail: `Could not load more conversations: ${error.detail}`, restartRequired: restartRequired || error.status === 400,
+      })
+    } finally {
+      if (activeReadRef.current === readId) {
+        activeReadRef.current = null
+        setIsLoadingMore(false)
+      }
+    }
+  }
+
+  const currentPage = savedReferencePage?.attackResultId === attackResultId
+    && savedReferencePage.pageSize === referencePageSize && savedReferencePage.refreshKey === refreshKey
+    ? savedReferencePage : null
+  const conversations = referencePageSize === undefined ? unpagedConversations : currentPage?.response.conversations ?? []
+  const mainConversationId = referencePageSize === undefined ? unpagedMainConversationId : currentPage?.response.main_conversation_id ?? null
+  const hasLoadedConversations = currentPage !== null || (referencePageSize === undefined && unpagedConversations.length > 0)
+  const showRows = (!isLoading || hasLoadedConversations) && (!error || hasLoadedConversations)
+  const selectionOutsidePage = currentPage && activeConversationId
+    && !conversations.some((conversation: ConversationSummary) => conversation.conversation_id === activeConversationId)
 
   return (
     <div id="conversation-panel" className={styles.root} data-testid="conversation-panel">
@@ -166,7 +270,7 @@ export default function ConversationPanel({
       <div className={styles.conversationList}>
         {isLoading && (
           <div className={styles.loading}>
-            <Spinner size="tiny" />
+            <Spinner size="tiny" label={referencePageSize === undefined ? undefined : 'Loading saved conversation references...'} />
           </div>
         )}
 
@@ -181,6 +285,7 @@ export default function ConversationPanel({
               className={styles.retryButton}
               icon={<ArrowSyncRegular />}
               onClick={handleRetry}
+              disabled={isLoadingMore}
               data-testid="conversation-retry-btn"
             >
               Retry
@@ -188,7 +293,7 @@ export default function ConversationPanel({
           </div>
         )}
 
-        {!isLoading && !error && conversations.length === 0 && (
+        {!isLoading && !error && conversations.length === 0 && !currentPage?.response.pagination?.has_more && (
           <div className={styles.emptyState}>
             <ChatRegular fontSize={24} />
             <Text size={200}>
@@ -199,7 +304,13 @@ export default function ConversationPanel({
           </div>
         )}
 
-        {!isLoading && !error && conversations.map((conv) => {
+        {selectionOutsidePage && (
+          <Text size={200} role="status" className={styles.offPageSelection}>
+            Selected conversation {activeConversationId} is outside the loaded references. Its transcript remains selected.
+          </Text>
+        )}
+
+        {showRows && conversations.map((conv: ConversationSummary) => {
           const isActive = conv.conversation_id === activeConversationId
           const selectConversation = () => onSelectConversation(conv.conversation_id)
           return (
@@ -207,7 +318,8 @@ export default function ConversationPanel({
               key={conv.conversation_id}
               className={`${styles.conversationItem} ${isActive ? styles.conversationItemActive : ''}`}
               onClick={selectConversation}
-              onKeyDown={(e) => {
+              onKeyDown={(e: React.KeyboardEvent<HTMLDivElement>) => {
+                if (e.target !== e.currentTarget) return
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
                   selectConversation()
@@ -238,6 +350,8 @@ export default function ConversationPanel({
                       size="small"
                       icon={conv.conversation_id === mainConversationId ? <StarFilled /> : <StarRegular />}
                       disabled={conv.conversation_id === mainConversationId || !!lockedReason}
+                      aria-label={conv.conversation_id === mainConversationId
+                        ? `Main conversation ${conv.conversation_id}` : `Promote conversation ${conv.conversation_id} to main`}
                       onClick={(e) => {
                         e.stopPropagation()
                         if (conv.conversation_id !== mainConversationId) {
@@ -262,6 +376,32 @@ export default function ConversationPanel({
           )
         })}
       </div>
+      {currentPage && (
+        <section className={styles.pagingControls} aria-label="Saved conversation references">
+          {continuationIssue && (
+            <MessageBar intent="error"><MessageBarBody>
+              {continuationIssue.detail} Loaded references are still available.
+            </MessageBarBody></MessageBar>
+          )}
+          <Text ref={pagingStatusRef} tabIndex={-1} size={200} role="status" aria-live="polite">
+            {isLoading ? 'Loading saved conversation references... ' : isLoadingMore ? 'Loading more conversations... ' : ''}
+            {conversations.length} of {currentPage.response.total_count} saved conversations loaded.{' '}
+            {currentPage.response.pagination?.has_more ? 'More references are available.' : 'End of saved conversation references.'}
+          </Text>
+          {currentPage.response.pagination?.has_more && (
+            <Button className={styles.retryButton} disabled={isLoading || isLoadingMore}
+              icon={isLoadingMore ? <Spinner size="tiny" /> : undefined}
+              onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                if (event.currentTarget === document.activeElement) pagingStatusRef.current?.focus({ preventScroll: true })
+                if (continuationIssue?.restartRequired) handleRetry(); else void loadMore()
+              }}>
+              {isLoadingMore ? 'Loading more conversations...'
+                : continuationIssue?.restartRequired ? 'Restart conversation references'
+                : continuationIssue ? 'Retry more conversations' : 'Load more conversations'}
+            </Button>
+          )}
+        </section>
+      )}
     </div>
   )
 }
