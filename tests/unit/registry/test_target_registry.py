@@ -360,15 +360,15 @@ class TestClassMetadata:
         assert any(p.is_reference_to(ComponentType.TARGET) for p in meta.parameters)
 
     def test_metadata_supported_auth_modes_projects_class_attribute(self, registry: TargetRegistry):
-        # Identity-capable targets expose both modes; api-key-only targets expose one.
-        assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity")
+        # OpenAI targets expose all three modes; api-key-only targets expose one.
+        assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity", "none")
         assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ("api_key",)
 
     def test_metadata_supported_auth_modes_sourced_from_class_attributes(self, registry: TargetRegistry):
         # Auth modes are read off the class via Param.ClassAttr, not a fabricated instance.
         meta = self._metadata_for(registry, "OpenAIChatTarget")
         assert "supported_auth_modes" in meta.class_attributes
-        assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity")
+        assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity", "none")
 
     @pytest.mark.usefixtures("patch_central_database")
     def test_instance_registration_does_not_invalidate_class_metadata(self, registry: TargetRegistry) -> None:
@@ -459,4 +459,14 @@ class TestRegistrationGate:
                 continue
             assert target_cls.get_auth_mode_parameters(auth_mode="identity") == {"auth_mode": "identity"}, (
                 f"{name} advertises identity support but does not forward an explicit auth_mode"
+            )
+
+    def test_no_key_targets_accept_an_explicit_auth_mode(self, registry: TargetRegistry) -> None:
+        # A no-key target that dropped the explicit mode would fall back to reading a key variable.
+        for name in registry.get_class_names():
+            target_cls = registry.get_class(name)
+            if "none" not in target_cls.supported_auth_modes:
+                continue
+            assert target_cls.get_auth_mode_parameters(auth_mode="none") == {"auth_mode": "none"}, (
+                f"{name} advertises no-key support but does not forward an explicit auth_mode"
             )
