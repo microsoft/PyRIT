@@ -11,7 +11,7 @@ from io import BytesIO
 from pathlib import Path
 
 import regex
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont
 from PIL.ImageFont import FreeTypeFont
 
 from pyrit.converter.base_image_text_converter import _BaseImageTextConverter
@@ -37,6 +37,7 @@ class TextToImageConverter(_BaseImageTextConverter):
     _UGLY_GERRY_CHARACTERS = frozenset(string.ascii_letters + " \n\r!',.?")
     _MAX_PIXELS = 16_000_000
     _MEASUREMENT_CACHE_SIZE = 1024
+    _MAX_MEASUREMENT_CHARACTERS = 1_000_000
 
     def __init__(
         self,
@@ -104,7 +105,8 @@ class TextToImageConverter(_BaseImageTextConverter):
 
         Raises:
             ValueError: If the input type or characters are unsupported, the prompt is blank,
-                a character cannot fit the width, or the image would exceed 16 million pixels.
+                a character cannot fit the width, the image would exceed 16 million pixels,
+                or layout requires measuring more than one million characters in total.
         """
         if not self.input_supported(input_type):
             raise ValueError(f"Input type {input_type} not supported")
@@ -147,7 +149,17 @@ class TextToImageConverter(_BaseImageTextConverter):
     def _iter_wrapped_lines(
         self, *, text: str, font: FreeTypeFont
     ) -> Iterator[tuple[str, tuple[float, float, float, float]]]:
-        measure = lru_cache(maxsize=self._MEASUREMENT_CACHE_SIZE)(font.getbbox)
+        measured_characters = 0
+
+        @lru_cache(maxsize=self._MEASUREMENT_CACHE_SIZE)
+        def measure(candidate: str) -> tuple[float, float, float, float]:
+            nonlocal measured_characters
+            # Charge cache misses before shaping, including zero-width and combining sequences.
+            if len(candidate) > self._MAX_MEASUREMENT_CHARACTERS - measured_characters:
+                raise ValueError("Text layout exceeds the measurement budget; shorten the prompt or reduce max_width")
+            measured_characters += len(candidate)
+            return font.getbbox(candidate)
+
         width = self._max_width - 2 * self._padding
         for paragraph in text.split("\n"):
             line = ""
@@ -191,13 +203,10 @@ class TextToImageConverter(_BaseImageTextConverter):
         width, height = self._get_image_size(text_width=text_width, text_height=bottom - top, line_count=len(lines))
         line_height = max(1, bottom - top) + self._font_size // 4
         with Image.new("RGB", (width, height), self._background_color) as image, BytesIO() as output:
-            draw = ImageDraw.Draw(image)
-            for index, (line, box) in enumerate(zip(lines, bounds, strict=True)):
-                draw.text(
-                    (self._padding - box[0], self._padding - top + index * line_height),
-                    line,
-                    font=font,
-                    fill=self._color,
-                )
+            positioned_lines = (
+                (line, (self._padding - box[0], self._padding - top + index * line_height))
+                for index, (line, box) in enumerate(zip(lines, bounds, strict=True))
+            )
+            self._draw_positioned_lines(image=image, lines=positioned_lines, font=font, color=self._color)
             image.save(output, format="PNG")
             return output.getvalue()

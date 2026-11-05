@@ -43,6 +43,9 @@
 # are rejected as soon as completed lines exceed that budget, and repeated font
 # measurements use a bounded per-render cache. The result is `image_path`,
 # intended for an image-capable target; it is not a Unicode text encoding.
+# Layout also rejects prompts requiring more than one million measured characters
+# across cache misses, bounding work and cached text even for zero-width runs.
+# Shorten the prompt or reduce `max_width` if this measurement budget is exceeded.
 #
 # (ugly-gerry)=
 # The `ugly_gerry` preset uses [Ugly Gerry](https://en.wikipedia.org/wiki/Ugly_Gerry),

@@ -376,6 +376,7 @@ async def test_convert_async_uses_local_font_without_gerry_restrictions(
     assert isinstance(pillow_font, ImageFont.FreeTypeFont)
     font_path = tmp_path / f"local{extension}"
     font_path.write_bytes(pillow_font.font_bytes)
+    pillow_font = ImageFont.truetype(str(font_path), size=32)
     converter = TextToImageConverter(font=str(font_path) if as_string else font_path, font_size=32)
     prompt = "Mixed CASE: 123 - caf\u00e9"
     result = await converter.convert_async(prompt=prompt)
@@ -455,3 +456,77 @@ def test_wrapping_keeps_grapheme_clusters_together(grapheme: str) -> None:
     converter = TextToImageConverter(max_width=math.ceil(right - left), padding=0)
     lines = [line for line, _ in converter._iter_wrapped_lines(text=grapheme * 3, font=font)]
     assert lines == [grapheme] * 3
+
+
+def test_rendering_bounds_measurement_work_for_a_local_font_with_zero_width_glyphs(tmp_path: Path) -> None:
+    font_path = tmp_path / "zero_width.otf"
+    font_path.write_bytes(TextToImageConverter._UGLY_GERRY_FONT_PATH.read_bytes())
+    converter = TextToImageConverter(font=font_path)
+    font = converter._load_font()
+    prompt = "A" + "\u00ad" * 2048
+    assert font.getbbox(prompt) == font.getbbox("A")
+    with (
+        patch.object(converter, "_load_font", return_value=font),
+        patch.object(font, "getbbox", wraps=font.getbbox) as measure,
+        patch.object(Image, "new", side_effect=AssertionError("Rejected layouts must not allocate an image")),
+        pytest.raises(ValueError, match="measurement budget"),
+    ):
+        converter._render_png(prompt)
+    measured_lengths = [len(call.args[0]) for call in measure.call_args_list]
+    assert sum(measured_lengths) <= converter._MAX_MEASUREMENT_CHARACTERS
+    assert sum(measured_lengths) + measured_lengths[-1] + 1 > converter._MAX_MEASUREMENT_CHARACTERS
+    assert len(measured_lengths) < len(prompt)
+
+
+@pytest.mark.parametrize("cache_size", [2, 1024])
+def test_wrapping_enforces_the_exact_measurement_budget_including_evictions(cache_size: int) -> None:
+    converter = TextToImageConverter(font="ugly_gerry", max_width=122)
+    font = converter._load_font()
+    # "A", "AB", "B", "BA" are measured; a two-entry cache then remeasures "A", "AB", and "B".
+    expected_work = 10 if cache_size == 2 else 6
+    with (
+        patch.object(converter, "_MEASUREMENT_CACHE_SIZE", cache_size),
+        patch.object(converter, "_MAX_MEASUREMENT_CHARACTERS", expected_work),
+    ):
+        assert [line for line, _ in converter._iter_wrapped_lines(text="ABAB", font=font)] == ["A", "B", "A", "B"]
+    with (
+        patch.object(converter, "_MEASUREMENT_CACHE_SIZE", cache_size),
+        patch.object(converter, "_MAX_MEASUREMENT_CHARACTERS", expected_work - 1),
+        pytest.raises(ValueError, match="measurement budget"),
+    ):
+        list(converter._iter_wrapped_lines(text="ABAB", font=font))
+
+
+def test_wrapping_rejects_an_oversized_grapheme_before_font_measurement() -> None:
+    converter = TextToImageConverter()
+    font = converter._load_font()
+    with (
+        patch.object(converter, "_MAX_MEASUREMENT_CHARACTERS", 32),
+        patch.object(font, "getbbox", wraps=font.getbbox) as measure,
+        pytest.raises(ValueError, match="measurement budget"),
+    ):
+        list(converter._iter_wrapped_lines(text="e" + "\u0301" * 32, font=font))
+    measure.assert_not_called()
+
+
+@pytest.mark.parametrize("center_text", [False, True])
+def test_shared_drawing_preserves_existing_overlay_positions_and_alpha(center_text: bool) -> None:
+    converter = TextToImageConverter()
+    font = converter._load_font()
+    lines = ["First line", "", "Second"]
+    color = (10, 20, 30)
+    width, height = 800, 400
+    line_height = converter._get_line_height(font=font)
+    y_start = (height - len(lines) * line_height) // 2 if center_text else 0
+    with (
+        converter._draw_text_overlay(
+            lines=lines, font=font, color=color, box_width=width, box_height=height, center_text=center_text
+        ) as actual,
+        Image.new("RGBA", (width, height), (0, 0, 0, 0)) as expected,
+    ):
+        draw = ImageDraw.Draw(expected)
+        for index, line in enumerate(lines):
+            left, _, right, _ = draw.textbbox((0, 0), line, font=font)
+            x = (width - (right - left)) // 2 if center_text else 0
+            draw.text((x, y_start + index * line_height), line, font=font, fill=color + (255,))
+        assert actual.tobytes() == expected.tobytes()
