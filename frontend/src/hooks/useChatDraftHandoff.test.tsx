@@ -91,6 +91,23 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
         }),
       ).toBe(true)
     })
+
+    it('returns true when conversation draft messages are present', () => {
+      expect(
+        isChatDraftDirty({
+          text: '',
+          conversation: {
+            messages: [
+              {
+                id: 'm1',
+                role: 'user',
+                pieces: [{ draftId: 'p1', data_type: 'text', original_value: 'hello' }],
+              },
+            ],
+          },
+        }),
+      ).toBe(true)
+    })
   })
 
   it('preserves target and unapplied setup without marking prompt content dirty', () => {
@@ -253,6 +270,27 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
     const wrapper = ({ children }: { children: ReactNode }) => (
       <ChatDraftProvider>{children}</ChatDraftProvider>
     )
+
+    it('releases uploaded history on discard but not while a newer handoff still owns it', () => {
+      const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
+      const conversation = { messages: [{
+        id: 'history', role: 'user' as const, pieces: [{
+          draftId: 'image', data_type: 'image_path', original_value: '', previewUrl: 'blob:history',
+          file: new File(['image'], 'history.png', { type: 'image/png' }),
+        }],
+      }] }
+      act(() => result.current.preserveDraft({
+        originatingAttackId: null, originatingConversationId: null, originatingPath: '/attack/chat',
+        draft: { text: '', attachments: [], conversation },
+      }))
+      act(() => { result.current.stagePendingImport({
+        destinationType: 'new_attack', content: { text: '' }, conversation,
+      }) })
+      act(() => result.current.clearPreservedDraft())
+      expect(revokeObjectURLSpy).not.toHaveBeenCalledWith('blob:history')
+      act(() => result.current.dismissPendingImport())
+      expect(revokeObjectURLSpy).toHaveBeenCalledWith('blob:history')
+    })
 
     it('returns fallback default context safely when used outside of Provider', () => {
       const { result } = renderHook(() => useChatDraftHandoff())

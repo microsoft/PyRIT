@@ -420,7 +420,18 @@ class ComponentIdentifier(BaseModel):
         Returns:
             frozenset[str]: Sensitive constructor parameter names.
         """
-        return frozenset({"api_key", "auth_token", "github_token", "hf_access_token", "sas_token"})
+        return frozenset(
+            {
+                "api_key",
+                "auth_token",
+                "azure_speech_key",
+                "cookie",
+                "github_token",
+                "hf_access_token",
+                "sas_token",
+                "session_id",
+            }
+        )
 
     @classmethod
     def get_multiline_parameter_names(cls) -> frozenset[str]:
