@@ -1860,3 +1860,17 @@ class TestConversationEditor:
                 await settle_tasks_async(task)
         assert not list(Path(sqlite_instance.results_path).rglob("*.txt"))
         assert (await sqlite_instance.get_attack_results_async()) == []
+
+    async def test_save_missing_destination_attack_raises_lookup_error_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = AttackService()
+        request = SaveConversationRequest(
+            save_id=uuid.uuid4(),
+            destination="same_attack",
+            attack_result_id=str(uuid.uuid4()),
+            operator="owner",
+            messages=[ConversationMessageRequest(role="user", pieces=[ConversationPieceRequest(original_value="Hi")])],
+        )
+        with pytest.raises(LookupError, match="The destination attack does not exist"):
+            await service.save_conversation_async(request=request)
