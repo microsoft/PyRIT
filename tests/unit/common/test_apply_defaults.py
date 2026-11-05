@@ -74,7 +74,7 @@ def test_deferred_defaults_reject_unresolved_required_placeholder() -> None:
 
 
 def test_deferred_defaults_do_not_apply_to_undecorated_constructor() -> None:
-    set_default_value(class_type=_Undecorated, parameter_name="name", value=42)
+    set_default_value(class_type=_Undecorated, parameter_name="count", value=42)
     resolved = resolve_constructor_defaults(
         class_type=_Undecorated, arguments={"count": None}, excluded_parameters=set()
     )
@@ -250,6 +250,8 @@ def test_apply_defaults_required_value_satisfied_by_explicit():
 def test_apply_defaults_none_on_required_value_param_raises():
     with pytest.raises(ValueError, match="target is required"):
         _WithRequired(target=None)
+
+
 # --- Lazy logging regression (microsoft/PyRIT#3903) ---
 
 
@@ -281,9 +283,7 @@ def test_lazy_logging_does_not_stringify_value_when_debug_disabled():
         assert sentinel.str_calls == 0
 
         # Deferred resolution path must not stringify.
-        resolved = resolve_constructor_defaults(
-            class_type=_LazyLogProbe, arguments={}, excluded_parameters=set()
-        )
+        resolved = resolve_constructor_defaults(class_type=_LazyLogProbe, arguments={}, excluded_parameters=set())
         assert sentinel.str_calls == 0
         assert resolved["name"] is sentinel
 
