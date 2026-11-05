@@ -860,53 +860,10 @@ export default function ChatWindow({
     } : {}),
   }
   const isActiveDraftDirty = isChatDraftDirty(activeDraft)
-  const currentConversationIdentity = `${draftAttackId ?? ''}::${draftConversationId ?? ''}`
-  const lastConversationIdentityRef = useRef(currentConversationIdentity)
-  const lastDraftAttackIdRef = useRef(draftAttackId)
-  const lastDraftConversationIdRef = useRef(draftConversationId)
-  const lastActiveDraftRef = useRef(activeDraft)
-  const lastLocationRef = useRef({ pathname: location.pathname, search: location.search, hash: location.hash, state: location.state })
-
-  useLayoutEffect(() => {
-    if (lastConversationIdentityRef.current !== currentConversationIdentity) {
-      const prevAttackId = lastDraftAttackIdRef.current
-      const prevConvId = lastDraftConversationIdRef.current
-      const prevDraft = lastActiveDraftRef.current
-      const wasDirty = isChatDraftDirty(prevDraft)
-      const isSendingPrev = prevConvId ? sendingConvIdsRef.current.has(prevConvId) : false
-
-      lastConversationIdentityRef.current = currentConversationIdentity
-      lastDraftAttackIdRef.current = draftAttackId
-      lastDraftConversationIdRef.current = draftConversationId
-
-      const isDirectSwitch = Boolean(prevConvId) && Boolean(draftConversationId) && prevConvId !== draftConversationId
-
-      if (isDirectSwitch && !isSendingPrev && !isSending && !copyingRef.current && !undoInFlight.current && !recoveryInFlightRef.current) {
-        if (wasDirty) {
-          draftHandoff.preserveDraft({
-            originatingAttackId: prevAttackId,
-            originatingConversationId: prevConvId,
-            originatingPath: lastLocationRef.current.pathname + lastLocationRef.current.search + lastLocationRef.current.hash,
-            originatingState: lastLocationRef.current.state,
-            draft: prevDraft,
-          })
-        }
-        setChatInputText('')
-        setDraftAttachments([])
-        setSystemPrompt('')
-        handoffRestoredRef.current = null
-        inputBoxRef.current?.restoreDraft('', [])
-        converters.clearAll()
-      }
-    }
-  }, [currentConversationIdentity, draftAttackId, draftConversationId, draftHandoff, isSending, converters])
-
   useLayoutEffect(() => {
     isActiveDraftDirtyRef.current = isActiveDraftDirty
     if (isDraftDestinationReady || isActiveDraftDirty) ownsDraftRef.current = true
     const savedDraft = { ...activeDraft, textMetadata: inputBoxRef.current?.getTextMetadata() }
-    lastActiveDraftRef.current = savedDraft
-    lastLocationRef.current = { pathname: location.pathname, search: location.search, hash: location.hash, state: location.state }
     const preservedForThis = draftHandoff.getPreservedDraft(draftAttackId, draftConversationId)
     const isWaitingForRestore = matchingPreservedDraft !== null
       && handoffRestoredRef.current !== preservedForThis?.sequence
