@@ -10,6 +10,7 @@ import uuid
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from pyrit.backend.main import app
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
     CreateAttackRequest,
@@ -543,6 +544,19 @@ def test_saved_target_binding_over_the_limit_still_loads() -> None:
 
     assert binding is not None
     assert binding.source_name == name
+
+
+def test_openapi_shows_the_target_binding_limit_on_requests_only() -> None:
+    schemas = app.openapi()["components"]["schemas"]
+    limited = ("source_name", "source_hash", "effective_hash")
+
+    for request_model in ("CreateAttackRequest", "AddMessageRequest", "SaveConversationRequest", "MessageSendRequest"):
+        options = schemas[request_model]["properties"]["target_binding"]["anyOf"]
+        binding = next(option for option in options if option.get("type") != "null")
+        assert {field: binding["properties"][field].get("maxLength") for field in limited} == dict.fromkeys(
+            limited, MAX_IDENTIFIER_LENGTH
+        )
+    assert all("maxLength" not in field for field in schemas["TargetBinding"]["properties"].values())
 
 
 @pytest.mark.parametrize(
