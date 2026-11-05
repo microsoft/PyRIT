@@ -7,6 +7,7 @@ registry exposes as its ``.instances`` property, plus the ``InstanceRegistry`` a
 ``SupportsInstances`` protocols.
 """
 
+import contextlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
 from typing import assert_type
@@ -16,10 +17,13 @@ import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
 from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
     DefaultInstanceRegistry,
     InstanceRegistry,
     RegistryEntry,
+    SavedEntryReplacementError,
     SupportsInstances,
+    record_saved_entry_refusals,
 )
 from pyrit.registry.tag_query import TagQuery
 
@@ -99,6 +103,27 @@ class TestRegistration:
         registry.register(_item("updated"), name="name", replace=True)
 
         assert registry.get("name") == "updated"
+
+    def test_register_refuses_to_replace_a_saved_entry(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
+        revision = registry.revision
+
+        with pytest.raises(SavedEntryReplacementError, match="Saved target 'name'"):
+            registry.register(_item("updated"), name="name", replace=True)
+
+        assert registry.get("name") == "saved"
+        assert registry.revision == revision
+
+    def test_refused_replacements_are_recorded_even_when_caught(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+
+        with record_saved_entry_refusals() as refusals:
+            with contextlib.suppress(SavedEntryReplacementError):
+                registry.register(_item("updated"), name="name", replace=True)
+            registry.register(_item("other"), name="other", replace=True)
+
+        assert refusals == [("converters", "name")]
+        assert registry.get("other") == "other"
 
     def test_register_rejects_reserved_name(self):
         registry: DefaultInstanceRegistry[_TestItem] = DefaultInstanceRegistry(reserved_names={"types"})

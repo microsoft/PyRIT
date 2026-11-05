@@ -20,6 +20,7 @@ from pyrit.models.catalog.registry_recipe import (
     TechniqueRecipe,
 )
 from pyrit.models.parameter import ComponentType
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage
 
 if TYPE_CHECKING:
@@ -417,6 +418,7 @@ class RegistryRecipeRestorer:
                     name=stored.ref.name,
                     type_name=recipe.class_name,
                     params=recipe.params,
+                    registry_metadata={SAVED_ENTRY_METADATA_KEY: stored.ref.kind.value},
                     external_input=True,
                     allowed_path_params=allowed_path_params,
                 )
@@ -444,7 +446,9 @@ class RegistryRecipeRestorer:
             name=name, attack_type=recipe.type, technique_tags=recipe.tags, strict_json=True, **args
         )
         try:
-            registry.instances.register_runtime(factory)
+            registry.instances.register_runtime(
+                factory, metadata={SAVED_ENTRY_METADATA_KEY: RegistryRecipeKind.TECHNIQUES.value}
+            )
         except ValueError as error:
             raise _RecipeRejectedError(reason=RestoreFailureReason.NAME_CLASH, message=str(error)) from error
 

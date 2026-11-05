@@ -9,6 +9,7 @@ import asyncio
 import logging
 import threading
 import uuid
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -22,11 +23,13 @@ import pyrit.backend.services.scenario_progress_read_model as _progress_mod
 import pyrit.backend.services.scenario_run_service as _svc_mod
 from pyrit.backend.services.scenario_progress_read_model import ScenarioPlanLookup, ScenarioProgressReadModel
 from pyrit.backend.services.scenario_run_service import (
+    SavedEntryLaunchConflictError,
     ScenarioRunConflictError,
     ScenarioRunService,
 )
 from pyrit.common.utils import to_sha256
-from pyrit.converter import Converter
+from pyrit.converter import Base64Converter, Converter, ROT13Converter
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.memory import (
     AttackResultKeysetCursor,
     AzureSQLMemory,
@@ -64,17 +67,21 @@ from pyrit.models import (
 from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
 from pyrit.models.scenario_dataset import ScenarioDatasetOptions, ScenarioDatasetRequest
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.registry import ConverterRegistry, ScenarioMetadata, ScenarioRegistry
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScenarioMetadata, ScenarioRegistry
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
     get_default_adversarial_target,
 )
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.scam import Scam
+from pyrit.setup.initializers.converters import ConverterInitializer
+from pyrit.setup.initializers.tools import ToolsInitializer
 from unit.async_utils import wait_for_completion_async
 from unit.mocks import (
     MockPromptTarget,
@@ -263,6 +270,100 @@ async def test_has_active_work_covers_scheduler_owned_work(patch_central_databas
 
     assert not service.has_active_work()
     await service.close_async()
+
+
+@pytest.fixture
+def converter_registry() -> Iterator[ConverterRegistry]:
+    ConverterRegistry.reset_registry_singleton()
+    yield ConverterRegistry.get_registry_singleton()
+    ConverterRegistry.reset_registry_singleton()
+
+
+class _LaunchScript:
+    """A launch script that registers one converter, optionally swallowing errors."""
+
+    def __init__(self, *, name: str, swallow: bool = False) -> None:
+        self._name = name
+        self._swallow = swallow
+
+    async def initialize_async(self) -> None:
+        registry = ConverterRegistry.get_registry_singleton()
+        try:
+            registry.instances.register(Base64Converter(), name=self._name, replace=True)
+        except Exception:
+            if not self._swallow:
+                raise
+
+
+async def _run_launch_scripts_async(scripts: dict[str, Any]) -> None:
+    initializers = MagicMock()
+    initializers.create_and_configure.side_effect = lambda name, initializer_params=None: scripts[name]
+    with patch(f"{_REGISTRY_PATCH_BASE}.InitializerRegistry.get_registry_singleton", return_value=initializers):
+        await ScenarioRunService()._run_initializers_async(request=_make_request(initializers=list(scripts)))
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "script", [ConverterInitializer(), _LaunchScript(name="rot13"), _LaunchScript(name="rot13", swallow=True)]
+)
+async def test_launch_scripts_cannot_replace_a_saved_entry_async(
+    converter_registry: ConverterRegistry, script: Any
+) -> None:
+    saved = ROT13Converter()
+    converter_registry.instances.register(saved, name="rot13", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+
+    with pytest.raises(SavedEntryLaunchConflictError, match="'converters' would replace the saved converter 'rot13'"):
+        await _run_launch_scripts_async({"converters": script})
+
+    assert converter_registry.instances.get("rot13") is saved
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_tools_launch_script_cannot_use_a_saved_technique_in_its_place_async() -> None:
+    AttackTechniqueRegistry.reset_registry_singleton()
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    saved = AttackTechniqueFactory(name="role_play_tool_calls", attack_class=PromptSendingAttack)
+    registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+    try:
+        with pytest.raises(
+            SavedEntryLaunchConflictError, match="'tools' would replace the saved technique 'role_play_tool_calls'"
+        ):
+            await _run_launch_scripts_async({"tools": ToolsInitializer()})
+
+        assert registry.instances.get("role_play_tool_calls") is saved
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_tools_launch_script_cannot_replace_a_saved_converter_async(
+    converter_registry: ConverterRegistry,
+) -> None:
+    AttackTechniqueRegistry.reset_registry_singleton()
+    saved = ROT13Converter()
+    converter_registry.instances.register(
+        saved, name="role_play_tool_calls", metadata={SAVED_ENTRY_METADATA_KEY: "converters"}
+    )
+    try:
+        with pytest.raises(
+            SavedEntryLaunchConflictError, match="'tools' would replace the saved converter 'role_play_tool_calls'"
+        ):
+            await _run_launch_scripts_async({"tools": ToolsInitializer()})
+
+        assert converter_registry.instances.get("role_play_tool_calls") is saved
+        assert "role_play_tool_calls" not in AttackTechniqueRegistry.get_registry_singleton().instances
+    finally:
+        AttackTechniqueRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_launch_scripts_still_replace_startup_entries_async(converter_registry: ConverterRegistry) -> None:
+    startup = ROT13Converter()
+    converter_registry.instances.register(startup, name="rot13")
+
+    await _run_launch_scripts_async({"converters": _LaunchScript(name="rot13")})
+
+    assert isinstance(converter_registry.instances.get("rot13"), Base64Converter)
 
 
 def _make_request(
