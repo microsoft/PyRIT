@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +12,7 @@ from pyrit.message_normalizer import (
     JsonSchemaNormalizer,
     MessageListNormalizer,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Identifiable, Message, MessagePiece
 from pyrit.models.literals import ChatMessageRole
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -452,3 +453,178 @@ def test_capabilities_to_identifier_params_differing_caps_produce_differing_para
     assert TargetConfiguration._capabilities_to_identifier_params(
         caps_a
     ) != TargetConfiguration._capabilities_to_identifier_params(caps_b)
+
+
+def test_as_identifier_params_pipeline_distinguishes_normalizer_templates():
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    config_a = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(schema_instructions_template="[TEMPLATE_A]\n{schema_json}")
+        },
+    )
+    config_b = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(schema_instructions_template="[TEMPLATE_B]\n{schema_json}")
+        },
+    )
+
+    params_a = config_a.as_identifier_params()
+    params_b = config_b.as_identifier_params()
+
+    assert params_a["normalization_pipeline"] != params_b["normalization_pipeline"]
+    assert params_a != params_b
+
+
+def test_as_identifier_params_pipeline_matches_when_normalizer_templates_equal():
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    template = "[CUSTOM_TEMPLATE]\n{schema_json}"
+    config_a = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(schema_instructions_template=template)},
+    )
+    config_b = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(schema_instructions_template=template)},
+    )
+
+    params_a = config_a.as_identifier_params()
+    params_b = config_b.as_identifier_params()
+
+    assert params_a["normalization_pipeline"] == params_b["normalization_pipeline"]
+    assert params_a == params_b
+
+
+def test_serialize_normalizer_honors_identifiable_message_list_normalizer():
+    class CustomIdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"custom_key": "custom_val"})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    norm = CustomIdentifiableListNormalizer()
+    serialized = TargetConfiguration._serialize_normalizer(norm)
+    assert serialized["params"] == {"custom_key": "custom_val"}
+    assert "CustomIdentifiableListNormalizer" in serialized["type"]
+
+
+def test_serialize_normalizer_falls_back_to_as_identifier_params():
+    class DuckTypedNormalizer:
+        def as_identifier_params(self) -> dict[str, Any]:
+            return {"duck_key": "duck_val"}
+
+    norm = DuckTypedNormalizer()
+    serialized = TargetConfiguration._serialize_normalizer(norm)
+    assert serialized["params"] == {"duck_key": "duck_val"}
+    assert "DuckTypedNormalizer" in serialized["type"]
+
+
+def test_serialize_normalizer_defaults_to_empty_params():
+    class PlainListNormalizer(MessageListNormalizer[Message]):
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    norm = PlainListNormalizer()
+    serialized = TargetConfiguration._serialize_normalizer(norm)
+    assert serialized["params"] == {}
+    assert "PlainListNormalizer" in serialized["type"]
+
+
+def test_serialize_normalizer_retains_child_identifier_configuration():
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
+            self.normalizer = normalizer
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(
+                self,
+                children={"normalizer": self.normalizer.get_identifier()},
+            )
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return await self.normalizer.normalize_async(messages)
+
+    child = CustomPrefixNormalizer(prefix="[CHILD]")
+    wrapper = CustomWrapperNormalizer(child)
+    serialized = TargetConfiguration._serialize_normalizer(wrapper)
+
+    assert serialized["params"] == {}
+    assert "children" in serialized
+    assert "normalizer" in serialized["children"]
+    child_serialized = serialized["children"]["normalizer"]
+    assert child_serialized["params"] == {"prefix": "[CHILD]"}
+    assert "CustomPrefixNormalizer" in child_serialized["type"]
+
+
+def test_serialize_normalizer_recursively_serializes_nested_children():
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
+            self.normalizer = normalizer
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(
+                self,
+                children={"normalizer": self.normalizer.get_identifier()},
+            )
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return await self.normalizer.normalize_async(messages)
+
+    leaf = CustomPrefixNormalizer(prefix="[LEAF]")
+    inner_wrapper = CustomWrapperNormalizer(leaf)
+    outer_wrapper = CustomWrapperNormalizer(inner_wrapper)
+
+    serialized = TargetConfiguration._serialize_normalizer(outer_wrapper)
+    assert serialized["params"] == {}
+    assert "children" in serialized
+
+    level1 = serialized["children"]["normalizer"]
+    assert level1["params"] == {}
+    assert "CustomWrapperNormalizer" in level1["type"]
+    assert "children" in level1
+
+    level2 = level1["children"]["normalizer"]
+    assert level2["params"] == {"prefix": "[LEAF]"}
+    assert "CustomPrefixNormalizer" in level2["type"]
