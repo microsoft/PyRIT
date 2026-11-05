@@ -73,4 +73,12 @@ export const useConverterRegistryPageStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     overflowWrap: 'anywhere',
   },
+  removeDialogContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: tokens.spacingVerticalM,
+  },
+  removeError: {
+    marginBottom: tokens.spacingVerticalXS,
+  },
 })
