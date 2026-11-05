@@ -97,7 +97,7 @@ describe('useConversationDraft', () => {
   })
 
   it.each(['same_attack', 'new_attack'] as const)(
-    'preserves an existing binding and historical generation metadata when saving %s',
+    'preserves an existing binding but omits server-authored generation evidence when saving %s',
     async (destination) => {
       const binding = {
         version: 1 as const, source_name: 'source', source_hash: registeredTarget.identifier.hash,
@@ -126,7 +126,11 @@ describe('useConversationDraft', () => {
       await act(async () => { await result.current.save(destination, jest.fn()) })
       const request = jest.mocked(attacksApi.saveConversation).mock.calls[0][0]
       expect(request.target_binding).toEqual(binding)
-      expect(request.messages[0].pieces[0].prompt_metadata).toEqual(metadata)
+      expect(request.messages[0].pieces[0].prompt_metadata).toEqual({
+        request_generation_config: { temperature: 0 }, custom: 'preserved',
+      })
+      expect(request.messages[0].pieces[0].source_piece_id).toBe('original-piece')
+      expect(metadata._pyrit_generation.temperature.resolved).toBe(0)
       expect(target.binding).toEqual(binding)
       expect(target.identifier.temperature).toBe(0.8)
       expect(targetsApi.buildTarget).not.toHaveBeenCalled()

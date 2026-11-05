@@ -136,9 +136,9 @@ describe("MessageList", () => {
       [0, "request", "Temperature: 0 (request override)"],
       [0.8, "target_default", "Temperature: 0.8 (target default)"],
       [null, "provider_default", "Temperature: provider default (unknown)"],
-      [undefined, undefined, "Temperature: not recorded"],
+      [undefined, undefined, undefined],
     ])("renders persisted temperature %s from %s", (
-      value: number | null | undefined, source: string | undefined, expected: string,
+      value: number | null | undefined, source: string | undefined, expected: string | undefined,
     ) => {
       const backendMessage: BackendMessage = {
         turn_number: 0, role: "user", created_at: "2026-02-15T00:00:00Z",
@@ -154,7 +154,11 @@ describe("MessageList", () => {
         }],
       };
       render(<TestWrapper><MessageList messages={[backendMessageToFrontend(backendMessage)]} /></TestWrapper>);
-      expect(screen.getByText(expected)).toBeInTheDocument();
+      if (expected === undefined) {
+        expect(screen.queryByText(/^Temperature:/)).not.toBeInTheDocument();
+      } else {
+        expect(screen.getByText(expected)).toBeInTheDocument();
+      }
     });
 
     it.each(["user", "assistant"] as const)("shows read-only requested and resolved evidence on a %s message", async (role: "user" | "assistant") => {

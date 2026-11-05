@@ -94,6 +94,8 @@ Read it using `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadat
 `info.temperature` records the `requested` override, `resolved` value sent, and
 `source` (`request`, `target_default`, or `provider_default`). Unknown provider
 defaults remain `None`; messages without evidence return `None`.
+The GUI omits temperature labels for messages without evidence. Edited or newly
+inserted history does not acquire evidence; unchanged source copies retain it.
 
 ## Chat-style targets vs general targets
 

@@ -61,13 +61,14 @@ describe('request temperature', () => {
   })
 
   it('does not guess the temperature of historical records', () => {
-    expect(generationDisplay({}).generationDescription).toBe('Temperature: not recorded')
-    expect(generationDisplay({ request_temperature: 1 }).generationDescription).toBe('Temperature: not recorded')
-    expect(generationDisplay({ request_generation_config: { temperature: 1 } }).generationDescription).toBe('Temperature: not recorded')
-    expect(generationDisplay({ _pyrit_generation: null }).generationDescription).toBe('Temperature: not recorded')
+    expect(generationDisplay()).toEqual({})
+    expect(generationDisplay({})).toEqual({})
+    expect(generationDisplay({ request_temperature: 1 })).toEqual({})
+    expect(generationDisplay({ request_generation_config: { temperature: 1 } })).toEqual({})
+    expect(generationDisplay({ _pyrit_generation: null })).toEqual({})
     expect(generationDisplay({
       _pyrit_temperature: { requested_temperature: 0, resolved_temperature: 0, source: 'request' },
-    }).generationDescription).toBe('Temperature: not recorded')
+    })).toEqual({})
   })
 
   it.each([

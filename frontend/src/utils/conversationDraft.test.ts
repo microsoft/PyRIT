@@ -1,4 +1,4 @@
-import type { ChatConverterSnapshot, ConversationDraftMessage, TargetCapabilities } from '@/types'
+import type { ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessagePieceRequest, TargetCapabilities } from '@/types'
 import { makeTarget } from '@/test-utils/targetFixtures'
 
 import { buildMessagePieces } from './messageMapper'
@@ -9,6 +9,32 @@ import {
 } from './conversationDraft'
 
 describe('conversation drafts', () => {
+  it('omits generation evidence from loaded, edited, and new draft pieces without mutating source metadata', async () => {
+    const metadata = {
+      _pyrit_generation: { temperature: { requested: 0.2, resolved: 0.2, source: 'request' } },
+      request_generation_config: { temperature: 0 }, custom: 'preserved', video_id: 'video',
+    }
+    const expected = { request_generation_config: { temperature: 0 }, custom: 'preserved', video_id: 'video' }
+    const draft = toConversationDraft([{
+      role: 'user', turn_number: 0, created_at: '2026-01-01T00:00:00Z',
+      message_pieces: ['first', 'second'].map((id: string) => ({
+        id, original_value_data_type: 'text', converted_value_data_type: 'text',
+        original_value: 'Original', converted_value: 'Original', scores: [], prompt_metadata: metadata,
+      })),
+    }])
+    expect(draft[0].pieces.map((piece: ConversationDraftPiece) => piece.prompt_metadata)).toEqual([expected, expected])
+    draft[0].pieces[0].original_value = 'Edited'
+    draft[0].pieces[0].prompt_metadata = metadata
+    draft[0].pieces.push({
+      draftId: 'new', data_type: 'text', original_value: 'New',
+      prompt_metadata: { _pyrit_generation: metadata._pyrit_generation },
+    })
+    const saved = await serializeDraft(draft)
+    expect(saved[0].pieces.map((piece: MessagePieceRequest) => piece.prompt_metadata)).toEqual([expected, expected, undefined])
+    expect(saved[0].pieces.map((piece: MessagePieceRequest) => piece.source_piece_id)).toEqual(['first', 'second', undefined])
+    expect(metadata._pyrit_generation.temperature.resolved).toBe(0.2)
+  })
+
   it.each([
     { roles: ['user', 'assistant'], index: 0, multiTurn: false, system: false, allowed: true },
     { roles: ['user', 'assistant'], index: 0, multiTurn: true, system: false, allowed: true },

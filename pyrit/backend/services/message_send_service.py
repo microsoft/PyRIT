@@ -57,6 +57,7 @@ from pyrit.models import (
     ConverterIdentifier,
     Message,
     MessagePiece,
+    RequestGenerationInfo,
 )
 from pyrit.models.component_spec import TargetBinding
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
@@ -1173,6 +1174,8 @@ class MessageSendService:
         """Persist all pieces atomically."""
         message = request_to_pyrit_message(request=request, conversation_id=conversation_id, sequence=sequence)
         message.set_simulated_role()
+        for piece in message.message_pieces:
+            RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
         for index, identifiers in applied_converter_identifiers.items():
             message.message_pieces[index].converter_identifiers.extend(identifiers)
         await self._memory.add_message_pieces_to_memory_async(message_pieces=message.message_pieces)

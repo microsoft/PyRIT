@@ -31,7 +31,13 @@ from pyrit.models import (
     WebSearchMode,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import OpenAIChatTarget, OpenAIResponseTarget, RoundRobinTarget, get_known_capabilities
+from pyrit.prompt_target import (
+    OpenAIChatTarget,
+    OpenAICompletionTarget,
+    OpenAIResponseTarget,
+    RoundRobinTarget,
+    get_known_capabilities,
+)
 from pyrit.prompt_target.common import utils as target_utils
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.openai.openai_target import _OpenAIModelSampling
@@ -290,10 +296,63 @@ async def test_profile_or_custom_capability_cannot_enable_an_unimplemented_adapt
 def test_adapter_support_is_required_even_after_applying_capabilities(patch_central_database: Any) -> None:
     target = OpenAIResponseTarget(model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key")
     target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_temperature": True}))
+    assert not target.capabilities.supports_temperature
     with patch.object(target, "_validate_request_generation_config") as validate:
         with pytest.raises(ValueError, match="does not support runtime temperature"):
             target.validate_request_generation_config(request(0))
     validate.assert_not_called()
+
+
+@pytest.mark.parametrize("target_type", [OpenAIResponseTarget, OpenAICompletionTarget])
+def test_capability_updates_mask_unimplemented_generation_without_mutating_input(
+    patch_central_database: Any, target_type: type[OpenAIResponseTarget] | type[OpenAICompletionTarget]
+) -> None:
+    target = target_type(model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key")
+    configuration = target.configuration
+    capabilities = target.capabilities.model_copy(update={"supports_temperature": True, "supports_json_output": True})
+    target.apply_capabilities(capabilities=capabilities)
+    assert not target.capabilities.supports_temperature
+    assert target.capabilities.supports_json_output
+    assert capabilities.supports_temperature
+    assert target.configuration.policy is configuration.policy
+    assert target.configuration.normalizer_overrides == configuration.normalizer_overrides
+
+
+@pytest.mark.parametrize("underlying_model", [None, "unknown-deployment"])
+def test_default_configuration_masks_unimplemented_generation(
+    patch_central_database: Any, underlying_model: str | None
+) -> None:
+    default = TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True))
+    with patch.object(OpenAIResponseTarget, "_DEFAULT_CONFIGURATION", default):
+        configuration = OpenAIResponseTarget.get_default_configuration(underlying_model)
+    assert not configuration.capabilities.supports_temperature
+    assert default.capabilities.supports_temperature
+    assert configuration.policy is default.policy
+    assert configuration.normalizer_overrides == default.normalizer_overrides
+
+
+def test_send_validation_rejects_unimplemented_generation_even_if_configuration_is_unmasked(
+    patch_central_database: Any,
+) -> None:
+    target = OpenAIResponseTarget(model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key")
+    target._configuration = TargetConfiguration(
+        capabilities=target.capabilities.model_copy(update={"supports_temperature": True})
+    )
+    with pytest.raises(ValueError, match="does not support runtime temperature"):
+        target.validate_request_generation_config(request(0))
+
+
+@pytest.mark.parametrize("supports_temperature", [False, True])
+def test_capability_updates_preserve_opted_in_generation(target: OpenAIChatTarget, supports_temperature: bool) -> None:
+    target.apply_capabilities(
+        capabilities=target.capabilities.model_copy(update={"supports_temperature": supports_temperature})
+    )
+    assert target.capabilities.supports_temperature is supports_temperature
+    if supports_temperature:
+        assert target.validate_request_generation_config(request(0)).temperature == 0
+    else:
+        with pytest.raises(ValueError, match="does not support runtime temperature"):
+            target.validate_request_generation_config(request(0))
 
 
 @pytest.mark.parametrize("temperature", [None, 0])

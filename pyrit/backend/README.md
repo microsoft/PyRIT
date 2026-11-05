@@ -214,6 +214,11 @@ All three use the application's `CentralMemory` instance. Both message endpoints
 the same cached `MessageSendService`; the synchronous facade awaits its execution core
 directly, while the submission endpoint schedules that core and returns a transient handle.
 
+Generation evidence (`_pyrit_generation`) is server-authored. Conversation saves
+preserve it only from a verified, unchanged source piece; client-supplied evidence
+is discarded for edited or new pieces, prepended history, and `send=false` appends.
+Unrelated metadata and requested generation options are preserved.
+
 All manual-message service instances share one process-local scheduler. It admits up to
 64 operations (active and waiting), with a semaphore allowing up to 4 to execute at once.
 There is no cross-conversation FIFO guarantee; each conversation still has a single owner.

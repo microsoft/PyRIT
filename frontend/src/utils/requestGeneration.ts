@@ -49,13 +49,19 @@ export function parseGenerationConfig(draft: RequestGenerationDraft, capabilitie
   return config
 }
 
+/** Generation evidence is server-authored, not editable request metadata. */
+export function withoutGenerationInfo(metadata?: Record<string, unknown> | null): Record<string, unknown> | undefined {
+  const result = { ...metadata }
+  delete result[GENERATION_INFO_KEY]
+  return Object.keys(result).length ? result : undefined
+}
+
 /** The composer selects the next send; copied historical metadata never selects it. */
 export function withRequestGenerationConfig(pieces: MessagePieceRequest[], config: RequestGenerationConfig): MessagePieceRequest[] {
   const options = Object.fromEntries(Object.entries(config).filter(([, value]) => value != null))
   return pieces.map((piece: MessagePieceRequest, index: number) => {
-    const metadata = { ...piece.prompt_metadata }
+    const metadata = withoutGenerationInfo(piece.prompt_metadata) ?? {}
     delete metadata[REQUEST_GENERATION_KEY]
-    delete metadata[GENERATION_INFO_KEY]
     if (index === 0 && Object.keys(options).length > 0) {
       metadata[REQUEST_GENERATION_KEY] = { ...options }
     }
@@ -65,7 +71,7 @@ export function withRequestGenerationConfig(pieces: MessagePieceRequest[], confi
 
 export function generationDisplay(metadata?: Record<string, unknown> | null): Pick<Message, 'generationDescription' | 'generationDetails'> {
   const value = metadata?.[GENERATION_INFO_KEY]
-  if (value == null) return { generationDescription: 'Temperature: not recorded' }
+  if (value == null) return {}
   const info = readGenerationInfo(value)
   if (!info) return { generationDescription: 'Temperature: invalid record' }
   const descriptions: string[] = []
