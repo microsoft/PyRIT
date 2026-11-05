@@ -1618,12 +1618,35 @@ class ScenarioRunService:
                     await instance.initialize_async()
                 except SavedEntryReplacementError as error:
                     refusals.append((error.kind, error.name))
+                except Exception as error:
+                    # A script can wrap the refusal in an error of its own; the clash is still why it stopped.
+                    if refusals:
+                        raise self._saved_entry_conflict(
+                            initializer_name=initializer_name, refusals=refusals
+                        ) from error
+                    raise
             if refusals:
-                entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in dict.fromkeys(refusals))
-                raise SavedEntryLaunchConflictError(
-                    f"The launch script '{initializer_name}' would replace the saved {entries}. "
-                    "Leave that script out of the launch."
-                )
+                raise self._saved_entry_conflict(initializer_name=initializer_name, refusals=refusals)
+
+    @staticmethod
+    def _saved_entry_conflict(
+        *, initializer_name: str, refusals: list[tuple[str, str]]
+    ) -> SavedEntryLaunchConflictError:
+        """
+        Describe the saved entries a launch script would have replaced.
+
+        Args:
+            initializer_name (str): The launch script's name.
+            refusals (list[tuple[str, str]]): The kind and name of each saved entry that was refused.
+
+        Returns:
+            SavedEntryLaunchConflictError: The error to raise.
+        """
+        entries = ", ".join(f"{kind.removesuffix('s')} '{name}'" for kind, name in dict.fromkeys(refusals))
+        return SavedEntryLaunchConflictError(
+            f"The launch script '{initializer_name}' would replace the saved {entries}. "
+            "Leave that script out of the launch."
+        )
 
     async def _initialize_scenario_async(
         self,

@@ -280,17 +280,20 @@ def converter_registry() -> Iterator[ConverterRegistry]:
 
 
 class _LaunchScript:
-    """A launch script that registers one converter, optionally swallowing errors."""
+    """A launch script that registers one converter, optionally swallowing or wrapping errors."""
 
-    def __init__(self, *, name: str, swallow: bool = False) -> None:
+    def __init__(self, *, name: str, swallow: bool = False, wrap: bool = False) -> None:
         self._name = name
         self._swallow = swallow
+        self._wrap = wrap
 
     async def initialize_async(self) -> None:
         registry = ConverterRegistry.get_registry_singleton()
         try:
             registry.instances.register(Base64Converter(), name=self._name, replace=True)
-        except Exception:
+        except Exception as error:
+            if self._wrap:
+                raise ValueError("The launch script failed.") from error
             if not self._swallow:
                 raise
 
@@ -304,7 +307,13 @@ async def _run_launch_scripts_async(scripts: dict[str, Any]) -> None:
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
-    "script", [ConverterInitializer(), _LaunchScript(name="rot13"), _LaunchScript(name="rot13", swallow=True)]
+    "script",
+    [
+        ConverterInitializer(),
+        _LaunchScript(name="rot13"),
+        _LaunchScript(name="rot13", swallow=True),
+        _LaunchScript(name="rot13", wrap=True),
+    ],
 )
 async def test_launch_scripts_cannot_replace_a_saved_entry_async(
     converter_registry: ConverterRegistry, script: Any
@@ -354,6 +363,23 @@ async def test_tools_launch_script_cannot_replace_a_saved_converter_async(
         assert "role_play_tool_calls" not in AttackTechniqueRegistry.get_registry_singleton().instances
     finally:
         AttackTechniqueRegistry.reset_registry_singleton()
+
+
+class _FailingLaunchScript:
+    """A launch script that fails for a reason unrelated to saved entries."""
+
+    async def initialize_async(self) -> None:
+        raise ValueError("The launch script failed.")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_launch_script_errors_without_a_saved_entry_clash_pass_through_async(
+    converter_registry: ConverterRegistry,
+) -> None:
+    with pytest.raises(ValueError, match="The launch script failed") as raised:
+        await _run_launch_scripts_async({"failing": _FailingLaunchScript()})
+
+    assert not isinstance(raised.value, SavedEntryLaunchConflictError)
 
 
 @pytest.mark.usefixtures("patch_central_database")
