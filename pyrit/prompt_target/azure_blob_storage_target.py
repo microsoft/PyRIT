@@ -109,7 +109,11 @@ class AzureBlobStorageTarget(PromptTarget):
             max_requests_per_minute (int, Optional): Maximum number of requests per minute.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. Defaults to None.
+
+        Raises:
+            ValueError: If ``auth_mode`` is set and is not one of ``supported_auth_modes``.
         """
+        self._validate_auth_mode(auth_mode)
         self._blob_content_type: str = blob_content_type.value
 
         self._container_url: str = default_values.get_required_value(
@@ -276,7 +280,8 @@ class AzureBlobStorageTarget(PromptTarget):
                 "path, e.g. https://<account>.blob.core.windows.net/<container>."
             )
         container_name = path_parts[1]
-        blob_prefix = "/".join(path_parts[2:])
+        # Strip slashes so a trailing "/" on the URL does not add an empty segment to the blob path.
+        blob_prefix = "/".join(path_parts[2:]).strip("/")
         container_url = f"https://{parsed_url.netloc}/{container_name}"
         return container_url, blob_prefix
 
@@ -303,7 +308,8 @@ class AzureBlobStorageTarget(PromptTarget):
             file_name = self._sanitize_file_name(str(request.prompt_metadata["file_name"]))
 
         data = str.encode(request.converted_value)
-        blob_url = self._container_url + "/" + file_name
+        # Drop a trailing "/" on the configured URL so the returned URL has no "//" before the file name.
+        blob_url = self._container_url.rstrip("/") + "/" + file_name
 
         await self._upload_blob_async(file_name=file_name, data=data, content_type=self._blob_content_type)
 

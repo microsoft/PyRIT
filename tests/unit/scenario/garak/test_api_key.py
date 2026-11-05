@@ -41,6 +41,11 @@ def corpus_seeds() -> dict[str, list[Seed[Any]]]:
     }
 
 
+@pytest.fixture
+def garak_dataset_names(corpus_seeds: dict[str, list[Seed[Any]]]) -> list[str]:
+    return list(corpus_seeds)
+
+
 async def _initialize_async(
     *,
     scenario: ApiKey,
@@ -58,8 +63,11 @@ async def _initialize_async(
             "technique_converters": technique_converters,
         }
     )
-    with patch.object(
-        ApiKeyDatasetConfiguration, "_collect_named_seeds_async", new_callable=AsyncMock, return_value=corpus_seeds
+    with (
+        patch.object(ApiKeyDatasetConfiguration, "prepare_async", new_callable=AsyncMock),
+        patch.object(
+            ApiKeyDatasetConfiguration, "_collect_named_seeds_async", new_callable=AsyncMock, return_value=corpus_seeds
+        ),
     ):
         await scenario.initialize_async()
 
@@ -236,6 +244,7 @@ class TestApiKey:
             )
 
     @pytest.mark.parametrize("size", [1, 7, 20, 348, None, "all"])
+    @pytest.mark.usefixtures("mock_dataset_preparation")
     async def test_launch_and_estimate_use_standard_dataset_size(
         self,
         size: int | Literal["all"] | None,
@@ -326,6 +335,7 @@ class TestApiKey:
         assert summary.configured_caps[0].count == size
         assert summary.configured_caps[0].configured_on == "configuration"
 
+    @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     async def test_real_local_datasets_resolve_through_memory(self, mock_objective_target: PromptTarget) -> None:
         scenario = ApiKey()
         scenario.set_params_from_args(args={"objective_target": mock_objective_target})

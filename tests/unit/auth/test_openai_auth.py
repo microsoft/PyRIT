@@ -161,3 +161,33 @@ def test_api_key_mode_error_names_the_identity_migration():
     message = str(exc_info.value)
     assert 'auth_mode="identity"' in message
     assert API_KEY_ENV_VAR in message
+
+
+def test_none_reads_no_key_and_mints_no_token(minted_provider):
+    """A no-key endpoint must receive neither the server's key nor an Entra token, even on an Azure host."""
+    _, mock_auth = minted_provider
+    with patch.dict(os.environ, {API_KEY_ENV_VAR: "sk-SECRET-FROM-DOTENV"}):
+        resolved = resolve_openai_auth(
+            endpoint=AZURE_ENDPOINT,
+            api_key=None,
+            api_key_environment_variable=API_KEY_ENV_VAR,
+            auth_mode="none",
+        )
+
+    assert resolved == "not-needed"
+    mock_auth.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "explicit_key",
+    ["sk-explicit", "", lambda: "caller-supplied-token"],
+    ids=["key_string", "empty_string", "token_provider"],
+)
+def test_none_with_explicit_api_key_raises(explicit_key):
+    with pytest.raises(ValueError, match='auth_mode="none" cannot be combined with an explicit api_key'):
+        resolve_openai_auth(
+            endpoint=NON_AZURE_ENDPOINT,
+            api_key=explicit_key,
+            api_key_environment_variable=API_KEY_ENV_VAR,
+            auth_mode="none",
+        )

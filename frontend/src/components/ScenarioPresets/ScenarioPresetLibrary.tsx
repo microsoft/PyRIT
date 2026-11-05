@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -12,6 +12,7 @@ import {
   MessageBar,
   MessageBarBody,
   Spinner,
+  Switch,
   Table,
   TableBody,
   TableCell,
@@ -22,34 +23,28 @@ import {
 } from '@fluentui/react-components'
 import {
   AddRegular,
-  ArrowSyncRegular,
   DeleteRegular,
   EditRegular,
-  PlayRegular,
 } from '@fluentui/react-icons'
 import { Link, useNavigate } from 'react-router'
 
 import { ScenarioRunEstimateSummary } from '@/components/Scenarios/ScenarioRunEstimate'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { mapScenarioRunEstimate } from '@/components/Scenarios/scenarioRunEstimateAdapter'
-import { scenarioPresetsApi, scenariosApi } from '@/services/api'
+import { scenarioPresetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ScenarioPresetResponse, TargetInstance } from '@/types'
+import type { ScenarioPresetResponse } from '@/types'
 
-import LaunchPresetDialog from './LaunchPresetDialog'
+import ScannerVisibilityLabel from './ScannerVisibilityLabel'
 import { useScenarioPresetLibraryStyles } from './ScenarioPresetLibrary.styles'
 import { NEW_PRESET_ROUTE, presetEditorRoutePath } from './presetRoutes'
+import { estimatePresetRunSizes, retainPresetRunSizes } from './presetRunSizes'
 
 const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
 
 interface ScenarioPresetLibraryProps {
-  targets: TargetInstance[]
-  defaultObjectiveTarget: TargetInstance | null
-  defaultAdversarialTarget: TargetInstance | null
-  labels: Record<string, string>
-  /** The saved Operation that new runs join, or null for none. */
-  operationId: string | null
-  /** False while server defaults or the global Operation selection are unresolved. */
-  defaultsReady: boolean
+  /** Lets sections that project preset state, such as suite entry statuses, reload. */
+  onPresetDeleted: () => void
 }
 
 function techniqueSummary(item: ScenarioPresetResponse): string {
@@ -63,16 +58,9 @@ function techniqueSummary(item: ScenarioPresetResponse): string {
 /**
  * Lists the saved scenario presets. Presets that reference something this
  * deployment does not have are still listed — the server reports the problems
- * as advisory issues — but cannot be launched here.
+ * as advisory issues. Presets launch from the Scanner, not from here.
  */
-export default function ScenarioPresetLibrary({
-  targets,
-  defaultObjectiveTarget,
-  defaultAdversarialTarget,
-  labels,
-  operationId,
-  defaultsReady,
-}: ScenarioPresetLibraryProps) {
+export default function ScenarioPresetLibrary({ onPresetDeleted }: ScenarioPresetLibraryProps) {
   const styles = useScenarioPresetLibraryStyles()
   const navigate = useNavigate()
   const [items, setItems] = useState<ScenarioPresetResponse[]>([])
@@ -82,22 +70,26 @@ export default function ScenarioPresetLibrary({
   const [actionError, setActionError] = useState<string | null>(null)
   const [estimatesLoading, setEstimatesLoading] = useState(true)
   const [estimateError, setEstimateError] = useState<string | null>(null)
-  const [launching, setLaunching] = useState<ScenarioPresetResponse | null>(null)
   const [pendingDelete, setPendingDelete] = useState<ScenarioPresetResponse | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [togglingVisibility, setTogglingVisibility] = useState(false)
   const [generation, setGeneration] = useState(0)
+  const pending = useRef(false)
+  const mutationEpoch = useRef(0)
 
   useEffect(() => {
     const controller = new AbortController()
     let cancelled = false
+    pending.current = true
+    const epoch = mutationEpoch.current
 
     // Estimate the displayed definitions, without re-reading storage or changing
-    // the versions that the operator will confirm at launch.
+    // the versions that row actions send as their expected version.
     const loadPresets = async (): Promise<void> => {
       try {
         const response = await scenarioPresetsApi.list(controller.signal, false)
-        if (cancelled) return
-        setItems(response.items)
+        if (cancelled || epoch !== mutationEpoch.current) return
+        setItems((current) => retainPresetRunSizes(response.items, current))
         setSource(response.source)
         setError(null)
         setLoading(false)
@@ -107,43 +99,22 @@ export default function ScenarioPresetLibrary({
           return
         }
 
-        try {
-          const estimates = await Promise.allSettled(response.items.map((item) => (
-            item.issues.length > 0 ? Promise.resolve(null) : scenariosApi.estimateRun(
-              item.preset.scenario_name,
-              {
-                techniques: item.preset.techniques,
-                datasets: item.preset.datasets ?? undefined,
-                include_baseline: item.preset.include_baseline,
-                scenario_params: item.preset.scenario_params,
-              },
-              controller.signal,
-            )
-          )))
-          if (cancelled) return
-          const failures: string[] = []
-          setItems(response.items.map((item, index) => {
-            const estimate = estimates[index]
-            if (estimate.status === 'rejected') {
-              failures.push(`${item.preset.name}: ${toApiError(estimate.reason).detail}`)
-              return { ...item, run_size: null }
-            }
-            return { ...item, run_size: estimate.value }
-          }))
-          setEstimateError(failures.length > 0 ? failures.join('; ') : null)
-        } catch (err: unknown) {
-          if (cancelled || controller.signal.aborted) return
-          setEstimateError(toApiError(err).detail)
-        } finally {
-          if (!cancelled) {
-            setEstimatesLoading(false)
-          }
-        }
+        const { runSizes, failures } = await estimatePresetRunSizes(response.items, controller.signal)
+        if (cancelled) return
+        // Merge by name so a row whose visibility changed while estimating keeps its new version.
+        setItems((current) => current.map((item) => ({
+          ...item,
+          run_size: runSizes.get(item.preset.name) ?? null,
+        })))
+        setEstimateError(failures.length > 0 ? failures.join('; ') : null)
+        setEstimatesLoading(false)
       } catch (err: unknown) {
-        if (cancelled || controller.signal.aborted) return
+        if (cancelled || controller.signal.aborted || epoch !== mutationEpoch.current) return
         setError(toApiError(err).detail)
         setLoading(false)
         setEstimatesLoading(false)
+      } finally {
+        if (!cancelled) pending.current = false
       }
     }
 
@@ -152,31 +123,68 @@ export default function ScenarioPresetLibrary({
     return () => {
       cancelled = true
       controller.abort()
+      pending.current = false
     }
   }, [generation])
 
   const refresh = useCallback(() => {
-    setLoading(true)
-    setEstimatesLoading(true)
-    setError(null)
-    setEstimateError(null)
     setGeneration((current) => current + 1)
   }, [])
+  useAutoRefresh(() => { if (!pending.current) refresh() }, !loading && !deleting && !togglingVisibility)
 
   const handleDelete = async (): Promise<void> => {
     if (!pendingDelete) {
       return
     }
     setDeleting(true)
+    mutationEpoch.current++
     setActionError(null)
     try {
       await scenarioPresetsApi.remove(pendingDelete.preset.name)
       setPendingDelete(null)
       refresh()
+      onPresetDeleted()
     } catch (err) {
       setActionError(toApiError(err).detail)
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const handleScannerVisibilityChange = async (
+    item: ScenarioPresetResponse,
+    showInScanner: boolean,
+  ): Promise<void> => {
+    if (item.version === null) {
+      return
+    }
+    setTogglingVisibility(true)
+    mutationEpoch.current++
+    setActionError(null)
+    try {
+      const updated = await scenarioPresetsApi.update(
+        item.preset.name,
+        { ...item.preset, show_in_scanner: showInScanner },
+        item.version,
+      )
+      // Visibility does not change what the preset runs, so its run size still applies.
+      setItems((current) => current.map((candidate) => (
+        candidate.preset.name === updated.preset.name
+          ? { ...updated, run_size: candidate.run_size }
+          : candidate
+      )))
+    } catch (err: unknown) {
+      const apiError = toApiError(err)
+      if (apiError.status === 409) {
+        refresh()
+        setActionError(
+          `Preset '${item.preset.name}' changed since it was loaded. Review it and try again.`,
+        )
+        return
+      }
+      setActionError(apiError.detail)
+    } finally {
+      setTogglingVisibility(false)
     }
   }
 
@@ -188,8 +196,8 @@ export default function ScenarioPresetLibrary({
     >
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text id="scenario-preset-library-title" as="h1" size={600} weight="semibold">
-            Scenario presets
+          <Text id="scenario-preset-library-title" as="h2" size={500} weight="semibold">
+            Individual presets
           </Text>
           <Text size={300} className={styles.subtitle}>
             Reusable scenario configurations. A preset pins what to test; you choose the target at
@@ -205,15 +213,6 @@ export default function ScenarioPresetLibrary({
             data-testid="new-preset-btn"
           >
             New preset
-          </Button>
-          <Button
-            className={styles.touchTarget}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            disabled={loading}
-          >
-            Refresh
           </Button>
         </div>
       </div>
@@ -232,30 +231,17 @@ export default function ScenarioPresetLibrary({
 
       {estimateError && (
         <MessageBar intent="warning">
-          <MessageBarBody>Run sizes could not be calculated: {estimateError}</MessageBarBody>
+          <MessageBarBody>{estimateError}</MessageBarBody>
         </MessageBar>
       )}
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {loading ? (
         <div className={styles.centeredState}>
           <Spinner label="Loading presets..." />
         </div>
-      ) : error ? (
-        <div className={styles.centeredState} data-testid="error-state">
-          <MessageBar intent="error">
-            <MessageBarBody>{error}</MessageBarBody>
-          </MessageBar>
-          <Button
-            className={styles.touchTarget}
-            appearance="primary"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            data-testid="retry-btn"
-          >
-            Retry
-          </Button>
-        </div>
-      ) : items.length === 0 ? (
+      ) : error && items.length === 0 ? null
+      : items.length === 0 ? (
         <div className={styles.centeredState} data-testid="empty-state">
           <Text size={400}>No presets saved yet</Text>
           <Text size={200}>
@@ -271,6 +257,7 @@ export default function ScenarioPresetLibrary({
                 <TableHeaderCell>Scenario</TableHeaderCell>
                 <TableHeaderCell>Run size</TableHeaderCell>
                 <TableHeaderCell>Author</TableHeaderCell>
+                <TableHeaderCell><ScannerVisibilityLabel /></TableHeaderCell>
                 <TableHeaderCell>Actions</TableHeaderCell>
               </TableRow>
             </TableHeader>
@@ -336,17 +323,20 @@ export default function ScenarioPresetLibrary({
                         : <Text className={styles.cardMeta}>—</Text>}
                     </TableCell>
                     <TableCell>
+                      <Switch
+                        className={styles.touchTarget}
+                        checked={item.preset.show_in_scanner !== false}
+                        disabled={!editable || item.version === null || togglingVisibility}
+                        title={editable ? undefined : DEFINED_IN_CODE_HINT}
+                        aria-label={`Add ${item.preset.name} to scanner`}
+                        onChange={(_, data) => {
+                          void handleScannerVisibilityChange(item, data.checked)
+                        }}
+                        data-testid={`preset-show-in-scanner-${item.preset.name}`}
+                      />
+                    </TableCell>
+                    <TableCell>
                       <div className={styles.cardActions}>
-                        <Button
-                          className={styles.touchTarget}
-                          appearance="primary"
-                          icon={<PlayRegular />}
-                          disabled={!runnable || !defaultsReady}
-                          onClick={() => setLaunching(item)}
-                          data-testid={`launch-preset-${item.preset.name}`}
-                        >
-                          Launch
-                        </Button>
                         <Button
                           className={styles.touchTarget}
                           appearance="subtle"
@@ -380,28 +370,6 @@ export default function ScenarioPresetLibrary({
             </TableBody>
           </Table>
         </div>
-      )}
-
-      {launching && (
-        <LaunchPresetDialog
-          preset={launching.preset}
-          version={launching.version}
-          targets={targets}
-          defaultObjectiveTarget={defaultObjectiveTarget}
-          defaultAdversarialTarget={defaultAdversarialTarget}
-          labels={labels}
-          operationId={operationId}
-          defaultsReady={defaultsReady}
-          onDismiss={() => setLaunching(null)}
-          onPresetChanged={() => {
-            const changedName = launching.preset.name
-            setLaunching(null)
-            refresh()
-            setActionError(
-              `Preset '${changedName}' changed while you were launching it. Review it and launch again.`,
-            )
-          }}
-        />
       )}
 
       {pendingDelete && (

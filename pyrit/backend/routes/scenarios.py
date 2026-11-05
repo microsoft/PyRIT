@@ -13,11 +13,13 @@ Route structure:
 """
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.analytics import PairedOutcomeStatistics, compute_paired_outcome_statistics
+from pyrit.backend.models.attacks import ConversationMessagesResponse
 from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.models.scenarios import (
@@ -31,7 +33,14 @@ from pyrit.backend.services.scenario_run_service import (
     get_scenario_run_service,
 )
 from pyrit.backend.services.scenario_service import get_scenario_service
-from pyrit.models import ScenarioQueueSnapshot, ScenarioResult, ScenarioRunProgress, ScenarioRunState
+from pyrit.models import (
+    ScenarioHierarchyNode,
+    ScenarioHierarchyProjection,
+    ScenarioQueueSnapshot,
+    ScenarioResult,
+    ScenarioRunProgress,
+    ScenarioRunState,
+)
 from pyrit.models.catalog import (
     RegisteredScenario,
     RunScenarioRequest,
@@ -41,6 +50,44 @@ from pyrit.models.catalog import (
 )
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+
+
+@router.get("/runs/{scenario_result_id}/launch-configuration", response_model=RunScenarioRequest)
+async def get_launch_configuration_async(scenario_result_id: IdentifierStr) -> RunScenarioRequest:
+    """
+    Read the saved configuration for a new launch without starting a run.
+
+    Returns:
+        RunScenarioRequest: Saved settings without an original result ID.
+    """
+    try:
+        request = await get_scenario_run_service().get_launch_configuration_async(scenario_result_id)
+    except (ScenarioRunConflictError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if request is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    return request
+
+
+@router.get(
+    "/runs/{scenario_result_id}/conversations/{conversation_id}",
+    response_model=ConversationMessagesResponse,
+)
+async def get_scan_conversation_async(
+    *, scenario_result_id: IdentifierStr, conversation_id: IdentifierStr
+) -> ConversationMessagesResponse:
+    """
+    Read a saved conversation owned by this scan, including an in-flight attempt.
+
+    Returns:
+        ConversationMessagesResponse: Saved messages and the existing conversation score projection.
+    """
+    response = await get_scenario_run_service().get_conversation_async(
+        scenario_result_id=scenario_result_id, conversation_id=conversation_id
+    )
+    if response is None:
+        raise HTTPException(status_code=404, detail="Conversation does not belong to this scan")
+    return response
 
 
 # ============================================================================
@@ -271,22 +318,30 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         max_length=MAX_ITEMS,
         description="Saved Operation IDs; repeated values are OR-matched. Legacy name-only runs never match.",
     ),
+    reference_id: uuid.UUID | None = Query(
+        None, description="Exact conversation, attack, finding, or scenario result ID"
+    ),
+    sort_by: Literal["created_at", "activity"] = Query(
+        "created_at", description="Sort by creation time or scenario activity time."
+    ),
     limit: int = Query(100, ge=1, le=100, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Opaque descending history cursor"),
 ) -> ScenarioRunListResponse:
     """
-    List tracked scenario runs (most recent first).
+    List tracked scenario runs in descending creation or activity order.
 
     Args:
         scenario_names: Registered or persisted scenario names to match.
         run_statuses: Run states to match.
         label: Repeated key:value label filters.
         operation_id: Saved Operation IDs to match.
+        reference_id: Exact conversation, attack, finding, or scenario result ID.
+        sort_by: ``created_at`` (default) or scenario ``activity`` timestamp.
         limit: Maximum number of runs to return.
         cursor: Opaque cursor from the previous page.
 
     Returns:
-        ScenarioRunListResponse: Runs, most recent first.
+        ScenarioRunListResponse: Runs in descending order by the selected timestamp.
     """
     service = get_scenario_run_service()
     return await service.list_runs_async(
@@ -294,6 +349,8 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         statuses=run_statuses,
         labels=parse_label_query_params(label),
         operation_ids=operation_id,
+        reference_id=reference_id,
+        sort_by=sort_by,
         limit=limit,
         cursor=cursor,
     )
@@ -375,6 +432,81 @@ async def get_scenario_run_progress(  # pyrit-async-suffix-exempt
             detail=f"Scenario run '{scenario_result_id}' not found",
         )
     return progress
+
+
+@router.get(
+    "/runs/{scenario_result_id}/hierarchy",
+    response_model=ScenarioHierarchyProjection,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid hierarchy cursor"},
+        404: {"model": ProblemDetail, "description": "Run not found"},
+    },
+)
+async def get_scenario_run_hierarchy(  # pyrit-async-suffix-exempt
+    *,
+    scenario_result_id: IdentifierStr,
+    max_nodes: int = Query(1000, ge=1, le=5000, description="Maximum nodes to assemble in the hierarchy tree"),
+    cursor: CursorStr | None = Query(None, description="Opaque root-page continuation cursor"),
+) -> ScenarioHierarchyProjection:
+    """
+    Get the bounded result hierarchy projection for a scenario run.
+
+    Returns:
+        ScenarioHierarchyProjection: Bounded hierarchy projection connecting orchestration parents,
+        target-facing children, and generic read-only conversations.
+    """
+    service = get_scenario_run_service()
+    try:
+        hierarchy = await service.get_run_hierarchy_async(
+            scenario_result_id=scenario_result_id, max_nodes=max_nodes, cursor=cursor
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if hierarchy is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scenario run '{scenario_result_id}' not found",
+        )
+    return hierarchy
+
+
+@router.get(
+    "/runs/{scenario_result_id}/hierarchy/nodes/{attack_result_id}",
+    response_model=ScenarioHierarchyNode,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid child cursor"},
+        404: {"model": ProblemDetail, "description": "Node or run not found"},
+    },
+)
+async def get_scenario_run_hierarchy_node(  # pyrit-async-suffix-exempt
+    *,
+    scenario_result_id: IdentifierStr,
+    attack_result_id: IdentifierStr,
+    limit: int = Query(200, ge=1, le=500, description="Maximum ordered child references in this page"),
+    children_cursor: CursorStr | None = Query(None, description="Opaque ordered-child continuation cursor"),
+) -> ScenarioHierarchyNode:
+    """
+    Get single-node hierarchy details and generic conversation projections without full-run hydration.
+
+    Returns:
+        ScenarioHierarchyNode: The target node with resolved immediate children and conversations.
+    """
+    service = get_scenario_run_service()
+    try:
+        node = await service.get_run_hierarchy_node_async(
+            scenario_result_id=scenario_result_id,
+            attack_result_id=attack_result_id,
+            max_immediate_children=limit,
+            children_cursor=children_cursor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if node is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Hierarchy node '{attack_result_id}' not found in scenario run '{scenario_result_id}'",
+        )
+    return node
 
 
 @router.post(

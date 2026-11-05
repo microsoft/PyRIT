@@ -12,7 +12,7 @@ import pytest
 
 from pyrit.common.path import JAILBREAK_TEMPLATES_PATH
 from pyrit.converter import TextJailbreakConverter
-from pyrit.datasets import SeedDatasetProvider, TextJailBreak
+from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
@@ -72,17 +72,6 @@ def patch_many_shot_load():
     with patch(
         "pyrit.executor.attack.single_turn.many_shot_jailbreak.load_many_shot_jailbreaking_dataset",
         return_value=_MOCK_MANY_SHOT_EXAMPLES,
-    ):
-        yield
-
-
-@pytest.fixture(autouse=True)
-def block_dataset_provider_lookup() -> Generator[None, None, None]:
-    with patch.object(
-        SeedDatasetProvider,
-        "get_providers_by_name_async",
-        new_callable=AsyncMock,
-        side_effect=AssertionError("Jailbreak unit tests must not resolve live dataset providers"),
     ):
         yield
 

@@ -22,6 +22,7 @@ from pyrit.models import (
     ConversationRetryReason,
     ConversationType,
     ScenarioRunState,
+    ScoringExpectation,
     SeedObjective,
 )
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
@@ -449,14 +450,29 @@ async def test_crescendo_scenario_retry_and_resume_use_real_components_without_s
     assert all(_REFUSAL not in json.dumps(message) for message in objective_messages[-1])
     scorer_messages = _message_contents(scorer_requests)
     scorer_inputs = [messages[-1]["content"] for messages in scorer_messages]
-    assert "conversation_objective: A prompt" in scorer_inputs[0]
+    assert f"conversation_objective: {_OBJECTIVE_A}\n" in scorer_inputs[0]
     assert "response_to_evaluate_input: RECOVERED A" in scorer_inputs[0]
-    assert "conversation_objective: B refused prompt" in scorer_inputs[1]
+    assert f"conversation_objective: {_OBJECTIVE_B}\n" in scorer_inputs[1]
     assert f"response_to_evaluate_input: {_REFUSAL}" in scorer_inputs[1]
-    assert "conversation_objective: B recovery prompt" in scorer_inputs[2]
+    assert f"conversation_objective: {_OBJECTIVE_B}\n" in scorer_inputs[2]
     assert "response_to_evaluate_input: RECOVERED B" in scorer_inputs[2]
 
     all_pieces = await memory.get_message_pieces_async()
+    pieces_by_id = {piece.id: piece for piece in all_pieces}
+    refusal_scores = [
+        score for score in await memory.get_scores_async(score_type="true_false") if score.score_category == ["refusal"]
+    ]
+    assert len(refusal_scores) == 3
+    expected_refusals = {
+        "RECOVERED A": (_OBJECTIVE_A, False),
+        _REFUSAL: (_OBJECTIVE_B, True),
+        "RECOVERED B": (_OBJECTIVE_B, False),
+    }
+    for score in refusal_scores:
+        objective, refused = expected_refusals[pieces_by_id[score.message_piece_id].converted_value]
+        assert score.scored_expectation == ScoringExpectation(objective=objective)
+        assert score.get_value() is refused
+        assert score.score_rationale == "controlled test score"
     assert len({piece.id for piece in all_pieces}) == len(all_pieces)
     assert len({piece.conversation_id for piece in recovered_messages}) == 1
     assert len({piece.conversation_id for piece in pruned_messages}) == 1
@@ -739,6 +755,10 @@ async def test_crescendo_scenario_cancellation_preserves_progress_and_resumes_on
     adversarial_messages = _message_contents(adversarial_requests)
     assert adversarial_messages[1] == adversarial_messages[2]
     assert adversarial_messages[3] == adversarial_messages[4]
+    scorer_messages = _message_contents(scorer_requests)
+    assert len(scorer_messages) == 7
+    for messages, objective in zip(scorer_messages, [_OBJECTIVE_A, *[_OBJECTIVE_B] * 6], strict=True):
+        assert f"conversation_objective: {objective}\n" in messages[-1]["content"]
     assert [call.kwargs["scenario_run_state"] for call in update_state.call_args_list] == [
         ScenarioRunState.IN_PROGRESS,
         ScenarioRunState.CANCELLED,

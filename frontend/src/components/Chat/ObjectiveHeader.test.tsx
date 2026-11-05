@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
@@ -15,6 +15,73 @@ function mockOverflow(scrollWidth: number, clientWidth: number): void {
 }
 
 describe('ObjectiveHeader', () => {
+  beforeEach(() => jest.clearAllMocks())
+
+  it.each([
+    { objective: '', next: ' New goal ', draftMode: false },
+    { objective: 'Existing goal', next: 'Changed goal', draftMode: false },
+    { objective: 'Existing goal', next: '', draftMode: false },
+    { objective: 'Existing goal', next: 'Local goal', draftMode: true },
+  ])('saves objective "$next" with Enter in draft mode $draftMode', async ({ objective, next, draftMode }) => {
+    const user = userEvent.setup()
+    const onAdd = jest.fn().mockResolvedValue(undefined)
+    const onKeyDown = jest.fn()
+    render(<TestWrapper><div onKeyDown={onKeyDown}>
+      <ObjectiveHeader objective={objective} draftMode={draftMode} canAdd onAdd={onAdd} />
+    </div></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: objective ? 'Edit objective' : 'Add objective' }))
+    const input = screen.getByRole('textbox', { name: 'Attack objective' })
+    await user.clear(input)
+    if (next) await user.type(input, next)
+    onKeyDown.mockClear()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(onAdd).toHaveBeenCalledWith(next.trim(), objective))
+    expect(onAdd).toHaveBeenCalledTimes(1)
+    expect(onKeyDown).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Attack objective' })).not.toBeInTheDocument()
+  })
+
+  it('does not save an empty new objective with Enter', async () => {
+    const user = userEvent.setup()
+    const onAdd = jest.fn()
+    render(<TestWrapper><ObjectiveHeader objective="" canAdd onAdd={onAdd} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Add objective' }))
+    await user.keyboard('{Enter}')
+    expect(onAdd).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('does not save during input-method composition', async () => {
+    const user = userEvent.setup()
+    const onAdd = jest.fn()
+    render(<TestWrapper><ObjectiveHeader objective="Goal" canAdd onAdd={onAdd} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Edit objective' }))
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Attack objective' }), { key: 'Enter', isComposing: true })
+    expect(onAdd).not.toHaveBeenCalled()
+  })
+
+  it('prevents duplicate objective saves and keeps a failed draft available for retry', async () => {
+    const user = userEvent.setup()
+    let rejectSave: (error: Error) => void = () => {}
+    const onAdd = jest.fn().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      rejectSave = reject
+    })).mockResolvedValue(undefined)
+    render(<TestWrapper><ObjectiveHeader objective="Goal" canAdd onAdd={onAdd} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: 'Edit objective' }))
+    const input = screen.getByRole('textbox', { name: 'Attack objective' })
+    await user.type(input, ' changed{Enter}{Enter}')
+    await user.click(screen.getByRole('button', { name: 'Saving...' }))
+    expect(onAdd).toHaveBeenCalledTimes(1)
+    expect(input).toBeDisabled()
+    await act(async () => { rejectSave(new Error('Save failed')) })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to save the objective.')
+    expect(input).toHaveValue('Goal changed')
+    await user.click(input)
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(2))
+    expect(onAdd).toHaveBeenLastCalledWith('Goal changed', 'Goal')
+  })
+
   it.each<[string | null, string]>([
     [null, 'Not set'], ['undetermined', 'Undetermined'], ['True', 'Success'], ['False', 'Failure'],
   ])('distinguishes automated score %s as %s', async (value: string | null, label: string) => {
@@ -25,7 +92,7 @@ describe('ObjectiveHeader', () => {
       status: value === 'undetermined' ? 'undetermined' : 'complete', timestamp: '',
     }
     render(<TestWrapper><ObjectiveHeader objective="Goal" automatedScore={score} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     expect(screen.getByRole('group', { name: 'Automated score', exact: true })).toHaveTextContent(label)
   })
 
@@ -39,7 +106,7 @@ describe('ObjectiveHeader', () => {
       scorers={[{ scorer_registry_name: 'judge', identifier: {
         class_name: 'Judge', hash: 'hash', scorer_type: 'true_false',
       } }]} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
     await user.selectOptions(screen.getByRole('combobox', { name: 'Chat scorer' }),
       'registered:judge')
@@ -196,7 +263,7 @@ describe('ObjectiveHeader', () => {
     const user = userEvent.setup()
     render(<TestWrapper><ObjectiveHeader objective="Goal" outcome="undetermined" canUpdateOutcome
       onUpdateHumanScore={jest.fn().mockRejectedValue(new Error('Unavailable'))} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.type(screen.getByRole('textbox', { name: 'Rationale' }), 'Keep this review')
     await user.click(screen.getByRole('button', { name: 'Add' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to update')
@@ -209,9 +276,9 @@ describe('ObjectiveHeader', () => {
     const user = userEvent.setup()
     render(<TestWrapper><ObjectiveHeader objective={objective} outcome="undetermined"
       chatScorer={selected ? { registry_name: 'judge', identifier_hash: 'hash' } : null} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     const scoreRow = screen.getByRole('group', { name: 'Automated score', exact: true })
-    expect(scoreRow).toHaveTextContent(selected && objective ? 'This will be generated on the next turn' : 'Not set')
+    expect(scoreRow).toHaveTextContent(selected && objective ? 'Not scored' : 'Not set')
     expect(within(scoreRow).queryByRole('button')).not.toBeInTheDocument()
   })
 
@@ -227,7 +294,7 @@ describe('ObjectiveHeader', () => {
     }
     const rendered = render(<TestWrapper><ObjectiveHeader objective="Goal" outcome="success"
       automatedScore={automatedScore} humanScore={humanScore} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     expect(screen.getByText('Overridden by the human score.')).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Automated score', exact: true })).toHaveTextContent('Failure')
     expect(screen.getByRole('radio', { name: 'Success' })).toBeChecked()
@@ -240,7 +307,7 @@ describe('ObjectiveHeader', () => {
     expect(screen.getByTestId('automated-score-details')).toHaveTextContent(automatedScore.score_rationale)
   })
 
-  it('offers a future-response scorer only after an objective is added', async () => {
+  it('offers a scorer only after an objective is added', async () => {
     const user = userEvent.setup()
     const onUpdateScorer = jest.fn().mockResolvedValue(undefined)
     const props = { outcome: 'undetermined' as const, canUpdateScorer: true, onUpdateScorer,
@@ -252,7 +319,7 @@ describe('ObjectiveHeader', () => {
           chat_scoring_disabled_reason: 'Requires tool criteria.' },
       ] }
     const rendered = render(<TestWrapper><ObjectiveHeader {...props} objective="" /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     expect(screen.queryByRole('button', { name: /^automated scorer:/i })).not.toBeInTheDocument()
     rendered.rerender(<TestWrapper><ObjectiveHeader {...props} objective="Goal" /></TestWrapper>)
     const scoreRow = screen.getByRole('group', { name: 'Automated score', exact: true })
@@ -266,7 +333,65 @@ describe('ObjectiveHeader', () => {
     await user.selectOptions(picker,
       'registered:judge')
     await waitFor(() => expect(onUpdateScorer).toHaveBeenCalledWith({ registry_name: 'judge', identifier_hash: 'judge-hash' }))
-    expect(screen.getByText(/future responses in all conversations/i)).toBeInTheDocument()
+    expect(screen.queryByText(/future responses in all conversations/i)).not.toBeInTheDocument()
+  })
+
+  it('shows Apply only inside the scorer pane after a scorer is selected and hides it for Off', async () => {
+    const user = userEvent.setup()
+    const onApplyScorer = jest.fn().mockResolvedValue(undefined)
+    const onUpdateScorer = jest.fn().mockResolvedValue(undefined)
+    const reference = { registry_name: 'judge', identifier_hash: 'hash' }
+    const props = { objective: 'Goal', canUpdateScorer: true, onUpdateScorer, canApplyScorer: true, onApplyScorer,
+      scorers: [{ scorer_registry_name: 'judge', identifier: {
+        class_name: 'Judge', class_module: 'pyrit.score', hash: 'hash', scorer_type: 'true_false',
+      } }] }
+    const rendered = render(<TestWrapper><ObjectiveHeader {...props} /></TestWrapper>)
+    expect(screen.queryByRole('button', { name: 'Apply scorer', exact: true })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
+    await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
+    expect(screen.queryByRole('button', { name: 'Apply scorer', exact: true })).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Chat scorer' }), 'registered:judge')
+    expect(onApplyScorer).not.toHaveBeenCalled()
+    rendered.rerender(<TestWrapper><ObjectiveHeader {...props} chatScorer={reference} /></TestWrapper>)
+    expect(within(screen.getByRole('region', { name: 'Automated scorer selection' }))
+      .getByRole('button', { name: 'Apply scorer', exact: true })).toBeEnabled()
+    rendered.rerender(<TestWrapper><ObjectiveHeader {...props} chatScorer={null} /></TestWrapper>)
+    expect(screen.queryByRole('button', { name: 'Apply scorer', exact: true })).not.toBeInTheDocument()
+  })
+
+  it('reopens the scorer pane on the running Apply without allowing a duplicate call', async () => {
+    const user = userEvent.setup()
+    const onApplyScorer = jest.fn().mockResolvedValue(undefined)
+    render(<TestWrapper><ObjectiveHeader objective="Goal" canUpdateScorer onUpdateScorer={jest.fn()}
+      canApplyScorer onApplyScorer={onApplyScorer} applyingScorer
+      chatScorer={{ registry_name: 'judge', identifier_hash: 'hash' }} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
+    const pending = within(screen.getByRole('region', { name: 'Automated scorer selection' }))
+      .getByRole('button', { name: 'Scoring latest response...' })
+    expect(pending).toBeDisabled()
+    await user.click(pending)
+    expect(onApplyScorer).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { intent: 'error' as const, role: 'alert', message: 'The latest response changed. Reload before applying the scorer.' },
+    { intent: 'info' as const, role: 'status', message: 'Already scored. Kept the existing valid result. No new evaluation.' },
+  ])('keeps an Apply $intent result that arrives while the popover is closed', async ({ intent, role, message }) => {
+    const user = userEvent.setup()
+    const props = { objective: 'Goal', canUpdateScorer: true, onUpdateScorer: jest.fn(), canApplyScorer: true,
+      onApplyScorer: jest.fn().mockResolvedValue(undefined), chatScorer: { registry_name: 'judge', identifier_hash: 'hash' },
+      scorers: [{ scorer_registry_name: 'judge', identifier: {
+        class_name: 'Judge', class_module: 'pyrit.score', hash: 'hash', scorer_type: 'true_false',
+      } }] }
+    const rendered = render(<TestWrapper><ObjectiveHeader {...props} applyingScorer /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Automated scorer selection' })).not.toBeInTheDocument())
+    rendered.rerender(<TestWrapper><ObjectiveHeader {...props} applyStatus={{ intent, message }} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
+    const pane = screen.getByRole('region', { name: 'Automated scorer selection' })
+    expect(within(pane).getByRole(role)).toHaveTextContent(message)
+    expect(within(pane).getByRole('button', { name: 'Apply scorer', exact: true })).toBeEnabled()
   })
 
   it.each([false, true])('uses a different registry alias only for an inherited scorer (%s)', async (inherited: boolean) => {
@@ -275,7 +400,7 @@ describe('ObjectiveHeader', () => {
       chatScorer={{ registry_name: 'saved-alias', identifier_hash: 'hash' }}
       scorers={[{ scorer_registry_name: 'current-alias', identifier: { class_name: 'SubStringScorer', hash: 'hash', scorer_type: 'true_false' } }]}
       canUpdateScorer onUpdateScorer={jest.fn()} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     const scorerButton = screen.getByRole('button', { name: /^automated scorer:/i })
     expect(scorerButton).toHaveTextContent(inherited ? 'current-alias' : 'saved-alias')
     expect(scorerButton).toHaveTextContent(inherited ? 'SubStringScorer' : 'Unavailable')
@@ -292,7 +417,7 @@ describe('ObjectiveHeader', () => {
         identifier: { class_name: 'MessageToolCallScorer', hash: 'hash', scorer_type: 'true_false' },
         chat_scoring_disabled_reason: 'Requires tool criteria.' }]}
       canUpdateScorer onUpdateScorer={jest.fn()} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
     const picker = screen.getByRole('combobox', { name: 'Chat scorer' })
     expect(picker).toHaveValue('unavailable')
@@ -308,7 +433,7 @@ describe('ObjectiveHeader', () => {
         error: 'Scorer configuration changed\nTraceback:\n  ValueError: Missing grade' }}
       chatScorer={{ registry_name: 'new-judge', identifier_hash: 'new-hash' }}
       onUpdateScorer={jest.fn()} /></TestWrapper>)
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /scoring error.*view details/i }))
     expect(screen.getByText(/old-judge: Scorer configuration changed/)).toBeInTheDocument()
     expect(screen.getByLabelText('Scorer failure details').textContent).toContain(

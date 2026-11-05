@@ -61,6 +61,9 @@ class Converter(Identifiable):
     #: Tuple of output modalities supported by this converter. Subclasses must override this.
     SUPPORTED_OUTPUT_TYPES: tuple[PromptDataType, ...] = ()
 
+    #: Constructor parameters whose controls must preserve line breaks.
+    MULTILINE_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
+
     #: Capability requirements placed on the converter's target (if any).
     #: Subclasses that use a target should override this and pass the target to
     #: ``super().__init__(converter_target=...)`` so the base class can validate it.

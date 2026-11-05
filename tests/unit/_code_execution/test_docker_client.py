@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxExecutionError
+from pyrit._code_execution.docker_client import _ClientOutput, _ContainerState, _InvocationResult
 from pyrit.models.code_execution import _ProgramInvocation, _SandboxRun
 
 if TYPE_CHECKING:
@@ -234,6 +235,38 @@ async def test_container_and_client_outcomes_async(
     assert mounted_dir.parent.parent == tmp_path
     process.communicate.assert_awaited_once()
     assert await asyncio.to_thread(lambda: list(tmp_path.iterdir())) == []
+
+
+async def test_startup_consumes_shared_deadline_before_capture_async(client: DockerSandboxClient) -> None:
+    process = _process()
+    scope_entered = asyncio.Event()
+
+    async def start_async(*, argv: list[str]) -> MagicMock:
+        del argv
+        assert scope_entered.is_set()
+        return process
+
+    output = _ClientOutput(stdout=b"", stdout_truncated=False, stderr=b"", stderr_truncated=False)
+    container = _ContainerState(status="exited", exit_code=0, oom_killed=False)
+    wait = AsyncMock(return_value=_InvocationResult(output=output, container=container))
+
+    class _NoopTimeout:
+        async def __aenter__(self) -> None:
+            scope_entered.set()
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+    with (
+        patch("pyrit._code_execution.docker_client.asyncio.timeout_at", return_value=_NoopTimeout()) as timeout_at,
+        patch.object(client, "_start_client_async", side_effect=start_async),
+        patch.object(client, "_wait_for_invocation_async", wait),
+        patch.object(client, "_control_async", _control()),
+    ):
+        assert (await _run_async(client)).events[0].exit_code == 0
+
+    deadline = timeout_at.call_args.args[0]
+    assert wait.call_args.kwargs["deadline"] == deadline
 
 
 @pytest.mark.parametrize(

@@ -229,7 +229,10 @@ class _EquityMedQADataset(_RemoteDatasetLoader):
 
         prompts_list = []
 
+        # The upstream CSV files have no header row, so HuggingFace reads each file's first row as the
+        # column names. Those names are prompts too, so keep them alongside the column values.
         for column_name in self.DATASET_COLUMNS[subset_name]:
+            prompts_list.append(column_name)
             prompts_list.extend([item[column_name] for item in data])
 
         # Remove duplicates within this subset

@@ -149,7 +149,7 @@ def _make_fake_factory(
     return factory
 
 
-FIXTURES = ["patch_central_database", "mock_runtime_env"]
+FIXTURES = ["patch_central_database", "mock_runtime_env", "mock_dataset_preparation"]
 
 
 @pytest.mark.usefixtures(*FIXTURES)

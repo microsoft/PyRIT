@@ -1,6 +1,7 @@
-// Mock axios before importing the module
+// Mock axios before importing the module. The instance is callable, like a
+// real Axios instance, so the 401 handler can replay a request through it.
 jest.mock("axios", () => ({
-  create: jest.fn(() => ({
+  create: jest.fn(() => Object.assign(jest.fn(), {
     get: jest.fn(),
     post: jest.fn(),
     put: jest.fn(),
@@ -36,9 +37,12 @@ import {
   scenarioSuitesApi,
   datasetsApi,
   analyticsApi,
+  setMsalInstance,
 } from "./api";
 import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
+import { toApiError } from "./errors";
 import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
+import type { FindingExportRequest } from "@/types";
 import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
@@ -88,6 +92,22 @@ describe("api service", () => {
       expect(await operationsApi.deleteFinding("a/b", "c/d")).toBeUndefined();
       expect(apiClient.delete).toHaveBeenCalledWith("/operations/a%2Fb/findings/c%2Fd");
     });
+    it("downloads the explicitly selected findings as a cancellable file", async () => {
+      const request: FindingExportRequest = {
+        finding_ids: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
+        format: "markdown",
+        dashboard_origin: "https://pyrit.example.test",
+      };
+      const blob = new Blob(["# Findings"], { type: "text/markdown" });
+      const controller = new AbortController();
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: blob });
+      expect(await operationsApi.exportFindings("a/b", request, controller.signal)).toBe(blob);
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/operations/a%2Fb/findings/export",
+        request,
+        { responseType: "blob", signal: controller.signal },
+      );
+    });
   });
   // Interceptor functions are registered at module-load time.
   // Capture them before beforeEach's clearAllMocks wipes the call records.
@@ -135,12 +155,23 @@ describe("api service", () => {
   });
 
   describe("scenarioSuitesApi", () => {
-    it("supports collection and encoded item CRUD with optimistic concurrency", async () => {
+    it("supports definition CRUD and transient execution APIs with encoded identifiers", async () => {
       const suite = { name: "nightly_suite", schema_version: 1, entries: [] };
-      const response = { suite, version: "v1", entry_statuses: [] };
+      const response = { suite, origin: "stored", version: "v1", entry_statuses: [] };
+      const launch = {
+        expected_version: "v1",
+        entries: [],
+        target_name: "objective",
+      };
+      const execution = { suite_execution_id: "execution/id" };
       const controller = new AbortController();
-      (apiClient.get as jest.Mock).mockResolvedValue({ data: response });
-      (apiClient.post as jest.Mock).mockResolvedValue({ data: response });
+      (apiClient.get as jest.Mock)
+        .mockResolvedValueOnce({ data: response })
+        .mockResolvedValueOnce({ data: response })
+        .mockResolvedValueOnce({ data: execution });
+      (apiClient.post as jest.Mock)
+        .mockResolvedValueOnce({ data: response })
+        .mockResolvedValue({ data: execution });
       (apiClient.put as jest.Mock).mockResolvedValue({ data: response });
       (apiClient.delete as jest.Mock).mockResolvedValue({ data: undefined });
 
@@ -157,6 +188,18 @@ describe("api service", () => {
       });
       await scenarioSuitesApi.remove("a/b");
       expect(apiClient.delete).toHaveBeenCalledWith("/scenario-suites/a%2Fb");
+      await expect(scenarioSuitesApi.launch("a/b", launch)).resolves.toEqual(execution);
+      expect(apiClient.post).toHaveBeenCalledWith("/scenario-suites/a%2Fb/launch", launch);
+      await expect(scenarioSuitesApi.getExecution("execution/id", controller.signal)).resolves.toEqual(execution);
+      expect(apiClient.get).toHaveBeenCalledWith("/scenario-suites/executions/execution%2Fid", {
+        signal: controller.signal,
+      });
+      await expect(scenarioSuitesApi.cancelExecution("execution/id", controller.signal)).resolves.toEqual(execution);
+      expect(apiClient.post).toHaveBeenCalledWith(
+        "/scenario-suites/executions/execution%2Fid/cancel",
+        undefined,
+        { signal: controller.signal },
+      );
     });
   });
 
@@ -267,6 +310,117 @@ describe("api service", () => {
       );
 
       consoleSpy.mockRestore();
+    });
+
+    describe("file download errors", () => {
+      const backendId = `1.2.0.dev0+g${"b".repeat(40)}`;
+
+      function jsonBlob(body: unknown): Blob {
+        return new Blob([JSON.stringify(body)], { type: "application/json" });
+      }
+
+      function fileRequestError(status: number, data: unknown) {
+        const headers: Record<string, string> = { "X-Request-ID": "export-request" };
+        return {
+          isAxiosError: true,
+          config: {
+            method: "post",
+            url: "/operations/op/findings/export",
+            responseType: "blob",
+            headers: Object.assign(headers, { set: (name: string, value: string) => { headers[name] = value; } }),
+          },
+          response: { status, data },
+        };
+      }
+
+      function replaceCompatibilityStore() {
+        const compatibilityModule = jest.requireMock<typeof import("./compatibility")>("./compatibility");
+        const store = new compatibilityModule.CompatibilityStore(compatibility.bundledId);
+        jest.replaceProperty(compatibilityModule, "compatibility", store);
+        return store;
+      }
+
+      let consoleError: jest.SpyInstance;
+
+      beforeEach(() => {
+        consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+      });
+
+      afterEach(() => {
+        setMsalInstance(null);
+        jest.restoreAllMocks();
+      });
+
+      it.each([
+        ["JSON", 409, "urn:pyrit:compatibility:mismatch", false],
+        ["Blob", 409, "urn:pyrit:compatibility:mismatch", true],
+        ["Blob", 400, "urn:pyrit:compatibility:invalid", true],
+      ])("blocks an incompatible frontend on a %s %i compatibility problem", async (_body, status, type, asBlob) => {
+        const store = replaceCompatibilityStore();
+        const problem = { type, expected: backendId, actual: compatibility.bundledId };
+        const error = fileRequestError(status, asBlob ? jsonBlob(problem) : problem);
+
+        await expect(responseOnError(error)).rejects.toBe(error);
+
+        expect(store.getSnapshot()).toEqual({
+          status: "blocked",
+          reason: "The backend rejected this frontend build identity.",
+          expected: backendId,
+          actual: compatibility.bundledId,
+        });
+      });
+
+      it.each([["JSON", false], ["Blob", true]])(
+        "refreshes the token and replays the file request once after a %s 401",
+        async (_body, asBlob) => {
+          const acquireTokenSilent = jest.fn().mockResolvedValue({ accessToken: "fresh-token" });
+          setMsalInstance({
+            getActiveAccount: () => ({ username: "user@example.com" }),
+            acquireTokenSilent,
+          } as unknown as Parameters<typeof setMsalInstance>[0]);
+          const replayed = { status: 200, data: new Blob(["document"]) };
+          (apiClient as unknown as jest.Mock).mockResolvedValueOnce(replayed);
+          const unauthorized = { detail: "Not authenticated" };
+          const error = fileRequestError(401, asBlob ? jsonBlob(unauthorized) : unauthorized);
+
+          await expect(responseOnError(error)).resolves.toBe(replayed);
+
+          expect(acquireTokenSilent).toHaveBeenCalledWith(expect.objectContaining({ forceRefresh: true }));
+          expect(apiClient).toHaveBeenCalledTimes(1);
+          expect(apiClient).toHaveBeenCalledWith(error.config);
+          expect(error.config).toMatchObject({ _retried: true, responseType: "blob" });
+          expect(error.config.headers.Authorization).toBe("Bearer fresh-token");
+          expect(consoleError).not.toHaveBeenCalled();
+        },
+      );
+
+      it("logs and rejects with a Blob error's decoded detail and original status", async () => {
+        const error = fileRequestError(404, jsonBlob({ detail: "Finding not found" }));
+
+        await expect(responseOnError(error)).rejects.toBe(error);
+
+        expect(toApiError(error)).toMatchObject({ status: 404, detail: "Finding not found" });
+        expect(consoleError).toHaveBeenCalledWith(
+          "[API] POST /operations/op/findings/export failed | status=404 | "
+            + "requestId=export-request | Finding not found",
+        );
+      });
+
+      it("keeps an unreadable Blob error a visible failure with its status", async () => {
+        const read = jest.spyOn(FileReader.prototype, "readAsText").mockImplementation(() => undefined);
+        const body = jsonBlob({ detail: "Unreadable" });
+        const error = fileRequestError(500, body);
+
+        const rejected = expect(responseOnError(error)).rejects.toBe(error);
+        const reader = read.mock.contexts[0];
+        if (!(reader instanceof FileReader)) throw new Error("Blob read did not start");
+        reader.dispatchEvent(new ProgressEvent("error"));
+        await rejected;
+
+        expect(error.response.data).toBe(body);
+        expect(toApiError(error)).toMatchObject({ status: 500, detail: "Server error (500)" });
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("status=500"));
+      });
     });
   });
 
@@ -631,6 +785,41 @@ describe("api service", () => {
       expect(result.attack_type).toBe("ManualAttack");
     });
 
+    it.each([undefined, "off-page/conversation"])(
+      "should request reference-free initial metadata with selected conversation %s",
+      async (conversationId: string | undefined) => {
+        const data = {
+          attack_result_id: "attack/id", conversation_id: "main", objective: "Saved objective",
+          labels: {}, outcome: "undetermined", execution_read_only: true,
+          last_response_message_piece_id: "last-response", related_conversation_count: 700,
+          selected_conversation_id: conversationId ?? "main", selected_conversation_valid: true,
+        };
+        (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+        expect(await attacksApi.getAttackMetadata("attack/id", conversationId)).toEqual(data);
+        if (conversationId === undefined) {
+          expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/metadata");
+        } else {
+          expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/metadata", {
+            params: { conversation_id: conversationId },
+          });
+        }
+        expect(apiClient.get).toHaveBeenCalledTimes(1);
+        expect(data).not.toHaveProperty("related_conversations");
+        expect(data).not.toHaveProperty("related_conversation_ids");
+      },
+    );
+
+    it("should propagate metadata errors without fetching the legacy full summary", async () => {
+      const error = new Error("Metadata unavailable");
+      (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
+      await expect(attacksApi.getAttackMetadata("attack", "selected")).rejects.toBe(error);
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack/metadata", {
+        params: { conversation_id: "selected" },
+      });
+    });
+
     it("should get attack messages", async () => {
       const mockResponse = {
         data: {
@@ -660,6 +849,61 @@ describe("api service", () => {
         { params: { conversation_id: "conv-123" } }
       );
       expect(result.messages).toHaveLength(1);
+    });
+
+    it.each([1, 100, 500])("should preserve message-piece pagination metadata with limit %i", async (limit: number) => {
+      const data = {
+        conversation_id: "conversation/id",
+        messages: [],
+        target_response_status: null,
+        pagination: { limit, has_more: true, next_cursor: "message-next" },
+        partial_message_sequences: [7],
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+      expect(await attacksApi.getMessages("attack/id", "conversation/id", { limit, cursor: "message-previous" })).toEqual(data);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/messages", {
+        params: { conversation_id: "conversation/id", limit, cursor: "message-previous" },
+      });
+    });
+
+    it("should preserve the unpaged conversation-reference request", async () => {
+      const data = { attack_result_id: "attack", main_conversation_id: "main", conversations: [] };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+      expect(await attacksApi.getConversations("attack")).toEqual(data);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack/conversations");
+    });
+
+    it.each([1, 50, 200])("should preserve reference pagination and server totals with limit %i", async (limit: number) => {
+      const data = {
+        attack_result_id: "attack/id", main_conversation_id: "main", conversations: [],
+        total_count: 700, pagination: { limit, has_more: true, next_cursor: "references-next" },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+      expect(await attacksApi.getConversations("attack/id", { limit, cursor: "references-previous" })).toEqual(data);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/conversations", {
+        params: { limit, cursor: "references-previous" },
+      });
+    });
+
+    it("should request initial bounded pages without sending a continuation cursor", async () => {
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: {} });
+      await attacksApi.getMessages("attack", "main", { limit: 100 });
+      expect(apiClient.get).toHaveBeenLastCalledWith("/attacks/attack/messages", {
+        params: { conversation_id: "main", limit: 100 },
+      });
+      await attacksApi.getConversations("attack", { limit: 50 });
+      expect(apiClient.get).toHaveBeenLastCalledWith("/attacks/attack/conversations", { params: { limit: 50 } });
+    });
+
+    it("should propagate invalid saved-evidence cursors without retrying or fetching an unpaged transcript", async () => {
+      const error = new Error("Invalid saved cursor");
+      (apiClient.get as jest.Mock).mockRejectedValue(error);
+      await expect(attacksApi.getMessages("attack", "main", { limit: 100, cursor: "invalid" })).rejects.toBe(error);
+      await expect(attacksApi.getConversations("attack", { limit: 50, cursor: "invalid" })).rejects.toBe(error);
+      expect(apiClient.get).toHaveBeenCalledTimes(2);
     });
 
     it("should add a text message to an attack", async () => {
@@ -1054,6 +1298,7 @@ describe("api service", () => {
         scenario_names: ["first.scenario", "second.scenario"],
         run_statuses: ["IN_PROGRESS", "FAILED"],
         label: ["operator:alice", "operator:bob", "team:safety"],
+        sort_by: "activity",
       });
 
       expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs", {
@@ -1063,6 +1308,7 @@ describe("api service", () => {
           scenario_names: ["first.scenario", "second.scenario"],
           run_statuses: ["IN_PROGRESS", "FAILED"],
           label: ["operator:alice", "operator:bob", "team:safety"],
+          sort_by: "activity",
         },
         paramsSerializer: { indexes: null },
       });
@@ -1096,6 +1342,52 @@ describe("api service", () => {
         params: { since: "cursor-1", limit: 50 },
         signal: controller.signal,
       });
+    });
+
+    it("loads a hierarchy root page with its root cursor", async () => {
+      const projection = {
+        scenario_result_id: "sr-1",
+        groups: [],
+        has_more: true,
+        next_cursor: "roots-2",
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: projection });
+      const controller = new AbortController();
+
+      const result = await scenariosApi.getRunHierarchy(
+        "sr/1",
+        { max_nodes: 200, cursor: "roots-1" },
+        controller.signal,
+      );
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs/sr%2F1/hierarchy", {
+        params: { max_nodes: 200, cursor: "roots-1" },
+        signal: controller.signal,
+      });
+      expect(result).toBe(projection);
+    });
+
+    it("loads a node's children with the node's own children cursor", async () => {
+      const node = {
+        attack_result_id: "ar/1",
+        child_offset: 200,
+        next_children_cursor: "children-3",
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: node });
+      const controller = new AbortController();
+
+      const result = await scenariosApi.getRunHierarchyNode(
+        "sr/1",
+        "ar/1",
+        { limit: 200, children_cursor: "children-2" },
+        controller.signal,
+      );
+
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/scenarios/runs/sr%2F1/hierarchy/nodes/ar%2F1",
+        { params: { limit: 200, children_cursor: "children-2" }, signal: controller.signal },
+      );
+      expect(result).toBe(node);
     });
 
     it("cancels a scenario run by id", async () => {

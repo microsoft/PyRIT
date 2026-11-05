@@ -181,17 +181,34 @@ prepare_database_migration() {
     --template-file "$migration_template" --mode Incremental --parameters "${migration_parameters[@]}" -o none
 }
 
+start_database_job_execution() (
+  set -euo pipefail
+  local mode="$1" job_name="$PYRIT_APP_NAME-migrate" template_file
+  local job_args=(--resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" --query name -o tsv)
+  if [[ "$mode" == check ]]; then
+    template_file=$(mktemp "$PYRIT_AGENT_TEMP_DIRECTORY/pyrit-schema-check.XXXXXX") \
+      || deployment_error "Could not create database schema check template" >&2
+    trap 'rm -f -- "$template_file"' EXIT
+    if ! az containerapp job show \
+      --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" \
+      --query properties.template -o json | jq -e '
+        if ([.containers[] | select(.name == "pyrit-migrate" and (.image | type == "string" and length > 0))] | length) != 1
+        then error("Expected one pyrit-migrate container with an image")
+        else .containers |= map(if .name == "pyrit-migrate" then .args = ["--check-only"] else . end)
+        end' > "$template_file"; then
+      deployment_error "Could not prepare database schema check template" >&2
+    fi
+    job_args+=(--yaml "$template_file")
+  fi
+  az containerapp job start "${job_args[@]}"
+)
+
 run_database_job() {
   local mode="$1" action="migration"
-  local job_args=(--container-name pyrit-migrate)
-  if [[ "$mode" == check ]]; then
-    action="schema check"
-    job_args+=(--args=--check-only)
-  fi
+  [[ "$mode" == check ]] && action="schema check"
   local job_name="$PYRIT_APP_NAME-migrate"
   local execution status="" attempt
-  if ! execution=$(az containerapp job start \
-    --resource-group "$PYRIT_DEPLOYMENT_RESOURCE_GROUP" --name "$job_name" "${job_args[@]}" --query name -o tsv); then
+  if ! execution=$(start_database_job_execution "$mode"); then
     deployment_error "Database $action job did not start"
   fi
   [[ -n "$execution" ]] || deployment_error "Database $action job did not start"

@@ -36,7 +36,7 @@ export function attackRoutePath(
   scenarioResultId?: string | null,
 ): string {
   return appendScenarioRunProvenance(
-    `/attacks/${encodeURIComponent(attackResultId)}`,
+    `/attack/chat/${encodeURIComponent(attackResultId)}`,
     scenarioResultId,
   )
 }
@@ -49,7 +49,7 @@ export function attackConversationRoutePath(
   findingEvidenceId?: string | null,
 ): string {
   const path = appendScenarioRunProvenance(
-    `/attacks/${encodeURIComponent(attackResultId)}/conversations/${encodeURIComponent(conversationId)}`,
+    `/attack/chat/${encodeURIComponent(attackResultId)}/conversations/${encodeURIComponent(conversationId)}`,
     scenarioResultId,
   )
   if (!findingEvidenceId || !UUID_PATTERN.test(findingEvidenceId)) return path
@@ -58,12 +58,20 @@ export function attackConversationRoutePath(
 
 /** Builds the route for one scenario run. Callers must pass a trusted persisted ID. */
 export function scenarioRunRoutePath(scenarioResultId: string): string {
-  return `/scanner-history/${encodeURIComponent(scenarioResultId)}`
+  return `/scanner/history/${encodeURIComponent(scenarioResultId)}`
 }
 
 /** Builds the route for one attack result within a scenario run. */
 export function scenarioRunAttackRoutePath(scenarioResultId: string, attackResultId: string): string {
   return `${scenarioRunRoutePath(scenarioResultId)}/${encodeURIComponent(attackResultId)}`
+}
+
+export function scenarioConversationRoutePath(scenarioResultId: string, conversationId: string): string {
+  return `${scenarioRunRoutePath(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`
+}
+
+export function scenarioRerunRoutePath(scenarioName: string, scenarioResultId: string): string {
+  return `/scanner/launch/${encodeURIComponent(scenarioName)}?rerun=${encodeURIComponent(scenarioResultId)}`
 }
 
 function appendScenarioRunProvenance(path: string, scenarioResultId?: string | null): string {
@@ -141,4 +149,47 @@ function isCatalogReturnPath(value: string): boolean {
     && url.password === ''
     && url.pathname === DATASETS_PATH
     && url.hash === ''
+}
+
+/** Returns true if the pathname or path belongs to the dataset catalog or dataset detail view. */
+export function isDatasetsPath(pathOrUrl: string): boolean {
+  if (!pathOrUrl) return false
+  const cleanPath = pathOrUrl.split('?')[0].split('#')[0]
+  return cleanPath === DATASETS_PATH || cleanPath === DATASET_DETAIL_PATH || cleanPath.startsWith(`${DATASETS_PATH}/`)
+}
+
+/** Returns true if the pathname or path belongs to the chat view or an attack view. */
+export function isChatPath(pathOrUrl: string): boolean {
+  if (!pathOrUrl) return false
+  const cleanPath = pathOrUrl.split('?')[0].split('#')[0]
+  return cleanPath === '/attack/chat' || cleanPath.startsWith('/attack/chat/')
+}
+
+/** Parses attackId and conversationId from a chat or attack route path. */
+export function parseChatRoute(path: string): { attackId: string | null; conversationId: string | null } {
+  if (!path) return { attackId: null, conversationId: null }
+  const clean = path.split('?')[0].split('#')[0]
+  const matchWithConv = /^\/attacks\/([^/]+)\/conversations\/([^/]+)/.exec(clean)
+  if (matchWithConv) {
+    try {
+      return {
+        attackId: decodeURIComponent(matchWithConv[1]),
+        conversationId: decodeURIComponent(matchWithConv[2]),
+      }
+    } catch {
+      return { attackId: matchWithConv[1], conversationId: matchWithConv[2] }
+    }
+  }
+  const matchAttack = /^\/attacks\/([^/]+)/.exec(clean)
+  if (matchAttack) {
+    try {
+      return {
+        attackId: decodeURIComponent(matchAttack[1]),
+        conversationId: null,
+      }
+    } catch {
+      return { attackId: matchAttack[1], conversationId: null }
+    }
+  }
+  return { attackId: null, conversationId: null }
 }

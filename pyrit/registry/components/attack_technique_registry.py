@@ -30,6 +30,7 @@ from weakref import WeakSet
 from pydantic import ValidationError
 
 from pyrit.models import AttackIdentifier, ComponentType
+from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.registry.instance_registry import DefaultInstanceRegistry
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -441,31 +442,47 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         return factory.with_settings(settings=copied)
 
     @staticmethod
-    def _resolve_converter_changes(changes: dict[str, list[str] | None]) -> dict[str, list[ConverterConfiguration]]:
+    def _resolve_converter_changes(
+        changes: dict[str, list[str | SourceInstanceSpec] | list[str] | None],
+    ) -> dict[str, list[ConverterConfiguration]]:
         """
-        Resolve ordered converter names for creation and copies without registering new instances.
+        Resolve ordered converter names or private settings without registering new instances.
 
         Returns:
-            dict[str, list[ConverterConfiguration]]: Ordered chains with shared live converter instances.
+            dict[str, list[ConverterConfiguration]]: Ordered chains of registered converters or private copies.
 
         Raises:
             ValueError: If a chain is null or a name is not registered.
         """
         from pyrit.prompt_normalizer import ConverterConfiguration
+        from pyrit.registry.components.converter_registry import ConverterRegistry
         from pyrit.registry.resolution import resolve_reference_value
 
+        registry = ConverterRegistry.get_registry_singleton()
         converters = {}
         for name, names in changes.items():
             if names is None:
                 raise ValueError(f"Use an empty list to clear {name}")
-            converters[name] = ConverterConfiguration.from_converters(
-                converters=[
-                    resolve_reference_value(
+            chain = []
+            for value in names:
+                if isinstance(value, SourceInstanceSpec):
+                    source = registry.resolve_source(name=value.source_name, identifier_hash=value.source_hash)
+                    metadata = registry.get_registered_class_metadata(type(source).__name__)
+                    for parameter in metadata.parameters if metadata else []:
+                        if parameter.name in value.params and (parameter.is_path or parameter.is_path_or_str):
+                            raise ValueError(
+                                f"Temporary technique settings cannot replace file parameter '{parameter.name}'. "
+                                "Create a registered converter with the new file instead."
+                            )
+                    converter = registry.recreate_instance(source=source, params=value.params, external_input=True)
+                    if value.effective_hash and converter.get_identifier().hash != value.effective_hash:
+                        raise ValueError("Temporary converter configuration has changed")
+                else:
+                    converter = resolve_reference_value(
                         component_type=ComponentType.CONVERTER, value=value, owner="Technique", name=name
                     )
-                    for value in names
-                ]
-            )
+                chain.append(converter)
+            converters[name] = ConverterConfiguration.from_converters(converters=chain)
         return converters
 
     @property

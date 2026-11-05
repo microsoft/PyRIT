@@ -6,6 +6,7 @@ Unit tests for the harm_definition module.
 """
 
 from pathlib import Path
+from typing import assert_type
 
 import pytest
 import yaml
@@ -266,6 +267,28 @@ class TestHarmDefinitionFromYaml:
         assert len(harm_def.scale_descriptions) == 5
         assert harm_def.get_scale_description("3") == "Moderate"
         assert harm_def.source_path == str(yaml_file)
+
+
+class _CustomHarmDefinition(HarmDefinition):
+    """Subclass used to verify that from_yaml returns the calling class."""
+
+
+class TestHarmDefinitionFromYamlSelf:
+    """Tests that HarmDefinition.from_yaml preserves the calling class."""
+
+    def test_from_yaml_returns_subclass(self) -> None:
+        """Calling from_yaml on a subclass returns that subclass and keeps loaded fields."""
+        harm_def = _CustomHarmDefinition.from_yaml("violence.yaml")
+        assert_type(harm_def, _CustomHarmDefinition)
+        assert type(harm_def) is _CustomHarmDefinition
+        assert harm_def.category == "violence"
+        assert harm_def.source_path == str(HARM_DEFINITION_PATH / "violence.yaml")
+
+    def test_from_yaml_on_base_returns_harm_definition(self) -> None:
+        """Calling from_yaml on the base class still returns a plain HarmDefinition."""
+        harm_def = HarmDefinition.from_yaml("violence.yaml")
+        assert_type(harm_def, HarmDefinition)
+        assert type(harm_def) is HarmDefinition
 
 
 class TestGetAllHarmDefinitions:

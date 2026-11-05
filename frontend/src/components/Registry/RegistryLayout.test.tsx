@@ -23,8 +23,8 @@ function renderLayout(initialPath = '/registry/targets') {
             <Route path="scenario-presets" element={<div>Preset library content</div>} />
             <Route path="scenario-presets/new" element={<div>Preset editor content</div>} />
             <Route path="scorers" element={<div>Scorer registry content</div>} />
-            <Route path="scenario-suites" element={<div>Suite library content</div>} />
             <Route path="scenario-suites/new" element={<div>Suite editor content</div>} />
+            <Route path="scenario-suites/:suiteName/edit" element={<div>Suite editor content</div>} />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -33,14 +33,31 @@ function renderLayout(initialPath = '/registry/targets') {
 }
 
 describe('RegistryLayout', () => {
-  it('shows target, converter, preset, and suite registry tabs', () => {
+  it('shows target, converter, and scenario preset registry tabs', () => {
     renderLayout()
 
     expect(screen.getByRole('tab', { name: 'Targets' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Converters' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByRole('tab', { name: 'Scenario presets' })).toHaveAttribute('aria-selected', 'false')
-    expect(screen.getByRole('tab', { name: 'Suites' })).toHaveAttribute('aria-selected', 'false')
     expect(screen.getByText('Target registry content')).toBeInTheDocument()
+  })
+
+  it('has no separate suites tab because suites share the scenario preset page', () => {
+    renderLayout()
+
+    expect(screen.queryByRole('tab', { name: 'Suites' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('tab')).toEqual(
+      ['Targets', 'Converters', 'Scorers', 'Techniques', 'Scenario presets'].map(
+        (name: string) => screen.getByRole('tab', { name }),
+      ),
+    )
+  })
+
+  it('selects the Targets tab on the bare registry route', () => {
+    renderLayout('/registry')
+
+    expect(screen.getByRole('tab', { name: 'Targets' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Scenario presets' })).toHaveAttribute('aria-selected', 'false')
   })
 
   it('navigates between registry sections', async () => {
@@ -73,20 +90,13 @@ describe('RegistryLayout', () => {
     expect(screen.getByText('Preset editor content')).toBeInTheDocument()
   })
 
-  it('opens the suite library and keeps the tab selected on nested routes', async () => {
-    const user = userEvent.setup()
-    renderLayout()
+  it.each([
+    '/registry/scenario-suites/new',
+    '/registry/scenario-suites/nightly_suite/edit',
+  ])('keeps the scenario presets tab selected on suite editor route %s', (path: string) => {
+    renderLayout(path)
 
-    await user.click(screen.getByRole('tab', { name: 'Suites' }))
-
-    expect(screen.getByRole('tab', { name: 'Suites' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByText('Suite library content')).toBeInTheDocument()
-  })
-
-  it('keeps the suite tab selected on the new-suite route', () => {
-    renderLayout('/registry/scenario-suites/new')
-
-    expect(screen.getByRole('tab', { name: 'Suites' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Scenario presets' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Suite editor content')).toBeInTheDocument()
   })
 
