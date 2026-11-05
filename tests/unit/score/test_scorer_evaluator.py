@@ -3,12 +3,16 @@
 
 import asyncio
 import csv
+import inspect
 import json
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.memory import MemoryInterface
@@ -85,6 +89,53 @@ def test_from_scorer_unknown_metrics_type_falls_back_to_harm_evaluator(mock_harm
     )
     assert isinstance(evaluator, HarmScorerEvaluator)
     assert evaluator.scorer is mock_harm_scorer
+
+
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_from_scorer_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_enum: bool) -> None:
+    enum_source = inspect.getsource(MetricsType)
+    if extend_enum:
+        enum_source += '\n    FUTURE = "future"\n'
+    probe = tmp_path / "dispatch.py"
+    probe.write_text(
+        "\n".join(
+            [
+                "from __future__ import annotations",
+                "from enum import Enum",
+                "from typing import TYPE_CHECKING, assert_never",
+                "from pyrit.score import Scorer, TrueFalseScorer, ScorerEvaluator",
+                "from pyrit.score import HarmScorerEvaluator, ObjectiveScorerEvaluator",
+                enum_source,
+                "class DispatchProbe:",
+                inspect.getsource(ScorerEvaluator.from_scorer),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(metrics_type)" in output, output
+        assert "MetricsType.FUTURE" in output, output
 
 
 async def test_evaluate_dataset_async_harm(mock_harm_scorer):
