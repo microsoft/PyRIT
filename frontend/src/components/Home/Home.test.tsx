@@ -291,6 +291,27 @@ describe('Home', () => {
     expect(mockOperations).toHaveBeenCalledTimes(1)
   })
 
+  it('should not present a partial page of recent attacks as operation totals', async () => {
+    mockAttacks.mockResolvedValue({
+      items: Array.from({ length: 5 }, (_, index: number) => attack({
+        attack_result_id: `attack-${index}`,
+        operation_id: 'saved-operation',
+        operation_name: 'Saved operation',
+      })),
+      pagination: { ...PAGINATION, has_more: true, next_cursor: 'more-attacks' },
+    })
+    mockOperations.mockResolvedValue({ items: [operation()] })
+
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+
+    const recent = await screen.findByRole('list')
+    expect(within(recent).getAllByRole('button')).toHaveLength(5)
+    const operations = screen.getByRole('region', { name: 'Operations', exact: true })
+    await within(operations).findByRole('button', { name: /Saved operation A real saved engagement/ })
+    expect(within(operations).queryByText(/attacks|total|sample|more in history/i)).not.toBeInTheDocument()
+    expect(mockAttacks).toHaveBeenCalledWith({ limit: 5, include_scenario_attacks: false })
+  })
+
   it('should rank newest-created operations when no saved operation is selected', async () => {
     mockOperations.mockResolvedValue({ items: [
       operation({ id: 'old', name: 'A old', created_at: '2026-10-01T00:00:00Z' }),

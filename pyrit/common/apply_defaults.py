@@ -118,7 +118,7 @@ class GlobalDefaultValues:
         )
         self._default_values.pop(opposite_scope, None)
         self._default_values[scope] = value
-        logger.debug(f"Set default value for {class_type.__name__}.{parameter_name} = {value}")
+        logger.debug("Set default value for %s.%s = %s", class_type.__name__, parameter_name, value)
 
     def get_default_value(
         self,
@@ -352,7 +352,7 @@ def _apply_default_arguments(
         found, default = _global_default_values.get_default_value(class_type=class_type, parameter_name=name)
         if found:
             arguments[name] = default
-            logger.debug(f"Applied default value for {class_type.__name__}.{name} = {default}")
+            logger.debug("Applied default value for %s.%s = %s", class_type.__name__, name, default)
         elif isinstance(value, _RequiredValueSentinel):
             raise ValueError(
                 f"{name} is required for {class_type.__name__}. "

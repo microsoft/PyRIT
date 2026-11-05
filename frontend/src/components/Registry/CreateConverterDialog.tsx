@@ -165,6 +165,11 @@ function formValueIsSet(value: ParameterFormValue | undefined): boolean {
   return typeof value === 'string' ? Boolean(value.trim()) : Boolean(value?.length)
 }
 
+function acceptsEmptySearchReplaceValue(converterType: string | undefined, parameterName: string): boolean {
+  return converterType === 'SearchReplaceConverter'
+    && (parameterName === 'pattern' || parameterName === 'replace')
+}
+
 function stringFormValue(value: ParameterFormValue | undefined): string {
   return typeof value === 'string' ? value : ''
 }
@@ -326,6 +331,7 @@ function ParameterInput({
           // Read-only, not disabled: a disabled input drops focus to <body>
           // when the form is submitted with Enter, and Escape stops closing the dialog.
           readOnly={disabled}
+          type={parameter.sensitive ? 'password' : 'text'}
           value={value}
           placeholder={parameterDefaultValue(parameter) || undefined}
           onChange={(_, data) => onChange(data.value)}
@@ -590,6 +596,7 @@ export default function CreateConverterDialog({
     const missingParameters = (selectedConverterType?.parameters ?? []).some(
       (parameter) => parameter.required
         && !parameter.default
+        && !acceptsEmptySearchReplaceValue(selectedType, parameter.name)
         && !formValueIsSet(parameterValues[parameter.name]),
     )
     if (!selectedType || (!editing && (!registryName.trim() || missingParameters))) {
@@ -605,7 +612,10 @@ export default function CreateConverterDialog({
         .filter((parameter) => !sendsTypedValue(parameter))
         .flatMap((parameter) => {
           const value = parameterValues[parameter.name]
-          return typeof value === 'string' ? [[parameter.name, value]] : []
+          if (typeof value === 'string') return [[parameter.name, value]]
+          return acceptsEmptySearchReplaceValue(selectedType, parameter.name)
+            ? [[parameter.name, '']]
+            : []
         }),
     )
     const typed = buildParametersFromForm(parameters.filter(sendsTypedValue), parameterValues)
@@ -817,6 +827,7 @@ export default function CreateConverterDialog({
                             showValidation
                             && parameter.required
                             && !parameter.default
+                            && !acceptsEmptySearchReplaceValue(selectedType, parameter.name)
                             && !formValueIsSet(parameterValues[parameter.name])
                           }
                           onChange={(value) => {
