@@ -28,9 +28,9 @@ from pyrit.exceptions.exception_classes import (
     RateLimitException,
     handle_bad_request_exception,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, ParameterResolution, RequestGenerationConfig, RequestGenerationInfo
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.openai._response_adapter import OpenAIResponseAdapter
 from pyrit.prompt_target.openai.openai_error_handling import (
@@ -223,6 +223,12 @@ class OpenAITarget(PromptTarget):
         endpoint_value = default_values.get_required_value(
             env_var_name=self.endpoint_environment_variable, passed_value=endpoint
         )
+        self._generation_capability_overrides = {
+            capability: custom_configuration.capabilities.includes(capability=capability)
+            for capability in self._SUPPORTED_GENERATION_CAPABILITIES
+            if custom_configuration is not None
+            and capability.value in custom_configuration.capabilities.model_fields_set
+        }
 
         # Initialize parent with endpoint and model_name
         PromptTarget.__init__(
@@ -242,6 +248,121 @@ class OpenAITarget(PromptTarget):
         )
 
         self._initialize_openai_client()
+        if self._SUPPORTED_GENERATION_CAPABILITIES:
+            self._refresh_generation_capabilities()
+
+    def set_model_name(self, *, model_name: str) -> None:
+        """Set the model name and refresh request-generation support for opted-in adapters."""
+        super().set_model_name(model_name=model_name)
+        if self._SUPPORTED_GENERATION_CAPABILITIES:
+            self._refresh_generation_capabilities()
+
+    def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
+        """Apply declared model support subject to the adapter's configured sampling mode."""
+        self._effective_generation_capability_overrides = {
+            capability: capabilities.includes(capability=capability)
+            for capability in self._SUPPORTED_GENERATION_CAPABILITIES
+            if capability.value in capabilities.model_fields_set
+        }
+        if self._SUPPORTED_GENERATION_CAPABILITIES:
+            capabilities = self._generation_capabilities_for_mode(capabilities)
+        super().apply_capabilities(capabilities=capabilities)
+
+    def _refresh_generation_capabilities(self) -> None:
+        self._effective_generation_capability_overrides = self._generation_capability_overrides.copy()
+        parameters = self._effective_generation_parameters()
+        support = {
+            capability.value: self._generation_capability_overrides.get(capability, False)
+            for capability in self._SUPPORTED_GENERATION_CAPABILITIES
+        }
+        if CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES:
+            support["supports_temperature"] = _OpenAIModelSampling.supports_temperature(
+                model_name=parameters["model"],
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=self._generation_capability_overrides.get(CapabilityName.TEMPERATURE),
+            )
+        super().apply_capabilities(
+            capabilities=self._generation_capabilities_for_mode(self.capabilities.model_copy(update=support))
+        )
+
+    def _effective_generation_parameters(self) -> dict[str, Any]:
+        parameters = getattr(self, "_extra_body_parameters", None) or {}
+        return {
+            "model": self._underlying_model or self._model_name,
+            **parameters,
+            **(parameters.get("extra_body") or {}),
+        }
+
+    def _generation_capabilities_for_mode(self, capabilities: TargetCapabilities) -> TargetCapabilities:
+        parameters = self._effective_generation_parameters()
+        temperature_supported = (
+            CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES
+            and capabilities.includes(capability=CapabilityName.TEMPERATURE)
+            and _OpenAIModelSampling.supports_temperature(
+                model_name=parameters["model"],
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=self._effective_generation_capability_overrides.get(CapabilityName.TEMPERATURE),
+            )
+            and not parameters.get("stream", False)
+        )
+        return capabilities.model_copy(update={"supports_temperature": temperature_supported})
+
+    def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
+        if config.temperature is None:
+            return
+        if not self._generation_capabilities_for_mode(self.capabilities).includes(
+            capability=CapabilityName.TEMPERATURE
+        ):
+            raise ValueError(
+                f"Runtime temperature is not supported for this {type(self).__name__} model configuration."
+            )
+        if not 0 <= config.temperature <= 2:
+            raise ValueError("OpenAI request temperature must be between 0 and 2 inclusive.")
+
+    def _prepare_request_generation(self, *, body: dict[str, Any], request: Message) -> None:
+        # Public sends and wrapper dispatch clear incoming evidence. Retries and tool
+        # continuations within this child invocation reuse its first resolution.
+        metadata = request.get_piece().prompt_metadata
+        info = RequestGenerationInfo.from_metadata(metadata=metadata)
+        if info is None:
+            config = self.validate_request_generation_config(request)
+            info = RequestGenerationInfo(temperature=self._resolve_request_temperature(body=body, config=config))
+        else:
+            self._apply_request_temperature(body=body, temperature=info.temperature.resolved)
+        metadata.update(info.to_metadata())
+
+    @staticmethod
+    def _apply_request_temperature(*, body: dict[str, Any], temperature: float | None) -> None:
+        nested = body.get("extra_body") or {}
+        if temperature is None:
+            body.pop("temperature", None)
+            # Preserve explicit passthrough nulls on retries, rather than changing the provider payload.
+            if nested.get("temperature") is not None:
+                nested.pop("temperature", None)
+        else:
+            body["temperature"] = temperature
+            # The SDK merges extra_body after its named arguments.
+            if "temperature" in nested:
+                nested["temperature"] = temperature
+
+    def _resolve_request_temperature(
+        self, *, body: dict[str, Any], config: RequestGenerationConfig
+    ) -> ParameterResolution:
+        nested = body.get("extra_body") or {}
+        if config.temperature is not None:
+            self._apply_request_temperature(body=body, temperature=config.temperature)
+        resolved = nested.get("temperature", body.get("temperature"))
+        return ParameterResolution(
+            requested=config.temperature,
+            resolved=resolved,
+            source=(
+                "request"
+                if config.temperature is not None
+                else "target_default"
+                if resolved is not None
+                else "provider_default"
+            ),
+        )
 
     def get_reconstruction_parameters(self) -> dict[str, object]:
         """

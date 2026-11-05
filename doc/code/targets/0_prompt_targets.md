@@ -82,8 +82,9 @@ response = await PromptNormalizer().send_prompt_async(message=message, target=ta
 
 - Set metadata on the current outbound message, not conversation history.
   One piece is sufficient; values on multiple pieces must agree.
-- Values must be finite numbers, not booleans or numeric strings. OpenAI Chat
-  accepts 0 through 2. Invalid, conflicting, or known unsupported overrides fail
+- Values must be finite numbers, not booleans or numeric strings. OpenAI Chat,
+  Completions, and Responses accept 0 through 2 in supported model modes.
+  Invalid, conflicting, or known unsupported overrides fail
   before provider I/O.
 - Overrides take precedence over target defaults and provider passthrough settings.
   Missing or null overrides preserve existing behavior. Transport retries reuse
@@ -298,8 +299,9 @@ Each target class defines defaults; instances can override individual capabiliti
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
 These profiles do not resolve runtime generation support. Check the instantiated
 target's `capabilities.supports_temperature`, which accounts for the adapter and
-its configured model mode. `OpenAIChatTarget` defaults to supported for unknown
-models and deployment aliases; this does not imply runtime support in other adapters.
+its configured model mode. `OpenAIChatTarget`, `OpenAICompletionTarget`, and
+`OpenAIResponseTarget` default to supported for unknown models and deployment
+aliases; this does not imply runtime support in other adapters.
 
 Tool-call history uses the existing `function_call` and `function_call_output` input
 modalities. These describe acceptance of prior calls and results, not tool execution.

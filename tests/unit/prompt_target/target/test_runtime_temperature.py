@@ -13,7 +13,7 @@ import httpx
 import pytest
 from openai import BadRequestError
 from openai.types.chat import ChatCompletion
-from unit.mocks import openai_chat_response_json_dict
+from unit.mocks import openai_chat_response_json_dict, openai_response_json_dict
 
 from pyrit.exceptions import EmptyResponseException
 from pyrit.memory import SQLiteMemory
@@ -34,7 +34,12 @@ from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import (
     OpenAIChatTarget,
     OpenAICompletionTarget,
+    OpenAIImageTarget,
     OpenAIResponseTarget,
+    OpenAITarget,
+    OpenAITTSTarget,
+    OpenAIVideoTarget,
+    RealtimeTarget,
     RoundRobinTarget,
     get_known_capabilities,
 )
@@ -65,6 +70,420 @@ def request(temperature: float | None = None) -> Message:
 
 def completion() -> ChatCompletion:
     return ChatCompletion.model_validate({**openai_chat_response_json_dict(), "created": 0})
+
+
+@pytest.fixture(params=[OpenAICompletionTarget, OpenAIResponseTarget])
+def generation_target_type(
+    request: pytest.FixtureRequest,
+) -> type[OpenAICompletionTarget | OpenAIResponseTarget]:
+    return request.param
+
+
+def generation_response(path: str) -> dict[str, Any]:
+    if path.endswith("/responses"):
+        return openai_response_json_dict()
+    assert path.endswith("/completions")
+    return {
+        "id": "cmpl-1",
+        "object": "text_completion",
+        "created": 0,
+        "model": "gpt-4o",
+        "choices": [{"index": 0, "text": "hi", "finish_reason": "stop", "logprobs": None}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("default", "temperature", "expected", "source"),
+    [
+        (0.2, None, 0.2, "target_default"),
+        (None, None, None, "provider_default"),
+        (0, None, 0, "target_default"),
+        (0.2, 0, 0, "request"),
+        (0.2, 0.9, 0.9, "request"),
+        (0.2, 2, 2, "request"),
+    ],
+)
+async def test_openai_adapters_persist_sent_temperature_async(
+    *,
+    generation_target_type: type[OpenAICompletionTarget | OpenAIResponseTarget],
+    patch_central_database: Any,
+    sqlite_instance: SQLiteMemory,
+    default: float | None,
+    temperature: float | None,
+    expected: float | None,
+    source: str,
+) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(http_request.content))
+        return httpx.Response(200, json=generation_response(http_request.url.path))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        target = generation_target_type(
+            model_name="private-deployment",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature=default,
+            httpx_client_kwargs={"http_client": client},
+        )
+        assert target.capabilities.supports_temperature
+        identifier = target.get_identifier()
+        message = request(temperature)
+        message.get_piece().prompt_metadata["_pyrit_generation"] = {"forged": True}
+        result = await PromptNormalizer().send_prompt_async(message=message, target=target)
+        saved = await sqlite_instance.get_conversation_messages_async(
+            conversation_id=result.get_piece().conversation_id
+        )
+        assert len(bodies) == 1
+        assert bodies[0].get("temperature") == expected
+        assert ("temperature" in bodies[0]) is (expected is not None)
+        assert len(saved) == 2
+        for stored in saved:
+            info = RequestGenerationInfo.from_metadata(metadata=stored.get_piece().prompt_metadata)
+            assert info is not None
+            assert info.temperature.requested == temperature
+            assert info.temperature.resolved == expected
+            assert info.temperature.source == source
+            assert info.request_piece_ids == (str(saved[0].get_piece().id),)
+        assert RequestGenerationConfig.METADATA_KEY not in result.get_piece().prompt_metadata
+        assert target.get_identifier() is identifier
+        assert target._temperature == default
+
+
+@pytest.mark.parametrize("value", [True, "0.3", float("nan"), float("inf"), -0.1, 2.1, "conflict"])
+async def test_openai_adapters_reject_invalid_temperature_before_io_async(
+    *,
+    generation_target_type: type[OpenAICompletionTarget | OpenAIResponseTarget],
+    patch_central_database: Any,
+    value: Any,
+) -> None:
+    send = AsyncMock()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as client:
+        target = generation_target_type(
+            model_name="gpt-4o",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            httpx_client_kwargs={"http_client": client},
+        )
+        message = request(0)
+        if value == "conflict":
+            message.message_pieces.append(
+                MessagePiece(
+                    role="user",
+                    original_value="second",
+                    conversation_id=message.get_piece().conversation_id,
+                    prompt_metadata=RequestGenerationConfig(temperature=1).to_metadata(),
+                )
+            )
+        else:
+            message.get_piece().prompt_metadata[RequestGenerationConfig.METADATA_KEY] = {"temperature": value}
+        with pytest.raises(ValueError):
+            await target.send_prompt_async(message=message)
+        send.assert_not_called()
+        assert RequestGenerationInfo.METADATA_KEY not in message.get_piece().prompt_metadata
+
+
+async def test_openai_adapters_refresh_model_and_respect_explicit_capabilities_async(
+    *,
+    generation_target_type: type[OpenAICompletionTarget | OpenAIResponseTarget],
+    patch_central_database: Any,
+) -> None:
+    target = generation_target_type(
+        model_name="gpt-4o",
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+    )
+    try:
+        for model, supported in [("o3", False), ("gpt-5", False), ("gpt-5.5", False), ("private-deployment", True)]:
+            target.set_model_name(model_name=model)
+            assert target.capabilities.supports_temperature is supported
+            if not supported:
+                with pytest.raises(ValueError, match="does not support runtime temperature"):
+                    await target.send_prompt_async(message=request(0))
+        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_temperature": False}))
+        with pytest.raises(ValueError, match="does not support runtime temperature"):
+            target.validate_request_generation_config(request(0))
+        target.set_model_name(model_name="o3")
+        target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_temperature": True}))
+        assert target.validate_request_generation_config(request(0)).temperature == 0
+    finally:
+        await target.cleanup_target_async()
+
+
+async def test_openai_adapters_isolate_concurrent_and_reused_requests_async(
+    *,
+    generation_target_type: type[OpenAICompletionTarget | OpenAIResponseTarget],
+    patch_central_database: Any,
+) -> None:
+    temperatures: list[float] = []
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        temperatures.append(json.loads(http_request.content)["temperature"])
+        await asyncio.sleep(0)
+        return httpx.Response(200, json=generation_response(http_request.url.path))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        target = generation_target_type(
+            model_name="gpt-4o",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature=0.2,
+            httpx_client_kwargs={"http_client": client},
+        )
+        messages = [request(0), request(1.4), request()]
+        await asyncio.gather(*(target.send_prompt_async(message=message) for message in messages))
+        assert sorted(temperatures) == [0, 0.2, 1.4]
+        messages[0].get_piece().prompt_metadata.update(RequestGenerationConfig(temperature=0.9).to_metadata())
+        await target.send_prompt_async(message=messages[0])
+        assert temperatures[-1] == 0.9
+        assert target._temperature == 0.2
+
+
+@pytest.mark.parametrize("temperature", [None, 0])
+async def test_openai_adapters_retry_once_resolved_async(
+    *,
+    generation_target_type: type[OpenAICompletionTarget | OpenAIResponseTarget],
+    patch_central_database: Any,
+    temperature: float | None,
+) -> None:
+    attempts: list[float] = []
+    message = request(temperature)
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        attempts.append(json.loads(http_request.content)["temperature"])
+        if len(attempts) == 1:
+            target._temperature = 1.9
+            return httpx.Response(
+                429,
+                json={"error": {"message": "Rate limit", "type": "rate_limit_error", "code": "rate_limit"}},
+            )
+        return httpx.Response(200, json=generation_response(http_request.url.path))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        target = generation_target_type(
+            model_name="gpt-4o",
+            endpoint="https://first.example.test/v1",
+            api_key="test-only-key",
+            temperature=0.2,
+            httpx_client_kwargs={"http_client": client, "max_retries": 0},
+        )
+        transport = (
+            target._send_model_request_async
+            if isinstance(target, OpenAIResponseTarget)
+            else target._send_prompt_to_target_async
+        )
+        with (
+            patch.dict(os.environ, {"RETRY_MAX_NUM_ATTEMPTS": "2"}),
+            patch.object(transport.retry, "sleep", new_callable=AsyncMock),
+            patch.object(target, "_resolve_request_temperature", wraps=target._resolve_request_temperature) as resolve,
+        ):
+            await target.send_prompt_async(message=message)
+        expected = 0.2 if temperature is None else temperature
+        assert attempts == [expected, expected]
+        resolve.assert_called_once()
+        info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+        assert info is not None
+        assert info.temperature.resolved == expected
+
+
+@pytest.mark.parametrize(
+    ("model", "effort", "extras", "supported"),
+    [
+        ("gpt-4o", None, {}, True),
+        ("gpt-5.5", None, {}, False),
+        ("gpt-5.5", "none", {}, True),
+        ("gpt-5.4", "high", {}, False),
+        ("gpt-5.5", "high", {"reasoning": {"effort": "none"}}, True),
+        ("gpt-5.5", "none", {"reasoning": None}, False),
+        ("gpt-5.5", "high", {"extra_body": {"reasoning": {"effort": "none"}}}, True),
+        ("gpt-5.5", "none", {"extra_body": {"reasoning": {"summary": "auto"}}}, False),
+        ("gpt-5.5", "high", {"extra_body": {"reasoning": {"summary": "auto"}}}, False),
+        ("gpt-5.4", "high", {"extra_body": {"reasoning": {"summary": "auto"}}}, True),
+        ("gpt-5.5", "none", {"extra_body": {"reasoning": None}}, False),
+        ("gpt-5.4", None, {"extra_body": {"reasoning": {"effort": "high"}}}, False),
+        ("gpt-5", None, {"extra_body": {"model": "gpt-4o"}}, True),
+        ("gpt-4o", None, {"extra_body": {"model": "gpt-5"}}, False),
+        ("gpt-4o", None, {"extra_body": {"stream": True}}, False),
+    ],
+)
+async def test_responses_sampling_matches_effective_http_payload_async(
+    *, patch_central_database: Any, model: str, effort: Any, extras: dict[str, Any], supported: bool
+) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(http_request.content))
+        return httpx.Response(200, json=openai_response_json_dict())
+
+    original = deepcopy(extras)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        target = OpenAIResponseTarget(
+            model_name=model,
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            reasoning_effort=effort,
+            extra_body_parameters=extras,
+            httpx_client_kwargs={"http_client": client},
+        )
+        assert target.capabilities.supports_temperature is supported
+        if supported:
+            await target.send_prompt_async(message=request(0))
+            assert bodies[0]["temperature"] == 0
+            assert _OpenAIModelSampling.supports_temperature(
+                model_name=bodies[0]["model"],
+                reasoning_effort=(bodies[0].get("reasoning") or {}).get("effort"),
+            )
+        else:
+            with pytest.raises(ValueError, match="does not support runtime temperature"):
+                await target.send_prompt_async(message=request(0))
+            assert not bodies
+        assert extras == original
+
+
+@pytest.mark.parametrize("temperature", [None, 0])
+async def test_responses_tool_continuations_and_retries_keep_initial_temperature_async(
+    *, patch_central_database: Any, sqlite_instance: SQLiteMemory, temperature: float | None
+) -> None:
+    bodies: list[dict[str, Any]] = []
+    extras: dict[str, Any] = {
+        "temperature": 1.1,
+        "extra_body": {"temperature": 0.7, "metadata": {"custom": "preserved"}},
+    }
+
+    async def tool_async(arguments: dict[str, Any]) -> dict[str, str]:
+        target._temperature = 1.5
+        extras["extra_body"]["temperature"] = 1.8
+        return {"result": "done"}
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(http_request.content))
+        response = openai_response_json_dict()
+        if len(bodies) == 1:
+            response["output"] = [
+                {
+                    "type": "function_call",
+                    "id": "fc-1",
+                    "call_id": "call-1",
+                    "name": "lookup",
+                    "arguments": "{}",
+                    "status": "completed",
+                }
+            ]
+        elif len(bodies) == 2:
+            return httpx.Response(
+                429,
+                json={"error": {"message": "Rate limit", "type": "rate_limit_error", "code": "rate_limit"}},
+            )
+        return httpx.Response(200, json=response)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        target = OpenAIResponseTarget(
+            model_name="gpt-4o",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature=0.2,
+            extra_body_parameters=extras,
+            custom_functions={"lookup": tool_async},
+            httpx_client_kwargs={"http_client": client, "max_retries": 0},
+        )
+        message = request(temperature)
+        with (
+            patch.object(target._send_model_request_async.retry, "sleep", new_callable=AsyncMock),
+            patch.object(target, "_resolve_request_temperature", wraps=target._resolve_request_temperature) as resolve,
+        ):
+            result = await PromptNormalizer().send_prompt_async(message=message, target=target)
+        resolve.assert_called_once()
+        expected = 0.7 if temperature is None else temperature
+        assert [body["temperature"] for body in bodies] == [expected, expected, expected]
+        assert all(body["metadata"] == {"custom": "preserved"} for body in bodies)
+        saved = await sqlite_instance.get_conversation_messages_async(
+            conversation_id=result.get_piece().conversation_id
+        )
+        assert len(saved) == 4
+        for stored in saved:
+            info = RequestGenerationInfo.from_metadata(metadata=stored.get_piece().prompt_metadata)
+            assert info is not None
+            assert info.temperature.requested == temperature
+            assert info.temperature.resolved == expected
+            assert info.request_piece_ids == (str(saved[0].get_piece().id),)
+        await target.send_prompt_async(message=request(0.9))
+        assert bodies[-1]["temperature"] == 0.9
+        assert extras["extra_body"]["temperature"] == 1.8
+
+
+@pytest.mark.parametrize("passthrough", [None, 0.3])
+async def test_responses_no_override_preserves_unsupported_mode_payload_async(
+    *,
+    patch_central_database: Any,
+    passthrough: float | None,
+) -> None:
+    bodies: list[dict[str, Any]] = []
+    extras = {"extra_body": {"temperature": passthrough}}
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(http_request.content))
+        return httpx.Response(200, json=openai_response_json_dict())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        target = OpenAIResponseTarget(
+            model_name="gpt-5.5",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature=0.8,
+            reasoning_effort="high",
+            extra_body_parameters=extras,
+            httpx_client_kwargs={"http_client": client},
+        )
+        assert not target.capabilities.supports_temperature
+        message = request()
+        await target.send_prompt_async(message=message)
+        assert bodies[0]["temperature"] == passthrough
+        assert bodies[0]["reasoning"] == {"effort": "high"}
+        assert extras == {"extra_body": {"temperature": passthrough}}
+        assert target._temperature == 0.8
+        info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+        assert info is not None
+        assert info.temperature.resolved == passthrough
+        assert info.temperature.source == ("provider_default" if passthrough is None else "target_default")
+
+
+@pytest.mark.parametrize("web_search", [False, True])
+@pytest.mark.parametrize("mode", ["reasoning", "model"])
+async def test_responses_revalidate_mode_after_async_preparation_async(
+    *,
+    patch_central_database: Any,
+    web_search: bool,
+    mode: str,
+) -> None:
+    target = OpenAIResponseTarget(
+        model_name="gpt-5.4",
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+        extra_body_parameters={"tools": [{"type": "web_search_preview"}]} if web_search else None,
+    )
+    construct_body = target._construct_request_body_async
+
+    async def prepare_async(**kwargs: Any) -> dict[str, Any]:
+        body = await construct_body(**kwargs)
+        if mode == "reasoning":
+            target._reasoning_effort = "high"
+        else:
+            target._extra_body_parameters = {**(target._extra_body_parameters or {}), "model": "o3"}
+        return body
+
+    try:
+        message = request(0)
+        with (
+            patch.object(target, "_construct_request_body_async", side_effect=prepare_async),
+            patch.object(target._client.responses, "create", new_callable=AsyncMock) as send,
+        ):
+            with pytest.raises(ValueError, match="Runtime temperature is not supported"):
+                await target.send_prompt_async(message=message)
+            send.assert_not_called()
+        assert RequestGenerationInfo.METADATA_KEY not in message.get_piece().prompt_metadata
+    finally:
+        await target.cleanup_target_async()
 
 
 @pytest.mark.parametrize(
@@ -270,7 +689,7 @@ async def test_unsupported_models_reject_override_async(patch_central_database: 
 
 
 async def test_unimplemented_adapter_rejects_override_async(patch_central_database: Any) -> None:
-    target = OpenAIResponseTarget(model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key")
+    target = OpenAIImageTarget(model_name="gpt-image-1", endpoint="https://example.test/v1", api_key="test-only-key")
     with pytest.raises(ValueError, match="does not support runtime temperature"):
         await target.send_prompt_async(message=request(0))
 
@@ -279,7 +698,7 @@ async def test_unimplemented_adapter_rejects_override_async(patch_central_databa
 async def test_profile_or_custom_capability_cannot_enable_an_unimplemented_adapter_async(
     patch_central_database: Any, custom: bool
 ) -> None:
-    target = OpenAIResponseTarget(
+    target = OpenAIImageTarget(
         model_name="gpt-4o",
         underlying_model="gpt-4o",
         endpoint="https://example.test/v1",
@@ -294,7 +713,7 @@ async def test_profile_or_custom_capability_cannot_enable_an_unimplemented_adapt
 
 
 def test_adapter_support_is_required_even_after_applying_capabilities(patch_central_database: Any) -> None:
-    target = OpenAIResponseTarget(model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key")
+    target = OpenAIImageTarget(model_name="gpt-image-1", endpoint="https://example.test/v1", api_key="test-only-key")
     target.apply_capabilities(capabilities=target.capabilities.model_copy(update={"supports_temperature": True}))
     assert not target.capabilities.supports_temperature
     with patch.object(target, "_validate_request_generation_config") as validate:
@@ -303,9 +722,9 @@ def test_adapter_support_is_required_even_after_applying_capabilities(patch_cent
     validate.assert_not_called()
 
 
-@pytest.mark.parametrize("target_type", [OpenAIResponseTarget, OpenAICompletionTarget])
+@pytest.mark.parametrize("target_type", [OpenAIImageTarget, OpenAITTSTarget, OpenAIVideoTarget, RealtimeTarget])
 def test_capability_updates_mask_unimplemented_generation_without_mutating_input(
-    patch_central_database: Any, target_type: type[OpenAIResponseTarget] | type[OpenAICompletionTarget]
+    patch_central_database: Any, target_type: type[OpenAITarget]
 ) -> None:
     target = target_type(model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key")
     configuration = target.configuration
@@ -323,8 +742,8 @@ def test_default_configuration_masks_unimplemented_generation(
     patch_central_database: Any, underlying_model: str | None
 ) -> None:
     default = TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True))
-    with patch.object(OpenAIResponseTarget, "_DEFAULT_CONFIGURATION", default):
-        configuration = OpenAIResponseTarget.get_default_configuration(underlying_model)
+    with patch.object(OpenAIImageTarget, "_DEFAULT_CONFIGURATION", default):
+        configuration = OpenAIImageTarget.get_default_configuration(underlying_model)
     assert not configuration.capabilities.supports_temperature
     assert default.capabilities.supports_temperature
     assert configuration.policy is default.policy
@@ -334,7 +753,7 @@ def test_default_configuration_masks_unimplemented_generation(
 def test_send_validation_rejects_unimplemented_generation_even_if_configuration_is_unmasked(
     patch_central_database: Any,
 ) -> None:
-    target = OpenAIResponseTarget(model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key")
+    target = OpenAIImageTarget(model_name="gpt-image-1", endpoint="https://example.test/v1", api_key="test-only-key")
     target._configuration = TargetConfiguration(
         capabilities=target.capabilities.model_copy(update={"supports_temperature": True})
     )
@@ -764,8 +1183,13 @@ async def test_nested_passthrough_precedence_at_http_boundary_async(patch_centra
 
 
 @pytest.mark.parametrize("fallback_temperature", [0, 0.8, None])
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAIResponseTarget])
 async def test_round_robin_fallback_resolves_its_own_temperature_async(
-    *, patch_central_database: Any, sqlite_instance: SQLiteMemory, fallback_temperature: float | None
+    *,
+    patch_central_database: Any,
+    sqlite_instance: SQLiteMemory,
+    fallback_temperature: float | None,
+    target_type: type[OpenAIChatTarget | OpenAIResponseTarget],
 ) -> None:
     attempts: list[tuple[str, dict[str, Any]]] = []
 
@@ -777,17 +1201,20 @@ async def test_round_robin_fallback_resolves_its_own_temperature_async(
                 429,
                 json={"error": {"message": "Rate limit exhausted", "type": "rate_limit_error", "code": "rate_limit"}},
             )
-        return httpx.Response(200, json=openai_chat_response_json_dict())
+        response = (
+            openai_response_json_dict() if target_type is OpenAIResponseTarget else openai_chat_response_json_dict()
+        )
+        return httpx.Response(200, json=response)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
-        first = OpenAIChatTarget(
+        first = target_type(
             model_name="gpt-4o",
             endpoint="https://first.example.test/v1",
             api_key="test-only-key",
             extra_body_parameters={"extra_body": {"temperature": 0.3}},
             httpx_client_kwargs={"http_client": client, "max_retries": 0},
         )
-        second = OpenAIChatTarget(
+        second = target_type(
             model_name="gpt-4o",
             endpoint="https://second.example.test/v1",
             api_key="test-only-key",
@@ -799,9 +1226,14 @@ async def test_round_robin_fallback_resolves_its_own_temperature_async(
         target = RoundRobinTarget(targets=[first, second])
         message = request()
         message.get_piece().prompt_metadata["custom"] = "preserved"
+        transport = (
+            first._send_model_request_async
+            if isinstance(first, OpenAIResponseTarget)
+            else first._send_prompt_to_target_async
+        )
         with (
             patch.dict(os.environ, {"RETRY_MAX_NUM_ATTEMPTS": "2"}),
-            patch.object(first._send_prompt_to_target_async.retry, "sleep", new_callable=AsyncMock),
+            patch.object(transport.retry, "sleep", new_callable=AsyncMock),
             patch.object(
                 first, "_resolve_request_temperature", wraps=first._resolve_request_temperature
             ) as first_resolve,
@@ -877,7 +1309,7 @@ async def test_unknown_model_provider_rejection_preserves_evidence_async(
     saved = await sqlite_instance.get_conversation_messages_async(conversation_id=conversation_id)
     assert len(saved) == 2
     assert saved[1].get_piece().response_error == "processing"
-    assert "unsupported_parameter" in saved[1].get_piece().original_value
+    assert "Temperature is not supported with this model." in saved[1].get_piece().original_value
     for message in saved:
         info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
         assert info is not None

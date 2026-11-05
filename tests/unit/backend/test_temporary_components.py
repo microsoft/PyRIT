@@ -53,7 +53,13 @@ from pyrit.converter import (
 from pyrit.memory import SQLiteMemory
 from pyrit.models import JSONValue, Operation, PromptDataType, RequestGenerationConfig, RequestGenerationInfo
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget, PromptTarget
+from pyrit.prompt_target import (
+    HuggingFaceChatTarget,
+    OpenAIChatTarget,
+    OpenAICompletionTarget,
+    OpenAIResponseTarget,
+    PromptTarget,
+)
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async, wait_for_event_async
@@ -302,12 +308,18 @@ class TestTemporaryComponents:
             await source.cleanup_target_async()
 
     @pytest.mark.parametrize("client_setting", ["default", "none", "custom"])
-    async def test_runtime_temperature_is_independent_of_reconstruction_async(self, client_setting: str) -> None:
+    @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
+    async def test_runtime_temperature_is_independent_of_reconstruction_async(
+        self,
+        *,
+        client_setting: str,
+        target_type: type[OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget],
+    ) -> None:
         async with httpx.AsyncClient() as client:
             client_kwargs: dict[str, Any] = {}
             if client_setting != "default":
                 client_kwargs["http_client"] = client if client_setting == "custom" else None
-            source = OpenAIChatTarget(
+            source = target_type(
                 endpoint="https://example.test/v1",
                 model_name="gpt-4o",
                 api_key="test-only-key",

@@ -104,7 +104,8 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 # Model profiles above do not resolve runtime generation support. Check the
 # instantiated target's `capabilities.supports_temperature`.
 #
-# **`OpenAIChatTarget` assumes temperature is supported unless a known model or
+# **`OpenAIChatTarget`, `OpenAICompletionTarget`, and `OpenAIResponseTarget`
+# assume temperature is supported unless a known model or
 # configured mode rules it out.** This is not a supported-model allowlist: unknown
 # model names and deployment aliases are supported by default. They are not probed;
 # provider rejection is surfaced without silently dropping the parameter.
@@ -119,10 +120,13 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 #
 # An explicit `supports_temperature=True` or `False` overrides these model-based
 # decisions, including inferred reasoning defaults. Explicit reasoning effort
-# other than `"none"`, audio output, and streaming still disable runtime support.
+# other than `"none"`, Chat audio output, and streaming still disable runtime support.
+# Responses reads effort from `reasoning_effort` or effective `reasoning.effort`
+# passthrough settings, including nested `extra_body` overrides.
 # Support refreshes when `set_model_name()` is called and is checked again before sending.
 # These rules do not change constructor defaults or requests without runtime overrides.
-# Other target adapters do not inherit OpenAI Chat's default; check their capabilities.
+# Image, TTS, Video, and Realtime targets do not expose runtime temperature.
+# Realtime's GA API removed temperature; legacy beta settings are not supported here.
 #
 # Reasoning defaults follow OpenAI's [GPT-5.5](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.5) and
 # [GPT-5.6](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6) guides.
