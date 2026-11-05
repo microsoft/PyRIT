@@ -994,7 +994,7 @@ class TestCreateAttack:
         store.assert_not_awaited()
 
     @pytest.mark.parametrize("copy_history", [False, True])
-    @pytest.mark.parametrize("objective", ["", "Evaluate the response"])
+    @pytest.mark.parametrize("objective", ["", "Evaluate the response", "Manual attack via GUI"])
     @pytest.mark.parametrize("field", ["objective", "name"])
     async def test_manual_creation_registers_ownership_async(
         self, *, sqlite_instance: SQLiteMemory, copy_history: bool, objective: str, field: str
@@ -1050,10 +1050,14 @@ class TestCreateAttack:
         assert identifier.get_child("objective_target") == target.get_identifier()
         filtered = await service.list_attacks_async(attack_types=["ManualAttack"])
         assert [item.attack_result_id for item in filtered.items] == [created.attack_result_id]
+        assert filtered.items[0].objective == objective
+        assert (await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id]))[
+            0
+        ].objective == summary.objective
 
         updated = await service.update_attack_async(
             attack_result_id=created.attack_result_id,
-            request=UpdateAttackRequest(objective="Edited objective", expected_objective=objective),
+            request=UpdateAttackRequest(objective="Edited objective", expected_objective=summary.objective),
         )
         assert updated is not None
         assert (updated.objective, updated.attack_type) == ("Edited objective", "ManualAttack")
@@ -1351,7 +1355,7 @@ class TestCreateAttack:
             stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_ar.objective == ""
             assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
-            assert "objective_is_placeholder" not in stored_ar.metadata
+            assert stored_ar.metadata["objective_is_placeholder"] is False
 
     async def test_create_attack_with_name_marks_objective_explicit(self, attack_service, mock_memory) -> None:
         """Test that a user-supplied request.name is persisted directly as the objective."""
@@ -1372,7 +1376,7 @@ class TestCreateAttack:
             stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_ar.objective == "Extract the secret"
             assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
-            assert "objective_is_placeholder" not in stored_ar.metadata
+            assert stored_ar.metadata["objective_is_placeholder"] is False
 
 
 # ============================================================================

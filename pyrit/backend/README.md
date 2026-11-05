@@ -48,6 +48,9 @@ Objective edits use `PATCH /api/attacks/{attack_result_id}` without changing the
 strategy identifier. New attacks copied from conversations or saved through
 `POST /api/attacks/save-conversation` also use `ManualAttack`; their automated
 source results keep their original strategy types.
+New and edited manual objectives are marked as non-placeholder, so even the literal
+`"Manual attack via GUI"` is preserved in summaries. Unmarked historical manual
+placeholders retain their legacy empty-summary behavior.
 
 Until PyRIT 1.4, `name` remains a deprecated input alias for `objective`, with
 the same text validation. When `objective` is omitted or null, `name` supplies

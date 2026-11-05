@@ -635,6 +635,7 @@ class AttackService:
             labels={"source": "gui", **(request.labels or {})},
             metadata={
                 "created_at": now.isoformat(),
+                "objective_is_placeholder": False,
                 "target_unbound": conversation.target_identifier is None,
                 **({"target_registry_name": request.target_registry_name} if request.target_registry_name else {}),
                 **(request.target_binding.to_metadata() if request.target_binding else {}),
@@ -1149,7 +1150,11 @@ class AttackService:
             "outcome_reason": None,
             "automated_score_id": None,
             "human_score_id": None,
-            "attack_metadata": {AttackResult.SCORING_ERRORS_KEY: {}, **(settings or {})},
+            "attack_metadata": {
+                "objective_is_placeholder": False,
+                AttackResult.SCORING_ERRORS_KEY: {},
+                **(settings or {}),
+            },
         }
 
     async def remove_human_score_async(self, *, attack_result_id: str) -> AttackSummary | None:
