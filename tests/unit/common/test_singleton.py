@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import abc
+import threading
 
 import pytest
 
@@ -45,3 +46,26 @@ def test_singleton_preserves_init_args():
     second = _Configured(value=99)
     assert first is second
     assert second.value == 42
+
+
+def test_singleton_concurrent_first_calls_create_single_instance():
+    class _SlowInit(abc.ABC, metaclass=Singleton):
+        def __init__(self) -> None:
+            # Release the GIL so racing threads interleave inside __call__.
+            threading.Event().wait(0.01)
+
+    barrier = threading.Barrier(16)
+    results: list = []
+
+    def _make() -> None:
+        barrier.wait()
+        results.append(_SlowInit())
+
+    threads = [threading.Thread(target=_make) for _ in range(16)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(results) == 16
+    assert all(result is results[0] for result in results)
