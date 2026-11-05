@@ -1263,8 +1263,10 @@ class FuzzerGenerator(
         if num_queries == 0:
             return
 
-        # Calculate reward (normalized by number of prompts tested)
-        reward = jailbreak_count / (len(context.prompts) * 1)
+        # The reward must stay a rate in [0, 1]: jailbreak_count counts flattened
+        # scores, and score_batch_async may yield several scores per response, so
+        # the denominator is the actual number of scored queries passed in.
+        reward = jailbreak_count / num_queries
 
         # Use MCTS explorer to update rewards
         self._mcts_explorer.update_rewards(

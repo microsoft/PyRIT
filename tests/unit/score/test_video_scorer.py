@@ -3,8 +3,10 @@
 
 import asyncio
 import os
+import tempfile
 import threading
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,10 +19,10 @@ from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score
 from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
-from pyrit.score.observation.execution import _scoring_expectation_context
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 from pyrit.score.true_false.video_true_false_scorer import VideoTrueFalseScorer
+from pyrit.score.video_scorer import VideoHelper
 
 
 def is_opencv_installed():
@@ -141,6 +143,160 @@ def _make_score(*, score_type: str, score_value: str | None, message_piece_id: u
     )
 
 
+@pytest.fixture
+def isolated_frame_extraction(
+    tmp_path: Path, video_converter_sample_video: MessagePiece
+) -> Iterator[tuple[VideoHelper, Path]]:
+    source = Path(video_converter_sample_video.converted_value)
+    original_video = source.read_bytes()
+    unrelated = tmp_path / "unrelated.png"
+    unrelated.write_bytes(b"caller-owned image")
+    helper = VideoHelper(image_capable_scorer=MockTrueFalseScorer(), num_sampled_frames=3)
+    with (
+        patch.object(tempfile, "tempdir", str(tmp_path)),
+        patch("pyrit.score.video_scorer.random.sample", return_value=[0, 1, 2]),
+    ):
+        yield helper, source
+    assert source.read_bytes() == original_video
+    assert unrelated.read_bytes() == b"caller-owned image"
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+@pytest.mark.parametrize("failure", ["encode", "write", "write_false", "create"])
+def test_extract_frames_partial_failure_removes_owned_files(
+    isolated_frame_extraction: tuple[VideoHelper, Path], failure: str
+) -> None:
+    import cv2
+
+    helper, source = isolated_frame_extraction
+    capture = cv2.VideoCapture(str(source))
+    encode = cv2.imencode
+    write = cv2.imwrite
+    create = tempfile.NamedTemporaryFile
+
+    def encode_frame(extension: str, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        if failure == "encode" and encode_mock.call_count == 2:
+            raise OSError("Injected encode failure")
+        return encode(extension, frame)
+
+    def write_frame(path: str, frame: np.ndarray) -> bool:
+        if failure in ("write", "write_false") and write_mock.call_count == 2:
+            if failure == "write_false":
+                return False
+            raise OSError("Injected write failure")
+        return bool(write(path, frame))
+
+    with (
+        patch.object(cv2, "VideoCapture", return_value=capture),
+        patch.object(cv2, "imencode", side_effect=encode_frame) as encode_mock,
+        patch.object(cv2, "imwrite", side_effect=write_frame) as write_mock,
+        patch.object(tempfile, "NamedTemporaryFile", side_effect=create) as create_mock,
+    ):
+        if failure == "create":
+            create_mock.side_effect = [
+                create(dir=source.parent, suffix="_frame_0.png", delete=False),
+                OSError("create"),
+            ]
+        with pytest.raises(OSError):
+            helper._extract_frames(str(source))
+
+    assert not capture.isOpened()
+    assert not list(source.parent.glob("*_frame_*.png"))
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+@pytest.mark.parametrize("failed_frames", [{1}, {0, 1, 2}])
+def test_extract_frames_failed_encodes_do_not_create_files(
+    isolated_frame_extraction: tuple[VideoHelper, Path], failed_frames: set[int]
+) -> None:
+    import cv2
+
+    helper, source = isolated_frame_extraction
+    encode = cv2.imencode
+
+    def encode_frame(extension: str, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        if encode_mock.call_count - 1 in failed_frames:
+            return False, np.empty(0, dtype=np.uint8)
+        return encode(extension, frame)
+
+    with patch.object(cv2, "imencode", side_effect=encode_frame) as encode_mock:
+        frames = helper._extract_frames(str(source))
+
+    assert set(frames) == {str(path) for path in source.parent.glob("*_frame_*.png")}
+    assert len(frames) == 3 - len(failed_frames)
+    assert all(cv2.imread(path) is not None for path in frames)
+    for path in frames:
+        Path(path).unlink()
+
+
+@pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")
+@pytest.mark.parametrize("cancel_twice", [False, True])
+@pytest.mark.parametrize("failure", ["write", "encode_false"])
+async def test_partial_frame_extraction_cancellation_removes_owned_files_async(
+    isolated_frame_extraction: tuple[VideoHelper, Path], failure: str, cancel_twice: bool
+) -> None:
+    import cv2
+
+    helper, source = isolated_frame_extraction
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = threading.Event()
+    capture = cv2.VideoCapture(str(source))
+    encode = cv2.imencode
+    write = cv2.imwrite
+    extract = helper._extract_frames
+
+    def hold_worker() -> None:
+        loop.call_soon_threadsafe(started.set)
+        if not release.wait(TEST_WATCHDOG_SECONDS):
+            raise TimeoutError("The test did not release partial frame extraction.")
+
+    def write_frame(path: str, frame: np.ndarray) -> bool:
+        if failure == "write" and write_mock.call_count == 2:
+            hold_worker()
+            raise OSError("Injected partial write failure")
+        return bool(write(path, frame))
+
+    def encode_frame(extension: str, frame: np.ndarray) -> tuple[bool, np.ndarray]:
+        if failure == "encode_false" and encode_mock.call_count == 2:
+            return False, np.empty(0, dtype=np.uint8)
+        return encode(extension, frame)
+
+    def extract_frames(video_path: str) -> list[str]:
+        paths = extract(video_path)
+        hold_worker()
+        return paths
+
+    with (
+        patch.object(cv2, "VideoCapture", return_value=capture),
+        patch.object(cv2, "imwrite", side_effect=write_frame) as write_mock,
+        patch.object(cv2, "imencode", side_effect=encode_frame) as encode_mock,
+        patch.object(helper, "_extract_frames", side_effect=extract_frames),
+    ):
+        task = asyncio.create_task(helper._extract_video_frames_async(str(source)))
+        try:
+            await wait_for_event_async(event=started, tasks=[task])
+            assert list(source.parent.glob("*_frame_*.png"))
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            if cancel_twice:
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError) as caught:
+                await wait_for_completion_async(future=task)
+            if failure == "write":
+                assert isinstance(caught.value.__cause__, OSError)
+        finally:
+            release.set()
+            await settle_tasks_async(task)
+
+    assert not capture.isOpened()
+    assert not list(source.parent.glob("*_frame_*.png"))
+
+
 @pytest.mark.parametrize("float_scale", [False, True])
 async def test_video_forwards_explicit_conditions_and_templates_async(float_scale: bool, tmp_path: Path) -> None:
     video_path = tmp_path / "typed-video.mp4"
@@ -162,7 +318,6 @@ async def test_video_forwards_explicit_conditions_and_templates_async(float_scal
         audio_objective_template="Audio: {objective}",
     )
     expectation = ScoringExpectation(objective="question", conditions=(AnswerMatches(correct_answer="Paris"),))
-    unrelated = ScoringExpectation(conditions=(AnswerMatches(correct_answer="London"),))
     audio_path = tmp_path / "typed-audio.wav"
     audio_path.write_bytes(b"audio")
     frame = MessagePiece(role="assistant", original_value="frame.png", original_value_data_type="image_path")
@@ -181,7 +336,6 @@ async def test_video_forwards_explicit_conditions_and_templates_async(float_scal
             ],
         ) as image_score,
         patch.object(audio_scorer, "_score_batch_nested_async", return_value=[]) as audio_score,
-        _scoring_expectation_context(unrelated),
     ):
         scores = await scorer._score_async(video.to_message(), expectation=expectation)
 
@@ -655,6 +809,53 @@ async def test_video_audio_scorer_cancellation_during_extraction_async(
     assert not extracted_audio.exists()
     assert source_path.exists()
     score_audio.assert_not_awaited()
+
+
+@pytest.mark.parametrize("cancel_twice", [False, True])
+async def test_video_frame_scorer_cancellation_during_extraction_cleans_up_frames_async(
+    tmp_path: Path, video_converter_sample_video: MessagePiece, cancel_twice: bool
+) -> None:
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = threading.Event()
+    Path(video_converter_sample_video.converted_value).touch(exist_ok=True)
+    frame_paths = [tmp_path / "cancelled_frame_0.png", tmp_path / "cancelled_frame_1.png"]
+    image_scorer = MockTrueFalseScorer()
+    scorer = VideoTrueFalseScorer(image_capable_scorer=image_scorer)
+
+    def extract_frames(video_path: str) -> list[str]:
+        loop.call_soon_threadsafe(started.set)
+        if not release.wait(TEST_WATCHDOG_SECONDS):
+            raise TimeoutError("The test did not release frame extraction.")
+        for frame_path in frame_paths:
+            frame_path.write_bytes(b"frame")
+        return [str(frame_path) for frame_path in frame_paths]
+
+    with (
+        patch.object(scorer._video_helper, "_extract_frames", side_effect=extract_frames),
+        patch.object(image_scorer, "_score_batch_nested_async", new_callable=AsyncMock) as score_frames,
+    ):
+        task = asyncio.create_task(
+            scorer._video_helper._score_frames_async(message_piece=video_converter_sample_video, expectation=None)
+        )
+        try:
+            await wait_for_event_async(event=started, tasks=[task])
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            if cancel_twice:
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await wait_for_completion_async(future=task)
+        finally:
+            release.set()
+            await settle_tasks_async(task)
+
+    assert not any(frame_path.exists() for frame_path in frame_paths)
+    score_frames.assert_not_awaited()
 
 
 @pytest.mark.skipif(not is_opencv_installed(), reason="opencv is not installed")

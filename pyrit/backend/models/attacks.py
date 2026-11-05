@@ -24,6 +24,7 @@ from pyrit.backend.models.common import (
     TextStr,
 )
 from pyrit.models import (
+    AttackOutcome,
     AttackResult,
     ChatMessageRole,
     ConversationReference,
@@ -328,6 +329,31 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
         return sorted(ref.conversation_id for ref in self.related_conversations)
 
 
+class AttackMetadata(BaseModel):
+    """Chat metadata without reference collections, transcript bodies, or result hierarchies."""
+
+    attack_result_id: str
+    conversation_id: str
+    objective: str
+    labels: dict[str, str] = Field(default_factory=dict)
+    operator: str | None = None
+    target: TargetInfo | None = None
+    target_unbound: bool = False
+    outcome: AttackOutcome
+    automated_score: ScoreView | None = None
+    human_score: ScoreView | None = None
+    chat_scorer: RegisteredComponentReference | None = None
+    chat_scorer_inherited: bool = False
+    execution_read_only: bool = False
+    manual_continuation: ManualContinuation | None = None
+    last_response_message_piece_id: str | None = None
+    related_conversation_count: int = Field(..., ge=0, description="Number of pruned conversations, excluding main")
+    selected_conversation_id: str
+    selected_conversation_valid: bool = Field(
+        ..., description="Selected conversation is a saved main or pruned reference"
+    )
+
+
 # ============================================================================
 # Conversation Messages Response
 # ============================================================================
@@ -350,6 +376,13 @@ class ConversationMessagesResponse(BaseModel):
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[MessageView] = Field(default_factory=list, description="All messages in order")
     scoring_failure: ScoringFailure | None = None
+    automated_score: ScoreView | None = None
+    outcome: AttackOutcome | None = Field(
+        default=None, description="Outcome for the latest response; a human score overrides the attack"
+    )
+    latest_response_id: str | None = Field(
+        default=None, description="First piece ID of the latest live assistant response"
+    )
     target_response_status: TargetResponseStatus | None = Field(
         default=None,
         description=(

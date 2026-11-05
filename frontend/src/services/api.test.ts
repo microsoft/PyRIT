@@ -785,6 +785,41 @@ describe("api service", () => {
       expect(result.attack_type).toBe("ManualAttack");
     });
 
+    it.each([undefined, "off-page/conversation"])(
+      "should request reference-free initial metadata with selected conversation %s",
+      async (conversationId: string | undefined) => {
+        const data = {
+          attack_result_id: "attack/id", conversation_id: "main", objective: "Saved objective",
+          labels: {}, outcome: "undetermined", execution_read_only: true,
+          last_response_message_piece_id: "last-response", related_conversation_count: 700,
+          selected_conversation_id: conversationId ?? "main", selected_conversation_valid: true,
+        };
+        (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+        expect(await attacksApi.getAttackMetadata("attack/id", conversationId)).toEqual(data);
+        if (conversationId === undefined) {
+          expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/metadata");
+        } else {
+          expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/metadata", {
+            params: { conversation_id: conversationId },
+          });
+        }
+        expect(apiClient.get).toHaveBeenCalledTimes(1);
+        expect(data).not.toHaveProperty("related_conversations");
+        expect(data).not.toHaveProperty("related_conversation_ids");
+      },
+    );
+
+    it("should propagate metadata errors without fetching the legacy full summary", async () => {
+      const error = new Error("Metadata unavailable");
+      (apiClient.get as jest.Mock).mockRejectedValueOnce(error);
+      await expect(attacksApi.getAttackMetadata("attack", "selected")).rejects.toBe(error);
+      expect(apiClient.get).toHaveBeenCalledTimes(1);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack/metadata", {
+        params: { conversation_id: "selected" },
+      });
+    });
+
     it("should get attack messages", async () => {
       const mockResponse = {
         data: {
@@ -814,6 +849,61 @@ describe("api service", () => {
         { params: { conversation_id: "conv-123" } }
       );
       expect(result.messages).toHaveLength(1);
+    });
+
+    it.each([1, 100, 500])("should preserve message-piece pagination metadata with limit %i", async (limit: number) => {
+      const data = {
+        conversation_id: "conversation/id",
+        messages: [],
+        target_response_status: null,
+        pagination: { limit, has_more: true, next_cursor: "message-next" },
+        partial_message_sequences: [7],
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+      expect(await attacksApi.getMessages("attack/id", "conversation/id", { limit, cursor: "message-previous" })).toEqual(data);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/messages", {
+        params: { conversation_id: "conversation/id", limit, cursor: "message-previous" },
+      });
+    });
+
+    it("should preserve the unpaged conversation-reference request", async () => {
+      const data = { attack_result_id: "attack", main_conversation_id: "main", conversations: [] };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+      expect(await attacksApi.getConversations("attack")).toEqual(data);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack/conversations");
+    });
+
+    it.each([1, 50, 200])("should preserve reference pagination and server totals with limit %i", async (limit: number) => {
+      const data = {
+        attack_result_id: "attack/id", main_conversation_id: "main", conversations: [],
+        total_count: 700, pagination: { limit, has_more: true, next_cursor: "references-next" },
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data });
+
+      expect(await attacksApi.getConversations("attack/id", { limit, cursor: "references-previous" })).toEqual(data);
+      expect(apiClient.get).toHaveBeenCalledWith("/attacks/attack%2Fid/conversations", {
+        params: { limit, cursor: "references-previous" },
+      });
+    });
+
+    it("should request initial bounded pages without sending a continuation cursor", async () => {
+      (apiClient.get as jest.Mock).mockResolvedValue({ data: {} });
+      await attacksApi.getMessages("attack", "main", { limit: 100 });
+      expect(apiClient.get).toHaveBeenLastCalledWith("/attacks/attack/messages", {
+        params: { conversation_id: "main", limit: 100 },
+      });
+      await attacksApi.getConversations("attack", { limit: 50 });
+      expect(apiClient.get).toHaveBeenLastCalledWith("/attacks/attack/conversations", { params: { limit: 50 } });
+    });
+
+    it("should propagate invalid saved-evidence cursors without retrying or fetching an unpaged transcript", async () => {
+      const error = new Error("Invalid saved cursor");
+      (apiClient.get as jest.Mock).mockRejectedValue(error);
+      await expect(attacksApi.getMessages("attack", "main", { limit: 100, cursor: "invalid" })).rejects.toBe(error);
+      await expect(attacksApi.getConversations("attack", { limit: 50, cursor: "invalid" })).rejects.toBe(error);
+      expect(apiClient.get).toHaveBeenCalledTimes(2);
     });
 
     it("should add a text message to an attack", async () => {
@@ -1208,6 +1298,7 @@ describe("api service", () => {
         scenario_names: ["first.scenario", "second.scenario"],
         run_statuses: ["IN_PROGRESS", "FAILED"],
         label: ["operator:alice", "operator:bob", "team:safety"],
+        sort_by: "activity",
       });
 
       expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs", {
@@ -1217,6 +1308,7 @@ describe("api service", () => {
           scenario_names: ["first.scenario", "second.scenario"],
           run_statuses: ["IN_PROGRESS", "FAILED"],
           label: ["operator:alice", "operator:bob", "team:safety"],
+          sort_by: "activity",
         },
         paramsSerializer: { indexes: null },
       });
@@ -1250,6 +1342,52 @@ describe("api service", () => {
         params: { since: "cursor-1", limit: 50 },
         signal: controller.signal,
       });
+    });
+
+    it("loads a hierarchy root page with its root cursor", async () => {
+      const projection = {
+        scenario_result_id: "sr-1",
+        groups: [],
+        has_more: true,
+        next_cursor: "roots-2",
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: projection });
+      const controller = new AbortController();
+
+      const result = await scenariosApi.getRunHierarchy(
+        "sr/1",
+        { max_nodes: 200, cursor: "roots-1" },
+        controller.signal,
+      );
+
+      expect(apiClient.get).toHaveBeenCalledWith("/scenarios/runs/sr%2F1/hierarchy", {
+        params: { max_nodes: 200, cursor: "roots-1" },
+        signal: controller.signal,
+      });
+      expect(result).toBe(projection);
+    });
+
+    it("loads a node's children with the node's own children cursor", async () => {
+      const node = {
+        attack_result_id: "ar/1",
+        child_offset: 200,
+        next_children_cursor: "children-3",
+      };
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: node });
+      const controller = new AbortController();
+
+      const result = await scenariosApi.getRunHierarchyNode(
+        "sr/1",
+        "ar/1",
+        { limit: 200, children_cursor: "children-2" },
+        controller.signal,
+      );
+
+      expect(apiClient.get).toHaveBeenCalledWith(
+        "/scenarios/runs/sr%2F1/hierarchy/nodes/ar%2F1",
+        { params: { limit: 200, children_cursor: "children-2" }, signal: controller.signal },
+      );
+      expect(result).toBe(node);
     });
 
     it("cancels a scenario run by id", async () => {
