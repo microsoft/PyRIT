@@ -69,3 +69,28 @@ def test_singleton_concurrent_first_calls_create_single_instance():
 
     assert len(results) == 16
     assert all(result is results[0] for result in results)
+
+
+def test_singleton_nested_construction_does_not_deadlock():
+    """A singleton whose __init__ builds another uncached singleton must not hang.
+
+    Regression test for the Copilot review finding on PR #3970: the metaclass lock
+    is shared across all Singleton classes, so a non-reentrant lock deadlocks when
+    construction nests within the same thread.
+    """
+
+    class _Inner(abc.ABC, metaclass=Singleton):
+        pass
+
+    class _Outer(abc.ABC, metaclass=Singleton):
+        def __init__(self) -> None:
+            self.inner = _Inner()
+
+    results: list = []
+    worker = threading.Thread(target=lambda: results.append(_Outer()))
+    worker.start()
+    worker.join(timeout=10)
+
+    assert not worker.is_alive(), "deadlock: nested singleton construction hung"
+    assert len(results) == 1
+    assert results[0].inner is _Inner()
