@@ -243,8 +243,6 @@ it('shows the operation and records a finding within it', async () => {
   })
 })
 
-
-
 it('links an optional evidence attack when the finding is created, but not when editing', async () => {
   const user = userEvent.setup()
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ items: [FINDING], has_more: false, next_offset: null })
