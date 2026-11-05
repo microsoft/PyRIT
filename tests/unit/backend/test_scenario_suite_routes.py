@@ -333,9 +333,12 @@ def test_get_registered_suite_returns_origin_and_null_version(client: TestClient
     assert response.json()["version"] is None
 
 
-def test_storage_failure_is_sanitized(client: TestClient, service: MagicMock) -> None:
-    """Test that Azure SDK details do not reach API callers."""
-    service.list_suites_async = AsyncMock(side_effect=AzureError("container key=secret"))
+@pytest.mark.parametrize(
+    "error", [AzureError("container key=secret"), PermissionError(13, "Permission denied", "/srv/secret/suites")]
+)
+def test_storage_failure_is_sanitized(client: TestClient, service: MagicMock, error: Exception) -> None:
+    """Test that storage details do not reach API callers."""
+    service.list_suites_async = AsyncMock(side_effect=error)
 
     response = client.get("/api/scenario-suites")
 
