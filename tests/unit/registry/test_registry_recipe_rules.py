@@ -165,6 +165,9 @@ def test_check_saved_entry_params_accepts_a_url_without_a_credential(url: str) -
         "https://contoso.example/v1?api-version=2024-10-21&=SECRET",
         "https://contoso.example/v1?api-version=2024-10-21?code=SECRET",
         "https://contoso.example/v1;code=SECRET",
+        "https://contoso.example/v1;SECRET",
+        "https://contoso.example/v1&SECRET",
+        "https://contoso.blob.core.windows.net;sig=SECRET/prompts",
         "https://contoso.example/v1/key=SECRET",
     ],
 )
@@ -221,6 +224,8 @@ def test_check_saved_entry_params_accepts_an_agent_card_path_without_a_credentia
         "//SECRET@h",
         "card.json&access_token=SECRET",
         "card.json;session=SECRET",
+        "card.json;SECRET",
+        "card.json&SECRET",
         "card.json?api-version=1",
     ],
 )
@@ -229,6 +234,13 @@ def test_check_saved_entry_params_refuses_an_agent_card_path_that_can_carry_a_cr
 
     assert str(refusal).startswith("'agent_card_path' can carry a credential in a URL")
     assert "SECRET" not in str(refusal)
+
+
+@pytest.mark.parametrize("endpoint", ["ftp://agent.example.test", "https:agent.example.test/card"])
+def test_check_saved_entry_params_refuses_an_agent_endpoint_that_isnt_a_plain_address(endpoint: str) -> None:
+    refusal = _refusal("A2ATarget", {"endpoint": endpoint})
+
+    assert str(refusal).startswith("'endpoint' can carry a credential in a URL")
 
 
 @pytest.mark.parametrize(
