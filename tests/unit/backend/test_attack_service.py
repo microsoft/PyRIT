@@ -105,6 +105,20 @@ async def test_missing_operation_rejected_before_target_or_media_preparation_asy
 
 
 @pytest.mark.usefixtures("patch_central_database")
+async def test_create_attack_rejects_a_half_provided_branch_spec_async() -> None:
+    """A branch spec with exactly one of the two fields is a bad request, not a silent unbranched attack."""
+    for bad in (
+        {"source_conversation_id": str(uuid.uuid4())},
+        {"cutoff_index": 2},
+    ):
+        with pytest.raises(ValueError, match="must be provided together"):
+            await AttackService().create_attack_async(request=CreateAttackRequest(**bad))
+
+    # The both and neither shapes keep working.
+    plain = await AttackService().create_attack_async(request=CreateAttackRequest())
+    assert plain.attack_result_id
+
+
 @pytest.mark.parametrize("name", [" engagement", "missing"])
 async def test_create_attack_keeps_deprecated_name_and_links_a_saved_operation_async(
     sqlite_instance, name: str
