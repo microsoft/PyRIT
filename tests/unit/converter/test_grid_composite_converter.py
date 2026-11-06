@@ -217,3 +217,12 @@ class TestConvertAsync:
             result = await converter.convert_async(prompt="word " * 200, input_type="text")
         assert os.path.exists(result.output_text)
         assert any("does not fit" in message for message in caplog.messages)
+
+
+def test_fit_tile_composites_transparency_onto_white(innocuous_images):
+    converter = GridCompositeConverter(innocuous_images=innocuous_images, tile_size=(32, 32), random_seed=1)
+    # Fully transparent pixels whose hidden RGB is black must not render as black.
+    transparent = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    tile = converter._fit_tile(transparent)
+    assert tile.mode == "RGB"
+    assert tile.getpixel((16, 16)) == (255, 255, 255)
