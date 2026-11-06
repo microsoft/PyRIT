@@ -376,7 +376,18 @@ function ScenarioLaunchForm({
     () => uniqueTechniqueOptions(scenario),
     [scenario],
   )
-  const dynamicParameters = useMemo(() => scenarioDynamicParameters(scenario), [scenario])
+  const catalogParameters = useMemo(() => scenarioDynamicParameters(scenario), [scenario])
+  const savedScenarioParams = initialRun?.scenario_params ?? preset?.preset.scenario_params
+  const [carriedScenarioParams] = useState(
+    () => carriedPresetScenarioParams(savedScenarioParams, catalogParameters),
+  )
+  // Initially carried values stay read-only until remount, even if refreshed metadata adds a field.
+  const dynamicParameters = useMemo(
+    () => catalogParameters.filter(
+      (parameter) => !Object.prototype.hasOwnProperty.call(carriedScenarioParams, parameter.name),
+    ),
+    [catalogParameters, carriedScenarioParams],
+  )
   const [techniqueSeed] = useState(() => seedPresetTechniques(
     scenario,
     initialRun?.techniques ?? preset?.preset.techniques,
@@ -481,10 +492,6 @@ function ScenarioLaunchForm({
   ) || (supportsTechniques
     && selectedTechniques.some((name) => !presetTokens.has(name)
       && !techniqueOptions.some((technique) => technique.name === name)))
-  const savedScenarioParams = initialRun?.scenario_params ?? preset?.preset.scenario_params
-  const [carriedScenarioParams] = useState(
-    () => carriedPresetScenarioParams(savedScenarioParams, dynamicParameters),
-  )
   const carriedScenarioParamNames = Object.keys(carriedScenarioParams)
   const presetScenarioParams = useMemo(
     () => ({
