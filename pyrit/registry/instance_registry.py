@@ -28,9 +28,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from pyrit.models import ComponentIdentifier, Identifiable
+from pyrit.models.catalog.registry_recipe import SavedEntryOwner
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Generator, Iterator, Mapping
 
     from pyrit.registry.tag_query import TagQuery
 
@@ -42,6 +43,10 @@ SAVED_ENTRY_METADATA_KEY = "saved_recipe_kind"
 #: Entry metadata marking an entry that the server's startup scripts registered, so its name is registered again
 #: after a restart. Entries with neither this nor the saved marker are gone after a restart.
 CONFIGURATION_ENTRY_METADATA_KEY = "configuration_entry"
+
+#: Entry metadata holding the ``SavedEntryOwner`` who saved a saved entry, or None when nobody was signed in. It is
+#: for display only, never used to decide who may change or remove the entry.
+SAVED_ENTRY_OWNER_METADATA_KEY = "saved_entry_owner"
 
 _saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
 
@@ -87,6 +92,21 @@ class SavedEntryReplacementError(RuntimeError):
         super().__init__(f"Saved {kind.removesuffix('s')} '{name}' can't be replaced.")
         self.kind = kind
         self.name = name
+
+
+def saved_entry_owner(metadata: Mapping[str, Any]) -> SavedEntryOwner | None:
+    """
+    Return who saved an entry, from its metadata.
+
+    Args:
+        metadata (Mapping[str, Any]): The entry's registry metadata.
+
+    Returns:
+        SavedEntryOwner | None: The signed-in user who saved the entry, or None for an entry that isn't saved or
+            was saved with sign-in off.
+    """
+    owner = metadata.get(SAVED_ENTRY_OWNER_METADATA_KEY)
+    return owner if isinstance(owner, SavedEntryOwner) else None
 
 
 def refuse_saved_entry(entry: RegistryEntry[Any] | None) -> None:

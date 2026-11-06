@@ -46,7 +46,11 @@ from pyrit.models.parameter import ComponentType, Parameter
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.file_document_storage import DocumentConflictError
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    saved_entry_owner,
+)
 from pyrit.registry.registry_recipe_rules import (
     SavedEntryRefusedError,
     check_saveable_class,
@@ -95,7 +99,13 @@ class TargetService:
         self._registry = TargetRegistry.get_registry_singleton()
 
     def _build_instance_from_object(
-        self, *, target_registry_name: str, target_obj: Any, origin: TargetOrigin | None = None
+        self,
+        *,
+        target_registry_name: str,
+        target_obj: Any,
+        origin: TargetOrigin | None = None,
+        owner: SavedEntryOwner | None = None,
+        current_user_oid: str | None = None,
     ) -> TargetInstance:
         """
         Build a TargetInstance from a registry object.
@@ -103,13 +113,16 @@ class TargetService:
         Returns:
             TargetInstance with metadata derived from the object.
         """
-        return target_object_to_instance(target_registry_name, target_obj, origin=origin)
+        return target_object_to_instance(
+            target_registry_name, target_obj, origin=origin, owner=owner, current_user_oid=current_user_oid
+        )
 
     async def list_targets_async(
         self,
         *,
         limit: int = 50,
         cursor: str | None = None,
+        current_user_oid: str | None = None,
     ) -> TargetListResponse:
         """
         List all target instances with pagination.
@@ -117,13 +130,18 @@ class TargetService:
         Args:
             limit: Maximum items to return.
             cursor: Pagination cursor (target_registry_name to start after).
+            current_user_oid: The signed-in user's Microsoft Entra object ID, used to mark the targets they saved.
 
         Returns:
             TargetListResponse containing paginated targets.
         """
         items = [
             self._build_instance_from_object(
-                target_registry_name=entry.name, target_obj=entry.instance, origin=target_origin(entry.metadata)
+                target_registry_name=entry.name,
+                target_obj=entry.instance,
+                origin=target_origin(entry.metadata),
+                owner=saved_entry_owner(entry.metadata),
+                current_user_oid=current_user_oid,
             )
             for entry in self._registry.instances.get_all_instances()
         ]
@@ -158,9 +176,15 @@ class TargetService:
         has_more = len(items) > start_idx + limit
         return page, has_more
 
-    async def get_target_async(self, *, target_registry_name: str) -> TargetInstance | None:
+    async def get_target_async(
+        self, *, target_registry_name: str, current_user_oid: str | None = None
+    ) -> TargetInstance | None:
         """
         Get a target instance by registry name.
+
+        Args:
+            target_registry_name: The target's registry name.
+            current_user_oid: The signed-in user's Microsoft Entra object ID, used to mark a target they saved.
 
         Returns:
             TargetInstance if found, None otherwise.
@@ -169,7 +193,11 @@ class TargetService:
         if entry is None:
             return None
         return self._build_instance_from_object(
-            target_registry_name=target_registry_name, target_obj=entry.instance, origin=target_origin(entry.metadata)
+            target_registry_name=target_registry_name,
+            target_obj=entry.instance,
+            origin=target_origin(entry.metadata),
+            owner=saved_entry_owner(entry.metadata),
+            current_user_oid=current_user_oid,
         )
 
     def get_target_object(self, *, target_registry_name: str) -> Any | None:
@@ -669,8 +697,13 @@ class TargetService:
             SavedTargetConflictError: If a saved or registered target already has the name.
             SavedTargetStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
+        # The user saving the target is the one asking, so the response marks it as theirs.
         target = self._build_instance_from_object(
-            target_registry_name=name, target_obj=target_obj, origin=TargetOrigin.SAVED
+            target_registry_name=name,
+            target_obj=target_obj,
+            origin=TargetOrigin.SAVED,
+            owner=owner,
+            current_user_oid=owner.oid if owner is not None else None,
         )
         recipe = ComponentRecipe(class_module=target_cls.__module__, class_name=type_name, params=params, owner=owner)
         storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=recipes_source)
@@ -689,7 +722,12 @@ class TargetService:
             raise SavedTargetStorageError("Saved targets can't be written right now.") from error
         try:
             self._registry.instances.register(
-                target_obj, name=name, metadata={SAVED_ENTRY_METADATA_KEY: RegistryRecipeKind.TARGETS.value}
+                target_obj,
+                name=name,
+                metadata={
+                    SAVED_ENTRY_METADATA_KEY: RegistryRecipeKind.TARGETS.value,
+                    SAVED_ENTRY_OWNER_METADATA_KEY: owner,
+                },
             )
         except Exception as error:
             if not await self._delete_recipe_async(storage=storage, name=name):

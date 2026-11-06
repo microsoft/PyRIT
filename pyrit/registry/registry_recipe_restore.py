@@ -20,7 +20,7 @@ from pyrit.models.catalog.registry_recipe import (
     TechniqueRecipe,
 )
 from pyrit.models.parameter import ComponentType
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SAVED_ENTRY_OWNER_METADATA_KEY
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage
 
@@ -395,7 +395,10 @@ class RegistryRecipeRestorer:
                     name=stored.ref.name,
                     type_name=recipe.class_name,
                     params=recipe.params,
-                    registry_metadata={SAVED_ENTRY_METADATA_KEY: stored.ref.kind.value},
+                    registry_metadata={
+                        SAVED_ENTRY_METADATA_KEY: stored.ref.kind.value,
+                        SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner,
+                    },
                     external_input=True,
                     allowed_path_params=allowed_path_params,
                 )

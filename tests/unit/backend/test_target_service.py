@@ -1768,6 +1768,21 @@ def _saved_document(source: Path, name: str) -> dict[str, Any]:
     return json.loads((source / "targets" / f"{name}.json").read_text())
 
 
+async def _saved_by_as_each_caller(
+    service: TargetService, *, caller_oids: list[str | None]
+) -> list[tuple[str | None, bool]]:
+    views = []
+    for caller_oid in caller_oids:
+        listed = await service.list_targets_async(current_user_oid=caller_oid)
+        fetched = await service.get_target_async(target_registry_name="contoso_gpt4o", current_user_oid=caller_oid)
+        assert fetched is not None
+        assert [(target.saved_by, target.saved_by_me) for target in listed.items] == [
+            (fetched.saved_by, fetched.saved_by_me)
+        ]
+        views.append((fetched.saved_by, fetched.saved_by_me))
+    return views
+
+
 @pytest.mark.usefixtures("sqlite_instance")
 class TestSaveTarget:
     async def test_saves_an_identity_target_that_restore_rebuilds(self, tmp_path: Path) -> None:
@@ -2034,3 +2049,39 @@ class TestSaveTarget:
         fetched = await service.get_target_async(target_registry_name="temporary_one")
         assert isinstance(fetched, TargetInstance)
         assert fetched.origin is TargetOrigin.TEMPORARY
+
+    async def test_says_who_saved_a_target_and_whether_it_was_the_caller_also_after_a_restart(
+        self, tmp_path: Path
+    ) -> None:
+        ada = SavedEntryOwner(oid="00000000-0000-0000-0000-00000000000a", name="Ada")
+        callers: list[str | None] = [ada.oid, "00000000-0000-0000-0000-00000000000b", None]
+
+        created = await TargetService().create_target_async(
+            request=_save_request(), owner=ada, recipes_source=str(tmp_path)
+        )
+        before_restart = await _saved_by_as_each_caller(TargetService(), caller_oids=callers)
+        TargetRegistry.reset_registry_singleton()
+        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        after_restart = await _saved_by_as_each_caller(TargetService(), caller_oids=callers)
+
+        assert (created.saved_by, created.saved_by_me) == ("Ada", True)
+        assert before_restart == after_restart == [("Ada", True), ("Ada", False), ("Ada", False)]
+
+    async def test_names_nobody_for_a_target_saved_with_sign_in_off_or_not_saved(self, tmp_path: Path) -> None:
+        service = TargetService()
+        ada = SavedEntryOwner(oid="00000000-0000-0000-0000-00000000000a", name="Ada")
+        local_request = _save_request(
+            name="local_llm", params={"endpoint": "http://localhost:11434/v1", "model_name": "llama3"}, auth_mode="none"
+        )
+        await service.create_target_async(request=local_request, recipes_source=str(tmp_path))
+        temporary = await service.create_target_async(
+            request=_save_request(name="temporary_one", persist=False), owner=ada
+        )
+
+        listed = await service.list_targets_async(current_user_oid=ada.oid)
+
+        assert (temporary.saved_by, temporary.saved_by_me) == (None, False)
+        assert {target.target_registry_name: (target.saved_by, target.saved_by_me) for target in listed.items} == {
+            "local_llm": (None, False),
+            "temporary_one": (None, False),
+        }

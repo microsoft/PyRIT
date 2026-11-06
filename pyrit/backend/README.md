@@ -59,7 +59,9 @@ target and its folder in case the write reached storage anyway, since the target
 start. Each listed target's `origin` is `saved`, `configuration`
 (registered by the server's startup scripts), or `temporary` (gone after a restart or reinitialization, such as a
 target created without `persist` or registered by a scan's launch scripts). A saved target can only use targets
-that come back after a restart; targets from configuration keep their own sign-in.
+that come back after a restart; targets from configuration keep their own sign-in. A saved target's `saved_by` is
+the name of the user who saved it (null when it was saved with sign-in off), and `saved_by_me` says whether that's the
+signed-in user asking. The user's object ID isn't returned.
 
 ### Saved conversations
 

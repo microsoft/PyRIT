@@ -19,7 +19,7 @@ from fastapi import Request, status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.middleware.auth import AuthenticatedUser
+from pyrit.backend.middleware.auth import AuthenticatedUser, current_user_oid
 from pyrit.backend.models.attacks import (
     AddMessageResponse,
     AttackListResponse,
@@ -1511,6 +1511,47 @@ class TestTargetRoutes:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert data["target_registry_name"] == "target-1"
+
+    def test_list_and_get_pass_the_signed_in_users_object_id(self, client: TestClient) -> None:
+        app.dependency_overrides[current_user_oid] = lambda: "user-oid"
+        try:
+            with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+                service = mock_get_service.return_value
+                service.list_targets_async = AsyncMock(
+                    return_value=TargetListResponse(
+                        items=[],
+                        pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
+                    )
+                )
+                service.get_target_async = AsyncMock(
+                    return_value=TargetInstance(
+                        target_registry_name="target-1",
+                        identifier=TargetIdentifier(class_name="TextTarget"),
+                        capabilities=TargetCapabilities(),
+                    )
+                )
+
+                assert client.get("/api/targets").status_code == status.HTTP_200_OK
+                assert client.get("/api/targets/target-1").status_code == status.HTTP_200_OK
+        finally:
+            app.dependency_overrides.pop(current_user_oid, None)
+
+        assert service.list_targets_async.call_args.kwargs["current_user_oid"] == "user-oid"
+        assert service.get_target_async.call_args.kwargs["current_user_oid"] == "user-oid"
+
+    def test_list_targets_passes_no_object_id_when_sign_in_is_off(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            service = mock_get_service.return_value
+            service.list_targets_async = AsyncMock(
+                return_value=TargetListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+
+            assert client.get("/api/targets").status_code == status.HTTP_200_OK
+
+        assert service.list_targets_async.call_args.kwargs["current_user_oid"] is None
 
     def test_get_target_not_found(self, client: TestClient) -> None:
         """Test getting a non-existent target."""

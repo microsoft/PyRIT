@@ -40,6 +40,7 @@ from pyrit.models import (
     PromptDataType,
     Score,
 )
+from pyrit.models.catalog.registry_recipe import SavedEntryOwner
 from pyrit.models.catalog.target import TargetOrigin
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, TextTarget, WebsocketTarget
@@ -1550,6 +1551,28 @@ class TestTargetOrigin:
         assert result.origin is TargetOrigin.SAVED
         assert target_object_to_instance("t-1", MockPromptTarget()).origin is None
 
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize(
+        ("owner", "current_user_oid", "saved_by"),
+        [
+            (SavedEntryOwner(oid="ada-oid", name="Ada"), "ada-oid", ("Ada", True)),
+            (SavedEntryOwner(oid="ada-oid", name="Ada"), "bob-oid", ("Ada", False)),
+            (SavedEntryOwner(oid="ada-oid", name="Ada"), None, ("Ada", False)),
+            (SavedEntryOwner(oid="ada-oid", name=""), "ada-oid", (None, True)),
+            (None, "ada-oid", (None, False)),
+            (None, None, (None, False)),
+        ],
+    )
+    def test_says_who_saved_the_target_and_whether_it_was_the_caller(
+        self, owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
+    ) -> None:
+        result = target_object_to_instance(
+            "t-1", MockPromptTarget(), origin=TargetOrigin.SAVED, owner=owner, current_user_oid=current_user_oid
+        )
+
+        assert (result.saved_by, result.saved_by_me) == saved_by
+        assert "ada-oid" not in result.model_dump_json()
+
 
 class TestTargetObjectToInstance:
     """Tests for target_object_to_instance function."""
@@ -1986,6 +2009,33 @@ class TestTargetObjectToInstanceRoundRobin:
         assert len(result.inner_targets) == 2
         assert result.inner_targets[0].identifier.endpoint == "https://a.openai.azure.com"
         assert result.inner_targets[1].identifier.endpoint == "https://b.openai.azure.com"
+
+    def test_inner_targets_name_nobody_as_their_saver(self) -> None:
+        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+
+        inner = MagicMock(spec=PromptTarget)
+        inner.capabilities = TargetCapabilities()
+        inner.get_identifier.return_value = ComponentIdentifier(
+            class_name="OpenAIChatTarget", class_module="pyrit.prompt_target", params={}
+        )
+        rr = MagicMock(spec=RoundRobinTarget)
+        rr.capabilities = TargetCapabilities(supports_multi_turn=True)
+        rr.inner_targets = [inner]
+        rr.get_identifier.return_value = ComponentIdentifier(
+            class_name="RoundRobinTarget", class_module="pyrit.prompt_target.round_robin_target", params={}
+        )
+
+        result = target_object_to_instance(
+            "rr-1",
+            rr,
+            origin=TargetOrigin.SAVED,
+            owner=SavedEntryOwner(oid="ada-oid", name="Ada"),
+            current_user_oid="ada-oid",
+        )
+
+        assert (result.saved_by, result.saved_by_me) == ("Ada", True)
+        assert result.inner_targets is not None
+        assert [(member.saved_by, member.saved_by_me) for member in result.inner_targets] == [(None, False)]
 
     def test_round_robin_identifier_carries_no_model_name(self) -> None:
         """The composite identifier owns no model_name; inner targets carry theirs.

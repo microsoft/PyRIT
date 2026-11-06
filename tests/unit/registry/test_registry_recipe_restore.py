@@ -21,6 +21,7 @@ from pyrit.models.catalog.registry_recipe import (
     RegistryRecipeKind,
     RestoreFailure,
     RestoreFailureReason,
+    SavedEntryOwner,
     SavedEntryRef,
     TechniqueRecipe,
 )
@@ -31,7 +32,11 @@ from pyrit.registry.components.attack_technique_registry import AttackTechniqueR
 from pyrit.registry.components.converter_registry import ConverterRegistry
 from pyrit.registry.components.scorer_registry import ScorerRegistry
 from pyrit.registry.components.target_registry import TargetRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    saved_entry_owner,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
@@ -173,6 +178,51 @@ class TestRestoreOrderAndRebuild:
             "refusal": "scorers",
             "formal_red_team": "techniques",
             "startup_encoder": None,
+        }
+
+    def test_keeps_who_saved_each_restored_entry(self, tmp_path: Path) -> None:
+        ada = {"oid": "00000000-0000-0000-0000-00000000000a", "name": "Ada"}
+        _save(
+            tmp_path,
+            RegistryRecipeKind.SCORERS,
+            "refusal",
+            {
+                "class_module": "pyrit.score.true_false.self_ask_refusal_scorer",
+                "class_name": "SelfAskRefusalScorer",
+                "params": {"chat_target": "contoso_gpt4o"},
+                "owner": ada,
+            },
+        )
+        _save(
+            tmp_path,
+            RegistryRecipeKind.CONVERTERS,
+            "tone_formal",
+            {
+                "class_module": "pyrit.converter.tone_converter",
+                "class_name": "ToneConverter",
+                "params": {"converter_target": "contoso_gpt4o", "tone": "formal"},
+                "owner": ada,
+            },
+        )
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", {**_IDENTITY_TARGET, "owner": ada})
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "saved_without_sign_in", _IDENTITY_TARGET)
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        assert report.failures == []
+        targets = TargetRegistry.get_registry_singleton().instances
+        entries = {
+            "contoso_gpt4o": targets.get_entry("contoso_gpt4o"),
+            "saved_without_sign_in": targets.get_entry("saved_without_sign_in"),
+            "tone_formal": ConverterRegistry.get_registry_singleton().instances.get_entry("tone_formal"),
+            "refusal": ScorerRegistry.get_registry_singleton().instances.get_entry("refusal"),
+        }
+        owner = SavedEntryOwner(**ada)
+        assert {name: saved_entry_owner(entry.metadata) for name, entry in entries.items() if entry} == {
+            "contoso_gpt4o": owner,
+            "saved_without_sign_in": None,
+            "tone_formal": owner,
+            "refusal": owner,
         }
 
     def test_finds_a_startup_entry_by_its_exact_name(self, tmp_path: Path) -> None:
@@ -436,7 +486,7 @@ class TestRestoreFailures:
             name="anonymous_agent",
             type_name="A2ATarget",
             params={"endpoint": "https://agent.example.test"},
-            registry_metadata={SAVED_ENTRY_METADATA_KEY: "targets"},
+            registry_metadata={SAVED_ENTRY_METADATA_KEY: "targets", SAVED_ENTRY_OWNER_METADATA_KEY: None},
             external_input=True,
             allowed_path_params=frozenset(),
         )
