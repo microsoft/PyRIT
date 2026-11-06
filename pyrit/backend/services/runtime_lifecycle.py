@@ -300,7 +300,7 @@ class RuntimeLifecycle:
                 self.version = current_version
                 if await self._restore_saved_entries_async(config):
                     self._publish(config)
-            except (Exception, asyncio.CancelledError) as error:
+            except (Exception, asyncio.CancelledError, BaseExceptionGroup) as error:
                 logger.exception(
                     "PyRIT live apply failed phase=%s generation=%s",
                     "mutation" if mutated else "preflight",
@@ -316,7 +316,8 @@ class RuntimeLifecycle:
                     if mutated
                     else "Configuration or memory settings are invalid. Memory changes require a restart."
                 )
-                if isinstance(error, asyncio.CancelledError):
+                # Only non-Exception errors can carry cancellation, including mixed exception groups.
+                if not isinstance(error, Exception):
                     raise
             finally:
                 logger.info("PyRIT apply outcome=%s generation=%s", self.outcome, self.generation)
@@ -378,7 +379,7 @@ class RuntimeLifecycle:
             errors.append(error)
         try:
             await close_services_async()
-        except (Exception, asyncio.CancelledError) as error:
+        except (Exception, asyncio.CancelledError, BaseExceptionGroup) as error:
             errors.append(error)
         try:
             if get_analytics_service.cache_info().currsize:

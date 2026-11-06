@@ -56,6 +56,32 @@ beforeEach(() => {
   jest.mocked(operationsApi.getFindingOptions).mockResolvedValue({ harm_types: ['Malware', 'Other'] })
 })
 
+it('does not fetch attack or Operation metadata while closed, including across saved-conversation changes', async () => {
+  const user = userEvent.setup()
+  const rendered = render(<FluentProvider theme={webLightTheme}><MemoryRouter>
+    <Harness attackResultId="initial" disabled={false} />
+  </MemoryRouter></FluentProvider>)
+  rendered.rerender(<FluentProvider theme={webLightTheme}><MemoryRouter>
+    <Harness attackResultId="selected" disabled={false} />
+  </MemoryRouter></FluentProvider>)
+  expect(attacksApi.getAttack).not.toHaveBeenCalled()
+  expect(operationsApi.get).not.toHaveBeenCalled()
+  expect(operationsApi.list).not.toHaveBeenCalled()
+  expect(operationsApi.listFindings).not.toHaveBeenCalled()
+
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio', { name: /Proof/ })
+  expect(jest.mocked(attacksApi.getAttack).mock.calls).toEqual([['selected']])
+  expect(operationsApi.get).toHaveBeenCalledWith('saved')
+  await user.click(screen.getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => { expect(screen.queryByRole('dialog')).not.toBeInTheDocument() })
+  rendered.rerender(<FluentProvider theme={webLightTheme}><MemoryRouter>
+    <Harness attackResultId="next" disabled={false} />
+  </MemoryRouter></FluentProvider>)
+  expect(jest.mocked(attacksApi.getAttack).mock.calls).toEqual([['selected']])
+  expect(operationsApi.get).toHaveBeenCalledTimes(1)
+})
+
 it('defaults to the attack\'s own Operation and attaches the viewed attack', async () => {
   const user = userEvent.setup()
   renderDialog()
@@ -134,6 +160,20 @@ it('searches literally, resets pagination, and ignores superseded results', asyn
   await act(async () => { resolveOld(EMPTY) })
   expect(screen.getByRole('radio', { name: /Proof/ })).toBeInTheDocument()
   expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '%_' })
+})
+
+it('caps the title search at the API limit', async () => {
+  const user = userEvent.setup()
+  renderDialog()
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio', { name: /Proof/ })
+  const search = screen.getByRole('textbox', { name: 'Search findings by title' })
+  await user.click(search)
+  await user.paste('x'.repeat(1001))
+  expect(search).toHaveValue('x'.repeat(1000))
+  await waitFor(() => expect(operationsApi.listFindings)
+    .toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: 'x'.repeat(1000) }))
 })
 
 it('preserves search and selection on failure, reports already attached, and restores focus on cancel', async () => {

@@ -6,13 +6,13 @@ import userEvent from '@testing-library/user-event'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { labelsApi, operationsApi, scenariosApi } from '@/services/api'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
 import type { ScenarioRunListItem, ScenarioRunListResponse, ScenarioRunState, ScenarioRunSummary } from '@/types'
 
 import ScenarioHistory from './ScenarioHistory'
-import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+import { DEFAULT_SCENARIO_HISTORY_FILTERS, scenarioHistoryFiltersFromSearchParams } from './scenarioHistoryFilters'
 
 installAutoRefreshTimers()
-import { DEFAULT_SCENARIO_HISTORY_FILTERS } from './scenarioHistoryFilters'
 
 jest.mock('@/services/api', () => ({
   scenariosApi: {
@@ -769,6 +769,21 @@ describe('ScenarioHistory', () => {
     )
 
     expect(screen.getByRole('button', { name: 'Reset all filters' })).not.toHaveAttribute('aria-disabled')
+  })
+
+  it('requests QUEUED runs from a QUEUED-only URL filter', async () => {
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [],
+      pagination: { limit: 25, has_more: false },
+    })
+    renderHistory({
+      ...defaultProps,
+      filters: scenarioHistoryFiltersFromSearchParams(new URLSearchParams('status=QUEUED')),
+    })
+
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ run_statuses: ['QUEUED'] }),
+    ))
   })
 
   it('serializes filters, paginates by cursor, and refreshes from the first page', async () => {
