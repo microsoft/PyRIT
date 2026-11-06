@@ -83,6 +83,7 @@ def test_check_saved_entry_params_refuses_an_openai_target_without_a_key_or_iden
     ("class_name", "params", "name"),
     [
         ("AzureMLChatTarget", {"endpoint": "https://contoso.inference.ml.azure.com/score"}, "api_key"),
+        ("AzureMLChatTarget", {"endpoint": "https://contoso.inference.ml.azure.com/score", "api_key": ""}, "api_key"),
         ("PromptShieldTarget", {"endpoint": "https://contoso.cognitiveservices.azure.com/"}, "api_key"),
         ("AzureBlobStorageTarget", {"container_url": "https://contoso.blob.core.windows.net/prompts"}, "sas_token"),
         ("GitHubCopilotTarget", {"model_name": "gpt-4o"}, "github_token"),
@@ -168,6 +169,11 @@ def test_check_saved_entry_params_accepts_a_url_without_a_credential(url: str) -
         "https://contoso.example/v1;SECRET",
         "https://contoso.example/v1&SECRET",
         "https://contoso.blob.core.windows.net;sig=SECRET/prompts",
+        "https://contoso.blob.core.windows.net;SIG=SECRET/prompts",
+        "https://contoso.example/v1?sv=SECRET",
+        "https://contoso.openai.azure.com/openai/v1?api-key=SECRET",
+        "https://contoso.cognitiveservices.azure.com/?subscription-key=SECRET",
+        "https://contoso.example/v1?api-version=2024-10-21=SECRET",
         "https://contoso.example/v1/key=SECRET",
     ],
 )
@@ -236,8 +242,17 @@ def test_check_saved_entry_params_refuses_an_agent_card_path_that_can_carry_a_cr
     assert "SECRET" not in str(refusal)
 
 
-@pytest.mark.parametrize("endpoint", ["ftp://agent.example.test", "https:agent.example.test/card"])
-def test_check_saved_entry_params_refuses_an_agent_endpoint_that_isnt_a_plain_address(endpoint: str) -> None:
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "ftp://agent.example.test",
+        "file://localhost/tmp/card.json",
+        "https:agent.example.test/card",
+        "https://[agent.example.test?access_token=SECRET",
+        123,
+    ],
+)
+def test_check_saved_entry_params_refuses_an_agent_endpoint_that_isnt_a_plain_address(endpoint: object) -> None:
     refusal = _refusal("A2ATarget", {"endpoint": endpoint})
 
     assert str(refusal).startswith("'endpoint' can carry a credential in a URL")
