@@ -1,8 +1,11 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 
-import { MessageBar, MessageBarBody, Text } from '@fluentui/react-components'
+import { MessageBar, MessageBarBody } from '@fluentui/react-components'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
+import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { ConverterIdentifier, ConverterInstance, ConverterSelection, SourceInstanceSpec } from '@/types'
@@ -11,22 +14,25 @@ import { groupConverters } from '@/utils/groupConverters'
 import { useConverterChainFieldStyles } from './ConverterChainField.styles'
 import SelectConverterInput from './SelectConverterInput'
 import ConverterCard from './ConverterCard'
+import SaveConverterDialog from './SaveConverterDialog'
 
 interface ConverterChainFieldProps {
   label: string
+  readonly help: string
   converters: ConverterInstance[]
   value: ConverterSelection[]
   disabled?: boolean
   allowTemporary?: boolean
   onChange: (value: ConverterSelection[]) => void
-  onConvertersChanged: (converters: ConverterInstance[]) => void
+  onConvertersChanged: Dispatch<SetStateAction<ConverterInstance[]>>
 }
 
 /** Ordered converter references with the same picker and settings form as chat. */
 export default function ConverterChainField({
-  label, converters, value, disabled = false, allowTemporary = true, onChange, onConvertersChanged,
+  label, help, converters, value, disabled = false, allowTemporary = true, onChange, onConvertersChanged,
 }: ConverterChainFieldProps) {
   const styles = useConverterChainFieldStyles()
+  const { generation } = useRuntime()
   const id = useId()
   const [entryIds, setEntryIds] = useState<string[]>([])
   const nextId = useRef(0)
@@ -36,18 +42,22 @@ export default function ConverterChainField({
     index: number; editing: { converter: ConverterInstance; spec?: SourceInstanceSpec }
   }>()
   const [error, setError] = useState<string>()
+  const [saving, setSaving] = useState<{
+    entryId: string; source: SourceInstanceSpec; converterType: string; generation: string
+  }>()
   const active = useRef(true)
   useEffect(() => {
     active.current = true
     return () => { active.current = false }
   }, [])
   const ids = value.map((_, index) => entryIds[index] ?? `${id}-initial-${index}`)
-  const latest = useRef({ value, ids, onChange })
-  useLayoutEffect(() => { latest.current = { value, ids, onChange } })
+  const latest = useRef({ value, ids, onChange, onConvertersChanged, generation })
+  useLayoutEffect(() => { latest.current = { value, ids, onChange, onConvertersChanged, generation } })
 
   const add = (name: string): void => {
     const current = latest.current
     const next = {
+      ...current,
       value: [...current.value, name],
       ids: [...current.ids, `${id}-added-${nextId.current++}`],
       onChange: current.onChange,
@@ -68,7 +78,9 @@ export default function ConverterChainField({
   }
 
   return <section className={styles.root} aria-label={label}>
-    <Text weight="semibold">{label}</Text>
+    <ContextualHelpLabel term={label} labelProps={{ weight: 'semibold' }}>
+      {help}
+    </ContextualHelpLabel>
     <SelectConverterInput
       label={label} disabled={disabled} groupedConverters={groupConverters(converters)}
       onOptionSelect={add} onCreateNew={() => setCreateOpen(true)}
@@ -85,6 +97,9 @@ export default function ConverterChainField({
             })
           } : undefined}
         onReset={() => onChange(value.map((entry, position) => position === index ? name : entry))}
+        onSave={allowTemporary && converter && typeof selection !== 'string' ? () => setSaving({
+          entryId: ids[index], source: selection, converterType: converter.identifier.class_name, generation,
+        }) : undefined}
         onMove={(delta) => move(index, delta)}
         onDragStart={(event) => {
           dragged.current = index
@@ -125,6 +140,26 @@ export default function ConverterChainField({
         onChange(value.map((entry, index) => index === settings.index
           ? { ...spec, effective_hash: identifier.hash } : entry))
         setSettings(undefined)
+      }}
+    />}
+    {saving && saving.generation === generation && <SaveConverterDialog
+      converterType={saving.converterType} source={saving.source}
+      onClose={() => setSaving(undefined)}
+      onSaved={(converter: ConverterInstance, isCurrentOpening: boolean) => {
+        if (!active.current || latest.current.generation !== saving.generation) return
+        const current = latest.current
+        current.onConvertersChanged((converters: ConverterInstance[]) => [
+          ...converters.filter((entry: ConverterInstance) => entry.converter_id !== converter.converter_id),
+          converter,
+        ])
+        if (!isCurrentOpening) return
+        const index = current.ids.findIndex((entryId: string, position: number) =>
+          entryId === saving.entryId && current.value[position] === saving.source,
+        )
+        if (index >= 0) current.onChange(current.value.map((entry: ConverterSelection, position: number) =>
+          position === index ? converter.converter_id : entry,
+        ))
+        setSaving(undefined)
       }}
     />}
   </section>

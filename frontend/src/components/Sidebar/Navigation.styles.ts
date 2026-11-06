@@ -1,6 +1,6 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
-import { mobileTouchTargetHeight } from '@/styles/touchTargets'
+import { mobileTouchTarget, mobileTouchTargetHeight } from '@/styles/touchTargets'
 
 export const useNavigationStyles = makeStyles({
   root: {
@@ -10,15 +10,23 @@ export const useNavigationStyles = makeStyles({
     minHeight: 0,
     overflowY: 'auto',
     overflowX: 'hidden',
-    padding: tokens.spacingVerticalM,
-    alignItems: 'center',
-    gap: tokens.spacingVerticalM,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
+    alignItems: 'stretch',
+    gap: tokens.spacingVerticalS,
+  },
+  expanded: {
+    '& button': {
+      width: '100%',
+      justifyContent: 'flex-start',
+      paddingInline: tokens.spacingHorizontalM,
+      gap: tokens.spacingHorizontalM,
+    },
   },
   primaryNavigation: {
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'center',
-    gap: tokens.spacingVerticalM,
+    alignItems: 'stretch',
+    gap: tokens.spacingVerticalXS,
   },
   navButton: {
     width: '44px',
@@ -28,9 +36,24 @@ export const useNavigationStyles = makeStyles({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
+    color: tokens.colorNeutralForeground2,
+    borderRadius: tokens.borderRadiusMedium,
+    ...mobileTouchTarget,
     '&[data-active="true"]': {
       backgroundColor: tokens.colorBrandBackground2,
-      borderRadius: tokens.borderRadiusMedium,
+      color: tokens.colorBrandForeground1,
+      fontWeight: tokens.fontWeightSemibold,
+      position: 'relative',
+      '::before': {
+        content: '""',
+        position: 'absolute',
+        left: 0,
+        width: tokens.strokeWidthThick,
+        height: tokens.spacingVerticalXL,
+        borderRadius: tokens.borderRadiusCircular,
+        backgroundColor: tokens.colorBrandForeground1,
+      },
     },
   },
   spacer: {

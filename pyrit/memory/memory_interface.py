@@ -55,6 +55,7 @@ from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import ClauseElement
 
 from pyrit.analytics.outcome_statistics import compute_outcome_statistics, success_percentage
+from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
@@ -1056,10 +1057,6 @@ class MemoryInterface(abc.ABC):
         """
         if limit < 1 or offset < 0:
             raise ValueError("Finding limit must be positive and offset must be nonnegative.")
-        severity_order = case(
-            {severity.value: position for position, severity in enumerate(FindingSeverity)},
-            value=FindingEntry.severity,
-        )
         statement = select(FindingEntry)
         if operation_id is not None:
             statement = statement.where(FindingEntry.operation_id == operation_id)
@@ -1067,13 +1064,41 @@ class MemoryInterface(abc.ABC):
             # SQL Server also treats "[" as a LIKE wildcard.
             escaped_title = title_query.replace("/", "//").replace("%", "/%").replace("_", "/_").replace("[", "/[")
             statement = statement.where(FindingEntry.title.ilike(f"%{escaped_title}%", escape="/"))
-        statement = (
-            statement.order_by(severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
+
+    async def get_findings_by_ids_async(
+        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+    ) -> list[Finding]:
+        """
+        Read selected findings of one operation, highest severity first, then newest first.
+
+        IDs that are not in the operation are omitted.
+
+        Returns:
+            list[Finding]: The selected findings, in the same order as ``get_findings_async``.
+        """
+        if not finding_ids:
+            return []
+        requested = set(finding_ids)
+        # The operation filter takes one of the statement's binds.
+        chunk_size = max(1, self._MAX_BIND_VARS - 1)
+        async with await self.get_session_async() as session:
+            ordered_ids = await session.scalars(
+                select(FindingEntry.id)
+                .where(FindingEntry.operation_id == operation_id)
+                .order_by(*self._finding_order())
+            )
+            selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
+            findings: dict[uuid.UUID, Finding] = {}
+            for start in range(0, len(selected_ids), chunk_size):
+                statement = select(FindingEntry).where(
+                    FindingEntry.id.in_(selected_ids[start : start + chunk_size]),
+                    FindingEntry.operation_id == operation_id,
+                )
+                findings.update({entry.id: entry.get_finding() for entry in await session.scalars(statement)})
+        return [findings[finding_id] for finding_id in selected_ids if finding_id in findings]
 
     async def get_finding_async(self, *, operation_id: uuid.UUID, finding_id: uuid.UUID) -> Finding | None:
         """
@@ -1145,6 +1170,34 @@ class MemoryInterface(abc.ABC):
         async with await self.get_session_async() as session:
             return [entry.get_evidence() for entry in (await session.scalars(statement)).all()]
 
+    async def get_finding_evidence_for_findings_async(
+        self, *, finding_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, list[FindingEvidence]]:
+        """
+        Read all evidence of several findings, most recently linked first.
+
+        Returns:
+            dict[uuid.UUID, list[FindingEvidence]]: Evidence for findings that have evidence.
+        """
+        if not finding_ids:
+            return {}
+        unique_ids = list(dict.fromkeys(finding_ids))
+        evidence: dict[uuid.UUID, list[FindingEvidence]] = {}
+        async with await self.get_session_async() as session:
+            for start in range(0, len(unique_ids), self._MAX_BIND_VARS):
+                statement = (
+                    select(FindingEvidenceEntry)
+                    .where(FindingEvidenceEntry.finding_id.in_(unique_ids[start : start + self._MAX_BIND_VARS]))
+                    .order_by(
+                        FindingEvidenceEntry.finding_id,
+                        FindingEvidenceEntry.attached_at.desc(),
+                        FindingEvidenceEntry.id.desc(),
+                    )
+                )
+                for entry in await session.scalars(statement):
+                    evidence.setdefault(entry.finding_id, []).append(entry.get_evidence())
+        return evidence
+
     async def get_finding_evidence_by_source_async(
         self, *, finding_id: uuid.UUID, attack_result_id: uuid.UUID
     ) -> FindingEvidence | None:
@@ -1214,6 +1267,14 @@ class MemoryInterface(abc.ABC):
             for operation_id, severity, count in (await session.execute(statement)).all():
                 counts.setdefault(operation_id, {})[FindingSeverity(severity)] = count
         return counts
+
+    @staticmethod
+    def _finding_order() -> "tuple[ColumnElement[Any], ...]":
+        severity_order = case(
+            {severity.value: position for position, severity in enumerate(FindingSeverity)},
+            value=FindingEntry.severity,
+        )
+        return severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc()
 
     def _uses_legacy_memory_override(self) -> bool:
         return any(
@@ -1882,6 +1943,8 @@ class MemoryInterface(abc.ABC):
         for dependency in cls._iter_identifier_dependencies(identifier):
             cls._persist_identifier(session=session, identifier=dependency)
 
+        # Without an outer SQLite transaction, releasing the savepoint would commit this row early.
+        _begin_sqlite_write(session)
         try:
             with session.begin_nested():
                 session.add(entry_type.from_domain_model(identifier))
@@ -2768,8 +2831,8 @@ class MemoryInterface(abc.ABC):
 
         Computes per-conversation message count (distinct sequence numbers),
         a truncated last-message preview, the first non-empty labels dict,
-        and the earliest message timestamp using efficient SQL aggregation
-        instead of loading full pieces.
+        and the earliest message timestamp (timezone-aware UTC) using efficient
+        SQL aggregation instead of loading full pieces.
 
         Args:
             conversation_ids: The conversation IDs to query.
@@ -7151,8 +7214,10 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
         Return one descending scenario-history page and its database-side attempt metrics.
@@ -7178,8 +7243,10 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
+            sort_by=sort_by,
         )
         aggregates = self._dispatch_memory_operation(
             "get_scenario_history_aggregates",
@@ -7314,7 +7381,10 @@ class MemoryInterface(abc.ABC):
                 outcomes=g_outcomes,
             )
             run_groups = groups_by_run.setdefault(run_id, {})
-            run_groups[canonical_gid] = counts
+            if canonical_gid in run_groups:
+                run_groups[canonical_gid] = combine_execution_counts([run_groups[canonical_gid], counts])
+            else:
+                run_groups[canonical_gid] = counts
             if canonical_gid != raw_gid:
                 run_groups[raw_gid] = counts
 
@@ -9502,8 +9572,8 @@ class MemoryInterface(abc.ABC):
 
         Computes per-conversation message count (distinct sequence numbers),
         a truncated last-message preview, the first non-empty labels dict,
-        and the earliest message timestamp using efficient SQL aggregation
-        instead of loading full pieces.
+        and the earliest message timestamp (timezone-aware UTC) using efficient
+        SQL aggregation instead of loading full pieces.
 
         Args:
             conversation_ids: The conversation IDs to query.
@@ -11752,8 +11822,10 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
         Use ``get_scenario_run_history_page_async``.
@@ -11773,8 +11845,10 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
+            sort_by=sort_by,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.get_scenario_run_history_page)
@@ -11785,8 +11859,10 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
         Return one descending scenario-history page and its database-side attempt metrics.
@@ -11802,7 +11878,7 @@ class MemoryInterface(abc.ABC):
                 another page exists.
 
         Raises:
-            ValueError: If the limit, cursor ID, or label keys are invalid.
+            ValueError: If the limit, cursor ID, sort mode, or label keys are invalid.
         """
         return await self._run_database_operation_async(
             self._execute_get_scenario_run_history_page,
@@ -11810,8 +11886,10 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
+            sort_by=sort_by,
         )
 
     def get_scenario_history_aggregates(

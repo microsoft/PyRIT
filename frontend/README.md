@@ -13,6 +13,15 @@ Your choice is saved in this browser. System follows the operating system's
 light/dark preference. High-contrast mode overrides every palette and hides
 decorations without forgetting the selected preset.
 
+## Contextual help
+
+Hover over a term or field label to read its explanation. Its information
+button also opens the help with a click, tap, or Enter/Space. Press Escape
+to dismiss it. Label clicks still focus the field. Field descriptions remain
+available to assistive technology while the help is closed. Required markers,
+validation errors, input-format guidance, and unavailable-estimate reasons
+stay visible.
+
 ## Conversation selection
 
 Opening a saved attack with related conversations automatically opens the
@@ -34,8 +43,12 @@ For single-turn targets or targets that cannot replay the first prompt as histor
 without copying the response. After a successful single send, **Undo last send**
 also restores the prompt in a new conversation, if the target can replay the
 preceding history. Both actions restore the saved prompt and converter results
-for text, image, audio, video, and mixed responses. They do not overwrite new
-prompt edits or changed converter pipelines.
+for text, image, audio, video, and mixed responses when the converter pipeline
+has not changed. If you change the pipeline, both actions keep your
+current converters and temporary settings, restore the original prompt, and
+discard the old conversion results. You can then convert the prompt again.
+Neither action overwrites new prompt or working-input edits, sends a prompt,
+or runs a converter.
 When you save an edited conversation, its final user turn moves to the prompt
 box instead of saved history. Text and attachments retain their metadata,
 including text-only video remix IDs. You can enter and edit prompts without a target.
@@ -59,6 +72,55 @@ off by default and disabled when the conversation ID is empty. When enabled,
 request converters run on the stored history during the scan, without changing
 the source conversation. New outgoing turns are always converted.
 
+Drop files onto the chat or an editable prompt to attach them. Converter file
+fields also accept drops, including **New converter** in the chat pane.
+Drops use the same handling as **Attach files** or **Upload**. Read-only inputs
+stay read-only. The attachment chooser's file-type filter is a browser hint,
+not an application-enforced allowlist. Existing reading and target/component
+checks still apply to both entry methods.
+Newly selected converter files show their actual name and size
+with **Replace** and **Remove**. Image previews use the existing safe display
+rules. Existing encoded values use a generic label when file details are
+unknown; manually typed or pasted values stay editable. **Remove** restores
+the path field.
+Drops outside writable media surfaces, including unrelated portal dialogs, do
+not attach files or navigate away from the app. A converter read failure is
+reported without replacing the previous field value.
+Blocked chat file drags show the existing disabled-input reason only during the
+drag. Converter file fields retain the first file and report ignored extras.
+
+## Saved Scenario conversation evidence
+
+Saved Scenario results reuse Chat's read-only viewer. Initial Chat metadata
+reports a server reference count and validates the selected conversation without
+downloading complete reference arrays. The conversation selector initially loads
+50 main/pruned references, and the viewer requests 100 **message
+pieces**, not turns, from only the selected conversation. **Load more
+conversations** and **Load more message pieces** follow separate server cursors.
+Reference totals come from the server; selecting a conversation outside the
+loaded reference page does not replace it with the main conversation.
+
+Split multimodal turns stay together as pieces arrive, retaining their order,
+original/converted media and saved scores. **Incomplete turn** describes an
+unfinished turn, while the paging footer describes the whole loaded transcript.
+Continuation failures keep the loaded evidence available with **Retry** or
+**Restart** controls. A restart begins a new bounded read rather than reusing a
+stale cursor. **End of saved transcript** means the server has no further pieces;
+it does not infer a final target-response status. The reference and transcript
+status regions announce pending page loads, including retries and restarts.
+
+Load the complete transcript before continuing manually, copying/branching,
+exporting, or assessing/attaching its evidence. Adding or removing a human score
+refreshes scores on the loaded pieces without discarding evidence, pagination,
+or completeness. Existing live/manual Chat reads, drafts and send/edit/recovery
+workflows are unchanged, and manual conversation-list refreshes retain keyed
+rows and keyboard focus. Selected conversation URLs, return-to-scan links and
+the originating History filters survive paging and reloads.
+On narrow screens, the saved viewer scrolls as one surface so loaded evidence
+and continuation controls remain reachable without squeezing the transcript.
+Selecting another saved conversation starts at its beginning; continuation
+keeps the current reading position.
+
 ## Dataset catalog
 
 Chat drafts stay in memory while you visit Datasets and return. Text, attachments,
@@ -70,7 +132,7 @@ journey discards the handoff; refreshing the browser does not retain it.
 The **Datasets** page shows summaries of datasets already loaded into the backend's
 memory. When memory is empty, **Learn how to load datasets into memory** opens the
 [dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
-Use the same memory as the backend, then select **Refresh** in the catalog.
+Use the same memory as the backend. The visible catalog checks for changes each minute.
 The catalog does not download providers or prefetch individual examples.
 
 Open a dataset to inspect its stored examples. Search matches text prompts and
@@ -84,10 +146,24 @@ autoplay. Reopening waits for a fresh display URL, with Show disabled while the
 request is pending. If refreshing fails, the preview stays closed and shows a
 message so you can try again. Hiding a preview stops playback.
 Filters, page size, and the open example stay in the address bar.
+The visible example page and open detail also check for stored changes each minute,
+using the same filters and page cursor. Transient background errors keep the
+previously loaded content visible with an error message until a check succeeds.
+Deleted examples and invalid page cursors still show their explicit recovery state.
 **Back to datasets** returns to the catalog search, facets, and sort you came
 from. A direct link without that return state goes to `/datasets`.
 On narrow screens, scroll the example table horizontally to read its columns.
 Expanded details stack each label above its stored value.
+
+## Automatic data updates
+
+Home, registries, history, analytics, catalogs, and configuration data update every
+60 seconds while their view is visible, and after relevant actions. Updates do not
+reload the page or reset filters, selection, expanded details, or drafts. Dirty
+configuration and environment files are not replaced by background reads. Successful
+checks show no status message; failed checks show the error text. Active scan and
+chat progress keep their faster polling. Runtime initialization and dataset loading
+remain explicit actions.
 
 ## Resuming a scenario run
 
@@ -151,6 +227,22 @@ Set `PYRIT_ANALYTICS_SCREENSHOT_DIR` to an artifact directory to also capture th
 verified overview in light/dark, a heatmap drill-down, and narrow controls/report views.
 The browser checks do not mock analytics APIs. They do not repeat the separate
 100,000-result backend performance workload.
+
+### Isolated Scenario evidence browser checks
+
+From `frontend`, use the existing hierarchy fixture:
+
+```powershell
+$env:PYRIT_PYTHON = uv run --no-sync python -c "import sys; print(sys.executable)"
+npm run test:e2e:scenario-hierarchy
+```
+
+It builds the current frontend and serves real application routes over private,
+disposable SQLite data without providers or user configuration. Its saved
+evidence includes 222 pieces, a split scored multimodal turn, overlapping stable
+piece IDs and 121 references. Journeys cover bounded requests, continuation
+retry/restart failures, pending-reader ownership, URL/History context and
+keyboard/touch use. `PYRIT_E2E_HIERARCHY_PORT` overrides the loopback port.
 
 ## Development
 
@@ -264,7 +356,6 @@ npm run test:coverage # Run with coverage report (85%+ threshold)
 # End-to-End Tests (Playwright)
 npm run test:e2e          # Run headless (default local setup uses dev.py)
 npm run test:e2e:headed   # Run with visible browser windows (requires display)
-npm run test:e2e:paired-outcomes # Real SQLite/API paired-outcome acceptance tests
 npm run test:e2e:ui       # Interactive UI mode (requires display)
 ```
 
