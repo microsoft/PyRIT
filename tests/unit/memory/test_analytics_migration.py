@@ -15,7 +15,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.operations import Operations
 from alembic.script import ScriptDirectory
-from sqlalchemy import String, UnicodeText, create_engine, inspect, literal, select, text
+from sqlalchemy import String, UnicodeText, create_engine, inspect, literal, text
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateIndex, CreateTable
@@ -336,18 +336,30 @@ def test_unicode_casefold_compiles_per_dialect() -> None:
     assert mssql_sql == "LOWER(:param_1)"
 
 
-def test_seed_value_search_folds_both_sides_in_the_compiled_statement() -> None:
-    """The real seed search folds column and pattern in SQL on both dialects."""
-    column = literal("probe value", UnicodeText())
-    statement = select(UnicodeCaseFold(column).like(UnicodeCaseFold(literal("%probe%", UnicodeText())), escape="\\"))
+def test_seed_value_search_folds_both_sides_in_the_real_statement() -> None:
+    """The seed search statement itself folds column and pattern in SQL."""
+    from sqlalchemy import true
+
+    from pyrit.memory.sqlite_memory import SQLiteMemory
+
+    conditions = SQLiteMemory._seed_example_filters(
+        SQLiteMemory.__new__(SQLiteMemory),
+        scope=true(),
+        data_types=None,
+        harm_categories=None,
+        seed_types=None,
+        value_search="CAFÉ",
+    )
+    assert conditions, "the value search must produce a condition"
     for dialect, fold_marker in (
         (sqlite.dialect(), "pyrit_analytics_casefold"),
         (mssql.dialect(), "LOWER"),
     ):
-        compiled = str(statement.compile(dialect=dialect))
-        # Column and pattern both fold in SQL, so neither backend can mix
-        # foldings by lowering one side in Python.
-        assert compiled.count(fold_marker) == 2
+        for condition in conditions:
+            compiled = str(condition.compile(dialect=dialect))
+            # Column and pattern both fold in SQL, so neither backend can mix
+            # foldings by lowering one side in Python.
+            assert compiled.count(fold_marker) == 2, compiled
 
 
 @pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect()])
