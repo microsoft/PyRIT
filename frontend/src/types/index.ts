@@ -496,7 +496,7 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
-  auth_mode?: 'api_key' | 'identity'
+  auth_mode?: TargetAuthMode
 }
 
 // --- Initializers ---
@@ -771,10 +771,12 @@ export interface ConverterPreviewResponse {
   steps: ConverterPreviewStep[]
 }
 
+export type TargetAuthMode = 'api_key' | 'identity' | 'none'
+
 export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
-  supported_auth_modes: ('api_key' | 'identity')[]
+  supported_auth_modes: TargetAuthMode[]
   description?: string | null
 }
 

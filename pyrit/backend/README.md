@@ -307,10 +307,10 @@ Stop these test-owned servers after the run.
 ### Request Limits
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
-API requests with URLs over 8 KiB receive **414**. Identifiers, names, labels, filters,
-cursors, configuration files, and initializer scripts also have length or item limits,
-listed in the OpenAPI schema; values over a limit receive **422**. Prompt content (message
-pieces, system prompts, and converter preview input) and free-form values (prompt
+API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,
+labels, filters, cursors, configuration files, and initializer scripts also have length or
+item limits, listed in the OpenAPI schema; values over a limit receive **422**. Prompt content
+(message pieces, system prompts, and converter preview input) and free-form values (prompt
 metadata, scenario and initializer arguments, and target and converter parameter values)
 are limited only by the body size, so long prompts and base64 media keep working.
 
@@ -361,7 +361,9 @@ API callers are trusted operators, so these are intentional exceptions:
   the deployment instead.
 - Some targets use this server's credentials when the caller gives no key: an API key from the
   server's environment, sent even to an endpoint the caller chose, or a token for the server's
-  Azure identity, sent to the Azure endpoint or container the caller chose.
+  Azure identity, sent to the Azure endpoint or container the caller chose. For an
+  OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
+  of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
   created them.
 - Prompt content is not filtered; it is adversarial test data by design.

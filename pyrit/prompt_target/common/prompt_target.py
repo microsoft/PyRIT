@@ -84,7 +84,8 @@ class PromptTarget(Identifiable):
     # ``supported_auth_modes`` lists the auth modes the create-target API accepts
     # for this type. Base default is api-key only; targets that can authenticate
     # via an ambient Azure identity (e.g. OpenAI, Azure ML, Azure Blob Storage,
-    # Prompt Shield) override this to add ``"identity"``.
+    # Prompt Shield) override this to add ``"identity"``, and OpenAI targets also
+    # add ``"none"`` for OpenAI-compatible servers that need no key.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
 
     # Targets that upload files from the machine running PyRIT name the constructor parameter that
@@ -145,6 +146,23 @@ class PromptTarget(Identifiable):
             dict[str, object]: Additional constructor parameters.
         """
         return {}
+
+    @classmethod
+    def _validate_auth_mode(cls, auth_mode: AuthMode | None) -> None:
+        """
+        Reject an authentication mode this target type does not support.
+
+        Args:
+            auth_mode (AuthMode | None): Authentication mode selected by the caller, or None for the default.
+
+        Raises:
+            ValueError: If ``auth_mode`` is set and is not one of ``supported_auth_modes``.
+        """
+        if auth_mode is not None and auth_mode not in cls.supported_auth_modes:
+            raise ValueError(
+                f"{cls.__name__} does not support auth_mode={auth_mode!r}. "
+                f"Use one of: {', '.join(cls.supported_auth_modes)}."
+            )
 
     def __init__(
         self,

@@ -53,14 +53,16 @@ class OpenAITextEmbedding(EmbeddingSupport):
                 Defaults to OPENAI_EMBEDDING_MODEL environment variable.
             auth_mode: ``"identity"`` authenticates with a Microsoft Entra ID token minted for the
                 endpoint; it ignores the API key environment variable and rejects an explicit
-                ``api_key``. ``"api_key"`` (the default) resolves a token-provider callable, then an
+                ``api_key``. ``"none"`` is for OpenAI-compatible endpoints that need no key: it reads no
+                key, rejects an explicit ``api_key`` and sends the placeholder ``not-needed``.
+                ``"api_key"`` (the default) resolves a token-provider callable, then an
                 explicit key, then the environment variable.
 
         Raises:
-            ValueError: If identity auth is requested alongside an explicit ``api_key``, if identity
-                auth is requested for an endpoint that is not a recognized Azure OpenAI / AI Foundry
-                endpoint, or if ``"api_key"`` auth is requested and no key is available via parameter
-                or environment variable.
+            ValueError: If identity or no-key auth is requested alongside an explicit ``api_key``, if
+                identity auth is requested for an endpoint that is not a recognized Azure OpenAI / AI
+                Foundry endpoint, or if ``"api_key"`` auth is requested and no key is available via
+                parameter or environment variable.
         """
         endpoint = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint

@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from openai import BadRequestError
 from openai.resources.chat.completions import AsyncCompletions
 from openai.types.chat import ChatCompletion
+from pydantic import ValidationError
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
@@ -273,6 +274,43 @@ class TestTemporaryComponents:
             try:
                 assert private._api_key is source._api_key
                 assert await private._api_key() == "test-token"
+                assert private.get_identifier().temperature == 0.8
+            finally:
+                await private.cleanup_target_async()
+        finally:
+            await source.cleanup_target_async()
+
+    @pytest.mark.parametrize("auth_mode", ["none", "identity", "api_key"])
+    def test_source_takes_its_auth_mode_only_from_source_params(self, auth_mode: str) -> None:
+        source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
+
+        with pytest.raises(ValidationError, match="including auth_mode"):
+            CreateTargetRequest(type="OpenAIChatTarget", source=source, register=False, auth_mode=auth_mode)
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"temperature": 0.8},
+            {"temperature": 0.8, "api_key": None},
+            {"temperature": 0.8, "headers": None},
+            {"temperature": 0.8, "headers": ""},
+        ],
+    )
+    async def test_no_key_source_stays_no_key_async(self, overrides: dict[str, Any]) -> None:
+        source = OpenAIChatTarget(endpoint="http://localhost:11434/v1", model_name="llama3", auth_mode="none")
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(source, name="source")
+        try:
+            with patch.dict(
+                "os.environ",
+                {"OPENAI_CHAT_KEY": "server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"X-Server-Secret": "s"}'},
+            ):
+                private = await TargetService().build_from_source_async(
+                    SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=overrides)
+                )
+            try:
+                assert private._api_key == "not-needed"
+                assert private._headers == {}
                 assert private.get_identifier().temperature == 0.8
             finally:
                 await private.cleanup_target_async()
