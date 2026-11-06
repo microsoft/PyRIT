@@ -1071,7 +1071,12 @@ class MemoryInterface(abc.ABC):
         if title_query:
             # SQL Server also treats "[" as a LIKE wildcard.
             escaped_title = title_query.replace("/", "//").replace("%", "/%").replace("_", "/_").replace("[", "/[")
-            statement = statement.where(FindingEntry.title.ilike(f"%{escaped_title}%", escape="/"))
+            # SQLite's lower() only folds ASCII, so both sides fold through the
+            # per character UnicodeCaseFold, matching the seed value search.
+            pattern = "%" + escaped_title + "%"
+            statement = statement.where(
+                UnicodeCaseFold(FindingEntry.title).like(UnicodeCaseFold(literal(pattern, UnicodeText())), escape="/")
+            )
         statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
