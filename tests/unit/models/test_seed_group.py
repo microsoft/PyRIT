@@ -682,6 +682,41 @@ class TestAttackSeedGroupWithTechnique:
         assert len(merged.seeds) == 4
         assert merged is not base
 
+    @pytest.mark.parametrize("append_objective", [False, True])
+    def test_prepend_with_objective_handoff_preserves_multipart_sequences_and_reusable_inputs(
+        self, append_objective: bool
+    ) -> None:
+        base = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective", metadata={"source": {"name": "dataset"}}),
+                SeedPrompt(value="first part", role="user", sequence=-4, metadata={"part": 1}),
+                SeedPrompt(value="second part", role="user", sequence=-4, metadata={"part": 2}),
+                SeedPrompt(value="last context", role="user", sequence=99),
+            ]
+        )
+        technique = AttackTechniqueSeedGroup(
+            seeds=[SeedPrompt(value="framing", role="user", is_general_technique=True)],
+            prompt_placement="prepend",
+            append_objective_prompt=append_objective,
+        )
+        originals = (base.model_dump(), technique.model_dump())
+        source_id = base.logical_id
+
+        for _ in range(2):
+            merged = base.with_technique(technique=technique)
+            expected = [("framing", 0), ("first part", 1), ("second part", 1), ("last context", 2)]
+            if append_objective:
+                expected.append(("objective", 3))
+            assert [(prompt.value, prompt.sequence) for prompt in merged.prompts] == expected
+            assert all(prompt.role == "user" for prompt in merged.prompts)
+            assert merged.objective.value == base.objective.value
+            assert merged.objective.metadata == base.objective.metadata
+            assert merged.prompts[1].metadata == {"part": 1}
+            assert (base.model_dump(), technique.model_dump()) == originals
+            assert base.logical_id == source_id
+            merged.objective.metadata["source"]["name"] = "changed execution copy"
+            assert base.objective.metadata["source"]["name"] == "dataset"
+
     def test_merged_group_is_valid_attack_seed_group(self):
         """Test that the returned group passes AttackSeedGroup validation."""
         base = self._make_base_group()

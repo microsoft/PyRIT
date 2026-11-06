@@ -20,6 +20,7 @@ from pyrit.models import (
     Parameter,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
+    SeedGroupRequirements,
     SeedPrompt,
 )
 from pyrit.prompt_target import CapabilityName
@@ -137,9 +138,11 @@ def _jailbreak_multi_turn_factory() -> AttackTechniqueFactory:
         description=(
             "Sends the jailbreak template as the first user turn and the objective as a follow-up "
             "user turn in the same conversation, scoring only the final response. "
-            "This technique requires native multi-turn support."
+            "This technique requires native multi-turn support and accepts objectives with static user prompts, "
+            "not authored non-user history or simulated conversations."
         ),
         technique_tags=["multi_turn"],
+        requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(user_prompts_only=True)),
     )
 
 
@@ -192,6 +195,10 @@ class Jailbreak(Scenario):
     multi-turn support. Capability-gated deliveries are skipped for incapable targets, or raise if
     no compatible technique remains. Responses are scored to determine whether the jailbreak
     succeeded (non-refusal).
+
+    Multi-turn delivery accepts objective-only groups or static user prompts before the objective.
+    Authored non-user history and simulated conversations follow the incompatible-technique policy;
+    they are not replayed as outgoing user turns.
     """
 
     VERSION: int = 4
@@ -664,6 +671,7 @@ class Jailbreak(Scenario):
                     name=_JAILBREAK_MULTI_TURN,
                     attack_class=MultiPromptSendingAttack,
                     technique_tags=["multi_turn"],
+                    requirements=_jailbreak_multi_turn_factory().requirements,
                     seed_technique=AttackTechniqueSeedGroup(
                         seeds=[SeedPrompt(value=framing, data_type="text", role="user", is_general_technique=True)],
                         prompt_placement="prepend",

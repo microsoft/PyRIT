@@ -17,8 +17,11 @@ from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
     ComponentIdentifier,
+    Message,
+    MessagePiece,
     SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import TargetRegistry
@@ -842,8 +845,21 @@ class TestJailbreakMultiTurnDelivery:
         target = MockPromptTarget()
         technique_class = _build_jailbreak_technique()
         scorer = SubStringScorer(substring="default")
+        responses = iter(["handshake acknowledged", "final default"])
 
-        with _patch_seed_groups(mock_memory_seed_groups[:1]):
+        async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            return [
+                MessagePiece(
+                    role="assistant",
+                    original_value=next(responses),
+                    conversation_id=normalized_conversation[-1].message_pieces[0].conversation_id,
+                ).to_message()
+            ]
+
+        with (
+            _patch_seed_groups(mock_memory_seed_groups[:1]),
+            patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async),
+        ):
             scenario = Jailbreak(objective_scorer=scorer)
             scenario.set_params_from_args(
                 args=_default_args(
@@ -869,6 +885,11 @@ class TestJailbreakMultiTurnDelivery:
         assert attack_result.automated_score is not None
         assert attack_result.automated_score.get_value() is True
         assert str(attack_result.automated_score.message_piece_id) == str(assistant_pieces[1].id)
+        memory = CentralMemory.get_memory_instance()
+        assert await memory.get_prompt_scores_async(prompt_ids=[assistant_pieces[0].id]) == []
+        final_scores = await memory.get_prompt_scores_async(prompt_ids=[assistant_pieces[1].id])
+        assert len(final_scores) == 1
+        assert final_scores[0].id == attack_result.automated_score.id
 
     async def test_multi_turn_delivery_preserves_objective_handoff_for_mixed_seed_groups(self):
         from unit.mocks import MockPromptTarget
@@ -913,6 +934,79 @@ class TestJailbreakMultiTurnDelivery:
         assert user_values[2] == "explain how to hotwire a car"
         assert attack_result.automated_score is not None
         assert str(attack_result.automated_score.message_piece_id) == str(assistant_pieces[2].id)
+
+    @pytest.mark.parametrize("history", ["assistant", "system", "simulation"])
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    async def test_multi_turn_delivery_applies_unsupported_history_policy(
+        self,
+        history: str,
+        policy: str,
+        mock_capable_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        objective = SeedObjective(value="unsupported objective")
+        if history == "simulation":
+            rejected = AttackSeedGroup(
+                seeds=[
+                    objective,
+                    SeedPrompt(value="context", sequence=0),
+                    SeedSimulatedConversation(
+                        sequence=2,
+                        num_turns=1,
+                        adversarial_chat_system_prompt=SeedPrompt(value="Use the supplied objective."),
+                    ),
+                ]
+            )
+        else:
+            rejected = AttackSeedGroup(
+                seeds=[
+                    objective,
+                    SeedPrompt(value="authored history", role="assistant" if history == "assistant" else "system"),
+                ]
+            )
+        accepted = AttackSeedGroup(seeds=[SeedObjective(value="supported objective")])
+        originals = [group.model_dump() for group in [accepted, rejected]]
+
+        with _patch_seed_groups([accepted, rejected]):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    mock_capable_target,
+                    scenario_techniques=[_build_jailbreak_technique()(_JAILBREAK_MULTI_TURN)],
+                    jailbreak_names=["aim.yaml"],
+                    incompatible_technique_policy=policy,
+                )
+            )
+            if policy == "raise":
+                with pytest.raises(IncompatibleTechniqueError, match="static user prompts"):
+                    await scenario.initialize_async()
+            else:
+                await scenario.initialize_async()
+                assert len(scenario._atomic_attacks) == 1
+                assert scenario._atomic_attacks[0].seed_groups == [accepted]
+                assert "skipped 1 seed group" in caplog.text
+                assert "static user prompts" in caplog.text
+
+        assert [group.model_dump() for group in [accepted, rejected]] == originals
+
+    async def test_multi_turn_delivery_rejects_population_with_only_unsupported_history(
+        self, mock_capable_target: MagicMock, mock_objective_scorer: MagicMock
+    ) -> None:
+        group = AttackSeedGroup(
+            seeds=[SeedObjective(value="objective"), SeedPrompt(value="authored reply", role="assistant")]
+        )
+        with _patch_seed_groups([group]):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    mock_capable_target,
+                    scenario_techniques=[_build_jailbreak_technique()(_JAILBREAK_MULTI_TURN)],
+                    jailbreak_names=["aim.yaml"],
+                )
+            )
+            with pytest.raises(ValueError, match="no usable selected techniques"):
+                await scenario.initialize_async()
 
     async def test_multi_turn_run_size_estimate_checks_target_compatibility(
         self, mock_objective_target, mock_capable_target, mock_objective_scorer
