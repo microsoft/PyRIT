@@ -683,8 +683,9 @@ class TestAttackSeedGroupWithTechnique:
         assert merged is not base
 
     @pytest.mark.parametrize("append_objective", [False, True])
+    @pytest.mark.parametrize("prepend", [False, True])
     def test_prepend_with_objective_handoff_preserves_multipart_sequences_and_reusable_inputs(
-        self, append_objective: bool
+        self, *, append_objective: bool, prepend: bool
     ) -> None:
         base = AttackSeedGroup(
             seeds=[
@@ -695,8 +696,12 @@ class TestAttackSeedGroupWithTechnique:
             ]
         )
         technique = AttackTechniqueSeedGroup(
-            seeds=[SeedPrompt(value="framing", role="user", is_general_technique=True)],
-            prompt_placement="prepend",
+            seeds=[
+                SeedPrompt(
+                    value="framing", role="user", is_general_technique=True, metadata={"technique": {"name": "framing"}}
+                )
+            ],
+            prompt_placement="prepend" if prepend else "preserve",
             append_objective_prompt=append_objective,
         )
         originals = (base.model_dump(), technique.model_dump())
@@ -704,18 +709,110 @@ class TestAttackSeedGroupWithTechnique:
 
         for _ in range(2):
             merged = base.with_technique(technique=technique)
-            expected = [("framing", 0), ("first part", 1), ("second part", 1), ("last context", 2)]
+            expected = (
+                [("framing", 0), ("first part", 1), ("second part", 1), ("last context", 2)]
+                if prepend
+                else [("first part", 0), ("second part", 0), ("framing", 1), ("last context", 2)]
+            )
             if append_objective:
                 expected.append(("objective", 3))
             assert [(prompt.value, prompt.sequence) for prompt in merged.prompts] == expected
             assert all(prompt.role == "user" for prompt in merged.prompts)
             assert merged.objective.value == base.objective.value
             assert merged.objective.metadata == base.objective.metadata
-            assert merged.prompts[1].metadata == {"part": 1}
+            assert next(prompt for prompt in merged.prompts if prompt.value == "first part").metadata == {"part": 1}
             assert (base.model_dump(), technique.model_dump()) == originals
             assert base.logical_id == source_id
             merged.objective.metadata["source"]["name"] = "changed execution copy"
             assert base.objective.metadata["source"]["name"] == "dataset"
+            next(prompt for prompt in merged.prompts if prompt.value == "framing").metadata["technique"]["name"] = (
+                "changed"
+            )
+            assert technique.prompts[0].metadata["technique"]["name"] == "framing"
+
+    @pytest.mark.parametrize("prepend", [False, True])
+    @pytest.mark.parametrize("insertion_index", [None, 0])
+    def test_objective_handoff_is_final_after_multipart_technique(
+        self, *, prepend: bool, insertion_index: int | None
+    ) -> None:
+        base = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+        technique = AttackTechniqueSeedGroup(
+            seeds=[
+                SeedPrompt(value="framing part 1", role="user", sequence=0, is_general_technique=True),
+                SeedPrompt(value="framing part 2", role="user", sequence=0, is_general_technique=True),
+                SeedPrompt(value="last framing", role="user", sequence=1, is_general_technique=True),
+            ],
+            prompt_placement="prepend" if prepend else "preserve",
+            insertion_index=insertion_index,
+            append_objective_prompt=True,
+        )
+
+        merged = base.with_technique(technique=technique)
+
+        assert [(prompt.value, prompt.sequence, prompt.role) for prompt in merged.prompts] == [
+            ("framing part 1", 0, "user"),
+            ("framing part 2", 0, "user"),
+            ("last framing", 1, "user"),
+            ("objective", 2, "user"),
+        ]
+        assert len(merged.user_messages) == 3
+        assert len(merged.user_messages[0].message_pieces) == 2
+        assert merged.user_messages[-1].get_value() == base.objective.value
+
+    @pytest.mark.parametrize("simulation_in_technique", [False, True])
+    @pytest.mark.parametrize("generated_next_message", [False, True])
+    @pytest.mark.parametrize("late_static_prompt", [False, True])
+    @pytest.mark.parametrize("append_objective", [False, True])
+    def test_objective_handoff_follows_static_and_simulated_reservations(
+        self,
+        *,
+        simulation_in_technique: bool,
+        generated_next_message: bool,
+        late_static_prompt: bool,
+        append_objective: bool,
+    ) -> None:
+        simulation = SeedSimulatedConversation(
+            adversarial_chat_system_prompt=SeedPrompt(value="adversarial", parameters=["objective"]),
+            num_turns=2,
+            sequence=4,
+            next_message_system_prompt=SeedPrompt(value="next") if generated_next_message else None,
+            metadata={"simulation": {"source": "original"}},
+        )
+        base = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedPrompt(value="context", role="user", sequence=21 if late_static_prompt else 0),
+                *([] if simulation_in_technique else [simulation]),
+            ]
+        )
+        technique = AttackTechniqueSeedGroup(
+            seeds=[
+                SeedPrompt(value="framing", role="user", sequence=1, is_general_technique=True),
+                *([simulation] if simulation_in_technique else []),
+            ],
+            append_objective_prompt=append_objective,
+        )
+        originals = (base.model_dump(), technique.model_dump())
+        expected_sequence = 22 if late_static_prompt else 8 + int(generated_next_message)
+
+        for _ in range(2):
+            merged = base.with_technique(technique=technique)
+            assert merged.simulated_conversation_config is not None
+            assert merged.simulated_conversation_config.sequence_range == simulation.sequence_range
+            assert [
+                (prompt.value, prompt.sequence) for prompt in merged.prompts if prompt.value != "objective"
+            ] == sorted([("context", 21 if late_static_prompt else 0), ("framing", 1)], key=lambda pair: pair[1])
+            assert len(merged.prompts) == 2 + int(append_objective)
+            if append_objective:
+                assert (merged.prompts[-1].value, merged.prompts[-1].sequence, merged.prompts[-1].role) == (
+                    "objective",
+                    expected_sequence,
+                    "user",
+                )
+                assert merged.prompts[-1].sequence not in simulation.sequence_range
+            assert (base.model_dump(), technique.model_dump()) == originals
+            merged.simulated_conversation_config.metadata["simulation"]["source"] = "changed execution copy"
+            assert simulation.metadata["simulation"]["source"] == "original"
 
     def test_merged_group_is_valid_attack_seed_group(self):
         """Test that the returned group passes AttackSeedGroup validation."""
