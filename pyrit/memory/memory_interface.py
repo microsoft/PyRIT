@@ -2831,8 +2831,8 @@ class MemoryInterface(abc.ABC):
 
         Computes per-conversation message count (distinct sequence numbers),
         a truncated last-message preview, the first non-empty labels dict,
-        and the earliest message timestamp using efficient SQL aggregation
-        instead of loading full pieces.
+        and the earliest message timestamp (timezone-aware UTC) using efficient
+        SQL aggregation instead of loading full pieces.
 
         Args:
             conversation_ids: The conversation IDs to query.
@@ -9572,8 +9572,8 @@ class MemoryInterface(abc.ABC):
 
         Computes per-conversation message count (distinct sequence numbers),
         a truncated last-message preview, the first non-empty labels dict,
-        and the earliest message timestamp using efficient SQL aggregation
-        instead of loading full pieces.
+        and the earliest message timestamp (timezone-aware UTC) using efficient
+        SQL aggregation instead of loading full pieces.
 
         Args:
             conversation_ids: The conversation IDs to query.

@@ -8,11 +8,22 @@ All interactions in the UI are modeled as "attacks" - including manual conversat
 This is the attack-centric API design where every user interaction targets a model.
 """
 
+import copy
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, Field, computed_field, field_serializer, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    Field,
+    GetJsonSchemaHandler,
+    computed_field,
+    field_serializer,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import (
@@ -529,6 +540,44 @@ class _AttackAttributionInput(BaseModel):
         return normalized
 
 
+_TARGET_BINDING_LIMITED_FIELDS = ("source_name", "source_hash", "effective_hash")
+
+
+def _limit_target_binding(binding: TargetBinding) -> TargetBinding:
+    """
+    Apply the identifier limit to a binding a caller sends.
+
+    Saved bindings are read without this limit, so attacks saved before it keep loading.
+
+    Returns:
+        TargetBinding: The unchanged binding.
+
+    Raises:
+        ValueError: If a name or hash is longer than the identifier limit.
+    """
+    if any(len(getattr(binding, field)) > MAX_IDENTIFIER_LENGTH for field in _TARGET_BINDING_LIMITED_FIELDS):
+        raise ValueError(f"Target binding names and hashes are limited to {MAX_IDENTIFIER_LENGTH} characters.")
+    return binding
+
+
+class _TargetBindingInputSchema:
+    """Show the identifier limit in the schema of a binding a caller sends."""
+
+    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Return the binding schema with the limit, described inline for request fields only."""
+        schema = handler(core_schema)
+        if handler.mode != "validation":
+            return schema
+        # Saved bindings are read without the limit, so the shared definition stays unchanged.
+        limited = copy.deepcopy(handler.resolve_ref_schema(schema))
+        for field in _TARGET_BINDING_LIMITED_FIELDS:
+            limited["properties"][field]["maxLength"] = MAX_IDENTIFIER_LENGTH
+        return limited
+
+
+TargetBindingInput = Annotated[TargetBinding, AfterValidator(_limit_target_binding), _TargetBindingInputSchema()]
+
+
 # ============================================================================
 # Create Attack
 # ============================================================================
@@ -546,7 +595,7 @@ class CreateAttackRequest(_AttackAttributionInput):
     """
 
     name: TextStr | None = Field(None, description="Attack name/label")
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     chat_scorer: RegisteredComponentReference | None = None
     target_registry_name: IdentifierStr | None = Field(
         None, description="Target registry name, or None for a saved unbound attack"
@@ -665,7 +714,7 @@ class SaveConversationRequest(_AttackAttributionInput):
     expected_objective: str | None = None
     objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
     target_registry_name: IdentifierStr | None = None
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     messages: list[MessageRequest] = Field(default_factory=list)
     reuse_unsent_conversation: bool = False
     expected_source_piece_ids: list[uuid.UUID] | None = None
@@ -757,7 +806,7 @@ class AddMessageRequest(MessageRequest):
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     converter_ids: list[IdentifierStr] | None = Field(
         None,
         max_length=MAX_ITEMS,
