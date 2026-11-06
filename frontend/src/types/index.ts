@@ -674,6 +674,16 @@ export interface TechniqueConfiguration {
   read_only: Record<string, string>
   supports_prepended_conversation: boolean
   supports_prompt?: boolean
+  prompt_templates?: Partial<Record<TechniquePromptField, TechniquePromptTemplate>>
+  system_prompt_prefix?: string | null
+}
+
+export type TechniquePromptField = 'adversarial_system_prompt' | 'adversarial_seed_prompt' | 'adversarial_prompt_template'
+
+export interface TechniquePromptTemplate {
+  value: string
+  parameters: string[]
+  source: 'technique' | 'builtin'
 }
 
 export interface TechniqueEditResponse {
