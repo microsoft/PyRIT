@@ -694,6 +694,53 @@ class TestExtractObjectiveFromPreviousTurn:
 
         assert objective == "the first request"
 
+    @pytest.mark.parametrize("use_sync", [False, True], ids=["async", "sync"])
+    async def test_skips_tool_call_turns_between_request_and_answer_async(
+        self, *, sqlite_instance: MemoryInterface, use_sync: bool
+    ) -> None:
+        conversation_id = str(uuid.uuid4())
+        pieces = [
+            MessagePiece(role="user", original_value="Earlier request", conversation_id=conversation_id, sequence=0),
+            MessagePiece(
+                role="assistant", original_value="Earlier answer", conversation_id=conversation_id, sequence=1
+            ),
+            MessagePiece(
+                role="user",
+                original_value="What is the weather in Seattle?",
+                conversation_id=conversation_id,
+                sequence=2,
+            ),
+            MessagePiece(
+                role="assistant",
+                original_value='{"type": "function_call", "call_id": "call_1", "name": "get_weather"}',
+                original_value_data_type="function_call",
+                conversation_id=conversation_id,
+                sequence=3,
+            ),
+            MessagePiece(
+                role="tool",
+                original_value='{"type": "function_call_output", "call_id": "call_1", "output": "sunny"}',
+                original_value_data_type="function_call_output",
+                conversation_id=conversation_id,
+                sequence=4,
+            ),
+            MessagePiece(
+                role="assistant", original_value="It's sunny in Seattle.", conversation_id=conversation_id, sequence=5
+            ),
+        ]
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+        answer = pieces[-1].to_message()
+
+        if use_sync:
+            with pytest.warns(DeprecationWarning):
+                objective = await asyncio.to_thread(
+                    extract_objective_from_previous_turn, message=answer, memory=sqlite_instance
+                )
+        else:
+            objective = await extract_objective_from_previous_turn_async(message=answer, memory=sqlite_instance)
+
+        assert objective == "What is the weather in Seattle?"
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestInHandMessages:
