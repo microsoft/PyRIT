@@ -306,6 +306,27 @@ describe('DatasetCatalog', () => {
     expect(await screen.findByText('No datasets match these filters')).toBeInTheDocument()
   })
 
+  it('counts repeated facet parameters as one selection', async () => {
+    render(<Harness initialPath="/datasets?modality=text&modality=text&harm_category=hate&harm_category=hate" />)
+
+    expect(await screen.findByRole('link', { name: 'harmbench' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Modalities' })).toHaveValue('Modalities: text')
+    expect(screen.getByRole('combobox', { name: 'Harm categories' })).toHaveValue('Harm categories: hate')
+  })
+
+  it('canonicalizes repeated facets after an unrelated search edit', async () => {
+    const user = userEvent.setup()
+    render(<Harness initialPath="/datasets?modality=text&modality=text&harm_category=hate&harm_category=hate" />)
+    await screen.findByRole('link', { name: 'harmbench' })
+
+    await user.type(screen.getByRole('textbox', { name: 'Search datasets' }), 'harm')
+
+    expect(currentUrl().searchParams.get('q')).toBe('harm')
+    expect(currentUrl().searchParams.getAll('modality')).toEqual(['text'])
+    expect(currentUrl().searchParams.getAll('harm_category')).toEqual(['hate'])
+    expect(screen.getByRole('link', { name: 'harmbench' })).toBeInTheDocument()
+  })
+
   it('updates the URL from the sort, modality, and harm controls', async () => {
     const user = userEvent.setup()
     render(<Harness initialPath="/datasets" />)
