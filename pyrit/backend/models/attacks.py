@@ -8,11 +8,22 @@ All interactions in the UI are modeled as "attacks" - including manual conversat
 This is the attack-centric API design where every user interaction targets a model.
 """
 
+import copy
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, Field, computed_field, field_serializer, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    Field,
+    GetJsonSchemaHandler,
+    computed_field,
+    field_serializer,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.common import (
@@ -24,9 +35,11 @@ from pyrit.backend.models.common import (
     TextStr,
 )
 from pyrit.models import (
+    AttackOutcome,
     AttackResult,
     ChatMessageRole,
     ConversationReference,
+    ConversationSummary,
     Message,
     MessagePiece,
     PromptDataType,
@@ -327,6 +340,31 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
         return sorted(ref.conversation_id for ref in self.related_conversations)
 
 
+class AttackMetadata(BaseModel):
+    """Chat metadata without reference collections, transcript bodies, or result hierarchies."""
+
+    attack_result_id: str
+    conversation_id: str
+    objective: str
+    labels: dict[str, str] = Field(default_factory=dict)
+    operator: str | None = None
+    target: TargetInfo | None = None
+    target_unbound: bool = False
+    outcome: AttackOutcome
+    automated_score: ScoreView | None = None
+    human_score: ScoreView | None = None
+    chat_scorer: RegisteredComponentReference | None = None
+    chat_scorer_inherited: bool = False
+    execution_read_only: bool = False
+    manual_continuation: ManualContinuation | None = None
+    last_response_message_piece_id: str | None = None
+    related_conversation_count: int = Field(..., ge=0, description="Number of pruned conversations, excluding main")
+    selected_conversation_id: str
+    selected_conversation_valid: bool = Field(
+        ..., description="Selected conversation is a saved main or pruned reference"
+    )
+
+
 # ============================================================================
 # Conversation Messages Response
 # ============================================================================
@@ -349,6 +387,13 @@ class ConversationMessagesResponse(BaseModel):
     conversation_id: str = Field(..., description="Conversation identifier")
     messages: list[MessageView] = Field(default_factory=list, description="All messages in order")
     scoring_failure: ScoringFailure | None = None
+    automated_score: ScoreView | None = None
+    outcome: AttackOutcome | None = Field(
+        default=None, description="Outcome for the latest response; a human score overrides the attack"
+    )
+    latest_response_id: str | None = Field(
+        default=None, description="First piece ID of the latest live assistant response"
+    )
     target_response_status: TargetResponseStatus | None = Field(
         default=None,
         description=(
@@ -356,6 +401,8 @@ class ConversationMessagesResponse(BaseModel):
             "None when the conversation does not end with a target response."
         ),
     )
+    pagination: PaginationInfo | None = None
+    partial_message_sequences: list[int] = Field(default_factory=list)
 
 
 # ============================================================================
@@ -493,6 +540,44 @@ class _AttackAttributionInput(BaseModel):
         return normalized
 
 
+_TARGET_BINDING_LIMITED_FIELDS = ("source_name", "source_hash", "effective_hash")
+
+
+def _limit_target_binding(binding: TargetBinding) -> TargetBinding:
+    """
+    Apply the identifier limit to a binding a caller sends.
+
+    Saved bindings are read without this limit, so attacks saved before it keep loading.
+
+    Returns:
+        TargetBinding: The unchanged binding.
+
+    Raises:
+        ValueError: If a name or hash is longer than the identifier limit.
+    """
+    if any(len(getattr(binding, field)) > MAX_IDENTIFIER_LENGTH for field in _TARGET_BINDING_LIMITED_FIELDS):
+        raise ValueError(f"Target binding names and hashes are limited to {MAX_IDENTIFIER_LENGTH} characters.")
+    return binding
+
+
+class _TargetBindingInputSchema:
+    """Show the identifier limit in the schema of a binding a caller sends."""
+
+    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> JsonSchemaValue:
+        """Return the binding schema with the limit, described inline for request fields only."""
+        schema = handler(core_schema)
+        if handler.mode != "validation":
+            return schema
+        # Saved bindings are read without the limit, so the shared definition stays unchanged.
+        limited = copy.deepcopy(handler.resolve_ref_schema(schema))
+        for field in _TARGET_BINDING_LIMITED_FIELDS:
+            limited["properties"][field]["maxLength"] = MAX_IDENTIFIER_LENGTH
+        return limited
+
+
+TargetBindingInput = Annotated[TargetBinding, AfterValidator(_limit_target_binding), _TargetBindingInputSchema()]
+
+
 # ============================================================================
 # Create Attack
 # ============================================================================
@@ -510,7 +595,7 @@ class CreateAttackRequest(_AttackAttributionInput):
     """
 
     name: TextStr | None = Field(None, description="Attack name/label")
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     chat_scorer: RegisteredComponentReference | None = None
     target_registry_name: IdentifierStr | None = Field(
         None, description="Target registry name, or None for a saved unbound attack"
@@ -578,15 +663,6 @@ class UpdateAttackRequest(BaseModel):
 # ============================================================================
 
 
-class ConversationSummary(BaseModel):
-    """Summary of a conversation (message count, preview, timestamp)."""
-
-    conversation_id: str = Field(..., description="Unique conversation identifier")
-    message_count: int = Field(0, description="Number of messages in this conversation")
-    last_message_preview: str | None = Field(None, description="Preview of the last message")
-    created_at: datetime | None = Field(None, description="Timestamp of the first message")
-
-
 class AttackConversationsResponse(BaseModel):
     """Response listing all conversations belonging to an attack."""
 
@@ -595,6 +671,8 @@ class AttackConversationsResponse(BaseModel):
     conversations: list[ConversationSummary] = Field(
         default_factory=list, description="All conversations including main"
     )
+    pagination: PaginationInfo | None = None
+    total_count: int | None = None
 
 
 class CreateConversationRequest(BaseModel):
@@ -636,7 +714,7 @@ class SaveConversationRequest(_AttackAttributionInput):
     expected_objective: str | None = None
     objective: str | None = Field(None, description="Omit to keep the destination's objective unchanged")
     target_registry_name: IdentifierStr | None = None
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     messages: list[MessageRequest] = Field(default_factory=list)
     reuse_unsent_conversation: bool = False
     expected_source_piece_ids: list[uuid.UUID] | None = None
@@ -728,7 +806,7 @@ class AddMessageRequest(MessageRequest):
         None,
         description="Target registry name. Required when send=True so the backend knows which target to use.",
     )
-    target_binding: TargetBinding | None = None
+    target_binding: TargetBindingInput | None = None
     converter_ids: list[IdentifierStr] | None = Field(
         None,
         max_length=MAX_ITEMS,

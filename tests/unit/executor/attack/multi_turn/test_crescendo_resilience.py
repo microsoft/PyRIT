@@ -325,8 +325,10 @@ class TestCrescendoMixedFailureRecovery:
             "response-9",
             "response-10-final",
         ]
+        # The refusal judge renders its criterion as the conversation objective,
+        # so it receives the attack objective rather than the prompt that was sent.
         assert [call.kwargs["expectation"].objective for call in refusal_scorer.score_async.await_args_list] == [
-            f"question-{attempt}" for attempt in range(1, 13)
+            _OBJECTIVE for _ in range(12)
         ]
         objective_inputs = [call.kwargs["response"].get_value() for call in score_response.await_args_list]
         assert refusal_scorer.score_async.await_count == 12
@@ -550,8 +552,8 @@ class TestCrescendoSeededModalityTransitions:
         assert [message.get_value() for message in refusal_inputs] == ["first text response", "final text response"]
         assert [message.get_value() for message in objective_inputs] == ["first text response", "final text response"]
         assert [call.kwargs["expectation"].objective for call in refusal_scorer.score_async.await_args_list] == [
-            "question-1",
-            "question-2",
+            _OBJECTIVE,
+            _OBJECTIVE,
         ]
         assert [call.kwargs["expectation"].objective for call in score_response.await_args_list] == [
             _OBJECTIVE,
@@ -725,9 +727,9 @@ class TestCrescendoSeededModalityTransitions:
         ]
         assert refusal_inputs[0].get_piece().response_error == "blocked"
         assert [call.kwargs["expectation"].objective for call in refusal_scorer.score_async.await_args_list] == [
-            "question-1",
-            "question-2",
-            "question-3",
+            _OBJECTIVE,
+            _OBJECTIVE,
+            _OBJECTIVE,
         ]
         assert [call.kwargs["response"].get_value() for call in score_response.await_args_list] == [
             "accepted retry response",

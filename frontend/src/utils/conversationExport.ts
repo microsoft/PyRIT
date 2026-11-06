@@ -1,4 +1,5 @@
 import type { Message, MessageAttachment, MessageError } from '../types'
+import { downloadFile } from './downloadFile'
 import { fileToBase64 } from './messageMapper'
 
 export type ExportFormat = 'markdown' | 'json' | 'html'
@@ -275,26 +276,11 @@ export function buildExportFilename(
 }
 
 /**
- * Trigger a browser download of `content` as `filename`. Uses the Blob → object
- * URL → anchor-click idiom and always revokes the object URL, even if the click
- * throws.
+ * Trigger a browser download of `content` as `filename`, encoded as a Blob of
+ * `mimeType`. See {@link downloadFile} for the link and object URL cleanup.
  */
 export function downloadTextFile(content: string, filename: string, mimeType: string): void {
-  const blob = new Blob([content], { type: mimeType })
-  const objectUrl = URL.createObjectURL(blob)
-  try {
-    const link = document.createElement('a')
-    link.href = objectUrl
-    link.download = filename
-    document.body.appendChild(link)
-    try {
-      link.click()
-    } finally {
-      link.remove()
-    }
-  } finally {
-    URL.revokeObjectURL(objectUrl)
-  }
+  downloadFile(new Blob([content], { type: mimeType }), filename)
 }
 
 function withoutLoadingPlaceholders(messages: Message[]): Message[] {

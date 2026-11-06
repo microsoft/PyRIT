@@ -47,6 +47,78 @@ describe("MessageList", () => {
     },
   ];
 
+  it("should label a split turn and preserve its bubble when ordered evidence is extended", () => {
+    const first = { ...mockMessages[0], sequence: 0, isPartial: true };
+    const rendered = render(<TestWrapper><MessageList messages={[first]} autoScroll={false} /></TestWrapper>);
+    const bubble = screen.getByTestId("message-bubble-0");
+    expect(screen.getByText("Incomplete turn")).toBeVisible();
+    rendered.rerender(<TestWrapper><MessageList autoScroll={false} messages={[
+      { ...mockMessages[1], role: "system", sequence: -1 }, { ...first, isPartial: false },
+    ]} /></TestWrapper>);
+    expect(screen.getByTestId("message-bubble-1")).toBe(bubble);
+    expect(screen.queryByText("Incomplete turn")).not.toBeInTheDocument();
+  });
+
+  it("should keep saved evidence in place while retaining live Chat auto-scroll", () => {
+    const scroll = jest.mocked(Element.prototype.scrollIntoView);
+    scroll.mockClear();
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} autoScroll={false} /></TestWrapper>);
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} autoScroll={false} /></TestWrapper>);
+    expect(scroll).not.toHaveBeenCalled();
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([2, 3])("should retain gapped sequence %s beside optimistic user and loading rows without duplicate keys", (sequence: number) => {
+    const errors = jest.spyOn(console, "error").mockImplementation(() => {});
+    const stored: Message[] = [
+      { ...mockMessages[0], sequence: 0 }, { ...mockMessages[1], sequence },
+    ];
+    const pending: Message[] = [
+      { role: "user", content: "Pending request", timestamp: mockMessages[0].timestamp },
+      { role: "assistant", content: "...", timestamp: mockMessages[0].timestamp, isLoading: true },
+    ];
+    try {
+      const rendered = render(<TestWrapper><MessageList messages={[...stored, ...pending]} /></TestWrapper>);
+      const bubble = screen.getByTestId("message-bubble-1");
+      expect(screen.getByText("Pending request")).toBeVisible();
+      rendered.rerender(<TestWrapper><MessageList messages={[
+        ...stored, { ...pending[0], sequence: sequence + 2 },
+        { ...mockMessages[1], content: "Saved pending response", sequence: sequence + 3 },
+      ]} /></TestWrapper>);
+      expect(screen.getByTestId("message-bubble-1")).toBe(bubble);
+      expect(screen.getAllByText("Pending request")).toHaveLength(1);
+      expect(screen.getByText("Saved pending response")).toBeVisible();
+      expect(errors.mock.calls.flat().filter((value: unknown) =>
+        typeof value === "string" && value.includes("same key"))).toEqual([]);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("should explain why partial saved evidence cannot be copied or branched", async () => {
+    const user = userEvent.setup();
+    const onCopyToInput = jest.fn();
+    const onCopyToNewConversation = jest.fn();
+    const onCopyToNewAttack = jest.fn();
+    const onUseInTechnique = jest.fn();
+    const reason = "Load the complete saved transcript before continuing, copying, exporting, or assessing this result.";
+    render(<TestWrapper><MessageList messages={mockMessages} copyConversationDisabledReason={reason}
+      copyToInputDisabledReason={reason} onCopyToInput={onCopyToInput}
+      onCopyToNewConversation={onCopyToNewConversation} onCopyToNewAttack={onCopyToNewAttack}
+      onUseInTechnique={onUseInTechnique} /></TestWrapper>);
+    await user.click(screen.getAllByRole("button", { name: "Copy or Branch" })[0]);
+    for (const name of ["Copy to next message", "Branch conversation", "Branch attack", "Use in scan"]) {
+      const item = screen.getByRole("menuitem", { name, exact: true });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription(/Load the complete saved transcript/);
+      await user.click(item);
+    }
+    for (const callback of [onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique]) {
+      expect(callback).not.toHaveBeenCalled();
+    }
+  });
+
   it("should render empty state when no messages", () => {
     render(
       <TestWrapper>
@@ -88,6 +160,25 @@ describe("MessageList", () => {
     expect(within(branch).getByText(/This attack is read-only/)).toBeVisible();
     expect(screen.getByRole("menuitem", { name: "Copy to next message" })).not.toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("menuitem", { name: "Branch attack" })).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("disables next-message copying without disabling branching", async () => {
+    const user = userEvent.setup();
+    const onCopyToInput = jest.fn();
+    const reason = "This target only supports single-turn conversations.";
+    render(<TestWrapper><MessageList messages={mockMessages}
+      onCopyToInput={onCopyToInput} copyToInputDisabledReason={reason}
+      onCopyToNewConversation={jest.fn()} onCopyToNewAttack={jest.fn()} /></TestWrapper>);
+    for (const button of screen.getAllByRole("button", { name: "Copy or Branch" })) {
+      await user.click(button);
+      const copy = screen.getByRole("menuitem", { name: "Copy to next message" });
+      expect(copy).toHaveAttribute("aria-disabled", "true");
+      expect(copy).toHaveAccessibleDescription(reason);
+      await user.click(copy);
+      expect(onCopyToInput).not.toHaveBeenCalled();
+      expect(screen.getByRole("menuitem", { name: "Branch conversation" })).not.toHaveAttribute("aria-disabled", "true");
+      await user.keyboard("{Escape}");
+    }
   });
 
   it("should show an accessible description for every copy or branch action and support keyboard selection", async () => {

@@ -138,7 +138,7 @@ print(f"[keyword] meth synthesis terms -> {hit.get_value()}")
 # ([OWASP LLM02 — Insecure Output Handling](https://genai.owasp.org/llmrisk/llm02-insecure-output-handling/)):
 #
 # - **`XSSOutputScorer`** — `<script>`, `onerror=`, `javascript:` URIs, SVG-embedded script.
-# - **`SQLInjectionOutputScorer`** — `UNION SELECT`, `;DROP TABLE`, `';--`.
+# - **`SQLInjectionOutputScorer`** — `UNION SELECT`, `;DROP TABLE`, `';--`, `' OR 1=1`.
 # - **`ShellCommandOutputScorer`** — `curl ... | sh`, `rm -rf /`, reverse shells.
 # - **`PathTraversalOutputScorer`** — `../../etc/passwd` and similar walks to sensitive files.
 # - **`SSRFOutputScorer`** — `169.254.169.254` metadata, `http://localhost`/RFC1918 targets, `gopher://` schemes.
@@ -580,3 +580,50 @@ print(type(wildguard_scorer).__name__)
 # - **`VideoTrueFalseScorer`** — extracts frames from a `video_path` response and scores them with a
 #   wrapped image `TrueFalseScorer` (True if *any* frame matches); an optional audio scorer is
 #   AND-combined so both the visuals and the transcript must match.
+#
+# ### Scoring existing videos
+#
+# Video scoring works with an existing video file from any source; it does not require Sora
+# or another video-generation service. Install `pyrit[opencv]` and configure an image-capable
+# `OpenAIChatTarget` for the frame judge. Replace the path below with your own video.
+#
+# ```python
+# from pyrit.models import ContentScorable
+# from pyrit.prompt_target import OpenAIChatTarget
+# from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion, VideoTrueFalseScorer
+# from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+#
+# await initialize_pyrit_async(memory_db_type=IN_MEMORY)
+#
+# frame_scorer = SelfAskTrueFalseScorer.from_question(
+#     chat_target=OpenAIChatTarget(),
+#     question=TrueFalseQuestion(true_description="A raccoon is eating a pastry."),
+# )
+# video_scorer = VideoTrueFalseScorer(
+#     image_capable_scorer=frame_scorer,
+#     num_sampled_frames=3,
+# )
+# video = ContentScorable(value="/absolute/path/to/video.mp4", data_type="video_path")
+# scores = await video_scorer.score_async(scorable=video)
+# print(scores[0])
+# ```
+#
+# To require both matching visuals and matching speech, add an `AudioTrueFalseScorer`.
+# The video must contain an audio track, and Azure Speech transcription must be configured
+# (including the `speech` extra). The visual result and transcript result are AND-combined.
+#
+# ```python
+# from pyrit.score import AudioTrueFalseScorer
+#
+# transcript_scorer = SelfAskTrueFalseScorer.from_question(
+#     chat_target=OpenAIChatTarget(),
+#     question=TrueFalseQuestion(true_description="Someone introduces themselves."),
+# )
+# video_and_audio_scorer = VideoTrueFalseScorer(
+#     image_capable_scorer=frame_scorer,
+#     num_sampled_frames=3,
+#     audio_scorer=AudioTrueFalseScorer(text_capable_scorer=transcript_scorer),
+# )
+# scores = await video_and_audio_scorer.score_async(scorable=video)
+# print(scores[0])
+# ```

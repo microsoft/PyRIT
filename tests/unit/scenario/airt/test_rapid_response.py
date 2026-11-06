@@ -154,7 +154,7 @@ ALL_HARM_CATEGORIES = ["hate", "fairness", "violence", "sexual", "harassment", "
 ALL_HARM_SEED_GROUPS = {cat: _make_seed_groups(cat) for cat in ALL_HARM_CATEGORIES}
 
 
-FIXTURES = ["patch_central_database", "mock_runtime_env"]
+FIXTURES = ["patch_central_database", "mock_runtime_env", "mock_dataset_preparation"]
 
 
 @pytest.mark.usefixtures(*FIXTURES)

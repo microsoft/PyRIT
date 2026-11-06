@@ -7,7 +7,7 @@ import abc
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, assert_never, cast
 
 import numpy as np
 from scipy.stats import ttest_1samp
@@ -52,6 +52,7 @@ class ScorerEvalDatasetFiles:
 
     Maps input dataset files (via glob patterns) to an output result file.
     Multiple files matching the patterns will be concatenated before evaluation.
+    Each matched path is loaded once, even when patterns overlap or repeat.
 
     Args:
         human_labeled_datasets_files (list[str]): List of glob patterns to match CSV files.
@@ -102,9 +103,16 @@ class ScorerEvaluator(abc.ABC):
         if not metrics_type:
             metrics_type = MetricsType.OBJECTIVE if isinstance(scorer, TrueFalseScorer) else MetricsType.HARM
 
-        evaluator_map = {MetricsType.HARM: HarmScorerEvaluator, MetricsType.OBJECTIVE: ObjectiveScorerEvaluator}
-
-        evaluator = evaluator_map.get(metrics_type, HarmScorerEvaluator)
+        match metrics_type:
+            case MetricsType.HARM:
+                evaluator = HarmScorerEvaluator
+            case MetricsType.OBJECTIVE:
+                evaluator = ObjectiveScorerEvaluator
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(metrics_type)
+                # Preserve the historical runtime fallback for values outside the declared enum.
+                evaluator = HarmScorerEvaluator
         return evaluator(scorer=scorer)
 
     async def run_evaluation_async(
@@ -160,8 +168,8 @@ class ScorerEvaluator(abc.ABC):
             return None
 
         # Load each CSV as a HumanLabeledDataset and combine entries
-        # Sort csv_files for deterministic ordering when concatenating versions
-        csv_files = sorted(csv_files)
+        # Deduplicate overlapping matches and keep deterministic version ordering.
+        csv_files = sorted(set(csv_files))
         all_entries = []
         dataset_versions = []
         harm_definition_versions = set()

@@ -41,6 +41,7 @@ from pyrit.models import (
     AttackResultSelection,
     ComponentIdentifier,
     ConversationReference,
+    ConversationType,
     ConverterIdentifier,
     Identifiable,
     Message,
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
         AttackAdversarialConfig,
         AttackScoringConfig,
     )
+    from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.prompt_target import PromptTarget
@@ -223,6 +225,8 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     )
     _persisted_attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
     _persist_attack_result: bool = field(default=True, init=False, repr=False, compare=False)
+    _objective_conversation_ids: dict[str, None] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _current_objective_conversation_id: str | None = field(default=None, init=False, repr=False, compare=False)
     _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
         default=None,
         init=False,
@@ -357,6 +361,24 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         if lifecycle is None:
             return
         lifecycle.record_invocation(conversation_id=conversation_id)
+        self._objective_conversation_ids.setdefault(conversation_id, None)
+        self._current_objective_conversation_id = conversation_id
+
+    @property
+    def objective_conversation_ids(self) -> tuple[str, ...]:
+        """Objective conversations in first-invocation order."""
+        return tuple(self._objective_conversation_ids)
+
+    @property
+    def current_objective_conversation_id(self) -> str | None:
+        """The most recently invoked objective conversation, unless it has been pruned."""
+        current = self._current_objective_conversation_id
+        pruned = {
+            reference.conversation_id
+            for reference in self.related_conversations
+            if reference.conversation_type == ConversationType.PRUNED
+        }
+        return current if current not in pruned else None
 
 
 class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT]):
@@ -714,6 +736,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    #: A fixed execution-input contract for attacks that do not expose ``params_type``.
+    FIXED_PARAMS_TYPE: ClassVar[type[AttackParameters] | None] = None
 
     #: Named prompt slots, template parameters, and defaults consumed by the attack.
     ADVERSARIAL_PROMPT_REQUIREMENTS: ClassVar[AdversarialPromptRequirements | None] = None
@@ -802,7 +826,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
         type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._objective_target = objective_target
-        self._params_type = params_type
+        self._params_type = self.FIXED_PARAMS_TYPE or params_type
         self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         # Guard so subclasses that set converters before calling super() aren't clobbered
         if not hasattr(self, "_request_converters"):
@@ -977,6 +1001,11 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         return self._objective_target
 
+    @property
+    def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
+        """Child execution observations, supplied by compound strategies."""
+        return ()
+
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
@@ -1030,6 +1059,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         context._error_result_persistence_error = None
         context._error_result_metadata.clear()
         context._persisted_attack_result_id = None
+        context._objective_conversation_ids.clear()
+        context._current_objective_conversation_id = None
         await self._resolve_operation_async(context=context)
         self._validate_scoring_expectation(context=context)
         context._error_result_identifier_builder = lambda: AtomicAttackIdentifier.build(

@@ -11,7 +11,7 @@ import { usePieceConverters } from '@/hooks/useChatConverters'
 import type { useConversationDraft } from '@/hooks/useConversationDraft'
 import type {
   AddMessageResponse, ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment,
-  PieceConversionUpdates, SaveConversationRequest, TargetInstance,
+  SaveConversationRequest, TargetInstance,
 } from '@/types'
 import {
   NEW_MESSAGE_ROLES, draftAttachment, draftConverterInputs, editorTargetDisabledReason, unansweredToolCallId,
@@ -165,9 +165,11 @@ interface ConversationEditorProps {
   onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void
   onSave?: (destination: SaveConversationRequest['destination']) => void
   onExit?: () => Promise<boolean>
+  onDiscard?: (navigatingAway?: boolean) => void
   saveDestination?: SaveConversationRequest['destination']
   saveLabel?: string
   initialConverters?: ChatConverterSnapshot
+  blockNavigation?: boolean
 }
 
 export interface ConversationEditorHandle {
@@ -179,9 +181,9 @@ export interface ConversationEditorHandle {
 }
 
 export default function ConversationEditor({
-  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit,
+  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit, onDiscard,
   saveDestination: directSaveDestination, saveLabel = 'Save conversation',
-  initialConverters,
+  initialConverters, blockNavigation = true,
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -191,7 +193,11 @@ export default function ConversationEditor({
   const { draft, saving, error, dirty, validationError, targetError, changePiece, changeAttachments, insert, addPiece } = controller
   const messages = useMemo(() => draft?.messages ?? [], [draft?.messages])
   const target = draft?.target
-  const blocker = useBlocker(controller.shouldBlock)
+  const shouldBlock = useCallback(() => {
+    if (blockNavigation === false) return false
+    return controller.shouldBlock()
+  }, [blockNavigation, controller])
+  const blocker = useBlocker(shouldBlock)
   useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
     if (controller.shouldBlock()) {
       event.preventDefault()
@@ -226,7 +232,10 @@ export default function ConversationEditor({
   const cancel = (): void => {
     if (saving) return
     if (dirty) setDiscardOpen(true)
-    else controller.discard()
+    else {
+      controller.discard()
+      onDiscard?.(false)
+    }
   }
   const save = (destination: SaveConversationRequest['destination']): void => {
     if (converters.isConverting) return
@@ -246,22 +255,6 @@ export default function ConversationEditor({
     controller.removeMessage(messageId)
     setSelected((previous: Set<string>) => new Set([...previous].filter((id: string) => id !== messageId)))
   }
-  const applyConversions = (updates: PieceConversionUpdates): void => {
-    controller.changeMessages((current: ConversationDraftMessage[]) => current.map((message: ConversationDraftMessage) => ({
-      ...message,
-      pieces: message.pieces.map((piece: ConversationDraftPiece) => {
-        if (!Object.prototype.hasOwnProperty.call(updates, piece.draftId)) return piece
-        const conversion = updates[piece.draftId]
-        return {
-          ...piece,
-          converted_value: conversion?.convertedValue,
-          converted_value_data_type: conversion?.convertedDataType,
-          applied_converter_ids: conversion?.converterInstanceIds ?? [],
-          applied_converter_provenance: conversion?.converterProvenance,
-        }
-      }),
-    })))
-  }
   const unsupportedSelected = messages.some((message: ConversationDraftMessage) => selected.has(message.id)
     && message.pieces.some((piece: ConversationDraftPiece) => piece.data_type !== 'text' && !isPathDataType(piece.data_type)))
   const saveDisabledReason = (converters.isConverting ? 'Wait for conversion to finish before saving.' : undefined)
@@ -271,7 +264,7 @@ export default function ConversationEditor({
     <div className={styles.root} data-testid="conversation-editor">
       {convertersOpen && <div className={styles.converterPane}>
         <ConverterPanel controller={converters} selectedMessageCount={selected.size}
-          onClose={() => setConvertersOpen(false)} onApply={applyConversions} />
+          onClose={() => setConvertersOpen(false)} onApply={controller.applyConversions} />
       </div>}
       <div className={styles.content}>
       <div className={styles.thread}>
@@ -386,7 +379,9 @@ export default function ConversationEditor({
           <DialogActions>
             <Button className={styles.button} onClick={() => { setDiscardOpen(false); if (blocker.state === 'blocked') blocker.reset() }}>Keep editing</Button>
             <Button className={styles.button} disabled={saving} onClick={() => {
+              const isNavigating = blocker.state === 'blocked'
               controller.discard()
+              onDiscard?.(isNavigating)
               if (blocker.state === 'blocked') blocker.proceed()
             }}>Discard draft</Button>
           </DialogActions>

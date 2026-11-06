@@ -880,11 +880,17 @@ class _TreeOfAttacksNode:
         self.objective_score = objective_scores[0]
         logger.debug(f"Node {self.node_id}: Objective score: {normalize_score_to_float(self.objective_score)}")
 
-        # Extract auxiliary scores
+        # Extract auxiliary scores. Key by class name, unless several auxiliary scorers share a
+        # class, in which case their unique names keep them from overwriting each other.
         auxiliary_scores = scoring_results["auxiliary_scores"]
-        for score in auxiliary_scores:
+        class_names = [
+            score.scorer_class_identifier.class_name if score.scorer_class_identifier else "unknown"
+            for score in auxiliary_scores
+        ]
+        for score, class_name in zip(auxiliary_scores, class_names, strict=True):
             scorer_identifier = score.scorer_class_identifier
-            scorer_name = scorer_identifier.class_name if scorer_identifier else "unknown"
+            shared = class_names.count(class_name) > 1
+            scorer_name = scorer_identifier.unique_name if shared and scorer_identifier else class_name
             self.auxiliary_scores[scorer_name] = score
             logger.debug(f"Node {self.node_id}: {scorer_name} score: {normalize_score_to_float(score)}")
 
@@ -1744,10 +1750,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             if not supported_types:
                 supported_types.append("text")
 
-            scorer_validator = ScorerPromptValidator(
-                supported_data_types=supported_types,
-                is_objective_required=True,
-            )
+            scorer_validator = ScorerPromptValidator(supported_data_types=supported_types)
             default_scorer = FloatScaleThresholdScorer(
                 scorer=SelfAskScaleScorer.from_scale(
                     chat_target=self._adversarial_chat,

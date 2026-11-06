@@ -89,6 +89,30 @@ def test_get_jailbreak_templates_includes_subdirectory_templates():
     assert len(templates) > top_level_count, "Subdirectory templates should be included in the listing"
 
 
+@pytest.mark.parametrize("num_templates", [1, 3])
+def test_get_jailbreak_templates_returns_requested_count(num_templates: int) -> None:
+    all_templates = TextJailBreak.get_jailbreak_templates()
+    templates = TextJailBreak.get_jailbreak_templates(num_templates=num_templates)
+    assert len(templates) == num_templates
+    assert set(templates).issubset(all_templates)
+
+
+@pytest.mark.parametrize("num_templates", [0, -1])
+def test_get_jailbreak_templates_rejects_invalid_num_templates(num_templates: int) -> None:
+    with pytest.raises(ValueError, match="num_templates must be at least 1"):
+        TextJailBreak.get_jailbreak_templates(num_templates=num_templates)
+
+
+def test_get_jailbreak_templates_none_returns_all() -> None:
+    assert TextJailBreak.get_jailbreak_templates(num_templates=None) == sorted(TextJailBreak._get_template_cache())
+
+
+def test_get_jailbreak_templates_rejects_count_above_population() -> None:
+    num_templates = len(TextJailBreak.get_jailbreak_templates()) + 1
+    with pytest.raises(ValueError, match=f"Attempted to pull {num_templates} jailbreaks"):
+        TextJailBreak.get_jailbreak_templates(num_templates=num_templates)
+
+
 def test_all_templates_render_without_syntax_errors(jailbreak_dir):
     """Test that all jailbreak templates can be successfully rendered with a test prompt."""
     yaml_files = [f for f in jailbreak_dir.rglob("*.yaml") if "multi_parameter" not in f.parts]

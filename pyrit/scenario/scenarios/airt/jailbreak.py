@@ -220,12 +220,16 @@ class Jailbreak(Scenario):
             args (dict[str, Any]): Raw scenario run parameters.
 
         Raises:
-            ValueError: If ``num_jailbreak_attempts`` is less than one.
+            ValueError: If ``num_jailbreak_attempts`` is less than one, or if ``num_jailbreaks``
+                is provided and is less than one.
         """
         super().set_params_from_args(args=args)
         num_attempts = self.params["num_jailbreak_attempts"]
         if num_attempts < 1:
             raise ValueError("num_jailbreak_attempts must be at least 1")
+        num_jailbreaks = self.params.get("num_jailbreaks")
+        if num_jailbreaks is not None and num_jailbreaks < 1:
+            raise ValueError("num_jailbreaks must be at least 1")
 
     @apply_defaults
     def __init__(
