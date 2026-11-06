@@ -278,7 +278,11 @@ class PyRITApiClient:
         from pyrit.models import Operation
 
         payload = await self._get_json_async(path="/api/operations")
-        return [Operation.model_validate(item) for item in payload["items"]]
+        # The list endpoint returns OperationListItem records, which add ``finding_counts`` to Operation.
+        return [
+            Operation.model_validate({key: value for key, value in item.items() if key != "finding_counts"})
+            for item in payload["items"]
+        ]
 
     async def list_datasets_async(self) -> dict[str, Any]:
         """
