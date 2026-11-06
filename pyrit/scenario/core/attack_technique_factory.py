@@ -797,6 +797,37 @@ class AttackTechniqueFactory(Identifiable):
             result["simulation"] = simulation
         return result
 
+    def get_adversarial_prompt_templates(self, *, include_prefix: bool = False) -> dict[str, SeedPrompt]:
+        """
+        Resolve consumed prompt templates without materializing execution dependencies.
+
+        Returns:
+            dict[str, SeedPrompt]: Effective templates keyed by editable factory field.
+        """
+        requirements = self._attack_class.ADVERSARIAL_PROMPT_REQUIREMENTS
+        if requirements is None or "attack_adversarial_config" not in self._compatibility_helper.accepted_params:
+            return {}
+        templates = requirements.resolve_templates(
+            system_prompt=self._adversarial_system_prompt or None,
+            first_message=self._adversarial_seed_prompt or None,
+            feedback_template=self._adversarial_prompt_template,
+            system_prompt_prefix=self._adversarial_system_prompt_prefix if include_prefix else None,
+        )
+        return {
+            field: templates[slot]
+            for field, slot in (
+                ("adversarial_system_prompt", "system_prompt"),
+                ("adversarial_seed_prompt", "first_message"),
+                ("adversarial_prompt_template", "feedback_template"),
+            )
+            if slot in templates
+        }
+
+    @property
+    def adversarial_system_prompt_prefix(self) -> str | None:
+        """Static read-only guidance composed ahead of the editable base prompt."""
+        return self._adversarial_system_prompt_prefix
+
     @property
     def supports_prepended_conversation(self) -> bool:
         """Whether the declared attack and seed contracts permit caller-supplied history."""
@@ -859,6 +890,8 @@ class AttackTechniqueFactory(Identifiable):
         for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
             previous = getattr(self, f"_{name}")
             value = getattr(settings, name)
+            if previous is None and isinstance(value, str):
+                previous = self.get_adversarial_prompt_templates().get(name)
             if isinstance(previous, SeedPrompt) and isinstance(value, str):
                 value = previous.with_value(value)
             setattr(factory, f"_{name}", value)

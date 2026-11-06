@@ -23,11 +23,9 @@ from pyrit.exceptions import (
     remove_markdown_json,
 )
 from pyrit.executor.attack.core.attack_config import (
-    DEFAULT_ADVERSARIAL_FIRST_MESSAGE,
-    DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
+    AdversarialPromptRequirements,
     AttackAdversarialConfig,
     resolve_adversarial_json_schema,
-    resolve_adversarial_system_prompt,
 )
 from pyrit.models import (
     JsonResponseConfig,
@@ -416,30 +414,6 @@ class _AdversarialConversationManager:
       via ``adversarial_prompt_text`` (or ``prompt_text``) and the manager does everything else.
     """
 
-    @staticmethod
-    def _coerce_seed_prompt(value: str | SeedPrompt | None, *, default: str, error_message: str) -> SeedPrompt:
-        """
-        Coerce a configured prompt value into a Jinja ``SeedPrompt``.
-
-        Args:
-            value: The configured value (inline string, SeedPrompt, or None for the default).
-            default: The default template string used when ``value`` is None.
-            error_message: The error raised when ``value`` is neither a string nor a SeedPrompt.
-
-        Returns:
-            The resolved SeedPrompt.
-
-        Raises:
-            ValueError: If ``value`` is not a string, SeedPrompt, or None.
-        """
-        if value is None:
-            value = default
-        if isinstance(value, str):
-            return SeedPrompt(value=value, data_type="text", is_jinja_template=True)
-        if isinstance(value, SeedPrompt):
-            return value
-        raise ValueError(error_message)
-
     @classmethod
     def resolve_config(
         cls,
@@ -478,32 +452,21 @@ class _AdversarialConversationManager:
                 declared on both the system prompt and the first message, or a configured prompt value
                 is neither a string nor a SeedPrompt.
         """
-        system_prompt = resolve_adversarial_system_prompt(
-            config=config,
+        templates = AdversarialPromptRequirements(
             default_system_prompt_path=default_system_prompt_path,
-            required_parameters=system_prompt_required_parameters,
+            system_prompt_parameters=tuple(system_prompt_required_parameters),
+            accepts_user_messages=resolve_user_messages,
+        ).resolve_templates(
+            system_prompt=config.system_prompt,
+            first_message=config.first_message,
+            feedback_template=config.adversarial_prompt_template,
+            system_prompt_prefix=config.system_prompt_prefix,
             error_message=system_prompt_error_message,
         )
-        first_message: SeedPrompt | None = None
-        next_message_template: SeedPrompt | None = None
-        if resolve_user_messages:
-            first_message = cls._coerce_seed_prompt(
-                config.first_message,
-                default=DEFAULT_ADVERSARIAL_FIRST_MESSAGE,
-                error_message="First message must be a string or SeedPrompt object.",
-            )
-            next_message_template = cls._coerce_seed_prompt(
-                config.adversarial_prompt_template,
-                default=DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
-                error_message="Adversarial prompt template must be a string or SeedPrompt object.",
-            )
-        # Fail fast when a response schema is declared on both prompts (the per-run manager re-resolves
-        # and owns the schema thereafter); the result is discarded here.
-        resolve_adversarial_json_schema(system_prompt=system_prompt, first_message=first_message)
         return _ResolvedAdversarialConfig(
-            system_prompt=system_prompt,
-            first_message=first_message,
-            next_message_template=next_message_template,
+            system_prompt=templates["system_prompt"],
+            first_message=templates.get("first_message"),
+            next_message_template=templates.get("feedback_template"),
         )
 
     def __init__(

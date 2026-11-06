@@ -1,7 +1,7 @@
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
 
 import {
-  Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
+  Badge, Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
   Input, MessageBar, MessageBarBody, Select, Spinner, Text, Textarea,
 } from '@fluentui/react-components'
 
@@ -18,6 +18,7 @@ import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
   ConverterInstance, ConverterSelection,
+  TechniquePromptField,
 } from '@/types'
 import { fetchAllPages } from '@/utils/fetchAllPages'
 
@@ -25,6 +26,11 @@ import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
 
 const SCALAR_TYPES = new Set(['str', 'int', 'float', 'bool', 'list[str]', 'list[int]', 'list[float]', 'list[bool]'])
 const VALIDATION_DELAY_MS = 300
+const PROMPT_LABELS: Record<TechniquePromptField, string> = {
+  adversarial_system_prompt: 'Adversarial system prompt',
+  adversarial_seed_prompt: 'Adversarial seed prompt',
+  adversarial_prompt_template: 'Adversarial per-turn prompt',
+}
 
 function canConfigure(parameter: Parameter, allowStructured = true): boolean {
   if (parameter.reference_type) return false
@@ -63,6 +69,10 @@ function referenceValue(value: ParameterFormValue | undefined): string | string[
   return typeof value === 'string' || Array.isArray(value) ? value : ''
 }
 
+function promptValue(configuration: TechniqueConfiguration | undefined, field: TechniquePromptField): string {
+  return configuration?.prompt_templates?.[field]?.value ?? configuration?.settings[field] ?? ''
+}
+
 interface TechniqueEditorProps {
   onClose?: () => void
   onCreated?: () => void
@@ -95,9 +105,9 @@ export default function TechniqueEditor({
   const [requestConverters, setRequestConverters] = useState<ConverterSelection[]>(configuration?.settings.request_converters ?? [])
   const [responseConverters, setResponseConverters] = useState<ConverterSelection[]>(configuration?.settings.response_converters ?? [])
   const [adversarialTarget, setAdversarialTarget] = useState(configuration?.settings.adversarial_chat ?? '')
-  const [systemPrompt, setSystemPrompt] = useState(configuration?.settings.adversarial_system_prompt ?? '')
-  const [seedPrompt, setSeedPrompt] = useState(configuration?.settings.adversarial_seed_prompt ?? '')
-  const [turnPrompt, setTurnPrompt] = useState(configuration?.settings.adversarial_prompt_template ?? '')
+  const [systemPrompt, setSystemPrompt] = useState(promptValue(configuration, 'adversarial_system_prompt'))
+  const [seedPrompt, setSeedPrompt] = useState(promptValue(configuration, 'adversarial_seed_prompt'))
+  const [turnPrompt, setTurnPrompt] = useState(promptValue(configuration, 'adversarial_prompt_template'))
   const [simulation, setSimulation] = useState<SimulationChanges>(configuration?.settings.simulation ?? {})
   const [numTurns, setNumTurns] = useState(String(configuration?.settings.simulation?.num_turns ?? ''))
   const [loading, setLoading] = useState(true)
@@ -192,11 +202,19 @@ export default function TechniqueEditor({
     ] as const) {
       if (editable(key) && JSON.stringify(next) !== JSON.stringify(original.settings[key] ?? [])) changes[key] = next
     }
+    if (editable('adversarial_chat') && adversarialTarget !== (original.settings.adversarial_chat ?? '')) {
+      changes.adversarial_chat = adversarialTarget || null
+    }
     for (const [key, next] of [
-      ['adversarial_chat', adversarialTarget], ['adversarial_system_prompt', systemPrompt],
-      ['adversarial_seed_prompt', seedPrompt], ['adversarial_prompt_template', turnPrompt],
+      ['adversarial_system_prompt', systemPrompt], ['adversarial_seed_prompt', seedPrompt],
+      ['adversarial_prompt_template', turnPrompt],
     ] as const) {
-      if (editable(key) && next !== (original.settings[key] ?? '')) changes[key] = next || null
+      if (editable(key) && next !== promptValue(original, key)) {
+        if (!next.trim()) throw new Error(
+          `${PROMPT_LABELS[key]} must contain non-empty text. Use Reset to default to restore the selected technique's prompt.`,
+        )
+        changes[key] = next
+      }
     }
     if (original.settings.simulation) {
       const turns = Number(numTurns)
@@ -375,18 +393,36 @@ export default function TechniqueEditor({
                         help={HELP_DEFINITIONS.adversarialTarget}
                         onChange={(next) => { if (typeof next === 'string') update(setAdversarialTarget, next) }} />}
                       {selected?.supports_adversarial && <>
-                      {editable('adversarial_system_prompt') && <HelpField label="Adversarial system prompt"
-                        help="Instructions that guide the attack-writing model. These are not the objective target's system instructions.">
-                        <Textarea value={systemPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setSystemPrompt, data.value)} />
-                      </HelpField>}
-                      {editable('adversarial_seed_prompt') && <HelpField label="Adversarial seed prompt"
-                        help="The starting message for the attack-writing model, used to prepare its first attack prompt.">
-                        <Textarea value={seedPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setSeedPrompt, data.value)} />
-                      </HelpField>}
-                      {editable('adversarial_prompt_template') && <HelpField label="Adversarial per-turn prompt"
-                        help="Instructions used to request the next attack prompt on each turn. The attack supplies the current conversation context.">
-                        <Textarea value={turnPrompt} disabled={inputsDisabled} onChange={(_, data) => update(setTurnPrompt, data.value)} />
-                      </HelpField>}
+                      {([
+                        ['adversarial_system_prompt', systemPrompt, setSystemPrompt,
+                          "Instructions that guide the attack-writing model. These are not the objective target's system instructions."],
+                        ['adversarial_seed_prompt', seedPrompt, setSeedPrompt,
+                          'The starting message for the attack-writing model, used to prepare its first attack prompt.'],
+                        ['adversarial_prompt_template', turnPrompt, setTurnPrompt,
+                          'Instructions used to request the next attack prompt on each turn. The attack supplies the current conversation context.'],
+                      ] as const).map(([field, value, setter, help]) => {
+                        if (!editable(field)) return null
+                        const label = PROMPT_LABELS[field]
+                        const template = original?.prompt_templates?.[field]
+                        const customized = value !== promptValue(original, field)
+                        return <HelpField key={field} label={label} help={help}>
+                          {template && <div className={styles.promptControls}>
+                            <Badge appearance="tint" color={customized ? 'brand' : 'informative'}>{customized ? 'Customized' : 'Default'}</Badge>
+                            <Button size="small" appearance="subtle" disabled={inputsDisabled || !customized}
+                              aria-label={`Reset ${label.toLowerCase()} to default`}
+                              onClick={() => update(setter, promptValue(original, field))}>Reset to default</Button>
+                          </div>}
+                          <Textarea className={styles.prompt} resize="vertical" value={value}
+                            disabled={inputsDisabled} onChange={(_, data) => update(setter, data.value)} />
+                          {template && template.parameters.length > 0 && <Text size={200}>
+                            Template variables: {template.parameters.map((parameter) => `{{ ${parameter} }}`).join(', ')}
+                          </Text>}
+                          {field === 'adversarial_system_prompt' && configuration?.system_prompt_prefix
+                            && <Text size={200} className={styles.promptPrefix}>
+                              Additional guidance (read-only; prepended at execution):{'\n'}{configuration.system_prompt_prefix}
+                            </Text>}
+                        </HelpField>
+                      })}
                       </>}
                     </>
                   )}
