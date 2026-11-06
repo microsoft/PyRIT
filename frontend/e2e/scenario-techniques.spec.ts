@@ -191,6 +191,9 @@ for (const view of VIEWPORTS) {
       await expect(page).toHaveURL(presetScannerRoutePath(SCENARIO, name))
       await expect(page.getByTestId('preset-seed-banner')).toContainText(name)
       await expectSelection(page, ['offline_base64'], false)
+      const estimate = page.getByTestId('run-estimate')
+      const total = estimate.getByRole('term').filter({ hasText: 'Total atomic attacks' })
+        .locator('..').getByRole('definition')
       const targeted = nextEstimate(page)
       await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
       const targetedResponse = await targeted
@@ -198,6 +201,8 @@ for (const view of VIEWPORTS) {
         techniques: ['offline_base64'], include_baseline: false, target_name: TARGET,
       })
       await readEstimate(targetedResponse, 1, false)
+      await expect(total).toHaveText('Up to 1')
+      await expect(estimate.getByRole('status')).toHaveCount(0)
       await tabTo(page, page.getByRole('checkbox', { name: 'offline_rot13', exact: true }))
       const selected = nextEstimate(page)
       await page.keyboard.press('Space')
@@ -206,6 +211,8 @@ for (const view of VIEWPORTS) {
         techniques: ['offline_base64', 'offline_rot13'], include_baseline: false,
       })
       await readEstimate(selectedResponse, 2, false)
+      await expect(total).toHaveText('Up to 2')
+      await expect(estimate.getByRole('status')).toHaveCount(0)
       await expectSelection(page, ['offline_base64', 'offline_rot13'], false)
       const plain = page.getByRole('checkbox', { name: 'offline_plain', exact: true })
       await expect(plain).toBeDisabled()
@@ -216,8 +223,8 @@ for (const view of VIEWPORTS) {
       await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(ALTERNATE_TARGET)
       await expect.poll(async (): Promise<boolean> => (await control(page, 'status')).waiting).toBe(true)
       await expectSelection(page, ['offline_base64', 'offline_rot13'], false)
-      const estimate = page.getByTestId('run-estimate')
       await expect(estimate.getByRole('status')).toContainText('Updating estimate')
+      await expect(total).toHaveText('Up to 2')
       await estimate.scrollIntoViewIfNeeded()
       await capture(page, testInfo, view.name, 'estimate-loading')
       await control(page, 'release')
@@ -226,6 +233,8 @@ for (const view of VIEWPORTS) {
         techniques: ['offline_base64', 'offline_rot13'], include_baseline: false, target_name: ALTERNATE_TARGET,
       })
       await readEstimate(heldResponse, 2, false)
+      await expect(total).toHaveText('Up to 2')
+      await expect(estimate.getByRole('status')).toHaveCount(0)
       await expectSelection(page, ['offline_base64', 'offline_rot13'], false)
 
       await control(page, 'fail')
@@ -237,6 +246,7 @@ for (const view of VIEWPORTS) {
         techniques: ['offline_base64', 'offline_rot13'], include_baseline: true, target_name: ALTERNATE_TARGET,
       })
       await expect(estimate.getByRole('status')).toContainText(FAILURE)
+      await expect(total).toHaveText('Up to 2')
       await expectSelection(page, ['offline_base64', 'offline_rot13'], true)
       await estimate.scrollIntoViewIfNeeded()
       await capture(page, testInfo, view.name, 'estimate-error')
@@ -245,6 +255,8 @@ for (const view of VIEWPORTS) {
       await page.getByRole('combobox', { name: 'Objective Target', exact: true }).selectOption(TARGET)
       const refreshedResponse = await refreshed
       await readEstimate(refreshedResponse, 3, true)
+      await expect(total).toHaveText('Up to 3')
+      await expect(estimate.getByRole('status')).toHaveCount(0)
       const estimateRequest: ScenarioRunSizeEstimateRequest = refreshedResponse.request().postDataJSON()
       expect(estimateRequest).toMatchObject({
         techniques: ['offline_base64', 'offline_rot13'], include_baseline: true, target_name: TARGET,
@@ -268,11 +280,13 @@ for (const view of VIEWPORTS) {
       await expect(preview.getByText('offline_rot13', { exact: true })).toBeVisible()
       await expect(preview.getByText('baseline', { exact: true })).toBeVisible()
       await expect(preview.getByText('offline_plain', { exact: true })).toHaveCount(0)
+      await expect(preview.getByText('Up to 3 attacks', { exact: true })).toBeVisible()
       await page.keyboard.press('Escape')
       await expect(preview).toHaveCount(0)
       await expect(launch).toBeFocused()
       await page.keyboard.press('Enter')
       await expect(preview).toHaveCSS('opacity', '1')
+      await expect(preview.getByText('Up to 3 attacks', { exact: true })).toBeVisible()
       const confirm = preview.getByRole('button', { name: 'Launch scan', exact: true })
       await tabTo(page, confirm)
       await expectUnclipped(page, confirm)

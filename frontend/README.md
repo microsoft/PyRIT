@@ -275,7 +275,9 @@ Desktop and narrow/touch journeys cover preset selection and editing,
 scenario-relative defaults, aggregate expansion, independent baseline settings,
 keyboard/focus recovery, 44px preview actions for coarse-pointer input, and
 completed execution. Touch measurements wait for the dialog to settle, without
-fixed sleeps. Only loading and error checks
+fixed sleeps. The checks assert retained totals during pending/failed estimates,
+rendered total/status recovery, and the recovered total in Run preview.
+Only loading and error checks
 inject faults: the fixture holds one estimate or returns one deliberate 503,
 then delegates successful estimates to the real service. No browser API
 responses are intercepted. CI runs this as a separate isolated E2E shard.
