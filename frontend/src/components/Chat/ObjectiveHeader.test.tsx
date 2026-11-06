@@ -96,6 +96,27 @@ describe('ObjectiveHeader', () => {
     expect(screen.getByRole('group', { name: 'Automated score', exact: true })).toHaveTextContent(label)
   })
 
+  it.each([
+    { scoreType: 'float_scale', value: '0' },
+    { scoreType: 'float_scale', value: '0.9' },
+    { scoreType: 'unknown', value: 'unknown' },
+    { scoreType: 'unknown', value: 'true' },
+  ])('shows a $scoreType score of $value as its raw value, not a verdict', async ({ scoreType, value }) => {
+    const user = userEvent.setup()
+    const score: BackendScore = {
+      id: 'score', message_piece_id: 'response', scorer_type: 'Judge', score_type: scoreType,
+      score_value: value, status: 'complete', timestamp: '',
+    }
+    render(<TestWrapper><ObjectiveHeader objective="Goal" automatedScore={score} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
+    const scoreRow = screen.getByRole('group', { name: 'Automated score', exact: true })
+    expect(scoreRow).toHaveTextContent(value)
+    expect(scoreRow).not.toHaveTextContent(/Success|Failure|Undetermined/)
+    expect(screen.getByRole('button', { name: new RegExp(`^${value} automated score`) })).toBeInTheDocument()
+    // A score without a verdict must not preselect one for the human reviewer either.
+    expect(screen.getByRole('radio', { name: 'Success' })).toBeChecked()
+  })
+
   it('retains the API explanation when scorer selection fails', async () => {
     const user = userEvent.setup()
     const explanation = 'The selected scorer changed. Reload the registry before selecting it again.'

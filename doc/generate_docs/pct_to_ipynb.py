@@ -19,7 +19,6 @@ skip_files = {
     "embeddings.py",  # requires OpenAI embedding API key
     # targets
     "8_non_llm_targets.py",  # requires Azure Blob Storage data-plane credentials
-    "4_openai_video_target.py",  # requires OpenAI video API key
     "10_1_playwright_target.py",  # Playwright installation takes too long
     "10_2_playwright_target_copilot.py",  # Playwright installation takes too long, plus requires M365 account
     "10_3_websocket_copilot_target.py",  # requires manual token pasting

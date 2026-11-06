@@ -19,6 +19,31 @@ const initial: ConversationSaveInput = {
 describe('useConversationDraft', () => {
   beforeEach(() => jest.resetAllMocks())
 
+  it('rehydrates uploaded history from retained files and releases the replacement URLs', () => {
+    const file = new File(['image'], 'history.png', { type: 'image/png' })
+    jest.mocked(URL.createObjectURL).mockReturnValue('blob:restored-history')
+    const { result, unmount } = renderHook(() => useConversationDraft())
+    act(() => result.current.begin({
+      ...initial, messages: [{
+        id: 'image', role: 'user', pieces: [{
+          draftId: 'image', data_type: 'image_path', original_value: '', file, previewUrl: 'blob:revoked-history',
+        }],
+      }],
+    }))
+    expect(result.current.draft?.messages[0].pieces[0]).toMatchObject({ file, previewUrl: 'blob:restored-history' })
+    expect(result.current.dirty).toBe(false)
+    unmount()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:restored-history')
+  })
+
+  it('only treats an imported final user turn as pending when explicitly marked', () => {
+    const { result } = renderHook(() => useConversationDraft(undefined, { pendingUserMessage: true }))
+    act(() => result.current.begin({ ...initial, unsavedImport: true }))
+    expect(result.current.history).toHaveLength(1)
+    act(() => result.current.begin({ ...initial, unsavedImport: true, pendingPromptId: 'message' }))
+    expect(result.current.history).toHaveLength(0)
+  })
+
   const temperatureTarget: TargetInstance = {
     ...makeTarget({
       target_registry_name: 'source', target_type: 'OpenAIChatTarget', temperature: 0.2,
