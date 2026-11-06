@@ -4,7 +4,7 @@
 import logging
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import ComponentIdentifier, Identifiable, Message, RequestGenerationConfig
@@ -126,11 +126,19 @@ class TargetConfiguration:
             raise ValueError(
                 f"Target does not support '{capability.value}' and no handling policy exists for it."
             ) from None
-        if behavior == UnsupportedCapabilityBehavior.RAISE:
-            raise ValueError(f"Target does not support '{capability.value}' and the handling policy is RAISE.")
-        raise ValueError(
+        adapt_error = (
             f"Target does not support '{capability.value}', but no default or configured normalizer can adapt it."
         )
+        match behavior:
+            case UnsupportedCapabilityBehavior.RAISE:
+                raise ValueError(f"Target does not support '{capability.value}' and the handling policy is RAISE.")
+            case UnsupportedCapabilityBehavior.ADAPT:
+                raise ValueError(adapt_error)
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(behavior)
+                # Preserve the historical runtime fallback for values outside the declared enum.
+                raise ValueError(adapt_error)
 
     async def normalize_async(
         self,
