@@ -371,20 +371,12 @@ print(likert_scorer.evaluation_file_mapping)
 # %% [markdown]
 # ## Batch Evaluation with `evaluate_scorers.py`
 #
-# While `evaluate_async()` runs evaluations for a single scorer, the `evaluate_scorers.py` script
-# evaluates **eligible registered scorers** in bulk. This is useful for benchmarking after changing scorer
-# prompts, adding new variants, or updating human-labeled datasets.
+# `evaluate_scorers.py` initializes registered scorers and benchmarks eligible entries in bulk.
+# Results are saved under `pyrit/datasets/scorer_evals/`.
 #
-# The script initializes PyRIT with `ScorerInitializer` (which registers all configured scorers),
-# then runs `evaluate_async()` on each eligible entry. Results are saved to the JSONL registry files in
-# `pyrit/datasets/scorer_evals/`.
-#
-# Entries tagged `skip_batch_evaluation` are reported as skipped, even when matched by `--tags`.
-# The raw Decision probability scorer carries this tag; its 0.7-threshold wrapper remains eligible
-# for the objective benchmark. Both remain available for normal scoring. The tag only controls
-# batch selection; it does not change the public `evaluate_async()` API.
-# Missing evaluation mappings on other selected scorers remain errors. The batch finishes the
-# remaining evaluations before exiting nonzero on failure; selecting no eligible scorers also fails.
+# `skip_batch_evaluation` excludes an entry even when matched by `--tags`. This skips raw Decision,
+# not its 0.7-threshold wrapper; both remain usable for scoring.
+# Missing evaluation configuration, evaluation failures, and empty eligible selections still fail the batch.
 #
 # ### Basic Usage
 #
@@ -409,15 +401,9 @@ print(likert_scorer.evaluation_file_mapping)
 # - `best_refusal` — The configured preferred refusal variant, or the first available variant
 # - `best_objective` / `default_objective_scorer` — The objective scorer selected below
 #
-# Automatic best-objective selection ranks F1 only among otherwise eligible candidates with
-# known, positive `num_input_responses` and `num_responses == num_input_responses`.
-# Partial, unknown, zero, or inconsistent coverage counts cannot qualify for this ranking.
-# If no metrics qualify, the initializer keeps the configured fallback: `scale_and_refusal`,
-# then the first available objective composite. It retains both public tags and warns that the
-# choice is a configured fallback, not an F1-backed winner. With no composite, neither tag is added.
-# Partial results remain computed, stored, reported, and cached normally; users can still select
-# those scorers explicitly. Complete coverage does not itself establish that different records
-# evaluated identical examples.
+# F1 ranking requires a known positive input count with every response evaluated.
+# If none qualify, selection warns and uses the configured fallback (`scale_and_refusal`,
+# then the first available composite), not an F1-backed winner.
 #
 # ### Recommended Workflow: Refusal → Dependent Scorers
 #
@@ -429,9 +415,7 @@ print(likert_scorer.evaluation_file_mapping)
 # python -m build_scripts.evaluate_scorers --tags refusal
 # ```
 #
-# This evaluates the registered refusal variants and writes results to
-# `refusal_scorer/refusal_metrics.jsonl`. The `best_refusal` choice remains configuration-based,
-# rather than being reranked from these metrics.
+# Results are saved to `refusal_scorer/refusal_metrics.jsonl`.
 #
 # **Step 2: Re-evaluate all scorers**
 #
@@ -439,9 +423,7 @@ print(likert_scorer.evaluation_file_mapping)
 # python -m build_scripts.evaluate_scorers
 # ```
 #
-# On the next full run, `ScorerInitializer` builds dependent scorers (e.g.,
-# `TrueFalseInverterScorer`) using the configured `best_refusal` variant.
-# Overall best-objective selection uses the complete-coverage rule above.
+# Dependent scorers use the configured `best_refusal` variant.
 #
 # Scorers whose metrics are already up-to-date (same dataset version, sufficient trials) are
 # automatically skipped, so re-running the full script is efficient.
