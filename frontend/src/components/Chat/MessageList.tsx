@@ -37,6 +37,8 @@ import { formatStructuredMessage, getRenderMessagePieces } from './messageViewMo
 
 interface MessageListProps {
   onEditConversation?: () => void
+  /** Stable identity for the conversation; isolates transient download errors across switches. */
+  conversationId?: string | null
   messages: Message[]
   /** Copy this message to the input box of the current conversation */
   onCopyToInput?: (messageIndex: number) => void
@@ -437,7 +439,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
  * line of compact text.
  */
 export default function MessageList({
-  messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
+  conversationId, messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
   isLoading, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
@@ -721,6 +723,7 @@ export default function MessageList({
                     // Key download state to the message and attachment, not their array positions.
                     // MessageList can remain mounted while the user switches conversations.
                     const downloadKey = JSON.stringify([
+                      conversationId ?? null,
                       message.timestamp,
                       message.role,
                       message.content,
