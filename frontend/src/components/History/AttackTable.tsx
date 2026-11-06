@@ -1,7 +1,7 @@
+import { useState, type KeyboardEvent } from 'react'
+
 import {
-  tokens,
   Text,
-  Button,
   Badge,
   Tooltip,
   Table,
@@ -11,121 +11,107 @@ import {
   TableHeaderCell,
   TableRow,
 } from '@fluentui/react-components'
-import { OpenRegular } from '@fluentui/react-icons'
 
 import OutcomeBadge from '@/components/OutcomeBadge'
-import type { AttackSummary } from '../../types'
+import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
+import type { AttackSummary, TargetInstance } from '@/types'
+import { resolveTargetByIdentifierHash } from '@/utils/targetIdentity'
+
 import { useAttackHistoryStyles } from './AttackHistory.styles'
 
-function getHistoryConversationCount(attack: AttackSummary): number {
-  const relatedCount = attack.related_conversations
-    ? attack.related_conversations.filter(
-        reference => reference.conversation_type === 'pruned' || reference.conversation_type === 'preparation'
-      ).length
-    : attack.related_conversation_ids.length
-  return relatedCount + 1
-}
+const COLUMN_COUNT = 7
 
 interface AttackTableProps {
-  attacks: AttackSummary[]
-  onOpenAttack: (attackResultId: string) => void
-  formatDate: (dateStr: string) => string
+  readonly attacks: AttackSummary[]
+  readonly targets?: TargetInstance[]
+  readonly onOpenAttack: (attackResultId: string) => void
+  readonly formatDate: (dateStr: string) => string
 }
 
-export default function AttackTable({ attacks, onOpenAttack, formatDate }: AttackTableProps) {
+export default function AttackTable({ attacks, targets = [], onOpenAttack, formatDate }: AttackTableProps) {
   const styles = useAttackHistoryStyles()
+  const [expandedTargets, setExpandedTargets] = useState<Set<string>>(new Set())
+
+  const toggleTarget = (attackResultId: string): void => {
+    setExpandedTargets((current: Set<string>) => {
+      const next = new Set(current)
+      if (next.has(attackResultId)) next.delete(attackResultId)
+      else next.add(attackResultId)
+      return next
+    })
+  }
 
   return (
     <Table className={styles.table} data-testid="attacks-table">
       <TableHeader>
         <TableRow>
           <TableHeaderCell className={styles.colStatus}>Status</TableHeaderCell>
-          <TableHeaderCell className={styles.colAttackType}>Attack Type</TableHeaderCell>
+          <TableHeaderCell className={styles.colObjective}>Objective</TableHeaderCell>
           <TableHeaderCell className={styles.colTarget}>Target</TableHeaderCell>
           <TableHeaderCell className={styles.colOperator}>Operator</TableHeaderCell>
           <TableHeaderCell className={styles.colOperation}>Operation</TableHeaderCell>
-          <TableHeaderCell className={styles.colMessages}>Msgs</TableHeaderCell>
-          <TableHeaderCell className={styles.colConversations}>Convs</TableHeaderCell>
-          <TableHeaderCell className={styles.colConverters}>Converters</TableHeaderCell>
           <TableHeaderCell className={styles.colLabels}>Labels</TableHeaderCell>
-          <TableHeaderCell className={styles.colDate}>Created</TableHeaderCell>
-          <TableHeaderCell className={styles.colDate}>Updated</TableHeaderCell>
-          <TableHeaderCell>Last Message</TableHeaderCell>
-          <TableHeaderCell className={styles.colAction} />
+          <TableHeaderCell className={styles.colDate}>Last Update</TableHeaderCell>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {attacks.map(attack => (
-          <TableRow
-            key={attack.attack_result_id}
-            className={styles.clickableRow}
-            onClick={() => onOpenAttack(attack.attack_result_id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                onOpenAttack(attack.attack_result_id)
-              }
-            }}
-            tabIndex={0}
-            aria-label={`Open ${attack.attack_type} attack`}
-            data-testid={`attack-row-${attack.attack_result_id}`}
-          >
-            <TableCell>
-              <OutcomeBadge outcome={attack.outcome} testId={`outcome-badge-${attack.attack_result_id}`} />
-            </TableCell>
-            <TableCell>
-              <Text size={200} weight="semibold" truncate>{attack.attack_type}</Text>
-            </TableCell>
-            <TableCell>
-              {attack.target ? (
-                <Tooltip content={`${attack.target.target_type}${attack.target.model_name ? ` (${attack.target.model_name})` : ''}`} relationship="label">
-                  <Badge appearance="outline" size="small">
-                    {attack.target.model_name || attack.target.target_type}
-                  </Badge>
-                </Tooltip>
-              ) : (
-                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>—</Text>
-              )}
-            </TableCell>
-            <TableCell>
-              <Text size={200} className={styles.nowrap}>{attack.operator || '—'}</Text>
-            </TableCell>
-            <TableCell>
-              <Text size={200} className={styles.nowrap}>{attack.operation_name || '—'}</Text>
-            </TableCell>
-            <TableCell>
-              <Text size={200}>{attack.message_count}</Text>
-            </TableCell>
-            <TableCell>
-              <Text size={200}>{getHistoryConversationCount(attack)}</Text>
-            </TableCell>
-            <TableCell>
-              {attack.converters.length > 0 ? (
-                <div className={styles.badgeGroup}>
-                  {attack.converters.slice(0, 2).map(c => (
-                    <Badge key={c} appearance="tint" size="small">{c}</Badge>
-                  ))}
-                  {attack.converters.length > 2 && (
-                    <Tooltip content={attack.converters.join(', ')} relationship="label">
-                      <Badge appearance="tint" size="small">+{attack.converters.length - 2}</Badge>
-                    </Tooltip>
-                  )}
-                </div>
-              ) : (
-                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>—</Text>
-              )}
-            </TableCell>
-            <TableCell>
-              {(() => {
-                const otherLabels = Object.entries(attack.labels ?? {}).filter(([k]) => k !== 'source')
-                return otherLabels.length > 0 ? (
+        {attacks.map((attack: AttackSummary) => {
+          const target = attack.target
+          const resolution = target ? resolveTargetByIdentifierHash(target.identifier_hash, targets) : null
+          const registeredTarget = resolution?.status === 'resolved' ? resolution.target : null
+          const targetName = target
+            ? target.target_registry_name || target.binding?.source_name
+              || registeredTarget?.target_registry_name || 'Unnamed target'
+            : '—'
+          const otherLabels = Object.entries(attack.labels ?? {}).filter(([key]: [string, string]) => key !== 'source')
+
+          return (
+            <RegistryIdentityRow
+              key={attack.attack_result_id}
+              name={targetName}
+              identity={target?.identifier ?? registeredTarget?.identifier ?? target ?? null}
+              columns={COLUMN_COUNT}
+              expanded={expandedTargets.has(attack.attack_result_id)}
+              onToggle={() => { toggleTarget(attack.attack_result_id) }}
+              nameCellClassName={styles.colTarget}
+              rowClassName={styles.clickableRow}
+              rowTestId={`attack-row-${attack.attack_result_id}`}
+              rowProps={{
+                onClick: () => { onOpenAttack(attack.attack_result_id) },
+                onKeyDown: (event: KeyboardEvent<HTMLTableRowElement>) => {
+                  if (event.target !== event.currentTarget) return
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    onOpenAttack(attack.attack_result_id)
+                  }
+                },
+                tabIndex: 0,
+                'aria-label': `Open attack: ${attack.objective || 'No objective'}`,
+              }}
+              leadingCell={<>
+                <TableCell>
+                  <OutcomeBadge outcome={attack.outcome} testId={`outcome-badge-${attack.attack_result_id}`} />
+                </TableCell>
+                <TableCell className={styles.colObjective}>
+                  <Text size={200} className={styles.objectiveCell}>{attack.objective || '—'}</Text>
+                </TableCell>
+              </>}
+            >
+              <TableCell>
+                <Text size={200} className={styles.nowrap}>{attack.operator || '—'}</Text>
+              </TableCell>
+              <TableCell>
+                <Text size={200} className={styles.nowrap}>{attack.operation_name || '—'}</Text>
+              </TableCell>
+              <TableCell>
+                {otherLabels.length > 0 ? (
                   <div className={styles.badgeGroup}>
-                    {otherLabels.slice(0, 2).map(([k, v]) => (
-                      <Badge key={k} appearance="tint" size="small" color="brand">{k}: {v}</Badge>
+                    {otherLabels.slice(0, 2).map(([key, value]: [string, string]) => (
+                      <Badge key={key} appearance="tint" size="small" color="brand">{key}: {value}</Badge>
                     ))}
                     {otherLabels.length > 2 && (
                       <Tooltip
-                        content={otherLabels.map(([k, v]) => `${k}: ${v}`).join(', ')}
+                        content={otherLabels.map(([key, value]: [string, string]) => `${key}: ${value}`).join(', ')}
                         relationship="label"
                       >
                         <Badge appearance="tint" size="small" color="brand">
@@ -135,38 +121,15 @@ export default function AttackTable({ attacks, onOpenAttack, formatDate }: Attac
                     )}
                   </div>
                 ) : (
-                  <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>—</Text>
-                )
-              })()}
-            </TableCell>
-            <TableCell>
-              <Text size={200} className={styles.nowrap}>{formatDate(attack.created_at)}</Text>
-            </TableCell>
-            <TableCell>
-              <Text size={200} className={styles.nowrap}>{formatDate(attack.updated_at)}</Text>
-            </TableCell>
-            <TableCell>
-              <Text size={200} className={styles.previewCell}>
-                {attack.last_message_preview || '—'}
-              </Text>
-            </TableCell>
-            <TableCell>
-              <Tooltip content="Open attack" relationship="label">
-                <Button
-                  className={styles.touchTarget}
-                  appearance="subtle"
-                  size="small"
-                  icon={<OpenRegular />}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onOpenAttack(attack.attack_result_id)
-                  }}
-                  data-testid={`open-attack-${attack.attack_result_id}`}
-                />
-              </Tooltip>
-            </TableCell>
-          </TableRow>
-        ))}
+                  <Text size={200} className={styles.emptyValue}>—</Text>
+                )}
+              </TableCell>
+              <TableCell>
+                <Text size={200} className={styles.nowrap}>{formatDate(attack.updated_at)}</Text>
+              </TableCell>
+            </RegistryIdentityRow>
+          )
+        })}
       </TableBody>
     </Table>
   )

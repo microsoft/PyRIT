@@ -23,6 +23,8 @@ interface AttackHistoryProps {
   filters: HistoryFilters
   onFiltersChange: (filters: HistoryFilters) => void
   activeTarget: TargetInstance | null
+  targets?: TargetInstance[]
+  targetsError?: string | null
   onNavigate: (view: ViewName) => void
   showTitle?: boolean
 }
@@ -36,14 +38,9 @@ function buildListParams(filters: HistoryFilters, pageCursor: string | undefined
 
   const params: ListParams = { limit: PAGE_SIZE }
   if (pageCursor) params.cursor = pageCursor
-  if (filters.attackTypes.length > 0) params.attack_types = filters.attackTypes
   if (filters.outcome) params.outcome = filters.outcome
   if (filters.operator.length > 0) params.operator = filters.operator
   if (filters.operationId.length > 0) params.operation_id = filters.operationId
-  if (filters.converter.length > 0) params.converter_types = filters.converter
-  // Match mode is only meaningful with >=2 converters selected.
-  if (filters.converter.length >= 2) params.converter_types_match = filters.converterMatchMode
-  if (filters.hasConverters !== undefined) params.has_converters = filters.hasConverters
   params.include_scenario_attacks = filters.includeScenarioAttacks
   if (labelParams.length > 0) params.label = labelParams
   return params
@@ -65,6 +62,8 @@ export default function AttackHistory({
   filters,
   onFiltersChange,
   activeTarget,
+  targets = [],
+  targetsError,
   onNavigate,
   showTitle = true,
 }: AttackHistoryProps) {
@@ -76,14 +75,12 @@ export default function AttackHistory({
   const optionsPending = useRef(false)
 
   // Filter options
-  const [attackTypeOptions, setAttackTypeOptions] = useState<string[]>([])
   const [optionsRevision, setOptionsRevision] = useState(0)
   const [optionsError, setOptionsError] = useState<string | null>(null)
   const [narrowedOptionsError, setNarrowedOptionsError] = useState<{
     filterKey: string
     error: string | null
   } | null>(null)
-  const [converterOptions, setConverterOptions] = useState<string[]>([])
   const [operatorOptions, setOperatorOptions] = useState<string[]>([])
   const [operationOptions, setOperationOptions] = useState<FilterOption[]>([])
   const [allOtherLabelOptions, setAllOtherLabelOptions] = useState<string[]>([])
@@ -97,11 +94,7 @@ export default function AttackHistory({
   const [isLastPage, setIsLastPage] = useState(true)
   const [page, setPage] = useState(0)
   const filterKey = JSON.stringify([
-    filters.attackTypes,
     filters.outcome,
-    filters.converter,
-    filters.converterMatchMode,
-    filters.hasConverters,
     filters.includeScenarioAttacks,
     filters.operator,
     filters.operationId,
@@ -140,7 +133,6 @@ export default function AttackHistory({
     setFetchToken(prev => ({ cursor: pageCursor, filterKey, nonce: prev.nonce + 1, quiet }))
   }, [filterKey])
 
-  // Attack and converter options do not depend on the active history filters.
   useEffect(() => {
     let cancelled = false
     let failed = false
@@ -149,13 +141,7 @@ export default function AttackHistory({
       failed = true
       if (!cancelled) setOptionsError(toApiError(cause).detail)
     }
-    const reads = [attacksApi.getAttackOptions()
-      .then(resp => { if (!cancelled) setAttackTypeOptions(resp.attack_types) })
-      .catch(fail),
-    attacksApi.getConverterOptions()
-      .then(resp => { if (!cancelled) setConverterOptions(resp.converter_types) })
-      .catch(fail),
-    labelsApi.getLabels()
+    const reads = [labelsApi.getLabels()
       .then(resp => {
         if (cancelled) return
         // TODO(PyRIT 1.4): Remove the labels.* fallbacks with legacy attribution aliases.
@@ -251,11 +237,7 @@ export default function AttackHistory({
     // creates a new `filters` object on every render).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    filters.attackTypes,
     filters.outcome,
-    filters.converter,
-    filters.converterMatchMode,
-    filters.hasConverters,
     filters.includeScenarioAttacks,
     filters.operator,
     filters.operationId,
@@ -288,8 +270,7 @@ export default function AttackHistory({
   }
 
   const hasActiveFilters =
-    filters.attackTypes.length > 0 || filters.outcome || filters.converter.length > 0 ||
-    filters.hasConverters !== undefined ||
+    filters.outcome ||
     !filters.includeScenarioAttacks ||
     filters.operator.length > 0 || filters.operationId.length > 0 || filters.otherLabels.length > 0
   const filtersPending = settledFilterKey !== filterKey
@@ -323,13 +304,12 @@ export default function AttackHistory({
         <HistoryFiltersBar
           filters={filters}
           onFiltersChange={onFiltersChange}
-          attackTypeOptions={attackTypeOptions}
-          converterOptions={converterOptions}
           operatorOptions={operatorOptions}
           operationOptions={operationOptions}
           otherLabelOptions={otherLabelOptions}
         />
         {displayedOptionsError && <MessageBar intent="error"><MessageBarBody>{displayedOptionsError}</MessageBarBody></MessageBar>}
+        {targetsError && <MessageBar intent="error"><MessageBarBody>Target registry: {targetsError}</MessageBarBody></MessageBar>}
       </div>
 
       {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
@@ -357,7 +337,7 @@ export default function AttackHistory({
             )}
           </div>
         ) : (
-          <AttackTable attacks={attacks} onOpenAttack={onOpenAttack} formatDate={formatDate} />
+          <AttackTable attacks={attacks} targets={targets} onOpenAttack={onOpenAttack} formatDate={formatDate} />
         )}
       </div>
 

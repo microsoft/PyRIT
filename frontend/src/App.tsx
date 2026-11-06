@@ -1025,6 +1025,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                       filters={historyFilters}
                       onFiltersChange={handleFiltersChange}
                       activeTarget={targetDefaults.objectiveTarget}
+                      targets={registry.targets}
+                      targetsError={registry.error}
                       onNavigate={handleNavigate}
                       showTitle={false}
                     />

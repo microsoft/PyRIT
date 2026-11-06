@@ -585,16 +585,14 @@ test.describe("Mobile touch targets", () => {
 
     await page.goto("/attack/history");
     await expect(
-      page.getByTestId("open-attack-home-attack-001")
+      page.getByTestId("attack-row-home-attack-001")
     ).toBeVisible();
 
     await expect(page.getByTestId("refresh-btn")).toHaveCount(0);
     await expectMinimumTouchTargets(
       page.locator(
         [
-          '[data-testid="attack-type-filter"]',
           '[data-testid="outcome-filter"]',
-          '[data-testid="converter-filter"]',
           '[data-testid="operator-filter"]',
           '[data-testid="operation-filter"]',
           '[data-testid="label-filter"]',
@@ -605,9 +603,9 @@ test.describe("Mobile touch targets", () => {
       page.getByRole("button", { name: "Open", exact: true })
     );
 
-    const openAttack = page.getByTestId("open-attack-home-attack-001");
-    await openAttack.scrollIntoViewIfNeeded();
-    await expectMinimumTouchTarget(openAttack);
+    const targetDetails = page.getByTestId("attack-row-home-attack-001").getByRole("button");
+    await targetDetails.scrollIntoViewIfNeeded();
+    await expectMinimumTouchTarget(targetDetails);
     await expectMinimumTouchTarget(page.getByTestId("prev-page-btn"));
     await expectMinimumTouchTarget(page.getByTestId("next-page-btn"));
     await expectNoDocumentOverflow(page);

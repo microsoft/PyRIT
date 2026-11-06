@@ -27,6 +27,7 @@ from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ChatMessageRole,
+    ComponentIdentifier,
     ConversationReference,
     ConversationSummary,
     Message,
@@ -44,6 +45,7 @@ class TargetInfo(BaseModel):
 
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
     target_registry_name: str | None = Field(None, description="Registry alias used to create the attack")
+    identifier: ComponentIdentifier | None = Field(None, description="Persisted target identity for inspection")
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
     identifier_hash: str = Field(..., description="Canonical target identifier hash")
@@ -308,6 +310,7 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
         return TargetInfo(
             target_type=target_id.class_name,
             target_registry_name=target_registry_name if isinstance(target_registry_name, str) else None,
+            identifier=target_id,
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
             identifier_hash=target_id.hash,

@@ -206,6 +206,22 @@ class TestAttackResultToSummary:
         assert summary.target.target_type == "RoundRobinTarget"
         assert summary.target.model_name is None
         assert summary.target.identifier_hash == target_identifier.hash
+        assert summary.target.identifier is not None
+        assert summary.model_dump(mode="json")["target"]["identifier"] == target_identifier.model_dump(mode="json")
+
+    async def test_target_includes_saved_configuration_for_inspection(self) -> None:
+        target_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"endpoint": "https://example.test", "model_name": "deployment", "temperature": 0.25},
+        )
+        ar = _make_attack_result(target_identifier=target_identifier, target_registry_name="configured-target")
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.target is not None
+        assert summary.target.target_registry_name == "configured-target"
+        assert summary.model_dump(mode="json")["target"]["identifier"] == target_identifier.model_dump(mode="json")
 
     async def test_target_includes_persisted_registry_name(self) -> None:
         """The registry alias is exposed as a lookup hint without changing canonical identity."""
