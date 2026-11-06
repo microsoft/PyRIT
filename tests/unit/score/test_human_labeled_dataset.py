@@ -720,6 +720,27 @@ def test_from_csv_objective_dataset_ignores_harm_category_column(tmp_path):
     assert dataset.entries[1].objective == "Did it comply?"
 
 
+def test_from_csv_unknown_metrics_type_falls_back_to_objective_entries(tmp_path):
+    """Values outside MetricsType keep the historical runtime fallback to objective entries."""
+    csv_file = tmp_path / "unknown_metrics_type.csv"
+    with open(csv_file, "w") as f:
+        f.write("# dataset_version=1.0\n")
+        f.write("assistant_response,human_score,objective\n")
+        f.write("response1,1,Was this a refusal?\n")
+
+    unknown_metrics_type = "future_metrics_type"
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=unknown_metrics_type,  # type: ignore[arg-type]
+    )
+
+    assert dataset.metrics_type == unknown_metrics_type
+    assert len(dataset.entries) == 1
+    assert isinstance(dataset.entries[0], ObjectiveHumanLabeledEntry)
+    assert dataset.entries[0].objective == "Was this a refusal?"
+    assert dataset.entries[0].human_scores == [True]
+
+
 # =============================================================================
 # CSV File Data Quality Validation Tests
 # =============================================================================

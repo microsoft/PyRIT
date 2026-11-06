@@ -374,6 +374,16 @@ class TestAttackResultToSummary:
 
         assert summary.objective == ""
 
+    async def test_explicit_placeholder_text_is_preserved_async(self) -> None:
+        ar = _make_attack_result(name="ManualAttack")
+        ar.objective = "Manual attack via GUI"
+        ar.metadata["objective_is_placeholder"] = False
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.objective == ar.objective
+        assert summary.metadata["objective_is_placeholder"] is False
+
     async def test_non_manual_attack_preserves_placeholder_text_as_explicit_objective(self) -> None:
         """A non-manual attack may legitimately use the legacy placeholder text."""
         ar = _make_attack_result(name="CrescendoAttack")

@@ -54,6 +54,8 @@ logger = logging.getLogger(__name__)
 _LEGACY_MANUAL_ATTACK_PLACEHOLDER = "Manual attack via GUI"
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyrit.memory import MemoryInterface
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.results.attack_result import AttackScoringInputs
@@ -213,6 +215,8 @@ def _normalize_summary_objective(ar: AttackResult) -> str:
     Returns:
         The summary objective, with legacy manual placeholders converted to an empty string.
     """
+    if ar.metadata.get("objective_is_placeholder") is False:
+        return ar.objective
     identifier = ar.get_attack_strategy_identifier()
     is_manual_attack = identifier is not None and identifier.class_name == "ManualAttack"
     has_placeholder_metadata = ar.metadata.get("objective_is_placeholder") is True
@@ -377,31 +381,23 @@ def _score_lookup_key(*, piece: MessagePiece) -> str:
     return str(piece.original_prompt_id or piece.id)
 
 
-async def _fetch_scores_by_piece_async(
+async def fetch_message_scores_async(
     *,
-    pyrit_messages: list[Message],
+    pyrit_messages: Sequence[Message],
     memory: MemoryInterface | None = None,
-) -> dict[str, list[Score]]:
+) -> list[Score]:
     """
-    Batch-fetch scores for every piece in ``pyrit_messages`` and group by piece id.
-
-    Wrapped in ``asyncio.to_thread`` because ``get_prompt_scores`` is a blocking
-    SQLAlchemy call and ``pyrit_messages_to_dto_async`` runs on the event loop.
+    Batch-fetch the stored scores for every piece in ``pyrit_messages``.
 
     Returns:
-        ``{piece_lookup_key: [Score, ...]}``. Missing keys map to an empty list.
+        The scores, linked by ``message_piece_id`` to each piece's original.
     """
     score_lookup_ids = sorted({_score_lookup_key(piece=p) for msg in pyrit_messages for p in msg.message_pieces})
     if not score_lookup_ids:
-        return {}
+        return []
 
     source = memory if memory is not None else CentralMemory.get_memory_instance()
-    fetched = await source.get_prompt_scores_async(prompt_ids=score_lookup_ids)
-
-    grouped: dict[str, list[Score]] = {}
-    for score in fetched:
-        grouped.setdefault(str(score.message_piece_id), []).append(score)
-    return grouped
+    return list(await source.get_prompt_scores_async(prompt_ids=score_lookup_ids))
 
 
 async def pyrit_messages_to_dto_async(
@@ -409,6 +405,7 @@ async def pyrit_messages_to_dto_async(
     *,
     objective_score_id: uuid.UUID | str | None = None,
     memory: MemoryInterface | None = None,
+    scores: Sequence[Score] | None = None,
 ) -> list[MessageView]:
     """
     Translate PyRIT messages to backend MessageView responses.
@@ -420,15 +417,20 @@ async def pyrit_messages_to_dto_async(
     - Local files -> ``/api/media?path=...`` (served by the media endpoint)
     - Azure Blob Storage files -> signed URLs with SAS tokens
 
-    Scores are fetched from the supplied memory, or ``CentralMemory`` by default
-    (``MessagePiece`` no longer carries them), in one batched read and attached to their
-    originating piece. When ``objective_score_id`` is provided, the matching
-    score is marked as the attack's canonical objective score.
+    Scores are attached to their originating piece. Callers that already read them
+    pass ``scores``; otherwise they are fetched from the supplied memory, or
+    ``CentralMemory`` by default (``MessagePiece`` no longer carries them), in one
+    batched read. When ``objective_score_id`` is provided, the matching score is
+    marked as the attack's canonical objective score.
 
     Returns:
         List of MessageView responses for the API.
     """
-    scores_by_piece = await _fetch_scores_by_piece_async(pyrit_messages=pyrit_messages, memory=memory)
+    if scores is None:
+        scores = await fetch_message_scores_async(pyrit_messages=pyrit_messages, memory=memory)
+    scores_by_piece: dict[str, list[Score]] = {}
+    for score in scores:
+        scores_by_piece.setdefault(str(score.message_piece_id), []).append(score)
 
     messages: list[MessageView] = []
     for msg in pyrit_messages:

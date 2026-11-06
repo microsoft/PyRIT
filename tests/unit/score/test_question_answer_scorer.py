@@ -9,6 +9,7 @@ from unit.mocks import store_message_async
 
 from pyrit.models import (
     AnswerMatches,
+    ComponentIdentifier,
     ContentScorable,
     MatchesObjective,
     Message,
@@ -21,6 +22,7 @@ from pyrit.models import (
 )
 from pyrit.score import (
     LegacyScorerHookError,
+    MessageTrueFalseScorer,
     QuestionAnswerScorer,
     Scorer,
     ScorerPromptValidator,
@@ -278,14 +280,36 @@ def test_legacy_aggregation_override_cannot_drop_typed_criteria() -> None:
         LegacyAggregationScorer()
 
 
-class _LegacyMessageSubstringScorer(SubStringScorer):
+class _LegacySubstringScorer(MessageTrueFalseScorer):
+    """An unmigrated external leaf: only the objective-only piece hook."""
+
+    def __init__(self, *, substring: str) -> None:
+        super().__init__(validator=ScorerPromptValidator(supported_data_types=["text"]))
+        self._substring = substring
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier(params={"substring": self._substring})
+
+    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+        return [
+            Score(
+                score_value=str(self._substring in message_piece.converted_value),
+                score_type="true_false",
+                scorer_class_identifier=self.get_identifier(),
+                message_piece_id=message_piece.id,
+                objective=objective,
+            )
+        ]
+
+
+class _LegacyMessageSubstringScorer(_LegacySubstringScorer):
     async def _score_async(self, message: Message, *, objective: str | None = None) -> list[Score]:
         return await self._score_piece_async(message.get_piece(), objective=objective)
 
 
-@pytest.mark.parametrize("scorer_type", [SubStringScorer, _LegacyMessageSubstringScorer])
+@pytest.mark.parametrize("scorer_type", [_LegacySubstringScorer, _LegacyMessageSubstringScorer])
 async def test_legacy_hooks_reject_their_own_typed_criteria_async(
-    scorer_type: type[SubStringScorer], expectation: ScoringExpectation
+    scorer_type: type[_LegacySubstringScorer], expectation: ScoringExpectation
 ) -> None:
     scorer = scorer_type(substring="Paris")
     with (
@@ -297,9 +321,9 @@ async def test_legacy_hooks_reject_their_own_typed_criteria_async(
     leaf.assert_not_awaited()
 
 
-@pytest.mark.parametrize("scorer_type", [SubStringScorer, _LegacyMessageSubstringScorer])
+@pytest.mark.parametrize("scorer_type", [_LegacySubstringScorer, _LegacyMessageSubstringScorer])
 async def test_composite_filters_sibling_criteria_for_legacy_hooks_async(
-    scorer_type: type[SubStringScorer], expectation: ScoringExpectation
+    scorer_type: type[_LegacySubstringScorer], expectation: ScoringExpectation
 ) -> None:
     legacy = scorer_type(substring="Paris")
     composite = TrueFalseCompositeScorer(
@@ -313,10 +337,10 @@ async def test_composite_filters_sibling_criteria_for_legacy_hooks_async(
     assert score.scored_expectation == expectation
 
 
-@pytest.mark.parametrize("scorer_type", [SubStringScorer, _LegacyMessageSubstringScorer])
+@pytest.mark.parametrize("scorer_type", [_LegacySubstringScorer, _LegacyMessageSubstringScorer])
 @pytest.mark.parametrize("conditions", [(), (MatchesObjective(),)])
 async def test_legacy_hooks_keep_objective_scoring_async(
-    scorer_type: type[SubStringScorer], conditions: tuple[MatchesObjective, ...]
+    scorer_type: type[_LegacySubstringScorer], conditions: tuple[MatchesObjective, ...]
 ) -> None:
     scorer = scorer_type(substring="Paris")
     expectation = ScoringExpectation(objective="Find Paris", conditions=conditions)
