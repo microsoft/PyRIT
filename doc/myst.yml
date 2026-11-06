@@ -163,6 +163,7 @@ project:
             - file: code/targets/use_huggingface_chat_target.ipynb
             - file: code/targets/websocket_target.ipynb
             - file: code/targets/round_robin_target.ipynb
+            - file: code/targets/claude_chat_target.md
         - file: code/converters/0_converters.ipynb
           children:
             - file: code/converters/1_text_to_text_converters.ipynb
