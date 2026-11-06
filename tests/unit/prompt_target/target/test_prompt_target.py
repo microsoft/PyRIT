@@ -22,7 +22,7 @@ from pyrit.models import (
     PromptDataType,
     flatten_to_message_pieces,
 )
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target import AzureBlobStorageTarget, AzureMLChatTarget, OpenAIChatTarget, PromptShieldTarget
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
     CapabilityName,
@@ -984,3 +984,17 @@ def test_apply_capabilities_rebuilds_pipeline(patch_central_database):
 
     target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True, supports_system_prompt=True))
     assert not target.configuration.pipeline._normalizers, "Expected pipeline to be rebuilt as empty"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("target_class", "kwargs"),
+    [
+        (AzureMLChatTarget, {"endpoint": "https://example.inference.ml.azure.com/score", "api_key": "test-key"}),
+        (PromptShieldTarget, {"endpoint": "https://example.cognitiveservices.azure.com/", "api_key": "test-key"}),
+        (AzureBlobStorageTarget, {"container_url": "https://example.blob.core.windows.net/container"}),
+    ],
+)
+def test_targets_without_no_key_support_reject_none_auth_mode(target_class: type, kwargs: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match=f"{target_class.__name__} does not support auth_mode='none'"):
+        target_class(auth_mode="none", **kwargs)

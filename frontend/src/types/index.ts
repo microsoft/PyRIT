@@ -473,7 +473,7 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
-  auth_mode?: 'api_key' | 'identity'
+  auth_mode?: TargetAuthMode
 }
 
 // --- Initializers ---
@@ -748,10 +748,12 @@ export interface ConverterPreviewResponse {
   steps: ConverterPreviewStep[]
 }
 
+export type TargetAuthMode = 'api_key' | 'identity' | 'none'
+
 export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
-  supported_auth_modes: ('api_key' | 'identity')[]
+  supported_auth_modes: TargetAuthMode[]
   description?: string | null
 }
 
@@ -764,6 +766,7 @@ export interface TargetTypeListResponse {
 export interface TargetInfo {
   target_type: string
   target_registry_name?: string | null
+  identifier?: TargetIdentifier | null
   endpoint?: string | null
   model_name?: string | null
   identifier_hash: string
@@ -1022,6 +1025,9 @@ export interface AttackMetadata extends Pick<AttackSummary,
 export interface CreateAttackRequest {
   target_registry_name?: string
   target_binding?: TargetBinding
+  /** The attack goal, independent of the ManualAttack strategy type. */
+  objective?: string | null
+  /** @deprecated Use objective. Non-null name and objective must match if both are supplied. */
   name?: string
   chat_scorer?: RegisteredComponentReference | null
   operator?: string

@@ -1880,13 +1880,15 @@ describe("App", () => {
   });
 
   it("hydrates history filters from the URL query string", () => {
-    renderApp("/attack/history?outcome=success&attackType=PromptSendingAttack");
+    renderApp("/attack/history?outcome=success&operator=alice&attackType=PromptSendingAttack&converter=Base64Converter");
 
     const filters = JSON.parse(
       screen.getByTestId("history-filters").textContent ?? "{}"
     );
     expect(filters.outcome).toBe("success");
-    expect(filters.attackTypes).toEqual(["PromptSendingAttack"]);
+    expect(filters.operator).toEqual(["alice"]);
+    expect(filters).not.toHaveProperty("attackTypes");
+    expect(filters).not.toHaveProperty("converter");
   });
 
   it("writes filter changes into the URL", () => {
