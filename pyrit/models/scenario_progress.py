@@ -335,6 +335,8 @@ class ScenarioObjectiveScorerMetrics(BaseModel):
     precision: float | None = Field(default=None, ge=0, le=1)
     recall: float | None = Field(default=None, ge=0, le=1)
     average_score_time_seconds: float | None = Field(default=None, ge=0)
+    num_responses: int | None = Field(default=None, ge=0)
+    num_input_responses: int | None = Field(default=None, ge=0)
 
 
 class ScenarioScorerIdentity(ScenarioComponentIdentity):

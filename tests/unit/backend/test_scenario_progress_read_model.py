@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -134,23 +134,32 @@ async def _get_snapshot_async(*, read_model: ScenarioProgressReadModel, run_id: 
 
 
 def _write_objective_metrics(
-    *, file_path: Path, scorer_identifier: ComponentIdentifier, accuracy: float, age_seconds: int | None = None
+    *,
+    file_path: Path,
+    scorer_identifier: ComponentIdentifier,
+    accuracy: float,
+    age_seconds: int | None = None,
+    num_responses: int = 100,
+    num_input_responses: int | None = None,
 ) -> None:
     """Write one metrics entry, optionally backdating the file so the read model may cache it."""
     file_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_payload: dict[str, Any] = {
+        "num_responses": num_responses,
+        "num_human_raters": 3,
+        "accuracy": accuracy,
+        "accuracy_standard_error": 0.01,
+        "f1_score": accuracy,
+        "precision": accuracy,
+        "recall": accuracy,
+    }
+    if num_input_responses is not None:
+        metrics_payload["num_input_responses"] = num_input_responses
     file_path.write_text(
         json.dumps(
             {
                 "eval_hash": ScorerEvaluationIdentifier(scorer_identifier).eval_hash,
-                "metrics": {
-                    "num_responses": 100,
-                    "num_human_raters": 3,
-                    "accuracy": accuracy,
-                    "accuracy_standard_error": 0.01,
-                    "f1_score": accuracy,
-                    "precision": accuracy,
-                    "recall": accuracy,
-                },
+                "metrics": metrics_payload,
             }
         )
         + "\n",
@@ -343,9 +352,93 @@ async def test_progress_updates_scorer_identity_without_new_results(tmp_path: Pa
     first, second, removed = snapshots
     assert first.summary.objective_scorer.component_name == "FirstScorer"
     assert first.summary.objective_scorer.metrics.accuracy == 0.75
+    assert first.summary.objective_scorer.metrics.num_responses == 100
+    assert first.summary.objective_scorer.metrics.num_input_responses is None
     assert second.summary.objective_scorer.component_name == "SecondScorer"
     assert second.summary.objective_scorer.metrics is None
     assert removed.summary.objective_scorer is None
+
+
+async def test_progress_snapshot_propagates_scorer_coverage_metrics(tmp_path: Path) -> None:
+    file_path = tmp_path / "objective" / "objective_achieved_metrics.jsonl"
+    scorer_id = ComponentIdentifier(class_name="CoverageScorer", class_module="tests")
+    await asyncio.to_thread(
+        _write_objective_metrics,
+        file_path=file_path,
+        scorer_identifier=scorer_id,
+        accuracy=0.9,
+        num_responses=70,
+        num_input_responses=100,
+    )
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([], False))
+    read_model = ScenarioProgressReadModel(memory=memory)
+
+    with patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path):
+        snapshot = await read_model.get_snapshot_async(
+            scenario_result_id="coverage-run",
+            plan=None,
+            plan_complete=False,
+            active_group_ids=(),
+            terminal=True,
+            objective_scorer_identifier=scorer_id,
+        )
+
+    metrics = snapshot.summary.objective_scorer.metrics
+    assert metrics is not None
+    assert metrics.accuracy == 0.9
+    assert metrics.num_responses == 70
+    assert metrics.num_input_responses == 100
+
+
+def test_load_objective_metrics_reads_coverage_and_legacy_records(tmp_path: Path) -> None:
+    file_path = tmp_path / "objective" / "objective_achieved_metrics.jsonl"
+    scorer_coverage = ComponentIdentifier(class_name="ScorerWithCoverage", class_module="tests")
+    scorer_legacy = ComponentIdentifier(class_name="ScorerLegacy", class_module="tests")
+
+    _write_objective_metrics(
+        file_path=file_path,
+        scorer_identifier=scorer_coverage,
+        accuracy=1.0,
+        num_responses=7,
+        num_input_responses=10,
+    )
+    with file_path.open("a", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {
+                    "eval_hash": ScorerEvaluationIdentifier(scorer_legacy).eval_hash,
+                    "metrics": {
+                        "num_responses": 50,
+                        "num_human_raters": 1,
+                        "accuracy": 0.8,
+                        "accuracy_standard_error": 0.02,
+                        "f1_score": 0.8,
+                        "precision": 0.8,
+                        "recall": 0.8,
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    with patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path):
+        cov_metrics = ScenarioProgressReadModel._read_objective_metrics(
+            eval_hash=ScorerEvaluationIdentifier(scorer_coverage).eval_hash,
+            file_path=file_path,
+        )
+        legacy_metrics = ScenarioProgressReadModel._read_objective_metrics(
+            eval_hash=ScorerEvaluationIdentifier(scorer_legacy).eval_hash,
+            file_path=file_path,
+        )
+
+    assert cov_metrics is not None
+    assert cov_metrics.num_responses == 7
+    assert cov_metrics.num_input_responses == 10
+
+    assert legacy_metrics is not None
+    assert legacy_metrics.num_responses == 50
+    assert legacy_metrics.num_input_responses is None
 
 
 @pytest.mark.parametrize("cancel_request", [False, True])
