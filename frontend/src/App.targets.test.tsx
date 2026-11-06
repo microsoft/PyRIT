@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router'
 
 import { attacksApi, targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { AttackSummary, ConversationMessagesResponse, RegisteredComponentReference, ScorerInstance } from '@/types'
+import type { AttackMetadata, AttackSummary, ConversationMessagesResponse, RegisteredComponentReference, ScorerInstance } from '@/types'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
@@ -49,6 +49,7 @@ jest.mock('@/services/api', () => ({
   },
   attacksApi: {
     getAttack: jest.fn(),
+    getAttackMetadata: jest.fn(),
     getMessages: jest.fn(),
     getConversations: jest.fn(),
     submitMessageSend: jest.fn(),
@@ -81,6 +82,19 @@ const savedAttack: AttackSummary = {
     target_registry_name: 'target-b',
     identifier_hash: targetB.identifier.hash,
   },
+}
+const savedMetadata: AttackMetadata = {
+  attack_result_id: savedAttack.attack_result_id,
+  conversation_id: savedAttack.conversation_id,
+  objective: savedAttack.objective,
+  labels: savedAttack.labels,
+  operator: savedAttack.operator,
+  target: savedAttack.target,
+  execution_read_only: false,
+  last_response_message_piece_id: 'saved-response',
+  related_conversation_count: 0,
+  selected_conversation_id: savedAttack.conversation_id,
+  selected_conversation_valid: true,
 }
 const savedMessages: ConversationMessagesResponse = {
   conversation_id: 'saved-conversation',
@@ -131,6 +145,7 @@ describe('App target selection with the chat composer', () => {
     })
     jest.mocked(targetsApi.getTarget).mockResolvedValue(targetB)
     jest.mocked(attacksApi.getAttack).mockResolvedValue(savedAttack)
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue(savedMetadata)
     jest.mocked(attacksApi.getMessages).mockResolvedValue(savedMessages)
     jest.mocked(attacksApi.getConversations).mockResolvedValue({
       main_conversation_id: 'saved-conversation', conversations: [],

@@ -104,11 +104,13 @@ class PromptShieldTarget(PromptTarget):
                 this target instance. Defaults to None.
 
         Raises:
-            ValueError: If the endpoint value is not provided, if identity auth is requested
+            ValueError: If ``auth_mode`` is not one of ``supported_auth_modes``, if the endpoint
+                value is not provided, if identity auth is requested
                 alongside an explicit ``api_key``, if identity auth is requested for an endpoint
                 that is not a recognized Azure Content Safety endpoint, or if no API key is
                 available for an endpoint that is not a recognized Azure Content Safety endpoint.
         """
+        self._validate_auth_mode(auth_mode)
         endpoint_value = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
         )
