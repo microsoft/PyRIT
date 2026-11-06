@@ -57,6 +57,19 @@ def _make_attack(
 class TestBuildSeedIdentifier:
     """Tests for SeedIdentifier.from_seed."""
 
+    def test_preserves_subclass_type(self):
+        class CustomSeedIdentifier(SeedIdentifier):
+            pass
+
+        seed = SeedPrompt(value="hello", value_sha256="abc123", dataset_name="test_ds", name="seed1")
+        base_result = SeedIdentifier.from_seed(seed)
+        subclass_result = CustomSeedIdentifier.from_seed(seed)
+
+        assert_type(base_result, SeedIdentifier)
+        assert_type(subclass_result, CustomSeedIdentifier)
+        assert type(base_result) is SeedIdentifier
+        assert type(subclass_result) is CustomSeedIdentifier
+
     def test_returns_component_identifier(self):
         seed = SeedPrompt(value="hello", value_sha256="abc123", dataset_name="test_ds", name="seed1")
         result = SeedIdentifier.from_seed(seed)

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -21,12 +21,12 @@ class ToolExecutionMetadata(BaseModel):
         return {self.METADATA_KEY: self.model_dump(mode="json")}
 
     @classmethod
-    def from_metadata(cls, *, metadata: dict[str, Any]) -> ToolExecutionMetadata | None:
+    def from_metadata(cls, *, metadata: dict[str, Any]) -> Self | None:
         """
         Read invocation status without interpreting tool-returned data.
 
         Returns:
-            ToolExecutionMetadata | None: The recorded status, or None if absent.
+            Self | None: The recorded status, or None if absent.
 
         Raises:
             ValueError: If stored invocation metadata is malformed.
