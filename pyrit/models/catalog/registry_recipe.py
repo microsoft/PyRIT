@@ -142,7 +142,7 @@ class RestoreFailure(BaseModel):
     kind: RegistryRecipeKind
     name: _DisplayText | None = Field(None, description="Entry name; None when the whole folder couldn't be read")
     reason: RestoreFailureReason
-    message: _DisplayText = Field(..., description="Why, for administrators; any credential in a URL is hidden")
+    message: _DisplayText = Field(..., description="Why, in words safe to show users")
     version: str | None = Field(None, description="Version of the stored document, when it could be read")
     dependency: SavedEntryRef | None = Field(None, description="The entry this one needed that is missing or failed")
 

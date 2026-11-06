@@ -2360,33 +2360,6 @@ export interface RuntimeReadiness {
   generation: string
 }
 
-export type RegistryRecipeKind = 'targets' | 'converters' | 'scorers' | 'techniques'
-
-export interface SavedEntryRef {
-  kind: RegistryRecipeKind
-  name: string
-}
-
-/** A saved entry, or a whole folder of them when `name` is null, that couldn't be restored. */
-export interface RestoreFailure {
-  kind: RegistryRecipeKind
-  name: string | null
-  reason: string
-  /** Full details for administrators; a fixed explanation of the reason for everyone else. */
-  message: string
-  version: string | null
-  dependency: SavedEntryRef | null
-}
-
-export interface RestoreFailureList {
-  items: RestoreFailure[]
-}
-
-export interface RestoreRetryResult extends RestoreFailureList {
-  state: string
-  outcome: string
-}
-
 export interface RuntimeStatus {
   state: string
   generation: string
