@@ -57,13 +57,13 @@ COPY --chown=vscode:vscode doc/ /app/doc/
 # Note: We use 'uv pip' because the devcontainer creates venv with uv (no pip by default)
 RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Installing PyRIT from PyPI version: $PYRIT_VERSION"; \
-        uv pip install --python /opt/venv/bin/python pyrit[speech,opencv,fairness_bias,fastapi,playwright,github-copilot]==$PYRIT_VERSION; \
+        uv pip install --python /opt/venv/bin/python pyrit[speech,opencv,fairness_bias,fastapi,playwright,github-copilot,litellm]==$PYRIT_VERSION; \
         echo "Removing local source so the installed PyPI package isn't shadowed"; \
         rm -rf /app/pyrit /app/frontend /app/build_scripts /app/pyproject.toml /app/MANIFEST.in /app/README.md /app/LICENSE; \
     elif [ "$PYRIT_SOURCE" = "local" ]; then \
         echo "Installing PyRIT from local source"; \
         export PYRIT_SOURCE_COMMIT="$GIT_COMMIT" PYRIT_SOURCE_DIRTY="$GIT_MODIFIED"; \
-        uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright,github-copilot]; \
+        uv pip install --python /opt/venv/bin/python -e .[speech,opencv,fairness_bias,fastapi,playwright,github-copilot,litellm]; \
         echo "Building frontend..."; \
         if [ "$GIT_MODIFIED" = "true" ]; then \
             /opt/venv/bin/python -m build_scripts.prepare_package --development; \
@@ -74,6 +74,7 @@ RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Invalid PYRIT_SOURCE"; exit 1; \
     fi && \
     cd /tmp && \
+    /opt/venv/bin/python -c "import litellm; from pyrit.prompt_target import ClaudeChatTarget" && \
     if ! /opt/venv/bin/python -c "from pyrit._compatibility import get_compatibility_id; print(get_compatibility_id())"; then \
         if [ "$PYRIT_SOURCE" = "pypi" ]; then \
             echo "ERROR: Selected PyPI release $PYRIT_VERSION lacks valid compatibility metadata." >&2; \

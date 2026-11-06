@@ -2,10 +2,14 @@
 # Licensed under the MIT license.
 
 import itertools
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
+from contextlib import AsyncExitStack
 from typing import Any, NoReturn, cast
+
+import jsonschema
 
 from pyrit.auth import ensure_async_token_provider
 from pyrit.exceptions import (
@@ -21,7 +25,11 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    ToolCall,
+    ToolExecutionMetadata,
+    construct_response_from_request,
 )
+from pyrit.models.messages.chat_message import FunctionCall
 from pyrit.prompt_target.common.chat_completions_message_builder import (
     build_multimodal_chat_messages_async,
     build_response_format,
@@ -45,7 +53,8 @@ from pyrit.prompt_target.common.target_capabilities import (
 )
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
-from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
+from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES, parse_function_call
+from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider, _ScopedToolProvider, collect_tools_async
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -200,6 +209,11 @@ class LiteLLMChatTarget(PromptTarget):
             provider or gateway is not known to accept W3C trace context. Pass
             ``TargetTraceConfig(enabled=True)`` for an instrumented endpoint; each request then
             sends a fresh ``traceparent`` in ``extra_headers``.
+        tools: Executable tools advertised to the model.
+        tool_providers: Providers discovered within each send's resource scope.
+        execute_tools: Execute configured tools locally, or return calls to the caller.
+        max_tool_rounds: Maximum completions containing locally dispatched calls per send.
+            Calls beyond the limit receive error results without execution.
     """
 
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
@@ -237,6 +251,10 @@ class LiteLLMChatTarget(PromptTarget):
         max_requests_per_minute: int | None = None,
         custom_configuration: TargetConfiguration | None = None,
         trace_config: TargetTraceConfig | None = None,
+        tools: Sequence[Tool] | None = None,
+        tool_providers: Sequence[ToolProvider] | None = None,
+        execute_tools: bool = True,
+        max_tool_rounds: int = 10,
     ) -> None:
         """
         Initialize a LiteLLMChatTarget.
@@ -253,6 +271,15 @@ class LiteLLMChatTarget(PromptTarget):
         validate_top_p(top_p)
         validate_presence_penalty(presence_penalty)
         validate_frequency_penalty(frequency_penalty)
+        if isinstance(max_tool_rounds, bool) or not isinstance(max_tool_rounds, int) or max_tool_rounds < 0:
+            raise ValueError("max_tool_rounds must be a nonnegative integer.")
+        self._direct_tools = list(tools or [])
+        self._tool_providers = list(tool_providers or [])
+        self._execute_tools = execute_tools
+        self._max_tool_rounds = max_tool_rounds
+        self._suppress_tools = False
+        if execute_tools and (tools or tool_providers) and (extra_body_parameters or {}).get("n", n) not in (None, 1):
+            raise ValueError("Automatic tool execution requires n=1.")
 
         super().__init__(
             model_name=resolved_model,
@@ -398,6 +425,10 @@ class LiteLLMChatTarget(PromptTarget):
                 "n": self._n,
                 "stop": self._stop,
                 "extra_body_parameters": self._extra_body_parameters,
+                "tools": [self._tool_definition(tool) for tool in self._direct_tools] or None,
+                "tool_providers": [provider.identifier for provider in self._tool_providers] or None,
+                "execute_tools": None if self._execute_tools else False,
+                "max_tool_rounds": self._max_tool_rounds if self._direct_tools or self._tool_providers else None,
             },
         )
 
@@ -412,19 +443,164 @@ class LiteLLMChatTarget(PromptTarget):
 
     # Not decorated with ``pyrit_target_retry``: LiteLLM owns transient/rate-limit retry via
     # ``num_retries`` (see ``__init__``). Stacking both would multiply the retry count.
-    @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        async with AsyncExitStack() as stack:
+            for provider in () if self._suppress_tools else self._tool_providers:
+                if isinstance(provider, _ScopedToolProvider):
+                    await stack.enter_async_context(provider.execution_scope_async())
+            tools = (
+                []
+                if self._suppress_tools
+                else await collect_tools_async(tools=self._direct_tools, providers=self._tool_providers)
+            )
+            self._validate_tool_definitions(tools)
+            return await self._run_tool_loop_async(conversation=normalized_conversation, tools=tools)
+
+    @staticmethod
+    def _tool_definition(tool: Tool) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+                "strict": tool.strict,
+            },
+        }
+
+    def _validate_tool_definitions(self, tools: Sequence[Tool]) -> None:
+        declared = {
+            definition.get("function", {}).get("name")
+            for definition in (self._extra_body_parameters or {}).get("tools", [])
+        }
+        conflicts = {tool.name for tool in tools} & declared
+        if conflicts:
+            raise ValueError(f"Tools conflict with extra_body_parameters declarations: {sorted(conflicts)}")
+
+    async def _run_tool_loop_async(self, *, conversation: list[Message], tools: Sequence[Tool]) -> list[Message]:
+        request = conversation[-1]
+        working = list(conversation)
+        responses: list[Message] = []
+        registered = {tool.name: tool for tool in tools}
+        seen_ids = {
+            parse_function_call(piece).id
+            for message in conversation
+            for piece in message.message_pieces
+            if piece.converted_value_data_type == "function_call"
+        }
+        rounds = 0
+        while True:
+            try:
+                result = await self._send_completion_async(conversation=working, request=request, tools=tools)
+            except Exception as exc:
+                if not responses:
+                    raise
+                logger.exception("LiteLLM tool continuation failed; retaining completed tool evidence.")
+                responses.append(self._tool_loop_error(request=request, detail=f"Tool continuation failed: {exc}"))
+                return responses
+            responses.extend(result)
+            reply = result[-1]
+            call_pieces = [
+                piece for piece in reply.message_pieces if piece.converted_value_data_type == "function_call"
+            ]
+            if not call_pieces or not registered or not self._execute_tools:
+                return responses
+            if any(piece.is_truncated or piece.response_error != "none" for piece in reply.message_pieces):
+                for piece in reply.message_pieces:
+                    piece.response_error = "processing"
+                responses.append(
+                    self._tool_loop_error(request=request, detail="Truncated or failed tool calls were not executed.")
+                )
+                return responses
+            try:
+                calls = [parse_function_call(piece) for piece in call_pieces]
+                ids = [call.id for call in calls]
+                if len(set(ids)) != len(ids) or seen_ids.intersection(ids):
+                    raise ValueError("Duplicate or reused tool call ID.")
+            except ValueError as exc:
+                for piece in reply.message_pieces:
+                    piece.response_error = "processing"
+                responses.append(self._tool_loop_error(request=request, detail=f"Invalid tool calls: {exc}"))
+                return responses
+            seen_ids.update(ids)
+            working.extend(result)
+            exhausted = rounds >= self._max_tool_rounds
+            for call in calls:
+                output = (
+                    self._tool_result(
+                        request=request, call=call, output={"error": "max_tool_rounds_exhausted"}, invoked=False
+                    )
+                    if exhausted
+                    else await self._execute_tool_async(request=request, call=call, registered=registered)
+                )
+                responses.append(output)
+                working.append(output)
+            if exhausted:
+                responses.append(
+                    self._tool_loop_error(request=request, detail=f"max_tool_rounds={self._max_tool_rounds} exhausted.")
+                )
+                return responses
+            rounds += 1
+
+    @staticmethod
+    def _tool_loop_error(*, request: Message, detail: str) -> Message:
+        logger.error(detail)
+        return construct_response_from_request(
+            request=request.message_pieces[0], response_text_pieces=[detail], response_type="error", error="processing"
+        )
+
+    async def _execute_tool_async(self, *, request: Message, call: ToolCall, registered: Mapping[str, Tool]) -> Message:
+        invoked = False
+        try:
+            if not isinstance(call.function, FunctionCall):
+                raise ValueError("Tool calls require structured function arguments.")
+            configured = registered.get(call.function.name)
+            if configured is None:
+                raise ValueError(f"Unknown tool: {call.function.name}")
+            arguments = json.loads(call.function.arguments)
+            if not isinstance(arguments, dict):
+                raise ValueError("Tool arguments must be a JSON object.")
+            jsonschema.validate(instance=arguments, schema=configured.parameters)
+            configured.validate_arguments(arguments=arguments)
+            invoked = True
+            output = await configured.execute_async(arguments=arguments)
+            # Validate serialization here so a completed side effect is never lost or repeated.
+            if not isinstance(output, str):
+                output = json.dumps(output, allow_nan=False)
+        except Exception as exc:
+            logger.exception("Tool call %s failed.", call.id)
+            output = json.dumps({"error": type(exc).__name__, "message": str(exc)})
+        return self._tool_result(request=request, call=call, output=output, invoked=invoked)
+
+    @staticmethod
+    def _tool_result(*, request: Message, call: ToolCall, output: object, invoked: bool) -> Message:
+        return MessagePiece(
+            role="tool",
+            conversation_id=request.message_pieces[0].conversation_id,
+            original_value_data_type="function_call_output",
+            original_value=json.dumps(
+                {"call_id": call.id, "output": output if isinstance(output, str) else json.dumps(output)}
+            ),
+            prompt_metadata=ToolExecutionMetadata(invoked=invoked).to_metadata(),
+        ).to_message()
+
+    @limit_requests_per_minute
+    async def _send_completion_async(
+        self, *, conversation: list[Message], request: Message, tools: Sequence[Tool]
+    ) -> list[Message]:
         litellm = self._import_litellm()
 
-        message = normalized_conversation[-1]
+        message = request
         request_piece: MessagePiece = message.message_pieces[0]
 
         logger.info(f"Sending prompt to LiteLLM target ({self._model_name}): {message}")
 
         json_config = self._get_json_response_config(message_piece=request_piece)
-        messages = await self._build_chat_messages_async(normalized_conversation)
+        messages = await self._build_chat_messages_async(conversation)
         api_key = await self._resolve_api_key_async()
         body = self._construct_request_body(messages=messages, json_config=json_config, api_key=api_key)
+        if tools:
+            body["tools"] = [*body.get("tools", []), *(self._tool_definition(tool) for tool in tools)]
         # Applied after the passthrough merge so ``extra_body_parameters`` cannot drop the context.
         # LiteLLM merges ``headers`` with ``extra_headers`` and then the provider-specific headers,
         # so all three are checked for manual values.

@@ -25,6 +25,17 @@ PYPI_GATES = {
 }
 
 
+def test_production_installs_litellm_and_checks_final_interpreter() -> None:
+    dockerfile = (REPO_ROOT / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    installs = [line for line in dockerfile.splitlines() if "uv pip install" in line and "github-copilot" in line]
+    assert len(installs) == 2
+    assert all(",litellm]" in line for line in installs)
+    assert (
+        'cd /tmp && \\\n    /opt/venv/bin/python -c "import litellm; from pyrit.prompt_target import ClaudeChatTarget"'
+        in dockerfile
+    )
+
+
 @pytest.fixture(scope="module")
 def workflow() -> dict[str, Any]:
     # BaseLoader preserves the Actions "on" key instead of treating it as a YAML 1.1 boolean.
