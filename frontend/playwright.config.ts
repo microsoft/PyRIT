@@ -30,8 +30,8 @@ const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
 
 /**
  * Copies the seeded backend's configuration into a fresh folder that also holds
- * its saved targets, converters, and scorers, so a run never reads or writes
- * the ones saved on the machine running it.
+ * its saved targets, converters, scorers, and techniques, so a run never reads
+ * or writes the ones saved on the machine running it.
  */
 function createSeededBackendConfigFile(): string {
   const folder = mkdtempSync(path.join(tmpdir(), "pyrit-seeded-backend-"));

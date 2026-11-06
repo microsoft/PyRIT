@@ -29,9 +29,9 @@ def _pyrit_backend_server(tmp_path_factory: pytest.TempPathFactory):
 
     Uses the same ``test_config.yaml`` the scenario tests pass to the CLI
     client so server-side and client-side memory/config stay in sync. The
-    backend's copy also points saved targets, converters, and scorers at a
-    fresh folder, so a backend this fixture starts never reads or writes the
-    ones saved on the machine running it.
+    backend's copy also points saved targets, converters, scorers, and
+    techniques at a fresh folder, so a backend this fixture starts never reads
+    or writes the ones saved on the machine running it.
 
     Tear down via ``launcher.stop()`` so a lingering subprocess does not
     occupy port 8000 between local pytest runs. The launcher is a no-op if
