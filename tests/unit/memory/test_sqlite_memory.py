@@ -7,6 +7,7 @@ import io
 import logging
 import os
 import sqlite3
+import sys
 import tempfile
 import threading
 import uuid
@@ -44,7 +45,7 @@ from pyrit.models import (
     flatten_to_message_pieces,
 )
 from pyrit.prompt_target.text_target import TextTarget
-from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
+from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import get_sample_conversation_entries, make_scenario_result
 
 
@@ -819,6 +820,124 @@ async def test_update_prompt_metadata_by_conversation_id(sqlite_instance, sample
 
         other_entry = (await session.scalars(select(PromptMemoryEntry).filter_by(conversation_id="other_id"))).first()
         assert other_entry.prompt_metadata == original_metadata
+
+
+@pytest.mark.parametrize("metadata", [[], "invalid", None, 1])
+async def test_metadata_replacement_rejects_invalid_roots_async(sqlite_instance: SQLiteMemory, metadata: Any) -> None:
+    pieces = [
+        MessagePiece(
+            role="assistant", original_value=value, conversation_id="replace", prompt_metadata={"owner": value}
+        )
+        for value in ("first", "second")
+    ]
+    await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=pieces)
+    before = await sqlite_instance.get_message_pieces_async(conversation_id="replace")
+
+    with pytest.raises(ValueError, match="prompt_metadata must be a dictionary"):
+        await sqlite_instance.update_prompt_metadata_by_conversation_id_async(
+            conversation_id="replace", prompt_metadata=metadata
+        )
+
+    after = await sqlite_instance.get_message_pieces_async(conversation_id="replace")
+    assert [piece.model_dump() for piece in after] == [piece.model_dump() for piece in before]
+
+
+@pytest.mark.parametrize("metadata", [{}, {"owner": "new", "count": 2}, {"nested": {"values": [1, 2]}}])
+async def test_metadata_replacement_preserves_dictionary_behavior_async(
+    sqlite_instance: SQLiteMemory, metadata: Any
+) -> None:
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="response",
+                conversation_id=conversation_id,
+                prompt_metadata={"owner": "original"},
+            )
+            for conversation_id in ("replace", "other")
+        ]
+    )
+    assert await sqlite_instance.update_prompt_metadata_by_conversation_id_async(
+        conversation_id="replace", prompt_metadata=metadata
+    )
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id="replace")
+    assert pieces[0].prompt_metadata == metadata
+    other = await sqlite_instance.get_message_pieces_async(conversation_id="other")
+    assert other[0].prompt_metadata == {"owner": "original"}
+    assert not await sqlite_instance.update_prompt_metadata_by_conversation_id_async(
+        conversation_id="missing", prompt_metadata=metadata
+    )
+
+
+async def test_metadata_replacement_sync_entry_rejects_invalid_root_async(sqlite_instance: SQLiteMemory) -> None:
+    await sqlite_instance.add_message_pieces_to_memory_async(
+        message_pieces=[
+            MessagePiece(
+                role="assistant",
+                original_value="response",
+                conversation_id="replace",
+                prompt_metadata={"owner": "original"},
+            )
+        ]
+    )
+    metadata: Any = []
+    with pytest.warns(DeprecationWarning, match="update_prompt_metadata_by_conversation_id"):
+        with pytest.raises(ValueError, match="prompt_metadata must be a dictionary"):
+            sqlite_instance.update_prompt_metadata_by_conversation_id(
+                conversation_id="replace", prompt_metadata=metadata
+            )
+    pieces = await sqlite_instance.get_message_pieces_async(conversation_id="replace")
+    assert len(pieces) == 1
+    assert pieces[0].original_value == "response"
+    assert pieces[0].prompt_metadata == {"owner": "original"}
+
+
+async def test_metadata_replacement_rejection_survives_reopen_async(tmp_path: Path) -> None:
+    script = """
+import asyncio
+import sys
+from pathlib import Path
+from pyrit.memory import SQLiteMemory
+from pyrit.models import MessagePiece
+
+async def main_async():
+    memory = SQLiteMemory(db_path=Path(sys.argv[1]), silent=True)
+    try:
+        if sys.argv[2] == "write":
+            await memory.add_message_pieces_to_memory_async(message_pieces=[
+                MessagePiece(role="assistant", original_value=value,
+                             conversation_id="replace", prompt_metadata={"owner": value})
+                for value in ("first", "second")
+            ])
+            for invalid in ([], "invalid"):
+                try:
+                    await memory.update_prompt_metadata_by_conversation_id_async(
+                        conversation_id="replace", prompt_metadata=invalid)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError("Invalid metadata was accepted")
+        pieces = await memory.get_message_pieces_async(conversation_id="replace")
+        assert len(pieces) == 2
+        assert {p.original_value for p in pieces} == {"first", "second"}
+        assert all(p.prompt_metadata == {"owner": p.original_value} for p in pieces)
+    finally:
+        await memory.dispose_engine_async()
+
+asyncio.run(main_async())
+"""
+    for mode in ("write", "read"):
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            script,
+            str(tmp_path / "metadata.db"),
+            mode,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=TEST_WATCHDOG_SECONDS)
+        assert process.returncode == 0, (stdout + stderr).decode()
 
 
 async def test_get_conversation_stats_returns_empty_for_no_ids(sqlite_instance):

@@ -4267,7 +4267,12 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             bool: True if the update was successful, False otherwise.
+
+        Raises:
+            ValueError: If prompt_metadata is not a dictionary.
         """
+        if not isinstance(prompt_metadata, dict):
+            raise ValueError("prompt_metadata must be a dictionary")
         return self._dispatch_memory_operation(
             "update_prompt_entries_by_conversation_id",
             self._execute_update_prompt_entries_by_conversation_id,
