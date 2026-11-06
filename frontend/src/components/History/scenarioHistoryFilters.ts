@@ -20,13 +20,16 @@ export const DEFAULT_SCENARIO_HISTORY_FILTERS: ScenarioHistoryFilters = {
   referenceId: '',
 }
 
-export const SCENARIO_RUN_STATES: readonly ScenarioRunState[] = [
-  'CREATED',
-  'IN_PROGRESS',
-  'COMPLETED',
-  'FAILED',
-  'CANCELLED',
-]
+const SCENARIO_RUN_STATE_VALUES = {
+  CREATED: 'CREATED',
+  QUEUED: 'QUEUED',
+  IN_PROGRESS: 'IN_PROGRESS',
+  COMPLETED: 'COMPLETED',
+  FAILED: 'FAILED',
+  CANCELLED: 'CANCELLED',
+} as const satisfies Record<ScenarioRunState, ScenarioRunState>
+
+export const SCENARIO_RUN_STATES: readonly ScenarioRunState[] = Object.values(SCENARIO_RUN_STATE_VALUES)
 
 const RUN_STATES = new Set<string>(SCENARIO_RUN_STATES)
 
