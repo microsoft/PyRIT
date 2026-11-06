@@ -27,6 +27,7 @@ from sqlalchemy import (
     Select,
     String,
     Unicode,
+    UnicodeText,
     and_,
     case,
     column,
@@ -59,7 +60,15 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
-from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonArrayValue, JsonContainer, JsonScalar, UuidHex
+from pyrit.memory.analytics_sql import (
+    JsonArrayItems,
+    JsonArrayJoin,
+    JsonArrayValue,
+    JsonContainer,
+    JsonScalar,
+    UnicodeCaseFold,
+    UuidHex,
+)
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -1058,7 +1067,12 @@ class MemoryInterface(abc.ABC):
         if title_query:
             # SQL Server also treats "[" as a LIKE wildcard.
             escaped_title = title_query.replace("/", "//").replace("%", "/%").replace("_", "/_").replace("[", "/[")
-            statement = statement.where(FindingEntry.title.ilike(f"%{escaped_title}%", escape="/"))
+            # SQLite's lower() only folds ASCII, so both sides fold through the
+            # per character UnicodeCaseFold, matching the seed value search.
+            pattern = "%" + escaped_title + "%"
+            statement = statement.where(
+                UnicodeCaseFold(FindingEntry.title).like(UnicodeCaseFold(literal(pattern, UnicodeText())), escape="/")
+            )
         statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
@@ -5472,12 +5486,17 @@ class MemoryInterface(abc.ABC):
             member_conditions.append(SeedEntry.seed_type.in_(list(seed_types)))
         if value_search:
             # A simulated-conversation value is JSON, so its keys would match common words such as "prompt".
+            # casefold maps each character independently, so lowering the term separately from the
+            # stored text cannot lose context sensitive forms such as Greek final sigma, and verbatim
+            # text always still matches.
             pattern = "%" + re.sub(r"([\\%_\[])", r"\\\1", value_search) + "%"
             member_conditions.append(
                 and_(
                     SeedEntry.data_type == "text",
                     SeedEntry.seed_type != "simulated_conversation",
-                    SeedEntry.value.ilike(pattern, escape="\\"),
+                    UnicodeCaseFold(SeedEntry.value).like(
+                        UnicodeCaseFold(literal(pattern, UnicodeText())), escape="\\"
+                    ),
                 )
             )
 
