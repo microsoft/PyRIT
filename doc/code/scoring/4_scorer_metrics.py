@@ -405,10 +405,19 @@ print(likert_scorer.evaluation_file_mapping)
 # `ScorerInitializer` applies tags to scorers during registration. These tags let you target
 # specific subsets for evaluation:
 #
-# - `refusal` — The 4 standalone refusal scorer variants
-# - `default` — All scorers registered by default
-# - `best_refusal_f1` — The refusal variant with the highest F1 (set dynamically from metrics)
-# - `best_objective_f1` — The objective scorer with the highest F1
+# - `refusal` — Registered standalone refusal scorer variants
+# - `best_refusal` — The configured preferred refusal variant, or the first available variant
+# - `best_objective` / `default_objective_scorer` — The objective scorer selected below
+#
+# Automatic best-objective selection ranks F1 only among otherwise eligible candidates with
+# known, positive `num_input_responses` and `num_responses == num_input_responses`.
+# Partial, unknown, zero, or inconsistent coverage counts cannot qualify for this ranking.
+# If no metrics qualify, the initializer keeps the configured fallback: `scale_and_refusal`,
+# then the first available objective composite. It retains both public tags and warns that the
+# choice is a configured fallback, not an F1-backed winner. With no composite, neither tag is added.
+# Partial results remain computed, stored, reported, and cached normally; users can still select
+# those scorers explicitly. Complete coverage does not itself establish that different records
+# evaluated identical examples.
 #
 # ### Recommended Workflow: Refusal → Dependent Scorers
 #
@@ -420,9 +429,9 @@ print(likert_scorer.evaluation_file_mapping)
 # python -m build_scripts.evaluate_scorers --tags refusal
 # ```
 #
-# This evaluates only the 4 refusal variants and writes results to
-# `refusal_scorer/refusal_metrics.jsonl`. After this step, `ScorerInitializer` can determine which
-# refusal variant has the best F1 and tag it as `best_refusal_f1`.
+# This evaluates the registered refusal variants and writes results to
+# `refusal_scorer/refusal_metrics.jsonl`. The `best_refusal` choice remains configuration-based,
+# rather than being reranked from these metrics.
 #
 # **Step 2: Re-evaluate all scorers**
 #
@@ -430,10 +439,9 @@ print(likert_scorer.evaluation_file_mapping)
 # python -m build_scripts.evaluate_scorers
 # ```
 #
-# On the next full run, `ScorerInitializer` reads the refusal metrics from Step 1, picks the best
-# refusal variant, and uses it to build dependent scorers (e.g., `TrueFalseInverterScorer` wrapping
-# the best refusal scorer). This ensures objective scorers that depend on refusal detection use the
-# best-performing refusal prompt.
+# On the next full run, `ScorerInitializer` builds dependent scorers (e.g.,
+# `TrueFalseInverterScorer`) using the configured `best_refusal` variant.
+# Overall best-objective selection uses the complete-coverage rule above.
 #
 # Scorers whose metrics are already up-to-date (same dataset version, sufficient trials) are
 # automatically skipped, so re-running the full script is efficient.

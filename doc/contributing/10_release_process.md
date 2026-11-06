@@ -124,6 +124,11 @@ for private vulnerability reporting.
   interpreting metrics as full-dataset results. Legacy cached metrics without input counts
   have unknown coverage. Evaluations with no determined results or other errors still fail:
   the script finishes the remaining scorers, then exits nonzero without reporting overall success.
+  Automatic best-objective selection ranks F1 only when `num_input_responses > 0`
+  and `num_responses == num_input_responses`. Partial and unknown-coverage results
+  remain stored and reusable, but cannot win that ranking. If none qualify, the
+  initializer preserves its configured composite fallback and warns that it is not
+  an F1-backed winner. Explicit scorer selection remains available.
 
 ## 2. Decide the Next Version
 
