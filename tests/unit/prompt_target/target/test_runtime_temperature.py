@@ -76,7 +76,9 @@ def completion() -> ChatCompletion:
 def generation_target_type(
     request: pytest.FixtureRequest,
 ) -> type[OpenAICompletionTarget | OpenAIResponseTarget]:
-    return request.param
+    target_type = request.param
+    assert isinstance(target_type, type) and issubclass(target_type, (OpenAICompletionTarget, OpenAIResponseTarget))
+    return target_type
 
 
 def generation_response(path: str) -> dict[str, Any]:
