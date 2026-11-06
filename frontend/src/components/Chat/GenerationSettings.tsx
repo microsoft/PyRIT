@@ -97,7 +97,7 @@ function TemperatureControl({ value, onChange, target, disabled }: GenerationSet
         }}>
           <HelpField label="Temperature" validationState={error ? 'error' : 'none'} validationMessage={error}
             hint="Blank uses target default."
-            help={`Enter ${minimum} through ${maximum}. Zero is valid. Configured default: ${defaultValue ?? 'not specified; provider default unknown'}. Applies to subsequent sends until changed; target defaults and earlier messages are unchanged.`}>
+            help={`Enter ${minimum} through ${maximum}. Configured default: ${defaultValue ?? 'not specified; provider default unknown'}. Applies to subsequent sends until changed; target defaults and earlier messages are unchanged.`}>
             <Input autoFocus type="text" inputMode="decimal" value={input ?? ''} placeholder="Default" disabled={!editable}
               onChange={(_event: ChangeEvent<HTMLInputElement>, data: InputOnChangeData) => {
                 const next = data.value.trim() ? data.value : undefined

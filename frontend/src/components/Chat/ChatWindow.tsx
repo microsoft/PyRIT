@@ -2888,7 +2888,7 @@ export default function ChatWindow({
         )}
         {editDraft === null && <MessageList
           messages={isEvidenceUnavailable ? [] : messages}
-          showGenerationInfo={activeTarget?.capabilities?.supports_temperature === true}
+          showGenerationInfo={activeTarget?.capabilities?.supports_temperature !== false}
           onCopyToInput={handleCopyToInput}
           copyToInputDisabledReason={incompleteTranscriptReason ?? singleTurnDisabledReason}
           onCopyToNewConversation={(index: number) => { void copyConversation(index, 'same_attack') }}

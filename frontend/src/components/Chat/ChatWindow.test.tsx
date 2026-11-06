@@ -4099,10 +4099,10 @@ describe("ChatWindow Integration", () => {
     expect(target.identifier.temperature).toBe(0.8);
   });
 
-  it.each([true, false, undefined])("shows saved temperature markers only with confirmed target support (%s)", async (
-    supportsTemperature: boolean | undefined,
+  it.each([true, false, undefined, null])("hides saved temperature markers only for explicitly unsupported targets (%s)", async (
+    supportsTemperature: boolean | undefined | null,
   ) => {
-    const target: TargetInstance = {
+    const target: TargetInstance | null = supportsTemperature === null ? null : {
       ...mockTarget, capabilities: buildCapabilities({ supports_temperature: supportsTemperature }),
     };
     const messages: BackendMessage[] = (["user", "assistant"] as const).map((role: "user" | "assistant", index: number) => ({
@@ -4119,13 +4119,58 @@ describe("ChatWindow Integration", () => {
       conversation_id: "conversation", messages, target_response_status: null,
     });
     render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target}
+      targetResolutionStatus={target ? "resolved" : "unavailable"}
       attackResultId="existing" conversationId="conversation" activeConversationId="conversation" /></TestWrapper>);
 
     expect(await screen.findByText("Saved assistant message")).toBeInTheDocument();
     expect(screen.getByText("Saved user message")).toBeInTheDocument();
     expect(screen.queryAllByRole("button", {
       name: "Generation details: Temperature: provider default (unknown)",
-    })).toHaveLength(supportsTemperature ? 2 : 0);
+    })).toHaveLength(supportsTemperature === false ? 0 : 2);
+  });
+
+  it.each<{ name: string; metadata?: Record<string, unknown>; label?: string }>([
+    {
+      name: "numeric temperature",
+      metadata: { _pyrit_generation: {
+        temperature: { requested: 0.7, resolved: 0.7, source: "request" }, request_piece_ids: ["piece-0"],
+      } },
+      label: "Temperature: 0.7 (request override)",
+    },
+    { name: "missing evidence" },
+    {
+      name: "invalid evidence",
+      metadata: { _pyrit_generation: {} },
+      label: "Temperature: invalid record",
+    },
+  ])("preserves $name without enabling controls for an unresolved target", async ({ metadata, label }) => {
+    const user = userEvent.setup();
+    mockedAttacksApi.getMessages.mockResolvedValue({
+      conversation_id: "conversation", target_response_status: null,
+      messages: [{
+        turn_number: 0, role: "user", created_at: "2026-02-15T00:00:00Z",
+        message_pieces: [{
+          id: "piece-0", original_value_data_type: "text", converted_value_data_type: "text",
+          original_value: "Saved message", converted_value: "Saved message", scores: [],
+          prompt_metadata: metadata,
+        }],
+      }],
+    });
+    render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={null}
+      targetResolutionStatus="unavailable"
+      attackResultId="existing" conversationId="conversation" activeConversationId="conversation" /></TestWrapper>);
+
+    expect(await screen.findByText("Saved message")).toBeInTheDocument();
+    if (label) expect(screen.getByText(label)).toBeInTheDocument();
+    else expect(screen.queryByText(/^Temperature:/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Adjust temperature/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+    if (label?.includes("request override")) {
+      await user.click(screen.getByRole("button", { name: `Generation details: ${label}` }));
+      expect(screen.getByRole("dialog", { name: "Saved generation details" }))
+        .toHaveTextContent("Requested override: 0.7. Sent parameter: 0.7. Source: request override.");
+    }
   });
 
   it("does not infer runtime temperature support from a target default", async () => {

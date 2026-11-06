@@ -85,6 +85,8 @@ response = await PromptNormalizer().send_prompt_async(message=message, target=ta
 - Values must be finite numbers, not booleans or numeric strings, within
   `target.capabilities.temperature_range`. OpenAI Chat, Completions, and Responses
   normally accept 0 through 2; `Mistral-Large-3` accepts 0 through 1.
+  An explicitly declared `temperature_range` in `custom_configuration` or
+  `apply_capabilities()` overrides these inferred bounds for that target only.
   Invalid, conflicting, or known unsupported overrides fail
   before provider I/O.
 - Overrides take precedence over target defaults and provider passthrough settings.
@@ -100,9 +102,12 @@ Read it using `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadat
 `info.temperature` records the `requested` override, `resolved` value sent, and
 `source` (`request`, `target_default`, or `provider_default`). Unknown provider
 defaults remain `None`; messages without evidence return `None`.
-The GUI omits temperature labels for messages without evidence or without a
-selected target that supports runtime temperature. Edited or newly
-inserted history does not acquire evidence; unchanged source copies retain it.
+Chat omits temperature labels for messages without evidence or when the target
+explicitly reports that runtime temperature is unsupported. Saved labels remain
+visible when the target or its capability cannot be resolved, including unknown
+provider-default labels; this does not enable sending or temperature controls.
+Edited or newly inserted history does not acquire evidence; unchanged source
+copies retain it.
 
 ## Chat-style targets vs general targets
 

@@ -129,8 +129,12 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 # Realtime's GA API removed temperature; legacy beta settings are not supported here.
 #
 # `capabilities.temperature_range` gives the inclusive bounds for supported targets.
-# OpenAI-compatible text targets default to 0 through 2; `Mistral-Large-3` is limited
-# to 0 through 1. Validation and the GUI use the same model-specific bounds.
+# OpenAI-compatible text targets infer 0 through 2, or 0 through 1 for `Mistral-Large-3`.
+# An explicitly declared `temperature_range` in `custom_configuration` or
+# `apply_capabilities()` overrides that target's inferred bounds, without enabling
+# unsupported modes. Validation and the GUI use the same effective bounds.
+# Like support declarations, constructor ranges survive `set_model_name()`; applied
+# ranges describe the current model and reset to constructor or inferred bounds on a model change.
 # These runtime capability fields do not change target configuration identities.
 #
 # `RoundRobinTarget` supports runtime temperature only when every child supports it,

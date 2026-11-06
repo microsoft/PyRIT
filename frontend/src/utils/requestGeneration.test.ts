@@ -1,7 +1,22 @@
-import type { MessagePieceRequest } from '@/types'
-import { generationDisplay, parseGenerationConfig, withRequestGenerationConfig } from './requestGeneration'
+import type { MessagePieceRequest, TargetCapabilities } from '@/types'
+import { GENERATION_FIELDS, generationDisplay, generationFieldRange, parseGenerationConfig, withRequestGenerationConfig } from './requestGeneration'
 
 describe('request temperature', () => {
+  it('uses the range key declared by each generation field', () => {
+    for (const field of GENERATION_FIELDS) {
+      const capabilities: TargetCapabilities = { [field.rangeKey]: [0.2, 1] }
+      expect(generationFieldRange(field.name, capabilities)).toEqual([0.2, 1])
+    }
+  })
+
+  it.each([undefined, null, {}])('uses field defaults when capabilities have no range (%j)', (capabilities?: TargetCapabilities | null) => {
+    expect(generationFieldRange('temperature', capabilities)).toEqual([0, 2])
+  })
+
+  it('preserves a declared zero-only range', () => {
+    expect(generationFieldRange('temperature', { temperature_range: [0, 0] })).toEqual([0, 0])
+  })
+
   it.each(['0', '0.8', '2'])('attaches numeric %s to only one piece', (input: string) => {
     const pieces: MessagePieceRequest[] = [
       { data_type: 'text', original_value: 'hello' },

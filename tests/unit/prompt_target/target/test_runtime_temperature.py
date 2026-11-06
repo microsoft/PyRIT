@@ -1607,6 +1607,93 @@ def test_mistral_temperature_range(model: str) -> None:
 
 
 @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
+@pytest.mark.parametrize("applied", [False, True])
+@pytest.mark.parametrize("bounds", [(0, 1), (0.2, 1), (0, 0)])
+async def test_declared_temperature_range_is_enforced_before_io_async(
+    *,
+    patch_central_database: Any,
+    target_type: type[OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget],
+    applied: bool,
+    bounds: tuple[float, float],
+) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    async def respond_async(http_request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(http_request.content))
+        response = (
+            openai_chat_response_json_dict()
+            if target_type is OpenAIChatTarget
+            else generation_response(http_request.url.path)
+        )
+        return httpx.Response(200, json=response)
+
+    declared = TargetCapabilities(supports_temperature=True, temperature_range=bounds)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond_async)) as client:
+        target = target_type(
+            model_name="gpt-4o",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature=1.5,
+            custom_configuration=None if applied else TargetConfiguration(capabilities=declared),
+            httpx_client_kwargs={"http_client": client},
+        )
+        if applied:
+            target.apply_capabilities(capabilities=declared)
+        assert target.capabilities.temperature_range == bounds
+        assert declared.temperature_range == bounds
+        identifier = target.get_identifier()
+        for temperature in (*bounds, None):
+            message = request(temperature)
+            await target.send_prompt_async(message=message)
+            info = RequestGenerationInfo.from_metadata(metadata=message.get_piece().prompt_metadata)
+            assert info is not None
+            assert (
+                info.temperature.resolved == bodies[-1]["temperature"] == (1.5 if temperature is None else temperature)
+            )
+        for invalid in (bounds[0] - 0.1, bounds[1] + 0.1):
+            with pytest.raises(ValueError, match="OpenAI request temperature must be between"):
+                await target.send_prompt_async(message=request(invalid))
+        assert len(bodies) == 3
+        assert target._temperature == 1.5
+        assert target.get_identifier() is identifier
+
+
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
+@pytest.mark.parametrize("constructor_range", [None, (0.2, 0.8)])
+async def test_temperature_range_refresh_uses_constructor_declaration_or_model_async(
+    *,
+    patch_central_database: Any,
+    target_type: type[OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget],
+    constructor_range: tuple[float, float] | None,
+) -> None:
+    declared = TargetCapabilities(supports_temperature=True)
+    if constructor_range is not None:
+        declared = declared.model_copy(update={"temperature_range": constructor_range})
+    async with httpx.AsyncClient() as client:
+        target = target_type(
+            model_name="Mistral-Large-3",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            custom_configuration=TargetConfiguration(capabilities=declared),
+            httpx_client_kwargs={"http_client": client},
+        )
+        assert target.capabilities.temperature_range == (constructor_range or (0, 1))
+        target.apply_capabilities(
+            capabilities=TargetCapabilities(supports_temperature=True, temperature_range=(0, 0.5))
+        )
+        assert target.capabilities.temperature_range == (0, 0.5)
+        for model, inferred_range in (("gpt-4o", (0, 2)), ("Mistral-Large-3", (0, 1))):
+            target.set_model_name(model_name=model)
+            bounds = constructor_range or inferred_range
+            assert target.capabilities.temperature_range == bounds
+            assert target.validate_request_generation_config(request(bounds[1])).temperature == bounds[1]
+            with pytest.raises(ValueError, match="OpenAI request temperature must be between"):
+                target.validate_request_generation_config(request(bounds[1] + 0.1))
+        target.apply_capabilities(capabilities=TargetCapabilities(supports_temperature=True))
+        assert target.capabilities.temperature_range == (0, 1)
+
+
+@pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
 @pytest.mark.parametrize("temperature", [None, 0, 0.7, 1, 1.01, 2])
 async def test_mistral_range_is_advertised_and_enforced_before_io_async(
     *,
@@ -1685,6 +1772,34 @@ async def test_round_robin_exposes_intersected_child_ranges_async(patch_central_
         assert target.validate_request_generation_config(request(1)).temperature == 1
         with pytest.raises(ValueError, match="between 0 and 1"):
             target.validate_request_generation_config(request(2))
+
+
+async def test_round_robin_intersects_declared_child_ranges_async(patch_central_database: Any) -> None:
+    async with httpx.AsyncClient() as client:
+        children = [
+            OpenAIChatTarget(
+                model_name="gpt-4o",
+                endpoint="https://example.test/v1",
+                api_key="test-only-key",
+                custom_configuration=TargetConfiguration(
+                    capabilities=TargetCapabilities(
+                        supports_temperature=True,
+                        temperature_range=bounds,
+                        supports_multi_turn=True,
+                        supports_editable_history=True,
+                    )
+                ),
+                httpx_client_kwargs={"http_client": client},
+            )
+            for bounds in [(0.2, 1), (0.5, 1.5)]
+        ]
+        target = RoundRobinTarget(targets=children)
+        assert target.capabilities.supports_temperature
+        assert target.capabilities.temperature_range == (0.5, 1)
+        assert target.validate_request_generation_config(request(0.7)).temperature == 0.7
+        for invalid in (0.4, 1.1):
+            with pytest.raises(ValueError, match="OpenAI request temperature must be between"):
+                target.validate_request_generation_config(request(invalid))
 
 
 async def test_no_override_preserves_request_body_async(target: OpenAIChatTarget) -> None:

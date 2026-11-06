@@ -152,6 +152,25 @@ describe('GenerationSettings', () => {
     expect(screen.queryByRole('textbox', { name: 'Temperature' })).not.toBeInTheDocument()
   })
 
+  it('should not promise zero is valid when the target range excludes it', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    const positiveMinimumTarget = makeTarget({
+      capabilities: { supports_temperature: true, temperature_range: [0.2, 1] },
+    })
+    render(<TestWrapper><SettingsHarness selectedTarget={positiveMinimumTarget} onChange={onChange} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    const input = screen.getByRole('textbox', { name: 'Temperature' })
+    expect(input).toHaveAccessibleDescription(expect.stringContaining('Enter 0.2 through 1.'))
+    expect(input).not.toHaveAccessibleDescription(expect.stringContaining('Zero is valid'))
+    await user.type(input, '0')
+    expect(screen.getByText('Temperature must be a finite number between 0.2 and 1.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Apply temperature' })).toBeDisabled()
+    await user.clear(input)
+    expect(screen.getByRole('button', { name: 'Apply temperature' })).toBeEnabled()
+    expect(parseGenerationConfig(onChange.mock.lastCall[0], positiveMinimumTarget.capabilities)).toEqual({})
+  })
+
   it.each([undefined, null])('should not invent an unspecified default (%s)', async (temperature: undefined | null) => {
     const user = userEvent.setup()
     render(<TestWrapper><SettingsHarness selectedTarget={{

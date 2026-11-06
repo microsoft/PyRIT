@@ -9,11 +9,12 @@ export const GENERATION_FIELDS: ReadonlyArray<{
   readonly name: keyof RequestGenerationConfig
   readonly label: string
   readonly capability: Extract<keyof TargetCapabilities, `supports_${string}`>
+  readonly rangeKey: Extract<keyof TargetCapabilities, `${string}_range`>
   readonly min: number
   readonly max: number
   readonly step: number
 }> = [
-  { name: 'temperature', label: 'Temperature', capability: 'supports_temperature', min: 0, max: 2, step: 0.1 },
+  { name: 'temperature', label: 'Temperature', capability: 'supports_temperature', rangeKey: 'temperature_range', min: 0, max: 2, step: 0.1 },
 ]
 
 export function generationFieldRange(
@@ -21,7 +22,7 @@ export function generationFieldRange(
 ): readonly [number, number] {
   const field = GENERATION_FIELDS.find((entry) => entry.name === name)
   if (!field) throw new Error(`Unknown generation option: ${name}`)
-  return capabilities?.temperature_range ?? [field.min, field.max]
+  return capabilities?.[field.rangeKey] ?? [field.min, field.max]
 }
 
 export function generationFieldError(

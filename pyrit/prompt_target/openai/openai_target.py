@@ -240,6 +240,12 @@ class OpenAITarget(PromptTarget):
             if custom_configuration is not None
             and capability.value in custom_configuration.capabilities.model_fields_set
         }
+        self._temperature_range_override = (
+            custom_configuration.capabilities.temperature_range
+            if custom_configuration is not None
+            and "temperature_range" in custom_configuration.capabilities.model_fields_set
+            else None
+        )
 
         # Initialize parent with endpoint and model_name
         PromptTarget.__init__(
@@ -275,12 +281,16 @@ class OpenAITarget(PromptTarget):
             for capability in self._SUPPORTED_GENERATION_CAPABILITIES
             if capability.value in capabilities.model_fields_set
         }
+        self._effective_temperature_range_override = (
+            capabilities.temperature_range if "temperature_range" in capabilities.model_fields_set else None
+        )
         if self._SUPPORTED_GENERATION_CAPABILITIES:
             capabilities = self._generation_capabilities_for_mode(capabilities)
         super().apply_capabilities(capabilities=capabilities)
 
     def _refresh_generation_capabilities(self) -> None:
         self._effective_generation_capability_overrides = self._generation_capability_overrides.copy()
+        self._effective_temperature_range_override = self._temperature_range_override
         parameters = self._effective_generation_parameters()
         support = {
             capability.value: self._generation_capability_overrides.get(capability, False)
@@ -319,7 +329,8 @@ class OpenAITarget(PromptTarget):
         return capabilities.model_copy(
             update={
                 "supports_temperature": temperature_supported,
-                "temperature_range": _OpenAIModelSampling.temperature_range(parameters["model"]),
+                "temperature_range": self._effective_temperature_range_override
+                or _OpenAIModelSampling.temperature_range(parameters["model"]),
             }
         )
 
