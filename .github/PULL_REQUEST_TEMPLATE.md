@@ -19,9 +19,12 @@
 ## Tests and Documentation
 
 <!--- Contributions require tests and documentation where applicable. -->
-<!--- Briefly describe tests and documentation added or updated. -->
-<!--- List the exact validation commands run and their results. State what was not run and why. -->
-<!--- Rerun notebooks affected by code or documentation changes and report the results. -->
+<!--- Keep this section to one short sentence summarizing relevant coverage and user-facing documentation. -->
+<!--- Do not enumerate test files, test cases, commands, passing checks, or routine reasons for skipped checks. -->
+<!--- Include only failures, validation gaps, or manual steps that materially affect review. Use N/A if not applicable. -->
+<!--- Follow the testing and documentation guides; do not copy their procedures or execution logs into the PR description. -->
+<!--- Testing: https://github.com/microsoft/PyRIT/blob/main/doc/contributing/4_running_tests.md -->
+<!--- Documentation and notebook reruns: https://github.com/microsoft/PyRIT/blob/main/doc/contributing/7_notebooks.md -->
 
 <!--- Guidance -->
 <!--- Before starting a contribution, open an issue to confirm it fits PyRIT's plans. -->
