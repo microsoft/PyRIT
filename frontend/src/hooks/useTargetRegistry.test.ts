@@ -52,6 +52,24 @@ describe('useTargetRegistry', () => {
     expect(result.current.targets).toEqual([second])
   })
 
+  it('reports loading when the runtime generation changes before the new list lands', async () => {
+    let complete!: (response: Awaited<ReturnType<typeof targetsApi.listTargets>>) => void
+    listTargets.mockReturnValueOnce(new Promise((resolve) => { complete = resolve }))
+    runtime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
+    const { result, rerender } = renderHook(useTargetRegistry)
+    act(() => { complete({ items: [first], pagination: { limit: 200, has_more: false } }) })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.targets).toEqual([first])
+
+    // The runtime reinitializes: the new fetch hangs, and the old targets
+    // must not stay selectable as if they belonged to the new generation.
+    listTargets.mockReturnValueOnce(new Promise(() => {}))
+    runtime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+    act(() => { rerender() })
+
+    expect(result.current.loading).toBe(true)
+  })
+
   it('keeps newer selections when an earlier registry load completes', async () => {
     let complete!: (response: Awaited<ReturnType<typeof targetsApi.listTargets>>) => void
     listTargets.mockReturnValueOnce(new Promise((resolve) => { complete = resolve }))
