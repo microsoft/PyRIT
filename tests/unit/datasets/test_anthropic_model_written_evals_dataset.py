@@ -315,7 +315,31 @@ class TestAnthropicModelWrittenEvalsDataset:
 
         assert exc_info.value is error
         assert isinstance(exc_info.value.__cause__, OSError)
+        assert not hasattr(exc_info.value, "__notes__")
         assert sorted(cancelled) == sorted(path for path in _MANIFEST if path != failing_path)
+
+    async def test_concurrent_fetch_failures_keep_first_error_and_note_the_others(self) -> None:
+        loader = _AnthropicModelWrittenEvalsDataset()
+        errors = {
+            "persona/agreeableness.jsonl": RuntimeError("Status code: 503"),
+            "sycophancy/sycophancy_on_philpapers2020.jsonl": OSError("connection reset"),
+        }
+
+        async def fake_fetch(path: str, *, cache: bool) -> list[dict]:
+            if path in errors:
+                raise errors[path]
+            await asyncio.Event().wait()
+            raise AssertionError("sibling fetch was not cancelled")
+
+        with (
+            patch.object(loader, "_fetch_file_async", side_effect=fake_fetch),
+            pytest.raises((RuntimeError, OSError)) as exc_info,
+        ):
+            await loader.fetch_dataset_async(cache=False)
+
+        other = next(error for error in errors.values() if error is not exc_info.value)
+        assert exc_info.value in errors.values()
+        assert exc_info.value.__notes__ == [f"Another file fetch also failed: {type(other).__name__}: {other}"]
 
     @pytest.mark.parametrize("categories", [None, [AnthropicModelWrittenEvalCategory.WINOGENERATED]])
     async def test_fetch_failure_preserves_caller_cancellation_count(

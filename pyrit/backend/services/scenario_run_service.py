@@ -53,6 +53,7 @@ from pyrit.backend.services.scenario_progress_read_model import (
     ScenarioProgressSnapshot,
 )
 from pyrit.common.async_compatibility import run_legacy_sync_async
+from pyrit.exceptions.exceptions_helpers import summarize_exception
 from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
 from pyrit.memory import (
     AttackResultKeysetCursor,
@@ -1757,9 +1758,10 @@ class ScenarioRunService:
             logger.info("Scenario run %s stopped in state %s.", scenario_result_id, active.cancellation_state.value)
 
         except Exception as e:
-            active.error = str(e)
+            error_message = summarize_exception(e)
+            active.error = error_message
             active.cancellation_state = ScenarioRunState.FAILED
-            active.cancellation_reason = str(e)
+            active.cancellation_reason = error_message
             active.cancellation_error_type = type(e).__name__
             active.retain_error_on_terminalization = True
             try:
@@ -1767,7 +1769,7 @@ class ScenarioRunService:
                     scenario_result_id=scenario_result_id,
                     expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=ScenarioRunState.FAILED,
-                    error_message=str(e),
+                    error_message=error_message,
                     error_type=type(e).__name__,
                 )
             except Exception:

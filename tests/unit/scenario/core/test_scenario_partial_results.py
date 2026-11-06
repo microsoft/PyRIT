@@ -1150,6 +1150,10 @@ class TestScenarioPartialAttackCompletion:
             )[0]
             assert failed_result.scenario_run_state == ScenarioRunState.FAILED
             assert failed_result.number_tries == 1
+            assert failed_result.error_type == "ExceptionGroup"
+            assert all(str(error) in failed_result.error_message for error in partial_failures.values())
+            assert "Caused by RuntimeError: attack-a interrupted" in failed_result.error_message
+            assert "Caused by TimeoutError: attack-b timed out" in failed_result.error_message
 
             final_result = await scenario.run_async()
 
