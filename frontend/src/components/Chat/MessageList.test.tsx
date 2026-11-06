@@ -2134,7 +2134,7 @@ describe("MessageList", () => {
       const secondMessages: Message[] = [{
         role: "assistant",
         content: "Second conversation",
-        timestamp: "2026-11-04T10:01:00.000Z",
+        timestamp: "2026-11-04T10:00:00.000Z",
         attachments: [{
           type: "image",
           name: "same.png",
@@ -2144,11 +2144,11 @@ describe("MessageList", () => {
         }],
       }];
 
-      const { rerender } = render(<TestWrapper><MessageList messages={firstMessages} /></TestWrapper>);
+      const { rerender } = render(<TestWrapper><MessageList key="conversation-a" conversationId="conversation-a" messages={firstMessages} /></TestWrapper>);
       await user.click(screen.getByTestId("download-btn-0-0"));
       expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
 
-      rerender(<TestWrapper><MessageList messages={secondMessages} /></TestWrapper>);
+      rerender(<TestWrapper><MessageList key="conversation-b" conversationId="conversation-b" messages={secondMessages} /></TestWrapper>);
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
       jest.restoreAllMocks();
