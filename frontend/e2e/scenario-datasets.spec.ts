@@ -41,6 +41,11 @@ interface DatasetTestContext {
   request: APIRequestContext
 }
 
+function presetSuffix(testInfo: TestInfo): string {
+  const viewport = testInfo.project.name.endsWith('narrow') ? 'narrow' : 'desktop'
+  return `${viewport}_repeat${testInfo.repeatEachIndex}_retry${testInfo.retry}`
+}
+
 async function control(request: APIRequestContext, action: ControlAction): Promise<FixtureStatus> {
   const response = await request.post('/api/e2e/scenario-datasets', {
     headers: compatibilityHeaders(), data: { action },
@@ -158,7 +163,7 @@ test.afterEach(async ({ request }: { request: APIRequestContext }, testInfo: Tes
 })
 
 test('configures, saves, refreshes, estimates without a target, and launches the same dataset request', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
-  const name = `dataset_journey_${testInfo.project.name.endsWith('narrow') ? 'narrow' : 'desktop'}`
+  const name = `dataset_journey_${presetSuffix(testInfo)}`
   const errors: string[] = []
   page.on('pageerror', (error: Error) => { errors.push(error.message) })
   await page.goto('/registry/scenario-presets/new')
@@ -331,7 +336,7 @@ test('configures, saves, refreshes, estimates without a target, and launches the
 })
 
 test('retains configured limits through deliberately held and failed estimates and metadata reads', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
-  const name = `dataset_faults_${testInfo.project.name.endsWith('narrow') ? 'narrow' : 'desktop'}`
+  const name = `dataset_faults_${presetSuffix(testInfo)}`
   await savePreset(request, { name, scenario_name: SCENARIO, include_baseline: false })
   await control(request, 'hold_estimate')
   await page.goto(presetScannerRoutePath(SCENARIO, name))
@@ -372,14 +377,18 @@ test('retains configured limits through deliberately held and failed estimates a
     .toHaveText('Maximum objectives must be a positive integer.')
   await expect(page.getByRole('button', { name: 'Launch scan', exact: true })).toBeDisabled()
   await openLimit(page, 'Maximum objectives')
+  const reset = nextEstimate(page)
   await page.getByRole('button', { name: 'Reset to 5', exact: true }).focus()
   await page.keyboard.press('Enter')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveText('Up to 5')
+  await expectBudget(await reset, 5)
 
   await control(request, 'hold_metadata')
   await control(request, 'fail_estimate')
+  const unavailable = nextEstimate(page)
   await page.reload()
+  expect((await unavailable).status()).toBe(503)
   await expect.poll(async (): Promise<boolean> => (await control(request, 'status')).metadata_waiting).toBe(true)
   const metadataStatus = page.getByRole('region', { name: 'Datasets', exact: true })
     .getByRole('status').filter({ hasText: 'Checking dataset details...' })
@@ -402,7 +411,7 @@ test('retains configured limits through deliberately held and failed estimates a
 })
 
 test('uses real inherited caps, unlimited unavailability, and the benchmark conditional range without inventing precision', async ({ page, request }: DatasetTestContext, testInfo: TestInfo): Promise<void> => {
-  const suffix = testInfo.project.name.endsWith('narrow') ? 'narrow' : 'desktop'
+  const suffix = presetSuffix(testInfo)
   const inheritedName = `dataset_inherited_${suffix}`
   await savePreset(request, {
     name: inheritedName, scenario_name: SCENARIO, include_baseline: false,

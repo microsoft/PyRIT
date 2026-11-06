@@ -264,6 +264,8 @@ Startup pins both imported default-configuration paths and explicitly configures
 the preset registry's private source. Before every preset save or delete, a guard
 checks the actual storage source, document, and lock paths. The report retains
 these containment checks alongside the real estimate responses.
+Preset names distinguish the viewport, repetition, and retry so test attempts
+cannot collide with presets saved by earlier attempts.
 `PYRIT_E2E_DATASETS_PORT` overrides the default port, 18612.
 
 The journeys cover keyboard preset creation, scenario and target selection,
