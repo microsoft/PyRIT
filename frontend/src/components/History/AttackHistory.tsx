@@ -313,7 +313,7 @@ export default function AttackHistory({
       </div>
 
       {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
-      <div className={styles.content}>
+      <div className={styles.content} data-testid="attack-history-scroll-region">
         {displayLoading ? (
           <div className={styles.emptyState}>
             <Spinner size="medium" label="Loading attacks..." />

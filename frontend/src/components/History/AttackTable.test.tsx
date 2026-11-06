@@ -165,9 +165,31 @@ describe('AttackTable', () => {
       </TestWrapper>
     )
 
-    await user.click(screen.getByText(sampleAttacks[0].objective))
+    await user.click(screen.getByRole('button', { name: `Open attack: ${sampleAttacks[0].objective}` }))
     expect(onOpenAttack).toHaveBeenCalledTimes(1)
     expect(onOpenAttack).toHaveBeenCalledWith('ar-1')
+  })
+
+  it('should retain the row-click shortcut outside its controls', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper><AttackTable {...defaultProps} /></TestWrapper>)
+
+    await user.click(screen.getByText('alice'))
+
+    expect(defaultProps.onOpenAttack).toHaveBeenCalledTimes(1)
+    expect(defaultProps.onOpenAttack).toHaveBeenCalledWith('ar-1')
+  })
+
+  it.each(['{Enter}', ' '])('should open a target-free attack once from its objective with %s', async (key: string) => {
+    const user = userEvent.setup()
+    render(<TestWrapper><AttackTable {...defaultProps} /></TestWrapper>)
+    const objective = screen.getByRole('button', { name: `Open attack: ${sampleAttacks[1].objective}` })
+
+    objective.focus()
+    await user.keyboard(key)
+
+    expect(defaultProps.onOpenAttack).toHaveBeenCalledTimes(1)
+    expect(defaultProps.onOpenAttack).toHaveBeenCalledWith('ar-2')
   })
 
   it('should call onOpenAttack when Enter or Space is pressed on a row', async () => {
@@ -205,7 +227,9 @@ describe('AttackTable', () => {
       </TestWrapper>
     )
 
-    expect(screen.queryByRole('button', { name: /open attack/i })).not.toBeInTheDocument()
+    for (const attack of sampleAttacks) {
+      expect(screen.getByRole('button', { name: `Open attack: ${attack.objective}` })).toHaveTextContent(attack.objective)
+    }
     expect(screen.queryByTestId('open-attack-ar-2')).not.toBeInTheDocument()
   })
 
@@ -255,7 +279,7 @@ describe('AttackTable', () => {
 
     const row = screen.getByTestId('attack-row-ar-2')
     expect(within(row).getAllByRole('cell')[2]).toHaveTextContent('—')
-    expect(within(row).queryByRole('button')).not.toBeInTheDocument()
+    expect(within(within(row).getAllByRole('cell')[2]).queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('should expand and collapse saved target identity without opening the attack', async () => {
@@ -443,6 +467,7 @@ describe('AttackTable', () => {
 
     const row = screen.getByRole('row', { name: 'Open attack: No objective' })
     expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('—')
+    expect(within(row).getByRole('button', { name: 'Open attack: No objective' })).toBeInTheDocument()
     expect(row).toHaveAttribute('tabindex', '0')
   })
 

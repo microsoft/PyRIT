@@ -1,7 +1,8 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState, type KeyboardEvent, type MouseEvent } from 'react'
 
 import {
   Text,
+  Button,
   Badge,
   Tooltip,
   Table,
@@ -93,7 +94,18 @@ export default function AttackTable({ attacks, targets = [], onOpenAttack, forma
                   <OutcomeBadge outcome={attack.outcome} testId={`outcome-badge-${attack.attack_result_id}`} />
                 </TableCell>
                 <TableCell className={styles.colObjective}>
-                  <Text size={200} className={styles.objectiveCell}>{attack.objective || '—'}</Text>
+                  <Button
+                    appearance="transparent"
+                    className={styles.objectiveCell}
+                    aria-label={`Open attack: ${attack.objective || 'No objective'}`}
+                    onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                      event.stopPropagation()
+                      onOpenAttack(attack.attack_result_id)
+                    }}
+                    data-testid={`attack-objective-${attack.attack_result_id}`}
+                  >
+                    {attack.objective || '—'}
+                  </Button>
                 </TableCell>
               </>}
             >

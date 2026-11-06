@@ -603,7 +603,11 @@ test.describe("Mobile touch targets", () => {
       page.getByRole("button", { name: "Open", exact: true })
     );
 
-    const targetDetails = page.getByTestId("attack-row-home-attack-001").getByRole("button");
+    const historyRow = page.getByTestId("attack-row-home-attack-001");
+    const openAttack = historyRow.getByRole("button", { name: /^Open attack:/ });
+    await openAttack.scrollIntoViewIfNeeded();
+    await expectMinimumTouchTarget(openAttack);
+    const targetDetails = historyRow.getByRole("button", { name: /^Identity for / });
     await targetDetails.scrollIntoViewIfNeeded();
     await expectMinimumTouchTarget(targetDetails);
     await expectMinimumTouchTarget(page.getByTestId("prev-page-btn"));

@@ -58,17 +58,38 @@ for (const width of [1280, 390]) {
     await expect(row.getByRole("cell").nth(3)).toHaveText("history-test");
     await expect(row.getByRole("cell").nth(4)).toHaveText(operation.name);
     await expect(row.getByRole("cell").nth(5)).toHaveText("category: history");
-    await expect(row.getByRole("button", { name: /open attack/i })).toHaveCount(0);
+    const objectiveButton = row.getByRole("button", { name: `Open attack: ${objective}`, exact: true });
+    await expect(objectiveButton).toHaveText(objective);
+    await expect(row.getByTestId(`open-attack-${created.attack_result_id}`)).toHaveCount(0);
 
     const toggle = row.getByRole("button", { name: "Identity for browser_offline" });
+    if (width === 390) {
+      await toggle.scrollIntoViewIfNeeded();
+      expect(await page.getByTestId("attack-history-scroll-region").evaluate(
+        (element: HTMLElement | SVGElement): number => element.scrollLeft,
+      )).toBeGreaterThan(0);
+    }
     await toggle.press("Enter");
     const details = page.getByRole("region", { name: "Identity for browser_offline" });
     await expect(details).toHaveText(JSON.stringify(attack.target.identifier, null, 2));
+    await expect(toggle).toBeFocused();
+    if (width === 390) {
+      await expect.poll(async (): Promise<boolean> => details.evaluate((element: HTMLElement | SVGElement): boolean => {
+        const text = element.querySelector("pre")?.firstChild;
+        const start = text?.textContent?.indexOf('"class_name"') ?? -1;
+        if (!text || start < 0) throw new Error("Expanded identity is missing its class name.");
+        const range = document.createRange();
+        range.setStart(text, start);
+        range.setEnd(text, start + '"class_name"'.length);
+        const bounds = range.getBoundingClientRect();
+        return bounds.left >= 0 && bounds.right <= window.innerWidth;
+      })).toBe(true);
+    }
     await expect(page).toHaveURL(/\/attack\/history\?/);
     await toggle.press("Space");
     await expect(details).toHaveCount(0);
     await expect(toggle).toBeFocused();
-    await row.press("Enter");
+    await objectiveButton.press("Enter");
     await expect(page).toHaveURL(new RegExp(`/attack/chat/${created.attack_result_id}(?:/|$)`));
   });
 }

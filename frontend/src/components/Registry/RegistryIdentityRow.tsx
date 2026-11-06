@@ -1,4 +1,4 @@
-import { useId, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useId, type MouseEvent, type ReactNode } from 'react'
 
 import { Button, TableCell, TableRow, Text, mergeClasses, type TableRowProps } from '@fluentui/react-components'
 import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
@@ -27,6 +27,9 @@ export default function RegistryIdentityRow({
 }: RegistryIdentityRowProps) {
   const styles = useRegistryIdentityRowStyles()
   const detailsId = useId()
+  const revealDetails = useCallback((element: HTMLDivElement | null): void => {
+    element?.scrollIntoView({ block: 'nearest', inline: 'start' })
+  }, [])
 
   return (
     <>
@@ -48,7 +51,7 @@ export default function RegistryIdentityRow({
       </TableRow>
       {expanded && identity && <TableRow className={styles.row}>
         <TableCell colSpan={columns}>
-          <div id={detailsId} role="region" aria-label={`Identity for ${name}`} className={styles.details}>
+          <div ref={revealDetails} id={detailsId} role="region" aria-label={`Identity for ${name}`} className={styles.details}>
             <pre className={styles.json}>{JSON.stringify(identity, null, 2)}</pre>
           </div>
         </TableCell>
