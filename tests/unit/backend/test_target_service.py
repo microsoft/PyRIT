@@ -19,6 +19,7 @@ from azure.core.exceptions import AzureError
 from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.services.target_service import (
     SavedTargetConflictError,
+    SavedTargetRefusedError,
     SavedTargetStorageError,
     TargetService,
     get_target_service,
@@ -273,6 +274,33 @@ class TestListTargetTypes:
         assert openai_entry.supported_auth_modes == ["api_key", "identity", "none"]
         azure_ml_entry = next(item for item in result.items if item.target_type == "AzureMLChatTarget")
         assert azure_ml_entry.supported_auth_modes == ["api_key", "identity"]
+
+    async def test_types_say_which_auth_modes_a_saved_target_can_use_and_why_none_can(self) -> None:
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entries = {item.target_type: item for item in result.items}
+        saveability = {
+            target_type: (entries[target_type].saveable_auth_modes, entries[target_type].not_saveable_reason)
+            for target_type in ("OpenAIChatTarget", "AzureMLChatTarget", "TextTarget", "GitHubCopilotTarget")
+        }
+        assert saveability == {
+            "OpenAIChatTarget": (["identity", "none"], None),
+            "AzureMLChatTarget": (["identity"], None),
+            "TextTarget": (["api_key"], None),
+            "GitHubCopilotTarget": (
+                [],
+                (
+                    "'GitHubCopilotTarget' needs a credential in 'github_token', which saved entries can't hold or "
+                    "take from this server yet."
+                ),
+            ),
+        }
+        assert entries["HTTPTarget"].saveable_auth_modes == []
+        assert entries["HTTPTarget"].not_saveable_reason == (
+            "'HTTPTarget' can't be saved. Its raw HTTP request can carry credentials."
+        )
 
     async def test_types_include_github_copilot_form_parameters_async(self) -> None:
         service = TargetService()
@@ -1795,7 +1823,7 @@ class TestSaveTarget:
 
         with (
             patch.dict(os.environ, {"OPENAI_CHAT_KEY": "sk-server-key"}),
-            pytest.raises(ValueError, match=message) as refusal,
+            pytest.raises(SavedTargetRefusedError, match=message) as refusal,
         ):
             await service.create_target_async(request=request, recipes_source=str(tmp_path))
 
@@ -1803,6 +1831,32 @@ class TestSaveTarget:
         assert "secret" not in str(refusal.value)
         assert "sk-server-key" not in str(refusal.value)
         assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
+        assert not (tmp_path / "targets").exists()
+
+    @pytest.mark.parametrize(
+        ("target_type", "reason"),
+        [
+            ("HTTPTarget", "'HTTPTarget' can't be saved. Its raw HTTP request can carry credentials."),
+            (
+                "WebSocketCopilotTarget",
+                (
+                    "'WebSocketCopilotTarget' can't be saved. It signs in with the Copilot account this server is set "
+                    "up with."
+                ),
+            ),
+        ],
+    )
+    async def test_refuses_to_save_a_type_that_cant_be_saved(
+        self, tmp_path: Path, target_type: str, reason: str
+    ) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(name="unsaveable", type=target_type, params={}, persist=True)
+
+        with pytest.raises(SavedTargetRefusedError) as refusal:
+            await service.create_target_async(request=request, is_admin=True, recipes_source=str(tmp_path))
+
+        assert str(refusal.value) == f"{reason} It can still be created without saving it."
+        assert service.get_target_object(target_registry_name="unsaveable") is None
         assert not (tmp_path / "targets").exists()
 
     async def test_a_taken_name_is_a_conflict_only_when_saving(self, tmp_path: Path) -> None:
@@ -1897,7 +1951,7 @@ class TestSaveTarget:
                 name=name, type="RoundRobinTarget", params={"targets": list(members)}, persist=True
             )
 
-        with pytest.raises(ValueError, match="Uses temporary target 'launch_member'"):
+        with pytest.raises(SavedTargetRefusedError, match="Uses temporary target 'launch_member'"):
             await service.create_target_async(
                 request=pool("pool", "startup_one", "launch_member"), recipes_source=str(tmp_path)
             )
@@ -1947,7 +2001,19 @@ class TestSaveTarget:
         with pytest.raises(ValueError, match="reserved") as refusal:
             await TargetService().create_target_async(request=_save_request(name="types"), recipes_source=str(tmp_path))
 
-        assert not isinstance(refusal.value, SavedTargetConflictError)
+        assert not isinstance(refusal.value, (SavedTargetConflictError, SavedTargetRefusedError))
+
+    async def test_an_address_that_is_not_a_full_web_address_is_an_error_to_fix(self, tmp_path: Path) -> None:
+        service = TargetService()
+        request = _save_request(params={"endpoint": "localhost:11434/v1", "model_name": "llama3"}, auth_mode="none")
+
+        with pytest.raises(ValueError) as refusal:
+            await service.create_target_async(request=request, recipes_source=str(tmp_path))
+
+        assert not isinstance(refusal.value, SavedTargetRefusedError)
+        assert str(refusal.value) == "'endpoint' must be a full http(s) or ws(s) address in a saved target."
+        assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
+        assert not (tmp_path / "targets").exists()
 
     async def test_lists_where_each_target_comes_from(self, tmp_path: Path) -> None:
         service = TargetService()

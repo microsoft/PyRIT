@@ -58,7 +58,11 @@ from pyrit.backend.routes.targets import _saved_entry_owner
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, AttackService
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
-from pyrit.backend.services.target_service import SavedTargetConflictError, SavedTargetStorageError
+from pyrit.backend.services.target_service import (
+    SavedTargetConflictError,
+    SavedTargetRefusedError,
+    SavedTargetStorageError,
+)
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
@@ -1381,6 +1385,37 @@ class TestTargetRoutes:
 
         assert response.status_code == status_code
         assert response.json()["detail"] == str(error)
+
+    def test_create_target_marks_a_save_refusal_so_the_target_can_be_created_without_saving(
+        self, client: TestClient
+    ) -> None:
+        refusal = SavedTargetRefusedError(
+            "Saved entries can't hold credentials ('api_key'). It can still be created without saving it."
+        )
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=refusal)
+
+            response = client.post(
+                "/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}, "persist": True}
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/not-saveable",
+            "title": "Can't be saved",
+            "status": 400,
+            "detail": "Saved entries can't hold credentials ('api_key'). It can still be created without saving it.",
+            "instance": "/api/targets",
+        }
+
+    def test_create_target_leaves_other_bad_requests_unmarked(self, client: TestClient) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("bad endpoint"))
+
+            response = client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {"detail": "bad endpoint"}
 
     def test_create_target_passes_the_saved_entries_source_and_no_owner_when_sign_in_is_off(
         self, client: TestClient

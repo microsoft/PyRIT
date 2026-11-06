@@ -34,7 +34,12 @@ from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.common.auth_mode import AUTH_MODES, AuthMode
 from pyrit.models import TargetIdentifier
-from pyrit.models.catalog.registry_recipe import ComponentRecipe, RegistryRecipeKind, SavedEntryOwner
+from pyrit.models.catalog.registry_recipe import (
+    ComponentRecipe,
+    RegistryRecipeKind,
+    RestoreFailureReason,
+    SavedEntryOwner,
+)
 from pyrit.models.catalog.target import TargetInstance, TargetOrigin
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.models.parameter import ComponentType, Parameter
@@ -42,7 +47,11 @@ from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.file_document_storage import DocumentConflictError
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_rules import (
+    SavedEntryRefusedError,
+    check_saveable_class,
+    check_saved_entry_params,
+)
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
 logger = logging.getLogger(__name__)
@@ -62,6 +71,10 @@ _AUTH_MODE_PARAM = "auth_mode"
 
 class SavedTargetConflictError(ValueError):
     """A target can't be saved under a name that a registered or saved target already has."""
+
+
+class SavedTargetRefusedError(ValueError):
+    """A target can't be saved as asked, though it can still be created without saving it."""
 
 
 class SavedTargetStorageError(RuntimeError):
@@ -243,8 +256,9 @@ class TargetService:
 
         Returns every target that external callers can build, with the
         constructor parameters they may supply, each described in the form callers
-        send it, and the auth modes it supports, all projected from the registry's
-        ``TargetMetadata``; targets that need a Python object or a path callers may not
+        send it, the auth modes it supports, and the ones a saved target of it can use
+        (or why none can), all projected from the registry's ``TargetMetadata`` and the
+        target class; targets that need a Python object or a path callers may not
         set for a required parameter are left out, and so are targets that upload local
         files when the server has no upload folder. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
@@ -258,24 +272,44 @@ class TargetService:
             TargetTypeResponse containing all available target classes.
         """
         metadata_items = await asyncio.to_thread(self._registry.get_all_registered_class_metadata)
-        items: list[TargetTypeEntry] = [
-            TargetTypeEntry(
-                target_type=metadata.class_name,
-                parameters=[
-                    parameter.for_external_catalog()
-                    for parameter in self._project_target_parameters(
-                        target_type=metadata.class_name,
-                        parameters=metadata.parameters,
-                    )
-                ],
-                supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
-                description=metadata.class_description or None,
+        items: list[TargetTypeEntry] = []
+        for metadata in metadata_items:
+            if not (
+                self._has_required_params(target_type=metadata.class_name, parameters=metadata.parameters)
+                and self._has_upload_directory(target_type=metadata.class_name, upload_directory=upload_directory)
+            ):
+                continue
+            saveable_auth_modes, not_saveable_reason = self._get_saveability(target_type=metadata.class_name)
+            items.append(
+                TargetTypeEntry(
+                    target_type=metadata.class_name,
+                    parameters=[
+                        parameter.for_external_catalog()
+                        for parameter in self._project_target_parameters(
+                            target_type=metadata.class_name,
+                            parameters=metadata.parameters,
+                        )
+                    ],
+                    supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
+                    saveable_auth_modes=saveable_auth_modes,
+                    not_saveable_reason=not_saveable_reason,
+                    description=metadata.class_description or None,
+                )
             )
-            for metadata in metadata_items
-            if self._has_required_params(target_type=metadata.class_name, parameters=metadata.parameters)
-            and self._has_upload_directory(target_type=metadata.class_name, upload_directory=upload_directory)
-        ]
         return TargetTypeResponse(items=items)
+
+    def _get_saveability(self, *, target_type: str) -> tuple[list[AuthMode], str | None]:
+        """
+        Return the auth modes a saved target of a type can use, and why it can't be saved when none can.
+
+        Returns:
+            tuple[list[AuthMode], str | None]: The saveable auth modes, and the reason when there are none.
+        """
+        try:
+            auth_modes = check_saveable_class(self._registry.get_class(target_type))
+        except SavedEntryRefusedError as error:
+            return [], str(error)
+        return self._get_supported_auth_modes(auth_modes), None
 
     async def build_from_source_async(self, spec: SourceInstanceSpec) -> PromptTarget:
         """
@@ -423,12 +457,13 @@ class TargetService:
                 ``auth_mode`` that conflicts with the request-level choice, identity or
                 no-key auth is requested but unsupported by the target type, or a target that
                 uploads local files is requested with its upload folder or while
-                the server configures none, or a target to save would hold or use a credential
-                or names a Temporary target. Construction errors (unknown params,
+                the server configures none. Construction errors (unknown params,
                 incompatible inner targets, unrecognized identity endpoints) are
                 raised by the registry / target classes.
             PermissionError: If a non-administrator enables a target's model code execution, or
                 creates a target that would authenticate with this server's stored credentials.
+            SavedTargetRefusedError: If a target to save would hold or use a credential, or names a
+                Temporary target.
             SavedTargetConflictError: If a target to save has the name of a registered or saved target.
             SavedTargetStorageError: If a target to save can't be written to storage.
         """
@@ -506,8 +541,8 @@ class TargetService:
                 target_type=request.type, target_cls=target_cls, params=params
             )
 
-        # LEGACY COMPATIBILITY: The current configuration UI omits the name.
-        # Remove this generated fallback after that UI sends an explicit name.
+        # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
+        # Remove it when the name becomes required for registered targets.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
         if request.register:
             try:
@@ -571,7 +606,8 @@ class TargetService:
             dict[str, Any]: The parameters to build and save the target with.
 
         Raises:
-            ValueError: If the target would hold or use a credential, or names a Temporary target.
+            SavedTargetRefusedError: If the target would hold or use a credential, or names a Temporary target.
+            ValueError: If an address the target would use isn't a full http(s) or ws(s) address.
         """
         saved_params = dict(params)
         for name, turned_off in target_cls.server_fallback_parameters.items():
@@ -582,7 +618,10 @@ class TargetService:
         try:
             check_saved_entry_params(cls=target_cls, parameters=parameters, params=saved_params)
         except SavedEntryRefusedError as error:
-            raise ValueError(f"{error} It can still be created without saving it.") from error
+            # The address needs fixing; creating the target without saving it wouldn't make it usable.
+            if error.reason is RestoreFailureReason.INVALID_RECIPE:
+                raise ValueError(str(error)) from error
+            raise SavedTargetRefusedError(f"{error} It can still be created without saving it.") from error
         self._refuse_temporary_references(parameters=parameters, params=saved_params)
         return saved_params
 
@@ -591,7 +630,7 @@ class TargetService:
         Refuse a target to save that uses a Temporary target, which won't exist after a restart.
 
         Raises:
-            ValueError: If a target parameter names a Temporary target.
+            SavedTargetRefusedError: If a target parameter names a Temporary target.
         """
         for parameter in parameters:
             if parameter.reference is None or parameter.reference.component_type is not ComponentType.TARGET:
@@ -600,7 +639,7 @@ class TargetService:
             for name in value if isinstance(value, list) else [value]:
                 entry = self._registry.instances.get_entry(name) if isinstance(name, str) else None
                 if entry is not None and target_origin(entry.metadata) is TargetOrigin.TEMPORARY:
-                    raise ValueError(
+                    raise SavedTargetRefusedError(
                         f"Uses temporary target '{name}', which won't exist after a restart. "
                         "It can still be created without saving it."
                     )

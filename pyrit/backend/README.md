@@ -37,6 +37,9 @@ API keys do not authenticate incoming GUI users.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `GET /api/targets/types` - List the target types that can be created, with their parameters and auth
+  modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), and why a type can't be saved
+  at all (`not_saveable_reason`)
 - `POST /api/targets` - Create a target
 
 A created target is Temporary: a restart or reinitialization removes it. With `"persist": true`, `register` left on,
@@ -46,10 +49,11 @@ signed-in user is recorded as the one who saved it. A saved target can't hold or
 Microsoft Entra ID (`"auth_mode": "identity"`, through this server's Azure identity) or needs no key. An OpenAI
 target's empty `headers` is set to `"{}"` first, so a saved one doesn't send this server's
 `OPENAI_ADDITIONAL_REQUEST_HEADERS`; settings the OpenAI SDK reads by itself (`OPENAI_CUSTOM_HEADERS`,
-`OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) still apply. After the usual permission checks, a request receives **400**,
-and can be sent again without `persist`, if it would save a key, use one of this server's keys or address settings,
-give an address that can carry a credential or, where this server's setting would apply, isn't a full http(s) or
-ws(s) address, save a target type that can't be saved, or use a Temporary target. A name that a target or saved
+`OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) still apply. After the usual permission checks, a request receives **400**
+with `"type": "/errors/not-saveable"`, and can be sent again without `persist`, if it would save a key, use one of
+this server's keys or address settings, give an address that can carry a credential, save a target type that can't
+be saved, or use a Temporary target. Where this server's address setting would apply, an address that isn't a full
+http(s) or ws(s) address receives a plain **400** to fix it. A name that a target or saved
 file already has receives **409**, and storage that can't be written receives **503**; the server log names the
 target and its folder in case the write reached storage anyway, since the target would then come back at the next
 start. Each listed target's `origin` is `saved`, `configuration`
