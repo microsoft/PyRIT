@@ -105,6 +105,23 @@ def test_summarize_exception(error, expected):
     assert summarize_exception(error) == expected
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_summarize_exception_preserves_group_child_causes(*, nested: bool) -> None:
+    cause = RuntimeError("connection reset")
+    error = ValueError("fetch failed")
+    error.__cause__ = cause
+    group = ExceptionGroup("Fetches failed", [error, OSError("disk full")])
+    if nested:
+        group = ExceptionGroup("Outer", [group])
+
+    summary = summarize_exception(group)
+
+    assert "ValueError: fetch failed Caused by RuntimeError: connection reset" in summary
+    assert "OSError: disk full" in summary
+    assert summarize_exception(error) == "fetch failed"
+    assert error.__cause__ is cause
+
+
 class TestLogException:
     """Tests for the log_exception function with execution context."""
 

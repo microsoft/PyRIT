@@ -83,13 +83,16 @@ def summarize_exception(error: BaseException) -> str:
         error: The exception to describe.
 
     Returns:
-        str: ``str(error)``, followed by each child's type and summary if ``error`` is a group.
+        str: ``str(error)``, followed by each child's type, summary, and direct explicit
+            cause if ``error`` is a group. Non-group errors are unchanged.
     """
     if not isinstance(error, BaseExceptionGroup):
         return str(error)
     children = []
     for child in error.exceptions:
         child_summary = summarize_exception(child)
+        if child.__cause__ is not None:
+            child_summary = f"{child_summary} Caused by {type(child.__cause__).__name__}: {child.__cause__}"
         child_type = type(child).__name__
         children.append(f"{child_type}: {child_summary}" if child_summary else child_type)
     return f"{error}: [{'; '.join(children)}]"
