@@ -161,7 +161,9 @@ def build_assert_policy_scorer(
     Returns:
         TrueFalseScorer: A conversation scorer. True means the selected failure occurred.
             Scoring rejects unreadable media in user, assistant, and tool turns before calling
-            the judge. Text, error messages, and structured tool calls and results are supported.
+            the judge. Text, error messages, and structured tool calls and results, including
+            native web searches, are supported. Internal reasoning is retained in the
+            conversation snapshot but excluded from the judged transcript.
 
     Raises:
         TypeError: If the taxonomy is missing or composition does not return a true/false scorer.
@@ -211,10 +213,11 @@ def build_assert_policy_scorer(
     conversation_scorer = create_conversation_scorer(
         scorer=scorer,
         validator=ScorerPromptValidator(
-            supported_data_types=["text", "error", "function_call", "function_call_output"],
+            supported_data_types=["text", "error", "function_call", "tool_call", "function_call_output"],
             supported_roles=["user", "assistant", "tool"],
             enforce_all_pieces_valid=True,
         ),
+        excluded_data_types=["reasoning"],
     )
     if not isinstance(conversation_scorer, TrueFalseScorer):
         raise TypeError("ASSERT policy scoring requires a true/false conversation scorer.")

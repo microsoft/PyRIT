@@ -6,6 +6,7 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from openai.types.responses import Response
 from unit.assert_mocks import make_assert_taxonomy
 from unit.mocks import MockPromptTarget, store_message_async
 
@@ -17,6 +18,7 @@ from pyrit.models import (
     ConversationObservationPayload,
     ConversationScorable,
     JsonResponseConfig,
+    Message,
     MessagePiece,
     MessageScorable,
     PromptDataType,
@@ -24,7 +26,8 @@ from pyrit.models import (
     ScorerTargetResponsePayload,
     ScoringExpectation,
 )
-from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
+from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.prompt_target import OpenAIResponseTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import (
     AssertJudgmentMode,
     AssertScoringDimension,
@@ -760,7 +763,7 @@ def test_response_schema_describes_fields_and_binds_category_names(
 @pytest.mark.parametrize("mode", list(AssertJudgmentMode))
 @pytest.mark.parametrize("message_entry", [False, True])
 @pytest.mark.parametrize("role", ["user", "assistant", "tool"])
-@pytest.mark.parametrize("data_type", ["image_path", "audio_path", "video_path"])
+@pytest.mark.parametrize("data_type", ["image_path", "audio_path", "video_path", "binary_path", "url"])
 async def test_unreadable_conversation_evidence_is_rejected_before_judging_async(
     *,
     sqlite_instance: MemoryInterface,
@@ -774,6 +777,13 @@ async def test_unreadable_conversation_evidence_is_rejected_before_judging_async
     scorer = build_assert_policy_scorer(target=target, taxonomy=taxonomy, judgment_mode=mode)
     pieces = await _store_conversation_async(request="Explain the return period.", replies=("The period is 30 days.",))
     assert pieces[0].conversation_id
+    reasoning = MessagePiece(
+        role="assistant",
+        original_value='{"type": "reasoning", "summary": []}',
+        original_value_data_type="reasoning",
+        conversation_id=pieces[0].conversation_id,
+    )
+    await store_message_async(reasoning.to_message())
     media = MessagePiece(
         role=role,
         original_value="retained-media",
@@ -801,6 +811,14 @@ async def test_unreadable_conversation_evidence_is_rejected_before_judging_async
     [
         ("assistant", "error", '{"error": "The request was blocked."}'),
         ("assistant", "function_call", '{"name": "lookup_policy", "arguments": "{}"}'),
+        (
+            "assistant",
+            "tool_call",
+            (
+                '{"type": "web_search_call", "id": "ws-1", "status": "completed", '
+                '"action": {"type": "search", "query": "published return period"}}'
+            ),
+        ),
         ("tool", "function_call_output", '{"output": "The period is 30 days."}'),
         ("system", "image_path", "excluded-system-image"),
         ("simulated_assistant", "audio_path", "excluded-simulated-audio"),
@@ -844,6 +862,141 @@ async def test_readable_or_excluded_evidence_preserves_scoring_async(
     observations = await sqlite_instance.get_observations_async(observation_ids=saved.observation_ids)
     snapshot = next(obs for obs in observations if isinstance(obs.payload, ConversationObservationPayload))
     assert additional.id in snapshot.evidence_message_piece_ids
+
+
+@pytest.mark.parametrize("mode", list(AssertJudgmentMode))
+@pytest.mark.parametrize("dimension", list(AssertScoringDimension))
+@pytest.mark.parametrize("message_entry", [False, True], ids=["conversation", "reasoning-trigger"])
+@pytest.mark.parametrize("with_web_search", [False, True])
+@pytest.mark.parametrize("with_summary", [False, True])
+async def test_responses_api_history_excludes_reasoning_and_retains_native_tools_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    taxonomy: AssertTaxonomy,
+    mode: AssertJudgmentMode,
+    dimension: AssertScoringDimension,
+    message_entry: bool,
+    with_web_search: bool,
+    with_summary: bool,
+) -> None:
+    application = OpenAIResponseTarget(
+        model_name="gpt-4.1", endpoint="https://mock.openai.com/v1", api_key="mock-api-key"
+    )
+    reasoning_text = "Internal deliberation, not an observable assistant action."
+    output: list[dict[str, object]] = [
+        {
+            "type": "reasoning",
+            "id": "rs-1",
+            "summary": [{"type": "summary_text", "text": reasoning_text}] if with_summary else [],
+        }
+    ]
+    web_search = {
+        "type": "web_search_call",
+        "id": "ws-1",
+        "status": "completed",
+        "action": {"type": "search", "query": "published return period"},
+    }
+    if with_web_search:
+        output.append(web_search)
+    answer = "The return period is 30 days."
+    output.append(
+        {
+            "type": "message",
+            "id": "msg-1",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": answer, "annotations": []}],
+        }
+    )
+    provider_response = Response.model_validate(
+        {
+            "id": "resp-1",
+            "object": "response",
+            "created_at": 1,
+            "model": "gpt-4.1",
+            "parallel_tool_calls": True,
+            "tool_choice": "auto",
+            "tools": [{"type": "web_search_preview"}] if with_web_search else [],
+            "status": "completed",
+            "output": output,
+        }
+    )
+    conversation_id = str(uuid.uuid4())
+    with patch.object(
+        application._async_client.responses, "create", new_callable=AsyncMock, return_value=provider_response
+    ) as application_transport:
+        reply = await PromptNormalizer().send_prompt_async(
+            message=Message.from_prompt(prompt="Explain the return period.", role="user"),
+            target=application,
+            conversation_id=conversation_id,
+        )
+    application_transport.assert_awaited_once()
+    reasoning = next(piece for piece in reply.message_pieces if piece.converted_value_data_type == "reasoning")
+    assert [piece.converted_value_data_type for piece in reply.message_pieces] == (
+        ["text", "tool_call", "reasoning"] if with_web_search else ["text", "reasoning"]
+    )
+    anchor = ConversationScorable(conversation_id=conversation_id)
+    evidence = MessageScorable.from_message(reasoning.to_message()) if message_entry else anchor
+    judge = MockPromptTarget()
+    scorer = build_assert_policy_scorer(target=judge, taxonomy=taxonomy, dimension=dimension, judgment_mode=mode)
+    payload = json.loads(_category_response(verdict=False, nodes=[_category_node()]))
+    if mode == AssertJudgmentMode.DIRECT:
+        del payload["node_judgments"]
+    response = MessagePiece(role="assistant", original_value=json.dumps(payload)).to_message()
+    with patch.object(
+        judge, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=[response]
+    ) as transport:
+        (score,) = await scorer.score_async(scorable=evidence)
+    transport.assert_awaited_once()
+    transcript = transport.call_args.kwargs["normalized_conversation"][-1].get_value()
+    assert answer in transcript
+    assert reasoning.converted_value not in transcript
+    assert reasoning_text not in transcript
+    assert "rs-1" not in transcript
+    if with_web_search:
+        tool_call = next(piece for piece in reply.message_pieces if piece.converted_value_data_type == "tool_call")
+        assert json.loads(tool_call.converted_value) == web_search
+        assert f"[BEGIN ASSISTANT TURN 2]\n  {tool_call.converted_value}\n[END ASSISTANT TURN 2]" in transcript
+    assert transcript.count("[BEGIN ") == (3 if with_web_search else 2)
+    (saved,) = await sqlite_instance.get_scores_async(score_ids=[score.id])
+    assert saved.get_value() is False
+    assert saved.score_category == [dimension.value]
+    assert saved.scorable == anchor
+    assert saved.message_piece_id == (reasoning.id if message_entry else None)
+    assert saved.score_rationale == "Original judge explanation"
+    assert saved.score_metadata["metadata"] == "Original judge evidence"
+    observations = await sqlite_instance.get_observations_async(observation_ids=saved.observation_ids)
+    snapshot = next(obs for obs in observations if isinstance(obs.payload, ConversationObservationPayload))
+    assert reasoning.id in snapshot.evidence_message_piece_ids
+    retained = await sqlite_instance.get_message_pieces_async(prompt_ids=list(snapshot.evidence_message_piece_ids))
+    assert next(piece for piece in retained if piece.id == reasoning.id).converted_value == reasoning.converted_value
+    assert await scorer.find_matching_scores_async(scores=[saved], scorable=evidence) == [saved]
+
+
+@pytest.mark.parametrize("mode", list(AssertJudgmentMode))
+@pytest.mark.parametrize("message_entry", [False, True])
+async def test_reasoning_only_history_does_not_produce_a_verdict_async(
+    *, sqlite_instance: MemoryInterface, taxonomy: AssertTaxonomy, mode: AssertJudgmentMode, message_entry: bool
+) -> None:
+    target = MockPromptTarget()
+    scorer = build_assert_policy_scorer(target=target, taxonomy=taxonomy, judgment_mode=mode)
+    reasoning = MessagePiece(
+        role="assistant",
+        original_value='{"type": "reasoning", "summary": []}',
+        original_value_data_type="reasoning",
+        conversation_id=str(uuid.uuid4()),
+    )
+    await store_message_async(reasoning.to_message())
+    assert reasoning.conversation_id
+    evidence = (
+        MessageScorable.from_message(reasoning.to_message())
+        if message_entry
+        else ConversationScorable(conversation_id=reasoning.conversation_id)
+    )
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as transport:
+        assert await scorer.score_async(scorable=evidence) == []
+    transport.assert_not_awaited()
+    assert await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True) == []
 
 
 @pytest.mark.parametrize("mode", list(AssertJudgmentMode))

@@ -16,6 +16,7 @@ from pyrit.models import (
     Message,
     MessagePiece,
     MessageScorable,
+    PromptDataType,
     Scorable,
     Score,
     ScoringExpectation,
@@ -53,6 +54,7 @@ class ConversationScorer(MessageScorer, ABC):
         enforce_all_pieces_valid=False,
     )
     _source: ObservationSource[ConversationScorable]
+    _excluded_data_types: tuple[PromptDataType, ...] = ()
 
     def get_chat_target(self) -> "PromptTarget | None":
         """
@@ -341,6 +343,9 @@ class ConversationScorer(MessageScorer, ABC):
         separators and trailing newlines while indenting every Unicode line-break
         variant. The extra newline before the closing fence belongs to the framing.
 
+        Explicitly excluded data types are omitted before strict validation. They remain
+        in the acquired conversation snapshot but are not presented to the wrapped scorer.
+
         Args:
             pieces (tuple[MessagePiece, ...]): The conversation pieces to render.
 
@@ -354,6 +359,8 @@ class ConversationScorer(MessageScorer, ABC):
         turn_index = 0
         for piece in pieces:
             if piece.api_role not in ("user", "assistant", "tool") or not self._validator.is_role_supported(piece):
+                continue
+            if piece.converted_value_data_type in self._excluded_data_types:
                 continue
             if self._validator._enforce_all_pieces_valid and not self._validator.is_message_piece_supported(piece):
                 raise ValueError(
@@ -411,6 +418,7 @@ def create_conversation_scorer(
     scorer: Scorer,
     validator: ScorerPromptValidator | None = None,
     source: ObservationSource[ConversationScorable] | None = None,
+    excluded_data_types: Sequence[PromptDataType] = (),
 ) -> Scorer:
     """
     Create a ConversationScorer that inherits from the same type as the wrapped scorer.
@@ -425,6 +433,9 @@ def create_conversation_scorer(
         validator (ScorerPromptValidator | None): Optional validator override.
             If not provided, uses the conversation scorer's default text validator.
         source (ObservationSource[ConversationScorable] | None): Whole-conversation acquisition source.
+        excluded_data_types (Sequence[PromptDataType]): Data types to omit from the judged
+            transcript, even under strict validation. The retained snapshot is unchanged.
+            Defaults to no exclusions.
 
     Returns:
         Scorer: A ConversationScorer instance that is also an instance of the wrapped scorer's type.
@@ -463,6 +474,7 @@ def create_conversation_scorer(
             MessageScorer.__init__(self, validator=validator or ConversationScorer._DEFAULT_VALIDATOR)
             self._wrapped_scorer = scorer
             self._source = source if source is not None else ConversationSource()
+            self._excluded_data_types = tuple(sorted(set(excluded_data_types)))
 
         def _get_wrapped_scorer(self) -> Scorer:
             """
@@ -488,6 +500,7 @@ def create_conversation_scorer(
                     "rendering_version": 2,
                     "supported_roles": self._validator._supported_roles,
                     "should_score_blocked_content": self.should_score_blocked_content,
+                    **({"excluded_data_types": self._excluded_data_types} if self._excluded_data_types else {}),
                     **(
                         {
                             "enforce_all_pieces_valid": True,
