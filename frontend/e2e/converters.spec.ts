@@ -407,6 +407,7 @@ async function mockBackendAPIs(page: Page) {
               attack_result_id: "e2e-attack-001",
               conversation_id: MOCK_CONVERSATION_ID,
               attack_type: "ManualAttack",
+              objective: "Review this saved conversation",
               target: { target_type: "OpenAIChatTarget", model_name: "gpt-4o-mock" },
               converters: ["Base64Converter"],
               outcome: "undetermined",
@@ -1069,7 +1070,7 @@ test.describe("Converter Panel", () => {
     await expect(page.locator('[data-testid="converted-label"]')).toBeVisible({ timeout: 5000 });
   });
 
-  test("should show converter badge in attack history after sending with converter", async ({ page }) => {
+  test("should show the objective instead of converter badges in attack history", async ({ page }) => {
     // Type text BEFORE opening panel
     await page.getByTestId("chat-input").fill("hello");
     await selectConverter(page, "Base64Converter");
@@ -1088,8 +1089,9 @@ test.describe("Converter Panel", () => {
     await page.getByRole("button", { name: "Attacks", exact: true }).click();
     await page.getByRole("tab", { name: "History", exact: true }).click();
 
-    // Converter badge should appear in the attack table
-    await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });
+    const table = page.getByTestId("attacks-table");
+    await expect(table.getByText("Review this saved conversation")).toBeVisible({ timeout: 10000 });
+    await expect(table.getByText("Base64Converter")).toHaveCount(0);
   });
 
   test("should select an already configured converter without showing constructor fields", async ({ page }) => {
@@ -1148,13 +1150,14 @@ test.describe("Converter Panel", () => {
     await expect(page.getByTestId("converter-option-ImageCompressionConverter")).not.toBeVisible();
   });
 
-  test("should show converter type in history filter options", async ({ page }) => {
+  test("should not offer converter or attack type filters in history", async ({ page }) => {
     // Navigate to History view
     await page.getByRole("button", { name: "Attacks", exact: true }).click();
     await page.getByRole("tab", { name: "History", exact: true }).click();
 
-    // The converter badge should be visible in the attack table
-    await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("attacks-table")).toBeVisible();
+    await expect(page.getByTestId("converter-filter")).toHaveCount(0);
+    await expect(page.getByTestId("attack-type-filter")).toHaveCount(0);
   });
 
   test("should render inline image preview in input box after a text→image conversion", async ({ page }) => {

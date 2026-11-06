@@ -25,6 +25,7 @@ from tqdm.auto import tqdm
 from pyrit.common import default_values, get_global_default_values
 from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException, ScenarioRunInProgressException
+from pyrit.exceptions.exceptions_helpers import summarize_exception
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution, _observe_interrupted_executions
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
@@ -1930,7 +1931,7 @@ class Scenario(ABC):
 
     async def _mark_scenario_failed_async(self, *, scenario_result_id: str, error: BaseException) -> None:
         """Mark the scenario run as FAILED, deriving message/type from ``error``."""
-        error_message = str(error)
+        error_message = summarize_exception(error)
         if error.__cause__ is not None:
             error_message = f"{error_message} Caused by {type(error.__cause__).__name__}: {str(error.__cause__)}"
         (

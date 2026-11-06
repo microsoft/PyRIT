@@ -1,11 +1,11 @@
-import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { makeTarget } from '@/test-utils/targetFixtures'
 import { deferred } from '@/test-utils/deferred'
 import AttackHistory from './AttackHistory'
 import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
-import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
+import { DEFAULT_HISTORY_FILTERS, filtersFromSearchParams } from './historyFilters'
 import { attacksApi, labelsApi, operationsApi } from '../../services/api'
 
 installAutoRefreshTimers()
@@ -38,7 +38,7 @@ const sampleAttacks = [
     attack_type: 'CrescendoAttack',
     attack_specific_params: null,
     objective: 'Extract the hidden system prompt',
-    target: { target_type: 'OpenAIChatTarget', endpoint: 'https://api.openai.com', model_name: 'gpt-4' },
+    target: { target_type: 'OpenAIChatTarget', target_registry_name: 'primary-chat', identifier_hash: 'chat-hash', endpoint: 'https://api.openai.com', model_name: 'gpt-4' },
     converters: ['Base64Converter'],
     outcome: 'success' as const,
     last_message_preview: 'The model responded with...',
@@ -54,7 +54,7 @@ const sampleAttacks = [
     attack_type: 'ManualAttack',
     attack_specific_params: null,
     objective: 'Bypass the safety filter',
-    target: { target_type: 'OpenAIImageTarget', endpoint: 'https://api.openai.com', model_name: 'dall-e-3' },
+    target: { target_type: 'OpenAIImageTarget', target_registry_name: 'image-target', identifier_hash: 'image-hash', endpoint: 'https://api.openai.com', model_name: 'dall-e-3' },
     converters: [],
     outcome: 'failure' as const,
     last_message_preview: null,
@@ -77,8 +77,6 @@ describe('AttackHistory', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
-    mockedAttacksApi.getAttackOptions.mockImplementation(() => new Promise(() => {}))
-    mockedAttacksApi.getConverterOptions.mockImplementation(() => new Promise(() => {}))
     mockedLabelsApi.getLabels.mockImplementation(() => new Promise(() => {}))
     mockedOperationsApi.list.mockImplementation(() => new Promise(() => {}))
   })
@@ -101,8 +99,8 @@ describe('AttackHistory', () => {
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
     expect(screen.getByTestId('label-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
+    expect(screen.queryByTestId('attack-type-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-filter')).not.toBeInTheDocument()
 
     await waitFor(() => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalledTimes(1)
@@ -195,8 +193,8 @@ describe('AttackHistory', () => {
     })
     expect(screen.getByTestId('attack-row-ar-conv-1')).toBeInTheDocument()
     expect(screen.getByTestId('attack-row-ar-conv-2')).toBeInTheDocument()
-    expect(screen.getByText('CrescendoAttack')).toBeInTheDocument()
-    expect(screen.getByText('ManualAttack')).toBeInTheDocument()
+    expect(screen.getByText(sampleAttacks[0].objective)).toBeInTheDocument()
+    expect(screen.getByText(sampleAttacks[1].objective)).toBeInTheDocument()
   })
 
   it('should show outcome badges', async () => {
@@ -231,12 +229,30 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText('gpt-4')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Identity for primary-chat' })).toBeInTheDocument()
     })
-    expect(screen.getByText('dall-e-3')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Identity for image-target' })).toBeInTheDocument()
   })
 
-  it('should show message counts', async () => {
+  it('should resolve legacy target names from the supplied registry', async () => {
+    const attack = { ...sampleAttacks[0], target: { ...sampleAttacks[0].target, target_registry_name: null } }
+    mockedAttacksApi.listAttacks.mockResolvedValue({
+      items: [attack],
+      pagination: { limit: 25, has_more: false },
+    })
+
+    render(
+      <TestWrapper>
+        <AttackHistory {...defaultProps} targets={[makeTarget({ target_registry_name: 'resolved-chat', identifier_hash: 'chat-hash' })]} />
+      </TestWrapper>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Identity for resolved-chat' })).toBeInTheDocument()
+    })
+  })
+
+  it('should report registry failures without hiding saved attacks', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: sampleAttacks,
       pagination: { limit: 25, has_more: false },
@@ -244,34 +260,12 @@ describe('AttackHistory', () => {
 
     render(
       <TestWrapper>
-        <AttackHistory {...defaultProps} />
+        <AttackHistory {...defaultProps} targetsError="Registry unavailable" />
       </TestWrapper>
     )
 
-    await waitFor(() => {
-      expect(screen.getByText('10')).toBeInTheDocument()
-    })
-    expect(screen.getByText('2')).toBeInTheDocument()
-  })
-
-  it('should show conversation count from related_conversation_ids + 1', async () => {
-    mockedAttacksApi.listAttacks.mockResolvedValue({
-      items: sampleAttacks,
-      pagination: { limit: 25, has_more: false },
-    })
-
-    render(
-      <TestWrapper>
-        <AttackHistory {...defaultProps} />
-      </TestWrapper>
-    )
-
-    // conv-1 has 2 related conversations + 1 main = 3
-    await waitFor(() => {
-      expect(screen.getByText('3')).toBeInTheDocument()
-    })
-    // conv-2 has 0 related conversations + 1 main = 1
-    expect(screen.getByText('1')).toBeInTheDocument()
+    await screen.findByText(sampleAttacks[0].objective)
+    expect(screen.getByText('Target registry: Registry unavailable')).toBeInTheDocument()
   })
 
   it('should call onOpenAttack when row is clicked', async () => {
@@ -295,7 +289,7 @@ describe('AttackHistory', () => {
     expect(onOpenAttack).toHaveBeenCalledWith('ar-conv-1')
   })
 
-  it('should call onOpenAttack when open button is clicked', async () => {
+  it('should not render separate open attack buttons', async () => {
     const onOpenAttack = jest.fn()
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: sampleAttacks,
@@ -308,15 +302,12 @@ describe('AttackHistory', () => {
       </TestWrapper>
     )
 
-    await waitFor(() => {
-      expect(screen.getByTestId('open-attack-ar-conv-2')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByTestId('open-attack-ar-conv-2'))
-    expect(onOpenAttack).toHaveBeenCalledWith('ar-conv-2')
+    await screen.findByTestId('attack-row-ar-conv-2')
+    expect(screen.queryByTestId('open-attack-ar-conv-2')).not.toBeInTheDocument()
+    expect(onOpenAttack).not.toHaveBeenCalled()
   })
 
-  it('should show last message preview when available', async () => {
+  it('should show objectives instead of last message previews', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: sampleAttacks,
       pagination: { limit: 25, has_more: false },
@@ -329,11 +320,13 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText('The model responded with...')).toBeInTheDocument()
+      expect(screen.getByText(sampleAttacks[0].objective)).toBeInTheDocument()
     })
+    expect(screen.queryByText('The model responded with...')).not.toBeInTheDocument()
   })
 
-  it('should show converter badges', async () => {
+  it('should expand target details without opening the attack', async () => {
+    const user = userEvent.setup()
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: sampleAttacks,
       pagination: { limit: 25, has_more: false },
@@ -345,9 +338,11 @@ describe('AttackHistory', () => {
       </TestWrapper>
     )
 
-    await waitFor(() => {
-      expect(screen.getByText('Base64Converter')).toBeInTheDocument()
-    })
+    const toggle = await screen.findByRole('button', { name: 'Identity for primary-chat' })
+    await user.click(toggle)
+    expect(screen.getByRole('region', { name: 'Identity for primary-chat' })).toHaveTextContent('OpenAIChatTarget')
+    expect(defaultProps.onOpenAttack).not.toHaveBeenCalled()
+    expect(within(screen.getByTestId('attack-row-ar-conv-1')).queryByText('Base64Converter')).not.toBeInTheDocument()
   })
 
   it('should show label badges', async () => {
@@ -441,10 +436,11 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(mockedAttacksApi.getAttackOptions).toHaveBeenCalledTimes(1)
+      expect(mockedLabelsApi.getLabels).toHaveBeenCalledTimes(1)
     })
-    expect(mockedAttacksApi.getConverterOptions).toHaveBeenCalledTimes(1)
-    expect(mockedLabelsApi.getLabels).toHaveBeenCalledTimes(1)
+    expect(mockedOperationsApi.list).toHaveBeenCalledTimes(1)
+    expect(mockedAttacksApi.getAttackOptions).not.toHaveBeenCalled()
+    expect(mockedAttacksApi.getConverterOptions).not.toHaveBeenCalled()
   })
 
   it('should render table header columns', async () => {
@@ -462,16 +458,10 @@ describe('AttackHistory', () => {
     await waitFor(() => {
       expect(screen.getByTestId('attacks-table')).toBeInTheDocument()
     })
-    expect(screen.getByText('Status')).toBeInTheDocument()
-    expect(screen.getByText('Attack Type')).toBeInTheDocument()
-    expect(screen.getByText('Target')).toBeInTheDocument()
-    expect(screen.getByText('Msgs')).toBeInTheDocument()
-    expect(screen.getByText('Convs')).toBeInTheDocument()
-    expect(screen.getByText('Converters')).toBeInTheDocument()
-    expect(screen.getByText('Labels')).toBeInTheDocument()
-    expect(screen.getByText('Last Message')).toBeInTheDocument()
-    expect(screen.getByText('Created')).toBeInTheDocument()
-    expect(screen.getByText('Updated')).toBeInTheDocument()
+    const table = screen.getByTestId('attacks-table')
+    expect(within(table).getAllByRole('columnheader').map((header: HTMLElement) => header.textContent)).toEqual([
+      'Status', 'Objective', 'Target', 'Operator', 'Operation', 'Labels', 'Last Update',
+    ])
   })
 
   it('should show error state on API failure', async () => {
@@ -544,17 +534,17 @@ describe('AttackHistory', () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: sampleAttacks, pagination: { limit: 25, has_more: false },
     })
-    mockedAttacksApi.getAttackOptions.mockRejectedValueOnce(new Error('Options unavailable'))
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
-    mockedLabelsApi.getLabels.mockResolvedValue({ labels: {} })
+    mockedLabelsApi.getLabels
+      .mockRejectedValueOnce(new Error('Options unavailable'))
+      .mockResolvedValue({ labels: {} })
     mockedOperationsApi.list.mockResolvedValue({ items: [] })
     render(<TestWrapper><AttackHistory {...defaultProps} /></TestWrapper>)
     expect(await screen.findByText('Options unavailable')).toBeInTheDocument()
-    const recovery = deferred<Awaited<ReturnType<typeof attacksApi.getAttackOptions>>>()
-    mockedAttacksApi.getAttackOptions.mockReturnValueOnce(recovery.promise)
+    const recovery = deferred<Awaited<ReturnType<typeof labelsApi.getLabels>>>()
+    mockedLabelsApi.getLabels.mockReturnValueOnce(recovery.promise)
     await advanceAutoRefresh()
     expect(screen.getByText('Options unavailable')).toBeInTheDocument()
-    await act(async () => { recovery.resolve({ attack_types: [] }) })
+    await act(async () => { recovery.resolve({ labels: {} }) })
     expect(screen.queryByText('Options unavailable')).not.toBeInTheDocument()
   })
 
@@ -719,12 +709,6 @@ describe('AttackHistory', () => {
       items: [],
       pagination: { limit: 25, has_more: false },
     })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({
-      attack_types: ['CrescendoAttack', 'ManualAttack'],
-    })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({
-      converter_types: ['Base64Converter'],
-    })
     mockedLabelsApi.getLabels.mockResolvedValue({
       source: 'attacks',
       operators: ['alice', 'bob'],
@@ -741,10 +725,11 @@ describe('AttackHistory', () => {
     )
 
     await waitFor(() => {
-      expect(mockedAttacksApi.getAttackOptions).toHaveBeenCalled()
+      expect(mockedLabelsApi.getLabels).toHaveBeenCalled()
     })
-    expect(mockedAttacksApi.getConverterOptions).toHaveBeenCalled()
-    expect(mockedLabelsApi.getLabels).toHaveBeenCalled()
+    expect(mockedOperationsApi.list).toHaveBeenCalled()
+    expect(mockedAttacksApi.getAttackOptions).not.toHaveBeenCalled()
+    expect(mockedAttacksApi.getConverterOptions).not.toHaveBeenCalled()
   })
 
   it('should narrow arbitrary label options by operator and labels and filter attacks by operation ID', async () => {
@@ -846,56 +831,11 @@ describe('AttackHistory', () => {
     expect(screen.getByRole('button', { name: 'Reset all filters' })).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('should call onFiltersChange with attackTypes when attack type filter is selected', async () => {
-    mockedAttacksApi.listAttacks.mockResolvedValue({
-      items: [],
-      pagination: { limit: 25, has_more: false },
-    })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({
-      attack_types: ['CrescendoAttack', 'ManualAttack'],
-    })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({
-      converter_types: [],
-    })
-    mockedLabelsApi.getLabels.mockResolvedValue({
-      source: 'attacks',
-      labels: {},
-    })
-
-    const onFiltersChange = jest.fn()
-
-    render(
-      <TestWrapper>
-        <AttackHistory {...defaultProps} onFiltersChange={onFiltersChange} />
-      </TestWrapper>
-    )
-
-    await waitFor(() => {
-      expect(mockedAttacksApi.getAttackOptions).toHaveBeenCalled()
-    })
-
-    // Open the attack type dropdown and select an option
-    const attackDropdown = screen.getByTestId('attack-type-filter')
-    fireEvent.click(attackDropdown)
-
-    await waitFor(() => {
-      expect(screen.getByText('CrescendoAttack')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByText('CrescendoAttack'))
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ attackTypes: ['CrescendoAttack'] })
-    )
-  })
-
   it('should call onFiltersChange with outcome when outcome filter is selected', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
       pagination: { limit: 25, has_more: false },
     })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
     mockedLabelsApi.getLabels.mockResolvedValue({ source: 'attacks', labels: {} })
 
     const onFiltersChange = jest.fn()
@@ -924,50 +864,11 @@ describe('AttackHistory', () => {
     )
   })
 
-  it('should call onFiltersChange with converter when converter filter is selected', async () => {
-    mockedAttacksApi.listAttacks.mockResolvedValue({
-      items: [],
-      pagination: { limit: 25, has_more: false },
-    })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({
-      converter_types: ['Base64Converter', 'ROT13Converter'],
-    })
-    mockedLabelsApi.getLabels.mockResolvedValue({ source: 'attacks', labels: {} })
-
-    const onFiltersChange = jest.fn()
-
-    render(
-      <TestWrapper>
-        <AttackHistory {...defaultProps} onFiltersChange={onFiltersChange} />
-      </TestWrapper>
-    )
-
-    await waitFor(() => {
-      expect(mockedAttacksApi.getConverterOptions).toHaveBeenCalled()
-    })
-
-    const converterDropdown = screen.getByTestId('converter-filter')
-    fireEvent.click(converterDropdown)
-
-    await waitFor(() => {
-      expect(screen.getByText('Base64Converter')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByText('Base64Converter'))
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: ['Base64Converter'] })
-    )
-  })
-
   it('should call onFiltersChange with operator when operator filter is selected', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
       pagination: { limit: 25, has_more: false },
     })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
     mockedLabelsApi.getLabels.mockResolvedValue({
       source: 'attacks',
       labels: {
@@ -1007,8 +908,6 @@ describe('AttackHistory', () => {
       items: [],
       pagination: { limit: 25, has_more: false },
     })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
     mockedLabelsApi.getLabels.mockResolvedValue({
       source: 'attacks',
       labels: { operator: [], operation: ['legacy_name_only'] },
@@ -1052,8 +951,6 @@ describe('AttackHistory', () => {
       items: [],
       pagination: { limit: 25, has_more: false },
     })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
     mockedLabelsApi.getLabels.mockResolvedValue({
       source: 'attacks',
       labels: {
@@ -1090,7 +987,6 @@ describe('AttackHistory', () => {
     const onFiltersChange = jest.fn()
     const activeFilters = {
       ...DEFAULT_HISTORY_FILTERS,
-      attackTypes: ['CrescendoAttack'],
       outcome: 'success',
       operator: ['alice'],
     }
@@ -1114,8 +1010,6 @@ describe('AttackHistory', () => {
       items: [],
       pagination: { limit: 25, has_more: false },
     })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
     mockedLabelsApi.getLabels.mockResolvedValue({
       source: 'attacks',
       labels: {
@@ -1152,19 +1046,14 @@ describe('AttackHistory', () => {
     )
   })
 
-  it('should forward multi-select attackTypes as attack_types array to the API', async () => {
+  it('should ignore removed filter parameters from older history URLs', async () => {
     mockedAttacksApi.listAttacks.mockResolvedValue({
       items: [],
       pagination: { limit: 25, has_more: false },
     })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
-    mockedLabelsApi.getLabels.mockResolvedValue({ source: 'attacks', labels: {} })
-
-    const filters = {
-      ...DEFAULT_HISTORY_FILTERS,
-      attackTypes: ['CrescendoAttack', 'RedTeamingAttack'],
-    }
+    const filters = filtersFromSearchParams(new URLSearchParams(
+      'attackType=CrescendoAttack&converter=Base64Converter&converter=ROT13Converter&converterMatch=all&hasConverters=false',
+    ))
 
     render(
       <TestWrapper>
@@ -1176,40 +1065,10 @@ describe('AttackHistory', () => {
       expect(mockedAttacksApi.listAttacks).toHaveBeenCalled()
     })
 
-    expect(mockedAttacksApi.listAttacks).toHaveBeenCalledWith(
-      expect.objectContaining({ attack_types: ['CrescendoAttack', 'RedTeamingAttack'] })
-    )
-  })
-
-  it('should forward hasConverters=false without converter_types or converter_types_match', async () => {
-    mockedAttacksApi.listAttacks.mockResolvedValue({
-      items: [],
-      pagination: { limit: 25, has_more: false },
+    expect(mockedAttacksApi.listAttacks).toHaveBeenCalledWith({
+      limit: 25,
+      include_scenario_attacks: true,
     })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
-    mockedLabelsApi.getLabels.mockResolvedValue({ source: 'attacks', labels: {} })
-
-    const filters = {
-      ...DEFAULT_HISTORY_FILTERS,
-      hasConverters: false,
-      converter: [],
-    }
-
-    render(
-      <TestWrapper>
-        <AttackHistory {...defaultProps} filters={filters} />
-      </TestWrapper>
-    )
-
-    await waitFor(() => {
-      expect(mockedAttacksApi.listAttacks).toHaveBeenCalled()
-    })
-
-    const callArgs = mockedAttacksApi.listAttacks.mock.calls[0][0]
-    expect(callArgs).toEqual(expect.objectContaining({ has_converters: false }))
-    expect(callArgs).not.toHaveProperty('converter_types')
-    expect(callArgs).not.toHaveProperty('converter_types_match')
   })
 
   it('should include scanner attacks by default and exclude them when disabled', async () => {
@@ -1251,68 +1110,4 @@ describe('AttackHistory', () => {
     )
   })
 
-  it('should only send converter_types_match when two or more converters are selected', async () => {
-    mockedAttacksApi.listAttacks.mockResolvedValue({
-      items: [],
-      pagination: { limit: 25, has_more: false },
-    })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
-    mockedLabelsApi.getLabels.mockResolvedValue({ source: 'attacks', labels: {} })
-
-    // Case 1: single converter → converter_types_match is NOT sent
-    const singleFilters = {
-      ...DEFAULT_HISTORY_FILTERS,
-      converter: ['Base64Converter'],
-      converterMatchMode: 'all' as const,
-    }
-
-    const { unmount } = render(
-      <TestWrapper>
-        <AttackHistory {...defaultProps} filters={singleFilters} />
-      </TestWrapper>
-    )
-
-    await waitFor(() => {
-      expect(mockedAttacksApi.listAttacks).toHaveBeenCalled()
-    })
-
-    const singleCallArgs = mockedAttacksApi.listAttacks.mock.calls[0][0]
-    expect(singleCallArgs).toEqual(expect.objectContaining({ converter_types: ['Base64Converter'] }))
-    expect(singleCallArgs).not.toHaveProperty('converter_types_match')
-
-    unmount()
-    jest.clearAllMocks()
-    mockedAttacksApi.listAttacks.mockResolvedValue({
-      items: [],
-      pagination: { limit: 25, has_more: false },
-    })
-    mockedAttacksApi.getAttackOptions.mockResolvedValue({ attack_types: [] })
-    mockedAttacksApi.getConverterOptions.mockResolvedValue({ converter_types: [] })
-    mockedLabelsApi.getLabels.mockResolvedValue({ source: 'attacks', labels: {} })
-
-    // Case 2: two converters → converter_types_match IS sent
-    const multiFilters = {
-      ...DEFAULT_HISTORY_FILTERS,
-      converter: ['Base64Converter', 'ROT13Converter'],
-      converterMatchMode: 'all' as const,
-    }
-
-    render(
-      <TestWrapper>
-        <AttackHistory {...defaultProps} filters={multiFilters} />
-      </TestWrapper>
-    )
-
-    await waitFor(() => {
-      expect(mockedAttacksApi.listAttacks).toHaveBeenCalled()
-    })
-
-    expect(mockedAttacksApi.listAttacks).toHaveBeenCalledWith(
-      expect.objectContaining({
-        converter_types: ['Base64Converter', 'ROT13Converter'],
-        converter_types_match: 'all',
-      })
-    )
-  })
 })
