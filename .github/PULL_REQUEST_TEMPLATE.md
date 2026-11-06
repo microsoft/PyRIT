@@ -16,13 +16,9 @@
 <!--- or before/after scorer outputs (score and rationale) for the same response and scoring criteria. -->
 <!--- For breaking changes, explain why the change is necessary and how users should migrate. -->
 
-## Tests and Documentation
-
+<!-- Tests and Documentation -->
 <!--- Contributions require tests and documentation where applicable. -->
-<!--- Keep this section to one short sentence summarizing relevant coverage and user-facing documentation. -->
-<!--- Do not enumerate test files, test cases, commands, passing checks, or routine reasons for skipped checks. -->
-<!--- Include only failures, validation gaps, or manual steps that materially affect review. Use N/A if not applicable. -->
-<!--- Follow the testing and documentation guides; do not copy their procedures or execution logs into the PR description. -->
+<!--- Follow these guides; do not add a tests and documentation section or validation inventory to the PR description. -->
 <!--- Testing: https://github.com/microsoft/PyRIT/blob/main/doc/contributing/4_running_tests.md -->
 <!--- Documentation and notebook reruns: https://github.com/microsoft/PyRIT/blob/main/doc/contributing/7_notebooks.md -->
 
