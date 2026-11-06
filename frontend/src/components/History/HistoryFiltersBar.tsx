@@ -72,8 +72,8 @@ const OUTCOME_LABELS: Record<string, string> = {
 // search text so typing-to-search actually works.
 function formatMultiSelectValue(selected: string[]): string {
   if (selected.length === 0) return ''
-  if (selected.length === 1) return selected[0]
-  return `${selected[0]} (+${selected.length - 1})`
+  if (selected.length === 1) return selected[0] ?? ''
+  return `${selected[0] ?? ''} (+${selected.length - 1})`
 }
 
 /** History's choices are plain strings, shown as they are. */
@@ -302,17 +302,21 @@ export default function HistoryFiltersBar({
               itemSize={LABEL_OPTION_HEIGHT_PX}
               containerSizeRef={labelListMeasure.containerSizeRef}
             >
-              {(index: number) => (
-                <Option
-                  key={filteredLabelOptions[index]}
-                  value={filteredLabelOptions[index]}
-                  aria-posinset={index + 1}
-                  aria-setsize={filteredLabelOptions.length}
-                  {...{ [LABEL_OPTION_INDEX_ATTR]: index }}
-                >
-                  {filteredLabelOptions[index]}
-                </Option>
-              )}
+              {(index: number) => {
+                const option = filteredLabelOptions[index]
+                if (option === undefined) return null
+                return (
+                  <Option
+                    key={option}
+                    value={option}
+                    aria-posinset={index + 1}
+                    aria-setsize={filteredLabelOptions.length}
+                    {...{ [LABEL_OPTION_INDEX_ATTR]: index }}
+                  >
+                    {option}
+                  </Option>
+                )
+              }}
             </Virtualizer>
           </div>
         </Combobox>

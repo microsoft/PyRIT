@@ -97,7 +97,7 @@ function elementTypeName(param: Parameter): string {
     return param.type_name
   }
   const match = /^list\[(.+)\]$/.exec(param.type_name)
-  return match ? match[1] : 'str'
+  return match?.[1] ?? 'str'
 }
 
 function parseListValue(raw: string): string[] {
