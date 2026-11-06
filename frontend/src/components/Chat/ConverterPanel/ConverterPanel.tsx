@@ -50,6 +50,7 @@ const PIECE_TYPE_LABELS: Record<string, string> = {
 const MIN_PANEL_WIDTH = 480
 const MAX_PANEL_WIDTH = 1200
 const DEFAULT_PANEL_WIDTH = 560
+const PANEL_RESIZE_STEP = 16
 
 interface ValuePreviewProps {
   dataType: string
@@ -363,6 +364,19 @@ export default function ConverterPanel({
     document.body.style.userSelect = 'none'
   }, [])
 
+  const handleResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const nextWidth: Record<string, (width: number) => number> = {
+      ArrowLeft: (width) => width - PANEL_RESIZE_STEP,
+      ArrowRight: (width) => width + PANEL_RESIZE_STEP,
+      Home: () => MIN_PANEL_WIDTH,
+      End: () => MAX_PANEL_WIDTH,
+    }
+    const resize = nextWidth[event.key]
+    if (!resize) return
+    event.preventDefault()
+    setPanelWidth((width) => Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, resize(width))))
+  }, [])
+
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent): void => {
       if (!isResizing.current) return
@@ -602,9 +616,18 @@ export default function ConverterPanel({
           )}
         </div>
       </aside>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- focusable separator is the WAI-ARIA window splitter pattern (jsx-a11y#577) */}
       <div
         className={styles.resizeHandle}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize converters panel"
+        aria-valuenow={panelWidth}
+        aria-valuemin={MIN_PANEL_WIDTH}
+        aria-valuemax={MAX_PANEL_WIDTH}
+        tabIndex={0}
         onMouseDown={handleMouseDown}
+        onKeyDown={handleResizeKeyDown}
         data-testid="converter-panel-resize"
       />
       <CreateConverterDialog

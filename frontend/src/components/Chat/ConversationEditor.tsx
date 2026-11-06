@@ -352,6 +352,7 @@ export default function ConversationEditor({
         <Button className={styles.button} disabled={saving} onClick={cancel}>Cancel</Button>
         <Tooltip content={saveDisabledReason ?? 'Save a new conversation without changing the original sent history.'}
           relationship="description">
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled */}
         <span tabIndex={saveDisabledReason ? 0 : undefined} aria-label={saveDisabledReason ?? undefined}>
         <Button className={styles.button} appearance="primary"
           disabled={saving || converters.isConverting || Boolean(validationError)

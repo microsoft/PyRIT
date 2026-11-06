@@ -651,6 +651,45 @@ describe('ConverterPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('exposes the resize handle as a focusable separator with the current width', async () => {
+    renderPanel()
+    await screen.findByTestId('converter-panel-list')
+
+    const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+
+    expect(handle).toHaveAttribute('tabindex', '0')
+    expect(handle).toHaveAttribute('aria-orientation', 'vertical')
+    expect(handle).toHaveAttribute('aria-valuenow', '560')
+    expect(handle).toHaveAttribute('aria-valuemin', '480')
+    expect(handle).toHaveAttribute('aria-valuemax', '1200')
+  })
+
+  it('resizes the panel with the keyboard within its bounds', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByTestId('converter-panel-list')
+    const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+    const container = screen.getByTestId('converter-panel').parentElement
+
+    handle.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(container).toHaveStyle({ width: '576px' })
+    expect(handle).toHaveAttribute('aria-valuenow', '576')
+
+    await user.keyboard('{ArrowLeft}{ArrowLeft}')
+    expect(container).toHaveStyle({ width: '544px' })
+
+    await user.keyboard('{Home}')
+    expect(container).toHaveStyle({ width: '480px' })
+    await user.keyboard('{ArrowLeft}')
+    expect(container).toHaveStyle({ width: '480px' })
+
+    await user.keyboard('{End}')
+    expect(container).toHaveStyle({ width: '1200px' })
+    await user.keyboard('{ArrowRight}')
+    expect(container).toHaveStyle({ width: '1200px' })
+  })
+
   it('keeps the pipeline, outputs, and applied selection when the panel is reopened', async () => {
     mockedConvertersApi.previewConversion.mockResolvedValue(makePreviewResponse(['base64-default'], ['converted']))
     const user = userEvent.setup()

@@ -2649,6 +2649,7 @@ export default function ChatWindow({
                 setTemperatureExplanationId(data.visible ? temperatureExplanationContext ?? null : null)
               }}>
               <span
+                // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled
                 tabIndex={!temperatureTarget.supports_temperature_override || temperatureReadOnly && (isSending || isSavingEditor) ? 0 : undefined}
                 onPointerDownCapture={() => {
                   if (temperatureReadOnly) setTemperatureExplanationId(temperatureExplanationContext ?? null)
