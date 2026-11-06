@@ -16,13 +16,9 @@ from pyrit.backend.models import (
     ScenarioSuiteResponse,
     UpdateScenarioSuiteRequest,
 )
-from pyrit.backend.services import (
-    get_scenario_suite_execution_service,
-    get_scenario_suite_service,
-)
-from pyrit.backend.services.scenario_suite_execution_service import (
-    ScenarioSuiteExecutionCapacityError,
-)
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.backend.services import get_scenario_suite_execution_service, get_scenario_suite_service
+from pyrit.backend.services.scenario_suite_execution_service import ScenarioSuiteExecutionCapacityError
 from pyrit.models import LaunchScenarioSuiteRequest, ScenarioSuite, ScenarioSuiteExecutionSummary
 from pyrit.registry import (
     ScenarioSuiteConflictError,
@@ -153,7 +149,7 @@ async def cancel_scenario_suite_execution(  # pyrit-async-suffix-exempt
     },
 )
 async def launch_scenario_suite(  # pyrit-async-suffix-exempt
-    name: str,
+    name: IdentifierStr,
     body: LaunchScenarioSuiteRequest,
     http_request: Request,
 ) -> ScenarioSuiteExecutionSummary:
@@ -196,7 +192,7 @@ async def launch_scenario_suite(  # pyrit-async-suffix-exempt
     response_model=ScenarioSuiteResponse,
     responses={404: {"model": ProblemDetail, "description": "Scenario suite not found"}},
 )
-async def get_scenario_suite(name: str) -> ScenarioSuiteResponse:  # pyrit-async-suffix-exempt
+async def get_scenario_suite(name: IdentifierStr) -> ScenarioSuiteResponse:  # pyrit-async-suffix-exempt
     """
     Get one scenario suite and the version required to update it.
 
@@ -260,7 +256,7 @@ async def create_scenario_suite(  # pyrit-async-suffix-exempt
     },
 )
 async def update_scenario_suite(  # pyrit-async-suffix-exempt
-    name: str,
+    name: IdentifierStr,
     body: UpdateScenarioSuiteRequest,
 ) -> ScenarioSuiteResponse:
     """
@@ -303,7 +299,7 @@ async def update_scenario_suite(  # pyrit-async-suffix-exempt
     dependencies=[Depends(require_admin)],
     responses={404: {"model": ProblemDetail, "description": "Scenario suite not found"}},
 )
-async def delete_scenario_suite(name: str) -> None:  # pyrit-async-suffix-exempt
+async def delete_scenario_suite(name: IdentifierStr) -> None:  # pyrit-async-suffix-exempt
     """Delete one stored scenario suite."""
     try:
         deleted = await get_scenario_suite_service().delete_suite_async(name=name)

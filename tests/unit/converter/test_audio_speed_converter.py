@@ -10,6 +10,7 @@ import pytest
 from scipy.io import wavfile
 
 from pyrit.converter import AudioSpeedConverter
+from pyrit.memory import SQLiteMemory
 from pyrit.registry import ConverterRegistry
 
 
@@ -166,3 +167,39 @@ def test_speed_identifier_is_stable_for_equal_settings() -> None:
         AudioSpeedConverter(speed_factor=0.5).get_identifier().hash
         == AudioSpeedConverter(speed_factor=0.5).get_identifier().hash
     )
+
+
+async def test_speed_up_shifts_pitch_by_speed_factor_async(sqlite_instance: SQLiteMemory) -> None:
+    """Resampling shifts pitch with speed, as the docstring now says: 2x turns a 440 Hz tone into about 880 Hz."""
+    sample_rate = 16000
+    t = np.arange(sample_rate) / sample_rate
+    tone = (0.5 * 32767 * np.sin(2 * np.pi * 440 * t)).astype(np.int16)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav_file:
+        original_wav_path = temp_wav_file.name
+        wavfile.write(original_wav_path, sample_rate, tone)
+
+    converter = AudioSpeedConverter(speed_factor=2.0)
+    result = await converter.convert_async(prompt=original_wav_path)
+
+    out_rate, out_data = wavfile.read(result.output_text)
+    spectrum = np.abs(np.fft.rfft(out_data.astype(np.float64)))
+    peak_hz = np.fft.rfftfreq(len(out_data), 1 / out_rate)[spectrum.argmax()]
+    assert abs(peak_hz - 880) < 10
+
+    os.remove(original_wav_path)
+    if os.path.exists(result.output_text):
+        os.remove(result.output_text)
+
+
+async def test_speed_factor_too_large_for_input_raises_async(sqlite_instance: SQLiteMemory) -> None:
+    """A speed factor that would leave zero samples should raise instead of writing empty audio."""
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav_file:
+        original_wav_path = temp_wav_file.name
+        wavfile.write(original_wav_path, 16000, np.array([100, -100], dtype=np.int16))
+
+    converter = AudioSpeedConverter(speed_factor=100)
+    with pytest.raises(ValueError, match="converted audio would be empty"):
+        await converter.convert_async(prompt=original_wav_path)
+
+    os.remove(original_wav_path)

@@ -1444,6 +1444,7 @@ class ScoreEntry(Base):
     score_category: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     score_rationale = mapped_column(String, nullable=True)
     score_metadata: Mapped[dict[str, str | int | float]] = mapped_column(JSON)
+    snapshot_participation: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     scorer_class_identifier: Mapped[dict[str, Any]] = mapped_column(JSON)
     # What the score is about, in the shape the Scorable owns. Always a reference once stored.
     scorable: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
@@ -1480,7 +1481,10 @@ class ScoreEntry(Base):
             entry (Score): The score object to convert into a database entry.
             is_intermediate (bool): Whether this result came from a nested scoring call.
         """
+        snapshot_participation = entry._snapshot_participation
         entry = Score.model_validate(entry.model_dump(exclude={"objective"}))
+        if snapshot_participation is None:
+            snapshot_participation = entry._snapshot_participation
         self.id = entry.id
         self.is_intermediate = is_intermediate
         self.score_value = entry.score_value
@@ -1490,6 +1494,7 @@ class ScoreEntry(Base):
         self.score_category = entry.score_category
         self.score_rationale = entry.score_rationale
         self.score_metadata = entry.score_metadata or {}
+        self.snapshot_participation = snapshot_participation
         self.scorable = entry.scorable.model_dump(mode="json") if entry.scorable else None
         self.scorable_content_id = (
             entry.scorable.content_id if isinstance(entry.scorable, ContentEntryScorable) else None
@@ -1523,7 +1528,7 @@ class ScoreEntry(Base):
             pyrit_version=stored_version,
             eval_identifier_cls=ScorerEvaluationIdentifier,
         )
-        return Score(
+        score = Score(
             id=self.id,
             score_value=self.score_value,
             score_value_description=self.score_value_description,
@@ -1543,6 +1548,8 @@ class ScoreEntry(Base):
                 else None
             ),
         )
+        score._snapshot_participation = self.snapshot_participation
+        return score
 
     def to_dict(self) -> dict[str, Any]:
         """

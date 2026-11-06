@@ -18,6 +18,7 @@ from pyrit.auth import (
 from pyrit.auth.azure_auth import (
     get_speech_config,
     get_speech_config_from_default_azure_credential,
+    validate_speech_region_shape,
 )
 
 curr_epoch_time = int(time.time())
@@ -51,6 +52,22 @@ def test_get_token_on_init() -> None:
     with patch("azure.identity.DefaultAzureCredential.get_token", return_value=AccessToken(mock_token, _TOKEN_TIME)):
         test_instance = AzureAuth(token_scope="https://mocked_endpoint.azure.com")
         assert test_instance.token == mock_token
+
+
+def test_get_token_forwards_tenant_id() -> None:
+    with patch(
+        "azure.identity.DefaultAzureCredential.get_token", return_value=AccessToken(mock_token, _TOKEN_TIME)
+    ) as mock_get_token:
+        AzureAuth(token_scope="https://mocked_endpoint.azure.com", tenant_id="my-tenant")
+        mock_get_token.assert_called_once_with("https://mocked_endpoint.azure.com", tenant_id="my-tenant")
+
+
+def test_get_token_omits_tenant_id_when_not_set() -> None:
+    with patch(
+        "azure.identity.DefaultAzureCredential.get_token", return_value=AccessToken(mock_token, _TOKEN_TIME)
+    ) as mock_get_token:
+        AzureAuth(token_scope="https://mocked_endpoint.azure.com")
+        mock_get_token.assert_called_once_with("https://mocked_endpoint.azure.com")
 
 
 @pytest.mark.parametrize("elapsed_seconds", [0, 301])
@@ -169,6 +186,23 @@ def test_get_speech_config_insufficient_info_raises_error() -> None:
     """Test get_speech_config raises ValueError with insufficient information."""
     with pytest.raises(ValueError, match="Insufficient information provided for Azure Speech service"):
         get_speech_config(resource_id=None, key=None, region="test_region")
+
+
+@pytest.mark.parametrize(
+    ("region", "expected"),
+    [("eastus", "eastus"), ("EastUS", "EastUS"), ("usgovvirginia", "usgovvirginia"), (" westus2\n", "westus2")],
+)
+def test_validate_speech_region_shape_accepts_region_names(region: str, expected: str) -> None:
+    assert validate_speech_region_shape(region) == expected
+
+
+@pytest.mark.parametrize(
+    "region",
+    ["example.com#", "example.com/x?", "user@example.com", "eastus.example.com", "east us", "east-us", "east_us", ""],
+)
+def test_validate_speech_region_shape_rejects_anything_else(region: str) -> None:
+    with pytest.raises(ValueError, match="azure_speech_region must be an Azure region name"):
+        validate_speech_region_shape(region)
 
 
 def test_get_access_token_from_interactive_login_returns_token():

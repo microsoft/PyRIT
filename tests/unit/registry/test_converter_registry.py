@@ -6,6 +6,7 @@ Tests for the merged ``ConverterRegistry`` (buildable catalog + instance contain
 and its introspection helpers.
 """
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -225,6 +226,37 @@ class TestConverterRegistryRegisterInstance:
             name="caesar", type_name="CaesarConverter", params={"caesar_offset": "3"}, external_input=True
         )
         assert registry.instances.get("caesar") is converter
+
+    def test_create_named_instance_rejects_path_parameters_unless_allowed(self, registry: ConverterRegistry):
+        params = {"base_image": "input.png"}
+        with pytest.raises(ValueError, match="'base_image' of 'ImageOverlayConverter' names a server file"):
+            registry.create_named_instance(
+                name="overlay", type_name="ImageOverlayConverter", params=params, external_input=True
+            )
+        assert registry.instances.get("overlay") is None
+
+        converter = registry.create_named_instance(
+            name="overlay",
+            type_name="ImageOverlayConverter",
+            params=params,
+            external_input=True,
+            allowed_path_params=frozenset({"base_image"}),
+        )
+        assert registry.instances.get("overlay") is converter
+
+    def test_recreate_instance_rejects_path_overrides_unless_allowed(self, registry: ConverterRegistry):
+        source = registry.create_named_instance(
+            name="overlay", type_name="ImageOverlayConverter", params={"base_image": "input.png"}
+        )
+        params = {"base_image": "other.png"}
+        with pytest.raises(ValueError, match="'base_image' of 'ImageOverlayConverter' names a server file"):
+            registry.recreate_instance(source=source, params=params, external_input=True)
+
+        variant = registry.recreate_instance(
+            source=source, params=params, external_input=True, allowed_path_params=frozenset({"base_image"})
+        )
+        assert variant.get_identifier().params["base_image"] == "other.png"
+        assert source.get_identifier().params["base_image"] == "input.png"
 
     @pytest.mark.parametrize("name", ["preview", "types"])
     def test_create_named_instance_rejects_reserved_name(self, registry: ConverterRegistry, name: str):
@@ -473,6 +505,31 @@ class TestClassMetadata:
             "system_prompt",
         }
         assert all(p.model_dump()["multiline"] for p in meta.parameters if p.multiline)
+
+    def test_credential_parameters_are_sensitive(self, registry: ConverterRegistry) -> None:
+        credential_name_pattern = re.compile(
+            r"token|secret|password|credential|api_key|_key$|cookie|session_id", re.IGNORECASE
+        )
+        non_credential_parameter_names = frozenset(
+            {
+                "end_token",
+                "mask_token",
+                "preserve_tokens",
+                "start_token",
+                "token_insert_mode",
+                "token_to_repeat",
+                "tokenizer",
+            }
+        )
+
+        for meta in registry.get_all_registered_class_metadata():
+            for parameter in meta.parameters:
+                looks_like_credential = (
+                    credential_name_pattern.search(parameter.name)
+                    and parameter.name not in non_credential_parameter_names
+                )
+                if looks_like_credential:
+                    assert parameter.sensitive, f"{meta.class_name}.{parameter.name} looks like a credential"
 
     def test_is_llm_based_flag(self, registry: ConverterRegistry):
         llm_based = (

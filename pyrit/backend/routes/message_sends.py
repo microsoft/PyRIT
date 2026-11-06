@@ -44,8 +44,11 @@ async def submit_message_send_async(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ManualSendQueueFullError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=404 if "not found" in str(exc).lower() else 400, detail=str(exc)) from exc
+        is_not_found = "not found" in str(exc).lower() or "does not exist" in str(exc).lower()
+        raise HTTPException(status_code=404 if is_not_found else 400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to accept message send for attack '%s'", attack_result_id)
         raise HTTPException(status_code=500, detail="Could not accept the message send. Check server logs.") from exc

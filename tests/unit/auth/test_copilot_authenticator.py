@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import tempfile
+import warnings
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -82,7 +83,6 @@ class TestCopilotAuthenticatorInitialization:
             assert authenticator._maximized is True
             assert authenticator._elements_timeout == 10000
             assert authenticator._token_capture_timeout == 60
-            assert authenticator._network_retries == 3
             assert authenticator._fallback_to_plaintext is False
 
             assert isinstance(authenticator._token_fetch_lock, asyncio.Lock)
@@ -101,7 +101,6 @@ class TestCopilotAuthenticatorInitialization:
                 maximized=False,
                 timeout_for_elements_seconds=20,
                 token_capture_timeout_seconds=120,
-                network_retries=5,
                 fallback_to_plaintext=True,
             )
 
@@ -109,8 +108,48 @@ class TestCopilotAuthenticatorInitialization:
             assert authenticator._maximized is False
             assert authenticator._elements_timeout == 20000
             assert authenticator._token_capture_timeout == 120
-            assert authenticator._network_retries == 5
             assert authenticator._fallback_to_plaintext is True
+
+    @pytest.mark.parametrize("explicit_none", [False, True])
+    def test_init_does_not_warn_by_default(
+        self, *, mock_env_vars: None, mock_persistent_cache: MagicMock, explicit_none: bool
+    ) -> None:
+        """Test that omitting network_retries or passing None emits no deprecation warning."""
+
+        with (
+            patch(
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._create_persistent_cache",
+                return_value=mock_persistent_cache,
+            ),
+            warnings.catch_warnings(),
+        ):
+            warnings.simplefilter("error", DeprecationWarning)
+            if explicit_none:
+                CopilotAuthenticator(network_retries=None)
+            else:
+                CopilotAuthenticator()
+
+    @pytest.mark.parametrize("network_retries", [0, CopilotAuthenticator.DEFAULT_NETWORK_RETRIES, 5])
+    def test_init_network_retries_is_deprecated(
+        self, *, mock_env_vars: None, mock_persistent_cache: MagicMock, network_retries: int
+    ) -> None:
+        """Test that every explicit retry count warns with migration guidance at the caller."""
+
+        with (
+            patch(
+                "pyrit.auth.copilot_authenticator.CopilotAuthenticator._create_persistent_cache",
+                return_value=mock_persistent_cache,
+            ),
+            pytest.warns(DeprecationWarning) as captured,
+        ):
+            CopilotAuthenticator(network_retries=network_retries)
+
+        assert len(captured) == 1
+        assert str(captured[0].message) == (
+            "CopilotAuthenticator(network_retries=...) is deprecated and will be removed in 1.3.0. "
+            "Use CopilotAuthenticator() instead."
+        )
+        assert captured[0].filename == __file__
 
     def test_init_missing_env_var_raises_error(self):
         """Test that missing a required environment variable raises ValueError."""

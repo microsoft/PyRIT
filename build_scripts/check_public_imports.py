@@ -25,9 +25,13 @@ def _export_index(root: Path) -> ExportIndex:
         package = ".".join(path.parent.relative_to(root).parts)
         tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
         for node in tree.body:
-            if not isinstance(node, ast.AnnAssign) or not isinstance(node.target, ast.Name):
+            if isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+            elif isinstance(node, ast.Assign):
+                targets = node.targets
+            else:
                 continue
-            if node.target.id != "_LAZY_EXPORTS":
+            if not any(isinstance(target, ast.Name) and target.id == "_LAZY_EXPORTS" for target in targets):
                 continue
             for name, value in ast.literal_eval(node.value).items():
                 module, attribute = (value, name) if isinstance(value, str) else value
@@ -88,15 +92,16 @@ def _check_file(*, path: Path, root: Path, exports: ExportIndex) -> list[str]:
             f"{relative}:{finding}"
             for finding in _check_source(source=text, source_module=source_module, exports=exports)
         ]
+    # IPython syntax is valid in notebooks but not in Python source files.
+    from IPython.core.inputtransformer2 import TransformerManager
+
+    transformer = TransformerManager()
     findings: list[str] = []
     for number, cell in enumerate(json.loads(text)["cells"], start=1):
         if cell["cell_type"] != "code":
             continue
         source = "".join(cell["source"])
-        # IPython syntax is valid in notebooks but not in Python source files.
-        from IPython.core.inputtransformer2 import TransformerManager
-
-        source = TransformerManager().transform_cell(source)
+        source = transformer.transform_cell(source)
         findings.extend(
             f"{relative}:cell {number}:{finding}"
             for finding in _check_source(source=source, source_module=source_module, exports=exports)

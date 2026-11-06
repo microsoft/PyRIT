@@ -299,7 +299,7 @@ async def test_write_async_harm_no_metrics(mock_find, mock_eval_id_cls, capsys):
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_renders_compact_projected_component_tree(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=False)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
@@ -329,6 +329,7 @@ async def test_write_async_renders_compact_projected_component_tree(mock_find, m
     )
 
     await printer.write_async(scorer_identifier=identifier)
+    mock_find.assert_called_once()
     output = capsys.readouterr().out
 
     assert "▸ sub_scorers (2 components)" in output
@@ -350,7 +351,7 @@ async def test_write_async_renders_compact_projected_component_tree(mock_find, m
 
 
 @patch("pyrit.models.ScorerEvaluationIdentifier")
-@patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash")
+@patch("pyrit.score.find_objective_metrics_by_eval_hash")
 async def test_write_async_with_colors_enabled_emits_ansi_codes(mock_find, mock_eval_id_cls, capsys):
     printer = PrettyScorerMemoryPrinter(enable_colors=True)
     mock_eval_id_cls.return_value = MagicMock(eval_hash="x")
@@ -358,6 +359,7 @@ async def test_write_async_with_colors_enabled_emits_ansi_codes(mock_find, mock_
     mock_find.return_value = _make_objective_metrics(accuracy=0.95, f1_score=0.5, precision=0.8, recall=0.95)
 
     await printer.write_async(scorer_identifier=_make_scorer_identifier())
+    mock_find.assert_called_once()
     output = capsys.readouterr().out
     assert "\x1b[" in output  # ANSI escape sequences present
 

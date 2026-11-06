@@ -14,28 +14,13 @@ from pyrit.backend.models import (
     ScorerTypeEntry,
     ScorerTypeResponse,
 )
-from pyrit.backend.models.scorers import (
-    UnregisteredScorer,
-)
-from pyrit.models import Parameter, ScorerEvaluationIdentifier, ScorerIdentifier, project_behavioral_identity
+from pyrit.backend.models.scorers import UnregisteredScorer
+from pyrit.models import ScorerEvaluationIdentifier, ScorerIdentifier, project_behavioral_identity
 from pyrit.models.catalog import ScorerInstance
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
 from pyrit.registry import ScorerRegistry
 from pyrit.score import Scorer
-
-
-def _names_server_file(parameter: Parameter) -> bool:
-    """
-    Return whether a scorer parameter names a file on the server.
-
-    Args:
-        parameter (Parameter): The scorer constructor parameter.
-
-    Returns:
-        bool: True for ``Path`` and ``Path | str`` parameters.
-    """
-    return parameter.is_path or parameter.is_path_or_str
 
 
 class ScorerService:
@@ -100,25 +85,6 @@ class ScorerService:
             None,
         )
 
-    def _reject_server_file_params(self, *, type_name: str, params: dict[str, Any]) -> None:
-        """
-        Reject parameters that name a file on the server, before any scorer is built.
-
-        Args:
-            type_name (str): The registered scorer type.
-            params (dict[str, Any]): The constructor parameters from the API caller.
-
-        Raises:
-            ValueError: If a parameter names a file on the server.
-        """
-        metadata = self._registry.get_registered_class_metadata(type_name)
-        for parameter in metadata.parameters if metadata else []:
-            if parameter.name in params and _names_server_file(parameter):
-                raise ValueError(
-                    f"Parameter '{parameter.name}' of '{type_name}' names a server file and cannot be set "
-                    "through the API; pass it from Python or an initializer instead."
-                )
-
     async def list_scorer_types_async(self) -> ScorerTypeResponse:
         """
         List the scorer types external callers can build, without constructing scorers.
@@ -140,17 +106,13 @@ class ScorerService:
                     parameters=[
                         parameter.for_external_catalog()
                         for parameter in metadata.parameters
-                        if parameter.is_external_input and not _names_server_file(parameter)
+                        if parameter.is_allowed_external_input()
                     ],
                     is_llm_based=metadata.is_llm_based,
                     description=metadata.class_description or None,
                 )
                 for metadata in self._registry.get_all_registered_class_metadata()
-                if all(
-                    parameter.is_external_input and not _names_server_file(parameter)
-                    for parameter in metadata.parameters
-                    if parameter.required
-                )
+                if all(parameter.is_allowed_external_input() for parameter in metadata.parameters if parameter.required)
             ]
             return ScorerTypeResponse(items=items)
 
@@ -222,7 +184,6 @@ class ScorerService:
         def create() -> ScorerInstance | UnregisteredScorer:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
-            self._reject_server_file_params(type_name=request.type, params=request.params)
             if not request.register:
                 scorer = self._registry.create_instance_from_external_input(request.type, params=request.params)
                 return UnregisteredScorer(

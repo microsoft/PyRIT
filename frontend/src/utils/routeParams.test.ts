@@ -44,14 +44,14 @@ describe('routerPathParamValue', () => {
 describe('scenario run provenance routes', () => {
   it('builds evidence-origin routes preserving scanner provenance', () => {
     expect(attackConversationRoutePath('attack/1', 'conversation/1', SCENARIO_RESULT_ID, SCENARIO_RESULT_ID)).toBe(
-      `/attacks/attack%2F1/conversations/conversation%2F1?scenarioResultId=${SCENARIO_RESULT_ID}&findingEvidenceId=${SCENARIO_RESULT_ID}`,
+      `/attack/chat/attack%2F1/conversations/conversation%2F1?scenarioResultId=${SCENARIO_RESULT_ID}&findingEvidenceId=${SCENARIO_RESULT_ID}`,
     )
     expect(findingEvidenceOrigin(new URLSearchParams(`findingEvidenceId=${SCENARIO_RESULT_ID}`))).toBe(SCENARIO_RESULT_ID)
   })
   it.each(['findingEvidenceId=bad', `findingEvidenceId=${SCENARIO_RESULT_ID}&findingEvidenceId=${SCENARIO_RESULT_ID}`, ''])(
     'rejects invalid evidence origin %s', (query: string) => {
       expect(findingEvidenceOrigin(new URLSearchParams(query))).toBeNull()
-      expect(attackConversationRoutePath('a', 'c', null, 'bad')).toBe('/attacks/a/conversations/c')
+      expect(attackConversationRoutePath('a', 'c', null, 'bad')).toBe('/attack/chat/a/conversations/c')
     },
   )
   it('reads one canonical UUID and ignores unrelated query values', () => {
@@ -72,24 +72,24 @@ describe('scenario run provenance routes', () => {
 
   it('builds encoded attack and conversation destinations with bounded provenance', () => {
     expect(attackRoutePath('attack/1', SCENARIO_RESULT_ID)).toBe(
-      `/attacks/attack%2F1?scenarioResultId=${SCENARIO_RESULT_ID}`,
+      `/attack/chat/attack%2F1?scenarioResultId=${SCENARIO_RESULT_ID}`,
     )
     expect(attackConversationRoutePath('attack/1', 'conversation/1', SCENARIO_RESULT_ID)).toBe(
-      `/attacks/attack%2F1/conversations/conversation%2F1?scenarioResultId=${SCENARIO_RESULT_ID}`,
+      `/attack/chat/attack%2F1/conversations/conversation%2F1?scenarioResultId=${SCENARIO_RESULT_ID}`,
     )
   })
 
   it('omits invalid provenance instead of serializing it', () => {
-    expect(attackRoutePath('attack-1', 'https://evil.example')).toBe('/attacks/attack-1')
+    expect(attackRoutePath('attack-1', 'https://evil.example')).toBe('/attack/chat/attack-1')
     expect(attackConversationRoutePath('attack-1', 'conversation-1', 'run-1')).toBe(
-      '/attacks/attack-1/conversations/conversation-1',
+      '/attack/chat/attack-1/conversations/conversation-1',
     )
   })
 
   it('builds an encoded scenario-run route from a trusted persisted ID', () => {
-    expect(scenarioRunRoutePath('run/1')).toBe('/scanner-history/run%2F1')
+    expect(scenarioRunRoutePath('run/1')).toBe('/scanner/history/run%2F1')
     expect(scenarioRunAttackRoutePath('run/1', 'attack/1')).toBe(
-      '/scanner-history/run%2F1/attack%2F1',
+      '/scanner/history/run%2F1/attack%2F1',
     )
   })
 })
@@ -143,17 +143,17 @@ describe('isDatasetsPath and isChatPath', () => {
     expect(isDatasetsPath('/datasets')).toBe(true)
     expect(isDatasetsPath('/datasets/detail')).toBe(true)
     expect(isDatasetsPath('/datasets?filter=harmful')).toBe(true)
-    expect(isDatasetsPath('/chat')).toBe(false)
-    expect(isDatasetsPath('/attacks/123')).toBe(false)
+    expect(isDatasetsPath('/attack/chat')).toBe(false)
+    expect(isDatasetsPath('/attack/chat/123')).toBe(false)
     expect(isDatasetsPath('')).toBe(false)
   })
 
   it('correctly detects chat and attack routes', () => {
-    expect(isChatPath('/chat')).toBe(true)
-    expect(isChatPath('/attacks/attack-123')).toBe(true)
-    expect(isChatPath('/attacks/attack-123/conversations/conv-456')).toBe(true)
+    expect(isChatPath('/attack/chat')).toBe(true)
+    expect(isChatPath('/attack/chat/attack-123')).toBe(true)
+    expect(isChatPath('/attack/chat/attack-123/conversations/conv-456')).toBe(true)
     expect(isChatPath('/datasets')).toBe(false)
-    expect(isChatPath('/history')).toBe(false)
+    expect(isChatPath('/attack/history')).toBe(false)
     expect(isChatPath('')).toBe(false)
   })
 })

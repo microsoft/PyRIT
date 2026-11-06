@@ -15,6 +15,36 @@ from pyrit.models import (
 )
 
 
+@pytest.mark.parametrize("version", ["1.1.0", "1.2.0.dev0", "1.2.0", "1.3.0.dev0"])
+def test_seed_group_hash_ignores_pyrit_version(version: str) -> None:
+    original = SeedIdentifier.from_seed(SeedObjective(value="question", dataset_name="questions"))
+    restored = SeedIdentifier.model_validate({**original.model_dump(), "pyrit_version": version})
+
+    assert restored.pyrit_version == version
+    assert restored.hash == original.hash
+    assert compute_seed_group_hash([restored]) == compute_seed_group_hash([original])
+
+
+def test_seed_group_hash_ignores_eval_hash() -> None:
+    original = SeedIdentifier.from_seed(SeedObjective(value="question"))
+    restored = SeedIdentifier.model_validate({**original.model_dump(), "eval_hash": "evaluation-only"})
+
+    assert restored.eval_hash == "evaluation-only"
+    assert compute_seed_group_hash([restored]) == compute_seed_group_hash([original])
+
+
+def test_seed_group_hash_ignores_child_storage_metadata() -> None:
+    child = ComponentIdentifier(class_name="Child", class_module="tests", pyrit_version="1.2.0.dev0")
+    original = SeedIdentifier(class_name="Seed", class_module="tests", children={"child": child})
+    restored = SeedIdentifier(
+        class_name="Seed",
+        class_module="tests",
+        children={"child": ComponentIdentifier.model_validate({**child.model_dump(), "pyrit_version": "1.2.0"})},
+    )
+
+    assert compute_seed_group_hash([restored]) == compute_seed_group_hash([original])
+
+
 @pytest.mark.parametrize("seed_class", [SeedObjective, SeedPrompt])
 def test_condition_free_identifier_retains_legacy_hash(seed_class: type[SeedObjective] | type[SeedPrompt]) -> None:
     seed = seed_class(value="question", dataset_name="questions", data_type="text")
@@ -32,9 +62,7 @@ def test_condition_free_identifier_retains_legacy_hash(seed_class: type[SeedObje
     assert actual.hash == legacy.hash
     assert actual.model_dump() == legacy.model_dump()
     assert "conditions" not in actual.model_dump()
-    assert compute_seed_group_hash([actual]) == config_hash(
-        {"seed_identifiers": [legacy.model_dump(exclude={"hash", "eval_hash", "pyrit_version"})]}
-    )
+    assert compute_seed_group_hash([actual]) == config_hash({"seed_identifiers": [legacy.hash]})
     assert SeedIdentifier.model_validate(legacy.model_dump()).hash == legacy.hash
 
 

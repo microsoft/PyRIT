@@ -69,6 +69,7 @@ class ScenarioMetadata(RegistryMetadata):
 
     # Descriptions and tags for each available concrete technique.
     technique_summaries: tuple[ScenarioTechniqueSummary, ...] = field(kw_only=True, default=())
+    default_objective_scorer_identifier: ComponentIdentifier | None = field(kw_only=True, default=None)
 
     # Aggregate techniques that combine multiple attack approaches.
     aggregate_techniques: tuple[str, ...] = field(kw_only=True)
@@ -221,6 +222,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 name=technique.value,
                 description=technique.description,
                 tags=sorted(technique.tags),
+                identifier=technique.identifier,
             )
             for technique in technique_class.get_all_techniques()
         )
@@ -247,6 +249,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             all_techniques=all_techniques,
             technique_class=technique_class,
             technique_summaries=technique_summaries,
+            default_objective_scorer_identifier=instance._objective_scorer_identifier,
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,

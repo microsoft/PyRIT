@@ -112,7 +112,7 @@ async def _report_async(*, operation_id: UUID, finding_ids: Sequence[UUID]) -> F
 
 def _dashboard_link(*, evidence: FindingEvidence, conversation_id: str) -> str:
     return (
-        f"{DASHBOARD_ORIGIN}/attacks/{evidence.attack_result_id}/conversations/{conversation_id}"
+        f"{DASHBOARD_ORIGIN}/attack/chat/{evidence.attack_result_id}/conversations/{conversation_id}"
         f"?findingEvidenceId={evidence.id}"
     )
 
@@ -428,6 +428,18 @@ def test_export_rejects_invalid_dashboard_origin(
     response = _client().post(f"/api/operations/{uuid4()}/findings/export", json=body, headers=compatibility_headers)
 
     assert response.status_code == 422
+    assert "content-disposition" not in response.headers
+
+
+@pytest.mark.parametrize(("count", "status_code"), [(1_000, 404), (1_001, 422)])
+def test_export_limits_the_number_of_findings(
+    compatibility_headers: dict[str, str], count: int, status_code: int
+) -> None:
+    finding_ids = [uuid4() for _ in range(count)]
+
+    response = _export(headers=compatibility_headers, operation_id=MISSING_ID, finding_ids=finding_ids)
+
+    assert response.status_code == status_code
     assert "content-disposition" not in response.headers
 
 
@@ -804,7 +816,7 @@ def test_score_text_capitalizes_booleans_and_names_human_review(score_value: str
     assert finding_export._score_text(ScoreView.from_domain(score)) == expected
 
 
-LINK = "https://pyrit.example.test/attacks/a/conversations/b?findingEvidenceId=c"
+LINK = "https://pyrit.example.test/attack/chat/a/conversations/b?findingEvidenceId=c"
 TABLE_REPORT = FindingReport(
     operation_name="Synthetic evaluation",
     findings=(

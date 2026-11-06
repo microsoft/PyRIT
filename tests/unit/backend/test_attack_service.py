@@ -924,7 +924,7 @@ class TestGetConversationMessages:
                 conversation_id="test-id",
             )
 
-        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id, memory=mock_memory)
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id, memory=mock_memory, scores=[])
 
     async def test_get_conversation_messages_preserves_string_objective_score_id(
         self, attack_service, mock_memory
@@ -945,7 +945,7 @@ class TestGetConversationMessages:
                 conversation_id="test-id",
             )
 
-        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id, memory=mock_memory)
+        mock_mapper.assert_awaited_once_with([], objective_score_id=objective_score_id, memory=mock_memory, scores=[])
 
     async def test_get_conversation_messages_raises_for_unrelated_conversation(
         self, attack_service, mock_memory

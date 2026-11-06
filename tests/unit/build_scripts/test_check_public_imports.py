@@ -129,6 +129,29 @@ def test_check_file_notebook(export_root: Path) -> None:
     assert "from pyrit.models import Score" in findings[0]
 
 
+def test_check_file_notebook_is_independent_of_paired_python(export_root: Path) -> None:
+    python_path = export_root / "example.py"
+    python_path.write_text("from pyrit.models import Score\n", encoding="utf-8")
+    notebook_path = python_path.with_suffix(".ipynb")
+    notebook_path.write_text(
+        json.dumps({"cells": [{"cell_type": "code", "source": ["from pyrit.models.score.score import Score\n"]}]}),
+        encoding="utf-8",
+    )
+    exports = checker._export_index(export_root)
+    assert not checker._check_file(path=python_path, root=export_root, exports=exports)
+    assert len(checker._check_file(path=notebook_path, root=export_root, exports=exports)) == 1
+
+
+@pytest.mark.parametrize("annotation", ["", ": dict"])
+def test_export_index_accepts_assignment_forms(export_root: Path, annotation: str) -> None:
+    path = export_root / "pyrit" / "analytics" / "__init__.py"
+    path.write_text(
+        f"_LAZY_EXPORTS{annotation} = {{'analyze_results': 'pyrit.analytics.result_analysis'}}\n",
+        encoding="utf-8",
+    )
+    assert checker._export_index(export_root)["pyrit.analytics.result_analysis", "analyze_results"] == "pyrit.analytics"
+
+
 @pytest.mark.parametrize(
     ("source", "status"),
     [

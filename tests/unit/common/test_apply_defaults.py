@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
+
 import pytest
 
 from pyrit.common import (
@@ -250,3 +252,55 @@ def test_apply_defaults_required_value_satisfied_by_explicit():
 def test_apply_defaults_none_on_required_value_param_raises():
     with pytest.raises(ValueError, match="target is required"):
         _WithRequired(target=None)
+
+
+# --- Lazy logging regression (microsoft/PyRIT#3903) ---
+
+
+class _StringifiesOnStr:
+    """Value whose __str__ fails loudly, catching any eager stringification."""
+
+    def __init__(self) -> None:
+        self.str_calls = 0
+
+    def __str__(self) -> str:
+        self.str_calls += 1
+        raise AssertionError("default value was stringified while DEBUG was disabled")
+
+
+class _LazyLogProbe:
+    @apply_defaults
+    def __init__(self, *, name: str | None = None) -> None:
+        self.name = name
+
+
+def test_lazy_logging_does_not_stringify_value_when_debug_disabled():
+    log = logging.getLogger("pyrit.common.apply_defaults")
+    previous_level = log.level
+    log.setLevel(logging.WARNING)
+    try:
+        sentinel = _StringifiesOnStr()
+        # Registration path must not stringify.
+        set_default_value(class_type=_LazyLogProbe, parameter_name="name", value=sentinel)
+        assert sentinel.str_calls == 0
+
+        # Deferred resolution path must not stringify.
+        resolved = resolve_constructor_defaults(class_type=_LazyLogProbe, arguments={}, excluded_parameters=set())
+        assert sentinel.str_calls == 0
+        assert resolved["name"] is sentinel
+
+        # Decorated construction path must not stringify, and preserves identity.
+        obj = _LazyLogProbe()
+        assert sentinel.str_calls == 0
+        assert obj.name is sentinel
+    finally:
+        log.setLevel(previous_level)
+
+
+def test_debug_messages_logged_with_ordinary_value(caplog):
+    caplog.set_level(logging.DEBUG, logger="pyrit.common.apply_defaults")
+    set_default_value(class_type=_LazyLogProbe, parameter_name="name", value="configured")
+    _LazyLogProbe()
+    messages = [record.getMessage() for record in caplog.records]
+    assert "Set default value for _LazyLogProbe.name = configured" in messages
+    assert "Applied default value for _LazyLogProbe.name = configured" in messages

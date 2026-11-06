@@ -15,6 +15,7 @@ import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.mappers import target_object_to_instance
@@ -59,6 +60,7 @@ from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import HuggingFaceChatTarget, OpenAIChatTarget
 from pyrit.prompt_target.common.utils import _get_rate_limit_lock
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
+from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async, wait_for_event_async
 from unit.backend.mocks import _settle_send_async
 
 
@@ -114,8 +116,8 @@ class TestTemporaryComponents:
         registry = TargetRegistry.get_registry_singleton()
         factory = registry.create_instance_from_external_input
 
-        def create(name: str, *, params: Any) -> HuggingFaceChatTarget:
-            target = factory(name, params=params)
+        def create(name: str, *, params: Any, allowed_path_params: Any) -> HuggingFaceChatTarget:
+            target = factory(name, params=params, allowed_path_params=allowed_path_params)
             assert isinstance(target, HuggingFaceChatTarget)
             constructed.append(target)
             return target
@@ -267,6 +269,43 @@ class TestTemporaryComponents:
             try:
                 assert private._api_key is source._api_key
                 assert await private._api_key() == "test-token"
+                assert private.get_identifier().temperature == 0.8
+            finally:
+                await private.cleanup_target_async()
+        finally:
+            await source.cleanup_target_async()
+
+    @pytest.mark.parametrize("auth_mode", ["none", "identity", "api_key"])
+    def test_source_takes_its_auth_mode_only_from_source_params(self, auth_mode: str) -> None:
+        source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
+
+        with pytest.raises(ValidationError, match="including auth_mode"):
+            CreateTargetRequest(type="OpenAIChatTarget", source=source, register=False, auth_mode=auth_mode)
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"temperature": 0.8},
+            {"temperature": 0.8, "api_key": None},
+            {"temperature": 0.8, "headers": None},
+            {"temperature": 0.8, "headers": ""},
+        ],
+    )
+    async def test_no_key_source_stays_no_key_async(self, overrides: dict[str, Any]) -> None:
+        source = OpenAIChatTarget(endpoint="http://localhost:11434/v1", model_name="llama3", auth_mode="none")
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(source, name="source")
+        try:
+            with patch.dict(
+                "os.environ",
+                {"OPENAI_CHAT_KEY": "server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"X-Server-Secret": "s"}'},
+            ):
+                private = await TargetService().build_from_source_async(
+                    SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=overrides)
+                )
+            try:
+                assert private._api_key == "not-needed"
+                assert private._headers == {}
                 assert private.get_identifier().temperature == 0.8
             finally:
                 await private.cleanup_target_async()
@@ -475,26 +514,102 @@ class TestTemporaryComponents:
         finally:
             await target.cleanup_target_async()
 
+    @pytest.mark.timeout(3 * TEST_WATCHDOG_SECONDS)
     async def test_cancelled_thread_build_releases_component_async(self) -> None:
-        started = threading.Event()
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
         finish = threading.Event()
         component = source_target()
         cleanup = AsyncMock()
 
         def build() -> OpenAIChatTarget:
-            started.set()
-            assert finish.wait(timeout=5)
+            loop.call_soon_threadsafe(started.set)
+            finish.wait()
             return component
 
-        with patch.object(component, "cleanup_target_async", cleanup):
-            task = asyncio.create_task(construct_component_async(build))
-            assert await asyncio.to_thread(started.wait, 5)
-            task.cancel()
-            finish.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-            cleanup.assert_awaited_once()
-        await component.cleanup_target_async()
+        try:
+            with patch.object(component, "cleanup_target_async", cleanup):
+                task = asyncio.create_task(construct_component_async(build))
+                try:
+                    await wait_for_event_async(event=started, tasks=[task])
+                    if task.done():
+                        task.result()
+                        pytest.fail("Construction completed before the worker was released")
+                    task.cancel()
+                    finish.set()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                    cleanup.assert_awaited_once()
+                finally:
+                    finish.set()
+                    if not task.done():
+                        task.cancel()
+                    await drain_tasks_async(task)
+        finally:
+            await component.cleanup_target_async()
+
+    @pytest.mark.timeout(3 * TEST_WATCHDOG_SECONDS)
+    @pytest.mark.parametrize(
+        ("failure", "cancel_during_drain"),
+        [
+            (AssertionError, False),
+            (TimeoutError, False),
+            (asyncio.CancelledError, False),
+            (asyncio.CancelledError, True),
+        ],
+    )
+    async def test_thread_build_drains_worker_on_early_failure_async(
+        self, *, failure: type[BaseException], cancel_during_drain: bool
+    ) -> None:
+        observe = wait_for_event_async
+        drain = drain_tasks_async
+        component = source_target()
+        pending = asyncio.all_tasks()
+
+        async def fail_after_readiness_async(*, event: asyncio.Event, tasks: list[asyncio.Task[Any]]) -> None:
+            await observe(event=event, tasks=tasks)
+            raise failure("injected failure after worker readiness")
+
+        async def interrupt_drain_async(*tasks: asyncio.Task[OpenAIChatTarget]) -> None:
+            if cancel_during_drain:
+                task = asyncio.current_task()
+                assert task is not None
+                asyncio.get_running_loop().call_soon(task.cancel, "cleanup cancellation")
+            await drain(*tasks)
+
+        with (
+            patch(f"{__name__}.source_target", return_value=component),
+            patch(f"{__name__}.wait_for_event_async", side_effect=fail_after_readiness_async),
+            patch(f"{__name__}.drain_tasks_async", side_effect=interrupt_drain_async),
+        ):
+            with pytest.raises(failure, match="injected failure"):
+                await self.test_cancelled_thread_build_releases_component_async()
+
+        assert component._client.is_closed()
+        assert asyncio.all_tasks() == pending
+
+    @pytest.mark.timeout(3 * TEST_WATCHDOG_SECONDS)
+    async def test_thread_build_reports_failure_before_readiness_async(self) -> None:
+        component = source_target()
+        pending = asyncio.all_tasks()
+        failure = RuntimeError("construction failed before readiness")
+        to_thread = asyncio.to_thread
+
+        def fail_build() -> None:
+            raise failure
+
+        async def fail_to_thread_async(*_args: Any, **_kwargs: Any) -> None:
+            await to_thread(fail_build)
+
+        with (
+            patch(f"{__name__}.source_target", return_value=component),
+            patch.object(asyncio, "to_thread", side_effect=fail_to_thread_async),
+        ):
+            with pytest.raises(RuntimeError, match="construction failed before readiness") as error:
+                await self.test_cancelled_thread_build_releases_component_async()
+        assert error.value is failure
+        assert component._client.is_closed()
+        assert asyncio.all_tasks() == pending
 
     async def test_attack_binding_persists_and_same_attack_is_immutable_async(
         self, sqlite_instance: SQLiteMemory

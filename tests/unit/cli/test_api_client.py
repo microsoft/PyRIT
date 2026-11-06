@@ -59,6 +59,20 @@ async def test_list_operations_returns_saved_directory_records_async() -> None:
     assert rows == [operation]
 
 
+async def test_list_operations_accepts_finding_counts_from_list_items_async() -> None:
+    operation = Operation(name="Saved")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        item = {**operation.model_dump(mode="json"), "finding_counts": {"high": 2}}
+        return httpx.Response(200, json={"items": [item]})
+
+    client = PyRITApiClient(base_url="http://localhost:8000")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://localhost:8000") as transport:
+        client._client = transport
+        rows = await client.list_operations_async()
+    assert rows == [operation]
+
+
 async def test_request_waiting_for_auth_stops_after_concurrent_mismatch(monkeypatch):
     client = PyRITApiClient(base_url="http://localhost:8000")
     client._compatibility_id = COMPATIBILITY_ID

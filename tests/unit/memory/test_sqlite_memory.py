@@ -856,6 +856,32 @@ async def test_get_conversation_stats_returns_empty_for_unknown_ids(sqlite_insta
     assert result == {}
 
 
+async def test_get_conversation_stats_returns_aware_utc_created_at(sqlite_instance):
+    """The raw MIN(timestamp) aggregate must still surface aware UTC like every other read path."""
+    import uuid
+    from datetime import UTC
+
+    from pyrit.models import MessagePiece
+
+    conv_id = str(uuid.uuid4())
+    piece = MessagePiece(
+        role="user",
+        original_value="hello",
+        original_value_data_type="text",
+        converted_value="hello",
+        converted_value_data_type="text",
+        conversation_id=conv_id,
+        sequence=0,
+    )
+    sqlite_instance._insert_entry(PromptMemoryEntry(entry=piece))
+
+    result = await sqlite_instance.get_conversation_stats_async(conversation_ids=[conv_id])
+
+    created_at = result[conv_id].created_at
+    assert created_at == piece.timestamp
+    assert created_at.utcoffset() == UTC.utcoffset(None)
+
+
 async def test_get_conversation_stats_counts_distinct_sequences(sqlite_instance, sample_conversation_entries):
     """Test that message_count reflects distinct sequence numbers, not raw rows."""
     # Extract conversation IDs and sequences before inserting (entries get detached after commit)
@@ -1270,7 +1296,7 @@ async def test_file_backed_scenario_writes_wait_for_another_connections_lock_asy
         connection_key = id(connection_record)
 
         def trace_statement(statement: str) -> None:
-            if statement.startswith(("INSERT", "UPDATE")):
+            if statement.startswith(("BEGIN IMMEDIATE", "INSERT", "UPDATE")):
                 loop.call_soon_threadsafe(record_write, connection_key)
 
         dbapi_connection.run_async(lambda driver: driver.set_trace_callback(trace_statement))
