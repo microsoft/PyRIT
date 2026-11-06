@@ -10,6 +10,7 @@ from typing import Any
 from pyrit.common import forward_init_parameters
 from pyrit.models import ComponentIdentifier, JsonResponseConfig, Message, MessagePiece, construct_response_from_request
 from pyrit.models.messages.chat_message import FunctionCall
+from pyrit.prompt_target.common.chat_completions_response_parser import capture_usage_and_finish_reason
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.tool_call_history import parse_function_call
 from pyrit.prompt_target.common.tool_provider import Tool
@@ -150,8 +151,12 @@ class ClaudeChatTarget(LiteLLMChatTarget):
             else:
                 remaining.append(piece)
         if formatting:
-            formatting[0].prompt_metadata = message.message_pieces[0].prompt_metadata
-            return Message(message_pieces=[*formatting, *remaining])
+            cost = message.message_pieces[0].prompt_metadata.get("token_usage_cost")
+            pieces = [*formatting, *remaining]
+            capture_usage_and_finish_reason(pieces=pieces, response=response)
+            if cost is not None:
+                pieces[0].prompt_metadata["token_usage_cost"] = cost
+            return Message(message_pieces=pieces)
         if not any(piece.converted_value_data_type == "function_call" for piece in remaining):
             value = json.loads(message.get_value())
             if not isinstance(value, dict):

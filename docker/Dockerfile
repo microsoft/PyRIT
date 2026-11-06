@@ -74,7 +74,10 @@ RUN set -eu; if [ "$PYRIT_SOURCE" = "pypi" ]; then \
         echo "Invalid PYRIT_SOURCE"; exit 1; \
     fi && \
     cd /tmp && \
-    /opt/venv/bin/python -c "import litellm; from pyrit.prompt_target import ClaudeChatTarget" && \
+    /opt/venv/bin/python -c "import litellm" && \
+    if [ "$PYRIT_SOURCE" = "local" ]; then \
+        /opt/venv/bin/python -c "from pyrit.prompt_target import ClaudeChatTarget"; \
+    fi && \
     if ! /opt/venv/bin/python -c "from pyrit._compatibility import get_compatibility_id; print(get_compatibility_id())"; then \
         if [ "$PYRIT_SOURCE" = "pypi" ]; then \
             echo "ERROR: Selected PyPI release $PYRIT_VERSION lacks valid compatibility metadata." >&2; \

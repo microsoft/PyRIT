@@ -226,7 +226,10 @@ class TestClaudeChatTarget:
             )
             assert bodies[0]["tool_choice"]["type"] == "auto"
 
-    async def test_real_tool_based_json_adapter_does_not_dispatch_formatting_tool_async(self) -> None:
+    @pytest.mark.parametrize("include_text", [False, True])
+    async def test_real_tool_based_json_adapter_does_not_dispatch_formatting_tool_async(
+        self, include_text: bool
+    ) -> None:
         pytest.importorskip("litellm")
         from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 
@@ -244,27 +247,53 @@ class TestClaudeChatTarget:
                 "role": "assistant",
                 "model": "claude-sonnet-4-5",
                 "content": [
+                    *([{"type": "text", "text": "Here is the result."}] if include_text else []),
                     {
                         "type": "tool_use",
                         "id": "json_1",
                         "name": ClaudeChatTarget._JSON_OUTPUT_TOOL_NAME,
                         "input": {"answer": "ok"},
-                    }
+                    },
                 ],
                 "stop_reason": "tool_use",
                 "usage": {"input_tokens": 1, "output_tokens": 2},
             },
         )
-        with patch.object(AsyncHTTPHandler, "post", new_callable=AsyncMock, return_value=response) as post:
+        with (
+            patch.object(AsyncHTTPHandler, "post", new_callable=AsyncMock, return_value=response) as post,
+            patch.object(target, "_extract_response_cost", return_value=0.25),
+        ):
             replies = await target.send_prompt_async(
                 message=MessagePiece(
                     role="user",
                     original_value="Return JSON.",
-                    prompt_metadata=JsonResponseConfig(enabled=True).to_metadata(),
+                    prompt_metadata={
+                        **JsonResponseConfig(enabled=True).to_metadata(),
+                        "token_usage_input_tokens": 999,
+                        "token_usage_cost": "999",
+                        "finish_reason": "stale",
+                        "status": "stale",
+                        "incomplete_reason": "stale",
+                        "caller_tag": "keep",
+                    },
                 ).to_message()
             )
         assert json.loads(replies[-1].get_value()) == {"answer": "ok"}
         assert all(piece.converted_value_data_type == "text" for reply in replies for piece in reply.message_pieces)
+        pieces = replies[-1].message_pieces
+        assert len(pieces) == (2 if include_text else 1)
+        assert pieces[0].prompt_metadata["token_usage_input_tokens"] == 1
+        assert pieces[0].prompt_metadata["token_usage_output_tokens"] == 2
+        assert pieces[0].prompt_metadata["token_usage_cost"] == "0.25"
+        assert pieces[0].prompt_metadata["finish_reason"] == "tool_calls"
+        assert all(piece.prompt_metadata["caller_tag"] == "keep" for piece in pieces)
+        assert all(
+            "status" not in piece.prompt_metadata and "incomplete_reason" not in piece.prompt_metadata
+            for piece in pieces
+        )
+        for piece in pieces[1:]:
+            assert piece.converted_value == "Here is the result."
+            assert not any(key.startswith("token_usage_") or key == "finish_reason" for key in piece.prompt_metadata)
         assert post.await_count == 1
 
     async def test_real_anthropic_explicit_schema_async(self) -> None:
