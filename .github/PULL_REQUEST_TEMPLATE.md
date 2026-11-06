@@ -12,7 +12,8 @@
 
 <!--- Describe the goal of this PR in 1-2 sentences. It should solve one problem end to end. -->
 <!--- Add a concise bulleted list of how you accomplished this goal. -->
-<!--- Include a concise demonstration where applicable (e.g., before/after screenshots for UI changes). -->
+<!--- Include a concise demonstration where applicable, e.g., before/after screenshots for UI changes -->
+<!--- or before/after scorer outputs (score and rationale) for the same response and scoring criteria. -->
 <!--- For breaking changes, explain why the change is necessary and how users should migrate. -->
 
 ## Tests and Documentation
