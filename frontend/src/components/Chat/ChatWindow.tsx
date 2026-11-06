@@ -2586,6 +2586,7 @@ export default function ChatWindow({
           </MessageBar>
         )}
         {editDraft === null && <MessageList
+          key={viewedConversationId ?? 'no-conversation'}
           messages={isEvidenceUnavailable ? [] : messages}
           onCopyToInput={handleCopyToInput}
           copyToInputDisabledReason={singleTurnDisabledReason}
