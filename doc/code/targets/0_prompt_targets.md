@@ -59,64 +59,28 @@ overriding `send_prompt_async`.
 
 ## Runtime generation configuration
 
-Use `RequestGenerationConfig` to override temperature per request without changing
-target defaults or identity. Check `target.capabilities.supports_temperature`
-and `target.temperature_range`. The range is inclusive; `None` means no declared
-bounds, not lack of support.
+Use `RequestGenerationConfig` in a current request's `MessagePiece.prompt_metadata`
+to override temperature without changing shared target defaults:
 
 ```python
-from pyrit.models import Message, MessagePiece, RequestGenerationConfig
-from pyrit.prompt_normalizer import PromptNormalizer
+from pyrit.models import MessagePiece, RequestGenerationConfig
 
-message = Message(
-    message_pieces=[
-        MessagePiece(
-            role="user",
-            original_value="Describe this scene.",
-            prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
-        )
-    ]
+piece = MessagePiece(
+    role="user",
+    original_value="Describe this scene.",
+    prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
 )
-response = await PromptNormalizer().send_prompt_async(message=message, target=target, conversation_id=conversation_id)
 ```
 
-- Put metadata on the current outbound message, never history. One piece is enough;
-  non-null values on multiple pieces must agree.
-- Use a finite number within the target's range; zero is valid when in range.
-  Booleans, numeric strings, conflicts, out-of-range values, and known unsupported
-  overrides fail before target I/O.
-- Overrides win over defaults and passthrough settings, including nested `extra_body`.
-  Missing or null overrides preserve existing payload/default behavior;
-  PyRIT never guesses provider defaults.
-- Transport retries and tool continuations reuse the resolved value. A later
-  logical send can choose another.
-- `RoundRobinTarget` requires support from every child and overlapping known ranges,
-  validating each before sending. It exposes their intersection, or `None` if any
-  child's bounds are unknown. Overrides survive fallback; without one, each child
-  resolves its own default.
+Check `target.capabilities.supports_temperature` and `target.temperature_range`
+before choosing a value. Bounds are inclusive; `None` means unspecified bounds,
+not lack of support. Missing or null temperature preserves existing defaults.
+Invalid, conflicting, or unsupported overrides fail before provider I/O.
 
-`OpenAIChatTarget`, `OpenAICompletionTarget`, and `OpenAIResponseTarget` infer support
-and bounds from the effective model and mode, not a live probe. Unknown model names
-default to supported; bounds are usually 0 to 2 (0 to 1 for `Mistral-Large-3`).
-Explicit declarations cannot bypass reasoning, streaming, or Chat audio-output
-restrictions. Image, TTS, Video, and Realtime adapters do not support runtime temperature.
-
-For the three supported OpenAI adapters, override support through `custom_configuration` or
-`apply_capabilities()`, and bounds through constructor `temperature_range=(0, 1)`
-or `apply_temperature_range(temperature_range=(0, 1))`. Passing `None` to the latter
-restores inference; support updates leave bounds unchanged. `set_model_name()`
-restores constructor declarations and re-infers omitted values. Neither support
-nor bounds declarations change target identity or the configured temperature default.
-
-`PromptNormalizer` saves adapter-authored evidence on request and response pieces.
-Read it with `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)`.
-`info.temperature` contains the `requested` override, `resolved` parameter, and
-`source`: `request`, `target_default`, or `provider_default`. Unknown provider
-defaults stay `None`; this records the submitted parameter, not provider success.
-Messages without evidence, including older records, return `None`.
-
-Conversation saves preserve evidence only from verified, unchanged source pieces.
-See [Chat temperature](../../gui/0_gui.md#temperature) for display rules.
+Read saved request and response evidence with
+`RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)` to inspect the
+requested temperature, resolved value, and source. Unknown provider defaults remain
+`None`. See [Chat temperature](../../gui/0_gui.md#temperature) for the UI.
 
 ## Chat-style targets vs general targets
 

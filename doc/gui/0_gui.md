@@ -101,23 +101,13 @@ corresponding Chat route while retaining query parameters and fragments.
 
 ### Temperature
 
-Use the thermometer below **Send** to override temperature within the supported
-target's range. Blank or **Use target default** clears it. The override applies
-to subsequent sends, not shared defaults or saved messages.
-If a supported target declares no bounds, the control says so rather than assuming
-a range; send-time validation remains authoritative.
-
-Switching targets or attacks, or reloading, clears it. Returning to a retained
-draft restores that draft's setting.
-
-Select a saved temperature footer to inspect the requested override, parameter
-sent, and source. Footers are hidden only when the target explicitly reports
-temperature as unsupported or the message has no evidence. Unresolved targets
-still show evidence, including **provider default (unknown)**; this does not
-enable sending or temperature controls.
+On supported targets, use the thermometer below **Send** to adjust temperature
+for subsequent messages. **Use target default** clears the override; shared
+defaults and saved messages are unchanged. Select a message's temperature footer
+to inspect its saved settings.
 
 See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
-for the SDK contract and capability rules.
+for SDK usage.
 
 ## Scanner
 
