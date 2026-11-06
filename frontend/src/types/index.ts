@@ -455,6 +455,10 @@ export interface TargetInstance {
   target_registry_name: string
   /** Saved, from the server's configuration, or Temporary. Absent for inner targets. */
   origin?: TargetOrigin | null
+  /** Name of the user who saved the target; null when it isn't saved or was saved with sign-in off. */
+  saved_by?: string | null
+  /** Whether the signed-in user is the one who saved the target. */
+  saved_by_me?: boolean
   reconstructable?: boolean
   reconstruction_error?: string | null
   supports_temperature_override?: boolean

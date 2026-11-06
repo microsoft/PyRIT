@@ -343,6 +343,34 @@ test.describe("Target Registry Page", () => {
     await expect(reset).toBeFocused();
     await expect(reset).toHaveAttribute("aria-disabled", "true");
   });
+
+  test("should say who saved each target and list only yours on request", async ({ page }) => {
+    await page.route(/\/api\/targets(?:\?.*)?$/, async (route) => {
+      await route.fulfill(
+        mockTargetsList([
+          { target_registry_name: "mine_chat", target_type: "OpenAIChatTarget", model_name: "gpt-4o", origin: "saved",
+            saved_by: "Ada", saved_by_me: true },
+          { target_registry_name: "bobs_chat", target_type: "OpenAIChatTarget", model_name: "gpt-4o-mini",
+            origin: "saved", saved_by: "Bob" },
+          { target_registry_name: "startup_chat", target_type: "OpenAIChatTarget", model_name: "gpt-4.1",
+            origin: "configuration" },
+        ])
+      );
+    });
+    await goToTargets(page);
+
+    await expect(page.getByTestId("target-row-mine_chat").getByText("Saved by you", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("target-row-bobs_chat").getByText("Saved by Bob", { exact: true })).toBeVisible();
+    await page.getByRole("checkbox", { name: "Only targets I saved (1)" }).check();
+    await expect(page.getByTestId("target-row-bobs_chat")).toHaveCount(0);
+    await expect(page.getByTestId("target-row-startup_chat")).toHaveCount(0);
+    await expect(page.getByTestId("target-row-mine_chat")).toBeVisible();
+
+    // The choice isn't kept, so a fresh load lists everyone's targets again.
+    await goToTargets(page);
+    await expect(page.getByTestId("target-row-bobs_chat")).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "Only targets I saved (1)" })).not.toBeChecked();
+  });
 });
 
 test.describe("Create Target Dialog", () => {

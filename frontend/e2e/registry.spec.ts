@@ -163,7 +163,11 @@ test("saves a target from the New Target dialog and still lists it as Saved afte
   await expect(page.getByTestId(`target-row-${name}`).getByText("Saved", { exact: true })).toBeVisible();
   const saved = await request.get(`/api/targets/${name}`, { headers: compatibilityHeaders() });
   expect(saved.ok(), await saved.text()).toBe(true);
-  expect((await saved.json()).origin).toBe("saved");
+  const savedTarget = await saved.json();
+  // Sign-in is off here, so nobody is named as the one who saved it and there is nothing to narrow the list to.
+  expect([savedTarget.origin, savedTarget.saved_by, savedTarget.saved_by_me]).toEqual(["saved", null, false]);
+  await expect(page.getByTestId(`target-row-${name}`).getByText(/^Saved by /)).toHaveCount(0);
+  await expect(page.getByRole("checkbox", { name: /Only targets I saved/ })).toHaveCount(0);
 
   await page.reload();
   await expect(page.getByTestId(`target-row-${name}`).getByText("Saved", { exact: true })).toBeVisible();

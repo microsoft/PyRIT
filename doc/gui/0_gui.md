@@ -195,7 +195,10 @@ a Temporary target is created as **Temporary** instead, and the dialog says why.
 A Temporary target is gone after the backend restarts or is reinitialized.
 
 The Targets table labels each target **Saved**, **From configuration**
-(registered by an initializer at startup), or **Temporary**.
+(registered by an initializer at startup), or **Temporary**. A target saved while
+signed in also says who saved it (**Saved by you** for your own). Once you have
+saved one, check **Only targets I saved** to list just yours. Anyone can still
+use every target.
 
 Converters and techniques added only to the live registry must be recreated
 after a backend restart or reinitialization. Use

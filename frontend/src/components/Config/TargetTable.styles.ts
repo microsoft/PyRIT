@@ -42,6 +42,12 @@ export const useTargetTableStyles = makeStyles({
   registryNameCell: {
     minWidth: 0,
   },
+  savedBy: {
+    display: 'block',
+    marginTop: tokens.spacingVerticalXXS,
+    color: tokens.colorNeutralForeground2,
+    overflowWrap: 'anywhere',
+  },
   registryNameText: {
     display: 'block',
     maxWidth: '100%',
@@ -107,6 +113,9 @@ export const useTargetTableStyles = makeStyles({
     cursor: 'help',
   },
   visibilityControls: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    columnGap: tokens.spacingHorizontalL,
     marginBottom: tokens.spacingVerticalS,
   },
   noMatchState: {
