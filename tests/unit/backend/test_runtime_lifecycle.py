@@ -224,6 +224,65 @@ async def test_shutdown_disposes_memory_after_services_even_on_failure(
         assert getattr(error, "__notes__", None) == expected
 
 
+@pytest.mark.parametrize("scenario_fails", [False, True])
+async def test_shutdown_mixed_close_group_still_disposes_memory_and_reports_errors_async(
+    *, runtime: RuntimeLifecycle, scenario_fails: bool
+) -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    scenario_service = MagicMock(spec=ScenarioRunService)
+    scenario_error = RuntimeError("scenario shutdown failed")
+    if scenario_fails:
+        scenario_service.shutdown_async.side_effect = scenario_error
+    close_error = BaseExceptionGroup(
+        "Backend service closure failed.", [asyncio.CancelledError("cached close"), RuntimeError("analytics close")]
+    )
+    with (
+        patch.object(CentralMemory, "_memory_instance", memory),
+        patch.object(lifecycle_module, "peek_scenario_run_service", return_value=scenario_service),
+        patch.object(lifecycle_module, "close_services_async", AsyncMock(side_effect=close_error)),
+        pytest.raises(BaseExceptionGroup) as caught,
+    ):
+        await runtime.shutdown_async()
+
+    if scenario_fails:
+        assert caught.value.exceptions == (scenario_error, close_error)
+    else:
+        assert caught.value is close_error
+    memory.dispose_engine_async.assert_awaited_once()
+
+
+async def test_apply_mixed_close_group_requires_restart_and_propagates_cancellation_async(
+    runtime: RuntimeLifecycle,
+) -> None:
+    close_error = BaseExceptionGroup(
+        "Backend service closure failed.", [asyncio.CancelledError("cached close"), RuntimeError("analytics close")]
+    )
+    with (
+        patch.object(lifecycle_module, "close_services_async", AsyncMock(side_effect=close_error)),
+        pytest.raises(BaseExceptionGroup) as caught,
+    ):
+        await apply_async(runtime)
+
+    assert caught.value is close_error
+    assert runtime.state == "restart-required"
+    assert runtime.outcome == "restart-required"
+    config = await runtime._load_async()
+    config.apply_prepared_reinitialization_async.assert_not_awaited()
+
+
+async def test_apply_close_group_without_cancellation_requires_restart_without_raising_async(
+    runtime: RuntimeLifecycle,
+) -> None:
+    close_error = ExceptionGroup(
+        "Backend service closure failed.", [RuntimeError("cached close"), RuntimeError("analytics close")]
+    )
+    with patch.object(lifecycle_module, "close_services_async", AsyncMock(side_effect=close_error)):
+        await apply_async(runtime)
+
+    assert runtime.state == "restart-required"
+    assert runtime.outcome == "restart-required"
+
+
 async def test_shutdown_repeated_failure_preserves_original_error_async(runtime: RuntimeLifecycle) -> None:
     failure = RuntimeError("service shutdown failed")
     lifecycle_module.close_services_async.side_effect = failure

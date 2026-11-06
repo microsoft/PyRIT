@@ -4008,6 +4008,35 @@ class TestScenarioRunServiceExecution:
         assert fetched is not None
         assert fetched.error == "scenario exploded"
 
+    async def test_execute_run_reports_every_failure_in_an_exception_group(self, mock_all_registries) -> None:
+        service = ScenarioRunService()
+        mock_instance = mock_all_registries["scenario_instance"]
+        release_execution = asyncio.Event()
+
+        async def _run() -> None:
+            await release_execution.wait()
+            raise ExceptionGroup("Multiple failed", [ValueError("first boom"), RuntimeError("second boom")])
+
+        mock_instance.run_async = AsyncMock(side_effect=_run)
+        response = await service.start_run_async(request=_make_request())
+        active = service._active_tasks.get(response.scenario_result_id)
+        assert active is not None
+        assert active.task is not None
+        release_execution.set()
+        await active.task
+
+        expected = "Multiple failed (2 sub-exceptions): [ValueError: first boom; RuntimeError: second boom]"
+        assert active.error == expected
+        assert active.cancellation_reason == expected
+        assert active.cancellation_error_type == "ExceptionGroup"
+        mock_all_registries["memory"].try_update_scenario_run_state_async.assert_awaited_with(
+            scenario_result_id=response.scenario_result_id,
+            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+            scenario_run_state=ScenarioRunState.FAILED,
+            error_message=expected,
+            error_type="ExceptionGroup",
+        )
+
     async def test_execute_run_retains_richer_terminal_error_from_scenario(self, mock_all_registries) -> None:
         service = ScenarioRunService()
         mock_instance = mock_all_registries["scenario_instance"]

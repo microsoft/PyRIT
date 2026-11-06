@@ -85,12 +85,17 @@ class SeedIdentifier(ComponentIdentifier):
 
 
 def compute_seed_group_hash(seed_identifiers: Sequence[SeedIdentifier]) -> str:
-    """Return the deterministic hash of ordered canonical seed identifiers."""
-    return config_hash(
-        {
-            "seed_identifiers": [
-                seed_identifier.model_dump(exclude={"hash", "eval_hash", "pyrit_version"})
-                for seed_identifier in seed_identifiers
-            ]
-        }
-    )
+    """
+    Return the deterministic hash of ordered seed content hashes.
+
+    Content hashes exclude storage metadata (including PyRIT versions and eval
+    hashes), also for child identifiers. Do not hash the flat storage serialization:
+    its custom serializer does not honor ``model_dump(exclude=...)``.
+
+    Args:
+        seed_identifiers (Sequence[SeedIdentifier]): The ordered seed identifiers.
+
+    Returns:
+        str: The SHA256 logical seed-group ID.
+    """
+    return config_hash({"seed_identifiers": [seed_identifier.hash for seed_identifier in seed_identifiers]})
