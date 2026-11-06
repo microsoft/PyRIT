@@ -11,6 +11,12 @@ export const useMessageListStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalL,
   },
+  savedEvidenceBody: {
+    [NARROW_VIEWPORT_QUERY]: {
+      flex: '0 0 auto',
+      overflowY: 'visible',
+    },
+  },
   message: {
     display: 'flex',
     gap: tokens.spacingHorizontalM,
@@ -73,6 +79,7 @@ export const useMessageListStyles = makeStyles({
   footerDetails: {
     display: 'flex',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: tokens.spacingHorizontalXS,
   },
   pieceRow: {

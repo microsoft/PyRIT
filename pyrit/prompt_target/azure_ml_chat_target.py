@@ -117,7 +117,11 @@ class AzureMLChatTarget(PromptTarget):
                 Note that the link above may not be comprehensive, and specific acceptable parameters may be
                 model-dependent. If a model does not accept a certain parameter that is passed in, it will be skipped
                 without throwing an error.
+
+        Raises:
+            ValueError: If ``auth_mode`` is not one of ``supported_auth_modes``.
         """
+        self._validate_auth_mode(auth_mode)
         endpoint_value = default_values.get_required_value(
             env_var_name=self.endpoint_uri_environment_variable, passed_value=endpoint
         )

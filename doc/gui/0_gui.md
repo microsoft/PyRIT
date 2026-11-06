@@ -71,6 +71,28 @@ Use **New attack** to start a blank draft. The **History** tab
 are read-only; **Continue manually** creates a separate manual attack. Export
 a conversation when you need a transcript.
 
+Drop files onto the chat or an editable conversation prompt to attach them.
+Converter file fields also accept drops, including **New converter** in the
+chat pane. File drops use the existing attachment or **Upload** handling;
+the click controls and typed path fields remain available.
+The attachment chooser's file-type filter is browser guidance, not an
+application-enforced allowlist. Both entry paths keep the existing read and
+configured-component checks. A file in the draft is not a guarantee that the
+selected target can use it.
+
+A drop outside these writable surfaces, including on a dialog that has no
+file input, does not attach a file or replace the page. A file drag shows one
+drop target for the chat. Read-only and disabled inputs remain locked.
+During a blocked file drag, Chat shows the same reason as its disabled prompt.
+Newly selected converter files show their name and size with **Replace** and
+**Remove**, instead of an encoded value. Supported image previews also show a
+thumbnail. Existing encoded values without file details use a generic label;
+unknown names and sizes are not guessed. Typed and pasted paths or values stay
+editable. **Remove** restores path entry. If a converter file
+cannot be read, the dialog reports the error and keeps the previous value.
+Converter file fields still use only the first selected file. If a selection
+contains extra files, the dialog reports how many were ignored.
+
 Older `/attacks/{attackId}` and
 `/attacks/{attackId}/conversations/{conversationId}` links redirect to the
 corresponding Chat route while retaining query parameters and fragments.
@@ -166,6 +188,26 @@ recreated after a backend restart or reinitialization. Use
 Browse datasets already loaded into backend memory. Open a dataset to inspect
 its examples, search text, or filter by seed type. Supported media can be
 previewed on request.
+
+Use **Import into Chat** to stage an example directly into Chat without copying
+text or reattaching files:
+- **Single prompt or multimodal message**: loads the text and attachments into the
+  editable composer.
+- **Multi-turn conversation**: opens the conversation editor with all turns intact,
+  mapping assistant and tool messages to simulated roles. If the conversation ends
+  in a user turn, that turn is also visible and editable in the editor. Saving
+  stores the preceding history and restores the edited final turn in the prompt box,
+  ready for an explicit send.
+- **Import destinations**: choose between starting a new attack, continuing the
+  current conversation, or creating a new conversation within the current attack.
+- **Preserve evidence**: multi-turn imports can extend an unsent conversation in
+  place. For a conversation containing sent responses or request traces, choose a
+  new conversation or new attack instead. Conflicting system or developer instructions
+  require an explicit choice; they are never silently combined.
+- **Keep setup**: replacing a prompt retains the destination's system prompt and
+  configured converter pipelines, but clears generated conversion results.
+- **No automatic sending**: importing and saving do not make model calls or execute
+  tools; edits remain under your control until you explicitly send or save.
 
 Load data through PyRIT; the visible catalog checks for changes each minute. See
 [datasets](../code/datasets/0_dataset.md) for loading options.
