@@ -417,9 +417,10 @@ class DatasetConfiguration:
         self.max_total = None if isinstance(max_total, _Unset) else max_total
         self.fetch = DatasetFetchPolicy.IF_MISSING if isinstance(fetch, _Unset) else fetch
         self._filters: dict[str, list[str]] = dict(filters or {})
+        self._user_validators: list[Callable[[ResolvedDataset], None]] = list(validators) if validators else []
         self._validators: list[Callable[[ResolvedDataset], None]] = [
             *self._default_validators(),
-            *(list(validators) if validators else []),
+            *self._user_validators,
         ]
         self._validate_selection_options()
 
@@ -494,6 +495,7 @@ class DatasetConfiguration:
         result = copy.copy(self)
         result._filters = {key: list(values) for key, values in self._filters.items()}
         result._validators = list(self._validators)
+        result._user_validators = list(self._user_validators)
         if not isinstance(sources, _Unset):
             if self.source_kind is DatasetSourceKind.INLINE:
                 raise DatasetConstraintError("Cannot replace inline seeds with named sources through overrides.")
@@ -1021,11 +1023,48 @@ class DatasetAttackConfiguration(DatasetConfiguration):
                 dataset fails validation, or no attack groups could be built.
         """
         selection = await self._resolve_attack_groups_async()
-        sampled = selection.select(apply_sampling=apply_sampling)
-        if not any(sampled.values()):
+        return self._require_selected_groups(selection.select(apply_sampling=apply_sampling))
+
+    def select_assembled_groups(
+        self, *, groups_by_population: dict[str, list[AttackSeedGroup]], apply_sampling: bool = True
+    ) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Validate and limit attack groups a scenario assembled from its required data.
+
+        The configuration has no sources of its own here: it validates the assembled
+        population and applies ``max_total`` across it, keeping each population's key.
+
+        Args:
+            groups_by_population (dict[str, list[AttackSeedGroup]]): Assembled groups keyed by population.
+            apply_sampling (bool): When True (default), apply ``max_total``. Resume passes False.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The validated, limited groups.
+
+        Raises:
+            DatasetConstraintError: If the configuration has its own sources or inline seeds, the
+                population fails validation, or no attack groups remain.
+        """
+        self.validate_configuration()
+        if self.sources or self.source_kind is DatasetSourceKind.INLINE:
+            raise DatasetConstraintError(
+                "Assembled populations can't be combined with dataset sources or inline seeds."
+            )
+        self.validate(
+            ResolvedDataset(
+                seeds=[seed for groups in groups_by_population.values() for group in groups for seed in group.seeds],
+                source_kind=self.source_kind,
+                dataset_names=tuple(groups_by_population),
+            )
+        )
+        selection = _ResolvedAttackGroups(configuration=self, groups=groups_by_population)
+        return self._require_selected_groups(selection.select(apply_sampling=apply_sampling))
+
+    def _require_selected_groups(self, selected: dict[str, list[AttackSeedGroup]]) -> dict[str, list[AttackSeedGroup]]:
+        if not any(selected.values()):
             names = ", ".join(self.dataset_names) if self.dataset_names else "<inline>"
             raise DatasetConstraintError(f"Resolved attack-group dataset is empty (datasets: {names}).")
-        return sampled
+        return selected
 
     async def _resolve_attack_groups_async(self) -> _ResolvedAttackGroups:
         self.validate_configuration()

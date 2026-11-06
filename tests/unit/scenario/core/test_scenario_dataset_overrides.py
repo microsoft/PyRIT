@@ -206,6 +206,7 @@ async def test_catalog_dataset_controls_do_not_depend_on_estimates() -> None:
     assert item.dataset_options.mode is DatasetSelectionMode.FIXED
     assert item.dataset_options.per_dataset_limit is False
     assert [source.name for source in item.dataset_defaults.sources] == ApiKey.required_datasets()
+    assert item.default_datasets == ApiKey.required_datasets()
     assert item.dataset_defaults.max_total == 20
 
 

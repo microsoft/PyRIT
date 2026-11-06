@@ -43,7 +43,7 @@ from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
 from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial
 from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
 from pyrit.scenario.scenarios.foundry.red_team_agent import FoundryComposite, FoundryTechnique, RedTeamAgent
-from pyrit.scenario.scenarios.garak.api_key import ApiKey, ApiKeyDatasetConfiguration
+from pyrit.scenario.scenarios.garak.api_key import ApiKey
 from pyrit.scenario.scenarios.garak.encoding import Encoding
 from pyrit.scenario.scenarios.garak.exploitation import Exploitation
 from pyrit.scenario.scenarios.garak.figstep import FigStep
@@ -224,14 +224,12 @@ async def test_configuration_only_checks_are_shared_before_dataset_reads_async(
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
     "configuration_class",
-    [ApiKeyDatasetConfiguration, PromptInjectDatasetConfiguration, LatentInjectionDatasetConfiguration],
+    [LatentInjectionDatasetConfiguration],
 )
 def test_ingredient_configurations_require_uncapped_sources(
     configuration_class: type[DatasetAttackConfiguration],
 ) -> None:
     scenario_class = {
-        ApiKeyDatasetConfiguration: ApiKey,
-        PromptInjectDatasetConfiguration: PromptInject,
         LatentInjectionDatasetConfiguration: LatentInjection,
     }[configuration_class]
     config = configuration_class(sources=[DatasetSource(name=name) for name in scenario_class.required_datasets()])
@@ -269,7 +267,7 @@ async def test_compound_configuration_checks_children_before_a_bounded_preview_a
     config = CompoundDatasetAttackConfiguration(
         configurations=[
             DatasetAttackConfiguration(dataset_names=["missing"]),
-            PromptInjectDatasetConfiguration(dataset_names=PromptInject.required_datasets(), max_dataset_size=1),
+            PromptInjectDatasetConfiguration(max_total=1),
         ],
         max_dataset_size=10,
     )
