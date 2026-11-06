@@ -61,8 +61,8 @@ overriding `send_prompt_async`.
 
 Use `RequestGenerationConfig` to override temperature per request without changing
 target defaults or identity. Check `target.capabilities.supports_temperature`
-and `target.temperature_range`; [Target Capabilities](./6_1_target_capabilities.ipynb#runtime-temperature-support)
-explains model restrictions and custom declarations.
+and `target.temperature_range`. The range is inclusive; `None` means no declared
+bounds, not lack of support.
 
 ```python
 from pyrit.models import Message, MessagePiece, RequestGenerationConfig
@@ -90,9 +90,23 @@ response = await PromptNormalizer().send_prompt_async(message=message, target=ta
   PyRIT never guesses provider defaults.
 - Transport retries and tool continuations reuse the resolved value. A later
   logical send can choose another.
-- `RoundRobinTarget` requires support and a shared range across all children,
-  validating each before sending. Overrides survive fallback; without one,
-  each child resolves its own default.
+- `RoundRobinTarget` requires support from every child and overlapping known ranges,
+  validating each before sending. It exposes their intersection, or `None` if any
+  child's bounds are unknown. Overrides survive fallback; without one, each child
+  resolves its own default.
+
+`OpenAIChatTarget`, `OpenAICompletionTarget`, and `OpenAIResponseTarget` infer support
+and bounds from the effective model and mode, not a live probe. Unknown model names
+default to supported; bounds are usually 0 to 2 (0 to 1 for `Mistral-Large-3`).
+Explicit declarations cannot bypass reasoning, streaming, or Chat audio-output
+restrictions. Image, TTS, Video, and Realtime adapters do not support runtime temperature.
+
+For the three supported OpenAI adapters, override support through `custom_configuration` or
+`apply_capabilities()`, and bounds through constructor `temperature_range=(0, 1)`
+or `apply_temperature_range(temperature_range=(0, 1))`. Passing `None` to the latter
+restores inference; support updates leave bounds unchanged. `set_model_name()`
+restores constructor declarations and re-infers omitted values. Neither support
+nor bounds declarations change target identity or the configured temperature default.
 
 `PromptNormalizer` saves adapter-authored evidence on request and response pieces.
 Read it with `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)`.

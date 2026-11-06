@@ -99,27 +99,9 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 # and other models pick up the right modality combinations automatically. Unknown models fall back to
 # the class default.
 #
-# ### Runtime temperature support
-#
-# Check `target.capabilities.supports_temperature` and `target.temperature_range`.
-# Bounds are inclusive; `None` means undeclared, not unsupported.
-#
-# `OpenAIChatTarget`, `OpenAICompletionTarget`, and `OpenAIResponseTarget` infer support
-# and bounds from the effective model and mode, not a live probe. Unknown model names
-# default to supported; bounds are usually 0–2 (0–1 for `Mistral-Large-3`).
-# Explicit support cannot bypass reasoning, streaming, or Chat audio-output restrictions.
-# Image, TTS, Video, and Realtime adapters do not implement runtime temperature.
-#
-# Override support through `custom_configuration` or `apply_capabilities()`. Set bounds
-# with constructor `temperature_range=(0, 1)` or `apply_temperature_range(temperature_range=(0, 1))`;
-# passing `None` to the latter restores inference. Support updates leave bounds unchanged.
-# `set_model_name()` restores constructor declarations, re-inferring omitted values.
-# These declarations do not change target identity or the configured temperature default.
-#
-# The GUI and send-time validation use the same bounds. `RoundRobinTarget` validates
-# every child and requires shared support and overlapping known ranges. It exposes
-# their intersection, or `None` if any child's bounds are unknown. Requests without
-# overrides keep existing behavior.
+# Runtime temperature support depends on the configured target instance, not just its model profile.
+# Check `target.capabilities.supports_temperature`; see
+# [Runtime generation configuration](./0_prompt_targets.md#runtime-generation-configuration) for usage and bounds.
 
 # %%
 class_default = OpenAIChatTarget._DEFAULT_CONFIGURATION.capabilities
