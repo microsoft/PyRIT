@@ -359,6 +359,84 @@ describe('ScenarioDetail', () => {
     expect(mockStartRun.mock.calls[0][0]).not.toHaveProperty('adversarial_target_name')
   })
 
+  it.each(['preset', 'saved run'] as const)(
+    'omits a removed editable %s parameter after catalog refresh',
+    async (seed: 'preset' | 'saved run') => {
+      jest.useFakeTimers()
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      const scenarioParams = { iterations: 5, custom_key: 'x' }
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [
+          { name: 'iterations', type_name: 'int', required: false, default: null, choices: null, is_list: false },
+        ],
+      }))
+      mockGetPreset.mockResolvedValue(makePresetResponse({ scenario_params: scenarioParams }))
+      const detail = renderDetail(
+        '/scanner/launch/foundry.red_team_agent' + (seed === 'preset' ? '?preset=spanish_probe' : ''),
+        seed === 'saved run' ? {
+          initialRun: {
+            scenario_name: 'foundry.red_team_agent', target_name: 'target-a', scenario_params: scenarioParams,
+          },
+        } : {},
+      )
+      await flushRenderedPromises()
+      const iterations = screen.getByLabelText(/^iterations/)
+      await user.clear(iterations)
+      await user.type(iterations, '7')
+      await advanceTimers(300)
+      expect(mockEstimateRun.mock.calls.at(-1)?.[1].scenario_params).toEqual({ custom_key: 'x', iterations: 7 })
+
+      mockGetScenario.mockResolvedValue(makeScenario())
+      mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+      detail.updateDefaults({})
+      await flushRenderedPromises()
+      await user.click(screen.getByRole('button', { name: 'I have reviewed the refreshed selections' }))
+      await advanceTimers(300)
+
+      expect(screen.queryByLabelText(/^iterations/)).not.toBeInTheDocument()
+      expect(mockEstimateRun.mock.calls.at(-1)?.[1].scenario_params).toEqual({ custom_key: 'x' })
+      await confirmRunPreview(user)
+      expect(mockStartRun.mock.calls[0][0].scenario_params).toEqual({ custom_key: 'x' })
+    },
+  )
+
+  it.each(['preset', 'saved run'] as const)(
+    'retains a carried %s parameter when catalog refresh adds its field',
+    async (seed: 'preset' | 'saved run') => {
+      jest.useFakeTimers()
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      const scenarioParams = { custom_key: 'x' }
+      mockGetPreset.mockResolvedValue(makePresetResponse({ scenario_params: scenarioParams }))
+      const detail = renderDetail(
+        '/scanner/launch/foundry.red_team_agent' + (seed === 'preset' ? '?preset=spanish_probe' : ''),
+        seed === 'saved run' ? {
+          initialRun: {
+            scenario_name: 'foundry.red_team_agent', target_name: 'target-a', scenario_params: scenarioParams,
+          },
+        } : {},
+      )
+      await flushRenderedPromises()
+      await advanceTimers(300)
+      expect(mockEstimateRun.mock.calls.at(-1)?.[1].scenario_params).toEqual({ custom_key: 'x' })
+
+      mockGetScenario.mockResolvedValue(makeScenario({
+        supported_parameters: [
+          { name: 'custom_key', type_name: 'str', required: false, default: null, choices: null, is_list: false },
+        ],
+      }))
+      mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+      detail.updateDefaults({})
+      await flushRenderedPromises()
+      await user.click(screen.getByRole('button', { name: 'I have reviewed the refreshed selections' }))
+      await advanceTimers(300)
+
+      expect(screen.getByLabelText(/^custom_key/)).toBeInTheDocument()
+      expect(mockEstimateRun.mock.calls.at(-1)?.[1].scenario_params).toEqual({ custom_key: 'x' })
+      await confirmRunPreview(user)
+      expect(mockStartRun.mock.calls[0][0].scenario_params).toEqual({ custom_key: 'x' })
+    },
+  )
+
   describe('scanner conversation configuration', () => {
     const saved: AddMessageResponse = {
       attack: {

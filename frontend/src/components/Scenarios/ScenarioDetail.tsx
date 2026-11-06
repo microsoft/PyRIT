@@ -482,9 +482,8 @@ function ScenarioLaunchForm({
     && selectedTechniques.some((name) => !presetTokens.has(name)
       && !techniqueOptions.some((technique) => technique.name === name)))
   const savedScenarioParams = initialRun?.scenario_params ?? preset?.preset.scenario_params
-  const carriedScenarioParams = useMemo(
+  const [carriedScenarioParams] = useState(
     () => carriedPresetScenarioParams(savedScenarioParams, dynamicParameters),
-    [savedScenarioParams, dynamicParameters],
   )
   const carriedScenarioParamNames = Object.keys(carriedScenarioParams)
   const presetScenarioParams = useMemo(

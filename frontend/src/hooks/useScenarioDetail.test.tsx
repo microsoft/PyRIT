@@ -74,15 +74,30 @@ describe('useScenarioDetail', () => {
     await waitFor(() => expect(getScenario).toHaveBeenCalledTimes(2))
   })
 
-  it('ignores an answer that arrives after unmount', async () => {
-    let finish: (scenario: RegisteredScenario) => void = () => {}
-    getScenario.mockReturnValue(new Promise((resolve) => { finish = resolve }))
-    const view = renderHook(() => useScenarioDetail('garak.api_key'))
-    const before = view.result.current
+  it.each(['success', 'error'] as const)(
+    'ignores an older generation request that settles with %s after the new catalog',
+    async (outcome: 'success' | 'error') => {
+      let finishOld: () => void = () => { throw new Error('The old request has not started') }
+      const refreshed = { ...SCENARIO, supported_parameter_names: ['objective_target', 'prompt'] }
+      getScenario
+        .mockReturnValueOnce(new Promise<RegisteredScenario>((resolve, reject) => {
+          finishOld = outcome === 'success'
+            ? () => resolve(SCENARIO)
+            : () => reject({ isAxiosError: true, response: { status: 500, data: { detail: 'Old failure' } } })
+        }))
+        .mockResolvedValueOnce(refreshed)
+      const view = renderHook(() => useScenarioDetail('garak.api_key'))
 
-    view.unmount()
-    await act(async () => { finish(SCENARIO) })
+      runtime = { ready: true, generation: 'two' }
+      view.rerender()
+      await waitFor(() => expect(view.result.current.scenario).toBe(refreshed))
+      expect(getScenario).toHaveBeenCalledTimes(2)
 
-    expect(view.result.current).toBe(before)
-  })
+      await act(async () => { finishOld() })
+
+      expect(view.result.current.scenario).toBe(refreshed)
+      expect(view.result.current.status).toBe('success')
+      expect(view.result.current.error).toBeNull()
+    },
+  )
 })
