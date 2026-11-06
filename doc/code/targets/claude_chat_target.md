@@ -33,10 +33,12 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)
 
+
 @tool
 async def add_one_async(*, value: int) -> int:
     """Add one to a number."""
     return value + 1
+
 
 target = ClaudeChatTarget(
     model_name="claude-sonnet-4-6",
@@ -59,9 +61,7 @@ print(reply.get_value())
 follow_up = await normalizer.send_prompt_async(
     target=target,
     conversation_id="claude-example",
-    message=MessagePiece(
-        role="user", original_value="What was the result? Do not call tools again."
-    ).to_message(),
+    message=MessagePiece(role="user", original_value="What was the result? Do not call tools again.").to_message(),
 )
 ```
 
