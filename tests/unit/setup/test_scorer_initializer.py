@@ -166,6 +166,11 @@ class TestScorerInitializerInitialize:
         assert wrapped._scorer.get_chat_target() is target
         assert wrapped._scorer.get_identifier() == raw.get_identifier()
         assert wrapped._threshold == 0.7
+        assert raw.evaluation_file_mapping is None
+        assert wrapped.evaluation_file_mapping is not None
+        assert [entry.name for entry in registry.instances.get_by_tag(tag="skip_batch_evaluation")] == [
+            "task_achieved_microsoft_decision"
+        ]
         assert len(registry.instances) == 2
         assert len(registry.instances.get_by_tag(tag=ScorerInitializerTags.MICROSOFT_DECISION)) == 2
         for tag in (

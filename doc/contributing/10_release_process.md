@@ -108,6 +108,12 @@ for private vulnerability reporting.
   - **Partner integration tests.** Ensure the partner integration tests are also passing. These tests validate that we are not breaking contracts with partner teams (e.g., Foundry). If any are failing, coordinate with the affected partner teams before proceeding with the release.
   - **Azure key-based auth is disabled in our tenant.** Our Azure subscription has API-key (local) auth turned off, so Azure target integration tests authenticate with Microsoft Entra ID. Tests that run notebooks requiring Azure API keys are deliberately skipped; otherwise they fail with HTTP 403 `AuthenticationTypeDisabled` ("Key based authentication is disabled for this resource"). Do not re-enable key auth for our tenant. When validating a release manually, authenticate Azure targets with Entra (`az login`) rather than API keys.
 - **Update scorer metrics.** Run `python -m build_scripts.evaluate_scorers` and commit the results so that scorer evaluation metrics are up to date.
+  Scorers explicitly tagged `skip_batch_evaluation` are reported as skipped, including
+  when selected through `--tags`. The raw `task_achieved_microsoft_decision` probability
+  scorer carries this tag; its `task_achieved_microsoft_decision_threshold_07` wrapper
+  remains eligible for the objective benchmark. Both remain registered for normal use.
+  Missing evaluation mappings on other selected scorers are errors, not implicit exclusions.
+  An empty eligible selection also exits nonzero.
   Completion may use cached metrics; it does not guarantee fresh scoring.
   Blocked judge requests produce undetermined judgments rather than aborting the evaluation.
   A blocked response being evaluated is different: existing scorer semantics still apply

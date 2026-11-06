@@ -69,6 +69,9 @@ class ScorerInitializerTags(str, Enum):
     OBJECTIVE_COMPOSITE = "objective_composite"
     MICROSOFT_DECISION = "microsoft_decision"
 
+    # Batch-evaluation exclusions do not affect availability for normal scoring.
+    SKIP_BATCH_EVALUATION = "skip_batch_evaluation"
+
     # Overall best objective scorer (used by scenarios)
     BEST_OBJECTIVE = "best_objective"
     DEFAULT_OBJECTIVE_SCORER = "default_objective_scorer"
@@ -482,7 +485,7 @@ class ScorerInitializer(PyRITInitializer):
             name="task_achieved_microsoft_decision",
             factory=_build_decision_scorer,
             required_targets=[target],
-            tags=decision_tags,
+            tags=[*decision_tags, ScorerInitializerTags.SKIP_BATCH_EVALUATION],
         )
         self._try_register(
             name="task_achieved_microsoft_decision_threshold_07",

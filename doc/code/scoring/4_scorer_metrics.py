@@ -372,17 +372,24 @@ print(likert_scorer.evaluation_file_mapping)
 # ## Batch Evaluation with `evaluate_scorers.py`
 #
 # While `evaluate_async()` runs evaluations for a single scorer, the `evaluate_scorers.py` script
-# evaluates **all registered scorers** in bulk. This is useful for benchmarking after changing scorer
+# evaluates **eligible registered scorers** in bulk. This is useful for benchmarking after changing scorer
 # prompts, adding new variants, or updating human-labeled datasets.
 #
 # The script initializes PyRIT with `ScorerInitializer` (which registers all configured scorers),
-# then runs `evaluate_async()` on each one. Results are saved to the JSONL registry files in
+# then runs `evaluate_async()` on each eligible entry. Results are saved to the JSONL registry files in
 # `pyrit/datasets/scorer_evals/`.
+#
+# Entries tagged `skip_batch_evaluation` are reported as skipped, even when matched by `--tags`.
+# The raw Decision probability scorer carries this tag; its 0.7-threshold wrapper remains eligible
+# for the objective benchmark. Both remain available for normal scoring. The tag only controls
+# batch selection; it does not change the public `evaluate_async()` API.
+# Missing evaluation mappings on other selected scorers remain errors. The batch finishes the
+# remaining evaluations before exiting nonzero on failure; selecting no eligible scorers also fails.
 #
 # ### Basic Usage
 #
 # ```bash
-# # Evaluate all registered scorers (long-running — can take hours)
+# # Evaluate all eligible registered scorers (long-running — can take hours)
 # python -m build_scripts.evaluate_scorers
 #
 # # Evaluate only scorers with specific tags
