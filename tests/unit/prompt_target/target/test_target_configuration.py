@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -327,6 +327,19 @@ def test_ensure_can_handle_raises_valueerror_for_non_normalizable_capability():
     config = TargetConfiguration(capabilities=caps)
     with pytest.raises(ValueError, match="no handling policy"):
         config.ensure_can_handle(capability=CapabilityName.MULTI_MESSAGE_PIECES)
+
+
+def test_ensure_can_handle_unknown_behavior_keeps_historical_fallback():
+    """Values outside UnsupportedCapabilityBehavior keep the ADAPT error, not a new failure mode."""
+    config = TargetConfiguration(
+        capabilities=TargetCapabilities(supports_editable_history=False),
+        policy=CapabilityHandlingPolicy(
+            behaviors={CapabilityName.EDITABLE_HISTORY: UnsupportedCapabilityBehavior.ADAPT}
+        ),
+    )
+    with patch.object(CapabilityHandlingPolicy, "get_behavior", return_value="future_behavior"):
+        with pytest.raises(ValueError, match="no default or configured normalizer"):
+            config.ensure_can_handle(capability=CapabilityName.EDITABLE_HISTORY)
 
 
 # ---------------------------------------------------------------------------
