@@ -2144,11 +2144,11 @@ describe("MessageList", () => {
         }],
       }];
 
-      const { rerender } = render(<TestWrapper><MessageList key="conversation-a" conversationId="conversation-a" messages={firstMessages} /></TestWrapper>);
+      const { rerender } = render(<TestWrapper><MessageList conversationId="conversation-a" messages={firstMessages} /></TestWrapper>);
       await user.click(screen.getByTestId("download-btn-0-0"));
       expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
 
-      rerender(<TestWrapper><MessageList key="conversation-b" conversationId="conversation-b" messages={secondMessages} /></TestWrapper>);
+      rerender(<TestWrapper><MessageList conversationId="conversation-b" messages={secondMessages} /></TestWrapper>);
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
       jest.restoreAllMocks();
