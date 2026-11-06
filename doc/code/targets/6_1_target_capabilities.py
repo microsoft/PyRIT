@@ -101,45 +101,37 @@ print("output_modalities:          ", sorted(sorted(m) for m in caps.output_moda
 #
 # ### Runtime temperature support
 #
-# Model profiles above do not resolve runtime generation support. Check the
-# instantiated target's `capabilities.supports_temperature`.
+# Check the instance's `capabilities.supports_temperature`, not a model profile.
+# `OpenAIChatTarget`, `OpenAICompletionTarget`, and `OpenAIResponseTarget` default to
+# supported for unknown models and deployment aliases. This is inference, not a live
+# probe; provider errors are surfaced without dropping temperature.
 #
-# **`OpenAIChatTarget`, `OpenAICompletionTarget`, and `OpenAIResponseTarget`
-# assume temperature is supported unless a known model or
-# configured mode rules it out.** This is not a supported-model allowlist: unknown
-# model names and deployment aliases are supported by default. They are not probed;
-# provider rejection is surfaced without silently dropping the parameter.
+# Without an explicit support declaration:
 #
-# Without an explicit capability declaration, the exceptions are:
+# - Excluded models (e.g. `gpt-5`, `gpt-5-mini`, `gpt-5-nano`) remain unsupported
+#   even with `reasoning_effort="none"`.
+# - `gpt-5.5`, `gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`
+#   require explicit `reasoning_effort="none"`.
 #
-# - Known model exclusions, such as `gpt-5`, `gpt-5-mini`, and `gpt-5-nano`, disable
-#   support even with `reasoning_effort="none"`. Exclusions match exact names after
-#   removing a dated snapshot suffix, not arbitrary model-family prefixes.
-# - Known reasoning-enabled defaults (`gpt-5.5`, `gpt-5.6`, `gpt-5.6-sol`,
-#   `gpt-5.6-terra`, and `gpt-5.6-luna`) require explicit `reasoning_effort="none"`.
+# These rules match exact names after removing a `-YYYY-MM-DD` snapshot suffix,
+# not arbitrary model-family prefixes. Explicit `supports_temperature=True` or
+# `False` overrides model inference, but not configured reasoning effort other
+# than `"none"`, Chat audio output, or streaming restrictions. Responses uses the
+# effective `reasoning.effort`, including nested `extra_body` overrides.
+# Support is checked before sending; requests without overrides keep existing behavior.
+# OpenAI Image, TTS, Video, and Realtime adapters do not implement runtime temperature.
 #
-# An explicit `supports_temperature=True` or `False` overrides these model-based
-# decisions, including inferred reasoning defaults. Explicit reasoning effort
-# other than `"none"`, Chat audio output, and streaming still disable runtime support.
-# Responses reads effort from `reasoning_effort` or effective `reasoning.effort`
-# passthrough settings, including nested `extra_body` overrides.
-# Support refreshes when `set_model_name()` is called and is checked again before sending.
-# These rules do not change constructor defaults or requests without runtime overrides.
-# Image, TTS, Video, and Realtime targets do not expose runtime temperature.
-# Realtime's GA API removed temperature; legacy beta settings are not supported here.
+# These text adapters infer inclusive `capabilities.temperature_range` bounds of
+# 0 through 2, or 0 through 1 for `Mistral-Large-3`. Explicit ranges in `custom_configuration`
+# or `apply_capabilities()` override inference for that target, without enabling
+# unsupported modes. The GUI and send-time validation use the same bounds.
+# `set_model_name()` restores constructor support/range declarations, or re-infers
+# them when absent; applied declarations last until that call.
+# These capability fields leave target configuration identities unchanged.
 #
-# `capabilities.temperature_range` gives the inclusive bounds for supported targets.
-# OpenAI-compatible text targets infer 0 through 2, or 0 through 1 for `Mistral-Large-3`.
-# An explicitly declared `temperature_range` in `custom_configuration` or
-# `apply_capabilities()` overrides that target's inferred bounds, without enabling
-# unsupported modes. Validation and the GUI use the same effective bounds.
-# Like support declarations, constructor ranges survive `set_model_name()`; applied
-# ranges describe the current model and reset to constructor or inferred bounds on a model change.
-# These runtime capability fields do not change target configuration identities.
-#
-# `RoundRobinTarget` supports runtime temperature only when every child supports it,
-# exposes the intersection of their ranges, and validates against every child before
-# sending. A request override survives retries and fallback without changing child defaults.
+# `RoundRobinTarget` requires every child to support temperature and their ranges
+# to overlap. It exposes the intersection, validates every child before sending,
+# and retains overrides across retries and fallback without changing child defaults.
 #
 # Reasoning defaults follow OpenAI's [GPT-5.5](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.5) and
 # [GPT-5.6](https://developers.openai.com/api/docs/guides/latest-model/gpt-5.6) guides.

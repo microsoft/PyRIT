@@ -101,18 +101,21 @@ corresponding Chat route while retaining query parameters and fragments.
 
 ### Temperature
 
-Click the thermometer below **Send** to set a temperature override. Leave it
-blank or choose **Use target default** to clear it. The control shows and enforces
-the selected target's range; for example, `Mistral-Large-3` accepts 0 through 1.
+Use the thermometer below **Send** to override temperature within the supported
+target's range. Blank or **Use target default** clears it. The override applies
+to subsequent sends, not shared defaults or saved messages.
 
-The override resets when you switch attacks or targets, or refresh the page.
+Switching targets or attacks, or reloading, clears it. Returning to a retained
+draft restores that draft's setting.
 
-Temperature footers appear only when the selected target supports runtime
-temperature. Select a request or response footer to inspect the saved requested
-override, value sent, and its source.
+Select a saved temperature footer to inspect the requested override, parameter
+sent, and source. Footers are hidden only when the target explicitly reports
+temperature as unsupported or the message has no evidence. Unresolved targets
+still show evidence, including **provider default (unknown)**; this does not
+enable sending or temperature controls.
 
 See [Runtime generation configuration](../code/targets/0_prompt_targets.md#runtime-generation-configuration)
-for SDK usage and supported target behavior.
+for the SDK contract and capability rules.
 
 ## Scanner
 

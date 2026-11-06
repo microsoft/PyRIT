@@ -59,10 +59,10 @@ overriding `send_prompt_async`.
 
 ## Runtime generation configuration
 
-Use `RequestGenerationConfig` for per-request temperature overrides without changing
-the target's defaults or identity. Check `target.capabilities.supports_temperature`;
-see [Target Capabilities](./6_1_target_capabilities.ipynb#runtime-temperature-support)
-for support rules and exceptions.
+Use `RequestGenerationConfig` to override temperature per request without changing
+target defaults or identity. Check the instance's `capabilities.supports_temperature`
+and `temperature_range`; [Target Capabilities](./6_1_target_capabilities.ipynb#runtime-temperature-support)
+explains model restrictions and custom declarations.
 
 ```python
 from pyrit.models import Message, MessagePiece, RequestGenerationConfig
@@ -80,34 +80,29 @@ message = Message(
 response = await PromptNormalizer().send_prompt_async(message=message, target=target, conversation_id=conversation_id)
 ```
 
-- Set metadata on the current outbound message, not conversation history.
-  One piece is sufficient; values on multiple pieces must agree.
-- Values must be finite numbers, not booleans or numeric strings, within
-  `target.capabilities.temperature_range`. OpenAI Chat, Completions, and Responses
-  normally accept 0 through 2; `Mistral-Large-3` accepts 0 through 1.
-  An explicitly declared `temperature_range` in `custom_configuration` or
-  `apply_capabilities()` overrides these inferred bounds for that target only.
-  Invalid, conflicting, or known unsupported overrides fail
-  before provider I/O.
-- Overrides take precedence over target defaults and provider passthrough settings.
-  Missing or null overrides preserve existing behavior. Transport retries reuse
-  the resolved value.
-- `RoundRobinTarget` enables overrides only when every child supports them and
-  exposes their shared range. It validates against all children before sending.
-  Overrides survive fallback;
-  without an override, each child resolves its own default.
+- Put metadata on the current outbound message, never history. One piece is enough;
+  non-null values on multiple pieces must agree.
+- Use a finite number within the target's range; zero is valid when in range.
+  Booleans, numeric strings, conflicts, out-of-range values, and known unsupported
+  overrides fail before target I/O.
+- Overrides win over defaults and passthrough settings, including nested `extra_body`.
+  Missing or null overrides preserve existing payload/default behavior;
+  PyRIT never guesses provider defaults.
+- Transport retries and tool continuations reuse the resolved value. A later
+  logical send can choose another.
+- `RoundRobinTarget` requires support and a shared range across all children,
+  validating each before sending. Overrides survive fallback; without one,
+  each child resolves its own default.
 
-`PromptNormalizer` saves evidence with the request and its responses.
-Read it using `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)`.
-`info.temperature` records the `requested` override, `resolved` value sent, and
-`source` (`request`, `target_default`, or `provider_default`). Unknown provider
-defaults remain `None`; messages without evidence return `None`.
-Chat omits temperature labels for messages without evidence or when the target
-explicitly reports that runtime temperature is unsupported. Saved labels remain
-visible when the target or its capability cannot be resolved, including unknown
-provider-default labels; this does not enable sending or temperature controls.
-Edited or newly inserted history does not acquire evidence; unchanged source
-copies retain it.
+`PromptNormalizer` saves adapter-authored evidence on request and response pieces.
+Read it with `RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)`.
+`info.temperature` contains the `requested` override, `resolved` parameter, and
+`source`: `request`, `target_default`, or `provider_default`. Unknown provider
+defaults stay `None`; this records the submitted parameter, not provider success.
+Messages without evidence, including older records, return `None`.
+
+Conversation saves preserve evidence only from verified, unchanged source pieces.
+See [Chat temperature](../../gui/0_gui.md#temperature) for display rules.
 
 ## Chat-style targets vs general targets
 
@@ -301,7 +296,7 @@ A `TargetConfiguration` composes three concerns:
 | `supports_system_prompt`         | The target natively supports a system-role message.                                                                                      |
 | `supports_json_output`           | The target supports a "json" response format that guarantees valid JSON output.                                                          |
 | `supports_json_schema`           | The target supports constraining output to a caller-provided JSON schema.                                                                |
-| `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides. This does not change the target's default or identity. |
+| `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides.                                                        |
 | `temperature_range`              | Inclusive minimum and maximum for runtime temperature when `supports_temperature` is true.                                              |
 | `input_modalities`               | The set of input modality combinations the target accepts (e.g. `{text}`, `{text, image_path}`).                                         |
 | `output_modalities`              | The set of output modality combinations the target produces.                                                                             |
@@ -309,11 +304,8 @@ A `TargetConfiguration` composes three concerns:
 Each target class defines defaults; instances can override individual capabilities when they depend on deployment configuration (e.g. `HTTPTarget`, `PlaywrightTarget`).
 
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
-These profiles do not resolve runtime generation support. Check the instantiated
-target's `capabilities.supports_temperature`, which accounts for the adapter and
-its configured model mode. `OpenAIChatTarget`, `OpenAICompletionTarget`, and
-`OpenAIResponseTarget` default to supported for unknown models and deployment
-aliases; this does not imply runtime support in other adapters.
+Profiles alone do not determine runtime temperature support; check the instance's
+capabilities as described under [Runtime generation configuration](#runtime-generation-configuration).
 
 Tool-call history uses the existing `function_call` and `function_call_output` input
 modalities. These describe acceptance of prior calls and results, not tool execution.
