@@ -779,28 +779,44 @@ async def test_catalog_list_follows_next_cursor_async(
     ]
 
 
-async def test_list_targets_respects_total_limit_async(*, client: PyRITApiClient, mock_httpx_client: MagicMock) -> None:
+@pytest.mark.parametrize(
+    ("limit", "second_request_limit", "expected_count"),
+    [(None, 200, 205), (201, 1, 201)],
+    ids=["all-205-targets", "limit-201"],
+)
+async def test_list_targets_crosses_page_size_boundary_async(
+    *,
+    client: PyRITApiClient,
+    mock_httpx_client: MagicMock,
+    limit: int | None,
+    second_request_limit: int,
+    expected_count: int,
+) -> None:
+    items = [_target_payload(target_registry_name=f"target-{i}") for i in range(205)]
     mock_httpx_client.get.side_effect = [
         _make_response(
             json_data={
-                "items": [_target_payload(target_registry_name="first")],
+                "items": items[:200],
                 "pagination": {"has_more": True, "next_cursor": "first"},
             }
         ),
         _make_response(
             json_data={
-                "items": [_target_payload(target_registry_name="second")],
-                "pagination": {"has_more": True, "next_cursor": "second"},
+                "items": items[200:expected_count],
+                "pagination": {
+                    "has_more": expected_count < len(items),
+                    "next_cursor": "second" if expected_count < len(items) else None,
+                },
             }
         ),
     ]
 
-    result = await client.list_targets_async(limit=2)
+    result = await client.list_targets_async(limit=limit)
 
-    assert [item.target_registry_name for item in result] == ["first", "second"]
+    assert [item.target_registry_name for item in result] == [f"target-{i}" for i in range(expected_count)]
     assert mock_httpx_client.get.await_args_list == [
-        call("/api/targets", params={"limit": 2}),
-        call("/api/targets", params={"limit": 1, "cursor": "first"}),
+        call("/api/targets", params={"limit": 200}),
+        call("/api/targets", params={"limit": second_request_limit, "cursor": "first"}),
     ]
 
 
