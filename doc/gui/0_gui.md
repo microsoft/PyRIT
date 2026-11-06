@@ -104,6 +104,8 @@ corresponding Chat route while retaining query parameters and fragments.
 Use the thermometer below **Send** to override temperature within the supported
 target's range. Blank or **Use target default** clears it. The override applies
 to subsequent sends, not shared defaults or saved messages.
+If a supported target declares no bounds, the control says so rather than assuming
+a range; send-time validation remains authoritative.
 
 Switching targets or attacks, or reloading, clears it. Returning to a retained
 draft restores that draft's setting.

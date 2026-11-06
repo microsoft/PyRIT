@@ -366,13 +366,66 @@ class TestTemporaryComponents:
             target = RoundRobinTarget(targets=children) if wrapped else children[0]
             descriptor = target_object_to_instance("target", target)
             assert descriptor.capabilities.supports_temperature is supported
-            assert descriptor.capabilities.temperature_range == (0, maximum)
-            assert descriptor.model_dump(mode="json")["capabilities"]["temperature_range"] == [0, maximum]
+            assert descriptor.temperature_range == (0, maximum)
+            assert descriptor.model_dump(mode="json")["temperature_range"] == [0, maximum]
+            assert "temperature_range" not in descriptor.model_dump(mode="json")["capabilities"]
+            if descriptor.inner_targets:
+                assert all(child.temperature_range == (0, maximum) for child in descriptor.inner_targets)
             if wrapped:
                 children[1].apply_capabilities(
                     capabilities=children[1].capabilities.model_copy(update={"supports_temperature": False})
                 )
                 assert not target_object_to_instance("target", target).capabilities.supports_temperature
+
+    @pytest.mark.parametrize("register", [False, True])
+    @pytest.mark.parametrize("declaration", ["constructor", "applied", "inferred"])
+    @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
+    async def test_source_bounds_survive_reconstruction_and_descriptor_serialization_async(
+        self,
+        *,
+        register: bool,
+        declaration: str,
+        target_type: type[OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget],
+    ) -> None:
+        source = target_type(
+            model_name="gpt-4o",
+            endpoint="https://example.test/v1",
+            api_key="test-only-key",
+            temperature_range=(0.2, 0.8) if declaration == "constructor" else None,
+        )
+        if declaration == "applied":
+            source.apply_temperature_range(temperature_range=(0.2, 0.8))
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(source, name="source")
+        copied: PromptTarget | None = None
+        try:
+            explicit = None if declaration == "inferred" else (0.2, 0.8)
+            assert registry.get_reconstruction_parameters(source)["temperature_range"] == explicit
+            service = TargetService()
+            spec = SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params={})
+            if register:
+                copied = await service.build_from_source_async(spec)
+                registry.instances.register(copied, name="copy")
+                descriptor = await service.get_target_async(target_registry_name="copy")
+                assert descriptor is not None
+            else:
+                descriptor = await service.create_target_async(
+                    request=CreateTargetRequest(type=target_type.__name__, register=False, source=spec)
+                )
+            expected = explicit or (0, 2)
+            assert descriptor.temperature_range == expected
+            assert descriptor.model_dump(mode="json")["temperature_range"] == list(expected)
+            assert "temperature_range" not in descriptor.model_dump(mode="json")["capabilities"]
+            assert type(descriptor).model_validate_json(descriptor.model_dump_json()) == descriptor
+            assert not source._client.is_closed()
+            if copied is not None:
+                assert isinstance(copied, target_type)
+                copied.set_model_name(model_name="Mistral-Large-3")
+                assert copied.temperature_range == (explicit or (0, 1))
+        finally:
+            if copied is not None:
+                await copied.cleanup_target_async()
+            await source.cleanup_target_async()
 
     @pytest.mark.parametrize("client_setting", ["default", "none", "custom"])
     @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])

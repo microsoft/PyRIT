@@ -156,15 +156,32 @@ class RoundRobinTarget(PromptTarget):
         """The wrapper capabilities restricted to temperature support shared by every child."""
         capabilities = super().capabilities
         children = [target.capabilities for target in self._targets]
-        minimum = max(child.temperature_range[0] for child in children)
-        maximum = min(child.temperature_range[1] for child in children)
+        bounds = self._temperature_range_intersection()
         supported = capabilities.supports_temperature and all(child.supports_temperature for child in children)
         return capabilities.model_copy(
-            update={
-                "supports_temperature": supported and minimum <= maximum,
-                "temperature_range": (minimum, maximum) if minimum <= maximum else capabilities.temperature_range,
-            }
+            update={"supports_temperature": supported and (bounds is None or bounds[0] <= bounds[1])}
         )
+
+    @property
+    def temperature_range(self) -> tuple[float, float] | None:
+        """Shared bounds, unknown if any child omits them or the ranges do not overlap."""
+        if any(target.temperature_range is None for target in self._targets):
+            return None
+        bounds = self._temperature_range_intersection()
+        return bounds if bounds is not None and bounds[0] <= bounds[1] else None
+
+    def _temperature_range_intersection(self) -> tuple[float, float] | None:
+        """
+        Intersect the children's declared ranges.
+
+        Returns:
+            tuple[float, float] | None: Known intersection, or None if no bounds are declared.
+                A reversed pair indicates disjoint ranges.
+        """
+        ranges = [bounds for target in self._targets if (bounds := target.temperature_range) is not None]
+        if not ranges:
+            return None
+        return max(bounds[0] for bounds in ranges), min(bounds[1] for bounds in ranges)
 
     def validate_request_generation_config(self, message: Message) -> RequestGenerationConfig:
         """

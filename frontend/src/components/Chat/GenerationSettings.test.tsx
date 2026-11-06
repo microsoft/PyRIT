@@ -13,6 +13,7 @@ import GenerationSettings from './GenerationSettings'
 const target = makeTarget({
   target_registry_name: 'chat',
   temperature: 0.2,
+  temperature_range: [0, 2],
   capabilities: { supports_temperature: true },
 })
 
@@ -61,7 +62,7 @@ describe('GenerationSettings', () => {
     await user.click(screen.getByRole('button', { name: 'Apply temperature' }))
     expect(button).toHaveAccessibleName('Adjust temperature: target default')
     expect(onChange).toHaveBeenLastCalledWith({})
-    expect(parseGenerationConfig(onChange.mock.lastCall[0], target.capabilities)).toEqual({})
+    expect(parseGenerationConfig(onChange.mock.lastCall[0], target)).toEqual({})
   })
 
   it('should show an override even when it equals the configured default', async () => {
@@ -113,7 +114,7 @@ describe('GenerationSettings', () => {
     await user.keyboard('{Enter}')
     expect(screen.getByRole('dialog', { name: 'Temperature' })).toBeVisible()
     expect(onChange).toHaveBeenLastCalledWith({ temperature: value })
-    expect(() => parseGenerationConfig(onChange.mock.lastCall[0], target.capabilities)).toThrow(/finite number/)
+    expect(() => parseGenerationConfig(onChange.mock.lastCall[0], target)).toThrow(/finite number/)
     await user.keyboard('{Escape}')
     expect(onChange).toHaveBeenLastCalledWith({})
   })
@@ -122,7 +123,8 @@ describe('GenerationSettings', () => {
     const user = userEvent.setup()
     const mistral = makeTarget({
       model_name: 'Mistral-Large-3',
-      capabilities: { supports_temperature: true, temperature_range: [0, 1] },
+      capabilities: { supports_temperature: true },
+      temperature_range: [0, 1],
     })
     render(<TestWrapper><SettingsHarness selectedTarget={mistral} /></TestWrapper>)
     await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
@@ -156,7 +158,8 @@ describe('GenerationSettings', () => {
     const user = userEvent.setup()
     const onChange = jest.fn()
     const positiveMinimumTarget = makeTarget({
-      capabilities: { supports_temperature: true, temperature_range: [0.2, 1] },
+      capabilities: { supports_temperature: true },
+      temperature_range: [0.2, 1],
     })
     render(<TestWrapper><SettingsHarness selectedTarget={positiveMinimumTarget} onChange={onChange} /></TestWrapper>)
     await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
@@ -168,7 +171,25 @@ describe('GenerationSettings', () => {
     expect(screen.getByRole('button', { name: 'Apply temperature' })).toBeDisabled()
     await user.clear(input)
     expect(screen.getByRole('button', { name: 'Apply temperature' })).toBeEnabled()
-    expect(parseGenerationConfig(onChange.mock.lastCall[0], positiveMinimumTarget.capabilities)).toEqual({})
+    expect(parseGenerationConfig(onChange.mock.lastCall[0], positiveMinimumTarget)).toEqual({})
+  })
+
+  it.each([undefined, null])('should not invent bounds or disable supported temperature without a range (%s)', async (temperature_range: undefined | null) => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    const unknownRangeTarget = { ...target, temperature_range }
+    render(<TestWrapper><SettingsHarness selectedTarget={unknownRangeTarget} onChange={onChange} /></TestWrapper>)
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    const input = screen.getByRole('textbox', { name: 'Temperature' })
+    expect(input).toHaveAccessibleDescription(expect.stringContaining('No temperature range is declared'))
+    expect(input).not.toHaveAccessibleDescription(expect.stringContaining('Enter 0 through 2'))
+    await user.type(input, '3')
+    expect(screen.getByRole('button', { name: 'Apply temperature' })).toBeEnabled()
+    expect(parseGenerationConfig(onChange.mock.lastCall[0], unknownRangeTarget)).toEqual({ temperature: 3 })
+    await user.clear(input)
+    await user.type(input, 'Infinity')
+    expect(screen.getByText('Temperature must be a finite number.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Apply temperature' })).toBeDisabled()
   })
 
   it.each([undefined, null])('should not invent an unspecified default (%s)', async (temperature: undefined | null) => {

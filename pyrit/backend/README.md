@@ -38,6 +38,12 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+Registered and unregistered target descriptors expose `capabilities.supports_temperature`
+and a separate top-level `temperature_range`. Bounds are inclusive; `null` means no
+range is declared, not that temperature is unsupported. Clients must not substitute
+assumed bounds. Per-send values use
+[`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
+
 ### Saved conversations
 
 `GET /api/attacks/conversations/{conversation_id}` returns the saved chat history

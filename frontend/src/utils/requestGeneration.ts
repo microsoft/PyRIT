@@ -1,5 +1,6 @@
 import type {
   Message, MessagePieceRequest, RequestGenerationConfig, RequestGenerationDraft, RequestGenerationInfo, TargetCapabilities,
+  TargetInstance,
 } from '@/types'
 
 const REQUEST_GENERATION_KEY = 'request_generation_config'
@@ -9,50 +10,53 @@ export const GENERATION_FIELDS: ReadonlyArray<{
   readonly name: keyof RequestGenerationConfig
   readonly label: string
   readonly capability: Extract<keyof TargetCapabilities, `supports_${string}`>
-  readonly rangeKey: Extract<keyof TargetCapabilities, `${string}_range`>
-  readonly min: number
-  readonly max: number
+  readonly rangeKey: Extract<keyof TargetInstance, `${string}_range`>
   readonly step: number
 }> = [
-  { name: 'temperature', label: 'Temperature', capability: 'supports_temperature', rangeKey: 'temperature_range', min: 0, max: 2, step: 0.1 },
+  { name: 'temperature', label: 'Temperature', capability: 'supports_temperature', rangeKey: 'temperature_range', step: 0.1 },
 ]
 
 export function generationFieldRange(
-  name: keyof RequestGenerationConfig, capabilities?: TargetCapabilities | null,
-): readonly [number, number] {
+  name: keyof RequestGenerationConfig, target?: Pick<TargetInstance, 'temperature_range'> | null,
+): readonly [number, number] | undefined {
   const field = GENERATION_FIELDS.find((entry) => entry.name === name)
   if (!field) throw new Error(`Unknown generation option: ${name}`)
-  return capabilities?.[field.rangeKey] ?? [field.min, field.max]
+  return target?.[field.rangeKey] ?? undefined
 }
 
 export function generationFieldError(
-  name: keyof RequestGenerationConfig, input: string | undefined, capabilities?: TargetCapabilities | null,
+  name: keyof RequestGenerationConfig, input: string | undefined,
+  target?: Pick<TargetInstance, 'capabilities' | 'temperature_range'> | null,
 ): string | undefined {
   if (input === undefined) return undefined
   const field = GENERATION_FIELDS.find((entry) => entry.name === name)
   if (!field) throw new Error(`Unknown generation option: ${name}`)
-  if (!capabilities?.[field.capability]) return `This target does not support runtime ${name}.`
-  const [minimum, maximum] = generationFieldRange(name, capabilities)
+  if (!target?.capabilities?.[field.capability]) return `This target does not support runtime ${name}.`
+  const bounds = generationFieldRange(name, target)
   if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(input.trim())
-    || !Number.isFinite(Number(input)) || Number(input) < minimum || Number(input) > maximum) {
-    return `${field.label} must be a finite number between ${minimum} and ${maximum}.`
+    || !Number.isFinite(Number(input)) || (bounds && (Number(input) < bounds[0] || Number(input) > bounds[1]))) {
+    return `${field.label} must be a finite number${bounds ? ` between ${bounds[0]} and ${bounds[1]}` : ''}.`
   }
   return undefined
 }
 
-export function generationConfigError(draft: RequestGenerationDraft, capabilities?: TargetCapabilities | null): string | undefined {
+export function generationConfigError(
+  draft: RequestGenerationDraft, target?: Pick<TargetInstance, 'capabilities' | 'temperature_range'> | null,
+): string | undefined {
   for (const field of GENERATION_FIELDS) {
-    const error = generationFieldError(field.name, draft[field.name], capabilities)
+    const error = generationFieldError(field.name, draft[field.name], target)
     if (error) return error
   }
   return undefined
 }
 
-export function parseGenerationConfig(draft: RequestGenerationDraft, capabilities?: TargetCapabilities | null): RequestGenerationConfig {
+export function parseGenerationConfig(
+  draft: RequestGenerationDraft, target?: Pick<TargetInstance, 'capabilities' | 'temperature_range'> | null,
+): RequestGenerationConfig {
   const config: { -readonly [Field in keyof RequestGenerationConfig]?: number } = {}
   for (const field of GENERATION_FIELDS) {
     const input = draft[field.name]
-    const error = generationFieldError(field.name, input, capabilities)
+    const error = generationFieldError(field.name, input, target)
     if (error) throw new Error(error)
     if (input !== undefined) config[field.name] = Number(input)
   }

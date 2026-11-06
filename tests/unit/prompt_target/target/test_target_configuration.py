@@ -391,7 +391,7 @@ def test_capabilities_to_identifier_params_excludes_request_only_availability():
 
     params = TargetConfiguration._capabilities_to_identifier_params(caps)
 
-    assert set(params.keys()) == set(type(caps).model_fields) - {"supports_temperature", "temperature_range"}
+    assert set(params.keys()) == set(type(caps).model_fields) - {"supports_temperature"}
 
 
 def test_capabilities_to_identifier_params_scalar_fields_passthrough():

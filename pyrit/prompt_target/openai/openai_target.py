@@ -6,7 +6,7 @@ import logging
 import re
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict
 from urllib.parse import urlparse
 
 from openai import (
@@ -21,6 +21,7 @@ from openai._exceptions import (
     APITimeoutError,
     AuthenticationError,
 )
+from pydantic import TypeAdapter
 
 from pyrit.auth import resolve_openai_auth
 from pyrit.common import default_values
@@ -28,7 +29,14 @@ from pyrit.exceptions.exception_classes import (
     RateLimitException,
     handle_bad_request_exception,
 )
-from pyrit.models import Message, MessagePiece, ParameterResolution, RequestGenerationConfig, RequestGenerationInfo
+from pyrit.models import (
+    Message,
+    MessagePiece,
+    ParameterResolution,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
+    TemperatureRange,
+)
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
@@ -40,6 +48,12 @@ from pyrit.prompt_target.openai.openai_error_handling import (
 )
 
 logger = logging.getLogger(__name__)
+_TEMPERATURE_RANGE_ADAPTER = TypeAdapter(TemperatureRange)
+
+
+class _GenerationDeclarations(TypedDict, total=False):
+    supports_temperature: bool
+    temperature_range: tuple[float, float]
 
 
 class _OpenAIModelSampling:
@@ -180,6 +194,7 @@ class OpenAITarget(PromptTarget):
         httpx_client_kwargs: dict[str, Any] | None = None,
         underlying_model: str | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        temperature_range: tuple[float, float] | None = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -216,6 +231,8 @@ class OpenAITarget(PromptTarget):
                 Defaults to None.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. If None, uses the class-level defaults. Defaults to None.
+            temperature_range (tuple[float, float] | None): Inclusive runtime bounds overriding model inference.
+                Does not enable unsupported model modes or change the configured temperature default.
 
         Raises:
             ValueError: If identity auth is requested for an endpoint that is not a recognized
@@ -245,18 +262,15 @@ class OpenAITarget(PromptTarget):
         endpoint_value = default_values.get_required_value(
             env_var_name=self.endpoint_environment_variable, passed_value=endpoint
         )
-        self._generation_capability_overrides = {
-            capability: custom_configuration.capabilities.includes(capability=capability)
-            for capability in self._SUPPORTED_GENERATION_CAPABILITIES
-            if custom_configuration is not None
-            and capability.value in custom_configuration.capabilities.model_fields_set
-        }
-        self._temperature_range_override = (
-            custom_configuration.capabilities.temperature_range
-            if custom_configuration is not None
-            and "temperature_range" in custom_configuration.capabilities.model_fields_set
-            else None
-        )
+        self._declared_generation: _GenerationDeclarations = {}
+        if (
+            custom_configuration is not None
+            and "supports_temperature" in custom_configuration.capabilities.model_fields_set
+        ):
+            self._declared_generation["supports_temperature"] = custom_configuration.capabilities.supports_temperature
+        self._effective_generation = self._declared_generation.copy()
+        self.apply_temperature_range(temperature_range=temperature_range)
+        self._declared_generation = self._effective_generation.copy()
 
         # Initialize parent with endpoint and model_name
         PromptTarget.__init__(
@@ -287,31 +301,45 @@ class OpenAITarget(PromptTarget):
 
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
         """Apply declared model support subject to the adapter's configured sampling mode."""
-        self._effective_generation_capability_overrides = {
-            capability: capabilities.includes(capability=capability)
-            for capability in self._SUPPORTED_GENERATION_CAPABILITIES
-            if capability.value in capabilities.model_fields_set
-        }
-        self._effective_temperature_range_override = (
-            capabilities.temperature_range if "temperature_range" in capabilities.model_fields_set else None
-        )
+        self._effective_generation.pop("supports_temperature", None)
+        if "supports_temperature" in capabilities.model_fields_set:
+            self._effective_generation["supports_temperature"] = capabilities.supports_temperature
         if self._SUPPORTED_GENERATION_CAPABILITIES:
             capabilities = self._generation_capabilities_for_mode(capabilities)
         super().apply_capabilities(capabilities=capabilities)
 
+    @property
+    def temperature_range(self) -> tuple[float, float] | None:
+        """Resolved runtime bounds, independently of whether the current mode supports temperature."""
+        if CapabilityName.TEMPERATURE not in self._SUPPORTED_GENERATION_CAPABILITIES:
+            return None
+        return self._effective_generation.get("temperature_range") or _OpenAIModelSampling.temperature_range(
+            self._effective_generation_parameters()["model"]
+        )
+
+    def apply_temperature_range(self, *, temperature_range: tuple[float, float] | None) -> None:
+        """
+        Apply bounds until the next model change; None restores model inference.
+
+        Raises:
+            ValueError: Bounds are invalid or the adapter does not implement runtime temperature.
+        """
+        if temperature_range is None:
+            self._effective_generation.pop("temperature_range", None)
+            return
+        if CapabilityName.TEMPERATURE not in self._SUPPORTED_GENERATION_CAPABILITIES:
+            raise ValueError(f"{type(self).__name__} does not implement runtime temperature.")
+        self._effective_generation["temperature_range"] = _TEMPERATURE_RANGE_ADAPTER.validate_python(temperature_range)
+
     def _refresh_generation_capabilities(self) -> None:
-        self._effective_generation_capability_overrides = self._generation_capability_overrides.copy()
-        self._effective_temperature_range_override = self._temperature_range_override
+        self._effective_generation = self._declared_generation.copy()
         parameters = self._effective_generation_parameters()
-        support = {
-            capability.value: self._generation_capability_overrides.get(capability, False)
-            for capability in self._SUPPORTED_GENERATION_CAPABILITIES
-        }
+        support: dict[str, bool] = {}
         if CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES:
             support["supports_temperature"] = _OpenAIModelSampling.supports_temperature(
                 model_name=parameters["model"],
                 reasoning_effort=parameters.get("reasoning_effort"),
-                declared_support=self._generation_capability_overrides.get(CapabilityName.TEMPERATURE),
+                declared_support=self._declared_generation.get("supports_temperature"),
             )
         super().apply_capabilities(
             capabilities=self._generation_capabilities_for_mode(self.capabilities.model_copy(update=support))
@@ -333,17 +361,11 @@ class OpenAITarget(PromptTarget):
             and _OpenAIModelSampling.supports_temperature(
                 model_name=parameters["model"],
                 reasoning_effort=parameters.get("reasoning_effort"),
-                declared_support=self._effective_generation_capability_overrides.get(CapabilityName.TEMPERATURE),
+                declared_support=self._effective_generation.get("supports_temperature"),
             )
             and not parameters.get("stream", False)
         )
-        return capabilities.model_copy(
-            update={
-                "supports_temperature": temperature_supported,
-                "temperature_range": self._effective_temperature_range_override
-                or _OpenAIModelSampling.temperature_range(parameters["model"]),
-            }
-        )
+        return capabilities.model_copy(update={"supports_temperature": temperature_supported})
 
     def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
         if config.temperature is None:
@@ -353,7 +375,10 @@ class OpenAITarget(PromptTarget):
             raise ValueError(
                 f"Runtime temperature is not supported for this {type(self).__name__} model configuration."
             )
-        minimum, maximum = capabilities.temperature_range
+        bounds = self.temperature_range
+        if bounds is None:
+            raise ValueError(f"Runtime temperature bounds are unavailable for {type(self).__name__}.")
+        minimum, maximum = bounds
         if not minimum <= config.temperature <= maximum:
             raise ValueError(f"OpenAI request temperature must be between {minimum:g} and {maximum:g} inclusive.")
 
@@ -437,6 +462,7 @@ class OpenAITarget(PromptTarget):
             "httpx_client_kwargs": dict(self._httpx_client_kwargs),
             "underlying_model": self._underlying_model,
             "custom_configuration": self.configuration,
+            "temperature_range": self._effective_generation.get("temperature_range"),
         }
 
     async def cleanup_target_async(self) -> None:

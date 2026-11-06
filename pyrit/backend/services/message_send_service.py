@@ -328,7 +328,7 @@ class MessageSendService:
         if request.target_binding is not None and request.target_binding != binding:
             raise ValueError(
                 "This attack's saved target binding is read-only. "
-                "Use request temperature metadata for per-send changes."
+                "Use request_generation_config metadata for supported per-send generation settings."
             )
         policy = get_chat_scoring_service()
         policy.require_manual(ar)

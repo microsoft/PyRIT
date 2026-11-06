@@ -60,8 +60,8 @@ overriding `send_prompt_async`.
 ## Runtime generation configuration
 
 Use `RequestGenerationConfig` to override temperature per request without changing
-target defaults or identity. Check the instance's `capabilities.supports_temperature`
-and `temperature_range`; [Target Capabilities](./6_1_target_capabilities.ipynb#runtime-temperature-support)
+target defaults or identity. Check `target.capabilities.supports_temperature`
+and `target.temperature_range`; [Target Capabilities](./6_1_target_capabilities.ipynb#runtime-temperature-support)
 explains model restrictions and custom declarations.
 
 ```python
@@ -297,7 +297,6 @@ A `TargetConfiguration` composes three concerns:
 | `supports_json_output`           | The target supports a "json" response format that guarantees valid JSON output.                                                          |
 | `supports_json_schema`           | The target supports constraining output to a caller-provided JSON schema.                                                                |
 | `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides.                                                        |
-| `temperature_range`              | Inclusive minimum and maximum for runtime temperature when `supports_temperature` is true.                                              |
 | `input_modalities`               | The set of input modality combinations the target accepts (e.g. `{text}`, `{text, image_path}`).                                         |
 | `output_modalities`              | The set of output modality combinations the target produces.                                                                             |
 
@@ -305,7 +304,8 @@ Each target class defines defaults; instances can override individual capabiliti
 
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
 Profiles alone do not determine runtime temperature support; check the instance's
-capabilities as described under [Runtime generation configuration](#runtime-generation-configuration).
+capabilities and separate `temperature_range` property as described under
+[Runtime generation configuration](#runtime-generation-configuration).
 
 Tool-call history uses the existing `function_call` and `function_call_output` input
 modalities. These describe acceptance of prior calls and results, not tool execution.

@@ -295,7 +295,6 @@ class TargetConfiguration:
         """
         params: dict[str, Any] = {}
         generation_flags = {capability.value for capability in RequestGenerationConfig.FIELD_CAPABILITIES.values()}
-        generation_flags.add("temperature_range")
         for field_name in type(capabilities).model_fields:
             # Request-option availability does not change configured generation behavior.
             # Excluding additive flags preserves existing target and nested scorer hashes.

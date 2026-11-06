@@ -28,7 +28,7 @@ export default function GenerationSettings(props: GenerationSettingsProps) {
   const { target, disabled } = props
   return <TemperatureControl key={JSON.stringify([
     target?.target_registry_name, target?.identifier.hash, target?.capabilities?.supports_temperature,
-    target?.capabilities?.temperature_range, disabled,
+    target?.temperature_range, disabled,
   ])} {...props} />
 }
 
@@ -40,8 +40,10 @@ function TemperatureControl({ value, onChange, target, disabled }: GenerationSet
   const hasOverride = input !== undefined
   const supported = Boolean(target?.capabilities?.supports_temperature)
   const editable = supported && !disabled
-  const error = generationFieldError('temperature', input, target?.capabilities)
-  const [minimum, maximum] = generationFieldRange('temperature', target?.capabilities)
+  const error = generationFieldError('temperature', input, target)
+  const bounds = generationFieldRange('temperature', target)
+  const rangeDescription = bounds ? `Enter ${bounds[0]} through ${bounds[1]}.`
+    : 'No temperature range is declared; values are validated when sending.'
   const defaultValue = target?.binding?.temperature ?? target?.identifier.temperature
   const reason = !target ? 'Select a target to adjust temperature.'
     : !supported ? 'This target does not support runtime temperature.'
@@ -97,7 +99,7 @@ function TemperatureControl({ value, onChange, target, disabled }: GenerationSet
         }}>
           <HelpField label="Temperature" validationState={error ? 'error' : 'none'} validationMessage={error}
             hint="Blank uses target default."
-            help={`Enter ${minimum} through ${maximum}. Configured default: ${defaultValue ?? 'not specified; provider default unknown'}. Applies to subsequent sends until changed; target defaults and earlier messages are unchanged.`}>
+            help={`${rangeDescription} Configured default: ${defaultValue ?? 'not specified; provider default unknown'}. Applies to subsequent sends until changed; target defaults and earlier messages are unchanged.`}>
             <Input autoFocus type="text" inputMode="decimal" value={input ?? ''} placeholder="Default" disabled={!editable}
               onChange={(_event: ChangeEvent<HTMLInputElement>, data: InputOnChangeData) => {
                 const next = data.value.trim() ? data.value : undefined

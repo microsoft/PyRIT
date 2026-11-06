@@ -453,7 +453,6 @@ export interface TargetCapabilities {
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
   supports_temperature?: boolean
-  temperature_range?: readonly [number, number]
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }
@@ -480,6 +479,8 @@ export interface TargetInstance {
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
+  /** Inclusive runtime bounds; missing/null means no range is declared, not no support. */
+  temperature_range?: readonly [number, number] | null
   /** Effective replay support, including configured adapters and provider restoration. */
   supports_history_replay?: boolean
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
@@ -600,6 +601,7 @@ export interface TargetBinding {
 export interface UnregisteredTarget {
   identifier: TargetIdentifier
   capabilities: TargetCapabilities
+  temperature_range?: readonly [number, number] | null
 }
 
 export interface UnregisteredConverter {

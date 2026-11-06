@@ -828,6 +828,11 @@ class PromptTarget(Identifiable):
         """
         return self._configuration.capabilities
 
+    @property
+    def temperature_range(self) -> tuple[float, float] | None:
+        """Inclusive runtime temperature bounds, or None when no bounds are declared."""
+        return None
+
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
         """
         Replace this target's capabilities, preserving the existing handling policy.

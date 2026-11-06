@@ -1686,7 +1686,7 @@ export default function ChatWindow({
     setMessages(prev => [...prev, loadingMessage])
 
     try {
-      const generationConfig = parseGenerationConfig(operation.generationDraft, activeTarget.capabilities)
+      const generationConfig = parseGenerationConfig(operation.generationDraft, activeTarget)
       // Build message pieces from text + attachments — always use original text
       const pieceIds = buildDraftPieceIds(originalValue, attachments, conversions)
       const originalPieces = await buildMessagePieces(originalValue, attachments, operation.textMetadata)
@@ -2573,7 +2573,7 @@ export default function ChatWindow({
       ? ['This conversation contains a target error. Use Copy or Branch on the failed prompt to branch into a new conversation or attack.']
       : []),
   ]
-  const generationError = generationConfigError(generationDraft, activeTarget?.capabilities)
+  const generationError = generationConfigError(generationDraft, activeTarget)
   const sendDisabledReasons = [
     ...(generationError ? [generationError] : []),
     ...(!activeTarget ? ['Select a target to send a message.'] : []),

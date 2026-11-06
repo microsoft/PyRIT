@@ -65,6 +65,7 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
 )
+from pyrit.models.component_spec import TargetBinding
 from pyrit.models.target.target_capabilities import TargetCapabilities
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
@@ -272,6 +273,27 @@ def _make_round_robin_identifier(
 @pytest.mark.usefixtures("patch_central_database")
 class TestAddMessage:
     """Synchronous sending and converter contracts moved with their owner."""
+
+    @pytest.mark.parametrize("saved_binding", [False, True])
+    async def test_binding_changes_explain_per_send_generation_settings_async(
+        self, *, message_send_service: MessageSendService, mock_memory: MagicMock, saved_binding: bool
+    ) -> None:
+        binding = TargetBinding(source_name="source", source_hash="source-hash", temperature=0.2, effective_hash="copy")
+        attack = make_attack_result(conversation_id="main")
+        if saved_binding:
+            attack.metadata = binding.to_metadata()
+        mock_memory.get_attack_results_async.return_value = [attack]
+        request = _request()
+        request.target_binding = binding.model_copy(update={"temperature": 0.8})
+        with patch("pyrit.backend.services.message_send_service.get_target_service") as get_target:
+            with pytest.raises(ValueError) as error:
+                await message_send_service.add_message_async(attack_result_id="attack", request=request)
+            get_target.assert_not_called()
+        assert str(error.value) == (
+            "This attack's saved target binding is read-only. "
+            "Use request_generation_config metadata for supported per-send generation settings."
+        )
+        assert not message_send_service._scheduler._conversations
 
     async def test_add_message_raises_for_nonexistent_attack(self, message_send_service, mock_memory) -> None:
         """Test that add_message raises ValueError for nonexistent attack."""

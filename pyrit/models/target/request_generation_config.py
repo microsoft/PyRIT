@@ -3,14 +3,32 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, FiniteFloat
 
 from pyrit.models.target.target_capabilities import CapabilityName
 
 if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
+
+
+def _validate_temperature_range(value: tuple[float, float]) -> tuple[float, float]:
+    """
+    Validate inclusive temperature bounds.
+
+    Returns:
+        tuple[float, float]: The validated bounds.
+
+    Raises:
+        ValueError: The minimum exceeds the maximum.
+    """
+    if value[0] > value[1]:
+        raise ValueError("Temperature minimum must not exceed maximum.")
+    return value
+
+
+TemperatureRange = Annotated[tuple[FiniteFloat, FiniteFloat], AfterValidator(_validate_temperature_range)]
 
 
 class RequestGenerationConfig(BaseModel):

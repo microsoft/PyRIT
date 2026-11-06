@@ -4303,7 +4303,10 @@ describe("ChatWindow Integration", () => {
 
   it("blocks an invalid explicit generation value without preparing or submitting the message", async () => {
     const user = userEvent.setup();
-    const target = { ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }) };
+    const target = {
+      ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }),
+      temperature_range: [0, 2] as const,
+    };
     render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target} /></TestWrapper>);
     await chooseTemperature(user, "2.1");
     await user.type(screen.getByRole("textbox"), "Hello");
