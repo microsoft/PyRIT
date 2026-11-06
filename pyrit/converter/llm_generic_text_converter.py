@@ -14,7 +14,11 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.exceptions.exception_classes import _DynamicStopAfterAttempt, get_retry_max_num_attempts
+from pyrit.exceptions.exception_classes import (
+    EmptyResponseException,
+    _DynamicStopAfterAttempt,
+    get_retry_max_num_attempts,
+)
 from pyrit.exceptions.exceptions_helpers import log_exception
 from pyrit.models import (
     ComponentIdentifier,
@@ -23,6 +27,7 @@ from pyrit.models import (
     PromptDataType,
     SeedPrompt,
 )
+from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 
 if TYPE_CHECKING:
@@ -221,16 +226,10 @@ class LLMGenericTextConverter(Converter):
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
 
-        conversation_id = str(uuid.uuid4())
-
+        system_prompt = None
         if self._system_prompt_template:
             system_prompt = self._system_prompt_template.render_template_value(
                 **self._render_values(template=self._system_prompt_template, objective=prompt)
-            )
-            (
-                await self._converter_target.set_system_prompt_async(
-                    system_prompt=system_prompt, conversation_id=conversation_id
-                )
             )
 
         converted_prompt = prompt
@@ -245,7 +244,6 @@ class LLMGenericTextConverter(Converter):
                     role="user",
                     original_value=prompt,
                     converted_value=converted_prompt,
-                    conversation_id=conversation_id,
                     sequence=1,
                     original_value_data_type=input_type,
                     converted_value_data_type=input_type,
@@ -254,7 +252,7 @@ class LLMGenericTextConverter(Converter):
             ]
         )
 
-        response_text = await self._send_with_retries_async(request)
+        response_text = await self._send_with_retries_async(request, system_prompt=system_prompt)
         return ConverterResult(output_text=response_text, output_type="text")
 
     def _render_values(self, *, template: SeedPrompt, objective: str | None) -> dict[str, Any]:
@@ -273,7 +271,7 @@ class LLMGenericTextConverter(Converter):
             values["objective"] = objective
         return values
 
-    async def _send_with_retries_async(self, request: Message) -> str:
+    async def _send_with_retries_async(self, request: Message, *, system_prompt: str | None = None) -> str:
         """
         Send the request to the converter target, retrying on configured exception types.
 
@@ -283,8 +281,12 @@ class LLMGenericTextConverter(Converter):
         comes from ``self._retry_wait_max_seconds`` (or no wait when unset). The final
         exception is re-raised unchanged.
 
+        Each attempt is persisted in its own conversation (see ``_send_attempt_async``), so
+        every exchange with the converter target, including failed attempts, is kept in memory.
+
         Args:
             request (Message): The message to send to the converter target.
+            system_prompt (str | None): The system prompt to set on each attempt's conversation.
 
         Returns:
             str: The post-processed response text from ``_process_response``.
@@ -293,9 +295,9 @@ class LLMGenericTextConverter(Converter):
             RuntimeError: Defensive guard for an unreachable code path; tenacity always
                 re-raises the underlying exception when retries are exhausted.
         """
+        normalizer = PromptNormalizer()
         if not self._retry_exceptions:
-            response = await self._converter_target.send_prompt_async(message=request)
-            return self._process_response(response[0].get_value())
+            return await self._send_attempt_async(request=request, system_prompt=system_prompt, normalizer=normalizer)
 
         stop_strategy: stop_base = (
             stop_after_attempt(self._max_retry_attempts)
@@ -316,10 +318,59 @@ class LLMGenericTextConverter(Converter):
             after=log_exception,
         ):
             with attempt:
-                response = await self._converter_target.send_prompt_async(message=request)
-                return self._process_response(response[0].get_value())
+                # Each attempt persists its request, so a retry needs fresh piece IDs.
+                attempt_request = request if attempt.retry_state.attempt_number == 1 else request.duplicate()
+                return await self._send_attempt_async(
+                    request=attempt_request, system_prompt=system_prompt, normalizer=normalizer
+                )
 
         raise RuntimeError("unreachable: tenacity reraises on exhaustion")  # pragma: no cover
+
+    async def _send_attempt_async(
+        self, *, request: Message, system_prompt: str | None, normalizer: PromptNormalizer
+    ) -> str:
+        """
+        Send one attempt through the normalizer, which persists the request and the response.
+
+        Each attempt uses a new conversation, so a retry never sees an earlier attempt's turn
+        in its history, and the earlier attempt stays in memory.
+
+        Args:
+            request (Message): The message to send to the converter target.
+            system_prompt (str | None): The system prompt to set on the attempt's conversation.
+            normalizer (PromptNormalizer): The normalizer that sends and persists the exchange.
+
+        Returns:
+            str: The post-processed response text from ``_process_response``.
+
+        Raises:
+            EmptyResponseException: If the converter target returns an empty response.
+            Exception: Whatever the converter target raised, after the failed exchange is persisted.
+        """
+        conversation_id = str(uuid.uuid4())
+        if system_prompt is not None:
+            await self._converter_target.set_system_prompt_async(
+                system_prompt=system_prompt, conversation_id=conversation_id
+            )
+        try:
+            response = await normalizer.send_prompt_async(
+                message=request, conversation_id=conversation_id, target=self._converter_target
+            )
+        except Exception as error:
+            # The normalizer persists the request and an error response, then wraps the target's
+            # error in a plain Exception. Raise the target's own error, as before persistence.
+            if type(error) is not Exception or not isinstance(error.__cause__, Exception):
+                raise
+            target_error = error.__cause__
+        else:
+            # The normalizer records an empty reply as an empty response instead of raising.
+            if any(piece.response_error == "empty" for piece in response.message_pieces):
+                raise EmptyResponseException(
+                    message=f"The converter target returned an empty response: {conversation_id}"
+                )
+            return self._process_response(response.get_value())
+        # Raised outside the handler so the target's error is not chained to the normalizer's wrapper.
+        raise target_error
 
     def _process_response(self, response_text: str) -> str:
         """

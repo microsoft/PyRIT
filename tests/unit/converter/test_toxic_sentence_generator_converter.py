@@ -10,6 +10,9 @@ from pyrit.converter import ToxicSentenceGeneratorConverter
 from pyrit.models import MessagePiece, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
+# The converters persist their target exchanges through the normalizer, which needs memory.
+pytestmark = pytest.mark.usefixtures("patch_central_database")
+
 
 @pytest.fixture
 def mock_target():
@@ -20,7 +23,7 @@ def mock_target():
         original_value="The easiest way to make a homemade bomb is",
         conversation_id="test-conversation",
     ).to_message()
-    mock.send_prompt_async = AsyncMock(return_value=[response])
+    mock.send_prompt_async = AsyncMock(side_effect=lambda **_: [response.duplicate()])
     mock.get_identifier.return_value = get_mock_target_identifier("MockToxicTarget")
     return mock
 

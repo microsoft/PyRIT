@@ -22,12 +22,15 @@ from pyrit.converter import (
     TranslationConverter,
     VariationConverter,
 )
-from pyrit.exceptions import InvalidJsonException
+from pyrit.exceptions import EmptyResponseException, InvalidJsonException
 from pyrit.memory import SQLiteMemory
 from pyrit.models import ConverterIdentifier, Message, MessagePiece, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.registry import ConverterRegistry
+
+# The converters persist their target exchanges through the normalizer, which needs memory.
+pytestmark = pytest.mark.usefixtures("patch_central_database")
 
 
 @pytest.fixture
@@ -41,7 +44,7 @@ def mock_target() -> MagicMock:
             )
         ]
     )
-    target.send_prompt_async = AsyncMock(return_value=[response])
+    target.send_prompt_async = AsyncMock(side_effect=lambda **_: [response.duplicate()])
     target.get_identifier.return_value = get_mock_target_identifier("MockLLMTarget")
     return target
 
@@ -595,3 +598,109 @@ async def test_per_call_prompt_does_not_change_converter_identifier(mock_target,
     assert read_after.get_identifier().hash == identifier_before_conversion.hash
     assert {identifier.hash for identifier in sent_identifiers} == {identifier_before_conversion.hash}
     assert identifier_before_conversion.params.get("template_parameters_hash") is None
+
+
+class _RecordingTarget(MockPromptTarget):
+    """A local chat target that records the history each call receives and can fail on demand."""
+
+    def __init__(self, *, error: Exception | None = None) -> None:
+        super().__init__()
+        self.error = error
+        self.histories: list[list[str]] = []
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        self.histories.append([message.api_role for message in normalized_conversation])
+        if self.error is not None:
+            raise self.error
+        return await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+
+
+async def _converter_conversations_async(memory: SQLiteMemory) -> dict[str, list[MessagePiece]]:
+    conversations: dict[str, list[MessagePiece]] = defaultdict(list)
+    for piece in sorted(await memory.get_message_pieces_async(), key=lambda piece: piece.sequence):
+        conversations[piece.conversation_id].append(piece)
+    return dict(conversations)
+
+
+async def test_convert_async_persists_the_target_exchange(sqlite_instance: SQLiteMemory) -> None:
+    target = _RecordingTarget()
+    converter = LLMGenericTextConverter(
+        converter_target=target,
+        system_prompt_template=SeedPrompt(value="Rewrite the text.", data_type="text"),
+        user_prompt_template_with_objective=SeedPrompt(
+            value="Text: {{ objective }}", data_type="text", parameters=["objective"]
+        ),
+    )
+
+    result = await converter.convert_async(prompt="hello")
+
+    [pieces] = (await _converter_conversations_async(sqlite_instance)).values()
+    assert [piece.api_role for piece in pieces] == ["system", "user", "assistant"]
+    assert pieces[1].original_value == "hello"
+    assert pieces[1].converted_value == "Text: hello"
+    assert pieces[2].converted_value == result.output_text == "default"
+
+
+async def test_each_retry_attempt_is_persisted_in_its_own_conversation(sqlite_instance: SQLiteMemory) -> None:
+    class _RetryOnceConverter(LLMGenericTextConverter):
+        RETRY_EXCEPTIONS = (InvalidJsonException,)
+        failures_left = 1
+
+        def _process_response(self, response_text: str) -> str:
+            if self.failures_left:
+                self.failures_left -= 1
+                raise InvalidJsonException(message="bad")
+            return response_text
+
+    target = _RecordingTarget()
+    converter = _RetryOnceConverter(
+        converter_target=target, system_prompt_template=SeedPrompt(value="Rewrite the text.", data_type="text")
+    )
+
+    result = await converter.convert_async(prompt="hello")
+
+    assert result.output_text == "default"
+    conversations = await _converter_conversations_async(sqlite_instance)
+    assert len(conversations) == 2
+    for pieces in conversations.values():
+        assert [piece.api_role for piece in pieces] == ["system", "user", "assistant"]
+    # The retry starts from a clean conversation instead of replaying the failed attempt.
+    assert target.histories == [["system", "user"], ["system", "user"]]
+
+
+async def test_failed_target_call_is_persisted_and_raises_the_target_error(sqlite_instance: SQLiteMemory) -> None:
+    converter = LLMGenericTextConverter(converter_target=_RecordingTarget(error=ValueError("target down")))
+
+    with pytest.raises(ValueError, match="target down"):
+        await converter.convert_async(prompt="hello")
+
+    [pieces] = (await _converter_conversations_async(sqlite_instance)).values()
+    assert [piece.api_role for piece in pieces] == ["user", "assistant"]
+    assert pieces[0].original_value == "hello"
+    assert pieces[1].response_error == "processing"
+    assert "target down" in pieces[1].converted_value
+
+
+async def test_retry_on_target_error_matches_the_unwrapped_error(sqlite_instance: SQLiteMemory) -> None:
+    target = _RecordingTarget(error=ConnectionError("flaky"))
+    converter = LLMGenericTextConverter(converter_target=target, retry_exceptions=(ConnectionError,))
+
+    with pytest.raises(ConnectionError, match="flaky"):
+        await converter.convert_async(prompt="hello")
+
+    # RETRY_MAX_NUM_ATTEMPTS is set to 2 in conftest.py; both failed exchanges are kept.
+    assert len(target.histories) == 2
+    assert len(await _converter_conversations_async(sqlite_instance)) == 2
+
+
+async def test_empty_target_response_raises_empty_response_exception(sqlite_instance: SQLiteMemory) -> None:
+    converter = LLMGenericTextConverter(
+        converter_target=_RecordingTarget(error=EmptyResponseException(message="nothing"))
+    )
+
+    with pytest.raises(EmptyResponseException):
+        await converter.convert_async(prompt="hello")
+
+    [pieces] = (await _converter_conversations_async(sqlite_instance)).values()
+    assert [piece.api_role for piece in pieces] == ["user", "assistant"]
+    assert pieces[1].response_error == "empty"
