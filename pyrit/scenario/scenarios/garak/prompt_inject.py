@@ -334,7 +334,7 @@ class PromptInject(Scenario):
                 scorer = (
                     SubStringScorer(substring=goal_text, categories=["prompt_injection"])
                     if self._use_goal_scorers
-                    else cast("TrueFalseScorer", self._objective_scorer)
+                    else self._objective_scorer
                 )
                 technique_text = self._technique_templates[technique.value].render_template_value(goal_text=goal_text)
                 converter_config = AttackConverterConfig(

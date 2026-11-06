@@ -144,13 +144,10 @@ class MyScenario(Scenario):
         objective_scorer: TrueFalseScorer | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
-        self._objective_scorer: TrueFalseScorer = (
-            objective_scorer if objective_scorer else self._get_default_objective_scorer()
-        )
-
+        # Without a scorer, self._objective_scorer builds the default on first use.
         super().__init__(
             version=self.VERSION,
-            objective_scorer=self._objective_scorer,
+            objective_scorer=objective_scorer,
             technique_class=MyTechnique,
             default_dataset_config=DatasetAttackConfiguration(
                 sources=[DatasetSource(name="dataset_name")], max_total=4

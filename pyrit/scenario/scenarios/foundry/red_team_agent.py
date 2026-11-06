@@ -12,6 +12,7 @@ available attacks against specified datasets.
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import cached_property
 from inspect import signature
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, cast
@@ -330,17 +331,20 @@ class RedTeamAgent(Scenario):
         Raises:
             ValueError: If attack_techniques is empty or contains unsupported techniques.
         """
-        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
-        if not attack_scoring_config:
-            attack_scoring_config = AttackScoringConfig(objective_scorer=self._get_default_objective_scorer())
-        self._attack_scoring_config = attack_scoring_config
+        # Without explicit arguments, ``_adversarial_chat`` and ``_attack_scoring_config`` resolve their
+        # defaults when an attack first needs them, so construction does not require target credentials.
+        if adversarial_chat:
+            self._adversarial_chat = adversarial_chat
 
-        objective_scorer = self._attack_scoring_config.objective_scorer
-        if not objective_scorer:
-            raise ValueError(
-                "AttackScoringConfig must have an objective_scorer. "
-                "Please provide attack_scoring_config with objective_scorer set."
-            )
+        objective_scorer = None
+        if attack_scoring_config:
+            objective_scorer = attack_scoring_config.objective_scorer
+            if not objective_scorer:
+                raise ValueError(
+                    "AttackScoringConfig must have an objective_scorer. "
+                    "Please provide attack_scoring_config with objective_scorer set."
+                )
+            self._attack_scoring_config = attack_scoring_config
 
         # Call super().__init__() first to initialize self._memory
         super().__init__(
@@ -355,6 +359,26 @@ class RedTeamAgent(Scenario):
         )
 
         self._scenario_composites: list[FoundryComposite] = []
+
+    @cached_property
+    def _adversarial_chat(self) -> PromptTarget:
+        """
+        The adversarial chat target, defaulting to ``get_default_adversarial_target()`` on first access.
+
+        Returns:
+            PromptTarget: The target passed to the constructor, or the default adversarial target.
+        """
+        return get_default_adversarial_target()
+
+    @cached_property
+    def _attack_scoring_config(self) -> AttackScoringConfig:
+        """
+        Scoring configuration around the default objective scorer, used when none was passed.
+
+        Returns:
+            AttackScoringConfig: A configuration whose objective scorer is ``_objective_scorer``.
+        """
+        return AttackScoringConfig(objective_scorer=self._objective_scorer)
 
     def _resolve_scenario_techniques(
         self,

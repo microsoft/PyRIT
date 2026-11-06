@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
@@ -137,7 +137,7 @@ class Divergence(Scenario):
         Returns:
             list[AtomicAttack]: Word populations sharing one scorer and attack technique.
         """
-        scorer = cast("TrueFalseScorer", self._objective_scorer)
+        scorer = self._objective_scorer
         converters = context.technique_converters.get("repeat", [])
         technique = self._REPEAT_FACTORY.create(
             objective_target=context.objective_target,

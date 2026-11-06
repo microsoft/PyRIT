@@ -7,6 +7,7 @@ import asyncio
 import logging
 import pathlib
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from pyrit.common import apply_defaults
@@ -433,22 +434,12 @@ class Psychosocial(Scenario):
 
         # Each sub-harm builds its own scorer (see ``_SubHarm.build_scorer``), so the right scorer
         # is paired with its dataset by construction. Callers can still override either explicitly.
-        # The default scorer target is resolved lazily -- only when a sub-harm needs to build its
-        # own scorer -- so fully-overridden scorers never require scorer-target configuration.
-        overrides: dict[str, TrueFalseScorer | None] = {
+        # Default scorers are built in ``_scorers_by_harm`` the first time it is read, so construction
+        # never requires scorer-target configuration.
+        self._scorer_overrides: dict[str, TrueFalseScorer | None] = {
             "imminent_crisis": imminent_crisis_scorer,
             "licensed_therapist": licensed_therapist_scorer,
         }
-        scorer_target: PromptTarget | None = None
-        self._scorers_by_harm: dict[str, TrueFalseScorer] = {}
-        for harm in _SUB_HARMS:
-            override = overrides.get(harm.name)
-            if override is not None:
-                self._scorers_by_harm[harm.name] = override
-                continue
-            if scorer_target is None:
-                scorer_target = get_default_scorer_target()
-            self._scorers_by_harm[harm.name] = harm.build_scorer(scorer_target)
 
         super().__init__(
             version=self.VERSION,
@@ -458,10 +449,43 @@ class Psychosocial(Scenario):
                 sources=[DatasetSource(name=harm.dataset_name) for harm in _SUB_HARMS],
             ),
             # No single scenario objective scorer -- each sub-harm scores itself. The base contract
-            # still requires one for scenario identity; the imminent-crisis scorer stands in.
-            objective_scorer=self._scorers_by_harm["imminent_crisis"],
+            # still requires one for scenario identity; the imminent-crisis scorer stands in (see
+            # ``_get_default_objective_scorer``).
+            objective_scorer=imminent_crisis_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+    @cached_property
+    def _scorers_by_harm(self) -> dict[str, TrueFalseScorer]:
+        """
+        Scorer for each sub-harm: the caller's override, or the sub-harm's default scorer.
+
+        The default scorer target is resolved only when a sub-harm needs to build its own scorer,
+        so fully-overridden scorers never require scorer-target configuration.
+
+        Returns:
+            dict[str, TrueFalseScorer]: Scorers keyed by sub-harm name.
+        """
+        scorer_target: PromptTarget | None = None
+        scorers_by_harm: dict[str, TrueFalseScorer] = {}
+        for harm in _SUB_HARMS:
+            override = self._scorer_overrides.get(harm.name)
+            if override is not None:
+                scorers_by_harm[harm.name] = override
+                continue
+            if scorer_target is None:
+                scorer_target = get_default_scorer_target()
+            scorers_by_harm[harm.name] = harm.build_scorer(scorer_target)
+        return scorers_by_harm
+
+    def _get_default_objective_scorer(self) -> TrueFalseScorer:
+        """
+        Use the imminent-crisis scorer as the scenario's objective scorer for identity.
+
+        Returns:
+            TrueFalseScorer: The imminent-crisis sub-harm scorer.
+        """
+        return self._scorers_by_harm["imminent_crisis"]
 
     def _selected_sub_harms(self) -> list[_SubHarm]:
         """

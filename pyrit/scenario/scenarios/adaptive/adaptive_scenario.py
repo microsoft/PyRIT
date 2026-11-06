@@ -108,10 +108,6 @@ class AdaptiveScenario(Scenario):
                 with default settings.
             scenario_result_id (str | None): ID of an existing ``ScenarioResult`` to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-        self._objective_scorer: TrueFalseScorer = objective_scorer
-
         self._selector: TechniqueSelector = selector if selector is not None else EpsilonGreedyTechniqueSelector()
         self._selected_seed_group_adaptations: list[dict[str, str]] = []
         self._selected_technique_hashes: dict[str, list[str]] = {}

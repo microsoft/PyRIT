@@ -424,6 +424,22 @@ class Registry(ABC, Generic[T, MetadataT]):
             type[MetadataT]: The metadata dataclass (e.g. ``ConverterMetadata``).
         """
 
+    def _build_catalog_entry(self, name: str, cls: type[T]) -> MetadataT | None:
+        """
+        Build one entry of the metadata snapshot returned by catalog listings.
+
+        Returning None leaves the class out of listings without failing them. The base
+        implementation never does: any error from ``_build_metadata`` propagates.
+
+        Args:
+            name (str): The catalog name (the registry key) for the class.
+            cls (type[T]): The registered class to describe.
+
+        Returns:
+            MetadataT | None: The class's metadata, or None to leave it out of the snapshot.
+        """
+        return self._build_metadata(name, cls)
+
     def _build_metadata(self, name: str, cls: type[T]) -> MetadataT:
         """
         Build the metadata descriptor for a registered class.
@@ -665,7 +681,17 @@ class Registry(ABC, Generic[T, MetadataT]):
                     classes_snapshot = dict(self._classes)
                     version = self._catalog_version
 
-                built = {name: self._build_metadata(name, cls) for name, cls in sorted(classes_snapshot.items())}
+                built: dict[str, MetadataT] = {}
+                for name, cls in sorted(classes_snapshot.items()):
+                    metadata = self._build_catalog_entry(name, cls)
+                    if metadata is not None:
+                        built[name] = metadata
+
+                if len(built) < len(classes_snapshot):
+                    # Some classes are unavailable right now (for example, missing configuration).
+                    # Serve the rest, but don't cache the partial snapshot, so they reappear once
+                    # their dependencies are in place.
+                    return built
 
                 with self._catalog_lock:
                     if self._metadata_cache is not None:
@@ -710,13 +736,19 @@ class Registry(ABC, Generic[T, MetadataT]):
         """
         Get the metadata for a single registered class by name.
 
+        A registered class left out of the catalog snapshot (see ``_build_catalog_entry``) is
+        described directly, so the lookup raises the error that made it unavailable.
+
         Args:
             name (str): The catalog name.
 
         Returns:
             MetadataT | None: The metadata, or None if the name is not registered.
         """
-        return self._ensure_metadata().get(name)
+        metadata = self._ensure_metadata().get(name)
+        if metadata is None and name in self:
+            return self._build_metadata(name, self.get_class(name))
+        return metadata
 
     def get_class_metadata(self, cls: type[T]) -> MetadataT:
         """

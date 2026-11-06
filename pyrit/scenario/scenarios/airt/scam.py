@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+from functools import cached_property
 from pathlib import Path
 from typing import ClassVar
 
@@ -144,13 +145,10 @@ class Scam(Scenario):
                 objective into the role-play context (in single-turn techniques).
             scenario_result_id (str | None): Optional ID of an existing scenario result to resume.
         """
-        if not objective_scorer:
-            objective_scorer = self._get_default_objective_scorer()
-        self._scorer_config = AttackScoringConfig(objective_scorer=objective_scorer)
-
-        # Used for multiturn techniques and role-play simulated conversations
-        self._adversarial_chat = adversarial_chat if adversarial_chat else get_default_adversarial_target()
-        self._adversarial_config = AttackAdversarialConfig(target=self._adversarial_chat)
+        # Used for multiturn techniques and role-play simulated conversations. Without an explicit
+        # target, ``_adversarial_chat`` resolves the default when an attack first needs it.
+        if adversarial_chat:
+            self._adversarial_chat = adversarial_chat
 
         super().__init__(
             version=self.VERSION,
@@ -162,6 +160,36 @@ class Scam(Scenario):
             objective_scorer=objective_scorer,
             scenario_result_id=scenario_result_id,
         )
+
+    @cached_property
+    def _scorer_config(self) -> AttackScoringConfig:
+        """
+        Scoring configuration built from the objective scorer the first time an attack needs it.
+
+        Returns:
+            AttackScoringConfig: A configuration whose objective scorer is ``_objective_scorer``.
+        """
+        return AttackScoringConfig(objective_scorer=self._objective_scorer)
+
+    @cached_property
+    def _adversarial_chat(self) -> PromptTarget:
+        """
+        The adversarial chat target, defaulting to ``get_default_adversarial_target()`` on first access.
+
+        Returns:
+            PromptTarget: The target passed to the constructor, or the default adversarial target.
+        """
+        return get_default_adversarial_target()
+
+    @cached_property
+    def _adversarial_config(self) -> AttackAdversarialConfig:
+        """
+        Adversarial configuration around ``_adversarial_chat``.
+
+        Returns:
+            AttackAdversarialConfig: A configuration targeting ``_adversarial_chat``.
+        """
+        return AttackAdversarialConfig(target=self._adversarial_chat)
 
     def _get_atomic_attack_from_technique(
         self,
