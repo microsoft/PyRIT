@@ -33,7 +33,7 @@ import {
 } from '@/components/Parameters/parameterForm'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { TargetInstance, TargetTypeEntry } from '@/types'
+import type { TargetAuthMode, TargetInstance, TargetTypeEntry } from '@/types'
 import {
   targetIdentifierHash,
   targetModelName,
@@ -68,6 +68,15 @@ const FALLBACK_IDENTITY_TARGET_TYPES = new Set([
   'OpenAITTSTarget',
   'OpenAIResponseTarget',
   'AzureMLChatTarget',
+])
+
+const FALLBACK_NO_KEY_TARGET_TYPES = new Set([
+  'OpenAIChatTarget',
+  'OpenAICompletionTarget',
+  'OpenAIImageTarget',
+  'OpenAIVideoTarget',
+  'OpenAITTSTarget',
+  'OpenAIResponseTarget',
 ])
 
 const TARGET_DISPLAY_NAMES: Record<string, string> = {
@@ -122,8 +131,13 @@ const FALLBACK_TARGET_TYPE_ENTRIES: TargetTypeEntry[] = FALLBACK_TARGET_TYPES.ma
   }
 ))
 
-type AuthMode = 'api_key' | 'identity'
 type TypeMetadataStatus = 'loading' | 'loaded' | 'error'
+
+const AUTH_MODE_LABELS: Record<TargetAuthMode, string> = {
+  api_key: 'API key',
+  identity: 'Microsoft Entra ID',
+  none: 'No key',
+}
 
 function getTargetDisplayName(targetType: string): string {
   return TARGET_DISPLAY_NAMES[targetType] ?? targetType
@@ -136,9 +150,7 @@ return 'Supported authentication: GitHub token'
   const authModes = entry.supported_auth_modes
   if (authModes.length === 0) return null
 
-  const labels = authModes.map((mode) => (
-    mode === 'identity' ? 'Microsoft Entra ID' : 'API key'
-  ))
+  const labels = authModes.map((mode) => AUTH_MODE_LABELS[mode])
   return `Supported authentication: ${labels.join(' or ')}`
 }
 
@@ -147,6 +159,10 @@ return 'Supported authentication: GitHub token'
  */
 function defaultSupportsIdentity(targetType: string): boolean {
   return FALLBACK_IDENTITY_TARGET_TYPES.has(targetType)
+}
+
+function defaultSupportsNoKey(targetType: string): boolean {
+  return FALLBACK_NO_KEY_TARGET_TYPES.has(targetType)
 }
 
 function getParameterLabel(name: string): string {
@@ -264,7 +280,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const [modelName, setModelName] = useState('')
   const [hasDifferentUnderlying, setHasDifferentUnderlying] = useState(false)
   const [underlyingModel, setUnderlyingModel] = useState('')
-  const [authMode, setAuthMode] = useState<AuthMode>('api_key')
+  const [authMode, setAuthMode] = useState<TargetAuthMode>('api_key')
   const [apiKey, setApiKey] = useState('')
   const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -384,12 +400,16 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const supportsIdentity = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('identity')
     : defaultSupportsIdentity(targetType)
-  const showAuthField = targetType !== '' && supportsIdentity
+  const supportsNoKey = targetTypeEntry
+    ? targetTypeEntry.supported_auth_modes.includes('none')
+    : defaultSupportsNoKey(targetType)
+  const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey)
   const isIdentity = showAuthField && authMode === 'identity'
+  const isNoKey = showAuthField && authMode === 'none'
   const endpointRequired = hasEndpointField
   const modelNameRequired = Boolean(modelNameParameter?.required)
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
-  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity
+  const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey
   const identityEndpointError: string | null = (() => {
     if (!isIdentity || endpoint === '') return null
     if (isOpenAi && !isAzureOpenAiEndpoint(endpoint)) {
@@ -580,7 +600,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       }
       if (hasEndpointField && endpoint) params.endpoint = endpoint
       if (hasModelNameField && modelName) params.model_name = modelName
-      if (hasApiKeyField && !isIdentity && apiKey) params.api_key = apiKey
+      if (hasApiKeyField && !isIdentity && !isNoKey && apiKey) params.api_key = apiKey
 
       if (
         (underlyingModelRequired || hasDifferentUnderlying)
@@ -594,6 +614,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         type: targetType,
         params,
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
+        ...(isNoKey ? { auth_mode: 'none' as const } : {}),
       })
 
       resetForm()
@@ -662,7 +683,13 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     const nextSupportsIdentity = nextEntry
                       ? nextEntry.supported_auth_modes.includes('identity')
                       : defaultSupportsIdentity(next)
-                    if (!nextSupportsIdentity) {
+                    const nextSupportsNoKey = nextEntry
+                      ? nextEntry.supported_auth_modes.includes('none')
+                      : defaultSupportsNoKey(next)
+                    if (
+                      (authMode === 'identity' && !nextSupportsIdentity)
+                      || (authMode === 'none' && !nextSupportsNoKey)
+                    ) {
                       setAuthMode('api_key')
                     }
                   }}
@@ -978,8 +1005,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                       <RadioGroup
                         value={authMode}
                         onChange={(_, data) => {
-                          const next = data.value as AuthMode
+                          const next = data.value as TargetAuthMode
                           setAuthMode(next)
+                          if (next === 'none') {
+                            setApiKey('')
+                          }
                           if (next === 'identity') {
                             setApiKey('')
                             setParameterValues((current) => {
@@ -993,7 +1023,12 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         }}
                       >
                         <Radio value="api_key" label="API Key" />
-                        <Radio value="identity" label="Identity-based (Microsoft Entra ID)" />
+                        {supportsIdentity && (
+                          <Radio value="identity" label="Identity-based (Microsoft Entra ID)" />
+                        )}
+                        {supportsNoKey && (
+                          <Radio value="none" label="No key (for servers that need none)" />
+                        )}
                       </RadioGroup>
                     </Field>
                   )}
@@ -1006,7 +1041,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                     </MessageBar>
                   )}
 
-                  {hasApiKeyField && !isIdentity && (
+                  {hasApiKeyField && !isIdentity && !isNoKey && (
                     <Field
                       label="API Key"
                       hint={apiKeyParameter?.description || undefined}

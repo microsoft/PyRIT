@@ -7,7 +7,7 @@ import abc
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, assert_never, cast
 
 import numpy as np
 from scipy.stats import ttest_1samp
@@ -103,9 +103,16 @@ class ScorerEvaluator(abc.ABC):
         if not metrics_type:
             metrics_type = MetricsType.OBJECTIVE if isinstance(scorer, TrueFalseScorer) else MetricsType.HARM
 
-        evaluator_map = {MetricsType.HARM: HarmScorerEvaluator, MetricsType.OBJECTIVE: ObjectiveScorerEvaluator}
-
-        evaluator = evaluator_map.get(metrics_type, HarmScorerEvaluator)
+        match metrics_type:
+            case MetricsType.HARM:
+                evaluator = HarmScorerEvaluator
+            case MetricsType.OBJECTIVE:
+                evaluator = ObjectiveScorerEvaluator
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(metrics_type)
+                # Preserve the historical runtime fallback for values outside the declared enum.
+                evaluator = HarmScorerEvaluator
         return evaluator(scorer=scorer)
 
     async def run_evaluation_async(

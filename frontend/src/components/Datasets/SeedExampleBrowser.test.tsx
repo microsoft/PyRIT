@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router'
 
-import { apiClient } from '@/services/api'
+import { apiClient, attacksApi } from '@/services/api'
+import { ChatDraftProvider, useChatDraftHandoff } from '@/hooks/useChatDraftHandoff'
+import { deferred } from '@/test-utils/deferred'
 import { advanceAutoRefresh } from '@/test-utils/autoRefresh'
 import type { DatasetInfo, SeedExampleDetailResponse, SeedExampleListResponse, SeedExampleSummary, SeedRecord } from '@/types'
 
@@ -118,29 +120,33 @@ function seedListCalls(): unknown[][] {
   return mockGet.mock.calls.filter((call) => call[0] === '/datasets/seeds')
 }
 
-function renderBrowser(search = '', state?: unknown) {
+function renderBrowser(search = '', state?: unknown, activeAttackId?: string) {
   const path = `/datasets/detail?selection_key=${encodeURIComponent(DATASET.selection_key)}${search}`
   const url = new URL(path, 'http://localhost')
   return render(
     <FluentProvider theme={webLightTheme}>
       <MemoryRouter initialEntries={[{ pathname: url.pathname, search: url.search, state }]}>
-        <Harness dataset={DATASET} />
+        <ChatDraftProvider><Harness dataset={DATASET} activeAttackId={activeAttackId} /></ChatDraftProvider>
       </MemoryRouter>
     </FluentProvider>,
   )
 }
 
-function Harness({ dataset }: { dataset: DatasetInfo }) {
+function Harness({ dataset, activeAttackId }: { dataset: DatasetInfo; activeAttackId?: string }) {
   const location = useLocation()
   const navigate = useNavigate()
+  const handoff = useChatDraftHandoff()
   const [epoch, setEpoch] = useState(0)
   const [runtimeTick, setRuntimeTick] = useState(0)
   return (
     <>
       <Routes key={epoch}>
-        <Route path="/datasets/detail" element={<SeedExampleBrowser dataset={dataset} onCatalogStale={onCatalogStale} />} />
+        <Route path="/datasets/detail" element={<SeedExampleBrowser dataset={dataset} activeAttackId={activeAttackId} onCatalogStale={onCatalogStale} />} />
+        <Route path="/away" element={<h1>Another page</h1>} />
       </Routes>
       <output aria-label="Current URL">{`${location.pathname}${location.search}`}</output>
+      <output aria-label="Pending import">{handoff.pendingImport ? 'waiting' : 'none'}</output>
+      <button onClick={() => navigate('/away')}>Leave examples</button>
       <output aria-label="Catalog return">{
         location.state && typeof location.state === 'object' && 'catalogPath' in location.state
           ? String((location.state as { catalogPath?: unknown }).catalogPath)
@@ -208,6 +214,38 @@ describe('SeedExampleBrowser', () => {
     jest.useRealTimers()
     jest.restoreAllMocks()
   })
+
+  it.each(['navigation', 'runtime', 'selection'] as const)(
+    'ignores a new-conversation completion after %s changes',
+    async (change: 'navigation' | 'runtime' | 'selection') => {
+      const user = userEvent.setup()
+      const creation = deferred<Awaited<ReturnType<typeof attacksApi.createConversation>>>()
+      const create = jest.spyOn(attacksApi, 'createConversation').mockReturnValue(creation.promise)
+      const detail = { ...DETAIL, members: [member({ id: 'prompt', value: 'Template', sequence: 0 })] }
+      mockGet.mockImplementation((url: string) => Promise.resolve({
+        data: url === '/datasets/seeds' ? listPage([FIRST, SECOND]) : detail,
+      }))
+      renderBrowser('&example=example-1', undefined, 'attack')
+      await screen.findByRole('heading', { level: 2, name: 'alpha' })
+      await user.click(screen.getByTestId('import-into-chat-button'))
+      await user.click(screen.getByTestId('import-new-conversation-item'))
+      await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+      if (change === 'navigation') {
+        await user.click(screen.getByRole('button', { name: 'Leave examples' }))
+      } else if (change === 'runtime') {
+        generation = 'gen-2'
+        await user.click(screen.getByRole('button', { name: 'Apply runtime' }))
+      } else {
+        await user.click(screen.getByRole('button', { name: 'Show beta' }))
+      }
+      const before = currentUrl().href
+      await act(async () => { creation.resolve({
+        conversation_id: 'stale', attack_result_id: 'attack', created_at: '',
+      }) })
+      expect(currentUrl().href).toBe(before)
+      expect(screen.getByLabelText('Pending import')).toHaveTextContent('none')
+    },
+  )
 
   it('should retain visible examples, open detail, focus and URL through a failed background check and recovery', async () => {
     jest.useFakeTimers({ advanceTimers: true })
