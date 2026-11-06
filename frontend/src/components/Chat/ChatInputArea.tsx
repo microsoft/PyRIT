@@ -1,10 +1,11 @@
 import { useState, useCallback, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, type KeyboardEvent } from 'react'
 
-import { Button, Caption1, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
+import { Button, Caption1, MessageBar, MessageBarBody, MessageBarActions, Popover, PopoverSurface, PopoverTrigger, Tooltip, Text } from '@fluentui/react-components'
 import { SendRegular, DismissRegular, InfoRegular, CopyRegular, WarningRegular, SettingsRegular, ArrowSyncRegular } from '@fluentui/react-icons'
 
 import type { AttackTargetResolutionStatus, ChatSendOutcome, ConvertedFileChip, MessageAttachment, MultiSendOptions, PieceConversion, TargetInstance, UndoLastSendAction } from '@/types'
 import { isTargetResolutionBlocking } from '@/utils/targetIdentity'
+import { useAttachmentUploads } from '@/hooks/useAttachmentUploads'
 
 import { usePromptEditorStyles } from './PromptEditor.styles'
 import PromptEditor from './PromptEditor'
@@ -166,6 +167,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const styles = usePromptEditorStyles()
   const [input, setInput] = useState(initialText)
   const [attachments, setAttachments] = useState<MessageAttachment[]>(initialAttachments)
+  const uploads = useAttachmentUploads(attachments)
   const [isInputWarningOpen, setIsInputWarningOpen] = useState(false)
   const warningHoverTimer = useRef<number | undefined>(undefined)
   const cancelWarningHover = useCallback((): void => {
@@ -249,6 +251,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   const hasUnsupportedModalities = unsupportedModalityReasons.length > 0
   const hasContent = Boolean(input || convertedValue != null || convertedFileChip || attachments.length)
   const sendBlockedReasons = [
+    ...(uploads.errors.length ? ['Retry or remove attachments whose uploads failed.'] : []),
     ...(disabled ? inputDisabledReasons : []),
     ...(sendDisabled ? sendDisabledReasons.length > 0
       ? sendDisabledReasons : ['Sending is temporarily unavailable. Wait for the current operation to finish.'] : []),
@@ -309,11 +312,22 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
             convertedFileChip={convertedFileChip} onClearConvertedFileChip={onClearConvertedFileChip}
             setup={showSystemPrompt && onSystemPromptChange && <SystemPromptSetup value={systemPrompt}
               onChange={onSystemPromptChange} disabled={!!activeTarget && !supportsSystemPrompt} />}
-            warning={hasUnsupportedModalities && <div className={styles.unsupportedWarning} data-testid="unsupported-modality-warning">
-              <WarningRegular fontSize={14} /><Caption1>
-                {unsupportedModalityReasons.join(' ')}
-              </Caption1>
-            </div>}
+            warning={<>
+              {uploads.pending && <Caption1 role="status">Uploading attachments...</Caption1>}
+              {uploads.errors.map(({ id, file, detail }: { id: string; file: File; detail: string }) => (
+                <MessageBar key={id} intent="error">
+                  <MessageBarBody>Upload failed for {file.name}: {detail}</MessageBarBody>
+                  <MessageBarActions>
+                    <Button className={styles.touchTarget} onClick={() => uploads.retry(file)} disabled={disabled}>Retry upload</Button>
+                  </MessageBarActions>
+                </MessageBar>
+              ))}
+              {hasUnsupportedModalities && <div className={styles.unsupportedWarning} data-testid="unsupported-modality-warning">
+                <WarningRegular fontSize={14} /><Caption1>
+                  {unsupportedModalityReasons.join(' ')}
+                </Caption1>
+              </div>}
+            </>}
             actions={<>
               <MultiSendSettings options={effectiveSendOptions} disabled={disabled || sendDisabled}
                 disabledReason={repeatDisabledReason} onChange={setSendOptions} />

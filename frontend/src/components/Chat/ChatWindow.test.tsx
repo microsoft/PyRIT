@@ -30,7 +30,7 @@ import {
   TargetInstance,
   TargetResponseStatus,
 } from "@/types";
-import { attacksApi, convertersApi, scoresApi, targetsApi } from "@/services/api";
+import { attacksApi, convertersApi, mediaApi, scoresApi, targetsApi } from "@/services/api";
 import * as messageMapper from "@/utils/messageMapper";
 
 jest.mock("./FindingEvidenceDialog", () => ({
@@ -59,6 +59,7 @@ const buildCapabilities = (
 jest.setTimeout(60000);
 
 jest.mock("@/services/api", () => ({
+  mediaApi: { upload: jest.fn().mockResolvedValue({ value: "/stored/attachment" }) },
   attacksApi: {
     applyScorer: jest.fn(),
     createAttack: jest.fn(),
@@ -485,6 +486,7 @@ describe("ChatWindow Integration", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(mediaApi.upload).mockReset().mockResolvedValue({ value: "/stored/attachment" });
     for (const api of [mockedAttacksApi, mockedConvertersApi, mockedScoresApi, mockedMapper]) {
       for (const mock of Object.values(api)) {
         if (jest.isMockFunction(mock)) mock.mockReset();
@@ -5061,7 +5063,7 @@ describe("ChatWindow Integration", () => {
     expect(mockSendResult).not.toHaveBeenCalled();
   });
 
-  it("should preserve a recovered media converter before its file read completes", async () => {
+  it("should preserve a recovered media converter without rereading an uploaded file", async () => {
     const user = userEvent.setup();
     const file = new File(["image contents"], "evidence.png", { type: "image/png" });
     const NativeFileReader = FileReader;
@@ -5178,19 +5180,17 @@ describe("ChatWindow Integration", () => {
     expect(deferredReads).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: /send message/i }));
-    await waitFor(() => expect(deferredReads).toHaveLength(1));
-    await act(async () => {
-      await deferredReads[0]();
-    });
-    expect(mockSendResult).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(mockSendResult).toHaveBeenLastCalledWith(
       props.attackResultId,
       expect.objectContaining({
         target_conversation_id: "conv-media-recovery",
         pieces: [expect.objectContaining({
-          data_type: "image_path", applied_converter_ids: ["preserved-image-converter"],
+          data_type: "image_path", original_value: "/stored/attachment",
+          applied_converter_ids: ["preserved-image-converter"],
         })],
       }),
-    );
+    ));
+    expect(deferredReads).toHaveLength(0);
   });
 
   it("should preserve the draft and expose recovery for an HTTP 200 processing error", async () => {
@@ -6674,7 +6674,7 @@ describe("ChatWindow Integration", () => {
         target_conversation_id: "conv-media",
         pieces: [
           { data_type: "text", original_value: "Describe this image" },
-          { data_type: "image_path", original_value: "aW1hZ2UgYnl0ZXM=", mime_type: "image/png" },
+          { data_type: "image_path", original_value: "/stored/attachment", mime_type: "image/png" },
         ],
       }),
     );
@@ -8015,6 +8015,9 @@ describe("ChatWindow Integration", () => {
 
   it.each([false, true])("sends only the successful image after a partial failure (remove failed input: %s)", async (removeFailed: boolean) => {
     const user = userEvent.setup();
+    jest.mocked(mediaApi.upload).mockImplementation(async (request) => ({
+      value: request.content === "c2Vjb25k" ? "/stored/second.png" : "/stored/first.png",
+    }));
     mockedConvertersApi.listConverters.mockResolvedValue({
       items: [makeConverterInstance("compress", "ImageCompressionConverter", ["image_path"], ["image_path"])],
     });
@@ -8066,7 +8069,7 @@ describe("ChatWindow Integration", () => {
       pieces: expect.arrayContaining([expect.objectContaining({ applied_converter_ids: ["compress"] })]),
     })));
     const request = mockSendResult.mock.calls[0][1];
-    expect(request.pieces[removeFailed ? 0 : 1].original_value).toBe("c2Vjb25k");
+    expect(request.pieces[removeFailed ? 0 : 1].original_value).toBe("/stored/second.png");
     expect(request.pieces[removeFailed ? 0 : 1].applied_converter_ids).toEqual(["compress"]);
     expect(request.pieces).toHaveLength(removeFailed ? 1 : 2);
   });

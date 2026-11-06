@@ -9,10 +9,72 @@ import {
   mergeBackendMessages,
   attachmentToMessagePieceRequest,
   buildMessagePieces,
+  startAttachmentUpload,
 } from "./messageMapper";
 import type { BackendMessage, BackendMessagePiece, BackendScore, MessageAttachment } from "../types";
+import { mediaApi } from "@/services/api";
+
+jest.mock("@/services/api", () => ({
+  mediaApi: { upload: jest.fn() },
+}));
 
 describe("messageMapper", () => {
+  describe("staged attachment uploads", () => {
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it("should upload distinct File objects independently and reuse each stored value across draft copies", async () => {
+      const first = new File(["first"], "same.png", { type: "image/png" });
+      const second = new File(["second"], "same.png", { type: "image/png" });
+      jest.mocked(mediaApi.upload)
+        .mockResolvedValueOnce({ value: "/stored/first.png" })
+        .mockResolvedValueOnce({ value: "/stored/second.png" });
+      const pending = startAttachmentUpload(first);
+      expect(startAttachmentUpload(first)).toBe(pending);
+      await Promise.all([pending, startAttachmentUpload(second)]);
+      const attachment: MessageAttachment = {
+        type: "image", name: first.name, url: "blob:local", file: first, mimeType: first.type,
+        metadata: { retained: true }, pieceId: "original-piece",
+      };
+      expect(await attachmentToMessagePieceRequest({ ...attachment })).toMatchObject({
+        original_value: "/stored/first.png", original_prompt_id: "original-piece",
+        mime_type: first.type, prompt_metadata: { retained: true },
+      });
+      expect(await attachmentToMessagePieceRequest({ ...attachment, file: second })).toMatchObject({
+        original_value: "/stored/second.png",
+      });
+      expect(mediaApi.upload).toHaveBeenCalledTimes(2);
+    });
+
+    it("should not silently resend bytes after a background upload fails", async () => {
+      const file = new File(["image"], "failure.png", { type: "image/png" });
+      jest.mocked(mediaApi.upload).mockRejectedValueOnce(new Error("Storage unavailable"));
+      expect(await startAttachmentUpload(file)).toEqual({ status: "failed", detail: "Storage unavailable" });
+      await expect(attachmentToMessagePieceRequest({
+        type: "image", name: file.name, url: "blob:local", mimeType: file.type, file,
+      })).rejects.toThrow("Upload failed for failure.png: Storage unavailable");
+      expect(mediaApi.upload).toHaveBeenCalledTimes(1);
+    });
+
+    it("should refresh an expired staging lease from the retained draft File before sending", async () => {
+      const file = new File(["image"], "old.png", { type: "image/png" });
+      jest.mocked(mediaApi.upload)
+        .mockResolvedValueOnce({ value: "pyrit-upload:old" })
+        .mockResolvedValueOnce({ value: "pyrit-upload:fresh" });
+      await startAttachmentUpload(file);
+      const later = jest.spyOn(Date, "now").mockReturnValue(Date.now() + 24 * 60 * 60 * 1000);
+      try {
+        expect(await attachmentToMessagePieceRequest({
+          type: "image", name: file.name, url: "blob:local", mimeType: file.type, file,
+        })).toMatchObject({ original_value: "pyrit-upload:fresh" });
+        expect(mediaApi.upload).toHaveBeenCalledTimes(2);
+      } finally {
+        later.mockRestore();
+      }
+    });
+  });
+
   describe("mergeBackendMessages", () => {
     const timestamp = "2026-01-01T00:00:00Z";
     const piece = (id: string, overrides: Partial<BackendMessagePiece> = {}): BackendMessagePiece => ({

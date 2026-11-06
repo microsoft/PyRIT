@@ -35,8 +35,15 @@ from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
+from pyrit.backend.services.staged_media import staged_media_store
 from pyrit.memory import AzureSQLMemory, SQLiteMemory
 from pyrit.setup.configuration_loader import ConfigurationLoader
+
+
+@pytest.fixture(autouse=True)
+def isolated_staged_media(tmp_path: Path) -> Iterator[None]:
+    with patch.object(staged_media_store, "_directory", tmp_path / "uploads"):
+        yield
 
 
 async def test_health_responds_while_database_operation_is_pending(sqlite_instance: SQLiteMemory) -> None:
