@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
@@ -467,6 +468,30 @@ def get_azure_openai_auth(endpoint: str) -> Callable[[], Awaitable[str]]:
     """
     scope = get_default_azure_scope(endpoint)
     return get_azure_async_token_provider(scope)
+
+
+def validate_speech_region_shape(region: str) -> str:
+    """
+    Check that a value has the shape of an Azure region name, such as ``eastus``.
+
+    The Speech SDK builds the service's host name from the region, so only letters and digits are accepted.
+    This checks the form of the name only, not whether a region by that name exists.
+
+    Args:
+        region (str): The region to check.
+
+    Returns:
+        str: The region without surrounding whitespace.
+
+    Raises:
+        ValueError: If the region contains anything other than letters and digits.
+    """
+    stripped = region.strip()
+    if not re.fullmatch(r"[A-Za-z0-9]+", stripped):
+        raise ValueError(
+            "azure_speech_region must be an Azure region name such as 'eastus', using only letters and digits."
+        )
+    return stripped
 
 
 def get_speech_config(resource_id: str | None, key: str | None, region: str) -> speechsdk.SpeechConfig:
