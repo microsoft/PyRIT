@@ -39,7 +39,7 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets/{id}` - Get target details
 - `POST /api/targets` - Create a target
 
-A created target is Temporary: it is gone when the backend restarts. With `"persist": true`, `register` left on,
+A created target is Temporary: a restart or reinitialization removes it. With `"persist": true`, `register` left on,
 and a name that starts with a lowercase letter and has at most 64 lowercase letters, digits, and underscores
 (otherwise **422**), the target is saved under `registry_recipes_source` and restored at every start, and the
 signed-in user is recorded as the one who saved it. A saved target can't hold or use a key: it authenticates with
@@ -53,9 +53,9 @@ ws(s) address, save a target type that can't be saved, or use a Temporary target
 file already has receives **409**, and storage that can't be written receives **503**; the server log names the
 target and its folder in case the write reached storage anyway, since the target would then come back at the next
 start. Each listed target's `origin` is `saved`, `configuration`
-(registered by the server's startup scripts), or `temporary` (gone after a restart, such as a target created
-without `persist` or registered by a scan's launch scripts). A saved target can only use targets that come back
-after a restart; targets from configuration keep their own sign-in.
+(registered by the server's startup scripts), or `temporary` (gone after a restart or reinitialization, such as a
+target created without `persist` or registered by a scan's launch scripts). A saved target can only use targets
+that come back after a restart; targets from configuration keep their own sign-in.
 
 ### Saved conversations
 

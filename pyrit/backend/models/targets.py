@@ -73,9 +73,9 @@ class CreateTargetRequest(BaseModel):
     persist: bool = Field(
         False,
         description=(
-            "Save the target so it is restored at every start (true), or keep it until the server stops (false). "
-            "A saved target needs a name of lowercase letters, digits, and underscores, and can't hold or use a "
-            "key: it authenticates with Microsoft Entra ID ('identity') or needs no key."
+            "Save the target so it comes back after the backend restarts or is reinitialized (true), or keep it "
+            "only until then (false). A saved target needs a name of lowercase letters, digits, and underscores, "
+            "and can't hold or use a key: it authenticates with Microsoft Entra ID ('identity') or needs no key."
         ),
     )
     source: SourceInstanceSpec | None = None
