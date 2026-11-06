@@ -38,7 +38,7 @@ from pyrit.memory.memory_models import (
     UTCDateTime,
 )
 from pyrit.memory.memory_session import MemorySession
-from pyrit.memory.storage import DiskStorageIO
+from pyrit.memory.storage import DiskStorageIO, StorageIO
 from pyrit.models import ConversationStats
 
 if TYPE_CHECKING:
@@ -136,8 +136,10 @@ def _cleanup_interrupted_sqlite_connection(context: ExceptionContext) -> None:
 
 
 class _SQLiteAsyncSession(AsyncSession):
-    def __init__(self, *, engine: AsyncEngine, release: Callable[[], None] | None = None) -> None:
-        super().__init__(bind=engine, sync_session_class=MemorySession)
+    def __init__(
+        self, *, engine: AsyncEngine, storage: StorageIO | None, release: Callable[[], None] | None = None
+    ) -> None:
+        super().__init__(bind=engine, sync_session_class=MemorySession, info={"dataset_storage_io": storage})
         self._release: Callable[[], None] | None = release
 
     async def close(self) -> None:  # pyrit-async-suffix-exempt
@@ -309,11 +311,13 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             raise RuntimeError("Close the synchronous memory session before opening an async session on this thread.")
         connection_lock = self._transaction_lock
         if connection_lock is None:
-            return _SQLiteAsyncSession(engine=self._get_async_engine())
+            return _SQLiteAsyncSession(engine=self._get_async_engine(), storage=self.results_storage_io)
         while not connection_lock.acquire(blocking=False):
             await asyncio.sleep(0.01)
         try:
-            return _SQLiteAsyncSession(engine=self._get_async_engine(), release=connection_lock.release)
+            return _SQLiteAsyncSession(
+                engine=self._get_async_engine(), storage=self.results_storage_io, release=connection_lock.release
+            )
         except BaseException:
             connection_lock.release()
             raise
@@ -566,7 +570,7 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Raises:
             RuntimeError: If acquiring a session would block an event loop.
         """
-        session = self.SessionFactory()
+        session = self.SessionFactory(info={"dataset_storage_io": self.results_storage_io})
         connection_lock = self._connection_lock
         if connection_lock is None:
             return session

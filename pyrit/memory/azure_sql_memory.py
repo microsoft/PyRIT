@@ -205,6 +205,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
 
     async def dispose_loop_resources_async(self) -> None:
         """Close the current loop's engine and its owned Azure credential."""
+        await self._release_dataset_uploads_async()
         loop = asyncio.get_running_loop()
         for closed_loop in list(self._async_auth):
             if closed_loop.is_closed():
@@ -1005,4 +1006,4 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Returns:
             Session: A new SQLAlchemy session bound to the configured engine.
         """
-        return self.SessionFactory()
+        return self.SessionFactory(info={"dataset_storage_io": self.results_storage_io})

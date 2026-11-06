@@ -32,7 +32,6 @@ from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.service_lifecycle import close_services_async, has_active_analytics_work
 from pyrit.exceptions.analytics_exception import AnalyticsBusyException
 from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_models import Base
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from unit.async_utils import get_defined_tasks, wait_for_completion_async, wait_for_event_async
 
@@ -119,16 +118,13 @@ async def held_native_cleanup(sqlite_instance: SQLiteMemory) -> AsyncGenerator[_
 
 @pytest.fixture
 async def replacement_memory(tmp_path: Path) -> AsyncGenerator[SQLiteMemory, None]:
-    """Create a second private database without consulting the SQLite singleton or running migrations."""
+    """Create a second private database with its required schema and singleton rows."""
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "replacement.sqlite", skip_schema_migration=True, _defer_initialization=True)
+        memory.__init__(db_path=tmp_path / "replacement.sqlite", _defer_initialization=True)
     memory.results_path = str(tmp_path)
     try:
-        async with await memory.get_session_async() as session:
-            connection = await session.connection()
-            await connection.run_sync(Base.metadata.create_all)
-            await session.commit()
+        await memory.initialize_async()
         yield memory
     finally:
         await memory.dispose_engine_async()

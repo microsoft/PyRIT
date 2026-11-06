@@ -242,6 +242,7 @@ async def initialize_pyrit_async(
     CentralMemory.set_memory_instance(memory)
 
     try:
+        await memory.recover_dataset_cleanup_async()
         # Combine directly provided initializers with those loaded from scripts.
         all_initializers: list[PyRITInitializer] = list(initializers) if initializers else []
 

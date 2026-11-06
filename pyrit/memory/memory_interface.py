@@ -12,7 +12,7 @@ import threading
 import uuid
 import weakref
 from collections import Counter
-from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
+from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -62,6 +62,8 @@ from pyrit.common.pagination import DecodedKeysetCursor
 from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonArrayValue, JsonContainer, JsonScalar, UuidHex
 
 if TYPE_CHECKING:
+    from pyrit.memory.dataset_mutation import DatasetEditingSnapshot
+    from pyrit.memory.dataset_upload_lease import DatasetUploadLease
     from pyrit.memory.memory_embedding import MemoryEmbedding
 
 from pyrit.memory.memory_models import (
@@ -154,6 +156,7 @@ from pyrit.models import (
     SeedPrompt,
     SeedRecord,
     SeedType,
+    SeedUnion,
     TargetIdentifier,
     config_hash,
     group_conversation_message_pieces_by_sequence,
@@ -642,6 +645,7 @@ class MemoryInterface(abc.ABC):
         self.memory_embedding = embedding_model
         self._operation_session: ContextVar[Session | None] = ContextVar("memory_operation_session", default=None)
         self._async_engines: dict[asyncio.AbstractEventLoop, AsyncEngine] = {}
+        self._dataset_upload_leases: dict[uuid.UUID, DatasetUploadLease] = {}
         self._initialized = False
         self._initialization_lock = threading.Lock()
         self._init_storage_io()
@@ -680,7 +684,11 @@ class MemoryInterface(abc.ABC):
         """
         if self._uses_legacy_session_override():
             raise NotImplementedError("Override get_session_async when customizing the legacy get_session hook.")
-        return AsyncSession(bind=self._get_async_engine(), sync_session_class=MemorySession)
+        return AsyncSession(
+            bind=self._get_async_engine(),
+            sync_session_class=MemorySession,
+            info={"dataset_storage_io": self.results_storage_io},
+        )
 
     def _uses_legacy_session_override(self) -> bool:
         return (
@@ -1310,11 +1318,18 @@ class MemoryInterface(abc.ABC):
 
     async def dispose_loop_resources_async(self) -> None:
         """Close resources before their owning event loop stops."""
+        await self._release_dataset_uploads_async()
         loop = asyncio.get_running_loop()
         engine = self._async_engines.get(loop)
         if engine is not None:
             await engine.dispose()
             del self._async_engines[loop]
+
+    async def _release_dataset_uploads_async(self) -> None:
+        loop = asyncio.get_running_loop()
+        for upload_id, lease in list(self._dataset_upload_leases.items()):
+            if lease.loop is loop:
+                await self.release_dataset_upload_async(upload_id)
 
     @legacy_sync_override(lambda: MemoryInterface.dispose_engine)
     async def dispose_engine_async(self) -> None:
@@ -5008,6 +5023,119 @@ class MemoryInterface(abc.ABC):
             batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
         """
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=batch.seeds)
+
+    async def reserve_dataset_upload_async(self, *, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+        """
+        Reserve an exact name and journal owned asset paths before writing bytes.
+
+        Returns:
+            uuid.UUID: The durable upload/cleanup identifier.
+        """
+        from pyrit.memory.dataset_lifecycle import reserve_upload_async
+
+        return await reserve_upload_async(memory=self, dataset_name=dataset_name, paths=paths)
+
+    async def reserve_dataset_mutation_async(self, *, dataset_name: str, paths: Sequence[str]) -> uuid.UUID:
+        """
+        Journal new media for an existing exact-name population before writing bytes.
+
+        Returns:
+            uuid.UUID: Durable operation ID.
+        """
+        from pyrit.memory.dataset_lifecycle import reserve_upload_async
+
+        return await reserve_upload_async(memory=self, dataset_name=dataset_name, paths=paths, mutation=True)
+
+    async def get_dataset_editing_snapshot_async(self, dataset_name: str) -> "DatasetEditingSnapshot":
+        """
+        Read records and a complete content token from one participating-writer snapshot.
+
+        Returns:
+            DatasetEditingSnapshot: Inert records and their content token.
+        """
+        from pyrit.memory.dataset_mutation import editing_snapshot_async
+
+        return await editing_snapshot_async(memory=self, dataset_name=dataset_name)
+
+    async def commit_dataset_mutation_async(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        expected_version: str,
+        delete_ids: Sequence[uuid.UUID],
+        prepare_seeds: Callable[[dict[uuid.UUID, SeedRecord]], list[SeedUnion]],
+        write_media: Callable[[list[SeedUnion]], Awaitable[None]],
+        max_records: int,
+        max_bytes: int,
+    ) -> dict[str, Any]:
+        """
+        Commit exact inserts/replacements/deletions with final-group and state validation.
+
+        Returns:
+            dict[str, Any]: Exact committed counts, IDs, population and version.
+        """
+        from pyrit.memory.dataset_mutation import commit_mutation_async
+
+        return await commit_mutation_async(
+            memory=self,
+            upload_id=upload_id,
+            expected_version=expected_version,
+            delete_ids=delete_ids,
+            prepare_seeds=prepare_seeds,
+            write_media=write_media,
+            max_records=max_records,
+            max_bytes=max_bytes,
+        )
+
+    async def commit_dataset_upload_async(
+        self,
+        *,
+        upload_id: uuid.UUID,
+        seeds: Sequence[SeedUnion],
+        write_media: Callable[[], Awaitable[None]],
+    ) -> None:
+        """Atomically publish all storage-ready seeds without deduplication or replacement."""
+        from pyrit.memory.dataset_lifecycle import commit_upload_async
+
+        await commit_upload_async(memory=self, upload_id=upload_id, seeds=seeds, write_media=write_media)
+
+    async def delete_dataset_async(self, *, dataset_name: str) -> uuid.UUID:
+        """
+        Delete exact-name stored seeds and journal cleanup of API-owned media.
+
+        Returns:
+            uuid.UUID: The durable deletion identifier.
+        """
+        from pyrit.memory.dataset_lifecycle import delete_dataset_async
+
+        return await delete_dataset_async(memory=self, dataset_name=dataset_name)
+
+    async def cleanup_dataset_media_async(
+        self, *, operation_id: uuid.UUID, abandon_upload: bool = False
+    ) -> dict[str, object]:
+        """
+        Retry owned-media cleanup.
+
+        Returns:
+            dict[str, object]: Durable, non-sensitive cleanup status.
+        """
+        from pyrit.memory.dataset_lifecycle import cleanup_dataset_media_async
+
+        return await cleanup_dataset_media_async(memory=self, operation_id=operation_id, abandon_upload=abandon_upload)
+
+    async def release_dataset_upload_async(self, upload_id: uuid.UUID) -> None:
+        """Release this runtime's native upload ownership after publication, failure, or shutdown."""
+        from pyrit.memory.dataset_lifecycle import _finish_storage_write_async
+
+        lease = self._dataset_upload_leases.pop(upload_id, None)
+        if lease is not None:
+            await _finish_storage_write_async(lease.close_async())
+
+    async def recover_dataset_cleanup_async(self) -> None:
+        """Recover abandoned uploads and incomplete deletions after runtime initialization."""
+        from pyrit.memory.dataset_lifecycle import recover_dataset_cleanup_async
+
+        await recover_dataset_cleanup_async(self)
 
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """

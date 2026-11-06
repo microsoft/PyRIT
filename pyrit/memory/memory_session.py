@@ -9,14 +9,17 @@ from sqlite3 import Connection as SQLiteConnection
 from typing import Any
 
 from aiosqlite import Connection as AsyncSQLiteConnection
-from sqlalchemy import delete, inspect, select
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, event, inspect, select
+from sqlalchemy.orm import ORMExecuteState, Session, SessionTransaction
 
 from pyrit.memory.memory_models import (
     ObservationEntry,
     ObservationMessagePieceEntry,
+    PromptMemoryEntry,
+    ScorableContentEntry,
     ScoreEntry,
     ScoreObservationEntry,
+    SeedEntry,
 )
 
 
@@ -72,6 +75,18 @@ class MemorySession(Session):
         if self._flushing:
             super().flush(objects)
             return
+        references = [
+            entry
+            for entry in self.new | self.dirty | self.deleted
+            if isinstance(entry, (SeedEntry, PromptMemoryEntry, ScorableContentEntry))
+        ]
+        if references:
+            from pyrit.memory.dataset_lifecycle import lock_dataset_lifecycle, validate_dataset_reference_writes
+
+            lock_dataset_lifecycle(self)
+            validate_dataset_reference_writes(
+                session=self, entries=[entry for entry in references if entry not in self.deleted]
+            )
         with self.no_autoflush:
             removed = [entry for entry in self.deleted if isinstance(entry, ScoreEntry)]
             removed_links = [entry for entry in self.deleted if isinstance(entry, ScoreObservationEntry)]
@@ -146,3 +161,36 @@ class MemorySession(Session):
                 )
             )
             self.execute(delete(ObservationEntry).where(ObservationEntry.id == observation_id))
+
+
+@event.listens_for(MemorySession, "after_transaction_end")
+def _release_dataset_lock_state(session: Session, transaction: SessionTransaction) -> None:
+    if transaction.parent is None:
+        session.info.pop("dataset_lifecycle_locked", None)
+        session.info.pop("dataset_upload_id", None)
+
+
+@event.listens_for(MemorySession, "do_orm_execute", retval=True)
+def _guard_bulk_media_writes(state: ORMExecuteState) -> Any:
+    """
+    Include Core/bulk seed and message updates in the same reference protocol.
+
+    Returns:
+        Any: The original SQLAlchemy execution result.
+    """
+    table = getattr(state.statement, "table", None)
+    if not (state.is_insert or state.is_update or state.is_delete) or getattr(table, "name", None) not in {
+        SeedEntry.__tablename__,
+        PromptMemoryEntry.__tablename__,
+        ScorableContentEntry.__tablename__,
+    }:
+        return state.invoke_statement()
+    from pyrit.memory.dataset_lifecycle import lock_dataset_lifecycle, validate_stored_dataset_references
+
+    lock_dataset_lifecycle(state.session)
+    if state.is_delete:
+        return state.invoke_statement()
+    with state.session.begin_nested():
+        result = state.invoke_statement()
+        validate_stored_dataset_references(state.session)
+    return result

@@ -256,6 +256,40 @@ class Base(DeclarativeBase):
     """
 
 
+class DatasetLifecycleLock(Base):
+    """One transaction lock shared by dataset lifecycle and media-reference writers."""
+
+    __tablename__ = "DatasetLifecycleLock"
+    id: Mapped[int] = mapped_column(INTEGER, primary_key=True)
+
+
+class DatasetLifecycleEntry(Base):
+    """Durable import staging or dataset deletion; no prompt content is stored here."""
+
+    __tablename__ = "DatasetLifecycleEntries"
+    id: Mapped[uuid.UUID] = mapped_column(CustomUUID, primary_key=True)
+    dataset_name: Mapped[str] = mapped_column(Unicode(256), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    deleted_seeds: Mapped[int] = mapped_column(INTEGER, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Unicode(256), nullable=True)
+
+
+class DatasetMediaEntry(Base):
+    """API-owned assets, including permanent tombstones preventing dangling new references."""
+
+    __tablename__ = "DatasetMediaEntries"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    path: Mapped[str] = mapped_column(Unicode, nullable=False)
+    upload_id: Mapped[uuid.UUID] = mapped_column(
+        CustomUUID, ForeignKey("DatasetLifecycleEntries.id"), nullable=False, index=True
+    )
+    cleanup_id: Mapped[uuid.UUID | None] = mapped_column(
+        CustomUUID, ForeignKey("DatasetLifecycleEntries.id"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
 class OperationEntry(Base):
     """A saved operation that owns findings."""
 
@@ -1686,7 +1720,7 @@ class SeedEntry(Base):
     value_sha256 = mapped_column(Unicode, nullable=True)
     data_type: Mapped[PromptDataType] = mapped_column(String, nullable=False)
     name = mapped_column(String, nullable=True)
-    dataset_name = mapped_column(String, nullable=True)
+    dataset_name = mapped_column(Unicode, nullable=True)
     harm_categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     description = mapped_column(String, nullable=True)
     authors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -2286,6 +2320,7 @@ class AttackResultEntry(Base):
                 return uuid.UUID(str(obj.id))
             except (ValueError, TypeError):
                 pass
+
         return None
 
     @staticmethod

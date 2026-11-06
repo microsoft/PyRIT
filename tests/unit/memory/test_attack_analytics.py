@@ -40,7 +40,7 @@ from pyrit.memory.analytics_sql import (
 )
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsOption
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
-from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry, Base, TargetIdentifierEntry
+from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry, TargetIdentifierEntry
 from pyrit.memory.query_control import QueryControl
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -2172,12 +2172,12 @@ async def test_report_is_consistent_and_later_result_pages_are_fresh(
 ) -> None:
     memory = SQLiteMemory.__new__(SQLiteMemory)
     with patch.object(memory, "cleanup"):
-        memory.__init__(db_path=tmp_path / "analytics-snapshot.sqlite", skip_schema_migration=True)
+        memory.__init__(db_path=tmp_path / "analytics-snapshot.sqlite", _defer_initialization=True)
     try:
         engine = memory._get_async_engine()
         async with engine.connect() as connection:
             assert (await connection.exec_driver_sql("PRAGMA journal_mode=WAL")).scalar_one() == "wal"
-            await connection.run_sync(Base.metadata.create_all)
+        await memory.initialize_async()
         await add_legacy_attack_results_async(memory, attack_results=[make_result(), make_result(index=2)])
         inserted = False
 
