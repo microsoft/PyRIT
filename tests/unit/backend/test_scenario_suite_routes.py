@@ -3,6 +3,7 @@
 
 """Tests for scenario suite definition routes."""
 
+import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,6 +44,7 @@ from pyrit.registry import (
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
 )
+from pyrit.registry.file_document_storage import describe_storage_error
 
 SUITE_NAME = "weekly"
 ENTRY_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -364,14 +366,22 @@ def test_get_registered_suite_returns_origin_and_null_version(client: TestClient
     assert response.json()["version"] is None
 
 
-def test_storage_failure_is_sanitized(client: TestClient, service: MagicMock) -> None:
-    """Test that Azure SDK details do not reach API callers."""
-    service.list_suites_async = AsyncMock(side_effect=AzureError("container key=secret"))
+@pytest.mark.parametrize(
+    "error", [AzureError("container key=secret"), PermissionError(13, "Permission denied", "/srv/secret/suites")]
+)
+def test_storage_failure_is_sanitized(
+    client: TestClient, service: MagicMock, error: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test that storage details reach neither API callers nor the log."""
+    service.list_suites_async = AsyncMock(side_effect=error)
 
-    response = client.get("/api/scenario-suites")
+    with caplog.at_level(logging.WARNING, logger="pyrit.backend.routes.scenario_suites"):
+        response = client.get("/api/scenario-suites")
 
     assert response.status_code == 503
     assert "secret" not in response.text
+    assert f"Scenario suite storage is unavailable: {describe_storage_error(error)}" in caplog.messages
+    assert "secret" not in caplog.text
 
 
 def test_create_succeeds_when_preset_storage_is_unavailable(
