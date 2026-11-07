@@ -431,6 +431,18 @@ def test_export_rejects_invalid_dashboard_origin(
     assert "content-disposition" not in response.headers
 
 
+@pytest.mark.parametrize(("count", "status_code"), [(1_000, 404), (1_001, 422)])
+def test_export_limits_the_number_of_findings(
+    compatibility_headers: dict[str, str], count: int, status_code: int
+) -> None:
+    finding_ids = [uuid4() for _ in range(count)]
+
+    response = _export(headers=compatibility_headers, operation_id=MISSING_ID, finding_ids=finding_ids)
+
+    assert response.status_code == status_code
+    assert "content-disposition" not in response.headers
+
+
 @pytest.mark.parametrize("dashboard_origin", [DASHBOARD_ORIGIN, f"{DASHBOARD_ORIGIN}/"])
 async def test_export_accepts_an_origin_with_or_without_trailing_slash(
     sqlite_instance: SQLiteMemory,
