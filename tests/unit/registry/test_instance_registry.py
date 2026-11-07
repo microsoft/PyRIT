@@ -125,6 +125,18 @@ class TestRegistration:
         assert refusals == [("converters", "name")]
         assert registry.get("other") == "other"
 
+    def test_a_caught_duplicate_name_for_a_saved_entry_is_recorded(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
+        registry.register(_item("startup"), name="startup")
+
+        with record_saved_entry_refusals() as refusals:
+            for name in ("name", "startup"):
+                with pytest.raises(ValueError, match="already exists"):
+                    registry.register(_item("updated"), name=name)
+
+        assert refusals == [("targets", "name")]
+        assert registry.get("name") == "saved"
+
     def test_register_rejects_reserved_name(self):
         registry: DefaultInstanceRegistry[_TestItem] = DefaultInstanceRegistry(reserved_names={"types"})
 
