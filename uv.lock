@@ -1506,7 +1506,7 @@ wheels = [
 
 [[package]]
 name = "diff-cover"
-version = "11.0.0"
+version = "11.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chardet" },
@@ -1514,9 +1514,9 @@ dependencies = [
     { name = "pluggy" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f5/95/eed8243dd7c3442661c57297b5b1097d463a9d0fdabad5f42200c7ca7548/diff_cover-11.0.0.tar.gz", hash = "sha256:5450247cc885ac0c252f0d7a4cf91608f454377c6f88e579bc9ead410af50c36", size = 108509, upload-time = "2026-10-27T02:20:48.718Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/38/a9/7c3c637f7c4913ee66a40ac5d2821fe1ee3859f54e626954d4f812eb7950/diff_cover-11.0.1.tar.gz", hash = "sha256:18fff3b9df6f28c62953859fb16302d1dec0189d79f3ea437c0bcad5cc60dcf3", size = 110057, upload-time = "2026-11-04T02:31:08.188Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/10/97d05eef3876cffab13c3ce3cfd6e51bdd9d0cfb017b46622a9bbfbd91e4/diff_cover-11.0.0-py3-none-any.whl", hash = "sha256:8b0a5b356d525718ee18c14b163ce179c75ccdc5b8d5474ef22ade6a0e1fa65d", size = 63614, upload-time = "2026-10-27T02:20:47.38Z" },
+    { url = "https://files.pythonhosted.org/packages/09/e5/a12bcf82fe8930a4faeadba8afd60798010c5a1d9e5e374cd89ca27001ba/diff_cover-11.0.1-py3-none-any.whl", hash = "sha256:40d559e47ee9bcec35194fd9726d408a242608c54fbd0cdab244ae4324c1c7da", size = 63836, upload-time = "2026-11-04T02:31:06.805Z" },
 ]
 
 [[package]]
@@ -1863,7 +1863,7 @@ http = [
 
 [[package]]
 name = "github-copilot-sdk"
-version = "1.0.22"
+version = "1.0.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -1871,7 +1871,7 @@ dependencies = [
     { name = "python-dateutil" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/26/15/fbbf09a7e0b139667838cc4119b185f79ae32a2af50388bbf2e506e5ecc0/github_copilot_sdk-1.0.22-py3-none-any.whl", hash = "sha256:a3abdcf5145e096eebbfe3ab04179b0ce03922431e62eb6c52b6cfcb70bad948", size = 870060, upload-time = "2026-10-14T20:05:31.711Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/d8/fa5b5892a08584d169ba8676f3a38ea0217947c60ba91608c8192acf32bd/github_copilot_sdk-1.0.28-py3-none-any.whl", hash = "sha256:191e4b7f22a5a3842504ec9ee92f88abc4cf3aecca4ab04e2d359aa307436dd1", size = 925301, upload-time = "2026-10-28T00:55:38.809Z" },
 ]
 
 [[package]]
@@ -5131,8 +5131,8 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.133.0" },
     { name = "flask", marker = "extra == 'all'", specifier = ">=3.1.3" },
     { name = "flask", marker = "extra == 'playwright'", specifier = ">=3.1.3" },
-    { name = "github-copilot-sdk", marker = "extra == 'all'", specifier = ">=1.0.11,<1.0.23" },
-    { name = "github-copilot-sdk", marker = "extra == 'github-copilot'", specifier = ">=1.0.11,<1.0.23" },
+    { name = "github-copilot-sdk", marker = "extra == 'all'", specifier = ">=1.0.11,<1.0.29" },
+    { name = "github-copilot-sdk", marker = "extra == 'github-copilot'", specifier = ">=1.0.11,<1.0.29" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.27.2" },
     { name = "httpx2", specifier = ">=2.5.0,<3" },
     { name = "ipykernel", marker = "extra == 'all'", specifier = ">=6.29.5" },
