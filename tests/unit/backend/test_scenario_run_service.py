@@ -3556,6 +3556,93 @@ class TestScenarioRunServiceRecovery:
         assert all(call.kwargs["error_type"] == "ScenarioInterruptedError" for call in failure_calls)
         assert all("shut down" in call.kwargs["error_message"] for call in failure_calls)
 
+    async def test_shutdown_overwrites_scenario_cancelled_write_with_interrupted(self, mock_all_registries) -> None:
+        # Regression test for microsoft/PyRIT#3746: the real Scenario.run_async
+        # persists CANCELLED when its task is cancelled, before the service's
+        # cancellation handler runs. A shutdown must still land the active run
+        # as FAILED/ScenarioInterruptedError (which keeps saved-config resume
+        # eligible); a gated compare-and-swap write would silently keep
+        # CANCELLED because the row is already terminal by then.
+        mock_scenario_registry = mock_all_registries["scenario_registry"]
+        mock_memory = mock_all_registries["memory"]
+        records: dict[str, MagicMock] = {}
+
+        async def _create_scenario(*args: object, **kwargs: object) -> MagicMock:
+            run_id = "shutdown-real-scenario"
+            records[run_id] = _make_db_scenario_result(
+                result_id=run_id,
+                run_state=ScenarioRunState.CREATED,
+            )
+
+            async def _run_async() -> None:
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    # Mirrors Scenario.run_async: persist CANCELLED, then re-raise.
+                    await mock_memory.update_scenario_run_state_async(
+                        scenario_result_id=run_id,
+                        scenario_run_state=ScenarioRunState.CANCELLED,
+                        error_message="Scenario run was cancelled",
+                        error_type="CancelledError",
+                    )
+                    raise
+
+            scenario = MagicMock()
+            scenario._scenario_result_id = run_id
+            scenario.run_async = AsyncMock(side_effect=_run_async)
+            return scenario
+
+        def _get_results(*, scenario_result_ids: list[str] | None = None) -> list[MagicMock]:
+            if scenario_result_ids is None:
+                return list(records.values())
+            return [records[run_id] for run_id in scenario_result_ids if run_id in records]
+
+        def _update_state(*, scenario_result_id: str, scenario_run_state: ScenarioRunState, **_: object) -> None:
+            records[scenario_result_id].scenario_run_state = scenario_run_state
+
+        def _try_update_state(
+            *,
+            scenario_result_id: str,
+            expected_states: object,
+            scenario_run_state: ScenarioRunState,
+            **_: object,
+        ) -> bool:
+            # Faithful to the real compare-and-swap: a row already in a
+            # terminal state is NOT overwritten. (The pre-existing shutdown
+            # test mocks this as an unconditional write, which is exactly why
+            # it could not catch #3746.)
+            current = records[scenario_result_id].scenario_run_state
+            if current in expected_states:  # type: ignore[operator]
+                records[scenario_result_id].scenario_run_state = scenario_run_state
+                return True
+            return False
+
+        mock_scenario_registry.create_and_initialize_async = AsyncMock(side_effect=_create_scenario)
+        mock_memory.get_scenario_results_async = AsyncMock(side_effect=_get_results)
+        mock_memory.get_scenario_result_header_async = AsyncMock(
+            side_effect=lambda *, scenario_result_id: records.get(scenario_result_id)
+        )
+        mock_memory.update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
+        mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_try_update_state)
+        mock_memory.update_scenario_run_state_and_metadata_fields_async = AsyncMock(side_effect=_update_state)
+        service = ScenarioRunService()
+        await service.start_run_async(request=_make_request())
+        await asyncio.sleep(0)
+
+        await service.shutdown_async()
+
+        assert records["shutdown-real-scenario"].scenario_run_state == ScenarioRunState.FAILED
+        # The gated try_update is attempted first (and is a no-op once the row
+        # is CANCELLED); the effective write is the unconditional update below.
+        failure_writes = [
+            call
+            for call in mock_memory.update_scenario_run_state_async.call_args_list
+            if call.kwargs.get("scenario_run_state") == ScenarioRunState.FAILED
+        ]
+        assert len(failure_writes) == 1
+        assert failure_writes[0].kwargs["error_type"] == "ScenarioInterruptedError"
+        assert "shut down" in failure_writes[0].kwargs["error_message"]
+
     async def test_shutdown_waits_for_preparation_before_terminalizing_run(self, mock_all_registries) -> None:
         mock_memory = mock_all_registries["memory"]
         records = {
