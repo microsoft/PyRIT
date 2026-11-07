@@ -42,7 +42,7 @@ import {
   targetType as getTargetType,
   targetUnderlyingModelName,
 } from '@/utils/targetIdentity'
-import { TARGET_ORIGIN_LABELS } from '@/utils/targetOrigin'
+import { ORIGIN_LABELS } from '@/utils/registryOrigin'
 import { useCreateTargetDialogStyles } from './CreateTargetDialog.styles'
 import {
   canConfigureTargetType,
@@ -955,7 +955,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                         <option key={t.target_registry_name} value={t.target_registry_name}>
                           {t.target_registry_name} — {getTargetType(t)}
                           {targetModelName(t) ? ` (${targetModelName(t)})` : ''}
-                          {t.origin === 'temporary' ? ` · ${TARGET_ORIGIN_LABELS.temporary}` : ''}
+                          {t.origin === 'temporary' ? ` · ${ORIGIN_LABELS.temporary}` : ''}
                         </option>
                       ))}
                     </Select>
@@ -978,7 +978,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                           )
                           const selectedTargetLabel = `${target?.target_registry_name ?? sel.registryName}${
                             target && targetModelName(target) ? ` (${targetModelName(target)})` : ''
-                          }${target?.origin === 'temporary' ? ` · ${TARGET_ORIGIN_LABELS.temporary}` : ''}`
+                          }${target?.origin === 'temporary' ? ` · ${ORIGIN_LABELS.temporary}` : ''}`
                           const weightParse = parseWeight(sel.weightInput)
                           const weightError = weightParse.ok ? null : weightParse.error
                           return (

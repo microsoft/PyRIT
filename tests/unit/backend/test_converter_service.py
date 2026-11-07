@@ -2810,3 +2810,26 @@ def _register_own_target_converter(service: ConverterService) -> PromptTarget:
         class_type=OwnTargetTranslationConverter, parameter_name="converter_target", value=targets.get("launch_chat")
     )
     return own_target
+
+
+async def test_types_say_why_a_converter_type_cant_be_saved() -> None:
+    types = await ConverterService().list_converter_types_async()
+    reasons = {item.converter_type: item.not_saveable_reason for item in types.items}
+
+    assert reasons["AzureSpeechTextToAudioConverter"] == (
+        "'AzureSpeechTextToAudioConverter' needs a credential in 'azure_speech_key', which saved entries can't hold "
+        "or take from this server yet."
+    )
+    assert reasons["ImageOverlayConverter"] == (
+        "'ImageOverlayConverter' can't be saved. It needs an uploaded file, which saved converters can't keep yet."
+    )
+    assert reasons["AddTextImageConverter"] is None
+    assert reasons["CaesarConverter"] is None
+    assert {name for name, reason in reasons.items() if reason is not None} == {
+        "AddImageTextConverter",
+        "AddImageVideoConverter",
+        "AzureSpeechAudioToTextConverter",
+        "AzureSpeechTextToAudioConverter",
+        "ImageOverlayConverter",
+        "TransparencyAttackConverter",
+    }

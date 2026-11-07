@@ -143,6 +143,33 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   expect(promptRequests).toEqual([]);
 });
 
+test("saves a converter from the New Converter dialog and still lists it as Saved after a reload @seeded", async ({ page, request }) => {
+  const name = `saved_caesar_${Date.now()}`;
+  await page.goto("/registry/converters");
+  await page.getByRole("button", { name: "New Converter" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("combobox", { name: "Converter type" }).click();
+  await page.getByTestId("converter-type-option-CaesarConverter").click();
+  await expect(dialog.getByRole("textbox", { name: "Registry name", exact: true })).toHaveValue(/^caesar_converter/);
+  await dialog.getByRole("textbox", { name: "Registry name", exact: true }).fill(name);
+  await dialog.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
+  await expect(dialog.getByText("This converter can't be saved")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Save Converter" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  const row = page.getByRole("row", { name: new RegExp(name) });
+  await expect(row.getByText("Saved", { exact: true })).toBeVisible();
+  await expect(row.getByRole("button", { name: `Remove ${name}` })).toHaveAttribute("aria-disabled", "true");
+  const saved = await request.get(`/api/converters/${name}`, { headers: compatibilityHeaders() });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  expect((await saved.json()).origin).toBe("saved");
+  const removal = await request.delete(`/api/converters/${name}`, { headers: compatibilityHeaders() });
+  expect(removal.status()).toBe(409);
+
+  await page.reload();
+  await expect(page.getByRole("row", { name: new RegExp(name) }).getByText("Saved", { exact: true })).toBeVisible();
+});
+
 test("saves a target from the New Target dialog and still lists it as Saved after a reload @seeded", async ({ page, request }) => {
   const name = `saved_chat_${Date.now()}`;
   await page.goto("/registry/targets");
@@ -185,6 +212,7 @@ interface RegisteredConverter {
   };
   is_llm_based: boolean;
   description?: string;
+  origin?: "saved" | "configuration" | "temporary";
 }
 
 const CONVERTER_TYPES = {
@@ -223,6 +251,15 @@ const CONVERTER_TYPES = {
       ],
       is_llm_based: true,
       description: "Rewrites prompts.",
+    },
+    {
+      converter_type: "TemporaryOnlyConverter",
+      supported_input_types: ["text"],
+      supported_output_types: ["text"],
+      parameters: [],
+      is_llm_based: false,
+      description: "A converter type that can't be saved.",
+      not_saveable_reason: "It needs an uploaded file, which saved converters can't keep yet.",
     },
     ...Array.from({ length: 16 }, (_, index) => ({
       converter_type: `ViewportConverter${index}`,
@@ -299,6 +336,14 @@ async function installRegistryMocks(page: Page): Promise<void> {
       return;
     }
     const converterId = decodeURIComponent(route.request().url().split("/").pop() ?? "");
+    if (registeredConverters.some((converter) => converter.converter_id === converterId && converter.origin === "saved")) {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: `Saved converter '${converterId}' can't be removed yet.` }),
+      });
+      return;
+    }
     registeredConverters = registeredConverters.filter(
       (converter) => converter.converter_id !== converterId,
     );
@@ -330,6 +375,7 @@ async function installRegistryMocks(page: Page): Promise<void> {
       },
       is_llm_based: converterType?.is_llm_based ?? false,
       description: converterType?.description,
+      origin: body.persist ? "saved" : "temporary",
     };
     registeredConverters.push(converter);
     await route.fulfill({
@@ -354,7 +400,7 @@ async function submitDuplicateName(page: Page): Promise<() => void> {
       status: 409,
       contentType: "application/json",
       body: JSON.stringify({
-        detail: "Converter instance 'caesar-custom' already exists",
+        detail: "Converter instance 'caesar_custom' already exists",
       }),
     });
   });
@@ -362,9 +408,9 @@ async function submitDuplicateName(page: Page): Promise<() => void> {
   await page.getByRole("button", { name: "Create First Converter" }).click();
   await page.getByRole("combobox", { name: "Converter type" }).click();
   await page.getByTestId("converter-type-option-CaesarConverter").click();
-  await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar-custom");
+  await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar_custom");
   await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
-  await page.getByRole("button", { name: "Add Converter" }).click();
+  await page.getByRole("button", { name: "Save Converter" }).click();
   await expect(page.getByRole("button", { name: "Adding..." })).toBeVisible();
 
   return () => releaseCreate?.();
@@ -375,7 +421,15 @@ async function createCaesarConverter(page: Page, name: string): Promise<void> {
   await page.getByTestId("converter-type-option-CaesarConverter").click();
   await page.getByRole("textbox", { name: "Registry name", exact: true }).fill(name);
   await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
-  await page.getByRole("button", { name: "Add Converter" }).click();
+  await page.getByRole("button", { name: "Save Converter" }).click();
+}
+
+async function createTemporaryConverter(page: Page, name: string): Promise<void> {
+  await page.getByRole("combobox", { name: "Converter type" }).click();
+  await page.getByTestId("converter-type-option-TemporaryOnlyConverter").click();
+  await page.getByRole("textbox", { name: "Registry name", exact: true }).fill(name);
+  await expect(page.getByRole("status")).toContainText("This converter can't be saved");
+  await page.getByRole("button", { name: "Create as Temporary" }).click();
 }
 
 async function submitSlowCreate(page: Page, name: string): Promise<() => void> {
@@ -409,23 +463,41 @@ test.describe("Converter Registry", () => {
     await page.goto("/registry/converters");
   });
 
-  test("adds and removes a named converter without an active action", async ({ page }) => {
+  test("adds and removes a Temporary converter without an active action", async ({ page }) => {
     await expect(page.getByRole("heading", { name: "Converter Registry" })).toBeVisible();
     await expect(page.getByRole("region", { name: "Target defaults" })).toHaveCount(0);
 
     await page.getByRole("button", { name: "New Converter" }).click();
-    await page.getByRole("combobox", { name: "Converter type" }).click();
-    await page.getByTestId("converter-type-option-CaesarConverter").click();
-    await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar-custom");
-    await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
-    await page.getByRole("button", { name: "Add Converter" }).click();
+    await createTemporaryConverter(page, "temporary_custom");
 
-    await expect(page.getByText("caesar-custom")).toBeVisible();
-    await page.getByRole("button", { name: "Remove caesar-custom" }).click();
+    const row = page.getByRole("row", { name: /temporary_custom/ });
+    await expect(row.getByText("Temporary", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Remove temporary_custom" }).click();
     await page.getByRole("button", { name: "Remove", exact: true }).click();
 
-    await expect(page.getByText("caesar-custom")).toHaveCount(0);
+    await expect(page.getByText("temporary_custom")).toHaveCount(0);
     await expect(page.getByText("No Converters Registered")).toBeVisible();
+  });
+
+  test("saves a named converter and keeps it from being removed", async ({ page }) => {
+    await page.getByRole("button", { name: "New Converter" }).click();
+    const createRequest = page.waitForRequest(
+      (request) => request.method() === "POST" && /\/api\/converters$/.test(request.url()),
+    );
+    await createCaesarConverter(page, "caesar_custom");
+
+    expect((await createRequest).postDataJSON()).toEqual({
+      name: "caesar_custom", type: "CaesarConverter", params: { caesar_offset: 5 }, persist: true,
+    });
+    const row = page.getByRole("row", { name: /caesar_custom/ });
+    await expect(row.getByText("Saved", { exact: true })).toBeVisible();
+    const remove = page.getByRole("button", { name: "Remove caesar_custom" });
+    await expect(remove).toHaveAttribute("aria-disabled", "true");
+    await expect(remove).toHaveAccessibleDescription(
+      "Saved converters can't be removed here yet. Delete the converter's saved file and restart the backend.",
+    );
+    await remove.click({ force: true });
+    await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 
   test("restores focus to the trigger when the add dialog is dismissed", async ({ page }) => {
@@ -444,13 +516,13 @@ test.describe("Converter Registry", () => {
     await page.getByRole("button", { name: "Create First Converter" }).click();
     await page.getByRole("combobox", { name: "Converter type" }).click();
     await page.getByTestId("converter-type-option-CaesarConverter").click();
-    await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar-focus");
+    await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar_focus");
     await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
-    await page.getByRole("button", { name: "Add Converter" }).click();
+    await page.getByRole("button", { name: "Save Converter" }).click();
 
     // The empty-state trigger unmounts with the list it belonged to, so focus
     // falls back to the always-mounted header action.
-    await expect(page.getByText("caesar-focus")).toBeVisible();
+    await expect(page.getByText("caesar_focus")).toBeVisible();
     await expect(page.getByRole("button", { name: "New Converter" })).toBeFocused();
   });
 
@@ -468,13 +540,12 @@ test.describe("Converter Registry", () => {
     release();
   });
 
-  test("moves focus to the error when the registry rejects the name", async ({ page }) => {
+  test("moves focus to the name when the registry says it is taken", async ({ page }) => {
     const release = await submitDuplicateName(page);
     release();
 
-    const alert = page.getByRole("alert");
-    await expect(alert).toContainText(/already exists/i);
-    await expect(alert).toBeFocused();
+    await expect(page.getByRole("alert")).toContainText(/already exists/i);
+    await expect(page.getByRole("textbox", { name: "Registry name", exact: true })).toBeFocused();
 
     // Escape only reaches the dialog surface while focus is still inside it.
     await page.keyboard.press("Escape");
@@ -483,20 +554,20 @@ test.describe("Converter Registry", () => {
 
   test("leaves the removal dialog in place when a dismissed creation succeeds", async ({ page }) => {
     await page.getByRole("button", { name: "Create First Converter" }).click();
-    await createCaesarConverter(page, "caesar-first");
-    await expect(page.getByText("caesar-first")).toBeVisible();
+    await createTemporaryConverter(page, "temporary_first");
+    await expect(page.getByText("temporary_first")).toBeVisible();
 
-    const release = await submitSlowCreate(page, "caesar-late");
+    const release = await submitSlowCreate(page, "caesar_late");
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toBeHidden();
 
-    const removeTrigger = page.getByRole("button", { name: "Remove caesar-first" });
+    const removeTrigger = page.getByRole("button", { name: "Remove temporary_first" });
     await removeTrigger.click();
     const removeDialog = page.getByRole("dialog");
     await expect(removeDialog).toBeVisible();
 
     release();
-    await expect(page.getByText("caesar-late")).toBeVisible();
+    await expect(page.getByText("caesar_late")).toBeVisible();
 
     // Moving focus out makes Tabster mark the still-visible dialog aria-hidden,
     // and Escape then stops dismissing it, so the late response has to leave
@@ -521,7 +592,7 @@ test.describe("Converter Registry", () => {
 
     // The request settles either way; only its failure is dropped, so the
     // reopened dialog keeps the empty form the user opened.
-    await expect(dialog.getByRole("button", { name: "Add Converter" })).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: "Save Converter" })).toBeEnabled();
     await expect(page.getByRole("alert")).toHaveCount(0);
     await expect(dialog.getByRole("textbox", { name: "Registry name", exact: true })).toHaveValue("");
   });

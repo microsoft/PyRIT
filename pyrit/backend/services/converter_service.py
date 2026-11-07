@@ -68,6 +68,7 @@ from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry.components import ConverterRegistry
 from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry import Reconstructable
+from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
 _DEFAULT_UPLOAD_EXTENSION = ".bin"
@@ -166,6 +167,7 @@ class ConverterService:
         Returns every converter that external callers can build, with only the
         parameters they may supply, each described in the form callers send it;
         converters that need a Python object for a required parameter are left out.
+        Each says why a converter of its type can't be saved, if it can't.
         Deciding which entries to surface to a user is a presentation concern owned
         by the caller (e.g. the frontend), not this service.
 
@@ -182,12 +184,26 @@ class ConverterService:
                 ],
                 is_llm_based=metadata.is_llm_based,
                 description=metadata.class_description or None,
+                not_saveable_reason=self._get_not_saveable_reason(converter_type=metadata.class_name),
             )
             for metadata in self._registry.get_all_registered_class_metadata()
             if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
         ]
 
         return ConverterTypeResponse(items=items)
+
+    def _get_not_saveable_reason(self, *, converter_type: str) -> str | None:
+        """
+        Return why a converter of a type can't be saved, whatever its values, or None when it can be.
+
+        Returns:
+            str | None: The reason, or None when a converter of the type can be saved.
+        """
+        try:
+            check_saveable_class(self._registry.get_class(converter_type))
+        except SavedEntryRefusedError as error:
+            return str(error)
+        return self._required_upload_refusal(converter_type=converter_type)
 
     async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
         """

@@ -164,7 +164,9 @@ Expand a target, scorer, technique, or converter name to inspect its identity
 JSON. Target identity inspection is independent of expanding composite target
 members; defaults, visibility, and the target's configuration columns remain
 available. Converter inputs and outputs stay visible in the table. Use the small
-red X to remove a converter from the live registry; confirmation is required.
+red X to remove a converter from the live registry; confirmation is required. A
+saved converter can't be removed there yet: delete its file
+(`converters/<name>.json`) in `registry_recipes_source`, then restart the backend.
 
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
@@ -200,7 +202,17 @@ signed in also says who saved it (**Saved by you** for your own). Once you have
 saved one, check **Only targets I saved** to list just yours. Anyone can still
 use every target.
 
-Converters and techniques added only to the live registry must be recreated
+New converters are saved the same way, wherever you add one: **New Converter** in
+the Converters tab, the converter panel in chat, or **New converter** in the
+technique editor. The dialog suggests a name such as `base64_converter`. A
+converter type that can't be saved yet (the Azure Speech converters, and types
+that need an uploaded file), a converter with an uploaded file, or one that uses a
+Temporary target is created as **Temporary** instead, and the dialog says why.
+**Save to registry** on a converter's changed settings, in chat or in a technique
+edit, makes a Temporary copy. The Converters and Scorers tables use the same three
+labels; scorers can be saved through the API.
+
+Techniques added only to the live registry must be recreated
 after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 

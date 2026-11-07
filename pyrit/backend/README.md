@@ -65,6 +65,8 @@ signed-in user asking. The user's object ID isn't returned.
 
 ### Converters and scorers
 
+- `GET /api/converters/types` - List the converter types that can be created, with their parameters, and why a
+  type can't be saved at all (`not_saveable_reason`)
 - `POST /api/converters` - Create a converter
 - `DELETE /api/converters/{converter_id}` - Remove a converter
 - `POST /api/scorers` - Create a scorer

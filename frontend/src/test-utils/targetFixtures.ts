@@ -1,4 +1,4 @@
-import type { TargetCapabilities, TargetIdentifier, TargetInstance, TargetOrigin } from '../types'
+import type { RegistryEntryOrigin, TargetCapabilities, TargetIdentifier, TargetInstance } from '../types'
 
 /**
  * Flat description of a target for tests, mirroring the old pre-slimming
@@ -21,7 +21,7 @@ export interface FlatTargetInput {
   supports_history_replay?: boolean
   target_specific_params?: Record<string, unknown> | null
   inner_targets?: FlatTargetInput[] | null
-  origin?: TargetOrigin | null
+  origin?: RegistryEntryOrigin | null
   saved_by?: string | null
   saved_by_me?: boolean
 }

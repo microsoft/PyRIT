@@ -54,6 +54,13 @@ class ConverterTypeEntry(BaseModel):
     )
     is_llm_based: bool = Field(False, description="Whether this converter requires an LLM target")
     description: str | None = Field(None, description="Short description of the converter from its docstring")
+    not_saveable_reason: str | None = Field(
+        None,
+        description=(
+            "Why a converter of this type can't be saved, or None when it can be. The values a converter is given "
+            "are checked when it's saved"
+        ),
+    )
 
 
 class ConverterTypeResponse(BaseModel):

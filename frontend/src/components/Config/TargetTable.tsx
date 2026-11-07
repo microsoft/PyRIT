@@ -33,6 +33,7 @@ import {
   EyeRegular,
 } from '@fluentui/react-icons'
 
+import OriginBadge from '@/components/Registry/OriginBadge'
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import type { TargetInstance } from '@/types'
@@ -54,7 +55,6 @@ import {
   type TargetFilters,
 } from './targetFilters'
 import TargetFiltersBar from './TargetFiltersBar'
-import TargetOriginBadge from './TargetOriginBadge'
 import { useTargetTableStyles } from './TargetTable.styles'
 import TargetSelect from './TargetSelect'
 
@@ -462,7 +462,7 @@ export default function TargetTable({
                   (target.origin || isDefaultAdversarial(target)) && (
                     <>
                       <div className={styles.defaultIndicators}>
-                        {target.origin && <TargetOriginBadge origin={target.origin} />}
+                        {target.origin && <OriginBadge origin={target.origin} />}
                         {isDefaultAdversarial(target) && (
                           <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
                             Adversarial
