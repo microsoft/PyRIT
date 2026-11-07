@@ -179,7 +179,7 @@ def _json_input_type(annotation: TypeAnnotation) -> TypeAnnotation:
         result = str
     elif origin in (list, Collection, Sequence) and len(get_args(unwrapped)) == 1:
         element_type = get_args(unwrapped)[0]
-        result = list[element_type]
+        result = types.GenericAlias(list, element_type)
     else:
         return annotation
 

@@ -194,7 +194,9 @@ def test_structured_input_requires_an_explicit_contract() -> None:
     ("annotation", "expected"),
     [
         (Collection[str] | None, list[str] | None),
+        (Collection[str | int], list[str | int]),
         (Sequence[int], list[int]),
+        (Sequence[list[int]] | None, list[list[int]] | None),
         (list[int], list[int]),
         (dict[str, int], dict[str, int]),
         (Mapping[str, int] | None, Mapping[str, int] | None),
