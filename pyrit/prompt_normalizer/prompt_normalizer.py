@@ -125,6 +125,8 @@ class PromptNormalizer:
         Raises:
             Exception: If an error occurs during the request processing.
             ValueError: If the message pieces are not part of the same sequence.
+            asyncio.CancelledError: If the send is cancelled. A request the target may have
+                received is persisted first, without a response.
         """
         # Validates that the MessagePieces in the Message are part of the same sequence
         request_converter_configurations = request_converter_configurations or []
@@ -165,6 +167,12 @@ class PromptNormalizer:
                 send_context=send_context,
             )
             (await self.memory.add_message_to_memory_async(request=request))
+        except asyncio.CancelledError:
+            # Cancelled while the target may have been handling the request: keep the request as the
+            # record of the attempt, but no response, since none was received. Then propagate.
+            if not (send_context and send_context.target_invocation_count == target_invocation_count_before_send):
+                await self._persist_cancelled_request_async(request=request)
+            raise
         except EmptyResponseException as ex:
             if send_context and send_context.target_invocation_count == target_invocation_count_before_send:
                 cid = request.message_pieces[0].conversation_id if request.message_pieces else None
@@ -243,6 +251,21 @@ class PromptNormalizer:
 
         # Return the last response for backward compatibility
         return responses[-1]
+
+    async def _persist_cancelled_request_async(self, *, request: Message) -> None:
+        """
+        Persist the request of a send that was cancelled after reaching the target.
+
+        A failure to persist is logged rather than raised, so it never replaces the cancellation.
+
+        Args:
+            request (Message): The converted request that was sent.
+        """
+        try:
+            await self.memory.add_message_to_memory_async(request=request)
+        except Exception:
+            cid = request.message_pieces[0].conversation_id if request.message_pieces else None
+            logger.warning("Could not persist the request of a cancelled send in conversation %s.", cid, exc_info=True)
 
     async def send_prompt_batch_to_target_async(
         self,

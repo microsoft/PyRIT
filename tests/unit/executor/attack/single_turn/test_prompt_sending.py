@@ -5,6 +5,7 @@ import asyncio
 import base64
 import codecs
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -34,6 +35,7 @@ from pyrit.executor.attack import (
     RTASystemPromptPaths,
     SingleTurnAttackContext,
 )
+from pyrit.executor.attack.core.attack_cancellation import AttackCancellation
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
@@ -1818,3 +1820,93 @@ class TestEdgeCasesAndErrorHandling:
         # Verify that the AttackResult includes the related conversations
         assert result.related_conversations == basic_context.related_conversations
         assert len(result.related_conversations) == 2
+
+
+_CANCELLED_OBJECTIVE = "cancellation audit probe"
+
+
+async def _cancel_once_entered_async(*, attack: PromptSendingAttack, entered: asyncio.Event) -> None:
+    task = asyncio.create_task(attack.execute_async(objective=_CANCELLED_OBJECTIVE))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+def _blocking_target(entered: asyncio.Event) -> MockPromptTarget:
+    target = MockPromptTarget()
+
+    async def block_send(*, normalized_conversation: list[Message]) -> list[Message]:
+        entered.set()
+        await asyncio.Event().wait()
+        return []
+
+    target._send_prompt_to_target_async = block_send  # type: ignore[method-assign]
+    return target
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_cancelled_target_call_keeps_the_request_and_an_undetermined_result() -> None:
+    entered = asyncio.Event()
+    attack = PromptSendingAttack(objective_target=_blocking_target(entered))
+
+    await _cancel_once_entered_async(attack=attack, entered=entered)
+
+    memory = CentralMemory.get_memory_instance()
+    pieces = await memory.get_message_pieces_async()
+    assert [(piece.api_role, piece.original_value) for piece in pieces] == [("user", _CANCELLED_OBJECTIVE)]
+    [result] = await memory.get_attack_results_async(objective=_CANCELLED_OBJECTIVE)
+    assert result.outcome == AttackOutcome.UNDETERMINED
+    assert result.conversation_id == pieces[0].conversation_id
+    assert AttackCancellation.from_result(result=result) is not None
+    assert result.error_type is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_cancellation_before_the_target_call_records_nothing() -> None:
+    entered = asyncio.Event()
+    attack = PromptSendingAttack(objective_target=MockPromptTarget())
+
+    async def block_setup(*, context: Any) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    with patch.object(attack, "_setup_async", side_effect=block_setup):
+        await _cancel_once_entered_async(attack=attack, entered=entered)
+
+    memory = CentralMemory.get_memory_instance()
+    assert await memory.get_message_pieces_async() == []
+    assert await memory.get_attack_results_async(objective=_CANCELLED_OBJECTIVE) == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_cancellation_after_the_target_responds_keeps_the_exchange_and_an_undetermined_result() -> None:
+    entered = asyncio.Event()
+    attack = PromptSendingAttack(objective_target=MockPromptTarget())
+
+    async def block_scoring(**kwargs: Any) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    with patch.object(attack, "_evaluate_response_async", side_effect=block_scoring):
+        await _cancel_once_entered_async(attack=attack, entered=entered)
+
+    memory = CentralMemory.get_memory_instance()
+    pieces = await memory.get_message_pieces_async()
+    assert [piece.api_role for piece in pieces] == ["user", "assistant"]
+    [result] = await memory.get_attack_results_async(objective=_CANCELLED_OBJECTIVE)
+    assert result.outcome == AttackOutcome.UNDETERMINED
+    assert AttackCancellation.from_result(result=result) is not None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_failure_to_persist_a_cancelled_result_does_not_mask_the_cancellation() -> None:
+    entered = asyncio.Event()
+    attack = PromptSendingAttack(objective_target=_blocking_target(entered))
+    memory = CentralMemory.get_memory_instance()
+
+    with patch.object(memory, "add_attack_results_to_memory_async", side_effect=RuntimeError("database unavailable")):
+        await _cancel_once_entered_async(attack=attack, entered=entered)
+
+    assert await memory.get_attack_results_async(objective=_CANCELLED_OBJECTIVE) == []
+    assert [piece.api_role for piece in await memory.get_message_pieces_async()] == ["user"]

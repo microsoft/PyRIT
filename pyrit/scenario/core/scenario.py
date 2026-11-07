@@ -27,6 +27,7 @@ from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException, ScenarioRunInProgressException
 from pyrit.exceptions.exceptions_helpers import summarize_exception
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
+from pyrit.executor.attack.core.attack_cancellation import AttackCancellation
 from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution, _observe_interrupted_executions
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
 from pyrit.executor.attack.core.attack_strategy import AttackContext
@@ -1517,8 +1518,9 @@ class Scenario(ABC):
         )
         completed_by_attack: dict[tuple[str, str | None], set[str]] = {}
         for row in rows:
-            # ERROR rows hit infrastructure problems, and preparation failures never reached the
-            # objective target at all, so neither measured the objective and both stay pending.
+            # ERROR rows hit infrastructure problems, preparation failures never reached the
+            # objective target at all, and cancelled attempts were interrupted before a verdict,
+            # so none of them measured the objective and all stay pending.
             # Every other row did reach the target and recorded the best verdict available --
             # including UNDETERMINED when no scorer was configured or the scorer abstained. Those
             # are measured results of a deterministic configuration; retrying them would re-send
@@ -1528,6 +1530,8 @@ class Scenario(ABC):
             if AttackResultMetadata.from_metadata(metadata=row.attribution_data).attempt_index is not None:
                 continue
             if AttackPreparationFailure.from_result(result=row) is not None:
+                continue
+            if AttackCancellation.from_result(result=row) is not None:
                 continue
             name = row.attribution_data.get("parent_collection")
             eval_hash = row.attribution_data.get("parent_eval_hash")

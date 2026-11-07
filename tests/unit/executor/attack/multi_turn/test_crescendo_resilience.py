@@ -21,6 +21,7 @@ from pyrit.executor.attack import (
     CrescendoAttackContext,
     CrescendoAttackResult,
 )
+from pyrit.executor.attack.core.attack_cancellation import AttackCancellation
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, ComponentIdentifier, ConversationType, Message, MessagePiece, Score
 from pyrit.prompt_normalizer import PromptNormalizer
@@ -1043,12 +1044,17 @@ class TestCrescendoTerminalBoundaries:
             "objective",
         ]
         pieces = await attack._memory.get_message_pieces_async(conversation_id=context.session.conversation_id)
-        assert len(pieces) == 8
+        # Four completed turns, plus the fifth request that was in flight, with no response.
+        assert len(pieces) == 9
+        assert pieces[-1].api_role == "user"
         assert [piece.original_value for piece in pieces if piece.api_role == "assistant"] == [
             "response-1",
             "response-2",
             "response-3",
             "response-4",
         ]
-        assert (await attack._memory.get_attack_results_async(objective=_OBJECTIVE)) == []
+        [cancelled_result] = await attack._memory.get_attack_results_async(objective=_OBJECTIVE)
+        assert cancelled_result.outcome == AttackOutcome.UNDETERMINED
+        assert cancelled_result.conversation_id == context.session.conversation_id
+        assert AttackCancellation.from_result(result=cancelled_result) is not None
         assert get_retry_collector() is None
