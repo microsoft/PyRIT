@@ -11,6 +11,7 @@ import asyncio
 import base64
 import json
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1007,8 +1008,10 @@ class TestCreateAttack:
         store.assert_not_awaited()
 
     @pytest.mark.parametrize("copy_history", [False, True])
+    @pytest.mark.parametrize("objective", ["", "Evaluate the response", "Manual attack via GUI"])
+    @pytest.mark.parametrize("field", ["objective", "name"])
     async def test_manual_creation_registers_ownership_async(
-        self, *, sqlite_instance: SQLiteMemory, copy_history: bool
+        self, *, sqlite_instance: SQLiteMemory, copy_history: bool, objective: str, field: str
     ) -> None:
         target = MockPromptTarget()
         source_owner = str(uuid.uuid4())
@@ -1026,13 +1029,21 @@ class TestCreateAttack:
         with patch("pyrit.backend.services.attack_service.get_target_service") as targets:
             targets.return_value.get_target_async = AsyncMock(return_value=target_object_to_instance("target", target))
             targets.return_value.get_target_object.return_value = target
-            created = await AttackService().create_attack_async(
-                request=CreateAttackRequest(
-                    target_registry_name="target",
-                    source_conversation_id=source_id if copy_history else None,
-                    cutoff_index=0 if copy_history else None,
+            with (
+                pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective")
+                if field == "name"
+                else nullcontext()
+            ):
+                request = CreateAttackRequest.model_validate(
+                    {
+                        "target_registry_name": "target",
+                        "source_conversation_id": source_id if copy_history else None,
+                        "cutoff_index": 0 if copy_history else None,
+                        field: objective,
+                    }
                 )
-            )
+            service = AttackService()
+            created = await service.create_attack_async(request=request)
         [owned] = await sqlite_instance.get_attack_result_conversations_async(attack_result_id=created.attack_result_id)
         assert owned.conversation_id == created.conversation_id
         assert owned.target_identifier == target.get_identifier()
@@ -1041,6 +1052,30 @@ class TestCreateAttack:
         assert source.conversation_id == source_id
         copied = await sqlite_instance.get_message_pieces_async(attack_result_id=created.attack_result_id)
         assert [piece.original_value for piece in copied] == (["history"] if copy_history else [])
+        summary = await service.get_attack_async(attack_result_id=created.attack_result_id)
+        assert summary is not None
+        assert (summary.objective, summary.attack_type, summary.execution_read_only) == (
+            objective,
+            "ManualAttack",
+            False,
+        )
+        identifier = summary.get_attack_strategy_identifier()
+        assert identifier is not None
+        assert identifier.get_child("objective_target") == target.get_identifier()
+        filtered = await service.list_attacks_async(attack_types=["ManualAttack"])
+        assert [item.attack_result_id for item in filtered.items] == [created.attack_result_id]
+        assert filtered.items[0].objective == objective
+        assert (await sqlite_instance.get_attack_results_async(attack_result_ids=[created.attack_result_id]))[
+            0
+        ].objective == summary.objective
+
+        updated = await service.update_attack_async(
+            attack_result_id=created.attack_result_id,
+            request=UpdateAttackRequest(objective="Edited objective", expected_objective=summary.objective),
+        )
+        assert updated is not None
+        assert (updated.objective, updated.attack_type) == ("Edited objective", "ManualAttack")
+        assert updated.get_attack_strategy_identifier() == identifier
 
     async def test_create_attack_validates_target_exists(self, attack_service) -> None:
         """Test that create_attack validates target exists."""
@@ -1069,7 +1104,7 @@ class TestCreateAttack:
             result = await attack_service.create_attack_async(
                 request=CreateAttackRequest(
                     target_registry_name="target-1",
-                    name="My Attack",
+                    objective="My objective",
                     operator="alice",
                     operation_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
                     labels={"team": "red"},
@@ -1199,7 +1234,7 @@ class TestCreateAttack:
             await attack_service.create_attack_async(
                 request=CreateAttackRequest(
                     target_registry_name="target-1",
-                    name="Labeled Attack",
+                    objective="Labeled objective",
                     labels={"env": "prod", "team": "red"},
                 )
             )
@@ -1315,8 +1350,10 @@ class TestCreateAttack:
             stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_ar.labels["source"] == "api-test"
 
-    async def test_create_attack_default_name(self, attack_service, mock_memory) -> None:
-        """Test that request.name=None uses default class_name and an empty objective."""
+    async def test_create_attack_without_objective_async(
+        self, *, attack_service: AttackService, mock_memory: MagicMock
+    ) -> None:
+        """Test that omitting the objective creates a ManualAttack with an empty objective."""
         with patch("pyrit.backend.services.attack_service.get_target_service") as mock_get_target_service:
             mock_target_obj = MagicMock()
             mock_target_obj.get_identifier.return_value = ComponentIdentifier(
@@ -1332,7 +1369,7 @@ class TestCreateAttack:
             stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_ar.objective == ""
             assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
-            assert "objective_is_placeholder" not in stored_ar.metadata
+            assert stored_ar.metadata["objective_is_placeholder"] is False
 
     async def test_create_attack_with_name_marks_objective_explicit(self, attack_service, mock_memory) -> None:
         """Test that a user-supplied request.name is persisted directly as the objective."""
@@ -1346,13 +1383,14 @@ class TestCreateAttack:
             mock_target_service.get_target_object.return_value = mock_target_obj
             mock_get_target_service.return_value = mock_target_service
 
-            await attack_service.create_attack_async(
-                request=CreateAttackRequest(target_registry_name="target-1", name="Extract the secret")
-            )
+            with pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective"):
+                request = CreateAttackRequest(target_registry_name="target-1", name="Extract the secret")
+            await attack_service.create_attack_async(request=request)
 
             stored_ar = mock_memory.add_conversation_branches_to_attack_async.call_args.kwargs["new_attack"]
             assert stored_ar.objective == "Extract the secret"
-            assert "objective_is_placeholder" not in stored_ar.metadata
+            assert stored_ar.get_attack_strategy_identifier().class_name == "ManualAttack"
+            assert stored_ar.metadata["objective_is_placeholder"] is False
 
 
 # ============================================================================

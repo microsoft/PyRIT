@@ -611,8 +611,15 @@ export default function ConverterPanel({
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
         onCreated={(converterId: string, isCurrentOpening: boolean) => {
-          if (isCurrentOpening) setCreateDialogOpen(false)
-          void loadConverters(converterId, effectiveActiveTab)
+          if (isCurrentOpening) {
+            setCreateDialogOpen(false)
+            void loadConverters(converterId, effectiveActiveTab)
+            return
+          }
+          // A dismissed creation may still finish on the server. Refresh the
+          // registry so the converter is available, but do not mutate the
+          // pipeline the user chose after dismissing the dialog.
+          void loadConverters()
         }}
       />
       {settings && <CreateConverterDialog

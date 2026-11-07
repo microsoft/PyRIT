@@ -210,7 +210,7 @@ async function activateTarget(
 
 const historyClockPages = new WeakSet<Page>();
 
-/** Navigate to an attack by opening the History view and clicking its row. */
+/** Navigate to an attack through its objective control in History. */
 async function openAttackInHistory(
   page: Page,
   attackResultId: string,
@@ -227,7 +227,7 @@ async function openAttackInHistory(
   await page.clock.fastForward(60_000);
   const row = page.getByTestId(`attack-row-${attackResultId}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
-  await row.click();
+  await row.getByRole("button", { name: /^Open attack:/ }).click();
   await expect(page).toHaveURL(new RegExp(`/attack/chat/${attackResultId}$`));
   await expect(page.getByTestId("toggle-panel-btn")).toBeEnabled({
     timeout: 10_000,

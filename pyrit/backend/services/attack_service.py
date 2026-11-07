@@ -545,7 +545,7 @@ class AttackService:
 
     async def create_attack_async(self, *, request: CreateAttackRequest) -> CreateAttackResponse:
         """
-        Create a new attack.
+        Create a new manual attack with an objective independent of its strategy type.
 
         Creates an AttackResult with a new conversation_id.  When
         ``source_conversation_id`` and ``cutoff_index`` are provided the
@@ -589,8 +589,7 @@ class AttackService:
         attack_result = self._new_manual_attack(
             request=request,
             conversation=conversation,
-            objective=request.name or "",
-            attack_name=request.name or "ManualAttack",
+            objective=request.objective or "",
         )
         if request.source_conversation_id is not None:
             source_conversation = await self._memory.get_conversation_metadata_async(
@@ -673,7 +672,6 @@ class AttackService:
         conversation: Conversation,
         objective: str,
         attack_result_id: str | None = None,
-        attack_name: str = "ManualAttack",
     ) -> AttackResult:
         """
         Build manual attack metadata for normal creation and editor saves.
@@ -688,7 +686,7 @@ class AttackService:
             objective=objective,
             atomic_attack_identifier=AtomicAttackIdentifier.build(
                 attack_identifier=AttackIdentifier(
-                    class_name=attack_name,
+                    class_name="ManualAttack",
                     class_module="pyrit.backend",
                     objective_target=TargetIdentifier.from_component_identifier(conversation.target_identifier)
                     if conversation.target_identifier
@@ -703,6 +701,7 @@ class AttackService:
             labels={"source": "gui", **(request.labels or {})},
             metadata={
                 "created_at": now.isoformat(),
+                "objective_is_placeholder": False,
                 "target_unbound": conversation.target_identifier is None,
                 **({"target_registry_name": request.target_registry_name} if request.target_registry_name else {}),
                 **(request.target_binding.to_metadata() if request.target_binding else {}),
@@ -1217,7 +1216,11 @@ class AttackService:
             "outcome_reason": None,
             "automated_score_id": None,
             "human_score_id": None,
-            "attack_metadata": {AttackResult.SCORING_ERRORS_KEY: {}, **(settings or {})},
+            "attack_metadata": {
+                "objective_is_placeholder": False,
+                AttackResult.SCORING_ERRORS_KEY: {},
+                **(settings or {}),
+            },
         }
 
     async def remove_human_score_async(self, *, attack_result_id: str) -> AttackSummary | None:
