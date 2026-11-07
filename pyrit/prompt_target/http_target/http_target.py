@@ -67,6 +67,8 @@ class HTTPTarget(PromptTarget):
 
     """
 
+    not_saveable_reason: ClassVar[str | None] = "Its raw HTTP request can carry credentials."
+
     _CREDENTIAL_HEADERS: ClassVar[frozenset[str]] = frozenset(
         {
             "authorization",

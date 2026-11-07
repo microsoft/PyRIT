@@ -234,7 +234,10 @@ async def load_scenario_datasets_async(
     responses={
         400: {"model": ProblemDetail, "description": "Invalid request (bad scenario/target/technique)"},
         404: {"model": ProblemDetail, "description": "Saved run not found"},
-        409: {"model": ProblemDetail, "description": "Saved run cannot be resumed"},
+        409: {
+            "model": ProblemDetail,
+            "description": "Saved run cannot be resumed, or a launch script would replace a saved entry",
+        },
     },
 )
 async def start_scenario_run(  # pyrit-async-suffix-exempt

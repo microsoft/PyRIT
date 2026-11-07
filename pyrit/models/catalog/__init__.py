@@ -20,6 +20,18 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.models.catalog.initializer import RegisteredInitializer
+    from pyrit.models.catalog.registry_recipe import (
+        ComponentRecipe,
+        IgnoredRecipeFile,
+        RegistryRecipeKind,
+        RegistryRestoreReport,
+        RestoreFailure,
+        RestoreFailureReason,
+        SavedEntryOwner,
+        SavedEntryRef,
+        StoredRecipe,
+        TechniqueRecipe,
+    )
     from pyrit.models.catalog.scenario import (
         AttackErrorSummary,
         AttackRetrySummary,
@@ -55,14 +67,22 @@ if TYPE_CHECKING:
         StoredScenarioSuite,
     )
     from pyrit.models.catalog.scorer import ScorerInstance
-    from pyrit.models.catalog.target import TargetInstance
+    from pyrit.models.catalog.target import TargetInstance, TargetOrigin
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AttackErrorSummary": "pyrit.models.catalog.scenario",
     "AttackRetrySummary": "pyrit.models.catalog.scenario",
+    "ComponentRecipe": "pyrit.models.catalog.registry_recipe",
+    "IgnoredRecipeFile": "pyrit.models.catalog.registry_recipe",
     "PresetEntry": "pyrit.models.catalog.scenario_preset",
     "PresetIssue": "pyrit.models.catalog.scenario_preset",
     "RegisteredInitializer": "pyrit.models.catalog.initializer",
+    "RegistryRecipeKind": "pyrit.models.catalog.registry_recipe",
+    "RegistryRestoreReport": "pyrit.models.catalog.registry_recipe",
+    "RestoreFailure": "pyrit.models.catalog.registry_recipe",
+    "RestoreFailureReason": "pyrit.models.catalog.registry_recipe",
+    "SavedEntryOwner": "pyrit.models.catalog.registry_recipe",
+    "SavedEntryRef": "pyrit.models.catalog.registry_recipe",
     "ScorerInstance": "pyrit.models.catalog.scorer",
     "RegisteredScenario": "pyrit.models.catalog.scenario",
     "RunScenarioRequest": "pyrit.models.catalog.scenario",
@@ -87,8 +107,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioRunSummary": "pyrit.models.catalog.scenario",
     "ScenarioTechniqueSummary": "pyrit.models.catalog.scenario",
     "StoredPreset": "pyrit.models.catalog.scenario_preset",
+    "StoredRecipe": "pyrit.models.catalog.registry_recipe",
     "StoredScenarioSuite": "pyrit.models.catalog.scenario_suite",
     "TargetInstance": "pyrit.models.catalog.target",
+    "TargetOrigin": "pyrit.models.catalog.target",
+    "TechniqueRecipe": "pyrit.models.catalog.registry_recipe",
 }
 
 __all__ = list(_LAZY_EXPORTS)

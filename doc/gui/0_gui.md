@@ -177,8 +177,31 @@ Editing a preset preserves unchanged parameter values exactly, including commas
 and whitespace inside list entries, empty lists, duplicates, and their order.
 Editing a list field uses the comma-separated format shown in the editor.
 
-Targets, converters, and techniques added only to the live registry must be
-recreated after a backend restart or reinitialization. Use
+**New Target** saves the target, so it comes back after the backend restarts or
+is reinitialized. Give it a registry name of lowercase letters, digits, and
+underscores that starts with a letter; the dialog suggests one from the target
+type and model. Saved targets are kept in `registry_recipes_source`
+(`~/.pyrit/registry_recipes` unless set in your `.pyrit_conf`). To remove a saved
+target, delete its file (`targets/<name>.json`) there, and the file of any saved
+round robin that uses it, then restart the backend. If a startup initializer later
+registers a target under a saved target's name, the saved one isn't restored and
+the backend isn't ready until that file is renamed or removed and the backend
+restarted.
+
+Saved targets can't hold credentials yet, so choose Identity-based or No key
+authentication when the target supports it. A target that needs an API key or
+another credential value, a type that can't be saved, or a round robin that uses
+a Temporary target is created as **Temporary** instead, and the dialog says why.
+A Temporary target is gone after the backend restarts or is reinitialized.
+
+The Targets table labels each target **Saved**, **From configuration**
+(registered by an initializer at startup), or **Temporary**. A target saved while
+signed in also says who saved it (**Saved by you** for your own). Once you have
+saved one, check **Only targets I saved** to list just yours. Anyone can still
+use every target.
+
+Converters and techniques added only to the live registry must be recreated
+after a backend restart or reinitialization. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 
 ![Registry page with registered targets and component tabs](images/registry.png)

@@ -54,6 +54,7 @@ import {
   type TargetFilters,
 } from './targetFilters'
 import TargetFiltersBar from './TargetFiltersBar'
+import TargetOriginBadge from './TargetOriginBadge'
 import { useTargetTableStyles } from './TargetTable.styles'
 import TargetSelect from './TargetSelect'
 
@@ -80,8 +81,17 @@ function formatParams(params?: Record<string, unknown> | null): string {
   return parts.join('\n')
 }
 
+/** Who saved a target, shown under its badges, or null when nobody signed in saved it. */
+function savedByText(target: TargetInstance): string | null {
+  if (target.saved_by_me) return 'Saved by you'
+  return target.saved_by ? `Saved by ${target.saved_by}` : null
+}
+
 const COLUMN_TOOLTIPS = {
-  registryName: 'Unique name used to identify this configured target',
+  registryName:
+    'Unique name used to identify this target. Saved targets come back after the backend restarts or is '
+    + 'reinitialized, targets from configuration come back because the server registers them again, and '
+    + 'Temporary targets are gone.',
   type: 'Target class implementation',
   model: 'Configured model name. A dotted underline indicates the deployment alias differs from the underlying model — hover the value to see it.',
   endpoint: 'API endpoint URL the target sends requests to',
@@ -250,6 +260,7 @@ export default function TargetTable({
     [preferences.hiddenTargetRegistryNames],
   )
   const [showHiddenTargets, setShowHiddenTargets] = useState(false)
+  const [onlySavedByMe, setOnlySavedByMe] = useState(false)
   const [previousHiddenTargetCount, setPreviousHiddenTargetCount] = useState<number | null>(null)
   const [filters, setFilters] = useState<TargetFilters>(DEFAULT_TARGET_FILTERS)
   // Tracks which RoundRobinTarget rows are expanded to show inner targets.
@@ -301,10 +312,16 @@ export default function TargetTable({
     [hiddenTargetRegistryNames, showHiddenTargets, targets],
   )
 
+  const savedByMeCount = useMemo(() => targets.filter((target) => target.saved_by_me === true).length, [targets])
+  // The checkbox only shows while the user has a saved target, so it turns off when the last one goes.
+  if (onlySavedByMe && savedByMeCount === 0) setOnlySavedByMe(false)
+
   const filterOptions = useMemo(() => getTargetFilterOptions(targets, filters), [targets, filters])
   const filteredTargets = useMemo(
-    () => displayedTargets.filter((target: TargetInstance) => targetMatchesFilters(target, filters)),
-    [displayedTargets, filters],
+    () => displayedTargets.filter((target: TargetInstance) => (
+      (!onlySavedByMe || target.saved_by_me === true) && targetMatchesFilters(target, filters)
+    )),
+    [displayedTargets, filters, onlySavedByMe],
   )
   const noTargetsMatch = displayedTargets.length > 0 && filteredTargets.length === 0
 
@@ -349,6 +366,14 @@ export default function TargetTable({
           onChange={(_, data) => setShowHiddenTargets(data.checked === true)}
           data-testid="show-hidden-targets"
         />
+        {savedByMeCount > 0 && (
+          <Checkbox
+            checked={onlySavedByMe}
+            label={`Only targets I saved (${savedByMeCount})`}
+            onChange={(_, data) => setOnlySavedByMe(data.checked === true)}
+            data-testid="only-targets-i-saved"
+          />
+        )}
       </div>
       <TargetFiltersBar filters={filters} options={filterOptions} onFiltersChange={setFilters} />
 
@@ -405,6 +430,7 @@ export default function TargetTable({
             const expanded = expandedRows.has(target.target_registry_name)
             const expandable = hasInnerTargets(target)
             const hidden = hiddenTargetRegistryNames.has(target.target_registry_name)
+            const savedBy = savedByText(target)
             // Extract weights from target_specific_params so we can show per-inner-target weight
             const weights = target.target_specific_params?.weights as number[] | undefined
 
@@ -433,14 +459,18 @@ export default function TargetTable({
                 }
                 nameCellClassName={styles.registryNameCell}
                 nameContent={
-                  isDefaultAdversarial(target) && (
-                    <div className={styles.defaultIndicators}>
-                      {isDefaultAdversarial(target) && (
-                        <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
-                          Adversarial
-                        </Badge>
-                      )}
-                    </div>
+                  (target.origin || isDefaultAdversarial(target)) && (
+                    <>
+                      <div className={styles.defaultIndicators}>
+                        {target.origin && <TargetOriginBadge origin={target.origin} />}
+                        {isDefaultAdversarial(target) && (
+                          <Badge appearance="outline" color="brand" size="small" aria-label="Default adversarial target">
+                            Adversarial
+                          </Badge>
+                        )}
+                      </div>
+                      {savedBy && <Text size={200} className={styles.savedBy}>{savedBy}</Text>}
+                    </>
                   )
                 }
                 rowClassName={mergeClasses(

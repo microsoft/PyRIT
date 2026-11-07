@@ -18,6 +18,7 @@ from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.memory import SQLiteMemory
+from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from test_support.fixtures import authentication_policy, compatibility_headers, compatibility_id  # noqa: F401
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 
@@ -57,3 +58,10 @@ def isolated_manual_message_services() -> Iterator[None]:
     yield
     for factory in (get_attack_service, get_message_send_service, get_manual_send_scheduler, get_dataset_service):
         factory.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_saved_registry_entries(tmp_path: Path) -> Iterator[None]:
+    """Keep backend startup and apply from restoring entries saved on the machine running the tests."""
+    with patch.object(RegistryRecipeStorage, "_get_default_storage_dir", return_value=tmp_path / "registry_recipes"):
+        yield

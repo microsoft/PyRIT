@@ -15,6 +15,7 @@ from pyrit.common.auth_mode import AuthMode
 from pyrit.models import JSONValue, Parameter, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
+from pyrit.models.identifiers.class_name_utils import validate_registry_name
 from pyrit.models.target.target_capabilities import TargetCapabilities
 
 __all__ = [
@@ -41,6 +42,16 @@ class TargetTypeEntry(BaseModel):
         default_factory=_default_auth_modes,
         description="Authentication modes this target type supports",
     )
+    saveable_auth_modes: list[AuthMode] = Field(
+        default_factory=list,
+        description=(
+            "The supported authentication modes a saved target of this type can use. Empty when the type can't "
+            "be saved; not_saveable_reason says why. The values a target is given are checked when it's saved"
+        ),
+    )
+    not_saveable_reason: str | None = Field(
+        None, description="Why a target of this type can't be saved, or None when it can be with a saveable mode"
+    )
     description: str | None = Field(None, description="Short description of the target from its docstring")
 
 
@@ -60,15 +71,23 @@ class TargetListResponse(BaseModel):
 class CreateTargetRequest(BaseModel):
     """Request to create a new target instance."""
 
-    # LEGACY COMPATIBILITY: The current target configuration UI does not send a
-    # name. Make this field required after that UI sends explicit registry names.
+    # LEGACY COMPATIBILITY: The GUI now sends a name whenever it registers a target. Requiring the name for
+    # registered targets would break API callers that leave it out, so that is left to a separate breaking change.
     name: str | None = Field(
         None,
         min_length=1,
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
-        description="Unique registry name; omitted only for legacy UI compatibility",
+        description="Unique registry name, required with persist; when omitted, the backend generates one",
     )
     register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    persist: bool = Field(
+        False,
+        description=(
+            "Save the target so it comes back after the backend restarts or is reinitialized (true), or keep it "
+            "only until then (false). A saved target needs a name of lowercase letters, digits, and underscores, "
+            "and can't hold or use a key: it authenticates with Microsoft Entra ID ('identity') or needs no key."
+        ),
+    )
     source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[IdentifierStr, JSONValue] = Field(
@@ -90,6 +109,17 @@ class CreateTargetRequest(BaseModel):
     def _validate_source(self) -> "CreateTargetRequest":
         if self.source is not None and (self.register or self.params or "auth_mode" in self.model_fields_set):
             raise ValueError("source requires register=false and overrides, including auth_mode, in source.params")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_persist(self) -> "CreateTargetRequest":
+        if not self.persist:
+            return self
+        if not self.register:
+            raise ValueError("persist requires register=true")
+        if self.name is None:
+            raise ValueError("persist requires a name")
+        validate_registry_name(self.name)
         return self
 
 

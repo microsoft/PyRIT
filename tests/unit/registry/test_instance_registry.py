@@ -7,6 +7,7 @@ registry exposes as its ``.instances`` property, plus the ``InstanceRegistry`` a
 ``SupportsInstances`` protocols.
 """
 
+import contextlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
 from typing import assert_type
@@ -16,10 +17,14 @@ import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
 from pyrit.registry.instance_registry import (
+    CONFIGURATION_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_METADATA_KEY,
     DefaultInstanceRegistry,
     InstanceRegistry,
     RegistryEntry,
+    SavedEntryReplacementError,
     SupportsInstances,
+    record_saved_entry_refusals,
 )
 from pyrit.registry.tag_query import TagQuery
 
@@ -99,6 +104,57 @@ class TestRegistration:
         registry.register(_item("updated"), name="name", replace=True)
 
         assert registry.get("name") == "updated"
+
+    def test_register_refuses_to_replace_a_saved_entry(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
+        revision = registry.revision
+
+        with pytest.raises(SavedEntryReplacementError, match="Saved target 'name'"):
+            registry.register(_item("updated"), name="name", replace=True)
+
+        assert registry.get("name") == "saved"
+        assert registry.revision == revision
+
+    def test_refused_replacements_are_recorded_even_when_caught(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+
+        with record_saved_entry_refusals() as refusals:
+            with contextlib.suppress(SavedEntryReplacementError):
+                registry.register(_item("updated"), name="name", replace=True)
+            registry.register(_item("other"), name="other", replace=True)
+
+        assert refusals == [("converters", "name")]
+        assert registry.get("other") == "other"
+
+    def test_marks_startup_entries_and_keeps_the_mark_when_one_is_replaced(
+        self, registry: DefaultInstanceRegistry[_TestItem]
+    ):
+        startup_metadata = {"supports_tool_calls": True}
+        registry.register(_item("startup"), name="startup", metadata=startup_metadata)
+        registry.register(_item("saved"), name="saved", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
+
+        registry.mark_configuration_entries()
+        registry.register(_item("relaunched"), name="startup", replace=True)
+        registry.register(_item("launched"), name="launched", replace=True)
+
+        marked = {
+            entry.name: CONFIGURATION_ENTRY_METADATA_KEY in entry.metadata for entry in registry.get_all_instances()
+        }
+        assert marked == {"launched": False, "saved": False, "startup": True}
+        assert registry.get("startup") == "relaunched"
+        assert startup_metadata == {"supports_tool_calls": True}
+
+    def test_a_caught_duplicate_name_for_a_saved_entry_is_recorded(self, registry: DefaultInstanceRegistry[_TestItem]):
+        registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
+        registry.register(_item("startup"), name="startup")
+
+        with record_saved_entry_refusals() as refusals:
+            for name in ("name", "startup"):
+                with pytest.raises(ValueError, match="already exists"):
+                    registry.register(_item("updated"), name=name)
+
+        assert refusals == [("targets", "name")]
+        assert registry.get("name") == "saved"
 
     def test_register_rejects_reserved_name(self):
         registry: DefaultInstanceRegistry[_TestItem] = DefaultInstanceRegistry(reserved_names={"types"})
