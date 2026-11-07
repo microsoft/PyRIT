@@ -158,6 +158,26 @@ class TestOpenAITargetAuthResolution:
                 auth_mode="identity",
             )
 
+    def test_no_key_auth_mode_ignores_env_var_key_and_headers(self):
+        """A no-key target sends neither the server's key nor the server's extra request headers."""
+        target = _build_target(
+            endpoint="http://localhost:11434/v1",
+            api_key=None,
+            env_vars={"TEST_API_KEY": "env-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"X-Server-Secret": "s"}'},
+            auth_mode="none",
+        )
+
+        assert target._api_key == "not-needed"
+        assert target._headers == {}
+
+    def test_no_key_auth_mode_keeps_explicit_headers(self):
+        with patch.dict(os.environ, {"TEST_MODEL": "llama3"}, clear=True):
+            target = _ConcreteOpenAITarget(
+                endpoint="http://localhost:11434/v1", auth_mode="none", headers='{"X-Route": "local"}'
+            )
+
+        assert target._headers == {"X-Route": "local"}
+
 
 class TestEnsureAsyncTokenProvider:
     """Tests for the ensure_async_token_provider helper function."""

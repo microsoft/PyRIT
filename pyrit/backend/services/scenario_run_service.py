@@ -20,7 +20,7 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
@@ -50,6 +50,7 @@ from pyrit.backend.services.scenario_progress_read_model import (
     ScenarioProgressSnapshot,
 )
 from pyrit.common.async_compatibility import run_legacy_sync_async
+from pyrit.exceptions.exceptions_helpers import summarize_exception
 from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
 from pyrit.memory import AttackResultKeysetCursor, CentralMemory, SQLiteMemory
 from pyrit.memory.memory_interface import (
@@ -1069,9 +1070,10 @@ class ScenarioRunService:
         reference_id: uuid.UUID | None = None,
         limit: int = 100,
         cursor: str | None = None,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> ScenarioRunListResponse:
         """
-        List scenario runs by querying the database (most recent first).
+        List scenario runs in descending creation or activity order from the database.
 
         Args:
             scenario_names: Registered or persisted scenario names to match.
@@ -1082,6 +1084,7 @@ class ScenarioRunService:
             reference_id: Exact conversation, attack, finding, or scenario result ID.
             limit: Maximum number of runs to return.
             cursor: Opaque cursor from the previous page.
+            sort_by: Sort by creation time or scenario activity time.
 
         Returns:
             ScenarioRunListResponse with runs.
@@ -1104,6 +1107,8 @@ class ScenarioRunService:
             fingerprint_values["operation_ids"] = [str(operation_id) for operation_id in operation_ids]
         if reference_id is not None:
             fingerprint_values["reference_id"] = str(reference_id)
+        if sort_by != "created_at":
+            fingerprint_values["sort_by"] = sort_by
         fingerprint = fingerprint_filters(filters=fingerprint_values)
         decoded_cursor = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
         after = (
@@ -1122,6 +1127,7 @@ class ScenarioRunService:
             reference_id=reference_id,
             cursor=after,
             limit=limit,
+            sort_by=sort_by,
         )
         plans = {record.scenario_result_id: self._parse_history_plan(record=record) for record in records}
         # Memory resolves units against every persisted plan. Runs whose plan this service
@@ -1160,7 +1166,7 @@ class ScenarioRunService:
         ]
         next_cursor = (
             encode_keyset_cursor(
-                timestamp=records[-1].created_at,
+                timestamp=items[-1].updated_at if sort_by == "activity" else records[-1].created_at,
                 identifier=records[-1].scenario_result_id,
                 fingerprint=fingerprint,
             )
@@ -1753,9 +1759,10 @@ class ScenarioRunService:
             logger.info("Scenario run %s stopped in state %s.", scenario_result_id, active.cancellation_state.value)
 
         except Exception as e:
-            active.error = str(e)
+            error_message = summarize_exception(e)
+            active.error = error_message
             active.cancellation_state = ScenarioRunState.FAILED
-            active.cancellation_reason = str(e)
+            active.cancellation_reason = error_message
             active.cancellation_error_type = type(e).__name__
             active.retain_error_on_terminalization = True
             try:
@@ -1763,7 +1770,7 @@ class ScenarioRunService:
                     scenario_result_id=scenario_result_id,
                     expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=ScenarioRunState.FAILED,
-                    error_message=str(e),
+                    error_message=error_message,
                     error_type=type(e).__name__,
                 )
             except Exception:

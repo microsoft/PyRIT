@@ -2808,7 +2808,38 @@ class TestScenarioRunServiceListRuns:
             reference_id=None,
             cursor=None,
             limit=10,
+            sort_by="created_at",
         )
+
+    async def test_activity_history_cursor_uses_updated_at_and_is_mode_bound(self, mock_memory) -> None:
+        record = _make_history_record(result_id=str(uuid.UUID(int=42)), run_state=ScenarioRunState.IN_PROGRESS)
+        activity_timestamp = record.created_at + timedelta(days=1)
+        aggregate = replace(
+            ScenarioHistoryAggregate.empty(scenario_result_id=record.scenario_result_id),
+            latest_attempt_timestamp=activity_timestamp,
+        )
+        mock_memory.get_scenario_run_history_page_async = AsyncMock(
+            return_value=([record], {record.scenario_result_id: aggregate}, True)
+        )
+        service = ScenarioRunService()
+
+        activity_page = await service.list_runs_async(limit=1, sort_by="activity")
+        assert activity_page.items[0].updated_at == activity_timestamp
+        activity_cursor = activity_page.pagination.next_cursor
+        await service.list_runs_async(limit=1, sort_by="activity", cursor=activity_cursor)
+        memory_cursor = mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"]
+        assert memory_cursor.timestamp == activity_timestamp
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["sort_by"] == "activity"
+
+        await service.list_runs_async(limit=1, cursor=activity_cursor)
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"] is None
+        assert mock_memory.get_scenario_run_history_page_async.call_args.kwargs["sort_by"] == "created_at"
+
+        default_page = await service.list_runs_async(limit=1)
+        default_cursor = default_page.pagination.next_cursor
+        await service.list_runs_async(limit=1, cursor=default_cursor)
+        memory_cursor = mock_memory.get_scenario_run_history_page_async.call_args.kwargs["cursor"]
+        assert memory_cursor.timestamp == record.created_at
 
     async def test_history_cursor_is_filter_bound_and_invalid_values_restart_pagination(self, mock_memory) -> None:
         record = _make_history_record(result_id=str(uuid.uuid4()), run_state=ScenarioRunState.COMPLETED)
@@ -3849,6 +3880,35 @@ class TestScenarioRunServiceExecution:
         fetched = await service.get_run_async(scenario_result_id=response.scenario_result_id)
         assert fetched is not None
         assert fetched.error == "scenario exploded"
+
+    async def test_execute_run_reports_every_failure_in_an_exception_group(self, mock_all_registries) -> None:
+        service = ScenarioRunService()
+        mock_instance = mock_all_registries["scenario_instance"]
+        release_execution = asyncio.Event()
+
+        async def _run() -> None:
+            await release_execution.wait()
+            raise ExceptionGroup("Multiple failed", [ValueError("first boom"), RuntimeError("second boom")])
+
+        mock_instance.run_async = AsyncMock(side_effect=_run)
+        response = await service.start_run_async(request=_make_request())
+        active = service._active_tasks.get(response.scenario_result_id)
+        assert active is not None
+        assert active.task is not None
+        release_execution.set()
+        await active.task
+
+        expected = "Multiple failed (2 sub-exceptions): [ValueError: first boom; RuntimeError: second boom]"
+        assert active.error == expected
+        assert active.cancellation_reason == expected
+        assert active.cancellation_error_type == "ExceptionGroup"
+        mock_all_registries["memory"].try_update_scenario_run_state_async.assert_awaited_with(
+            scenario_result_id=response.scenario_result_id,
+            expected_states={ScenarioRunState.CREATED, ScenarioRunState.IN_PROGRESS},
+            scenario_run_state=ScenarioRunState.FAILED,
+            error_message=expected,
+            error_type="ExceptionGroup",
+        )
 
     async def test_execute_run_retains_richer_terminal_error_from_scenario(self, mock_all_registries) -> None:
         service = ScenarioRunService()

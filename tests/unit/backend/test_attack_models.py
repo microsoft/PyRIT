@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Request contracts for exact converter preview results."""
+"""Request contracts for attacks and exact converter preview results."""
 
 from typing import get_args
 from uuid import uuid4
@@ -17,6 +17,62 @@ from pyrit.backend.models.attacks import (
 )
 from pyrit.models import PromptDataType
 from pyrit.models.catalog.scenario import RunScenarioRequest
+
+
+@pytest.mark.parametrize("objective", [None, "", "Evaluate the response"])
+def test_create_attack_accepts_explicit_objective(objective: str | None) -> None:
+    request = CreateAttackRequest.model_validate({"objective": objective})
+    assert request.objective == objective
+    assert request.name is None
+
+
+@pytest.mark.parametrize("payload", [{}, {"name": None}, {"objective": None, "name": None}])
+def test_create_attack_without_objective_keeps_optional_defaults(payload: dict[str, None]) -> None:
+    request = CreateAttackRequest.model_validate(payload)
+    assert request.objective is None
+    assert request.name is None
+    assert "chat_scorer" not in request.model_fields_set
+
+
+@pytest.mark.parametrize("objective", ["", "Evaluate the response"])
+@pytest.mark.parametrize("include_objective", [False, True])
+def test_create_attack_accepts_legacy_objective_alias(*, objective: str, include_objective: bool) -> None:
+    payload = {"name": objective}
+    if include_objective:
+        payload["objective"] = objective
+    with pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective"):
+        request = CreateAttackRequest.model_validate(payload)
+    assert request.objective == objective
+    assert request.name == objective
+    assert payload == ({"name": objective, "objective": objective} if include_objective else {"name": objective})
+
+
+def test_create_attack_null_objective_uses_legacy_alias() -> None:
+    with pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective"):
+        request = CreateAttackRequest(objective=None, name="Legacy objective")
+    assert request.objective == "Legacy objective"
+
+
+@pytest.mark.parametrize("objective", ["", "Different objective"])
+def test_create_attack_rejects_conflicting_objective_alias(objective: str) -> None:
+    with (
+        pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective"),
+        pytest.raises(ValidationError, match="name and objective must match"),
+    ):
+        CreateAttackRequest(objective=objective, name="Legacy objective")
+
+
+@pytest.mark.parametrize("field", ["name", "objective"])
+@pytest.mark.parametrize("value", [123, "x" * 100_001], ids=["non-string", "too-long"])
+def test_create_attack_validates_objective_inputs(*, field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        CreateAttackRequest.model_validate({field: value})
+
+
+def test_create_attack_schema_documents_objective_alias() -> None:
+    properties = CreateAttackRequest.model_json_schema()["properties"]
+    assert "objective" in properties
+    assert properties["name"]["deprecated"] is True
 
 
 def _validate_new_activity(

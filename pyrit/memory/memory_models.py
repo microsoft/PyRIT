@@ -757,8 +757,9 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
     ``MemoryInterface._persist_target_identifier``). ``ConversationEntry`` references a
     row here via ``target_identifier_hash``. The promoted scalar columns (``endpoint`` /
     ``model_name`` / ``underlying_model_name`` / ``temperature`` / ``top_p`` /
-    ``max_requests_per_minute`` / ``supported_auth_modes``) are surfaced for querying;
-    ``identifier_json`` remains the source of truth on reload. Inner targets of a
+    ``max_requests_per_minute`` / ``http_request_fingerprint`` / ``supported_auth_modes``)
+    are surfaced for querying; ``identifier_json`` remains the source of truth on reload.
+    Inner targets of a
     multi-target are linked via ``TargetIdentifierChildren`` (and also live inline in
     ``identifier_json``).
     """
@@ -781,6 +782,7 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
     top_p: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_requests_per_minute: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
+    http_request_fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
     supported_auth_modes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     #: Ordered child-edge rows (``parent_hash -> child_hash``) for this target.
@@ -1483,6 +1485,8 @@ class ScoreEntry(Base):
         """
         snapshot_participation = entry._snapshot_participation
         entry = Score.model_validate(entry.model_dump(exclude={"objective"}))
+        if snapshot_participation is None:
+            snapshot_participation = entry._snapshot_participation
         self.id = entry.id
         self.is_intermediate = is_intermediate
         self.score_value = entry.score_value
@@ -1546,7 +1550,6 @@ class ScoreEntry(Base):
                 else None
             ),
         )
-
         score._snapshot_participation = self.snapshot_participation
         return score
 

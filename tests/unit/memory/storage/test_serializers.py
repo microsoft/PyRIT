@@ -812,3 +812,42 @@ async def test_save_formatted_audio_async_cleans_up_temp_file_on_azure_upload_fa
     # Check no NEW wav files leaked after test
     leaked_files = set(tmp_path.glob("*.wav")) - existing_wav_files
     assert leaked_files == set(), f"Temp files leaked: {leaked_files}"
+
+
+@pytest.mark.asyncio
+async def test_save_formatted_audio_rejects_reserved_non_wav_path(sqlite_instance, tmp_path):
+    """A non-WAV path reserved earlier must be rejected before anything is written."""
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
+
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock) as memory_prop:
+        memory = MagicMock(spec=MemoryInterface)
+        memory.results_path = str(tmp_path)
+        memory.results_storage_io = DiskStorageIO()
+        memory_prop.return_value = memory
+
+        reserved = await serializer.get_data_filename_async(file_name="sample.mp3")
+        with pytest.raises(ValueError, match="non-WAV"):
+            await serializer.save_formatted_audio_async(data=b"\x01\x00\x02\x00", output_filename="sample.mp3")
+
+    assert serializer.file_extension == "mp3"
+    assert not os.path.exists(str(reserved))
+
+
+@pytest.mark.asyncio
+async def test_save_formatted_audio_without_reservation_still_saves_wav(sqlite_instance, tmp_path):
+    import wave
+
+    serializer = data_serializer_factory(category="prompt-memory-entries", data_type="audio_path")
+    pcm = b"\x01\x00\x02\x00\x03\x00\x04\x00"
+
+    with patch.object(type(serializer), "_memory", new_callable=PropertyMock) as memory_prop:
+        memory = MagicMock(spec=MemoryInterface)
+        memory.results_path = str(tmp_path)
+        memory.results_storage_io = DiskStorageIO()
+        memory_prop.return_value = memory
+
+        await serializer.save_formatted_audio_async(data=pcm, output_filename="sample.mp3")
+
+    assert serializer.value.endswith("sample.wav")
+    with wave.open(serializer.value, "rb") as wav_file:
+        assert wav_file.readframes(wav_file.getnframes()) == pcm

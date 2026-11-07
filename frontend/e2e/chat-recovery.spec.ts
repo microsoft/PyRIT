@@ -300,7 +300,7 @@ test.describe("Chat processing recovery @seeded", () => {
         let releaseMetadata: () => void = () => {};
         const metadataGate = new Promise<void>((resolve) => { releaseMetadata = resolve; });
         let metadataStarted = false;
-        await page.route((url: URL) => url.pathname === `/api/attacks/${attackId}`, async (route: Route) => {
+        await page.route((url: URL) => url.pathname === `/api/attacks/${attackId}/metadata`, async (route: Route) => {
           if (route.request().method() === "GET") {
             metadataStarted = true;
             await metadataGate;

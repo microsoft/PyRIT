@@ -215,6 +215,8 @@ def _normalize_summary_objective(ar: AttackResult) -> str:
     Returns:
         The summary objective, with legacy manual placeholders converted to an empty string.
     """
+    if ar.metadata.get("objective_is_placeholder") is False:
+        return ar.objective
     identifier = ar.get_attack_strategy_identifier()
     is_manual_attack = identifier is not None and identifier.class_name == "ManualAttack"
     has_placeholder_metadata = ar.metadata.get("objective_is_placeholder") is True

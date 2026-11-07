@@ -21,6 +21,9 @@ import type {
 } from '@/types'
 
 import ScenarioCatalog from './ScenarioCatalog'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 interface LaunchSuiteDialogStubProps {
   suite: ScenarioSuiteResponse
@@ -310,6 +313,39 @@ describe('ScenarioCatalog', () => {
     expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
   })
 
+  it('retains scenario and preset estimates while quiet replacement estimates are pending', async () => {
+    const scenario = makeScenario({ scenario_name: 'review.scan', default_datasets: ['review_data'] })
+    const estimated = { ...scenario, default_run_size: makeEstimate(6) }
+    const nextScenario = deferred<ListRegisteredScenariosResponse>()
+    const nextPreset = deferred<ScenarioRunSizeEstimateResponse>()
+    mockListCatalog
+      .mockResolvedValueOnce(catalogPage([scenario]))
+      .mockResolvedValueOnce(catalogPage([estimated]))
+      .mockResolvedValueOnce(catalogPage([scenario]))
+      .mockReturnValueOnce(nextScenario.promise)
+    mockListPresets.mockResolvedValue(presetList([
+      makePreset({ name: 'review.preset', scenario_name: 'review.scan' }),
+    ]))
+    mockEstimateRun.mockResolvedValueOnce(makeEstimate(6)).mockReturnValueOnce(nextPreset.promise)
+    render(<TestWrapper><ScenarioCatalog {...CATALOG_PROPS} /></TestWrapper>)
+    const scenarioRow = await screen.findByTestId('scenario-card-review.scan')
+    const presetRow = screen.getByTestId('preset-card-review.preset')
+    expect(await within(scenarioRow).findByText('6 attacks')).toBeInTheDocument()
+    expect(await within(presetRow).findByText('6 attacks')).toBeInTheDocument()
+    await advanceAutoRefresh()
+    expect(mockListCatalog).toHaveBeenCalledTimes(4)
+    expect(mockEstimateRun).toHaveBeenCalledTimes(2)
+    expect(within(scenarioRow).getByText('6 attacks')).toBeInTheDocument()
+    expect(within(presetRow).getByText('6 attacks')).toBeInTheDocument()
+    expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
+    await act(async () => {
+      nextScenario.resolve(catalogPage([{ ...scenario, default_run_size: makeEstimate(12) }]))
+      nextPreset.resolve(makeEstimate(12))
+    })
+    expect(within(scenarioRow).getByText('12 attacks')).toBeInTheDocument()
+    expect(within(presetRow).getByText('12 attacks')).toBeInTheDocument()
+  })
+
   it('keeps metadata visible when default estimates fail', async () => {
     mockListCatalog
       .mockResolvedValueOnce({
@@ -321,7 +357,7 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog {...CATALOG_PROPS} /></TestWrapper>)
 
     expect(await screen.findByText('scenario.unsized')).toBeInTheDocument()
-    expect(await screen.findByText(/Default run sizes could not be calculated/)).toBeInTheDocument()
+    expect(await screen.findByText('estimate failed')).toBeInTheDocument()
     expect(screen.queryByText('Calculating...')).not.toBeInTheDocument()
   })
 
@@ -497,18 +533,16 @@ describe('ScenarioCatalog', () => {
     expect(await screen.findByTestId('empty-state')).toBeInTheDocument()
   })
 
-  it('shows an error MessageBar with a retry action on failure', async () => {
+  it('shows the error text without a retry action on failure', async () => {
     mockListCatalog.mockRejectedValueOnce(new Error('Network error — check that the backend is running and reachable.'))
 
     render(<TestWrapper><ScenarioCatalog {...CATALOG_PROPS} /></TestWrapper>)
 
-    expect(await screen.findByTestId('error-state')).toBeInTheDocument()
-    expect(screen.getByText(/Network error/)).toBeInTheDocument()
-    expect(screen.getByTestId('retry-btn')).toBeInTheDocument()
+    expect(await screen.findByText(/Network error/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   })
 
-  it('retries the fetch when Retry is clicked', async () => {
-    const user = userEvent.setup()
+  it('recovers on the next automatic catalog check', async () => {
     mockListCatalog
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValue({
@@ -518,8 +552,8 @@ describe('ScenarioCatalog', () => {
 
     render(<TestWrapper><ScenarioCatalog {...CATALOG_PROPS} /></TestWrapper>)
 
-    await screen.findByTestId('error-state')
-    await user.click(screen.getByTestId('retry-btn'))
+    await screen.findByText('boom')
+    await advanceAutoRefresh()
 
     expect(await screen.findByText('scenario.recovered')).toBeInTheDocument()
     await waitFor(() => expect(mockListCatalog).toHaveBeenCalledTimes(3))
@@ -1120,7 +1154,6 @@ describe('ScenarioCatalog', () => {
   })
 
   it('still lists scenarios when suites and presets fail to load', async () => {
-    const user = userEvent.setup()
     mockListCatalog.mockResolvedValue(catalogPage([makeScenario({ scenario_name: 'airt.jailbreak' })]))
     mockListSuites
       .mockRejectedValueOnce(new Error('suite store offline'))
@@ -1132,16 +1165,15 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog {...CATALOG_PROPS} /></TestWrapper>)
 
     expect(await screen.findByTestId('scenario-card-airt.jailbreak')).toBeInTheDocument()
-    expect(screen.getByText('Scenario suites could not be loaded: suite store offline')).toBeInTheDocument()
-    expect(screen.getByText('Scenario presets could not be loaded: preset store offline')).toBeInTheDocument()
+    expect(screen.getByText('suite store offline')).toBeInTheDocument()
+    expect(screen.getByText('preset store offline')).toBeInTheDocument()
     expect(screen.queryByTestId('error-state')).not.toBeInTheDocument()
     expect(screen.queryByTestId('scanner-suites')).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Individual scanners' })).not.toBeInTheDocument()
     expect(mockEstimateRun).not.toHaveBeenCalled()
 
-    const refreshButton = screen.getByRole('button', { name: 'Refresh' })
-    await waitFor(() => expect(refreshButton).toBeEnabled())
-    await user.click(refreshButton)
+    await waitForRunSizes()
+    await advanceAutoRefresh()
 
     expect(await screen.findByTestId('suite-card-nightly')).toBeInTheDocument()
     expect(screen.getByTestId('preset-card-quick-jailbreak')).toBeInTheDocument()
@@ -1158,9 +1190,8 @@ describe('ScenarioCatalog', () => {
 
     render(<TestWrapper><ScenarioCatalog {...CATALOG_PROPS} /></TestWrapper>)
 
-    const errorState = await screen.findByTestId('error-state')
-    expect(within(errorState).getByText('catalog offline')).toBeInTheDocument()
-    expect(within(errorState).getByTestId('retry-btn')).toBeInTheDocument()
+    expect(await screen.findByText('catalog offline')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
     expect(screen.queryByTestId('scanner-suites')).not.toBeInTheDocument()
     expect(screen.queryByTestId('preset-card-quick-jailbreak')).not.toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
@@ -1198,7 +1229,7 @@ describe('ScenarioCatalog', () => {
     render(<TestWrapper><ScenarioCatalog {...CATALOG_PROPS} /></TestWrapper>)
 
     expect(await screen.findByText(
-      'Preset run sizes could not be calculated: first-preset: estimate timed out; second-preset: dataset missing',
+      'first-preset: estimate timed out; second-preset: dataset missing',
     )).toBeInTheDocument()
     expect(within(screen.getByTestId('preset-card-first-preset')).getByText('—')).toBeInTheDocument()
     expect(within(screen.getByTestId('preset-card-second-preset')).getByText('—')).toBeInTheDocument()
@@ -1239,12 +1270,18 @@ describe('ScenarioCatalog', () => {
     expect(mockListPresets).toHaveBeenCalledTimes(2)
     expect(screen.getByTestId('suite-changed-notice')).toBeInTheDocument()
 
-    const refreshButton = screen.getByRole('button', { name: 'Refresh' })
-    await waitFor(() => expect(refreshButton).toBeEnabled())
-    await user.click(refreshButton)
+    await waitForRunSizes()
+    await advanceAutoRefresh()
 
-    expect(screen.queryByTestId('suite-changed-notice')).not.toBeInTheDocument()
+    expect(screen.getByTestId('suite-changed-notice')).toBeInTheDocument()
     expect(await screen.findByTestId('suite-card-nightly')).toBeInTheDocument()
+    await waitForRunSizes()
+    await user.click(screen.getByRole('button', { name: 'Dismiss notification' }))
+    expect(screen.queryByTestId('suite-changed-notice')).not.toBeInTheDocument()
+    const reads = mockListSuites.mock.calls.length
+    await advanceAutoRefresh()
+    expect(mockListSuites).toHaveBeenCalledTimes(reads + 1)
+    expect(screen.queryByTestId('suite-changed-notice')).not.toBeInTheDocument()
     await waitForRunSizes()
   })
 

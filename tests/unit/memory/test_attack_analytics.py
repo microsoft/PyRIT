@@ -1217,6 +1217,67 @@ async def test_odbc_timeout_is_applied_before_each_cursor_is_created() -> None:
         await engine.dispose()
 
 
+async def test_non_busy_sqlite_error_is_re_raised_with_its_result_code_name_async() -> None:
+    original = sqlite3.OperationalError("database is locked")
+    original.sqlite_errorcode = sqlite3.SQLITE_BUSY_SNAPSHOT
+    original.sqlite_errorname = "SQLITE_BUSY_SNAPSHOT"
+    error = OperationalError("SELECT", {}, original)
+    error.add_note("Existing diagnostic")
+
+    async def operation_async() -> None:
+        raise error
+
+    with pytest.raises(OperationalError) as exc_info:
+        await AttackAnalyticsReader._retry_sqlite_busy_async(operation=operation_async, control=control())
+    assert exc_info.value is error
+    assert exc_info.value.orig is original
+    assert exc_info.value.__notes__ == ["Existing diagnostic", "sqlite result code 517 (SQLITE_BUSY_SNAPSHOT)"]
+
+
+async def test_non_sqlite_operational_error_is_re_raised_without_a_sqlite_note_async() -> None:
+    async def operation_async() -> None:
+        raise OperationalError("SELECT", {}, RuntimeError("driver closed"))
+
+    with pytest.raises(OperationalError, match="driver closed") as exc_info:
+        await AttackAnalyticsReader._retry_sqlite_busy_async(operation=operation_async, control=control())
+    assert not [n for n in getattr(exc_info.value, "__notes__", []) if "sqlite result code" in n]
+
+
+async def test_non_sqlite_session_does_not_add_sqlite_notes_async(sqlite_instance: SQLiteMemory) -> None:
+    original = sqlite3.OperationalError("database is locked")
+    original.sqlite_errorcode = sqlite3.SQLITE_BUSY_SNAPSHOT
+    original.sqlite_errorname = "SQLITE_BUSY_SNAPSHOT"
+    error = OperationalError("SELECT", {}, original)
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    with (
+        patch.object(sqlite_instance._get_async_engine().dialect, "name", "mssql"),
+        patch.object(SQLiteConnection, "timeout", property(lambda driver: 0), create=True),
+        patch.object(reader, "_odbc_timeout_async", new_callable=AsyncMock),
+        pytest.raises(OperationalError) as exc_info,
+    ):
+        async with reader._session_async(control=control()):
+            raise error
+    assert exc_info.value is error
+    assert not getattr(error, "__notes__", [])
+
+
+async def test_plain_busy_still_retries_to_success_async() -> None:
+    calls = {"count": 0}
+
+    async def operation_async() -> str:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            original = sqlite3.OperationalError("database is locked")
+            original.sqlite_errorcode = sqlite3.SQLITE_BUSY
+            original.sqlite_errorname = "SQLITE_BUSY"
+            raise OperationalError("SELECT", {}, original)
+        return "ok"
+
+    result = await AttackAnalyticsReader._retry_sqlite_busy_async(operation=operation_async, control=control())
+    assert result == "ok"
+    assert calls["count"] == 2
+
+
 async def test_invalidated_sqlite_connection_preserves_the_original_error(sqlite_instance: SQLiteMemory) -> None:
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     with pytest.raises(OperationalError, match="lost connection"):
@@ -1225,15 +1286,20 @@ async def test_invalidated_sqlite_connection_preserves_the_original_error(sqlite
             raise OperationalError("SELECT", {}, RuntimeError("lost connection"))
 
 
-async def test_database_error_is_not_returned_as_an_empty_report(sqlite_instance: SQLiteMemory) -> None:
+async def test_database_error_is_not_returned_as_an_empty_report_async(sqlite_instance: SQLiteMemory) -> None:
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     with patch.object(
         AttackAnalyticsQueryCompiler,
         "totals",
         return_value=text("SELECT * FROM nonexistent_analytics_table"),
     ):
-        with pytest.raises(OperationalError, match="no such table"):
+        with pytest.raises(OperationalError, match="no such table") as exc_info:
             await reader.report_async(query=AttackAnalyticsQuery(), control=control())
+    original = exc_info.value.orig
+    assert isinstance(original, sqlite3.OperationalError)
+    assert original.sqlite_errorcode == sqlite3.SQLITE_ERROR
+    assert original.sqlite_errorname == "SQLITE_ERROR"
+    assert exc_info.value.__notes__ == ["sqlite result code 1 (SQLITE_ERROR)"]
     assert (await reader.report_async(query=AttackAnalyticsQuery(), control=control())).counts == {}
 
 

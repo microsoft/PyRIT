@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 
 import {
@@ -12,12 +12,14 @@ import {
   Popover,
   PopoverSurface,
   PopoverTrigger,
+  PositioningConfigurationProvider,
   Radio,
   RadioGroup,
   Spinner,
   Text,
   Textarea,
   mergeClasses,
+  type PositioningConfigurationFn,
 } from '@fluentui/react-components'
 import {
   AddRegular,
@@ -29,6 +31,9 @@ import {
 } from '@fluentui/react-icons'
 
 import OutcomeBadge from '@/components/OutcomeBadge'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
+import { NARROW_SCREEN_QUERY } from '@/styles/touchTargets'
 import type {
   ApplyScorerStatus,
   AttackOutcome,
@@ -42,6 +47,8 @@ import { toApiError } from '@/services/errors'
 
 import { useObjectiveHeaderStyles } from './ObjectiveHeader.styles'
 import ChatScorerPicker from './ChatScorerPicker'
+
+const OBJECTIVE_HELP = 'The behavior you are testing for. An objective gives the scorer a goal; it is not automatically sent as a user message.'
 
 interface ObjectiveHeaderProps {
   objective: string
@@ -75,8 +82,12 @@ interface ObjectiveHeaderProps {
   applyStatus?: ApplyScorerStatus | null
 }
 
+/** The only score type whose value answers "was the objective met?". */
+const BOOLEAN_SCORE_TYPE = 'true_false'
+
 function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'undetermined' {
-  if (!score?.score_value) return 'undetermined'
+  // A float_scale or unknown value is a measurement, not a verdict, so it gets none.
+  if (!score?.score_value || score.score_type !== BOOLEAN_SCORE_TYPE) return 'undetermined'
   return score.score_value.toLowerCase() === 'true' ? 'success' : 'failure'
 }
 
@@ -90,9 +101,12 @@ const RESULT_POPOVER_POSITIONING = {
 } as const
 
 function scoreLabel(score?: BackendScore | null): string {
-  const verdict = scoreVerdict(score)
   if (!score) return 'Not set'
-  return verdict === 'undetermined' ? 'Undetermined' : verdict === 'success' ? 'Success' : 'Failure'
+  if (!score.score_value) return 'Undetermined'
+  const verdict = scoreVerdict(score)
+  // Nonboolean scores carry no verdict: show what the scorer recorded, as the message score does.
+  if (verdict === 'undetermined') return score.score_value
+  return verdict === 'success' ? 'Success' : 'Failure'
 }
 
 export default function ObjectiveHeader({
@@ -123,6 +137,12 @@ export default function ObjectiveHeader({
   applyStatus = null,
 }: ObjectiveHeaderProps) {
   const styles = useObjectiveHeaderStyles()
+  const isNarrow = useMediaQuery(NARROW_SCREEN_QUERY)
+  const configurePositioning = useCallback<PositioningConfigurationFn>(({ options }) => ({
+    ...options,
+    // Keep the editor on screen when its anchor leaves a narrow viewport.
+    unstable_disableTether: isNarrow ? 'all' : options.unstable_disableTether,
+  }), [isNarrow])
   const [resultOpen, setResultOpen] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
@@ -248,8 +268,11 @@ export default function ObjectiveHeader({
   const resultControl = (outcome || objective.trim()) && (
     <div className={styles.outcomeSection}>
       <Badge className={styles.label} appearance="tint" color="brand" size="small">
-        Objective Achieved Outcome
+        <ContextualHelpLabel term="Objective Achieved Outcome">
+          Whether the objective was met. Automated and human judgments are recorded separately; open the outcome details to review them.
+        </ContextualHelpLabel>
       </Badge>
+      <PositioningConfigurationProvider value={configurePositioning}>
       <Popover
         withArrow
         open={resultOpen}
@@ -441,6 +464,7 @@ export default function ObjectiveHeader({
           </div>
         </PopoverSurface>
       </Popover>
+      </PositioningConfigurationProvider>
     </div>
   )
 
@@ -452,7 +476,7 @@ export default function ObjectiveHeader({
         {canShowObjective && (
           <div className={mergeClasses(styles.headerSection, styles.emptyHeaderSection)}>
             <Badge className={styles.label} appearance="tint" color="brand" size="small">
-              Objective
+              <ContextualHelpLabel term="Objective">{OBJECTIVE_HELP}</ContextualHelpLabel>
             </Badge>
             {isEditing ? (
               <>
@@ -497,7 +521,7 @@ export default function ObjectiveHeader({
     <div className={styles.root} data-testid="objective-header" data-conversation-editor-controls>
       <div className={styles.headerSection}>
         <Badge className={styles.label} appearance="tint" color="brand" size="small">
-          Objective
+          <ContextualHelpLabel term="Objective">{OBJECTIVE_HELP}</ContextualHelpLabel>
         </Badge>
         <ObjectiveContent
           type={canAdd && onAdd ? 'button' : undefined}

@@ -351,12 +351,12 @@ def test_print_converter_list_full(capsys):
     items = [
         {
             "converter_id": "translation_spanish",
-            "converter_type": "TranslationConverter",
+            "identifier": {"class_name": "TranslationConverter"},
             "display_name": "Spanish translation",
         },
         {
             "converter_id": "pipeline_1",
-            "converter_type": "ConverterPipeline",
+            "identifier": {"class_name": "ConverterPipeline"},
             "sub_converter_ids": ["base64", "rot13"],
         },
     ]
