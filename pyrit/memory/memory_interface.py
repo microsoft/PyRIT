@@ -3512,7 +3512,7 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): The category of the score to filter by.
+            score_category (str | None): Return only scores whose category list contains this category.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -3531,7 +3531,14 @@ class MemoryInterface(abc.ABC):
         if score_type:
             conditions.append(ScoreEntry.score_type == score_type)
         if score_category:
-            conditions.append(ScoreEntry.score_category == score_category)
+            # score_category is stored as a JSON array, so match by element membership.
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=ScoreEntry.score_category,
+                    property_path="$",
+                    array_to_match=[score_category],
+                )
+            )
         if sent_after:
             conditions.append(ScoreEntry.timestamp >= sent_after)
         if sent_before:
@@ -7153,6 +7160,38 @@ class MemoryInterface(abc.ABC):
             flag_modified(entry, "scenario_metadata")
             session.commit()
 
+    def _execute_increment_scenario_number_tries(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Atomically increment and return the number_tries counter for a scenario result.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+
+        Raises:
+            ValueError: If the scenario result is not found in memory.
+        """
+        with closing(self._get_session()) as session:
+            updated_rows = (
+                session.query(ScenarioResultEntry)
+                .filter(ScenarioResultEntry.id == scenario_result_id)
+                .update(
+                    {ScenarioResultEntry.number_tries: ScenarioResultEntry.number_tries + 1},
+                    synchronize_session=False,
+                )
+            )
+            if not updated_rows:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            new_tries: int = session.query(ScenarioResultEntry.number_tries).filter_by(id=scenario_result_id).scalar()
+            session.commit()
+            return new_tries
+
     def _execute_get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
         with closing(self._get_session()) as session:
@@ -9739,7 +9778,7 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): The category of the score to filter by.
+            score_category (str | None): Return only scores whose category list contains this category.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -11747,6 +11786,51 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(
             self._execute_update_scenario_metadata_fields, scenario_result_id=scenario_result_id, fields=fields
+        )
+
+    def increment_scenario_number_tries(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Use ``increment_scenario_number_tries_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.increment_scenario_number_tries",
+            new_item="MemoryInterface.increment_scenario_number_tries_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_increment_scenario_number_tries(
+            scenario_result_id=scenario_result_id,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.increment_scenario_number_tries)
+    async def increment_scenario_number_tries_async(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Atomically increment and return the number_tries counter for a scenario result.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        return await self._run_database_operation_async(
+            self._execute_increment_scenario_number_tries,
+            scenario_result_id=scenario_result_id,
         )
 
     def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:

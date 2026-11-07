@@ -247,7 +247,9 @@ class TestAtomicAttackEvaluationIdentifier:
 
     def test_adversarial_chat_rule(self):
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["adversarial_chat"]
-        assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert rule.included_params == frozenset(
+            {"underlying_model_name", "temperature", "top_p", "http_request_fingerprint"}
+        )
         assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
         assert rule.inner_child_name == "targets"
         assert not rule.exclude
@@ -264,7 +266,9 @@ class TestAtomicAttackEvaluationIdentifier:
         max_requests_per_minute) are excluded.
         """
         rule = AtomicAttackEvaluationIdentifier.CHILD_EVAL_RULES["converter_target"]
-        assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert rule.included_params == frozenset(
+            {"underlying_model_name", "temperature", "top_p", "http_request_fingerprint"}
+        )
         assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
         assert rule.inner_child_name == "targets"
         assert not rule.exclude
