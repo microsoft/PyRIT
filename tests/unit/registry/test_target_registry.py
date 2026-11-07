@@ -10,8 +10,7 @@ import re
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
-from pyrit.models.parameter import ComponentType
+from pyrit.models import ComponentIdentifier, ComponentType, Message, MessagePiece
 from pyrit.prompt_target import (
     CopilotType,
     PlaywrightCopilotTarget,
@@ -20,7 +19,7 @@ from pyrit.prompt_target import (
     TargetCapabilities,
     TargetConfiguration,
 )
-from pyrit.registry.components import TargetMetadata, TargetRegistry
+from pyrit.registry import TargetMetadata, TargetRegistry
 from pyrit.registry.resolution import derive_parameters
 
 
@@ -424,7 +423,7 @@ class TestRegistrationGate:
         assert "RoundRobinTarget" in names
 
     def test_every_target_reference_maps_to_a_wired_registry(self, registry: TargetRegistry) -> None:
-        from pyrit.models.identifiers import TargetIdentifier
+        from pyrit.models import TargetIdentifier
 
         for name in registry.get_class_names():
             parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)
@@ -437,7 +436,7 @@ class TestRegistrationGate:
                     )
 
     def test_credential_parameters_are_sensitive(self, registry: TargetRegistry) -> None:
-        from pyrit.models.identifiers import TargetIdentifier
+        from pyrit.models import TargetIdentifier
 
         for name in registry.get_class_names():
             parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)

@@ -7,8 +7,14 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import ComponentIdentifier, MatchesObjective, MessageScorable, Score, ScoringExpectation
-from pyrit.models.score import UnvalidatedScore
+from pyrit.models import (
+    ComponentIdentifier,
+    MatchesObjective,
+    MessageScorable,
+    Score,
+    ScoringExpectation,
+    UnvalidatedScore,
+)
 
 
 def _make_score(**overrides) -> Score:

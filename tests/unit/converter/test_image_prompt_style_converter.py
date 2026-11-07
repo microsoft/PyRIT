@@ -10,7 +10,7 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.common.random_context import configure_random_seed
 from pyrit.converter import ImagePromptStyleConverter
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ConverterRegistry
 
 

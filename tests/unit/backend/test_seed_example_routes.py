@@ -15,10 +15,9 @@ from httpx import ASGITransport, AsyncClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.common import MAX_CURSOR_LENGTH, MAX_LABEL_VALUE_LENGTH
-from pyrit.backend.services.dataset_service import get_dataset_service
+from pyrit.backend.services import get_dataset_service
 from pyrit.common.utils import to_sha256
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import (
     AnswerMatches,
     MatchesObjective,

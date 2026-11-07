@@ -22,7 +22,7 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     SeedDataset,
 )
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechniqueFactory,

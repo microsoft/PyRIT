@@ -24,9 +24,11 @@ import pytest
 
 from pyrit.common import REQUIRED_VALUE
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
-from pyrit.converter import Base64Converter, CodeAttackConverter, PolicyPuppetryTemplate
-from pyrit.converter.text_selection_strategy import (
+from pyrit.converter import (
+    Base64Converter,
+    CodeAttackConverter,
     IndexSelectionStrategy,
+    PolicyPuppetryTemplate,
     TextSelectionStrategy,
     WordIndexSelectionStrategy,
     WordSelectionStrategy,
@@ -34,7 +36,7 @@ from pyrit.converter.text_selection_strategy import (
 from pyrit.datasets import TextJailBreak
 from pyrit.memory import CentralMemory
 from pyrit.models import ComponentType, Parameter, SeedPrompt
-from pyrit.registry.components import ConverterRegistry
+from pyrit.registry import ConverterRegistry
 from unit.mocks import MockPromptTarget
 from unit.registry.converter_identifier_samples import (
     ALLOWED_VALUES_NEED,
