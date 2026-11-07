@@ -10,8 +10,7 @@ export const useAttackExecutionTableStyles = makeStyles({
     borderRadius: tokens.borderRadiusLarge,
     backgroundColor: tokens.colorNeutralBackground1,
   },
-  table: { minWidth: '64rem', tableLayout: 'auto' },
-  headerRow: { backgroundColor: tokens.colorNeutralBackground3 },
+  table: { minWidth: '44rem', tableLayout: 'auto' },
   resultRow: {
     cursor: 'pointer',
     ':hover': { backgroundColor: tokens.colorNeutralBackground1Hover },
@@ -33,11 +32,7 @@ export const useAttackExecutionTableStyles = makeStyles({
     minWidth: 0,
     overflowWrap: 'anywhere',
   },
-  objectiveLink: {
-    color: tokens.colorBrandForegroundLink,
-    textDecorationLine: 'none',
-    ':hover': { textDecorationLine: 'underline' },
-  },
+  actions: { textAlign: 'end', whiteSpace: 'nowrap' },
   expandSpacer: { width: '2rem', flexShrink: 0, ...mobileTouchTarget },
   position: { color: tokens.colorNeutralForeground3, fontVariantNumeric: 'tabular-nums' },
   hint: { color: tokens.colorNeutralForeground3 },

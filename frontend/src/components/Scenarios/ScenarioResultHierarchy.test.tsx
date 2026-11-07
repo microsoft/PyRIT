@@ -440,15 +440,15 @@ test('shows empty, truncated and rootless states without inventing roots', async
   expect(screen.queryByRole('button', { name: /Expand/ })).not.toBeInTheDocument()
 })
 
-test('opens details for a node with the clicked button as the focus target', async () => {
+test('opens attack details for a node with the clicked row as the focus target', async () => {
   const user = userEvent.setup()
   getRoots.mockResolvedValue(projection([node('r1')]))
   const { onOpenResult } = mount()
 
-  const button = await screen.findByRole('button', { name: 'Open details for attack r1: objective r1' })
-  await user.click(button)
+  const row = await screen.findByRole('row', { name: 'View attack details for attack r1: objective r1' })
+  await user.click(row)
 
-  expect(onOpenResult).toHaveBeenCalledWith(expect.objectContaining({ attack_result_id: 'r1' }), button)
+  expect(onOpenResult).toHaveBeenCalledWith(expect.objectContaining({ attack_result_id: 'r1' }), row)
 })
 
 test('an empty run says so', async () => {
@@ -580,22 +580,14 @@ test('shows results in aligned columns with the attack outcome spelled out', asy
   await user.click(await screen.findByRole('button', { name: 'Expand children of attack parent: objective parent' }))
   await screen.findByText('objective c1')
 
-  expect(within(resultsTable()).getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
-    'Result / objective',
-    'Result type',
-    'Attack outcome',
-    'Duration',
-    'Retries / error',
-    'Timestamp',
-    'Actions',
-  ])
+  expect(within(resultsTable()).queryByRole('columnheader')).not.toBeInTheDocument()
   // A child row has the same cells in the same columns as its parent; only the first column is indented.
   const cells = (text: string) => within(rowWith(text)).getAllByRole('cell').map((cell) => cell.textContent)
   expect(cells('objective parent')).toEqual([
-    'objective parentattack parent', 'Orchestration', 'Success', '1s', '0', expect.any(String), 'Details',
+    'objective parentattack parent', 'Success', '1s', 'No retries', expect.any(String),
   ])
   expect(cells('objective c1')).toEqual([
-    '#1objective c1attack c1', 'Target-facing', 'Error', '1s', '2Target timed out', expect.any(String), 'Details',
+    '#1objective c1attack c1', 'Error', '1s', '2 retries / errorTarget timed out', expect.any(String),
   ])
-  expect(screen.getByText(/^Result rows are saved attacks\./)).toHaveTextContent('not chat messages or retries')
+  expect(screen.queryByText(/^Result rows are saved attacks\./)).not.toBeInTheDocument()
 })

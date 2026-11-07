@@ -12,6 +12,7 @@ import App from "./App";
 import { attacksApi, operationsApi, targetsApi } from "./services/api";
 import { deferred } from "./test-utils/deferred";
 import { makeTarget } from "./test-utils/targetFixtures";
+import { LIVE_ATTACK_POLL_INTERVAL_MS } from "./hooks/useLiveAttackMetadata";
 import type { AttackMetadata } from "./types";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
 import { DEFAULT_ANALYTICS_VIEW, analyticsViewToHash } from "./utils/attackAnalytics";
@@ -210,6 +211,8 @@ jest.mock("./components/Chat/ChatWindow", () => {
     scenarioResultId,
     isLoadingAttack,
     executionReadOnly,
+    inProgress,
+    attackScenarioResultId,
     relatedConversationCount,
     lastResponseMessagePieceId,
   }: {
@@ -230,6 +233,8 @@ jest.mock("./components/Chat/ChatWindow", () => {
     scenarioResultId?: string | null;
     isLoadingAttack?: boolean;
     executionReadOnly?: boolean;
+    inProgress?: boolean;
+    attackScenarioResultId?: string | null;
     relatedConversationCount?: number;
     lastResponseMessagePieceId?: string | null;
   }) => {
@@ -318,6 +323,8 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="scenario-result-id">{scenarioResultId ?? "none"}</span>
         <span data-testid="execution-read-only">{String(executionReadOnly)}</span>
+        <span data-testid="in-progress">{String(inProgress)}</span>
+        <span data-testid="attack-scenario-result-id">{attackScenarioResultId ?? "none"}</span>
         <span data-testid="related-conversation-count">{relatedConversationCount}</span>
         <span data-testid="last-response-id">{lastResponseMessagePieceId ?? "none"}</span>
         <span data-testid="route-location" data-navigation-state={JSON.stringify(location.state)}>
@@ -1540,6 +1547,50 @@ describe("App", () => {
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main");
   });
 
+  it("follows a running scan attack and shows its saved result in place when it finishes", async () => {
+    jest.useFakeTimers();
+    try {
+      const scanId = "123e4567-e89b-12d3-a456-426614174000";
+      const live: AttackMetadata = {
+        attack_result_id: "live-attack", conversation_id: "branch-1", objective: "Goal", labels: {},
+        outcome: "undetermined", execution_read_only: true, in_progress: true, scenario_result_id: scanId,
+        related_conversation_count: 0, last_response_message_piece_id: null,
+        selected_conversation_id: "branch-1", selected_conversation_valid: true,
+      };
+      mockGetAttack
+        .mockResolvedValueOnce(live)
+        .mockResolvedValueOnce({ ...live, conversation_id: "branch-2", related_conversation_count: 1 })
+        .mockResolvedValueOnce({
+          ...live, conversation_id: "branch-2", related_conversation_count: 1, in_progress: false, outcome: "success",
+          last_response_message_piece_id: "final-response",
+        });
+      render(
+        <MemoryRouter initialEntries={["/attack/chat/live-attack"]}>
+          <App /><RouterProbe />
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(screen.getByTestId("in-progress")).toHaveTextContent("true"));
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("branch-1");
+      expect(screen.getByTestId("attack-scenario-result-id")).toHaveTextContent(scanId);
+
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS); });
+      expect(screen.getByTestId("related-conversation-count")).toHaveTextContent("1");
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("branch-2");
+      expect(screen.getByTestId("in-progress")).toHaveTextContent("true");
+
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS); });
+      expect(screen.getByTestId("in-progress")).toHaveTextContent("false");
+      expect(screen.getByTestId("outcome")).toHaveTextContent("success");
+      expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+      expect(screen.getByTestId("last-response-id")).toHaveTextContent("final-response");
+      expect(screen.getByTestId("route-location")).toHaveTextContent(/^\/attack\/chat\/live-attack$/);
+
+      await act(async () => { await jest.advanceTimersByTimeAsync(LIVE_ATTACK_POLL_INTERVAL_MS * 3); });
+      expect(mockGetAttack).toHaveBeenCalledTimes(3);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
   it("merges default labels from backend version API", async () => {
     mockedVersionApi.getVersion.mockResolvedValueOnce({
       version: "2.0.0",

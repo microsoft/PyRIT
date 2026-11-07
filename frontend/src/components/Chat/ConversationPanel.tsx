@@ -65,6 +65,8 @@ interface ConversationPanelProps {
   refreshKey?: number
   /** Saved evidence pages references independently from the selected transcript. */
   referencePageSize?: number
+  /** Re-reads the unpaged list at this interval, keeping its rows, such as while a scan runs the attack. */
+  pollIntervalMs?: number
 }
 
 export default function ConversationPanel({
@@ -77,6 +79,7 @@ export default function ConversationPanel({
   lockedReason,
   refreshKey,
   referencePageSize,
+  pollIntervalMs,
 }: ConversationPanelProps) {
   const styles = useConversationPanelStyles()
   const [unpagedConversations, setUnpagedConversations] = useState<ConversationSummary[]>([])
@@ -98,6 +101,12 @@ export default function ConversationPanel({
   // calling setState synchronously in an effect body.
   const [retryCount, setRetryCount] = useState(0)
   const selectionRefreshId = referencePageSize === undefined ? activeConversationId : null
+  const [pollCount, setPollCount] = useState(0)
+  useEffect(() => {
+    if (!pollIntervalMs || !attackResultId) return
+    const timer = setInterval(() => { setPollCount((count: number) => count + 1) }, pollIntervalMs)
+    return () => { clearInterval(timer) }
+  }, [pollIntervalMs, attackResultId])
 
   const saveReferencePage = useCallback((page: SavedReferencePage): void => {
     savedReferencePageRef.current = page
@@ -150,7 +159,7 @@ export default function ConversationPanel({
     return () => {
       cancelled = true
     }
-  }, [attackResultId, referencePageSize, selectionRefreshId, refreshKey, retryCount, saveReferencePage])
+  }, [attackResultId, referencePageSize, selectionRefreshId, refreshKey, retryCount, pollCount, saveReferencePage])
 
   // Reset attack/paging identity, but retain keyed rows during manual background
   // refreshes so keyboard focus survives. Adjust state during render instead of

@@ -32,6 +32,32 @@ describe("ConversationPanel", () => {
     jest.clearAllMocks();
   });
 
+  describe("live polling", () => {
+    const conversation = (id: string, count: number): ConversationSummary => ({ conversation_id: id, message_count: count })
+    beforeEach(() => { jest.useFakeTimers(); });
+    afterEach(() => { jest.useRealTimers(); });
+
+    it("should refresh at the poll interval, keep rows through a failed read, and recover", async () => {
+      mockedAttacksApi.getConversations
+        .mockResolvedValueOnce({ attack_result_id: "ar-attack-123", main_conversation_id: "attack-123", conversations: [conversation("attack-123", 1)] })
+        .mockRejectedValueOnce({ isAxiosError: true, response: { status: 503, data: { detail: "Live references unavailable" } } })
+        .mockResolvedValueOnce({
+          attack_result_id: "ar-attack-123", main_conversation_id: "branch-2",
+          conversations: [conversation("attack-123", 2), conversation("branch-2", 1)],
+        });
+      render(<TestWrapper><ConversationPanel {...defaultProps} pollIntervalMs={2_500} /></TestWrapper>);
+      const row = await screen.findByTestId("conversation-item-attack-123");
+      await act(async () => { await jest.advanceTimersByTimeAsync(2_500); });
+      expect(screen.getByText("Live references unavailable")).toBeInTheDocument();
+      expect(screen.getByTestId("conversation-item-attack-123")).toBe(row);
+      expect(screen.getByTestId("conversation-retry-btn")).toBeInTheDocument();
+      await act(async () => { await jest.advanceTimersByTimeAsync(2_500); });
+      expect(screen.queryByText("Live references unavailable")).not.toBeInTheDocument();
+      expect(screen.getByTestId("conversation-item-branch-2")).toBeInTheDocument();
+      expect(screen.getByTestId("conversation-item-attack-123")).toBe(row);
+      expect(mockedAttacksApi.getConversations.mock.calls).toEqual([["ar-attack-123"], ["ar-attack-123"], ["ar-attack-123"]]);
+    });
+  });
   describe("bounded saved references", () => {
     const props = { ...defaultProps, referencePageSize: 50 };
     const references: ConversationSummary[] = Array.from({ length: 55 }, (_value: unknown, index: number) => ({

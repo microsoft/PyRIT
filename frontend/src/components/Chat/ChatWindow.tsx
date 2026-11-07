@@ -120,6 +120,8 @@ import type {
 } from '../../types'
 import { isTargetResolutionBlocking, targetInfoMatchesTarget } from '../../utils/targetIdentity'
 import { attackConversationRoutePath, scenarioRunRoutePath } from '../../utils/routeParams'
+import { LIVE_ATTACK_POLL_INTERVAL_MS } from '@/hooks/useLiveAttackMetadata'
+import AttackInProgressBar from './AttackInProgressBar'
 import type { ViewName } from '../Sidebar/Navigation'
 import { CHAT_NOTICE_FADE_DURATION_MS, useChatWindowStyles } from './ChatWindow.styles'
 
@@ -382,6 +384,10 @@ interface ChatWindowProps {
   chatScorer?: RegisteredComponentReference | null
   chatScorerInherited?: boolean
   executionReadOnly?: boolean
+  /** A scan is still running this attack: its transcript and conversations refresh until the result is saved. */
+  inProgress?: boolean
+  /** The scan run that produced this attack, for returning to it while the attack runs. */
+  attackScenarioResultId?: string | null
   manualContinuation?: ManualContinuation | null
   defaultChatScorer?: RegisteredComponentReference | null
   availableScorers?: ScorerInstance[]
@@ -432,6 +438,8 @@ export default function ChatWindow({
   chatScorer = null,
   chatScorerInherited = false,
   executionReadOnly = false,
+  inProgress = false,
+  attackScenarioResultId = null,
   manualContinuation,
   defaultChatScorer,
   availableScorers = [],
@@ -690,6 +698,8 @@ export default function ChatWindow({
     }
     return frontendMessages
   }, [])
+  // Saved evidence is read in bounded pages; a running scan attack is re-read whole as it grows.
+  const pagesSavedEvidence = executionReadOnly && !inProgress
   const {
     messages,
     setMessages,
@@ -720,12 +730,19 @@ export default function ChatWindow({
     conversationId,
     activeConversationId,
     findingEvidenceId,
-    messagePageSize: executionReadOnly ? SAVED_MESSAGE_PAGE_SIZE : undefined,
+    messagePageSize: pagesSavedEvidence ? SAVED_MESSAGE_PAGE_SIZE : undefined,
+    pollIntervalMs: inProgress ? LIVE_ATTACK_POLL_INTERVAL_MS : undefined,
     sendingConversations,
     isSendInFlight,
     onConversationLoaded: handleConversationLoaded,
   })
   const incompleteTranscriptReason = isTranscriptIncomplete ? INCOMPLETE_TRANSCRIPT_REASON : undefined
+  // Refreshes of a running attack, including the reload when it finishes, keep the shown transcript in place.
+  const [liveAttackId, setLiveAttackId] = useState<string | null>(null)
+  if (inProgress && attackResultId && liveAttackId !== attackResultId) setLiveAttackId(attackResultId)
+  const refreshesInPlace = liveAttackId !== null && liveAttackId === attackResultId
+    && loadedConversationId === viewedConversationId
+  const liveScanId = scenarioResultId ?? attackScenarioResultId
   const loadedPieceSummary = `${loadedPieceCount} message ${loadedPieceCount === 1 ? 'piece' : 'pieces'} loaded.`
   const savedRecovery = viewedConversationId
     ? recoverableSends[viewedConversationId]
@@ -2783,12 +2800,12 @@ export default function ChatWindow({
           controller={converters}
         />
       )}
-      <FileDropZone ref={chatAreaRef} className={mergeClasses(styles.chatArea, executionReadOnly && styles.savedChatArea)} testId="chat-area"
+      <FileDropZone ref={chatAreaRef} className={mergeClasses(styles.chatArea, pagesSavedEvidence && styles.savedChatArea)} testId="chat-area"
         disabled={inputDisabledReasons.length > 0}
         disabledReason={inputDisabledReasons.join(' ')}
         onFiles={(files: File[]) => inputBoxRef.current?.addFiles(files)}>
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
-        {executionReadOnly && <MessageBar intent="info">
+        {executionReadOnly && !inProgress && <MessageBar intent="info">
           <MessageBarBody>
             This automated result is read-only. Continue in a separate manual attack to keep the original execution unchanged.
           </MessageBarBody>
@@ -2938,9 +2955,8 @@ export default function ChatWindow({
           getBranchConversationDescription={(index: number) => activeTarget && canBranchFirstPrompt(activeTarget, messages, index)
             ? 'Restore this prompt as an unsent draft in a new conversation in the same attack. The response is not copied.'
             : undefined}
-          isLoading={isLoadingAttack || isLoadingMessages || awaitingConversationLoad}
-          autoScroll={!executionReadOnly}
-          savedEvidence={executionReadOnly}
+          isLoading={isLoadingAttack || awaitingConversationLoad || (isLoadingMessages && !refreshesInPlace)}
+          savedEvidence={pagesSavedEvidence}
           globalMarkdown={globalMarkdown}
           onEditConversation={executionReadOnly ? undefined : () => { void beginEdit() }}
         />}
@@ -3014,7 +3030,8 @@ export default function ChatWindow({
             </MessageBarActions>
           </MessageBar>
         )}
-        <div hidden={editDraft !== null}>
+        {inProgress ? <AttackInProgressBar scanPath={liveScanId ? scenarioRunRoutePath(liveScanId) : null} scanState={location.state} />
+          : <div hidden={editDraft !== null}>
         <ChatInputArea
           fileDropEnabled={false}
           ref={inputBoxRef}
@@ -3070,7 +3087,7 @@ export default function ChatWindow({
             .map(([, conversion]) => conversion)}
           onClearMediaConversion={converters.clear}
         />
-        </div>
+        </div>}
       </FileDropZone>
       <Drawer
         as="aside"
@@ -3088,7 +3105,8 @@ export default function ChatWindow({
       >
         <ConversationPanel
           attackResultId={attackResultId}
-          referencePageSize={executionReadOnly ? SAVED_REFERENCE_PAGE_SIZE : undefined}
+          referencePageSize={pagesSavedEvidence ? SAVED_REFERENCE_PAGE_SIZE : undefined}
+          pollIntervalMs={inProgress ? LIVE_ATTACK_POLL_INTERVAL_MS : undefined}
           activeConversationId={activeConversationId}
           onSelectConversation={handlePanelSelectConversation}
           onNewConversation={handleNewConversation}

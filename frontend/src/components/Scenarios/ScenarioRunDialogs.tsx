@@ -48,9 +48,14 @@ interface ObjectiveDetailsDialogProps {
   readonly attempts: ScenarioProgressResult[]
   readonly onOpenAttempt: (attempt: ScenarioProgressResult, trigger: HTMLElement) => void
   readonly scenarioResultId: string
+  /** Technique shorthand per atomic group, shown under each attack. */
+  readonly techniqueNames: ReadonlyMap<string, string>
 }
 
-export function ObjectiveDetailsDialog({ objective, onClose, attempts, onOpenAttempt, scenarioResultId }: ObjectiveDetailsDialogProps) {
+/** An objective's text, its seed prompts, and the attacks that pursued it. */
+export function ObjectiveDetailsDialog({
+  objective, onClose, attempts, onOpenAttempt, scenarioResultId, techniqueNames,
+}: ObjectiveDetailsDialogProps) {
   const styles = useScenarioRunPageStyles()
 
   return (
@@ -92,7 +97,7 @@ export function ObjectiveDetailsDialog({ objective, onClose, attempts, onOpenAtt
                 <AttackExecutionTable label="Atomic attacks" attempts={attempts} totalAttempts={attempts.length}
                   roots={[]} hierarchy={EMPTY_HIERARCHY}
                   scenarioResultId={scenarioResultId} seedObjectives={new Map([[objective.id, objective.objective]])}
-                  onOpenDetails={onOpenAttempt} showTimestamp={false} booleanOutcome />
+                  techniqueNames={techniqueNames} onOpenDetails={onOpenAttempt} showTimestamp={false} booleanOutcome />
               </section>
             </DialogContent>
           )}

@@ -118,8 +118,39 @@ rows and keyboard focus. Selected conversation URLs, return-to-scan links and
 the originating History filters survive paging and reloads.
 On narrow screens, the saved viewer scrolls as one surface so loaded evidence
 and continuation controls remain reachable without squeezing the transcript.
-Selecting another saved conversation starts at its beginning; continuation
-keeps the current reading position.
+There, selecting another saved conversation starts at its beginning;
+continuation keeps the current reading position.
+
+## Scan results and live scan attacks
+
+A scan's run page shows its Operation as parent context above the title. Errors
+and scan-level notices (paused updates, overload, an incomplete plan, unmatched
+executions) stay explicit; a single attack's own error is not repeated as a run
+error. While the scan is active, the progress area shows elapsed time, an
+estimate of the time remaining, and **View live attacks**. When the scan
+finishes, the progress area collapses in place without moving the results.
+
+A run of one atomic attack shows that attack directly as one card, from
+preparing through completion. Other runs list atomic attack groups, datasets
+and objectives, and the scenario configuration; each result row opens the
+attack details. Attack details list the objective and outcome (with its score),
+the technique, objective scorer and dataset identities, and any findings that
+link the attack, followed by its conversation and **Attach to findings**.
+
+Every scan conversation opens in Chat at
+`/attack/chat/{attack_id}/conversations/{conversation_id}?scenarioResultId={run_id}`,
+whether the attack is still running or finished. Older
+`/scanner/history/{run_id}/conversations/{conversation_id}` links redirect there.
+While a scan is running the attack, Chat replaces the prompt bar with an
+**Attack in progress** bar and a link back to the scan, keeps the attack
+read-only, and refreshes its metadata, transcript, and conversation list at the
+scan's polling interval. A failed refresh keeps the loaded messages and offers
+**Retry**. When the attack finishes, Chat reloads its saved result in place on
+the same URL.
+
+Every transcript opens at its latest message and follows new messages only while
+the reader is within 48 px of the end; scrolling further up keeps the reading
+position.
 
 ## Dataset catalog
 

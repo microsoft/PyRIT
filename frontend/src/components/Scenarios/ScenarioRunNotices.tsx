@@ -1,6 +1,12 @@
 import { Accordion, AccordionHeader, AccordionItem, AccordionPanel, Button, MessageBar, MessageBarBody, Text } from '@fluentui/react-components'
 
-import type { ScenarioOverloadSummary, ScenarioProgressHeader, ScenarioProgressResult, ScenarioProgressSummary } from '@/types'
+import type {
+  ScenarioHierarchyNode,
+  ScenarioOverloadSummary,
+  ScenarioProgressHeader,
+  ScenarioProgressResult,
+  ScenarioProgressSummary,
+} from '@/types'
 import type { ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
 
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
@@ -9,15 +15,22 @@ interface ScenarioRunNoticesProps {
   readonly run: ScenarioProgressHeader
   readonly summary: ScenarioProgressSummary
   readonly state: ScenarioRunProgressState
+  /** The attack shown inline on the page; its own error is already visible there. */
+  readonly inlineAttempt?: ScenarioProgressResult | ScenarioHierarchyNode | null
   readonly onRetry: () => void
   readonly onOpenAttempt: (attempt: ScenarioProgressResult, trigger: HTMLElement) => void
 }
 
 /** Run failures, paused live updates, and conditions that limit how far the totals can be trusted. */
-export default function ScenarioRunNotices({ run, summary, state, onRetry, onOpenAttempt }: ScenarioRunNoticesProps) {
+export default function ScenarioRunNotices({ run, summary, state, inlineAttempt, onRetry, onOpenAttempt }: ScenarioRunNoticesProps) {
   const styles = useScenarioRunPageStyles()
   const overall = summary.overall
-  const firstError = state.results.find((attempt) => attempt.outcome === 'error')
+  const inlineError = inlineAttempt?.outcome === 'error' ? inlineAttempt : null
+  const firstError = inlineError ? undefined : state.results.find((attempt) => attempt.outcome === 'error')
+  const runErrorShownInline = inlineError !== null && run.error === inlineError.error_message
+    && (!run.error_type || run.error_type === inlineError.error_type)
+  const runError = run.error && !runErrorShownInline ? run.error : null
+  const showRunNotice = Boolean(runError) || (!inlineError && (run.status === 'FAILED' || overall.errors > 0))
   const unmatched = summary.unattributed_attempts ?? 0
   const overloaded = state.overloadSummaries.length > 0
   const notices: string[] = []
@@ -28,16 +41,16 @@ export default function ScenarioRunNotices({ run, summary, state, onRetry, onOpe
 
   return (
     <>
-      {(run.status === 'FAILED' || run.error || overall.errors > 0) && <MessageBar intent={runIntent}>
+      {showRunNotice && <MessageBar intent={runIntent}>
         <MessageBarBody>{run.status === 'FAILED' ? 'Scan failed. Resume to continue remaining attacks.'
           : run.status === 'CANCELLED' ? 'Scan cancelled.'
           : `${overall.errors} attack${overall.errors === 1 ? '' : 's'} ended with an error.`}
           {firstError && <Button appearance="transparent" onClick={(event) => { onOpenAttempt(firstError, event.currentTarget) }}>
             View attack
           </Button>}
-          {run.error && <Accordion collapsible><AccordionItem value="error">
+          {runError && <Accordion collapsible><AccordionItem value="error">
             <AccordionHeader>Error details</AccordionHeader>
-            <AccordionPanel><Text className={styles.objective}>{run.error_type ? `${run.error_type}: ` : ''}{run.error}</Text></AccordionPanel>
+            <AccordionPanel><Text className={styles.objective}>{run.error_type ? `${run.error_type}: ` : ''}{runError}</Text></AccordionPanel>
           </AccordionItem></Accordion>}
         </MessageBarBody>
       </MessageBar>}

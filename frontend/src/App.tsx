@@ -29,7 +29,7 @@ import ScenarioHistory from './components/History/ScenarioHistory'
 import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
 import ScenarioDetail from './components/Scenarios/ScenarioDetail'
 import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
-import ScenarioConversationPage from './components/Scenarios/ScenarioConversationPage'
+import ScanConversationRedirect from './components/Scenarios/ScanConversationRedirect'
 import ScenarioQueuePage from './components/Scenarios/ScenarioQueuePage'
 import ScenarioPresetEditor from './components/ScenarioPresets/ScenarioPresetEditor'
 import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
@@ -46,6 +46,7 @@ import { useAuthConfig } from './auth/AuthConfigContext'
 import { useTargetPreferences } from './hooks/useTargetPreferences'
 import { useTargetRegistry } from './hooks/useTargetRegistry'
 import { useOperationSelection } from './hooks/useOperationSelection'
+import { useLiveAttackMetadata } from './hooks/useLiveAttackMetadata'
 import { useScenarioLaunchSeed } from './hooks/useScenarioLaunchSeed'
 import { ConnectionHealthProvider, useConnectionHealth } from './hooks/useConnectionHealth'
 import { DEFAULT_GLOBAL_LABELS } from './components/Labels/labelDefaults'
@@ -57,7 +58,7 @@ import {
 import type { ScenarioHistoryFilters } from './components/History/scenarioHistoryFilters'
 import type { ViewName } from './components/Sidebar/Navigation'
 import type {
-  AttackOutcome, AttackSummary, BackendScore, Operation, TargetInfo, TargetInstance, TargetReference,
+  AttackMetadata, AttackOutcome, AttackSummary, BackendScore, Operation, TargetInfo, TargetInstance, TargetReference,
   UserPreferences,
 } from './types'
 import {
@@ -178,9 +179,39 @@ interface LoadedAttack {
   chatScorer?: RegisteredComponentReference | null
   chatScorerInherited?: boolean
   executionReadOnly?: boolean
+  /** A scan is still running this attack; it is read from the live run until its result is saved. */
+  inProgress?: boolean
+  /** The scan run that produced this attack. */
+  scenarioResultId?: string | null
   manualContinuation?: ManualContinuation | null
   lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
+}
+
+type SavedAttackFields = Omit<LoadedAttack, 'id' | 'loadSequence' | 'targetSource' | 'targetGeneration'
+  | 'createdTarget' | 'knownConversationIds' | 'status'>
+
+/** The attack fields Chat shows, as read from the attack's metadata. */
+function savedAttackFields(attack: AttackMetadata): SavedAttackFields {
+  return {
+    mainConversationId: attack.conversation_id,
+    labels: attack.labels ?? {},
+    operator: attack.operator ?? null,
+    target: attack.target ?? null,
+    targetUnbound: attack.target_unbound === true,
+    relatedConversationCount: attack.related_conversation_count,
+    objective: attack.objective ?? '',
+    outcome: attack.outcome ?? 'undetermined',
+    automatedScore: attack.automated_score ?? null,
+    humanScore: attack.human_score ?? null,
+    chatScorer: attack.chat_scorer ?? null,
+    chatScorerInherited: attack.chat_scorer_inherited ?? false,
+    executionReadOnly: attack.execution_read_only ?? false,
+    inProgress: attack.in_progress ?? false,
+    scenarioResultId: attack.scenario_result_id ?? null,
+    manualContinuation: attack.manual_continuation ?? null,
+    lastResponseMessagePieceId: attack.last_response_message_piece_id,
+  }
 }
 
 interface ServerDefaults {
@@ -499,22 +530,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           id: routeAttackId,
           loadSequence,
           targetSource: 'persisted',
-          mainConversationId: attack.conversation_id,
-          labels: attack.labels ?? {},
-          operator: attack.operator ?? null,
-          target: attack.target ?? null,
-          targetUnbound: attack.target_unbound === true,
+          ...savedAttackFields(attack),
           knownConversationIds: attack.selected_conversation_valid ? [attack.selected_conversation_id] : [],
-          relatedConversationCount: attack.related_conversation_count,
-          objective: attack.objective ?? '',
-          outcome: attack.outcome ?? 'undetermined',
-          automatedScore: attack.automated_score ?? null,
-          humanScore: attack.human_score ?? null,
-          chatScorer: attack.chat_scorer ?? null,
-          chatScorerInherited: attack.chat_scorer_inherited ?? false,
-          executionReadOnly: attack.execution_read_only ?? false,
-          manualContinuation: attack.manual_continuation ?? null,
-          lastResponseMessagePieceId: attack.last_response_message_piece_id,
           status: 'success',
         })
       })
@@ -563,6 +580,29 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   )
   const isLoadingAttack = isNavigatingToCreatedAttack
     || (routeAttackId !== null && !readyAttack && !isAttackNotFound && !isAttackError)
+
+  // While a scan runs the attack, follow its conversations; once its result is saved, show that in place.
+  const handleLiveAttackMetadata = useCallback((metadata: AttackMetadata) => {
+    setLoadedAttack((current) => {
+      if (current?.id !== metadata.attack_result_id || current.status !== 'success') return current
+      return metadata.in_progress
+        ? {
+            ...current,
+            mainConversationId: metadata.conversation_id,
+            relatedConversationCount: metadata.related_conversation_count,
+            lastResponseMessagePieceId: metadata.last_response_message_piece_id,
+          }
+        : { ...current, ...savedAttackFields(metadata) }
+    })
+  }, [])
+  const handleLiveAttackGone = useCallback(() => {
+    setLoadedAttack((current) => current?.inProgress ? { ...current, inProgress: false } : current)
+  }, [])
+  useLiveAttackMetadata({
+    attackResultId: readyAttack?.inProgress ? readyAttack.id : null,
+    onMetadata: handleLiveAttackMetadata,
+    onGone: handleLiveAttackGone,
+  })
   const {
     activeTarget: resolvedChatTarget,
     resolutionStatus: targetResolutionStatus,
@@ -819,6 +859,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       chatScorer={readyAttack?.chatScorer}
       chatScorerInherited={readyAttack?.chatScorerInherited}
       executionReadOnly={readyAttack?.executionReadOnly}
+      inProgress={readyAttack?.inProgress}
+      attackScenarioResultId={readyAttack?.scenarioResultId}
       manualContinuation={readyAttack?.manualContinuation}
       defaultChatScorer={defaultChatScorer}
       availableScorers={scorerRegistry.scorers}
@@ -1028,7 +1070,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 }
               />
               <Route path="/scanner/queue" element={<ScenarioQueuePage />} />
-              <Route path="/scanner/history/:scenarioResultId/conversations/:conversationId" element={<ScenarioConversationPage />} />
+              <Route path="/scanner/history/:scenarioResultId/conversations/:conversationId" element={<ScanConversationRedirect />} />
               <Route path="/scanner/history/:scenarioResultId/:attackResultId" element={<ScenarioRunPage />} />
               <Route path="/scanner/history/:scenarioResultId" element={<ScenarioRunPage />} />
               <Route path="/config" element={<Configuration />} />

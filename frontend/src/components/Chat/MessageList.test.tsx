@@ -49,26 +49,51 @@ describe("MessageList", () => {
 
   it("should label a split turn and preserve its bubble when ordered evidence is extended", () => {
     const first = { ...mockMessages[0], sequence: 0, isPartial: true };
-    const rendered = render(<TestWrapper><MessageList messages={[first]} autoScroll={false} /></TestWrapper>);
+    const rendered = render(<TestWrapper><MessageList messages={[first]} /></TestWrapper>);
     const bubble = screen.getByTestId("message-bubble-0");
     expect(screen.getByText("Incomplete turn")).toBeVisible();
-    rendered.rerender(<TestWrapper><MessageList autoScroll={false} messages={[
+    rendered.rerender(<TestWrapper><MessageList messages={[
       { ...mockMessages[1], role: "system", sequence: -1 }, { ...first, isPartial: false },
     ]} /></TestWrapper>);
     expect(screen.getByTestId("message-bubble-1")).toBe(bubble);
     expect(screen.queryByText("Incomplete turn")).not.toBeInTheDocument();
   });
 
-  it("should keep saved evidence in place while retaining live Chat auto-scroll", () => {
-    const scroll = jest.mocked(Element.prototype.scrollIntoView);
-    scroll.mockClear();
-    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} autoScroll={false} /></TestWrapper>);
-    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} autoScroll={false} /></TestWrapper>);
-    expect(scroll).not.toHaveBeenCalled();
+  it("should open at the latest message and follow new ones only while the reader stays near the end", () => {
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} /></TestWrapper>);
+    const list = screen.getByTestId("message-list");
+    Object.defineProperties(list, {
+      scrollHeight: { configurable: true, writable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+    });
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages.slice(0, 2)} /></TestWrapper>);
+    expect(list.scrollTop).toBe(1000);
+    list.scrollTop = 770;
+    fireEvent.scroll(list);
+    Object.defineProperty(list, "scrollHeight", { value: 1200 });
     rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
-    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(list.scrollTop).toBe(1200);
+    list.scrollTop = 100;
+    fireEvent.scroll(list);
+    Object.defineProperty(list, "scrollHeight", { value: 1400 });
+    rendered.rerender(<TestWrapper><MessageList messages={[...mockMessages, mockMessages[1]]} /></TestWrapper>);
+    expect(list.scrollTop).toBe(100);
+    expect(screen.getByTestId("message-list")).toBe(list);
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it("should follow saved evidence with the same policy as live Chat", () => {
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} savedEvidence /></TestWrapper>);
+    const list = screen.getByTestId("message-list");
+    Object.defineProperties(list, {
+      scrollHeight: { configurable: true, writable: true, value: 900 },
+      clientHeight: { configurable: true, value: 300 },
+    });
+    list.scrollTop = 200;
+    fireEvent.scroll(list);
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} savedEvidence /></TestWrapper>);
+    expect(list.scrollTop).toBe(200);
+  });
   it.each([2, 3])("should retain gapped sequence %s beside optimistic user and loading rows without duplicate keys", (sequence: number) => {
     const errors = jest.spyOn(console, "error").mockImplementation(() => {});
     const stored: Message[] = [
