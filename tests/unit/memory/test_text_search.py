@@ -3,6 +3,7 @@
 
 import json
 from typing import Any
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -242,6 +243,51 @@ async def test_candidate_filter_uses_the_same_contract_async(sqlite_instance: Me
     )
     assert [seed.value for seed in literal_seeds] == ["100%"]
     assert [seed.value for seed in pattern_seeds] == ["100%", "100X"]
+
+
+@pytest.mark.parametrize(
+    "filters, error",
+    [
+        ({"value_pattern": "text/"}, "unpaired"),
+        ({"value": "", "value_pattern": ""}, "either"),
+        ({"dataset_name_pattern": "text/"}, "unpaired"),
+        *[
+            ({f"{field}_patterns": ["text/"]}, "unpaired")
+            for field in ("authors", "harm_categories", "groups", "parameters")
+        ],
+        *[
+            ({field: [], f"{field}_patterns": []}, "either")
+            for field in ("authors", "harm_categories", "groups", "parameters")
+        ],
+    ],
+)
+async def test_empty_candidate_filters_validate_without_database_async(
+    *, sqlite_instance: MemoryInterface, filters: dict[str, Any], error: str
+) -> None:
+    with patch.object(sqlite_instance, "_run_database_operation_async", new_callable=AsyncMock) as operation:
+        with pytest.raises(ValueError, match=error):
+            await sqlite_instance.filter_seed_candidates_async(seeds=[], filters=filters)
+        operation.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {},
+        {"value": ""},
+        {"value_pattern": ""},
+        {"value_pattern": "text%"},
+        {"authors_patterns": []},
+        {"authors_patterns": ["text%"]},
+        {"dataset_name": "exact", "dataset_name_pattern": "text/"},
+    ],
+)
+async def test_valid_empty_candidate_filters_preserve_shortcut_async(
+    *, sqlite_instance: MemoryInterface, filters: dict[str, Any]
+) -> None:
+    with patch.object(sqlite_instance, "_run_database_operation_async", new_callable=AsyncMock) as operation:
+        assert await sqlite_instance.filter_seed_candidates_async(seeds=[], filters=filters) == []
+        operation.assert_not_called()
 
 
 def test_analytics_pattern_query_round_trips_and_conflicts_are_rejected() -> None:

@@ -107,6 +107,42 @@ async def test_seed_example_routes_reject_invalid_patterns(*, client: AsyncClien
     assert response.status_code == 400
 
 
+async def test_empty_pattern_cursor_continues_only_empty_examples_async(
+    *, client: AsyncClient, sqlite_instance: MemoryInterface
+) -> None:
+    empty_seeds = [_prompt(""), _prompt("")]
+    nonempty_seed = _prompt("nonempty")
+    await _store(sqlite_instance, *empty_seeds, nonempty_seed)
+    params = {"selection_key": NAMED, "limit": 1, "value_pattern": ""}
+
+    first_response = await client.get(URL, params=params)
+    assert first_response.status_code == 200
+    first = first_response.json()
+    cursor = first["pagination"]["next_cursor"]
+    assert cursor
+    assert first["pagination"]["has_more"] is True
+    assert len(first["items"]) == 1
+
+    second_response = await client.get(URL, params={**params, "cursor": cursor})
+    assert second_response.status_code == 200
+    second = second_response.json()
+    assert first["total"] == second["total"] == 2
+    assert len(second["items"]) == 1
+    assert {item["example_id"] for item in first["items"] + second["items"]} == {str(seed.id) for seed in empty_seeds}
+    assert second["pagination"]["has_more"] is False
+    assert second["pagination"]["next_cursor"] is None
+    assert second["pagination"]["prev_cursor"] == cursor
+
+    for omitted_pattern in ({}, {"search": ""}):
+        response = await client.get(
+            URL, params={"selection_key": NAMED, "limit": 1, "cursor": cursor, **omitted_pattern}
+        )
+        assert response.status_code == 400
+    unfiltered_response = await client.get(URL, params={"selection_key": NAMED})
+    assert unfiltered_response.status_code == 200
+    assert unfiltered_response.json()["total"] == 3
+
+
 @pytest.mark.parametrize(
     ("path", "params", "expected_status"),
     [

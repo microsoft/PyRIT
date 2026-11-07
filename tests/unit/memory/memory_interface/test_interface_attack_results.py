@@ -408,9 +408,9 @@ async def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface)
         ("snake_case", "Use snake_case names", "Use snakeXcase names"),
     ],
 )
-async def test_get_attack_results_by_objective_treats_like_wildcards_literally(
-    sqlite_instance: MemoryInterface, searched: str, matching_objective: str, decoy_objective: str
-):
+async def test_get_attack_results_by_objective_treats_like_wildcards_literally_async(
+    *, sqlite_instance: MemoryInterface, searched: str, matching_objective: str, decoy_objective: str
+) -> None:
     """The objective filter is a substring match, so ``%`` and ``_`` in it match only themselves."""
     matching = AttackResult(conversation_id="conv_match", objective=matching_objective, outcome=AttackOutcome.SUCCESS)
     decoy = AttackResult(conversation_id="conv_decoy", objective=decoy_objective, outcome=AttackOutcome.SUCCESS)

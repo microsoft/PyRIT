@@ -173,9 +173,14 @@ async def test_filter_by_name(sqlite_instance: MemoryInterface, sample_attack_re
         ("100%", "Scenario 100%", "Scenario 1000"),
     ],
 )
-async def test_filter_by_name_treats_like_wildcards_literally(
-    sqlite_instance: MemoryInterface, sample_attack_results, searched: str, matching_name: str, decoy_name: str
-):
+async def test_filter_by_name_treats_like_wildcards_literally_async(
+    *,
+    sqlite_instance: MemoryInterface,
+    sample_attack_results: list[AttackResult],
+    searched: str,
+    matching_name: str,
+    decoy_name: str,
+) -> None:
     """The scenario name filter is a substring match, so ``%`` and ``_`` in it match only themselves."""
     scenario_result1 = create_scenario_result(
         name=matching_name,

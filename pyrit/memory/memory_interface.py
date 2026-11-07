@@ -4575,9 +4575,15 @@ class MemoryInterface(abc.ABC):
 
         Returns:
             list[Seed]: Matching candidates in input order, with their original identities.
+
+        Raises:
+            ValueError: If literal and pattern filters conflict or a pattern has an unpaired escape.
         """
-        if not seeds or not filters:
+        if not filters:
             return list(seeds)
+        if not seeds:
+            self._build_seed_filter_conditions(**filters)
+            return []
         return await self._run_database_operation_async(self._filter_seed_candidates, seeds=seeds, filters=filters)
 
     def _filter_seed_candidates(self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]) -> list[Seed[Any]]:
