@@ -4,6 +4,7 @@
 import copy
 import logging
 import uuid
+from typing import Any
 
 from pyrit.message_normalizer._helpers import (
     format_message_piece_for_context,
@@ -12,12 +13,12 @@ from pyrit.message_normalizer._helpers import (
 from pyrit.message_normalizer.conversation_context_normalizer import ConversationContextNormalizer
 from pyrit.message_normalizer.generic_system_squash import GenericSystemSquashNormalizer
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer, MessageStringNormalizer
-from pyrit.models import Message, MessagePiece
+from pyrit.models import ComponentIdentifier, Identifiable, Message, MessagePiece
 
 logger = logging.getLogger(__name__)
 
 
-class HistorySquashNormalizer(MessageListNormalizer[Message]):
+class HistorySquashNormalizer(MessageListNormalizer[Message], Identifiable):
     """
     Combine conversation history and the current request into one message.
 
@@ -57,6 +58,31 @@ class HistorySquashNormalizer(MessageListNormalizer[Message]):
             raise ValueError("expected_history_message_count must be at least 1")
         self._message_normalizer = message_normalizer
         self._expected_history_message_count = expected_history_message_count
+
+    def as_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the configuration parameters that affect history squashing.
+
+        Returns:
+            dict[str, Any]: Parameters including expected count and child formatter identifier.
+        """
+        params: dict[str, Any] = {}
+        if self._message_normalizer is not None:
+            params["message_normalizer"] = self._message_normalizer.get_identifier().model_dump(
+                mode="json", exclude={"pyrit_version", "hash", "eval_hash"}
+            )
+        if self._expected_history_message_count is not None:
+            params["expected_history_message_count"] = self._expected_history_message_count
+        return params
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity for this normalizer.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(self, params=self.as_identifier_params())
 
     async def normalize_async(self, messages: list[Message]) -> list[Message]:
         """

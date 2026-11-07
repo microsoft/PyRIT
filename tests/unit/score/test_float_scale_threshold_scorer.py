@@ -10,9 +10,7 @@ from unit.mocks import store_message_async
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, ContentScorable, Message, MessagePiece, Score
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import FloatScaleThresholdScorer, MessageScorable
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+from pyrit.score import FloatScaleThresholdScorer, MessageFloatScaleScorer, MessageScorable, ScorerPromptValidator
 
 
 def create_mock_float_scorer(score_value: float):
@@ -272,7 +270,7 @@ async def test_float_scale_threshold_scorer_rejects_aggregator_that_does_not_com
     the verdict came from whichever category sorted first and the others were dropped without
     a log: with Hate at 0.0 and Violence at 0.9 the caller received False.
     """
-    from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleScorerByCategory
+    from pyrit.score import FloatScaleScorerByCategory
 
     memory = MagicMock(MemoryInterface)
     mock_identifier = ComponentIdentifier(class_name="MockScorer", class_module="test.mock")
@@ -377,7 +375,7 @@ async def test_float_scale_threshold_scorer_propagates_empty_scores():
 
 
 async def test_float_scale_threshold_scorer_bypasses_raise_on_empty_aggregator():
-    from pyrit.score.float_scale.float_scale_score_aggregator import FloatScaleScoreAggregator
+    from pyrit.score import FloatScaleScoreAggregator
 
     memory = MagicMock(MemoryInterface)
 

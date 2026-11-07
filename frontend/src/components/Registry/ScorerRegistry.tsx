@@ -1,16 +1,18 @@
-import { Fragment, useId, useState } from 'react'
+import { Fragment, useState } from 'react'
 
-import { Button, Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip } from '@fluentui/react-components'
-import { ArrowSyncRegular, ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
+import { Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip } from '@fluentui/react-components'
 
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import type { RegisteredComponentReference, ScorerInstance } from '@/types'
 import {
   formatScorerComparisonMetric, scorerComparisonValue, scorerEvidenceLabel, scorerMetricDescription, scorerMetricLabel,
 } from '@/utils/scorerPresentation'
 
 import { useConverterRegistryStyles } from './Registry.styles'
+import RegistryIdentityRow from './RegistryIdentityRow'
 import { useScorerRegistryStyles } from './ScorerRegistry.styles'
 
 interface ScorerRegistryProps {
@@ -68,7 +70,6 @@ function MetricCell({ name, value }: { name: string; value: unknown }) {
 function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
   const styles = useConverterRegistryStyles()
   const scorerStyles = useScorerRegistryStyles()
-  const detailsId = useId()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [sort, setSort] = useState<ScorerTableSort>({ column: 'name', direction: 'ascending' })
   const toggleSort = (column: string): void => {
@@ -108,7 +109,9 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
               sortDirection={sort.column === 'name' ? sort.direction : undefined}
               button={{ className: scorerStyles.sortButton, onClick: () => toggleSort('name') }}>Name</TableHeaderCell>
             <TableHeaderCell className={scorerStyles.typeColumn}>Type</TableHeaderCell>
-            <TableHeaderCell className={scorerStyles.scorableColumn}>Scorable</TableHeaderCell>
+            <TableHeaderCell aria-label="Scorable" className={scorerStyles.scorableColumn}>
+              <ContextualHelpLabel term="Scorable">Evidence the scorer evaluates, such as a message, conversation, or trace.</ContextualHelpLabel>
+            </TableHeaderCell>
             {metrics.map((name: string) => (
               <TableHeaderCell key={name}
                 sortable sortDirection={sort.column === name ? sort.direction : undefined}
@@ -129,18 +132,10 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
             </TableHeaderCell>
           </TableRow></TableHeader>
           <TableBody>{sorted.map((scorer: ScorerInstance) => (
-            <Fragment key={scorer.scorer_registry_name}>
-            <TableRow>
-              <TableCell>
-                <Button appearance="transparent" className={scorerStyles.name}
-                  icon={expanded.has(scorer.scorer_registry_name) ? <ChevronDownRegular /> : <ChevronRightRegular />}
-                  aria-expanded={expanded.has(scorer.scorer_registry_name)}
-                  aria-controls={`${detailsId}-${encodeURIComponent(scorer.scorer_registry_name)}`}
-                  aria-label={`Evaluation details for ${scorer.scorer_registry_name}`}
-                  onClick={() => toggleDetails(scorer.scorer_registry_name)}>
-                  {scorer.scorer_registry_name}
-                </Button>
-              </TableCell>
+            <RegistryIdentityRow key={scorer.scorer_registry_name}
+              name={scorer.scorer_registry_name} identity={scorer.identifier} columns={metrics.length + 4}
+              expanded={expanded.has(scorer.scorer_registry_name)}
+              onToggle={() => toggleDetails(scorer.scorer_registry_name)}>
               <TableCell>
                 <Text className={scorerStyles.type}>
                   {(scorer.display_type ?? scorer.identifier.class_name).split('(').map((part: string, index: number) => (
@@ -154,18 +149,7 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
               <TableCell>{scorerEvidenceLabel(scorer)}</TableCell>
               {metrics.map((name: string) => <MetricCell key={name} name={name} value={scorer.metrics?.[name]} />)}
               <MetricCell name="average_score_time_seconds" value={scorer.metrics?.average_score_time_seconds} />
-            </TableRow>
-            {expanded.has(scorer.scorer_registry_name) && <TableRow>
-              <TableCell colSpan={metrics.length + 4}>
-                <div className={scorerStyles.details} id={`${detailsId}-${encodeURIComponent(scorer.scorer_registry_name)}`}
-                  role="region" aria-label={`Evaluation details for ${scorer.scorer_registry_name}`}>
-                  {scorer.evaluation_identifier
-                    ? <pre className={scorerStyles.json}>{JSON.stringify(scorer.evaluation_identifier, null, 2)}</pre>
-                    : <Text>n/a</Text>}
-                </div>
-              </TableCell>
-            </TableRow>}
-            </Fragment>
+            </RegistryIdentityRow>
           ))}</TableBody>
         </Table>
       </div>
@@ -177,21 +161,23 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
   const styles = useConverterRegistryStyles()
   const scorerStyles = useScorerRegistryStyles()
   const { preferences, updatePreferences } = useUserPreferences()
+  useAutoRefresh(onRefresh, !loading)
   return (
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" size={600} weight="semibold">Scorer Registry</Text>
+          <Text as="h1" aria-label="Scorer Registry" size={600} weight="semibold">
+            <ContextualHelpLabel term="Scorer Registry" labelProps={{ weight: 'semibold' }}>
+              Components that evaluate evidence and return a score or verdict. The attack decides what to do with that result.
+            </ContextualHelpLabel>
+          </Text>
           <Text>Browse configured scorers.</Text>
-        </div>
-        <div className={styles.actions}>
-          <Button className={styles.action} appearance="subtle" icon={<ArrowSyncRegular />}
-            onClick={onRefresh} disabled={loading}>Refresh</Button>
         </div>
       </div>
       <div className={scorerStyles.defaultPicker}>
-        <ChatScorerPicker label="Default objective scorer for chats" value={preferences.chatScorer ?? null}
+        <ChatScorerPicker label="Default objective scorer for chats" value={preferences.chatScorer}
           scorers={scorers} loading={loading} error={error}
+          onUseLastUsed={() => updatePreferences((current) => ({ ...current, chatScorer: undefined }))}
           onChange={(chatScorer: RegisteredComponentReference | null) => updatePreferences((current) => ({ ...current, chatScorer }))} />
       </div>
       <Divider className={scorerStyles.separator} aria-label="Scorer registry" />

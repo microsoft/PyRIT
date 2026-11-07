@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
+from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
 from pyrit.memory import MemoryInterface
 from pyrit.models import SeedDataset, SeedOrigin, SeedPrompt
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration, DatasetSource
+from pyrit.scenario import DatasetConfiguration, DatasetSource
 
 
 class TestLocalDatasetLoader:

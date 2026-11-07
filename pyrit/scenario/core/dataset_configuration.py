@@ -34,12 +34,13 @@ from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, Self, TypeVar, cast
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     AllAvailableDatasetSize,
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetFetchPolicy,
     IndeterminateDatasetSize,
     ScenarioDatasetSizeEstimate,
     Seed,
@@ -49,7 +50,6 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, normalize_dataset_limit
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -564,7 +564,7 @@ class DatasetConfiguration:
             to_fetch.append(name)
         if not to_fetch:
             return
-        from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+        from pyrit.datasets import SeedDatasetProvider
 
         providers = {name: provider for name in to_fetch if (provider := configured_providers[name]) is not None}
         unresolved = [name for name in to_fetch if name not in providers]

@@ -20,9 +20,9 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateIndex, CreateTable
 
+from pyrit.memory import AttackResultEntry
 from pyrit.memory.alembic.versions.e5f7a9c1b3d2_add_identifiers_tables import IdentifierGraphInserter
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
-from pyrit.memory.memory_models import AttackResultEntry
 from pyrit.models import AtomicAttackIdentifier, AttackIdentifier, TargetIdentifier, compute_eval_hash
 
 if TYPE_CHECKING:

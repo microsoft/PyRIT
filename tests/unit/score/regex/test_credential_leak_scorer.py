@@ -8,11 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import MessagePiece
-from pyrit.score import CredentialLeakScorer
-from pyrit.score.true_false.regex.regex_scorer import RegexScorer
+from pyrit.memory import CentralMemory, MemoryInterface
+from pyrit.models import MessagePiece, ScoringExpectation
+from pyrit.score import CredentialLeakScorer, RegexScorer
 
 _RSA_KEY_HEADER = "-----BEGIN " + "RSA PRIVATE KEY-----"
 _AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
@@ -502,8 +500,9 @@ async def test_default_scores_use_original_regex_scorer_behavior(
 ) -> None:
     scorer = CredentialLeakScorer()
     piece = MessagePiece(role="assistant", original_value=text)
-    actual = (await scorer._score_piece_async(piece, objective="Detect credentials"))[0]
-    expected = (await RegexScorer._score_piece_async(scorer, piece, objective="Detect credentials"))[0]
+    expectation = ScoringExpectation(objective="Detect credentials")
+    actual = (await scorer._score_piece_with_expectation_async(piece, expectation=expectation))[0]
+    expected = (await RegexScorer._score_piece_with_expectation_async(scorer, piece, expectation=expectation))[0]
     assert actual.score_value == expected.score_value
     assert actual.score_value_description == expected.score_value_description
     assert actual.score_rationale == expected.score_rationale

@@ -28,15 +28,14 @@ from uvicorn.lifespan.on import LifespanOn
 
 from pyrit.backend.authentication_policy import AuthenticationConfigurationError
 from pyrit.backend.main import SPAStaticFiles, app, lifespan, setup_frontend
-from pyrit.backend.models.converters import CreateConverterRequest
-from pyrit.backend.services.converter_service import ConverterService, get_converter_service
+from pyrit.backend.models import CreateConverterRequest
+from pyrit.backend.services import ConverterService, ScenarioRunService, get_converter_service
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.message_send_service import get_message_send_service
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.memory import AzureSQLMemory, SQLiteMemory
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 
 
 async def test_health_responds_while_database_operation_is_pending(sqlite_instance: SQLiteMemory) -> None:
