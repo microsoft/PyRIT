@@ -194,6 +194,18 @@ Suites store ordered references to scenario presets and resolve each preset's cu
 
 A SAS query string may be included; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/scenario_suites`. Local writes use the same hidden lock-file and atomic replacement behavior as scenario presets. Startup scans the configured source so malformed suite documents are reported immediately without preventing the backend from starting.
 
+### `registry_recipes_source`
+
+Stores saved targets, converters, scorers, and techniques in a local directory or Azure Blob container, so they come back when the backend restarts. An Azure URI may include a blob-name prefix:
+
+```yaml
+registry_recipes_source: https://account.blob.core.windows.net/pyrit-storage/registry-recipes
+```
+
+Each kind has its own folder under the source (`targets/`, `converters/`, `scorers/`, `techniques/`), with one JSON file per saved entry named after the entry. A file holds what's needed to rebuild the entry, and never a credential: restore refuses a file that stores a value for a parameter its class marks as a credential, such as `api_key`. A saved target also can't use a key from this server: it signs in with Microsoft Entra ID (`"auth_mode": "identity"`), which uses this server's Azure identity for everyone using the app, or needs no key. Targets from the server's configuration that it uses, such as a round-robin's members, keep their own sign-in. So restore refuses a target file that would read an empty key from an environment variable or leave an address to this server's settings. The addresses each target type declares (such as `endpoint`, `container_url` for Blob storage, or an A2A agent card path) can't hold a user name, password, SAS token, fragment, path parameters (`;`, `&`, `=`), or a query other than `api-version`, and a path can't have a query at all. An address the server would otherwise fill in must be a full http(s) or ws(s) address. In identity mode, an OpenAI target file sets `"headers": "{}"` so that the server's `OPENAI_ADDITIONAL_REQUEST_HEADERS` aren't added. Settings the OpenAI SDK reads by itself (`OPENAI_CUSTOM_HEADERS`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) still apply to every OpenAI target on this server. GitHub Copilot, Hugging Face, HackAPrompt, LiteLLM, HTTP, and Copilot WebSocket targets can't be saved yet. A SAS query string may be included in the source; otherwise, PyRIT uses `DefaultAzureCredential`. The default is `~/.pyrit/registry_recipes`.
+
+The backend restores saved entries at startup and after a live apply, once the configured initializers have registered theirs. If any saved entry can't be restored, the backend stays not ready (state `failed`, outcome `restore-failed`) and lists each failure with its reason in `GET /api/config/runtime`, so a scan can't quietly run without an entry it expects. Fix or delete the listed files, then restart. Files whose names aren't valid entry names (up to 64 lowercase letters, digits, and underscores, starting with a letter) are listed as ignored and don't block startup.
+
 ### `initialization_scripts`
 
 Local paths to custom Python scripts containing `PyRITInitializer` subclasses. Paths can be absolute or relative to the current working directory.

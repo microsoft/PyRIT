@@ -14,6 +14,8 @@ Route structure:
     DELETE /api/initializers/{name}         — unregister an initializer
 """
 
+import logging
+
 from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
@@ -28,17 +30,26 @@ from pyrit.backend.models.initializers import (
 )
 from pyrit.backend.services.initializer_service import get_initializer_service
 from pyrit.models.catalog.initializer import RegisteredInitializer
+from pyrit.registry.file_document_storage import describe_storage_error
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/initializers", tags=["initializers"])
 
 
-def _custom_storage_unavailable() -> HTTPException:
+def _custom_storage_unavailable(error: Exception) -> HTTPException:
     """
     Create a sanitized response for unavailable custom initializer storage.
+
+    The cause is logged without any path or URL it carries.
+
+    Args:
+        error (Exception): The storage error.
 
     Returns:
         HTTPException: A service-unavailable response without SDK details.
     """
+    logger.warning(f"Custom initializer storage is unavailable: {describe_storage_error(error)}")
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail="Custom initializer storage is temporarily unavailable",
@@ -137,8 +148,8 @@ async def list_custom_initializers(request: Request) -> CustomInitializerListRes
     _check_custom_initializers_allowed(request)
     try:
         return await get_initializer_service().list_custom_initializers_async()
-    except AzureError as exc:
-        raise _custom_storage_unavailable() from exc
+    except (AzureError, OSError) as exc:
+        raise _custom_storage_unavailable(exc) from exc
 
 
 @router.get(
@@ -203,7 +214,7 @@ async def register_initializer(  # pyrit-async-suffix-exempt
     try:
         return await service.register_initializer_async(name=body.name, script_content=body.script_content)
     except AzureError as exc:
-        raise _custom_storage_unavailable() from exc
+        raise _custom_storage_unavailable(exc) from exc
     except ValueError as e:
         detail = str(e)
         if "already registered" in detail:
@@ -240,8 +251,8 @@ async def unregister_initializer(  # pyrit-async-suffix-exempt
 
     try:
         await service.unregister_initializer_async(initializer_name=initializer_name)
-    except AzureError as exc:
-        raise _custom_storage_unavailable() from exc
+    except (AzureError, OSError) as exc:
+        raise _custom_storage_unavailable(exc) from exc
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
