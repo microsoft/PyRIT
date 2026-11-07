@@ -12,8 +12,9 @@ from uuid import UUID
 
 import pytest
 
-from pyrit.models.catalog.scenario_suite import SUITE_SCHEMA_VERSION, ScenarioSuite, ScenarioSuiteEntry
-from pyrit.registry.scenario_suite_storage import ScenarioSuiteConflictError, ScenarioSuiteStorage
+from pyrit.models import ScenarioSuite, ScenarioSuiteEntry
+from pyrit.models.catalog.scenario_suite import SUITE_SCHEMA_VERSION
+from pyrit.registry import ScenarioSuiteConflictError, ScenarioSuiteStorage
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
