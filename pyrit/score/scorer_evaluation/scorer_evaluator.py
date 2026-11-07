@@ -45,6 +45,20 @@ logger = logging.getLogger(__name__)
 _CONTESTED_THRESHOLD = 0.5
 
 
+def _validate_num_scorer_trials(num_scorer_trials: int) -> None:
+    """
+    Check that the requested number of scorer trials is at least 1.
+
+    Args:
+        num_scorer_trials (int): The requested number of scoring trials.
+
+    Raises:
+        ValueError: If num_scorer_trials is less than 1.
+    """
+    if num_scorer_trials < 1:
+        raise ValueError(f"num_scorer_trials must be at least 1, got {num_scorer_trials}.")
+
+
 @dataclass
 class ScorerEvalDatasetFiles:
     """
@@ -137,7 +151,7 @@ class ScorerEvaluator(abc.ABC):
         Args:
             dataset_files: ScorerEvalDatasetFiles configuration specifying glob patterns
                 for input files and a result file name.
-            num_scorer_trials: Number of scoring trials per response. Defaults to 3.
+            num_scorer_trials: Number of scoring trials per response. Must be at least 1. Defaults to 3.
             update_registry_behavior: Controls how existing registry entries are handled.
                 Defaults to RegistryUpdateBehavior.SKIP_IF_EXISTS.
             max_concurrency: Maximum number of concurrent scoring requests. Defaults to 10.
@@ -146,8 +160,11 @@ class ScorerEvaluator(abc.ABC):
             ScorerMetrics if evaluation completed, None if no files found.
 
         Raises:
-            ValueError: If harm_category is not specified for harm scorer evaluations.
+            ValueError: If num_scorer_trials is less than 1, or if harm_category is not
+                specified for harm scorer evaluations.
         """
+        _validate_num_scorer_trials(num_scorer_trials)
+
         metrics_type = MetricsType.OBJECTIVE if isinstance(self.scorer, TrueFalseScorer) else MetricsType.HARM
 
         # Validate harm_category for harm scorers
@@ -375,7 +392,7 @@ class ScorerEvaluator(abc.ABC):
 
         Args:
             labeled_dataset (HumanLabeledDataset): The HumanLabeledDataset to evaluate the scorer against.
-            num_scorer_trials (int): The number of trials to run the scorer on all responses.
+            num_scorer_trials (int): The number of trials to run the scorer on all responses. Must be at least 1.
             max_concurrency (int): Maximum number of concurrent scoring requests. Defaults to 10.
 
         Returns:
@@ -383,8 +400,10 @@ class ScorerEvaluator(abc.ABC):
                 depending on the type of the HumanLabeledDataset (HARM or OBJECTIVE).
 
         Raises:
-            ValueError: If the labeled_dataset is invalid.
+            ValueError: If num_scorer_trials is less than 1, or if the labeled_dataset is invalid.
         """
+        _validate_num_scorer_trials(num_scorer_trials)
+
         # Validate dataset and extract data
         assistant_responses, human_scores_list, objectives = await self._validate_and_extract_data_async(
             labeled_dataset
