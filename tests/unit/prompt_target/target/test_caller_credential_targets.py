@@ -2,10 +2,12 @@
 # Licensed under the MIT license.
 
 import asyncio
+import json
 from unittest.mock import patch
 
 import httpx
 import pytest
+from unit.async_utils import get_defined_tasks, settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import openai_chat_response_json_dict
 
 from pyrit.auth import (
@@ -17,6 +19,23 @@ from pyrit.auth import (
 from pyrit.models import Message
 from pyrit.prompt_target import LiteLLMChatTarget, OpenAIChatTarget, PromptTarget, RealtimeTarget
 from pyrit.registry import TargetRegistry
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("header", ["Authorization", "aUtHoRiZaTiOn", "api-key", "X-API-Key", "x-goog-api-key"])
+@pytest.mark.parametrize("source", ["headers", "default_headers"])
+def test_token_provider_rejects_static_authentication_headers(
+    store: CallerCredentialStore, header: str, source: str
+) -> None:
+    provider = create_caller_credential_provider(store=store, credential_id="shared", component_name="shared")
+    with pytest.raises(ValueError, match="authentication headers"):
+        OpenAIChatTarget(
+            model_name="test-model",
+            endpoint="https://example.test/v1",
+            api_key=provider,
+            headers=json.dumps({header: "static-key"}) if source == "headers" else None,
+            httpx_client_kwargs={"default_headers": {header: "static-key"}} if source == "default_headers" else None,
+        )
 
 
 @pytest.fixture
@@ -70,11 +89,16 @@ async def test_openai_target_sends_each_callers_own_key_concurrently_async(store
         target = _target(store=store, http_client=http_client)
 
         alice = asyncio.create_task(_send_as_async(target=target, principal="alice"))
-        await transport.first_request_received.wait()
-        bob = asyncio.create_task(_send_as_async(target=target, principal="bob"))
-        await asyncio.sleep(0)
-        transport.release_first_request.set()
-        await asyncio.gather(alice, bob)
+        bob = None
+        try:
+            await wait_for_event_async(event=transport.first_request_received, tasks=[alice])
+            bob = asyncio.create_task(_send_as_async(target=target, principal="bob"))
+            await asyncio.sleep(0)
+            transport.release_first_request.set()
+            await wait_for_completion_async(future=asyncio.gather(alice, bob))
+        finally:
+            transport.release_first_request.set()
+            await settle_tasks_async(*get_defined_tasks(alice, bob))
 
     assert transport.authorizations == ["Bearer alice-key", "Bearer bob-key"]
 
@@ -127,3 +151,26 @@ async def test_openai_reconstructed_copy_resolves_the_current_caller_async(store
     finally:
         await copy.cleanup_target_async()
         await source.cleanup_target_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_openai_reconstructed_copy_rejects_static_authentication_async(store: CallerCredentialStore) -> None:
+    source = OpenAIChatTarget(
+        model_name="test-model",
+        endpoint="https://example.test/v1",
+        api_key=create_caller_credential_provider(store=store, credential_id="shared", component_name="shared"),
+    )
+    try:
+        with pytest.raises(ValueError, match="authentication headers"):
+            TargetRegistry.get_registry_singleton().recreate_instance(
+                source=source, params={"headers": json.dumps({"Authorization": "static-key"})}
+            )
+    finally:
+        await source.cleanup_target_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_concurrency_check_reports_early_send_failure_async(store: CallerCredentialStore) -> None:
+    with patch(__name__ + "._send_as_async", side_effect=CallerCredentialRequiredError("early send failure")):
+        with pytest.raises(CallerCredentialRequiredError, match="early send failure"):
+            await test_openai_target_sends_each_callers_own_key_concurrently_async(store)

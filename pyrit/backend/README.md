@@ -53,6 +53,15 @@ through the target fail
 with `CallerCredentialRequiredError`, and nothing falls back to the server's environment keys,
 managed identity, or SDK login.
 
+Dynamic-key LiteLLM targets require an explicit `openai/` model name. Other provider routes,
+including Vertex, are rejected because a generic API key does not establish their authentication
+contract. Configure those shared targets through an initializer instead. Dynamic token providers
+cannot be combined with static authentication headers or provider-routing overrides; the resolved
+key remains authoritative after request-body passthrough merging.
+Passthrough options in this mode are restricted to generation parameters and non-authentication
+headers. Global LiteLLM fallbacks, aliases for the selected model, and static authentication
+headers are rejected rather than allowed to change how the caller authenticates.
+
 ```http
 POST /api/targets
 {"name": "team-gpt", "type": "OpenAIChatTarget",
@@ -74,9 +83,11 @@ DELETE /api/targets/team-gpt
   that caller's credentials. Resuming or replaying a run uses the credential of whoever resumes it.
 - Replacing a credential applies to the caller's next request through the target, including in
   work that is already running. A request that was already sent finishes with the old value.
-- Only the caller who created a target through the API can delete it. Deleting it forgets every
-  caller's credential for it; running work keeps its target object, but its later requests fail.
-  Neither deletion nor removal revokes the credential at the provider.
+- Only the caller who created a target through the API can delete it. Deletion returns **409**
+  while runtime work is active. Once idle, new runtime requests are blocked until the target's
+  clients and connections have been closed; successful deletion then forgets every caller's
+  credential for it. Cleanup failure keeps the registered target and credentials available for
+  retry. Neither deletion nor credential removal revokes the credential at the provider.
 - Credentials are lost when the backend restarts or reinitializes, and are kept in one process:
   `PUT /api/targets/{id}/credentials` returns **409** when the deployment runs more than one
   backend worker or replica.

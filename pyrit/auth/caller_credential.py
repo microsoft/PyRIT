@@ -17,11 +17,29 @@ context must be given its own principal with ``caller_principal_context``.
 
 import contextvars
 import threading
-from collections.abc import Awaitable, Callable, Generator
+from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextlib import contextmanager
 from typing import NoReturn
 
 _caller_principal: contextvars.ContextVar[str | None] = contextvars.ContextVar("pyrit_caller_principal", default=None)
+
+
+def validate_token_provider_headers(headers: Mapping[str, object] | None) -> None:
+    """
+    Reject static authentication that could replace a token provider's credential.
+
+    Raises:
+        ValueError: If headers are invalid or contain static authentication.
+    """
+    if headers is None:
+        return
+    if not isinstance(headers, Mapping):
+        raise ValueError("Headers used with a token provider must be a mapping.")
+    if any(
+        name.lower() in {"authorization", "proxy-authorization", "api-key", "x-api-key", "x-goog-api-key"}
+        for name in headers
+    ):
+        raise ValueError("Static authentication headers cannot be combined with a token provider.")
 
 
 class CallerCredentialRequiredError(RuntimeError):

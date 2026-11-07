@@ -22,7 +22,7 @@ from openai._exceptions import (
     AuthenticationError,
 )
 
-from pyrit.auth import resolve_openai_auth
+from pyrit.auth import resolve_openai_auth, validate_token_provider_headers
 from pyrit.common import default_values
 from pyrit.exceptions.exception_classes import (
     RateLimitException,
@@ -464,6 +464,8 @@ class OpenAITarget(PromptTarget):
         httpx_kwargs = self._httpx_client_kwargs.copy()
         if self._headers:
             httpx_kwargs.setdefault("default_headers", {}).update(self._headers)
+        if callable(self._api_key):
+            validate_token_provider_headers(httpx_kwargs.get("default_headers"))
 
         # Determine if this is Azure OpenAI based on the endpoint
         is_azure = "azure" in self._endpoint.lower() if self._endpoint else False

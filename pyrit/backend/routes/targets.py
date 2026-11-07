@@ -197,6 +197,7 @@ async def get_target(
     responses={
         403: {"model": ProblemDetail, "description": "Only the caller who created the target can delete it"},
         404: {"model": ProblemDetail, "description": "Target not found"},
+        409: {"model": ProblemDetail, "description": "Runtime work is active"},
     },
 )
 async def delete_target(
@@ -206,8 +207,8 @@ async def delete_target(
     """
     Delete a target the caller created through the API.
 
-    Every caller's credential for the target is forgotten. Running work keeps its object, but
-    its later requests fail. Upstream credentials are not revoked.
+    Deletion requires an idle runtime. Target resources are closed before every caller's
+    credential is forgotten. Upstream credentials are not revoked.
 
     Returns:
         Response: An empty 204 response.

@@ -6,7 +6,7 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import Request, status
@@ -205,6 +205,26 @@ async def test_recreated_name_never_inherits_old_credentials_async(service: Targ
         await _resolve_as_async(old_target, caller=_BOB)
 
 
+async def test_delete_target_releases_owned_resources_async(service: TargetService) -> None:
+    await _create_async(service, caller=_ALICE)
+    target = service.get_target_object(target_registry_name="shared")
+    with patch.object(target, "cleanup_target_async", new_callable=AsyncMock) as cleanup:
+        assert await service.delete_target_async(target_registry_name="shared", caller=_ALICE)
+    cleanup.assert_awaited_once()
+
+
+async def test_delete_target_retains_ownership_when_cleanup_fails_async(service: TargetService) -> None:
+    await _create_async(service, caller=_ALICE)
+    target = service.get_target_object(target_registry_name="shared")
+    with patch.object(
+        target, "cleanup_target_async", new_callable=AsyncMock, side_effect=RuntimeError("cleanup failed")
+    ):
+        with pytest.raises(RuntimeError, match="cleanup failed"):
+            await service.delete_target_async(target_registry_name="shared", caller=_ALICE)
+    assert service.get_target_object(target_registry_name="shared") is target
+    assert await _resolve_as_async(target, caller=_ALICE) == _ALICE_KEY
+
+
 async def test_initializer_targets_cannot_be_deleted_through_the_api_async(service: TargetService) -> None:
     service._registry.instances.register(OpenAIChatTarget(**_TARGET_PARAMS, api_key="server-key"), name="configured")
 
@@ -388,6 +408,7 @@ def test_rest_set_credential_requires_one_backend_process(client: TestClient, ca
         is_stopping=False,
         state="ready",
         topology_supported=False,
+        target_cleanup_active=False,
         operations=set(),
         management_operations=set(),
         apply_task=None,

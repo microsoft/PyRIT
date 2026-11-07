@@ -643,8 +643,8 @@ class TargetService:
         """
         Unregister a target its caller created through the API, and forget all callers' credentials for it.
 
-        Work that already holds the target keeps its object, but its later requests fail because the
-        credentials are gone. The target's client is not closed, since running work may still use it.
+        The API admission barrier requires an idle runtime and blocks new work until cleanup
+        finishes. Direct service callers must provide the same exclusive ownership.
 
         Args:
             target_registry_name: The registry name of the target.
@@ -661,6 +661,7 @@ class TargetService:
             return False
         if caller is None or entry.metadata.get(self.CREATED_BY_METADATA_KEY) != caller:
             raise PermissionError("Only the caller who created this target through the API can delete it.")
+        await release_component_async(entry.instance)
         if self._registry.instances.unregister(target_registry_name, expected_entry=entry) is None:
             return False
         credential_id = entry.metadata.get(self.CALLER_CREDENTIAL_ID_METADATA_KEY)

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         caller_principal_scope,
         create_caller_credential_provider,
         get_caller_principal,
+        validate_token_provider_headers,
     )
     from pyrit.auth.copilot_authenticator import CopilotAuthenticator
     from pyrit.auth.manual_copilot_authenticator import ManualCopilotAuthenticator
@@ -52,6 +53,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "caller_principal_scope": "pyrit.auth.caller_credential",
     "create_caller_credential_provider": "pyrit.auth.caller_credential",
     "get_caller_principal": "pyrit.auth.caller_credential",
+    "validate_token_provider_headers": "pyrit.auth.caller_credential",
     "CopilotAuthenticator": "pyrit.auth.copilot_authenticator",
     "ManualCopilotAuthenticator": "pyrit.auth.manual_copilot_authenticator",
     "resolve_openai_auth": "pyrit.auth.openai_auth",

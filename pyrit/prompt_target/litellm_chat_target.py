@@ -7,7 +7,7 @@ import os
 from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
 from typing import Any, ClassVar, NoReturn, cast
 
-from pyrit.auth import ensure_async_token_provider
+from pyrit.auth import ensure_async_token_provider, validate_token_provider_headers
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -208,6 +208,44 @@ class LiteLLMChatTarget(PromptTarget):
 
     # A callable ``api_key`` is resolved before every send and passed to LiteLLM as a string key.
     caller_credential_parameter: ClassVar[str | None] = "api_key"
+    _TOKEN_PROVIDER_PASSTHROUGH = frozenset(
+        {
+            "api_key",
+            "headers",
+            "extra_headers",
+            "extra_body",
+            "timeout",
+            "drop_params",
+            "num_retries",
+            "response_format",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "reasoning_effort",
+            "verbosity",
+            "logprobs",
+            "top_logprobs",
+            "max_completion_tokens",
+            "user",
+            "metadata",
+            "store",
+            "stream",
+            "stream_options",
+            "prediction",
+            "service_tier",
+            "safety_identifier",
+            "modalities",
+            "audio",
+            "temperature",
+            "top_p",
+            "max_tokens",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+            "n",
+            "stop",
+        }
+    )
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,
@@ -292,6 +330,7 @@ class LiteLLMChatTarget(PromptTarget):
             extra_body_parameters = {**audio_params, **extra_body_parameters} if extra_body_parameters else audio_params
 
         self._extra_body_parameters = extra_body_parameters
+        self._validate_token_provider_options()
 
         # Delegate transient/rate-limit retry to LiteLLM (provider-aware: honors ``Retry-After``
         # and per-provider rate-limit semantics), rather than stacking PyRIT's
@@ -310,6 +349,21 @@ class LiteLLMChatTarget(PromptTarget):
                 derived = self._derive_capabilities_from_litellm(resolved_model)
                 if derived is not None:
                     self._configuration = TargetConfiguration(capabilities=derived)
+
+    def _validate_token_provider_options(self) -> None:
+        if not callable(self._api_key):
+            return
+        if not self._model_name.startswith("openai/"):
+            raise ValueError(
+                "A token provider requires an explicit openai/ model; other provider routes are unsupported."
+            )
+        options = self._extra_body_parameters or {}
+        if options.keys() - self._TOKEN_PROVIDER_PASSTHROUGH:
+            raise ValueError(
+                "Only generation parameters and non-authentication headers may accompany a token provider."
+            )
+        for headers in (self._headers, options.get("headers"), options.get("extra_headers")):
+            validate_token_provider_headers(headers)
 
     @staticmethod
     def _import_litellm() -> Any:
@@ -418,6 +472,15 @@ class LiteLLMChatTarget(PromptTarget):
     @limit_requests_per_minute
     async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
         litellm = self._import_litellm()
+        if callable(self._api_key):
+            aliases = getattr(litellm, "model_alias_map", {}) or {}
+            if (
+                getattr(litellm, "model_fallbacks", None) is not None
+                or self._model_name in aliases
+                or self._model_name.removeprefix("openai/") in aliases
+            ):
+                raise ValueError("Global LiteLLM fallback or alias routing cannot be combined with a token provider.")
+            validate_token_provider_headers(getattr(litellm, "headers", None))
 
         message = normalized_conversation[-1]
         request_piece: MessagePiece = message.message_pieces[0]
@@ -534,6 +597,13 @@ class LiteLLMChatTarget(PromptTarget):
         # Passthrough for arbitrary provider params (may override defaults above, e.g. drop_params).
         if self._extra_body_parameters:
             body.update(self._extra_body_parameters)
+        if callable(self._api_key):
+            self._validate_token_provider_options()
+            if not isinstance(api_key, str) or not api_key.strip():
+                raise ValueError("A token provider must return a nonempty API key.")
+            body["api_key"] = api_key
+            body["model"] = self._model_name.removeprefix("openai/")
+            body["custom_llm_provider"] = "openai"
 
         return {k: v for k, v in body.items() if v is not None}
 
