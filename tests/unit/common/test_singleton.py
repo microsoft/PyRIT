@@ -3,6 +3,7 @@
 
 import abc
 import threading
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -12,13 +13,13 @@ from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_singleton_instances():
+def _cleanup_singleton_instances() -> Iterator[None]:
     """Reset Singleton registry after each test to prevent cross-test pollution."""
     yield
     Singleton._instances.clear()
 
 
-def test_singleton_returns_same_instance():
+def test_singleton_returns_same_instance() -> None:
     class _MySingleton(abc.ABC, metaclass=Singleton):
         pass
 
@@ -27,7 +28,7 @@ def test_singleton_returns_same_instance():
     assert a is b
 
 
-def test_singleton_different_classes_have_different_instances():
+def test_singleton_different_classes_have_different_instances() -> None:
     class _A(abc.ABC, metaclass=Singleton):
         pass
 
@@ -39,7 +40,7 @@ def test_singleton_different_classes_have_different_instances():
     assert a is not b
 
 
-def test_singleton_preserves_init_args():
+def test_singleton_preserves_init_args() -> None:
     class _Configured(abc.ABC, metaclass=Singleton):
         def __init__(self, value: int = 0) -> None:
             self.value = value
@@ -50,7 +51,7 @@ def test_singleton_preserves_init_args():
     assert second.value == 42
 
 
-def test_singleton_concurrent_first_calls_construct_once():
+def test_singleton_concurrent_first_calls_construct_once() -> None:
     """Concurrent first calls construct exactly one instance."""
     first_entered = threading.Event()
     second_entered = threading.Event()
@@ -105,9 +106,7 @@ def test_singleton_concurrent_first_calls_construct_once():
             # attempt (rather than a fixed sleep) also covers delayed worker
             # startup: the test proceeds only once the second call is
             # actually in flight and blocked on the lock.
-            assert acquire_attempted.wait(timeout=TEST_WATCHDOG_SECONDS), (
-                "Second caller did not reach lock acquisition"
-            )
+            assert acquire_attempted.wait(timeout=TEST_WATCHDOG_SECONDS), "Second caller did not reach lock acquisition"
             assert not second_entered.is_set(), "Second construction entered while the first was gated"
         finally:
             release.set()
@@ -118,13 +117,13 @@ def test_singleton_concurrent_first_calls_construct_once():
     assert a is b
 
 
-def test_singleton_construction_from_init_subclass():
+def test_singleton_construction_from_init_subclass() -> None:
     """A base class __init_subclass__ hook can construct the singleton at class creation time."""
     # The hook runs inside Singleton.__new__ (via super().__new__), before
     # the class object is returned, so the per-class lock and flag must
     # already exist when the hook constructs the instance.
 
-    class _AutoRegister(abc.ABC):
+    class _AutoRegister:
         def __init_subclass__(cls, **kwargs: object) -> None:
             super().__init_subclass__(**kwargs)
             cls.instance = cls()
@@ -135,7 +134,7 @@ def test_singleton_construction_from_init_subclass():
     assert _Service.instance is _Service()
 
 
-def test_singleton_failed_construction_is_not_cached():
+def test_singleton_failed_construction_is_not_cached() -> None:
     """A failed construction is not cached, so the next call retries construction."""
     attempts = 0
 
@@ -154,8 +153,9 @@ def test_singleton_failed_construction_is_not_cached():
     assert _Flaky() is instance
 
 
-def test_singleton_subclass_has_own_instance():
+def test_singleton_subclass_has_own_instance() -> None:
     """A subclass of a singleton gets its own instance, isolated from the parent."""
+
     class _Parent(abc.ABC, metaclass=Singleton):
         pass
 
@@ -169,8 +169,9 @@ def test_singleton_subclass_has_own_instance():
     assert _Child() is child
 
 
-def test_singleton_nested_different_class_construction():
+def test_singleton_nested_different_class_construction() -> None:
     """Constructing one singleton inside another singleton's __init__ works."""
+
     class _Inner(abc.ABC, metaclass=Singleton):
         pass
 
@@ -183,8 +184,9 @@ def test_singleton_nested_different_class_construction():
     assert outer.inner is _Inner()
 
 
-def test_singleton_recursive_same_class_construction_raises():
+def test_singleton_recursive_same_class_construction_raises() -> None:
     """Recursive construction of the same class raises instead of deadlocking."""
+
     class _Recursive(abc.ABC, metaclass=Singleton):
         def __init__(self) -> None:
             _Recursive()
