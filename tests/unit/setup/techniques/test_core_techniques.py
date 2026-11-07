@@ -21,13 +21,10 @@ from pyrit.converter import (
     PromptTemplateConverter,
     TaskFramingConverter,
 )
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.executor.attack.core.attack_executor import AttackExecutor
+from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackSeedGroup, Message, MessagePiece, SeedGroupRequirements, SeedObjective, SeedPrompt
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 from pyrit.setup.initializers.techniques import airt, core, extra
 from tests.unit.mocks import MockPromptTarget
 

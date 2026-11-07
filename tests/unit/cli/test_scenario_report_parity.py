@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.cli._output import print_conversations_async, print_full_async
 from pyrit.memory import MemoryInterface
 from pyrit.models import (

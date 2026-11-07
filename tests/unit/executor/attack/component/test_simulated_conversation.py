@@ -10,15 +10,18 @@ import pytest
 from unit.mocks import get_mock_prompt_normalizer
 
 from pyrit.exceptions import AdversarialChatResponseBlockedException, InvalidJsonException
-from pyrit.executor.attack import AttackConverterConfig, RTASystemPromptPaths
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    RTASystemPromptPaths,
+    SimulatedConversationResult,
+    generate_simulated_conversation_async,
+)
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
 )
 from pyrit.executor.attack.multi_turn.simulated_conversation import (
-    SimulatedConversationResult,
     _generate_next_message_async,
-    generate_simulated_conversation_async,
 )
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
@@ -963,7 +966,7 @@ class TestGenerateSimulatedConversationAsync:
         sample_conversation: list[Message],
     ):
         """Test that next_message_system_prompt_path sets a system prompt on adversarial_chat."""
-        from pyrit.models.seeds import NextMessageSystemPromptPaths
+        from pyrit.models import NextMessageSystemPromptPaths
 
         conversation_id = str(uuid.uuid4())
 
@@ -1037,7 +1040,7 @@ class TestGenerateSimulatedConversationAsync:
         The ``_AdversarialConversationManager`` now owns this scoping, so the system prompt and the
         adversarial send it drives must share the same non-empty conversation id.
         """
-        from pyrit.models.seeds import NextMessageSystemPromptPaths
+        from pyrit.models import NextMessageSystemPromptPaths
 
         next_message_reply = Message.from_prompt(
             role="assistant",

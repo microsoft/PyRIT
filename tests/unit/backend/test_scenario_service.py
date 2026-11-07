@@ -18,14 +18,15 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
+from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.routes.scenarios import estimate_scenario_run_size
+from pyrit.backend.services import (
+    ScenarioService,
+    get_scenario_service,
+)
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_service import (
-    ScenarioService,
     _metadata_to_registered_scenario,
-    get_scenario_service,
 )
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
@@ -37,8 +38,8 @@ from pyrit.models import (
     ScenarioRunSizeEstimateRequest,
     ScenarioTechniqueSummary,
 )
-from pyrit.models.catalog.scenario import RegisteredScenario
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.models.catalog import RegisteredScenario
+from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
@@ -48,8 +49,8 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
     override_default_adversarial_target,
 )
-from pyrit.scenario.scenarios.airt.scam import Scam
-from pyrit.scenario.scenarios.garak.exploitation import Exploitation
+from pyrit.scenario.scenarios.airt import Scam
+from pyrit.scenario.scenarios.garak import Exploitation
 from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks
 from unit.mocks import MockPromptTarget, make_technique_class
@@ -1781,7 +1782,7 @@ class TestScenarioServiceGetScenario:
                 scenario_name="test.scenario",
                 request=ScenarioRunSizeEstimateRequest(dataset_names=["harmbench"], **limit_args),
             )
-        from pyrit.models.scenario_dataset import ScenarioDatasetOptions
+        from pyrit.models import ScenarioDatasetOptions
         from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 
         mapped = service._registry.create_and_estimate_async.await_args.kwargs["dataset_overrides"]

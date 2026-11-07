@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from pyrit.models import ComponentIdentifier
 from pyrit.output.scorer.json import JsonScorerMemoryPrinter, format_scorer_type, scorer_metrics_to_dict
-from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
+from pyrit.score import ObjectiveScorerMetrics
 
 
 def _scorer_identifier(
@@ -42,7 +42,7 @@ def _build(identifier: ComponentIdentifier, *, metrics=None) -> dict:
     printer = JsonScorerMemoryPrinter()
     with (
         patch("pyrit.models.ScorerEvaluationIdentifier") as mock_eval_id_cls,
-        patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash") as mock_find,
+        patch("pyrit.score.find_objective_metrics_by_eval_hash") as mock_find,
     ):
         mock_eval_id_cls.return_value = MagicMock(eval_hash="hash")
         mock_find.return_value = metrics
@@ -131,7 +131,7 @@ async def test_render_async_emits_valid_json_for_nan_metrics():
     printer = JsonScorerMemoryPrinter()
     with (
         patch("pyrit.models.ScorerEvaluationIdentifier") as mock_eval_id_cls,
-        patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash") as mock_find,
+        patch("pyrit.score.find_objective_metrics_by_eval_hash") as mock_find,
     ):
         mock_eval_id_cls.return_value = MagicMock(eval_hash="hash")
         mock_find.return_value = _objective_metrics(accuracy=float("nan"))
@@ -147,7 +147,7 @@ async def test_render_async_returns_valid_json():
     printer = JsonScorerMemoryPrinter()
     with (
         patch("pyrit.models.ScorerEvaluationIdentifier") as mock_eval_id_cls,
-        patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash") as mock_find,
+        patch("pyrit.score.find_objective_metrics_by_eval_hash") as mock_find,
     ):
         mock_eval_id_cls.return_value = MagicMock(eval_hash="hash")
         mock_find.return_value = _objective_metrics()

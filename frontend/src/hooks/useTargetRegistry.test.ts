@@ -15,6 +15,7 @@ const listTargets = jest.mocked(targetsApi.listTargets)
 const runtime = jest.mocked(useRuntime)
 const first = makeTarget({ target_registry_name: 'first' })
 const second = makeTarget({ target_registry_name: 'second' })
+const sdkTarget = makeTarget({ target_registry_name: 'demo', target_type: 'TextTarget' })
 
 describe('useTargetRegistry', () => {
   beforeEach(() => {
@@ -33,6 +34,46 @@ describe('useTargetRegistry', () => {
     expect(result.current.targets).toEqual([first, second])
     expect(result.current.isEmpty).toBe(false)
     expect(listTargets).toHaveBeenLastCalledWith(200, 'next')
+  })
+
+  it('skips SDK-only targets without losing the remaining registry pages', async () => {
+    listTargets.mockResolvedValueOnce({
+      items: [sdkTarget], pagination: { limit: 200, has_more: true, next_cursor: 'after-demo' },
+    }).mockResolvedValueOnce({
+      items: [first], pagination: { limit: 200, has_more: false },
+    })
+    const { result } = renderHook(useTargetRegistry)
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.targets).toEqual([first])
+    expect(result.current.isEmpty).toBe(false)
+    expect(listTargets).toHaveBeenLastCalledWith(200, 'after-demo')
+  })
+
+  it('treats a registry containing only SDK targets as empty for GUI choices', async () => {
+    listTargets.mockResolvedValue({
+      items: [sdkTarget], pagination: { limit: 200, has_more: false },
+    })
+    const { result } = renderHook(useTargetRegistry)
+    await waitFor(() => expect(result.current.isEmpty).toBe(true))
+    expect(result.current.targets).toEqual([])
+  })
+
+  it('does not reintroduce an SDK-only target through updates or full synchronization', async () => {
+    let complete: ((response: Awaited<ReturnType<typeof targetsApi.listTargets>>) => void) | undefined
+    listTargets.mockReturnValueOnce(new Promise((resolve) => { complete = resolve }))
+    const { result } = renderHook(useTargetRegistry)
+    act(() => {
+      result.current.rememberTarget(first)
+      result.current.rememberTarget({ ...sdkTarget, target_registry_name: first.target_registry_name })
+    })
+    expect(result.current.targets).toEqual([])
+    await act(async () => {
+      if (!complete) throw new Error('Registry request did not start')
+      complete({ items: [first, second], pagination: { limit: 200, has_more: false } })
+    })
+    expect(result.current.targets).toEqual([second])
+    act(() => result.current.synchronizeTargets([sdkTarget, first]))
+    expect(result.current.targets).toEqual([first])
   })
 
   it('reports incomplete pagination and retries rather than using a partial registry', async () => {
