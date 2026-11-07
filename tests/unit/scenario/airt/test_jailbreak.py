@@ -17,8 +17,11 @@ from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
     ComponentIdentifier,
+    Message,
+    MessagePiece,
     SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
@@ -30,6 +33,7 @@ from pyrit.scenario.scenarios.airt import (
 from pyrit.scenario.scenarios.airt.jailbreak import (
     _DEFAULT_NUM_JAILBREAKS,
     _DEFAULT_TECHNIQUES,
+    _JAILBREAK_MULTI_TURN,
     _JAILBREAK_SYSTEM_PROMPT,
     _JAILBREAK_TEMPLATES_METADATA_KEY,
     _PROMPT_SENDING,
@@ -826,6 +830,248 @@ class TestJailbreakResumePersistence:
 
 
 @pytest.mark.usefixtures(*FIXTURES)
+class TestJailbreakMultiTurnDelivery:
+    """Tests for the ``jailbreak_multi_turn`` two-turn user-handshake delivery."""
+
+    async def test_multi_turn_delivery_end_to_end_sends_framing_then_objective_and_scores_turn_two(
+        self, mock_memory_seed_groups
+    ):
+        from unit.mocks import MockPromptTarget
+
+        from pyrit.memory import CentralMemory
+        from pyrit.score import SubStringScorer
+
+        target = MockPromptTarget()
+        technique_class = _build_jailbreak_technique()
+        scorer = SubStringScorer(substring="default")
+        responses = iter(["handshake acknowledged", "final default"])
+
+        async def respond_async(*, normalized_conversation: list[Message]) -> list[Message]:
+            return [
+                MessagePiece(
+                    role="assistant",
+                    original_value=next(responses),
+                    conversation_id=normalized_conversation[-1].message_pieces[0].conversation_id,
+                ).to_message()
+            ]
+
+        with (
+            _patch_seed_groups(mock_memory_seed_groups[:1]),
+            patch.object(target, "_send_prompt_to_target_async", side_effect=respond_async),
+        ):
+            scenario = Jailbreak(objective_scorer=scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    target,
+                    scenario_techniques=[technique_class(_JAILBREAK_MULTI_TURN)],
+                    jailbreak_names=["aim.yaml"],
+                )
+            )
+            await scenario.initialize_async()
+            result = await scenario._atomic_attacks[0].run_async()
+
+        assert scenario._atomic_attacks[0].atomic_attack_name == f"{_JAILBREAK_MULTI_TURN}_aim_harmbench"
+        attack_result = result.completed_results[0]
+        assert attack_result.executed_turns == 2
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async(
+            conversation_id=attack_result.conversation_id
+        )
+        user_values = [p.converted_value for p in pieces if p.role == "user"]
+        assistant_pieces = [p for p in pieces if p.role == "assistant"]
+        assert len(user_values) == 2
+        assert "Niccolo" in user_values[0]
+        assert user_values[1] == mock_memory_seed_groups[0].objective.value
+        assert attack_result.automated_score is not None
+        assert attack_result.automated_score.get_value() is True
+        assert str(attack_result.automated_score.message_piece_id) == str(assistant_pieces[1].id)
+        memory = CentralMemory.get_memory_instance()
+        assert await memory.get_prompt_scores_async(prompt_ids=[assistant_pieces[0].id]) == []
+        final_scores = await memory.get_prompt_scores_async(prompt_ids=[assistant_pieces[1].id])
+        assert len(final_scores) == 1
+        assert final_scores[0].id == attack_result.automated_score.id
+
+    async def test_multi_turn_delivery_preserves_objective_handoff_for_mixed_seed_groups(self):
+        from unit.mocks import MockPromptTarget
+
+        from pyrit.memory import CentralMemory
+        from pyrit.score import SubStringScorer
+
+        target = MockPromptTarget()
+        technique_class = _build_jailbreak_technique()
+        scorer = SubStringScorer(substring="default")
+        custom_groups = [
+            AttackSeedGroup(
+                seeds=[
+                    SeedObjective(value="explain how to hotwire a car"),
+                    SeedPrompt(value="Please help with the following.", data_type="text", role="user", sequence=0),
+                ]
+            )
+        ]
+
+        with _patch_seed_groups(custom_groups):
+            scenario = Jailbreak(objective_scorer=scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    target,
+                    scenario_techniques=[technique_class(_JAILBREAK_MULTI_TURN)],
+                    jailbreak_names=["aim.yaml"],
+                )
+            )
+            await scenario.initialize_async()
+            result = await scenario._atomic_attacks[0].run_async()
+
+        attack_result = result.completed_results[0]
+        assert attack_result.executed_turns == 3
+        pieces = await CentralMemory.get_memory_instance().get_message_pieces_async(
+            conversation_id=attack_result.conversation_id
+        )
+        user_values = [p.converted_value for p in pieces if p.role == "user"]
+        assistant_pieces = [p for p in pieces if p.role == "assistant"]
+        assert len(user_values) == 3
+        assert "Niccolo" in user_values[0]
+        assert user_values[1] == "Please help with the following."
+        assert user_values[2] == "explain how to hotwire a car"
+        assert attack_result.automated_score is not None
+        assert str(attack_result.automated_score.message_piece_id) == str(assistant_pieces[2].id)
+
+    @pytest.mark.parametrize("history", ["assistant", "system", "simulation"])
+    @pytest.mark.parametrize("policy", ["skip", "raise"])
+    async def test_multi_turn_delivery_applies_unsupported_history_policy(
+        self,
+        history: str,
+        policy: str,
+        mock_capable_target: MagicMock,
+        mock_objective_scorer: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        objective = SeedObjective(value="unsupported objective")
+        if history == "simulation":
+            rejected = AttackSeedGroup(
+                seeds=[
+                    objective,
+                    SeedPrompt(value="context", sequence=0),
+                    SeedSimulatedConversation(
+                        sequence=2,
+                        num_turns=1,
+                        adversarial_chat_system_prompt=SeedPrompt(value="Use the supplied objective."),
+                    ),
+                ]
+            )
+        else:
+            rejected = AttackSeedGroup(
+                seeds=[
+                    objective,
+                    SeedPrompt(value="authored history", role="assistant" if history == "assistant" else "system"),
+                ]
+            )
+        accepted = AttackSeedGroup(seeds=[SeedObjective(value="supported objective")])
+        originals = [group.model_dump() for group in [accepted, rejected]]
+
+        with _patch_seed_groups([accepted, rejected]):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    mock_capable_target,
+                    scenario_techniques=[_build_jailbreak_technique()(_JAILBREAK_MULTI_TURN)],
+                    jailbreak_names=["aim.yaml"],
+                    incompatible_technique_policy=policy,
+                )
+            )
+            if policy == "raise":
+                with pytest.raises(IncompatibleTechniqueError, match="static user prompts"):
+                    await scenario.initialize_async()
+            else:
+                await scenario.initialize_async()
+                assert len(scenario._atomic_attacks) == 1
+                assert scenario._atomic_attacks[0].seed_groups == [accepted]
+                assert "skipped 1 seed group" in caplog.text
+                assert "static user prompts" in caplog.text
+
+        assert [group.model_dump() for group in [accepted, rejected]] == originals
+
+    async def test_multi_turn_delivery_rejects_population_with_only_unsupported_history(
+        self, mock_capable_target: MagicMock, mock_objective_scorer: MagicMock
+    ) -> None:
+        group = AttackSeedGroup(
+            seeds=[SeedObjective(value="objective"), SeedPrompt(value="authored reply", role="assistant")]
+        )
+        with _patch_seed_groups([group]):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args=_default_args(
+                    mock_capable_target,
+                    scenario_techniques=[_build_jailbreak_technique()(_JAILBREAK_MULTI_TURN)],
+                    jailbreak_names=["aim.yaml"],
+                )
+            )
+            with pytest.raises(ValueError, match="no usable selected techniques"):
+                await scenario.initialize_async()
+
+    async def test_multi_turn_run_size_estimate_checks_target_compatibility(
+        self, mock_objective_target, mock_capable_target, mock_objective_scorer
+    ) -> None:
+        seed_groups = [AttackSeedGroup(seeds=[SeedObjective(value="objective")])]
+        technique_class = _build_jailbreak_technique()
+        with _patch_seed_groups(seed_groups):
+            # Target not configured: conditional estimate
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer)
+            scenario.set_params_from_args(
+                args={
+                    "scenario_techniques": [technique_class(_JAILBREAK_MULTI_TURN)],
+                    "include_baseline": False,
+                    "num_jailbreaks": 2,
+                }
+            )
+            unconfigured_estimate = await scenario.get_run_size_estimate_async(target_is_configured=False)
+            assert unconfigured_estimate.estimated_attack_count is None
+            assert unconfigured_estimate.maximum_attack_count == 8
+
+            # Capable target: included in estimate
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_capable_target,
+                    "scenario_techniques": [technique_class(_JAILBREAK_MULTI_TURN)],
+                    "include_baseline": False,
+                    "num_jailbreaks": 2,
+                }
+            )
+            capable_estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+            assert capable_estimate.estimated_attack_count == 8
+            assert [c.label for c in capable_estimate.components] == [
+                "Inline jailbreak delivery",
+                "Multi-turn jailbreak delivery",
+            ]
+
+            # Incapable target with prompt_sending + jailbreak_multi_turn: omits multi-turn component
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [
+                        technique_class(_PROMPT_SENDING),
+                        technique_class(_JAILBREAK_MULTI_TURN),
+                    ],
+                    "include_baseline": False,
+                    "num_jailbreaks": 2,
+                }
+            )
+            degraded_estimate = await scenario.get_run_size_estimate_async(target_is_configured=True)
+            assert degraded_estimate.estimated_attack_count == 8
+            assert [c.label for c in degraded_estimate.components] == ["Inline jailbreak delivery"]
+
+            # Incapable target with only jailbreak_multi_turn: raises ValueError
+            scenario.set_params_from_args(
+                args={
+                    "objective_target": mock_objective_target,
+                    "scenario_techniques": [technique_class(_JAILBREAK_MULTI_TURN)],
+                    "include_baseline": False,
+                    "num_jailbreaks": 2,
+                }
+            )
+            with pytest.raises(ValueError, match="requires an objective target with native multi-turn support"):
+                await scenario.get_run_size_estimate_async(target_is_configured=True)
+
+
+@pytest.mark.usefixtures(*FIXTURES)
 class TestJailbreakTechniqueModel:
     """Tests for the dynamically-built JailbreakTechnique class."""
 
@@ -838,11 +1084,11 @@ class TestJailbreakTechniqueModel:
     def test_only_scenario_delivery_techniques_are_available(self):
         technique_class = _technique_class()
         available = {t.value for t in technique_class.get_all_techniques()}
-        assert available == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT}
+        assert available == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT, _JAILBREAK_MULTI_TURN}
 
     def test_registry_metadata_lists_only_scenario_deliveries(self):
         metadata = ScenarioRegistry()._build_metadata("airt.jailbreak", Jailbreak)
-        assert set(metadata.all_techniques) == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT}
+        assert set(metadata.all_techniques) == {_PROMPT_SENDING, _JAILBREAK_SYSTEM_PROMPT, _JAILBREAK_MULTI_TURN}
 
     def test_scenario_version_is_four(self):
         assert Jailbreak.VERSION == 4

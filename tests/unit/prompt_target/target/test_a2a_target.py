@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 from pyrit.exceptions import EmptyResponseException
 from pyrit.models import Message, MessagePiece
@@ -898,7 +899,7 @@ async def test_a2a_poll_deadline_bounds_retry_after(mock_send: AsyncMock) -> Non
         httpx.Response(429, headers={"Retry-After": "3600"}, request=httpx.Request("POST", ENDPOINT)),
     ]
     target = A2ATarget(endpoint=ENDPOINT, task_timeout_seconds=0.02, poll_interval_seconds=0)
-    async with asyncio.timeout(5):
+    async with asyncio.timeout(TEST_WATCHDOG_SECONDS):
         with pytest.raises(TimeoutError, match="TASK_STATE_WORKING"):
             await target.send_prompt_async(message=_user_message())
     assert mock_send.call_count == 2

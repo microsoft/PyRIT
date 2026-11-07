@@ -933,7 +933,9 @@ class TestDeriveEvalConfig:
 
         assert root_unwrap == "targets"
         assert own_rule is not None
-        assert own_rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert own_rule.included_params == frozenset(
+            {"underlying_model_name", "temperature", "top_p", "http_request_fingerprint"}
+        )
         assert own_rule.param_fallbacks == {"underlying_model_name": "model_name"}
         # The wrapper passthrough slot is also surfaced as a child rule.
         assert child_rules["targets"].inner_child_name == "targets"
@@ -948,7 +950,7 @@ class TestDeriveEvalConfig:
         assert own_rule is None
         assert root_unwrap is None
         assert child_rules["prompt_target"].included_params == frozenset(
-            {"underlying_model_name", "temperature", "top_p"}
+            {"underlying_model_name", "temperature", "top_p", "http_request_fingerprint"}
         )
 
     def test_objective_target_slot_restricted_to_temperature(self):
