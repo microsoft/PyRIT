@@ -35,18 +35,19 @@ describe('useAttackFindings', () => {
   })
 
   it('should keep findings visible while a refresh reloads them', async () => {
-    jest.mocked(attacksApi.getAttackFindings).mockResolvedValueOnce({ attack_result_id: 'attack-1', items: [] })
+    jest.mocked(attacksApi.getAttackFindings).mockResolvedValueOnce({ attack_result_id: 'attack-1', items: [FINDING] })
     const { result } = renderHook(() => useAttackFindings('attack-1'))
     await waitFor(() => { expect(result.current.loading).toBe(false) })
+    expect(result.current.findings).toEqual([FINDING])
 
     let resolve: (value: { attack_result_id: string; items: AttackFindingItem[] }) => void = () => {}
     jest.mocked(attacksApi.getAttackFindings).mockReturnValueOnce(new Promise((complete) => { resolve = complete }))
     act(() => { result.current.refresh() })
     expect(result.current.loading).toBe(true)
-    expect(result.current.findings).toEqual([])
-
-    await act(async () => { resolve({ attack_result_id: 'attack-1', items: [FINDING] }) })
     expect(result.current.findings).toEqual([FINDING])
+
+    await act(async () => { resolve({ attack_result_id: 'attack-1', items: [] }) })
+    expect(result.current.findings).toEqual([])
     expect(attacksApi.getAttackFindings).toHaveBeenCalledTimes(2)
   })
 

@@ -63,7 +63,7 @@ describe('OutcomeBadge', () => {
         scorer: 'objective', scoreType: 'true_false', value: 'true', rationale: 'The objective was met.', isObjective: true,
       }} />
     </TestWrapper>)
-    await user.click(screen.getByRole('button', { name: 'View score for First objective' }))
+    await user.click(screen.getByRole('button', { name: 'True: View score for First objective' }))
     expect(await screen.findByText('Score details')).toBeInTheDocument()
     expect(screen.getByText('The objective was met.')).toBeInTheDocument()
   })
@@ -73,8 +73,33 @@ describe('OutcomeBadge', () => {
     render(<TestWrapper>
       <OutcomeBadge outcome="error" score={null} scoreFallback="The attack ended before a score was saved." />
     </TestWrapper>)
-    await user.click(screen.getByRole('button', { name: 'View score' }))
+    await user.click(screen.getByRole('button', { name: 'error: View score' }))
     expect(await screen.findByText('The attack ended before a score was saved.')).toBeInTheDocument()
+  })
+
+  it.each<[AttackDisplayOutcome | null | undefined, string]>([
+    ['success', 'Success'],
+    ['failure', 'Failure'],
+    ['error', 'Error'],
+    ['undetermined', 'Undetermined'],
+    ['in_progress', 'In progress'],
+    ['preparing', 'Preparing'],
+    [null, 'Undetermined'],
+    [undefined, 'Undetermined'],
+  ])('keeps the displayed %s outcome in the score action name', (
+    outcome: AttackDisplayOutcome | null | undefined, label: string,
+  ) => {
+    render(<TestWrapper>
+      <OutcomeBadge outcome={outcome} labelStyle="outcome" scoreFallback="No score saved." />
+    </TestWrapper>)
+    expect(screen.getByRole('button', { name: `${label}: View score`, exact: true })).toHaveTextContent(label)
+  })
+
+  it('keeps a custom displayed outcome in the score action name', () => {
+    render(<TestWrapper>
+      <OutcomeBadge outcome="failure" label="Not achieved" scoreFallback="No score saved." />
+    </TestWrapper>)
+    expect(screen.getByRole('button', { name: 'Not achieved: View score', exact: true })).toHaveTextContent('Not achieved')
   })
 })
 
