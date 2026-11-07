@@ -62,6 +62,10 @@ class StaticPromptInjectionScorer(RegexScorer):
             r"(?i)(?:\[/?INST\]|<</?SYS>>|<\|im_start\|>|<\|im_end\|>"
             r"|<\|start_header_id\|>|<\|end_header_id\|>|<\|eot_id\|>|<\|begin_of_text\|>"
             r"|<start_of_turn>|<end_of_turn>"
+            r"|<\|(?:START_OF_TURN_TOKEN|END_OF_TURN_TOKEN|SYSTEM_TOKEN|USER_TOKEN|CHATBOT_TOKEN)\|>"
+            r"|<(?:｜|\|)(?:begin of sentence|end of sentence|User|Assistant|Thought|"
+            r"tool calls (?:begin|end)|tool outputs (?:begin|end))(?:｜|\|)>"
+            r"|\[/?(?:AVAILABLE_TOOLS|TOOL_CALLS|TOOL_RESULTS)\]"
             r"|<\|system\|>|<\|user\|>|<\|assistant\|>|<\|endoftext\|>|<\|end\|>"
             r"|<\|pad\|>)"
         ),
