@@ -1799,8 +1799,8 @@ describe('App draft handoff with the real chat and composer', () => {
       const promptInput = screen.getAllByPlaceholderText('Type prompt here')[0]
       await user.type(promptInput, ' modified')
 
-      // Attempt navigation to Datasets
-      await user.click(await screen.findByRole('button', { name: 'Datasets', exact: true }))
+      // Other workspaces still require explicit discard.
+      await user.click(await screen.findByRole('button', { name: 'Scanner', exact: true }))
 
       // Confirmation dialog opens
       expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
@@ -1810,7 +1810,7 @@ describe('App draft handoff with the real chat and composer', () => {
       await user.click(screen.getByRole('button', { name: 'Keep editing' }))
       expect(screen.queryByRole('dialog', { name: 'Discard conversation draft?' })).not.toBeInTheDocument()
       expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
-      expect(screen.queryByRole('heading', { name: 'Datasets' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Scanner launch' })).not.toBeInTheDocument()
       expect(screen.getByDisplayValue('Original turn 1 modified')).toBeInTheDocument()
     })
 
@@ -1836,19 +1836,42 @@ describe('App draft handoff with the real chat and composer', () => {
       const promptInput = screen.getAllByPlaceholderText('Type prompt here')[0]
       await user.type(promptInput, ' modified')
 
-      // Attempt navigation to Datasets
-      await user.click(await screen.findByRole('button', { name: 'Datasets', exact: true }))
+      // Other workspaces still require explicit discard.
+      await user.click(await screen.findByRole('button', { name: 'Scanner', exact: true }))
       expect(await screen.findByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
 
-      // Choosing "Discard draft" completes navigation to Datasets
+      // Choosing "Discard draft" completes navigation to Scanner
       await user.click(screen.getByRole('button', { name: 'Discard draft' }))
-      await screen.findByRole('heading', { name: 'Datasets' })
+      await screen.findByRole('heading', { name: 'Scanner launch' })
 
       // Navigating back to Chat confirms editor is closed and dirty draft was cleared
       await returnToChat(user)
       expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument()
       expect(screen.getByText('Original turn 1')).toBeInTheDocument()
       expect(screen.queryByText('Original turn 1 modified')).not.toBeInTheDocument()
+    })
+
+    it('preserves a normal editor draft while browsing datasets without requiring discard', async () => {
+      const user = userEvent.setup()
+      const source: BackendMessage[] = [{
+        turn_number: 0, role: 'user', created_at: '2026-01-01T00:00:00Z',
+        message_pieces: [{ id: 'p1', original_value_data_type: 'text', original_value: 'Original turn',
+          converted_value_data_type: 'text', converted_value: 'Original turn', scores: [], response_error: 'none' }],
+      }]
+      jest.mocked(attacksApi.getMessages).mockResolvedValue({ conversation_id: 'main', messages: source, target_response_status: null })
+      renderChat('/attacks/saved/conversations/main')
+      await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+      await user.click(screen.getByRole('button', { name: 'Edit Conversation', exact: true }))
+      await screen.findByRole('region', { name: 'Message 1' })
+      await user.type(screen.getAllByPlaceholderText('Type prompt here')[0], ' edited')
+      await user.click(screen.getByRole('button', { name: 'Datasets', exact: true }))
+      await screen.findByRole('heading', { name: 'Datasets' })
+      expect(screen.queryByRole('dialog', { name: 'Discard conversation draft?' })).not.toBeInTheDocument()
+      await returnToChat(user)
+      expect(await screen.findByTestId('conversation-editor')).toBeInTheDocument()
+      expect(screen.getByDisplayValue('Original turn edited')).toBeInTheDocument()
+      expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+      expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
     })
 
     it('preserves imported conversation edits across navigation without losing unsaved content', async () => {

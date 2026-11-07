@@ -120,7 +120,7 @@ function seedListCalls(): unknown[][] {
   return mockGet.mock.calls.filter((call) => call[0] === '/datasets/seeds')
 }
 
-function renderBrowser(search = '', state?: unknown, activeAttackId?: string) {
+function renderBrowser(search = '', state?: unknown, activeAttackId?: string | null) {
   const path = `/datasets/detail?selection_key=${encodeURIComponent(DATASET.selection_key)}${search}`
   const url = new URL(path, 'http://localhost')
   return render(
@@ -132,7 +132,7 @@ function renderBrowser(search = '', state?: unknown, activeAttackId?: string) {
   )
 }
 
-function Harness({ dataset, activeAttackId }: { dataset: DatasetInfo; activeAttackId?: string }) {
+function Harness({ dataset, activeAttackId }: { dataset: DatasetInfo; activeAttackId?: string | null }) {
   const location = useLocation()
   const navigate = useNavigate()
   const handoff = useChatDraftHandoff()
@@ -145,6 +145,10 @@ function Harness({ dataset, activeAttackId }: { dataset: DatasetInfo; activeAtta
         <Route path="/away" element={<h1>Another page</h1>} />
       </Routes>
       <output aria-label="Current URL">{`${location.pathname}${location.search}`}</output>
+      <button onClick={() => handoff.preserveDraft({
+        originatingAttackId: 'unrelated-attack', originatingConversationId: 'unrelated-conversation',
+        draft: { text: 'Unrelated draft', attachments: [] },
+      })}>Preserve unrelated destination</button>
       <output aria-label="Pending import">{handoff.pendingImport ? 'waiting' : 'none'}</output>
       <button onClick={() => navigate('/away')}>Leave examples</button>
       <output aria-label="Catalog return">{
@@ -246,6 +250,16 @@ describe('SeedExampleBrowser', () => {
       expect(screen.getByLabelText('Pending import')).toHaveTextContent('none')
     },
   )
+
+  it('does not infer a saved destination when the route explicitly has no Chat origin', async () => {
+    const user = userEvent.setup()
+    renderBrowser('&example=example-1', undefined, null)
+    await screen.findByRole('heading', { level: 2, name: 'alpha' })
+    await user.click(screen.getByRole('button', { name: 'Preserve unrelated destination' }))
+    await user.click(screen.getByTestId('import-into-chat-button'))
+    expect(screen.getByTestId('import-current-conversation-item')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByTestId('import-new-conversation-item')).toHaveAttribute('aria-disabled', 'true')
+  })
 
   it('should retain visible examples, open detail, focus and URL through a failed background check and recovery', async () => {
     jest.useFakeTimers({ advanceTimers: true })

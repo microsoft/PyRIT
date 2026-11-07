@@ -129,6 +129,8 @@ interface ChatInputAreaProps {
   onUseAsTemplate?: () => void
   attackOperator?: string
   onConfigureTarget?: () => void
+  onBrowseSeedPrompts?: () => void
+  showSeedInspiration?: boolean
   onToggleConverterPanel: () => void
   isConverterPanelOpen: boolean
   onInputChange: (value: string) => void
@@ -156,6 +158,7 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
   onSend, conversionRevisionKey = '', disabled = false, fileDropEnabled = true, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
   operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
+  onBrowseSeedPrompts, showSeedInspiration = false,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
   convertedValue, onClearConversion, onClearAllConversions, onConvertedValueChange,
   converterOutputDataTypes = [], mediaConversions = [], onClearMediaConversion, convertedFileChip,
@@ -283,6 +286,15 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
 
   return <div className={styles.root}>
     <div className={styles.inputContainer}>
+      {showSeedInspiration && onBrowseSeedPrompts && (
+        <div className={styles.seedInspiration} data-testid="seed-inspiration-callout">
+          <Text size={200}>Need inspiration? Browse seed prompts already loaded in memory.</Text>
+          <Button appearance="subtle" className={styles.touchTarget} onClick={onBrowseSeedPrompts}
+            data-testid="browse-seed-prompts-btn">
+            Browse seed prompts
+          </Button>
+        </div>
+      )}
       {isTargetResolutionBlocking(targetResolutionStatus) ? (
         <TargetResolutionBanner status={targetResolutionStatus} activeTarget={activeTarget} onRetry={onRetryTargetResolution}
           onConfigureTarget={onConfigureTarget} onUseAsTemplate={onUseAsTemplate} styles={styles} />
@@ -315,6 +327,10 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
               </Caption1>
             </div>}
             actions={<>
+              {onBrowseSeedPrompts && <Button appearance="subtle" className={styles.touchTarget}
+                aria-label="Browse seed prompts from composer" onClick={onBrowseSeedPrompts}>
+                Seed prompts
+              </Button>}
               <MultiSendSettings options={effectiveSendOptions} disabled={disabled || sendDisabled}
                 disabledReason={repeatDisabledReason} onChange={setSendOptions} />
               {activeTarget?.capabilities?.supports_multi_turn === false && <Tooltip

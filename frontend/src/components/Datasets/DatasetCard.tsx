@@ -51,6 +51,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
   const titleId = useId()
   const descriptionId = useId()
   const catalogPath = `${location.pathname}${location.search}`
+  const inheritedState = location.state !== null && typeof location.state === 'object' ? location.state : {}
 
   return (
     <article
@@ -62,7 +63,7 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
         <h2 id={titleId} className={styles.title}>
           <Link
             to={datasetDetailPath(dataset.selection_key)}
-            state={{ catalogPath }}
+            state={{ ...inheritedState, catalogPath }}
             className={styles.cardLink}
             aria-describedby={descriptionId}
           >

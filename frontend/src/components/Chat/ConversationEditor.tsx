@@ -5,7 +5,7 @@ import {
   Field, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, MessageBar, MessageBarBody, Select, Text, Textarea, Tooltip,
 } from '@fluentui/react-components'
 import { AddRegular, AttachRegular, DismissRegular } from '@fluentui/react-icons'
-import { useBeforeUnload, useBlocker } from 'react-router'
+import { useBeforeUnload, useBlocker, type BlockerFunction } from 'react-router'
 
 import { usePieceConverters } from '@/hooks/useChatConverters'
 import type { useConversationDraft } from '@/hooks/useConversationDraft'
@@ -16,6 +16,7 @@ import type {
 import {
   NEW_MESSAGE_ROLES, draftAttachment, draftConverterInputs, editorTargetDisabledReason, unansweredToolCallId,
 } from '@/utils/conversationDraft'
+import { isDatasetsPath } from '@/utils/routeParams'
 import { basenameFromValue, buildMediaUrl, dataTypeToAttachmentKind, isPathDataType } from '@/utils/media'
 
 import PromptEditor from './PromptEditor'
@@ -193,10 +194,10 @@ export default function ConversationEditor({
   const { draft, saving, error, dirty, validationError, targetError, changePiece, changeAttachments, insert, addPiece } = controller
   const messages = useMemo(() => draft?.messages ?? [], [draft?.messages])
   const target = draft?.target
-  const shouldBlock = useCallback(() => {
-    if (blockNavigation === false) return false
+  const shouldBlock = useCallback<BlockerFunction>(({ nextLocation }) => {
+    if (blockNavigation === false || (!saving && isDatasetsPath(nextLocation.pathname))) return false
     return controller.shouldBlock()
-  }, [blockNavigation, controller])
+  }, [blockNavigation, controller, saving])
   const blocker = useBlocker(shouldBlock)
   useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
     if (controller.shouldBlock()) {

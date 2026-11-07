@@ -2643,7 +2643,12 @@ describe("App", () => {
     await user.click(screen.getByTestId("nav-datasets"));
     await waitFor(() => expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument());
     expect(screen.getByTestId("dataset-location")).toHaveTextContent("/datasets?filter=harmful");
-    expect(screen.getByTestId("dataset-state")).toHaveTextContent('{"catalogPath":"/datasets?filter=harmful","cursors":["cur-1"]}');
+    expect(JSON.parse(screen.getByTestId("dataset-state").textContent ?? '{}')).toEqual(expect.objectContaining({
+      catalogPath: "/datasets?filter=harmful", cursors: ["cur-1"],
+      chatOrigin: expect.objectContaining({
+        path: "/attack/chat/ar-nav-1/conversations/conv-nav-1", attackId: "ar-nav-1", conversationId: "conv-nav-1",
+      }),
+    }));
   });
 
   it("clearing draft text stays cleared after another round trip to datasets", async () => {
