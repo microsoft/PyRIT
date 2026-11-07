@@ -1750,10 +1750,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             if not supported_types:
                 supported_types.append("text")
 
-            scorer_validator = ScorerPromptValidator(
-                supported_data_types=supported_types,
-                is_objective_required=True,
-            )
+            scorer_validator = ScorerPromptValidator(supported_data_types=supported_types)
             default_scorer = FloatScaleThresholdScorer(
                 scorer=SelfAskScaleScorer.from_scale(
                     chat_target=self._adversarial_chat,

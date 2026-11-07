@@ -47,6 +47,25 @@ APP_INPUTS = {
     "PYRIT_KEY_VAULT_RESOURCE_ID": f"{RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/copyrit-kv",
     "PYRIT_ENV_SECRET_NAME": "pyrit-env",
 }
+JOB_TEMPLATE = {
+    "containers": [
+        {
+            "name": "pyrit-migrate",
+            "image": IMAGE,
+            "command": ["/app/start.sh"],
+            "args": ["original-argument"],
+            "env": [
+                {"name": "PYRIT_MODE", "value": "migrate"},
+                {"name": "PYRIT_ENV_AKV_REF", "value": "https://copyrit-kv.vault.azure.net/secrets/pyrit-env"},
+                {"name": "PYRIT_CONFIG_FILE", "secretRef": "config-file-uri"},
+            ],
+            "resources": {"cpu": 1.0, "memory": "2.0Gi"},
+            "volumeMounts": [{"volumeName": "data", "mountPath": "/data"}],
+        },
+        {"name": "sidecar", "image": "example.azurecr.io/sidecar:1", "args": ["unchanged"]},
+    ],
+    "volumes": [{"name": "data", "storageType": "EmptyDir"}],
+}
 
 
 def _find_bash() -> str | None:
@@ -354,13 +373,20 @@ printf '%s\\n' "$template_file" "$deployment_name" "${{parameters[@]}}"
                 assert parameters["allowedCidr"] == parameters["pyritConfigFileUri"] == ""
 
     def _run_migration(
-        self, *, statuses: list[str], attempts: int = 3, check_only: bool = False
+        self,
+        *,
+        statuses: list[str],
+        attempts: int = 3,
+        check_only: bool = False,
+        azure_failure: str = "",
+        job_template: dict[str, object] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         command = (
             "if schema_is_current; then echo current; else echo migration-needed; fi"
             if check_only
             else "run_database_migration"
         )
+        template_json = shlex.quote(json.dumps(JOB_TEMPLATE if job_template is None else job_template))
         return self._run(
             script="deploy_app.sh",
             inputs=APP_INPUTS | {"PYRIT_MIGRATION_POLL_ATTEMPTS": str(attempts)},
@@ -374,9 +400,26 @@ trap 'rm -f "$poll_file"' EXIT
 preview_deployment() {{ echo "preview $1 $deployment_name ${{2##*/}}"; }}
 sleep() {{ :; }}
 az() {{
+  if [[ "$3" == {shlex.quote(azure_failure)} ]]; then return 1; fi
   case "$1 $2 $3" in
     "deployment group create") echo "create $3 $5" ;;
-    "containerapp job start") echo "start $*" >&2; echo execution-1 ;;
+    "containerapp job show") printf '%s\\n' {template_json} ;;
+    "containerapp job start")
+      echo "start $*" >&2
+      while (($#)); do
+        case "$1" in
+          --yaml)
+            shift
+            echo "template-file $1" >&2
+            printf 'template ' >&2
+            jq -c . "$1" >&2
+            ;;
+          --container-name | --args* | --image) echo "Partial container override" >&2; return 98 ;;
+        esac
+        shift
+      done
+      echo execution-1
+      ;;
     "containerapp job execution") echo poll >> "$poll_file"; echo "${{statuses[$(($(wc -l < "$poll_file") - 1))]}}" ;;
     *) echo "Unexpected az $*" >&2; exit 97 ;;
   esac
@@ -408,15 +451,32 @@ echo done
         assert "did not finish in time" in result.stdout
         assert "done" not in result.stdout
 
-    def test_schema_check_uses_execution_only_arguments(self) -> None:
+    def test_schema_check_preserves_full_execution_template(self) -> None:
         for status in ("Succeeded", "Failed"):
             with self.subTest(status=status):
                 result = self._run_migration(statuses=["Running", status], check_only=True)
                 assert result.returncode == 0, result.stdout + result.stderr
-                assert "--container-name pyrit-migrate --args=--check-only" in result.stderr
+                template = next(
+                    line.removeprefix("template ")
+                    for line in result.stderr.splitlines()
+                    if line.startswith("template ")
+                )
+                expected = json.loads(json.dumps(JOB_TEMPLATE))
+                expected["containers"][0]["args"] = ["--check-only"]
+                assert json.loads(template) == expected
+                template_file = next(
+                    line.removeprefix("template-file ")
+                    for line in result.stderr.splitlines()
+                    if line.startswith("template-file ")
+                )
+                assert "XXXXXX" not in Path(template_file).name
+                assert not Path(template_file).exists()
                 assert ("migration-needed" in result.stdout) == (status == "Failed")
                 assert ("current" in result.stdout) == (status == "Succeeded")
         result = self._run_migration(statuses=["Succeeded"])
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "--yaml" not in result.stderr
+        assert "--container-name" not in result.stderr
         assert "--args" not in result.stderr
 
     def test_schema_check_timeout_or_interruption_aborts_deployment(self) -> None:
@@ -429,17 +489,29 @@ echo done
                 assert "done" not in result.stdout
 
     def test_schema_check_azure_errors_do_not_fall_through_to_migration(self) -> None:
-        for command in ("start", "execution"):
+        for command in ("show", "start", "execution"):
             with self.subTest(command=command):
-                result = self._run(
-                    script="deploy_app.sh",
-                    inputs=APP_INPUTS,
-                    command=f"""
-az() {{ if [[ "$3" == {command} ]]; then return 1; else echo execution-1; fi; }}
-if schema_is_current; then echo current; else echo migration-needed; fi
-""",
-                )
+                result = self._run_migration(statuses=["Succeeded"], check_only=True, azure_failure=command)
                 assert result.returncode == 1
+                assert "migration-needed" not in result.stdout
+                assert "done" not in result.stdout
+                for line in result.stderr.splitlines():
+                    if line.startswith("template-file "):
+                        assert not Path(line.removeprefix("template-file ")).exists()
+
+    def test_schema_check_rejects_missing_or_invalid_migration_container(self) -> None:
+        for template in (
+            {},
+            {"containers": []},
+            {"containers": [{"name": "other", "image": IMAGE}]},
+            {"containers": [{"name": "pyrit-migrate"}]},
+            {"containers": [{"name": "pyrit-migrate", "image": ""}]},
+        ):
+            with self.subTest(template=template):
+                result = self._run_migration(statuses=["Succeeded"], check_only=True, job_template=template)
+                assert result.returncode == 1
+                assert "Could not prepare database schema check template" in result.stderr
+                assert "start containerapp job start" not in result.stderr
                 assert "migration-needed" not in result.stdout
 
     def test_app_deployment_migrates_only_when_schema_check_fails(self) -> None:
