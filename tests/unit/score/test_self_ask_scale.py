@@ -257,7 +257,7 @@ async def test_scale_scorer_score_calls_send_chat(patch_central_database):
 
 async def test_scale_scorer_non_text_sends_prepended_text(patch_central_database, tmp_path: Path):
     """Test that non-text content (e.g., image_path) uses prepended text for objective context."""
-    from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+    from pyrit.score import ScorerPromptValidator
 
     chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")

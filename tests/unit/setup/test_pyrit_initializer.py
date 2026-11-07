@@ -7,10 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.common.apply_defaults import (
+from pyrit.common import (
     REQUIRED_VALUE,
     reset_default_values,
     set_default_value,
+)
+from pyrit.common.apply_defaults import (
     set_global_variable,
 )
 from pyrit.models import Parameter
@@ -311,7 +313,7 @@ class TestInitializeWithTracking:
         await init.initialize_with_tracking_async()
 
         # Verify the default was actually set
-        from pyrit.common.apply_defaults import get_global_default_values
+        from pyrit.common import get_global_default_values
 
         registry = get_global_default_values()
         assert len(registry._default_values) > 0
@@ -598,7 +600,7 @@ class TestGetDynamicDefaultValuesInfo:
         await init.get_dynamic_default_values_info_async()
 
         # Original default should still be there
-        from pyrit.common.apply_defaults import get_global_default_values
+        from pyrit.common import get_global_default_values
 
         registry = get_global_default_values()
         # Should only have the original default, not the temporary one

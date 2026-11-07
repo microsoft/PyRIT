@@ -3,9 +3,11 @@
 
 import pytest
 
-from pyrit.common.brick_contract import (
+from pyrit.common import (
     enforce_keyword_only_init,
     forward_init_parameters,
+)
+from pyrit.common.brick_contract import (
     init_parameters_are_forwarded,
 )
 

@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.executor.benchmark import fairness_bias
-from pyrit.executor.benchmark.fairness_bias import (
+from pyrit.executor.benchmark import (
     FairnessBiasBenchmark,
     FairnessBiasBenchmarkContext,
+    fairness_bias,
 )
 from pyrit.models import (
     AttackOutcome,

@@ -7,8 +7,7 @@ import asyncio
 
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_models import AttackResultEntry
+from pyrit.memory import AttackResultEntry, CentralMemory
 from pyrit.models import AttackResult, Message, MessagePiece, SeedObjective
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import ScenarioRegistry, TargetRegistry

@@ -15,13 +15,15 @@ from sqlalchemy.engine import ScalarResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pyrit.memory import SQLiteMemory
-from pyrit.memory.memory_models import (
+from pyrit.memory import (
     AttackResultEntry,
+    PromptMemoryEntry,
+    SQLiteMemory,
+)
+from pyrit.memory.memory_models import (
     FindingEntry,
     FindingEvidenceEntry,
     OperationEntry,
-    PromptMemoryEntry,
     ScoreEntry,
 )
 from pyrit.models import Finding, FindingCreate, FindingEvidence, FindingSeverity, Operation

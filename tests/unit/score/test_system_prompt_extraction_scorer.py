@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.analytics import ApproximateTextMatching
-from pyrit.memory.central_memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece
 from pyrit.score import SystemPromptExtractionScorer
 

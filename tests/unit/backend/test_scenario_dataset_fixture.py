@@ -9,9 +9,8 @@ from unittest.mock import patch
 import pytest
 
 from frontend.e2e.fixtures.scenario_dataset_backend import _configure_preset_storage
-from pyrit.models.catalog import ScenarioPreset
-from pyrit.registry import ScenarioPresetRegistry
-from pyrit.registry.scenario_preset_storage import ScenarioPresetStorage
+from pyrit.models import ScenarioPreset
+from pyrit.registry import ScenarioPresetRegistry, ScenarioPresetStorage
 
 
 @pytest.fixture

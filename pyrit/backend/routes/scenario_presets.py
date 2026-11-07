@@ -23,14 +23,16 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.common import IdentifierStr, ProblemDetail
-from pyrit.backend.models.scenario_presets import (
+from pyrit.backend.models import (
+    ProblemDetail,
     ScenarioPresetListResponse,
     ScenarioPresetResponse,
     UpdateScenarioPresetRequest,
 )
-from pyrit.backend.services.scenario_preset_service import get_scenario_preset_service
-from pyrit.models.catalog import ResolveScenarioPresetRequest, RunScenarioRequest, ScenarioPreset
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.backend.services import get_scenario_preset_service
+from pyrit.models import ResolveScenarioPresetRequest, ScenarioPreset
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetNameRegisteredError
 
 router = APIRouter(prefix="/scenario-presets", tags=["scenario-presets"])

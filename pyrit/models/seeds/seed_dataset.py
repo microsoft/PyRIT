@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.common.utils import combine_list
+from pyrit.common import combine_list
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
 from pyrit.models.seeds.seed import (  # AwareDatetimeUTC is runtime-required by Pydantic

@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 import aiofiles
 import httpx
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.models import (
     ComponentIdentifier,
     Message,

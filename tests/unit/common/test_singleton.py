@@ -5,7 +5,7 @@ import abc
 
 import pytest
 
-from pyrit.common.singleton import Singleton
+from pyrit.common import Singleton
 
 
 @pytest.fixture(autouse=True)

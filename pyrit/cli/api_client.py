@@ -19,12 +19,15 @@ from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from pyrit.cli._auth import AuthMode, TokenProvider
-    from pyrit.models import Operation, ScenarioResult
+    from pyrit.models import (
+        Operation,
+        ScenarioResult,
+        ScenarioRunListItem,
+    )
     from pyrit.models.catalog import (
         RegisteredInitializer,
         RegisteredScenario,
         RunScenarioRequest,
-        ScenarioRunListItem,
         ScenarioRunSummary,
         TargetInstance,
     )
@@ -401,7 +404,7 @@ class PyRITApiClient:
         Raises:
             ValueError: If the requested limit is invalid or a paginated response has no cursor.
         """
-        from pyrit.models.catalog import ScenarioRunListItem
+        from pyrit.models import ScenarioRunListItem
 
         if limit < 1:
             raise ValueError("Scenario history limit must be positive.")
