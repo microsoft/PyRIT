@@ -53,6 +53,20 @@ export interface MessageAttachment {
   metadata?: Record<string, unknown>
 }
 
+export interface MediaUploadRequest {
+  data_type: string
+  content: string
+  mime_type: string
+}
+
+export interface MediaUploadResponse {
+  value: string
+}
+
+export type AttachmentUploadOutcome =
+  | { status: 'uploaded'; value: string }
+  | { status: 'failed'; detail: string }
+
 export interface ConverterInputPiece {
   id: string
   pieceType: string

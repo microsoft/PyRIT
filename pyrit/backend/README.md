@@ -331,6 +331,21 @@ Stop these test-owned servers after the run.
 
 ### Request Limits
 
+Chat attachments start uploading when they are attached, while the composer stays editable.
+`POST /api/media/uploads` accepts `data_type` (`image_path`, `audio_path`, `video_path`, or
+`binary_path`), raw base64 `content`, and `mime_type`. It returns **201** with an opaque
+`pyrit-upload:` reference that later message requests reuse as `original_value`. Uploads
+are staged locally under the configuration directory's `media-uploads` folder, not in
+permanent local or Azure results storage. They expire after 24 hours; a startup and
+minute-by-minute sweep removes expired files, including uploads abandoned before a
+restart. Only media used in a message or conversion is copied to results storage.
+The composer and conversation editor share uploads; Send and Save await pending uploads
+without retransmitting their bytes. Failed uploads can be retried or removed, and old
+uploads are refreshed from the draft's retained File before reuse. Local previews use
+browser object URLs while uploads and target responses are pending. Uploading alone
+does not create an attack or call a target. Refreshing the same bytes preserves the
+upload reference so retries keep the same conversation-save idempotency key.
+
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
 API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,
 labels, filters, cursors, configuration files, and initializer scripts also have length or
