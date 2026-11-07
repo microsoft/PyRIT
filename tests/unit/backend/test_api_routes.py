@@ -9,6 +9,7 @@ import json
 import os
 import tempfile
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -236,7 +237,8 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             assert mock_service.list_attacks_async.call_args.kwargs["include_scenario_attacks"] is False
 
-    def test_create_attack_success(self, client: TestClient) -> None:
+    @pytest.mark.parametrize("field", ["objective", "name"])
+    def test_create_attack_success(self, *, client: TestClient, field: str) -> None:
         """Test successful attack creation."""
         now = datetime.now(UTC)
 
@@ -251,14 +253,30 @@ class TestAttackRoutes:
             )
             mock_get_service.return_value = mock_service
 
-            response = client.post(
-                "/api/attacks",
-                json={"target_registry_name": "target-1", "name": "Test Attack"},
-            )
+            with (
+                pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective")
+                if field == "name"
+                else nullcontext()
+            ):
+                response = client.post(
+                    "/api/attacks",
+                    json={"target_registry_name": "target-1", field: "Test objective"},
+                )
 
             assert response.status_code == status.HTTP_201_CREATED
             data = response.json()
             assert data["conversation_id"] == "attack-1"
+            request = mock_service.create_attack_async.call_args.kwargs["request"]
+            assert request.objective == "Test objective"
+
+    def test_create_attack_rejects_conflicting_objective_alias(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.attacks.get_attack_service") as service,
+            pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective"),
+        ):
+            response = client.post("/api/attacks", json={"objective": "", "name": "Legacy objective"})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        service.assert_not_called()
 
     def test_create_attack_target_not_found(self, client: TestClient) -> None:
         """Test attack creation with non-existent target."""
