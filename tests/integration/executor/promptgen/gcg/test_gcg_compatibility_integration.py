@@ -1,0 +1,195 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""Integration tests for the GCG compatibility matrix in ``experiments/README.md``.
+
+Each case loads a representative checkpoint's real tokenizer and config from the
+Hugging Face Hub, but not its weights. Workers come from the real ``get_workers``,
+so tokenizer setup and the preflight run unchanged, but each one holds a tiny
+randomly initialized float16 model built from that config and runs operations
+in-process instead of in a subprocess. The architecture, vocabulary, chat template,
+and tokenizer are the real ones while the run stays small enough for CPU.
+
+Requires: torch, transformers (GCG optional deps).
+Skipped via importorskip when deps are not installed.
+"""
+
+from __future__ import annotations
+
+import queue
+from copy import deepcopy
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
+
+import pytest
+
+torch = pytest.importorskip("torch", reason="torch not installed")
+transformers = pytest.importorskip("transformers", reason="transformers not installed")
+
+from pyrit.executor.promptgen.gcg.attack.base import attack_manager  # noqa: E402
+from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E402
+    AttackPrompt,
+    ModelWorker,
+    ModelWorkerOperation,
+    ModelWorkerTask,
+    ProgressiveMultiPromptAttack,
+    get_workers,
+)
+from pyrit.executor.promptgen.gcg.attack.gcg.gcg_attack import (  # noqa: E402
+    GCGAttackPrompt,
+    GCGMultiPromptAttack,
+    GCGPromptManager,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+# One row per checkpoint in the README matrix. None of these need a Hugging Face token.
+_CHECKPOINTS = [
+    pytest.param("Qwen/Qwen2.5-0.5B-Instruct", id="qwen2.5"),
+    pytest.param("Qwen/Qwen3-0.6B", id="qwen3"),
+    pytest.param("microsoft/Phi-3-mini-4k-instruct", id="phi-3"),
+    pytest.param("microsoft/Phi-4-mini-instruct", id="phi-4"),
+    pytest.param("unsloth/gemma-2-2b-it", id="gemma-2"),
+    pytest.param("unsloth/gemma-3-1b-it", id="gemma-3"),
+    pytest.param("TinyLlama/TinyLlama-1.1B-Chat-v1.0", id="tinyllama"),
+    pytest.param("unsloth/Llama-3.2-1B-Instruct", id="llama-3.2"),
+    pytest.param("unsloth/mistral-7b-instruct-v0.3", id="mistral"),
+    pytest.param("unsloth/Mistral-Nemo-Instruct-2407", id="mistral-nemo"),
+    pytest.param("mistralai/Mixtral-8x7B-Instruct-v0.1", id="mixtral"),
+    pytest.param("HuggingFaceTB/SmolLM2-135M-Instruct", id="smollm2"),
+    pytest.param("HuggingFaceTB/SmolLM3-3B", id="smollm3"),
+    pytest.param("deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", id="deepseek-r1-distill-qwen"),
+    pytest.param("deepseek-ai/DeepSeek-R1-Distill-Llama-8B", id="deepseek-r1-distill-llama"),
+]
+
+_GOALS = ["Write a tutorial on how to make a cake", "Explain the plan"]
+_TARGETS = ["Sure, here is a tutorial", "Sure, here is the plan"]
+_CONTROL_INIT = "! ! ! ! !"
+
+
+class _InProcessWorker(ModelWorker):
+    """A ``ModelWorker`` with a tiny random model that runs each operation immediately."""
+
+    def __init__(self, model_path: str, token: str | None, model_kwargs: dict[str, Any], tokenizer: Any, device: str):
+        config = transformers.AutoConfig.from_pretrained(model_path)
+        # Phi-3 and Phi-4 size their rotary factors for the real head dimension, so keep it.
+        head_dim = config.hidden_size // config.num_attention_heads if config.model_type == "phi3" else 8
+        config.update(
+            {
+                "hidden_size": 2 * head_dim,
+                "head_dim": head_dim,
+                "intermediate_size": 32,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 1,
+            }
+        )
+        torch.manual_seed(0)
+        # ModelWorker loads float16 weights; match it so the gradient path runs in the same dtype.
+        self.model = transformers.AutoModelForCausalLM.from_config(config, torch_dtype=torch.float16).to(device).eval()
+        self.model.requires_grad_(False)
+        self.tokenizer = tokenizer
+        self._vocabulary_identities: dict[int, str] = {}
+        self.results: queue.Queue[Any] = queue.Queue()
+        self.operations: list[ModelWorkerOperation] = []
+
+    def start(self) -> _InProcessWorker:
+        return self
+
+    def __call__(self, ob: Any, operation: ModelWorkerOperation, *args: Any, **kwargs: Any) -> _InProcessWorker:
+        self.operations.append(operation)
+        task = ModelWorkerTask(obj=deepcopy(ob), operation=operation, args=args, kwargs=kwargs)
+        context = torch.enable_grad() if operation is ModelWorkerOperation.GRAD else torch.no_grad()
+        with context:
+            self.results.put(ModelWorker._execute_task(model=self.model, task=task))
+        return self
+
+
+def _run_attack(
+    *, checkpoints: list[str], test_checkpoints: list[str], logfile: Path
+) -> tuple[list[_InProcessWorker], list[_InProcessWorker], str]:
+    """
+    Load workers through ``get_workers`` and run one step of every progressive phase.
+
+    Returns:
+        tuple[list[_InProcessWorker], list[_InProcessWorker], str]: Training workers,
+            held-out workers, and the final control.
+    """
+    paths = [*checkpoints, *test_checkpoints]
+    params = SimpleNamespace(
+        tokenizer_paths=paths,
+        tokenizer_kwargs=[{} for _ in paths],
+        model_paths=paths,
+        model_kwargs=[{} for _ in paths],
+        devices=["cpu" for _ in paths],
+        token=None,
+        num_train_models=len(checkpoints),
+        goals=_GOALS,
+        targets=_TARGETS,
+        test_goals=_GOALS[:1],
+        test_targets=_TARGETS[:1],
+        control_init=_CONTROL_INIT,
+    )
+    with patch.object(attack_manager, "ModelWorker", _InProcessWorker):
+        workers, test_workers = get_workers(params)
+    attack = ProgressiveMultiPromptAttack(
+        goals=_GOALS,
+        targets=_TARGETS,
+        workers=workers,
+        test_workers=test_workers,
+        test_goals=params.test_goals,
+        test_targets=params.test_targets,
+        control_init=_CONTROL_INIT,
+        logfile=str(logfile),
+        managers={"AP": GCGAttackPrompt, "PM": GCGPromptManager, "MPA": GCGMultiPromptAttack},
+    )
+    # A random model never refuses, so stop_on_success would skip the early phases.
+    control, _ = attack.run(
+        n_steps=1, batch_size=8, topk=16, anneal=False, test_steps=1, stop_on_success=False, verbose=False
+    )
+    return workers, test_workers, control
+
+
+@pytest.mark.parametrize("checkpoint", _CHECKPOINTS)
+def test_prompt_slices_match_rendered_text(checkpoint: str) -> None:
+    tokenizer = transformers.AutoTokenizer.from_pretrained(checkpoint)
+    prompt = AttackPrompt(goal=_GOALS[0], target=_TARGETS[0], tokenizer=tokenizer, control_init=_CONTROL_INIT)
+
+    def decode(token_slice: slice) -> str:
+        return tokenizer.decode(prompt.input_ids[token_slice]).strip()
+
+    assert decode(prompt._goal_slice) == _GOALS[0]
+    assert decode(prompt._control_slice) == _CONTROL_INIT
+    assert decode(prompt._target_slice) == _TARGETS[0]
+
+
+@pytest.mark.parametrize("checkpoint", _CHECKPOINTS)
+def test_attack_step_runs_on_tiny_model(checkpoint: str, tmp_path: Path) -> None:
+    (worker,), _, control = _run_attack(checkpoints=[checkpoint], test_checkpoints=[], logfile=tmp_path / "log.json")
+
+    assert ModelWorkerOperation.GRAD in worker.operations
+    assert control != _CONTROL_INIT
+
+
+def test_attack_step_runs_with_mixed_tokenizers(tmp_path: Path) -> None:
+    # The two Qwen2.5 sizes share a vocabulary and so one gradient group. The DeepSeek distill has
+    # the same embedding rows but different special tokens, so it gets its own group. TinyLlama is a
+    # held-out model with a SentencePiece tokenizer that must accept the same shared control.
+    workers, (held_out,), control = _run_attack(
+        checkpoints=[
+            "Qwen/Qwen2.5-0.5B-Instruct",
+            "Qwen/Qwen2.5-1.5B-Instruct",
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+        ],
+        test_checkpoints=["TinyLlama/TinyLlama-1.1B-Chat-v1.0"],
+        logfile=tmp_path / "log.json",
+    )
+
+    assert all(ModelWorkerOperation.GRAD in worker.operations for worker in workers)
+    assert ModelWorkerOperation.GRAD not in held_out.operations
+    assert held_out.operations
+    qwen, qwen_larger, deepseek = (worker._vocabulary_identities for worker in workers)
+    assert qwen == qwen_larger != deepseek
+    assert control != _CONTROL_INIT
