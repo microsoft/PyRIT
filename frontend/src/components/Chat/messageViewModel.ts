@@ -37,9 +37,10 @@ export function formatStructuredMessage(text: string): string | null {
     const numbers: string[] = []
     const tokenRegex = /"(?:[^"\\]|\\.)*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/g
 
-    // Generate a unique token prefix that cannot collide with any substring in the input
+    // JSON escapes can hide a marker in the raw input; check decoded strings and keys.
+    const collisionCheckText = JSON.stringify(originalParsed)
     let nonce = `_PYRIT_NUM_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}_`
-    while (trimmed.includes(nonce)) {
+    while (collisionCheckText.includes(nonce)) {
       nonce = `_PYRIT_NUM_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}_`
     }
 
