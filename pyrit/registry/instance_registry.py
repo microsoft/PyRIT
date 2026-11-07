@@ -99,13 +99,28 @@ def refuse_saved_entry(entry: RegistryEntry[Any] | None) -> None:
     Raises:
         SavedEntryReplacementError: If the entry was rebuilt from a saved recipe.
     """
+    kind = _record_saved_entry_refusal(entry)
+    if entry is not None and kind is not None:
+        raise SavedEntryReplacementError(kind=kind, name=entry.name)
+
+
+def _record_saved_entry_refusal(entry: RegistryEntry[Any] | None) -> str | None:
+    """
+    Record a refused use of an entry rebuilt from a saved recipe, when refusals are being recorded.
+
+    Args:
+        entry (RegistryEntry[Any] | None): The entry registered under the name, if any.
+
+    Returns:
+        str | None: The entry's saved recipe kind, or None when it wasn't rebuilt from a saved recipe.
+    """
     if entry is None or SAVED_ENTRY_METADATA_KEY not in entry.metadata:
-        return
+        return None
     kind = str(entry.metadata[SAVED_ENTRY_METADATA_KEY])
     refusals = _saved_entry_refusals.get()
     if refusals is not None:
         refusals.append((kind, entry.name))
-    raise SavedEntryReplacementError(kind=kind, name=entry.name)
+    return kind
 
 
 @contextmanager
@@ -374,6 +389,8 @@ class DefaultInstanceRegistry(Generic[T]):
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
             if not replace:
+                # A script that catches the duplicate-name error would leave the saved entry standing in.
+                _record_saved_entry_refusal(self._registry_items.get(name))
                 self.validate_name_available(name)
             else:
                 replaced = self._registry_items.get(name)
