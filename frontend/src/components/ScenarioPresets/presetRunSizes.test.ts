@@ -5,7 +5,7 @@ import type {
   ScenarioRunSizeEstimateResponse,
 } from '@/types'
 
-import { estimatePresetRunSizes } from './presetRunSizes'
+import { estimatePresetRunSizes, retainPresetRunSizes } from './presetRunSizes'
 
 jest.mock('@/services/api', () => ({
   scenariosApi: {
@@ -40,6 +40,17 @@ function makeRunSize(attacks: number): ScenarioRunSizeEstimateResponse {
 function httpError(status: number, detail: string): unknown {
   return { isAxiosError: true, response: { status, data: { detail } } }
 }
+
+it('retains estimates only for unchanged preset snapshots and never replaces an incoming estimate', () => {
+  const previous = { ...makeItem({ name: 'review' }), run_size: makeRunSize(6) }
+  const unchanged = makeItem({ name: 'review' })
+  expect(retainPresetRunSizes([unchanged], [previous])[0].run_size).toBe(previous.run_size)
+  expect(retainPresetRunSizes([{ ...unchanged, version: 'v2' }], [previous])[0].run_size).toBeNull()
+  const changed = makeItem({ name: 'review', techniques: ['new-technique'] })
+  expect(retainPresetRunSizes([changed], [previous])[0].run_size).toBeNull()
+  const estimated = { ...unchanged, run_size: makeRunSize(12) }
+  expect(retainPresetRunSizes([estimated], [previous])[0].run_size).toBe(estimated.run_size)
+})
 
 describe('estimatePresetRunSizes', () => {
   beforeEach(() => {

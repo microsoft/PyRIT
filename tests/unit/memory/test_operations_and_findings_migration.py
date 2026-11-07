@@ -65,6 +65,7 @@ def test_migration_adds_tables_without_changing_existing_ones() -> None:
             assert {name: columns for name, columns in after.items() if name not in ACTIVITY_TABLES} == {
                 name: columns for name, columns in existing.items() if name not in ACTIVITY_TABLES
             }
+            command.upgrade(config, "head")
         check_schema_migrations(engine=engine)
     finally:
         engine.dispose()

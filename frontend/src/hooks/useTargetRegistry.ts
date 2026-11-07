@@ -10,6 +10,7 @@ export function useTargetRegistry() {
   const [targets, setTargets] = useState<TargetInstance[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [loadedGeneration, setLoadedGeneration] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
   const pendingUpdates = useRef<Map<string, TargetInstance> | null>(null)
 
@@ -25,6 +26,7 @@ export function useTargetRegistry() {
       setTargets([...merged.values()])
       pendingUpdates.current = null
       setError(null)
+      setLoadedGeneration(generation)
       setLoading(false)
     }).catch((cause: unknown) => {
       if (cancelled || pendingUpdates.current !== updates) return
@@ -53,8 +55,10 @@ export function useTargetRegistry() {
     pendingUpdates.current = null
     setTargets(items)
     setError(null)
+    setLoadedGeneration(generation)
     setLoading(false)
-  }, [])
+  }, [generation])
 
-  return { targets, loading, error, refresh, rememberTarget, synchronizeTargets }
+  const isEmpty = ready && !loading && !error && loadedGeneration === generation && targets.length === 0
+  return { targets, loading, error, isEmpty, refresh, rememberTarget, synchronizeTargets }
 }

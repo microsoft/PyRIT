@@ -2,9 +2,7 @@ import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TargetCapabilities, TargetInstance } from '../../types'
 import {
   DEFAULT_TARGET_FILTERS,
-  activeTargetFilters,
   getTargetFilterOptions,
-  isSameTargetFilters,
   targetMatchesFilters,
 } from './targetFilters'
 
@@ -89,22 +87,17 @@ describe('getTargetFilterOptions', () => {
   })
 })
 
-describe('activeTargetFilters', () => {
-  it('should drop selections the options no longer offer', () => {
-    const options = getTargetFilterOptions([imageChat, speech])
-    const filters = { ...DEFAULT_TARGET_FILTERS, inputs: ['image_path', 'audio_path'], types: ['RealtimeTarget'] }
-
-    expect(activeTargetFilters(filters, options)).toEqual({ ...DEFAULT_TARGET_FILTERS, inputs: ['image_path'] })
-  })
-})
-
-describe('isSameTargetFilters', () => {
-  it('should compare every filter value in order', () => {
-    const filters = { ...DEFAULT_TARGET_FILTERS, inputs: ['text', 'image_path'] }
-
-    expect(isSameTargetFilters(filters, { ...filters, inputs: ['text', 'image_path'] })).toBe(true)
-    expect(isSameTargetFilters(filters, { ...filters, inputs: ['text'] })).toBe(false)
-    expect(isSameTargetFilters(filters, { ...filters, inputs: ['image_path', 'text'] })).toBe(false)
+describe('retained target selections', () => {
+  it('should keep unavailable selected choices readable and removable even with no targets', () => {
+    const options = getTargetFilterOptions([], {
+      types: ['RealtimeTarget'], inputs: ['image_path'], outputs: ['audio_path'], capabilities: ['supports_system_prompt'],
+    })
+    expect(options).toEqual({
+      types: [{ value: 'RealtimeTarget', label: 'RealtimeTarget' }],
+      inputs: [{ value: 'image_path', label: 'Image' }],
+      outputs: [{ value: 'audio_path', label: 'Audio' }],
+      capabilities: [{ value: 'supports_system_prompt', label: 'System Prompt' }],
+    })
   })
 })
 

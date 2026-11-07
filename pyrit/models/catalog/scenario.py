@@ -29,6 +29,7 @@ from pydantic import (
 )
 
 from pyrit.models.component_spec import RegisteredComponentReference
+from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.parameter import Parameter
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_LABEL_KEY_LENGTH, MAX_LABEL_VALUE_LENGTH
 from pyrit.models.results.scenario_result import ScenarioRunState
@@ -264,6 +265,7 @@ class ScenarioTechniqueSummary(BaseModel):
     name: str = Field(..., min_length=1)
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
+    identifier: ComponentIdentifier | None = None
 
 
 class ScenarioRunSizeEstimate(BaseModel):
