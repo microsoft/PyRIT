@@ -3406,6 +3406,36 @@ class TestScenarioRunServiceCancelRun:
         assert next_run.started_at is not None
         assert row.metadata[_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY] == next_run.started_at.isoformat()
 
+    @pytest.mark.parametrize(
+        "persisted_started_at",
+        [
+            pytest.param("2026-01-02T03:04:05.123456Z", id="z-suffix"),
+            pytest.param(datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=UTC), id="datetime"),
+        ],
+    )
+    async def test_handoff_retry_matches_start_time_saved_in_another_format_async(
+        self, *, mock_memory: MagicMock, persisted_started_at: object
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        next_run = _svc_mod._ActiveTask(
+            scenario_result_id="next-run", started_at=datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=UTC)
+        )
+        service._queued_runs.append(next_run)
+        row = _make_db_scenario_result(result_id="next-run", run_state=ScenarioRunState.IN_PROGRESS)
+        row.metadata = {_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY: persisted_started_at}
+        mock_memory.get_scenario_result_header_async.return_value = row
+
+        with patch.object(service, "_execute_run_async", new_callable=AsyncMock) as execute:
+            await service._handoff_scheduler_async(scenario_result_id="finished-run")
+            assert next_run.task is not None
+            await next_run.task
+
+        execute.assert_awaited_once_with(scenario_result_id="next-run")
+        assert not service._queued_runs
+        assert service._active_scenario_result_id == "next-run"
+        mock_memory.update_scenario_run_state_and_metadata_fields_async.assert_not_awaited()
+
     async def test_handoff_skips_in_progress_run_with_a_different_start_time_async(
         self, *, mock_memory: MagicMock
     ) -> None:

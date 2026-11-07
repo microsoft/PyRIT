@@ -1480,11 +1480,10 @@ class ScenarioRunService:
         Returns:
             bool: True if the row is IN_PROGRESS with the start time this scheduler wrote for the run.
         """
-        persisted_started_at: object = persisted.metadata.get(SCENARIO_RUN_STARTED_AT_METADATA_KEY)
         return (
             run.started_at is not None
             and persisted.scenario_run_state == ScenarioRunState.IN_PROGRESS
-            and persisted_started_at == run.started_at.isoformat()
+            and ScenarioRunService._load_started_at(scenario_result=persisted) == run.started_at
         )
 
     def _release_completed_task(self, *, scenario_result_id: str) -> None:
