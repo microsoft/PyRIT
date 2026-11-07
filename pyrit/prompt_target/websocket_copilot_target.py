@@ -7,7 +7,7 @@ import logging
 import pathlib
 import uuid
 from enum import IntEnum
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import websockets
@@ -94,6 +94,7 @@ class WebSocketCopilotTarget(PromptTarget):
 
     RESPONSE_TIMEOUT_SECONDS: int = 60
     CONNECTION_TIMEOUT_SECONDS: int = 30
+    not_saveable_reason: ClassVar[str | None] = "It signs in with the Copilot account this server is set up with."
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,

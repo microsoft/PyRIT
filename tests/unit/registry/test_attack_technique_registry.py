@@ -15,6 +15,7 @@ from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import Registry, TargetRegistry
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SavedEntryReplacementError
 from pyrit.scenario import ScenarioTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
 from pyrit.setup.initializers.techniques import build_technique_factories
@@ -362,6 +363,23 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
 
         stored = self.registry.instances.get_entry("stub_policy").instance
         assert stored._scorer_override_policy == ScorerOverridePolicy.WARN
+
+    def test_register_from_factories_refuses_to_skip_a_saved_technique(self):
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+
+        with pytest.raises(SavedEntryReplacementError, match="Saved technique 'formal'"):
+            self.registry.register_from_factories([AttackTechniqueFactory(name="formal", attack_class=_StubAttack)])
+
+        assert self.registry.instances.get("formal") is saved
+
+    def test_register_from_factories_still_skips_an_existing_startup_technique(self):
+        startup = AttackTechniqueFactory(name="startup", attack_class=_StubAttack)
+        self.registry.register_from_factories([startup])
+
+        self.registry.register_from_factories([AttackTechniqueFactory(name="startup", attack_class=_StubAttack)])
+
+        assert self.registry.instances.get("startup") is startup
 
 
 SCENARIO_FACTORIES_FIXTURE: list[AttackTechniqueFactory] = []

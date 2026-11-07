@@ -9,6 +9,7 @@ import pytest
 
 from pyrit.prompt_target import LiteLLMDecisionTarget, OpenAIChatTarget
 from pyrit.registry import TargetRegistry
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SavedEntryReplacementError
 from pyrit.setup.initializers import TargetInitializer
 from pyrit.setup.initializers.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
 
@@ -930,6 +931,20 @@ class TestTargetInitializerAutoGroup:
         registry = TargetRegistry.get_registry_singleton()
         assert registry.instances.get("azure_openai_gpt4o") is not None
         assert registry.instances.get("azure_openai_gpt4o2") is not None
+
+    async def test_refuses_to_leave_a_saved_target_in_place_of_a_group(self) -> None:
+        os.environ.update(self.GPT4O_1_ENV)
+        os.environ.update(self.GPT4O_2_ENV)
+        registry = TargetRegistry.get_registry_singleton()
+        saved = OpenAIChatTarget(endpoint="https://saved.test/v1", model_name="gpt-4o", api_key="saved-key")
+        registry.instances.register(
+            saved, name="OpenAIChatTarget_gpt-4o_rr", metadata={SAVED_ENTRY_METADATA_KEY: "targets"}
+        )
+
+        with pytest.raises(SavedEntryReplacementError, match="Saved target 'OpenAIChatTarget_gpt-4o_rr'"):
+            await TargetInitializer().initialize_async()
+
+        assert registry.instances.get("OpenAIChatTarget_gpt-4o_rr") is saved
 
     async def test_no_round_robin_when_single_target(self) -> None:
         """Test that no round-robin is created when only one target has a given model."""

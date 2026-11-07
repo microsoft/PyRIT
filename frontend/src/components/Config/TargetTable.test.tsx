@@ -320,6 +320,40 @@ describe('TargetTable', () => {
     expect(defaults.getByRole('option', { name: 'Use server default' })).toHaveValue('')
   })
 
+  it('should say whether each target comes back after a restart, and nothing for inner targets', async () => {
+    const user = userEvent.setup()
+    const targets = [
+      makeTarget({ target_registry_name: 'saved_chat', origin: 'saved' }),
+      makeTarget({ target_registry_name: 'startup_chat', origin: 'configuration' }),
+      makeTarget({
+        target_registry_name: 'temp_pool',
+        target_type: 'RoundRobinTarget',
+        origin: 'temporary',
+        inner_targets: [{ target_registry_name: 'inner_chat', origin: null }],
+      }),
+      makeTarget({ target_registry_name: 'unknown_chat' }),
+    ]
+    render(
+      <TestWrapper>
+        <TargetTable {...defaultProps} targets={targets} />
+      </TestWrapper>
+    )
+
+    const labelIn = (name: string): string | null => {
+      const row = screen.getByRole('row', { name: new RegExp(`(^|\\s)${name}(\\s|$)`) })
+      const label = ['Saved', 'From configuration', 'Temporary'].find((text) => within(row).queryByText(text))
+      return label ?? null
+    }
+    expect(['saved_chat', 'startup_chat', 'temp_pool', 'unknown_chat'].map(labelIn)).toEqual([
+      'Saved',
+      'From configuration',
+      'Temporary',
+      null,
+    ])
+    await user.click(screen.getByRole('button', { name: 'Expand inner targets' }))
+    expect(labelIn('inner_chat')).toBeNull()
+  })
+
   it('should set the supported adversarial role', async () => {
     const user = userEvent.setup()
 

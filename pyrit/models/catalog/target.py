@@ -22,11 +22,21 @@ name, endpoint, model name, generation params, inner-target identifiers) and is
 embedded ``TargetCapabilities``.
 """
 
+from enum import Enum
+
 from pydantic import BaseModel, Field
 
 from pyrit.models.identifiers.component_identifier import JSONValue
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
 from pyrit.models.target.target_capabilities import TargetCapabilities
+
+
+class TargetOrigin(str, Enum):
+    """Where a registered target comes from, and so whether it is still there after a restart."""
+
+    SAVED = "saved"
+    CONFIGURATION = "configuration"
+    TEMPORARY = "temporary"
 
 
 class TargetInstance(BaseModel):
@@ -67,4 +77,12 @@ class TargetInstance(BaseModel):
     inner_targets: list["TargetInstance"] | None = Field(
         None,
         description="Inner targets for composite targets like RoundRobinTarget (full instances, not just identifiers)",
+    )
+    origin: TargetOrigin | None = Field(
+        None,
+        description=(
+            "Where the target comes from: 'saved' (restored at every start), 'configuration' (the server's "
+            "startup scripts), or 'temporary' (created through the API without saving, so gone after a "
+            "restart). None for an inner target"
+        ),
     )

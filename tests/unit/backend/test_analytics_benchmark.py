@@ -4,6 +4,7 @@
 """Local SQLite smoke coverage and unit tests of the integration workload's failure gates."""
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -58,6 +59,12 @@ def measurements() -> AnalyticsBenchmark:
     benchmark.updates = 2
     benchmark.peak_requests = 5
     return benchmark
+
+
+def test_benchmark_configuration_keeps_saved_entries_in_its_own_folder(benchmark_directory: Path) -> None:
+    config = json.loads((benchmark_directory / "config.yaml").read_text(encoding="utf-8"))
+
+    assert config["registry_recipes_source"] == str(benchmark_directory / "registry_recipes")
 
 
 @pytest.mark.timeout(120)
