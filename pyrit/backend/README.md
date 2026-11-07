@@ -37,6 +37,96 @@ API keys do not authenticate incoming GUI users.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `POST /api/targets` - Create (and optionally register) a target
+- `DELETE /api/targets/{id}` - Delete a target the caller created through the API
+- `PUT /api/targets/{id}/credentials` - Set or replace the caller's own credential for a target
+- `DELETE /api/targets/{id}/credentials` - Remove the caller's own credential for a target
+
+#### Personal targets with caller credentials
+
+Targets are shared by default: a key submitted when creating a target is used for every caller's
+requests. To use a personal token or account instead, create the target with
+`"requires_caller_credential": true`. Supported for OpenAI-family targets (except
+`RealtimeTarget`) and `LiteLLMChatTarget`, with `auth_mode` `api_key`.
+
+Such a target keeps no key. The backend stores the creator's `api_key` in process memory for that
+caller only, and the target asks for the current caller's own credential before every request.
+Other callers can see the target, but nobody can send a request with another caller's key: until a
+caller sets their own credential, their requests through the target fail with
+`CallerCredentialRequiredError`, and nothing falls back to the server's environment keys, managed
+identity, or SDK login.
+
+Dynamic-key LiteLLM targets require an explicit `openai/` model name. Other provider routes,
+including Vertex, are rejected because a generic API key does not establish their authentication
+contract. Configure those shared targets through an initializer instead. Dynamic token providers
+cannot be combined with static authentication headers or provider-routing overrides; the resolved
+key remains authoritative after request-body passthrough merging.
+Passthrough options in this mode are restricted to generation parameters and non-authentication
+headers. Global LiteLLM fallbacks, aliases for the selected model, and static authentication
+headers are rejected rather than allowed to change how the caller authenticates.
+`LiteLLMDecisionTarget` uses a separate decision API and does not support personal-target opt-in;
+its existing shared-target and direct Python callable-key behavior is unchanged.
+
+```http
+POST /api/targets
+{"name": "my-gpt", "type": "OpenAIChatTarget", "requires_caller_credential": true,
+ "params": {"endpoint": "https://<resource>/openai/v1", "model_name": "<deployment>", "api_key": "<your key>"}}
+
+PUT /api/targets/my-gpt/credentials
+{"credential": "<your own key or access token>"}
+
+DELETE /api/targets/my-gpt/credentials
+DELETE /api/targets/my-gpt
+```
+
+- The `api_key` is optional at creation; the creator can set it later with
+  `PUT /api/targets/{id}/credentials`, like any other caller.
+- Target responses report `requires_caller_credential`, whether the requesting caller has set a
+  credential (`caller_credential_configured`), and whether they may delete the target
+  (`can_delete`). Credentials are never returned or stored in the database, identifiers, logs,
+  or saved bindings.
+- A caller is identified by the configured Entra tenant and their Entra object ID; local mode has
+  one caller. Work a request starts, including background sends and queued scenario runs, uses
+  that caller's credentials. Resuming or replaying a run uses the credential of whoever resumes it.
+- Replacing a credential applies to the caller's next request through the target, including in
+  work that is already running. A request that was already sent finishes with the old value.
+- Only the caller who created a target through the API can delete it. Deletion returns **409**
+  while runtime work is active. Once idle, new runtime requests are blocked until the target's
+  clients and connections have been closed; successful deletion then forgets every caller's
+  credential for it. Cleanup failure keeps the registered target and credentials available for
+  retry. Neither deletion nor credential removal revokes the credential at the provider.
+- Credentials are lost when the backend restarts or reinitializes, and are kept in one process:
+  `PUT /api/targets/{id}/credentials` returns **409** when the deployment runs more than one
+  backend worker or replica.
+- A replacement credential is a value the caller obtains and submits again; the backend does not
+  acquire OAuth tokens or refresh them. The `pyrit_scan` client can re-read and re-send one
+  (`set-target-credential --from-ant --keep-fresh`).
+
+##### Personal copies of existing targets
+
+Some targets only exist because an initializer configured them in Python, with settings the create
+API cannot express. To use such a target with your own credential, register a personal copy:
+
+```http
+POST /api/targets
+{"name": "my-claude", "type": "OpenAIChatTarget", "requires_caller_credential": true,
+ "source": {"source_name": "claude_shared", "source_hash": "<identifier.hash from GET /api/targets>",
+            "params": {"api_key": "<your key>"}}}
+```
+
+- The copy keeps the source's configuration but never its credential: the source's key, token
+  provider, or managed identity is replaced by your own credential, even when the source used
+  `auth_mode` `none`. The source target is unchanged.
+- `source.params` accepts the same overrides as other source clones, including `endpoint` and
+  `headers`. Headers copied from the source go wherever the copy sends requests. `auth_mode`
+  cannot be overridden. An `api_key` override becomes the creator's stored credential, never a
+  static key on the copy.
+- The source must support reconstruction: OpenAI-family targets (except `RealtimeTarget`) and
+  `LiteLLMChatTarget`. Sources that cannot be rebuilt (for example an OpenAI target with a custom
+  `http_client`) or whose configuration cannot use a token provider (for example a LiteLLM route
+  other than `openai/`, or a static authentication header) are rejected.
+- `source` with `register: true` is accepted only for personal copies; other source clones still
+  require `register: false`.
 
 ### Manual attack creation
 
@@ -390,7 +480,9 @@ API callers are trusted operators, so these are intentional exceptions:
   OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
   of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
-  created them.
+  created them. A target created with `requires_caller_credential` shares only its
+  configuration; each caller's key stays with that caller (see
+  [Personal targets with caller credentials](#personal-targets-with-caller-credentials)).
 - Prompt content is not filtered; it is adversarial test data by design.
 - Any file type can be stored as a payload. `GET /api/media` renders only allow-listed image,
   audio, and video file extensions inline; everything else downloads as a file.

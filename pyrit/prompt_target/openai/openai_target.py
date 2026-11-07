@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from abc import abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar
 from urllib.parse import urlparse
 
@@ -22,7 +22,7 @@ from openai._exceptions import (
     AuthenticationError,
 )
 
-from pyrit.auth import resolve_openai_auth
+from pyrit.auth import resolve_openai_auth, validate_token_provider_headers
 from pyrit.common import default_values
 from pyrit.exceptions.exception_classes import (
     RateLimitException,
@@ -63,6 +63,10 @@ class OpenAITarget(PromptTarget):
     # endpoint (see ``is_azure_openai_endpoint``), and OpenAI-compatible servers
     # such as Ollama or vLLM may need no key at all.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity", "none")
+
+    # The OpenAI SDK resolves a callable ``api_key`` before every request and sends it as it
+    # would send a string key.
+    caller_credential_parameter: ClassVar[str | None] = "api_key"
 
     model_name_environment_variable: str
     endpoint_environment_variable: str
@@ -460,6 +464,8 @@ class OpenAITarget(PromptTarget):
         httpx_kwargs = self._httpx_client_kwargs.copy()
         if self._headers:
             httpx_kwargs.setdefault("default_headers", {}).update(self._headers)
+        if callable(self._api_key):
+            validate_token_provider_headers(httpx_kwargs.get("default_headers"))
 
         # Determine if this is Azure OpenAI based on the endpoint
         is_azure = "azure" in self._endpoint.lower() if self._endpoint else False
@@ -494,6 +500,16 @@ class OpenAITarget(PromptTarget):
             api_key=self._api_key,
             **httpx_kwargs,
         )
+
+    def _validate_request_headers(self, *, body: Mapping[str, Any]) -> None:
+        """
+        Validate SDK request options after request-body passthrough merging.
+
+        Raises:
+            ValueError: If static authentication could override a token provider.
+        """
+        if callable(self._api_key):
+            validate_token_provider_headers(body.get("extra_headers"))
 
     async def _handle_openai_request_async(
         self,

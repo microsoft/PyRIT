@@ -445,6 +445,7 @@ class OpenAIChatTarget(OpenAITarget):
 
         if self._extra_body_parameters:
             body_parameters.update(self._extra_body_parameters)
+        self._validate_request_headers(body=body_parameters)
 
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}

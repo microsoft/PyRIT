@@ -33,6 +33,7 @@ from pyrit.analytics.scenario_statistics import (
     resolve_execution_unit,
     select_execution_attack_result_ids,
 )
+from pyrit.auth import caller_principal_context, get_caller_principal
 from pyrit.backend.models.attacks import ConversationMessagesResponse
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
@@ -210,6 +211,8 @@ class _ActiveTask:
     cancellation_reason: str = _USER_CANCELLATION_REASON
     cancellation_error_type: str = "CancelledError"
     retain_error_on_terminalization: bool = False
+    # Captured at admission so a run queued behind another caller's run uses its own caller's credentials.
+    caller_principal: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -811,6 +814,7 @@ class ScenarioRunService:
             scenario_registry_name=request.scenario_name,
             created_at=persisted.creation_time,
             enqueued_at=datetime.now(UTC),
+            caller_principal=get_caller_principal(),
         )
         await self._enqueue_run_async(scheduled=scheduled)
 
@@ -1435,7 +1439,11 @@ class ScenarioRunService:
         )
         self._active_scenario_result_id = scheduled.scenario_result_id
         self._active_tasks[scheduled.scenario_result_id] = scheduled
-        scheduled.task = asyncio.create_task(self._execute_run_async(scenario_result_id=scheduled.scenario_result_id))
+        # A queued run starts from the previous run's handoff, so give it its own admitted caller.
+        scheduled.task = asyncio.create_task(
+            self._execute_run_async(scenario_result_id=scheduled.scenario_result_id),
+            context=caller_principal_context(scheduled.caller_principal),
+        )
         self._queue_revision += 1
 
     async def _handoff_scheduler_async(self, *, scenario_result_id: str) -> None:

@@ -379,6 +379,7 @@ The below talks about responsibilities of most modules in the PyRIT library
 **Responsibility**: Provide authentication helpers for the external services PyRIT talks to, behind a common `Authenticator` abstraction.
 
 - Components that need credentials should go through these helpers rather than handling tokens themselves.
+- Caller-supplied credentials (`pyrit.auth.caller_credential`) let a shared component hold a token provider instead of a secret. The provider returns the current caller's own credential, read from an explicitly scoped caller principal and an in-memory store, and fails closed when either is missing. Hosts own identifying callers and scoping work to them; targets own only sending the value they receive.
 
 ## Code Execution (Experimental)
 
@@ -481,6 +482,7 @@ The below describes the user-facing surfaces built on top of the framework.
 - Organized into `routes/`, `services/`, `models/`, `mappers/`, and `middleware/`, and launched through the `pyrit_backend` command (configurable via `PYRIT_API_HOST` / `PYRIT_API_PORT` / `PYRIT_API_RELOAD`).
 - Saved-result analytics routes consume the cached SDK directly and serialize shared models. The shared runtime owns admission, busy checks, SDK draining and cache invalidation before memory replacement/disposal, including work still cleaning up after an HTTP timeout. It does not calculate statistics or add an SDK authorization scope.
 - `ChatScoringService` owns manual chat scoring policy: the scorer and input for the next evaluation, reuse of a complete matching result, publication to the attack, and the latest-response result and outcome that the frontend shows.
+- The auth middleware scopes each request, and the work it starts, to its caller. For a target created with `requires_caller_credential`, including a personal copy of an existing target, `TargetService` stores submitted keys per caller and registers the target with a provider instead of a key; other targets stay shared. Work that starts outside its request, such as a queued scenario run, carries the principal captured at admission; shared single-flight work runs with no caller.
 
 ## [CLI](../scanner/0_scanner)
 
