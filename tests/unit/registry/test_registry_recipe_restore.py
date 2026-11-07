@@ -502,6 +502,20 @@ class TestRestoreFailures:
         assert "SECRET" not in failure.message
         assert [ref.name for ref in report.restored] == ["good"]
 
+    def test_error_text_with_a_percent_encoded_credential_is_hidden(self, tmp_path: Path) -> None:
+        encoded = {
+            **_IDENTITY_TARGET,
+            "params": {**_IDENTITY_TARGET["params"], "temperature": "https://host/v1%3Fsig%3DSECRET"},
+        }
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "encoded", encoded)
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("encoded", RestoreFailureReason.BUILD_ERROR)
+        assert failure.message.endswith("(message hidden because it may include a credential)")
+        assert "SECRET" not in failure.message
+
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
@@ -546,6 +560,8 @@ class TestRestoreFailures:
                 "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
             ),
             ("contact admin@example.com", "ValueError (message hidden because it may include a credential)"),
+            ("got https://host/v1%3Fsig%3DSECRET", "ValueError (message hidden because it may include a credential)"),
+            ("got https://user:SECRET%40host/v1", "ValueError (message hidden because it may include a credential)"),
             (
                 "could not convert '\uff10\uff0e\uff15' or 10\u00b3",
                 "ValueError: could not convert '\uff10\uff0e\uff15' or 10\u00b3",
@@ -570,6 +586,12 @@ class TestRestoreFailures:
     @pytest.mark.parametrize("mark", ["@", "\ufe6b", "\uff20"])
     def test_safe_message_hides_text_with_any_form_of_an_at_sign(self, mark: str) -> None:
         message = RegistryRecipeRestorer._safe_message(ValueError(f"got https://USER:SECRET{mark}host/v1"))
+
+        assert message == "ValueError (message hidden because it may include a credential)"
+
+    @pytest.mark.parametrize("mark", ["%", "\ufe6a", "\uff05"])
+    def test_safe_message_hides_text_with_any_form_of_a_percent_sign(self, mark: str) -> None:
+        message = RegistryRecipeRestorer._safe_message(ValueError(f"got https://USER:SECRET{mark}40host/v1"))
 
         assert message == "ValueError (message hidden because it may include a credential)"
 

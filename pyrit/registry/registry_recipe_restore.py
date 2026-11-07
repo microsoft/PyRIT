@@ -20,6 +20,7 @@ from pyrit.models.catalog.registry_recipe import (
     TechniqueRecipe,
 )
 from pyrit.models.parameter import ComponentType
+from pyrit.registry.file_document_storage import describe_storage_error
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage
 
@@ -96,7 +97,7 @@ class RegistryRecipeRestorer:
             try:
                 listings.append(storage.list_recipes())
             except Exception as error:  # Any listing error, not only storage ones, must become a failure.
-                message = f"The saved {kind.value} couldn't be listed: {storage._describe_read_error(error)}"
+                message = f"The saved {kind.value} couldn't be listed: {describe_storage_error(error)}"
                 failures.append(
                     RestoreFailure(kind=kind, reason=RestoreFailureReason.UNREADABLE_STORAGE, message=message)
                 )
@@ -537,9 +538,10 @@ class RegistryRecipeRestorer:
 
         Constructor errors can quote a server setting, such as an endpoint with a SAS token. The text
         is cut at the first ``?`` or ``#``, where a URL's query or fragment starts. A user name and
-        password can't be told apart reliably, so text with an ``@`` isn't shown at all. A look-alike
-        character, such as a full-width ``＠``, counts as the character it looks like, and the text
-        that is shown keeps its original characters.
+        password can't be told apart reliably, so text with an ``@`` isn't shown at all, nor is text
+        with a ``%``, since a percent escape such as ``%40`` or ``%3F`` can stand for any of these
+        marks. A look-alike character, such as a full-width ``＠``, counts as the character it looks
+        like, and the text that is shown keeps its original characters.
 
         Returns:
             str: The error's type and its text, noting when the rest of the text or all of it is hidden.
@@ -551,7 +553,7 @@ class RegistryRecipeRestorer:
             text = str.__str__(str(error))
         except Exception:
             return name
-        if any(_looks_like(char=char, marks="@") for char in text):
+        if any(_looks_like(char=char, marks="@%") for char in text):
             return f"{name} (message hidden {hidden})"
         cut_at = next((index for index, char in enumerate(text) if _looks_like(char=char, marks="?#")), None)
         if cut_at is None:
