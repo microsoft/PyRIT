@@ -786,6 +786,9 @@ export type AttackTargetResolutionStatus =
 
 export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
 
+/** An attack's saved outcome, or where it is before one exists. */
+export type AttackDisplayOutcome = AttackOutcome | 'in_progress' | 'preparing'
+
 // Wire contracts from pyrit.models.analytics. The SDK selects and counts the cohort.
 export type AttackAnalyticsDimensionName =
   | 'operation'
@@ -1187,6 +1190,20 @@ export interface DisplayScore extends BackendScore {
   pieceIndex: number
   pieceType: string
   sourceLabel: string
+}
+
+/**
+ * The fields a score popover shows, independent of where the score was recorded,
+ * so scan results do not need to fabricate a message-piece score.
+ */
+export interface ScoreSummary {
+  scorer: string
+  scoreType: string
+  value?: string | null
+  status?: string
+  rationale?: string | null
+  categories?: string[] | null
+  isObjective?: boolean
 }
 
 export interface BackendMessagePiece {
