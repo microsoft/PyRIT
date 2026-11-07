@@ -15,9 +15,10 @@ from sqlalchemy import text, update
 
 from pyrit.analytics._profile_aggregation import ProfileAggregation
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
+from pyrit.memory import AttackResultEntry
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsProfile, RawAnalyticsReport
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
-from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry
+from pyrit.memory.memory_models import AttackIdentifierEntry
 from pyrit.models import (
     AttackAnalyticsDimension,
     AttackAnalyticsQuery,

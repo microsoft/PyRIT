@@ -14,8 +14,8 @@ from pyrit.models import (
     Score,
     ScoreStatus,
     ScoringExpectation,
+    UnvalidatedScore,
 )
-from pyrit.models.score import UnvalidatedScore
 
 
 def _make_score(**overrides) -> Score:

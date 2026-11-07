@@ -3,8 +3,7 @@
 
 import pytest
 
-from pyrit.score import AnthraxKeywordScorer
-from pyrit.score.true_false.regex.regex_scorer import RegexScorer
+from pyrit.score import AnthraxKeywordScorer, RegexScorer
 
 
 def test_is_regex_scorer_subclass():

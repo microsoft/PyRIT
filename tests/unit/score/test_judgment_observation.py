@@ -16,8 +16,8 @@ import pytest
 from sqlalchemy import text, update
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import ObservationEntry, PromptMemoryEntry, ScoreEntry
+from pyrit.memory import MemoryInterface, PromptMemoryEntry
+from pyrit.memory.memory_models import ObservationEntry, ScoreEntry
 from pyrit.models import (
     Acquisition,
     AnswerMatches,

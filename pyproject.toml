@@ -457,6 +457,9 @@ extend-select = [
 [tool.ruff.lint.isort]
 known-first-party = ["pyrit"]
 
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
 [tool.ruff.lint.flake8-type-checking]
 # Pydantic resolves model field annotations at runtime (the models use
 # ``from __future__ import annotations``), so imports used only as field types
@@ -464,6 +467,7 @@ known-first-party = ["pyrit"]
 # subclasses, but not models whose base is an intermediate PyRIT class, so we
 # enumerate those bases here to keep their field imports runtime-evaluated.
 runtime-evaluated-base-classes = [
+    "pyrit.models.StrategyResult",
     "pyrit.models.results.strategy_result.StrategyResult",
 ]
 

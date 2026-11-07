@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from pyrit.analytics.result_analysis import get_cached_results_for_technique_async
+from pyrit.analytics import get_cached_results_for_technique_async
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
@@ -25,9 +25,10 @@ from pyrit.models import (
     ScoringExpectation,
     TargetIdentifier,
 )
-from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
-from pyrit.prompt_target.http_target.http_target import HTTPTarget
-from pyrit.prompt_target.http_target.http_target_callback_functions import (
+from pyrit.prompt_target import (
+    HTTPTarget,
+    TargetCapabilities,
+    TargetConfiguration,
     get_http_target_json_response_callback_function,
     get_http_target_regex_matching_callback_function,
 )

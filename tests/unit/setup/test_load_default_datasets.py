@@ -15,9 +15,8 @@ from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import ScenarioRegistry, TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.setup.initializers import LoadDefaultDatasets
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
@@ -145,7 +144,7 @@ class TestLoadDefaultDatasets:
 
         # Patch OpenAIChatTarget at the fallback construction site so registry
         # introspection does not depend on OPENAI_CHAT_MODEL or other env vars.
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
         from pyrit.score import TrueFalseScorer
 
         fallback_target = MagicMock()
