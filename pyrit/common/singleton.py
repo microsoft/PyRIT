@@ -13,6 +13,12 @@ class Singleton(abc.ABCMeta):
 
     _instances: dict[type, object] = {}
 
+    # Declared without values so the static type checker can see the
+    # per-class state: each singleton class gets its own lock and flag in
+    # __new__ (via the class namespace), and __call__ reads them via cls.
+    _singleton_lock: threading.RLock
+    _singleton_constructing: bool
+
     def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, object], **kwargs: object) -> type:
         """
         Create the class and give it a reentrant lock for synchronizing construction.
