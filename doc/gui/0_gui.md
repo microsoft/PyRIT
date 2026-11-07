@@ -264,7 +264,8 @@ together.
 
 A finding can be broken into sub-findings, at any depth, to record a
 decomposition such as a multi-step attack. Use **Add sub-finding** on a
-finding, and expand **Sub-findings** to see them. Each finding keeps its own
+finding, and expand **Sub-findings** to see them, oldest first in the order
+they were added. Each finding keeps its own
 severity, and turning off **Demonstrated** marks a step that was attempted but
 not achieved. **Edit paths** records the ordered ways a finding's direct
 sub-findings demonstrate it, for example *recon → obtain credentials → pull
@@ -275,10 +276,10 @@ you remove it from that path.
 
 **Export findings** on the operation page downloads the findings you select as
 one Word or Markdown document to paste into a report. Selecting a finding
-includes its sub-findings, numbered under it (1, 1.1, 1.2, …), with its paths and
-any steps that were not demonstrated. Evidence appears as links to the attacks
-in PyRIT, without transcripts or media. Nothing is redacted, so store and share
-exported files with care.
+includes its sub-findings, numbered under it in the order they were added (1,
+1.1, 1.2, …), with its paths and any steps that were not demonstrated. Evidence
+appears as links to the attacks in PyRIT, without transcripts or media. Nothing
+is redacted, so store and share exported files with care.
 
 ![Operations page with a test operation](images/operations.png)
 

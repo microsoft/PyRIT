@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -33,11 +33,12 @@ async def _finding(
     number: int | None = None,
     severity: str = "moderate",
     demonstrated: bool = True,
+    minutes: int = 0,
 ) -> Finding:
     return await memory.add_finding_async(
         finding=Finding(
             id=UUID(int=number) if number is not None else uuid4(),
-            created_at=STAMP,
+            created_at=STAMP + timedelta(minutes=minutes),
             operation_id=operation.id,
             title=title,
             severity=severity,
@@ -85,8 +86,10 @@ async def test_new_finding_cannot_have_paths(sqlite_instance: SQLiteMemory) -> N
 async def test_findings_filter_by_parent_and_top_level(sqlite_instance: SQLiteMemory) -> None:
     operation = await _operation(sqlite_instance)
     root = await _finding(sqlite_instance, operation=operation, title="Root", number=1, severity="critical")
-    first = await _finding(sqlite_instance, operation=operation, title="First", parent=root, number=2)
-    second = await _finding(sqlite_instance, operation=operation, title="Second", parent=root, number=3)
+    first = await _finding(sqlite_instance, operation=operation, title="First", parent=root, number=2, minutes=1)
+    second = await _finding(
+        sqlite_instance, operation=operation, title="Second", parent=root, number=3, severity="critical", minutes=2
+    )
     nested = await _finding(sqlite_instance, operation=operation, title="Nested", parent=first, number=4)
     standalone = await _finding(sqlite_instance, operation=operation, title="Standalone", number=5, severity="low")
 
@@ -94,8 +97,11 @@ async def test_findings_filter_by_parent_and_top_level(sqlite_instance: SQLiteMe
     assert {finding.id for finding in everything} == {root.id, first.id, second.id, nested.id, standalone.id}
     top_level = await sqlite_instance.get_findings_async(operation_id=operation.id, top_level_only=True)
     assert [finding.title for finding in top_level] == ["Root", "Standalone"]
+    # Sub-findings read in the order they were written, not by severity.
     children = await sqlite_instance.get_findings_async(operation_id=operation.id, parent_finding_id=root.id)
-    assert [finding.title for finding in children] == ["Second", "First"]
+    assert [finding.title for finding in children] == ["First", "Second"]
+    later_page = await sqlite_instance.get_findings_async(parent_finding_id=root.id, limit=1, offset=1)
+    assert [finding.title for finding in later_page] == ["Second"]
     assert await sqlite_instance.get_finding_child_counts_async(
         finding_ids=[root.id, first.id, second.id, standalone.id]
     ) == {root.id: 2, first.id: 1}

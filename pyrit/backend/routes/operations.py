@@ -162,13 +162,16 @@ async def list_operation_findings_async(
     title_pattern: str | None = Query(
         None, max_length=1000, description="Full case-insensitive LIKE pattern instead of title: % and _, / escaping"
     ),
-    parent_finding_id: UUID | None = Query(None, description="Only the direct sub-findings of this finding"),
+    parent_finding_id: UUID | None = Query(
+        None, description="Only the direct sub-findings of this finding, oldest first"
+    ),
     top_level: bool = Query(False, description="Only findings without a parent finding"),
 ) -> FindingListResponse:
     """
     List one page of an operation's findings, by severity and then newest first.
 
-    Without a filter, findings at every depth are listed.
+    Without a filter, findings at every depth are listed. A parent's sub-findings are listed oldest first, the order
+    a decomposition is usually written in.
 
     Returns:
         FindingListResponse: One page of findings.

@@ -217,7 +217,8 @@ class OperationService:
         """
         Read one page of an operation's findings and whether there is a next page.
 
-        Without a parent or top-level filter, the page can include findings at any depth.
+        Without a parent or top-level filter, the page can include findings at any depth. A parent's sub-findings are
+        listed oldest first.
 
         Returns:
             FindingListResponse: The page and the offset of the next one, if any.

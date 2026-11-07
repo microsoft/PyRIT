@@ -91,9 +91,9 @@ async def export_findings_async(*, operation_id: UUID, request: FindingExportReq
     """
     Build one document of an Operation's selected findings, in the dashboard's listing order, with evidence references.
 
-    Each selected finding includes all of its sub-findings, nested under it. A sub-finding selected without its
-    parent is listed at the top level and names the finding it is part of. Evidence appears as saved metadata and
-    dashboard links, without transcripts or media.
+    Each selected finding includes all of its sub-findings, nested under it oldest first. A sub-finding selected
+    without its parent is listed at the top level and names the finding it is part of. Evidence appears as saved
+    metadata and dashboard links, without transcripts or media.
 
     Returns:
         FindingExportFile: The complete document.
@@ -147,13 +147,19 @@ async def _build_report_async(*, operation_id: UUID, request: FindingExportReque
         for finding, items in selected
     }
     # A sub-finding selected without its parent leads its own subtree, and names the finding it is part of.
+    # Top-level entries keep the dashboard's order; sub-findings read oldest first, as the dashboard lists them.
+    roots = [finding for finding in findings.values() if finding.parent_finding_id not in findings]
+    sub_findings = sorted(
+        (finding for finding in findings.values() if finding.parent_finding_id in findings),
+        key=lambda finding: (finding.created_at, finding.id),
+    )
     tree = DecompositionTree(
         DecompositionNode(
             id=finding.id,
             parent_id=finding.parent_finding_id if finding.parent_finding_id in findings else None,
             paths=finding.paths,
         )
-        for finding in findings.values()
+        for finding in (*roots, *sub_findings)
     )
     part_of = await service.get_finding_titles_async(
         operation_id=operation_id,

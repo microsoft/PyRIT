@@ -149,6 +149,26 @@ describe('FindingExportDialog', () => {
     expect(operationsApi.listFindings).toHaveBeenCalledTimes(1)
   })
 
+  it('nests sub-findings oldest first while findings keep the dashboard order', async () => {
+    const user = userEvent.setup()
+    const parent = syntheticFinding(10, { title: 'Parent', severity: 'critical', child_count: 2 })
+    const first = syntheticFinding(11, {
+      title: 'Written first', severity: 'low', parent_finding_id: parent.id, created_at: '2026-10-21T12:01:00Z',
+    })
+    const second = syntheticFinding(12, {
+      title: 'Written second', severity: 'critical', parent_finding_id: parent.id, created_at: '2026-10-21T12:02:00Z',
+    })
+    // The unfiltered list is in dashboard order: by severity, then newest first.
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([parent, second, ALPHA, BETA, first]))
+    renderDialog()
+    const dialog = await openDialog(user)
+    await within(dialog).findByRole('checkbox', { name: 'Written first' })
+
+    const titles = ['Parent', 'Written first', 'Written second', ALPHA.title, BETA.title]
+    expect(within(dialog).getAllByRole('checkbox').slice(1))
+      .toEqual(titles.map(name => within(dialog).getByRole('checkbox', { name })))
+  })
+
   it('selects a finding with all of its sub-findings and sends only the finding', async () => {
     const user = userEvent.setup()
     const parent = syntheticFinding(10, { title: 'Parent', child_count: 1 })

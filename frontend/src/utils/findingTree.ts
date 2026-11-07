@@ -4,6 +4,7 @@ import type { FindingPath } from '@/types'
 interface FindingNode {
   readonly id: string
   readonly parent_finding_id?: string | null
+  readonly created_at: string
 }
 
 /** A finding with how far below a listed root it sits. */
@@ -12,7 +13,17 @@ export interface FindingTreeRow<T extends FindingNode> {
   readonly depth: number
 }
 
-/** The direct sub-findings of each finding, in listing order. Findings whose parent is not listed are roots. */
+/** Oldest first, the order a decomposition is usually written in, with the ID keeping ties stable. */
+function bySubFindingOrder(first: FindingNode, second: FindingNode): number {
+  const created = Date.parse(first.created_at) - Date.parse(second.created_at)
+  if (created !== 0) return created
+  return first.id < second.id ? -1 : first.id > second.id ? 1 : 0
+}
+
+/**
+ * The direct sub-findings of each finding, oldest first, keyed by parent. Findings whose parent is not listed are
+ * roots, keyed by null and kept in listing order.
+ */
 export function findingChildren<T extends FindingNode>(findings: readonly T[]): Map<string | null, T[]> {
   const listed = new Set(findings.map(finding => finding.id))
   const children = new Map<string | null, T[]>()
@@ -22,10 +33,13 @@ export function findingChildren<T extends FindingNode>(findings: readonly T[]): 
     if (siblings) siblings.push(finding)
     else children.set(parentId, [finding])
   }
+  for (const [parentId, siblings] of children) {
+    if (parentId !== null) siblings.sort(bySubFindingOrder)
+  }
   return children
 }
 
-/** Findings depth-first, each parent before its sub-findings, keeping listing order among siblings. */
+/** Findings depth-first, each parent before its sub-findings. */
 export function flattenFindingTree<T extends FindingNode>(findings: readonly T[]): Array<FindingTreeRow<T>> {
   const children = findingChildren(findings)
   const rows: Array<FindingTreeRow<T>> = []

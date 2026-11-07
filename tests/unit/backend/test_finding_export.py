@@ -1031,17 +1031,17 @@ async def _save_decomposed_findings_async(memory: SQLiteMemory) -> tuple[Operati
             memory=memory,
             operation=operation,
             title=title,
-            created_at=stamp - timedelta(minutes=minutes),
+            created_at=stamp + timedelta(minutes=minutes),
             parent_finding_id=named[parent].id if parent else None,
             **fields,
         )
 
     await add("Data theft", 0, severity="critical", description="Records left the tenant.")
     await add("Separate", 1)
-    # Siblings list newest first, as on the dashboard, so Recon is 1.1.
-    await add("Recon", 2, "Data theft")
+    # Sub-findings read in the order they were written, not by severity, so low-severity Recon is still 1.1.
+    await add("Recon", 2, "Data theft", severity="low")
     await add("Obtain creds", 3, "Data theft", demonstrated=False)
-    await add("Pull records", 4, "Data theft")
+    await add("Pull records", 4, "Data theft", severity="critical")
     await add("Port scan", 5, "Recon")
     await add("Lone", 6, "Separate", severity="low")
     steps = [named[title].id for title in ("Recon", "Obtain creds", "Pull records")]

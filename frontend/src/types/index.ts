@@ -2500,7 +2500,7 @@ export interface FindingListParams {
   title?: string
   /** Full LIKE pattern instead of literal title search (% and _, / escaping). */
   title_pattern?: string
-  /** Only the direct sub-findings of this finding. */
+  /** Only the direct sub-findings of this finding, oldest first. */
   parent_finding_id?: string
   /** Only findings without a parent. */
   top_level?: boolean

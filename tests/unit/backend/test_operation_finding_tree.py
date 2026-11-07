@@ -48,7 +48,7 @@ def _editable(finding: dict[str, Any], **changes: object) -> dict[str, Any]:
 
 def test_sub_findings_are_created_listed_and_counted(client: TestClient, findings_path: str) -> None:
     parent = _create(client, findings_path, "Data theft", severity="critical")
-    recon = _create(client, findings_path, "Recon", parent_finding_id=parent["id"])
+    recon = _create(client, findings_path, "Recon", parent_finding_id=parent["id"], severity="low")
     creds = _create(client, findings_path, "Creds", parent_finding_id=parent["id"], demonstrated=False)
     _create(client, findings_path, "Nested", parent_finding_id=recon["id"])
 
@@ -59,10 +59,11 @@ def test_sub_findings_are_created_listed_and_counted(client: TestClient, finding
     assert parent["parent_finding_id"] is None and parent["demonstrated"] is True and parent["paths"] == []
     assert (creds["parent_finding_id"], creds["demonstrated"]) == (parent["id"], False)
     assert [(item["title"], item["child_count"]) for item in top_level] == [("Data theft", 2)]
-    assert {(item["title"], item["child_count"]) for item in children} == {("Recon", 1), ("Creds", 0)}
+    # Sub-findings read in the order they were written, even though Creds is more severe.
+    assert [(item["title"], item["child_count"]) for item in children] == [("Recon", 1), ("Creds", 0)]
     assert len(everything) == 4
     counts = {item["name"]: item["finding_counts"] for item in client.get("/api/operations").json()["items"]}
-    assert counts == {"Decomposed": {"critical": 1, "moderate": 3}}
+    assert counts == {"Decomposed": {"critical": 1, "low": 1, "moderate": 2}}
 
 
 def test_list_filters_reject_a_missing_parent_and_conflicting_filters(client: TestClient, findings_path: str) -> None:

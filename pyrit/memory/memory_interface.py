@@ -1137,7 +1137,8 @@ class MemoryInterface(abc.ABC):
         """
         Read one page of findings, highest severity first, then newest first.
 
-        Without a parent or top-level filter, every finding is listed, including sub-findings.
+        Without a parent or top-level filter, every finding is listed, including sub-findings. A parent's direct
+        sub-findings are listed oldest first instead, the order a decomposition is usually written in.
 
         Args:
             operation_id (uuid.UUID | None): Only findings of this operation. Defaults to None.
@@ -1145,7 +1146,8 @@ class MemoryInterface(abc.ABC):
             offset (int): The number of findings to skip. Defaults to 0.
             title_query (str | None): Case-insensitive literal title substring. Defaults to None.
             title_pattern (str | None): Full LIKE pattern instead of title_query. Defaults to None.
-            parent_finding_id (uuid.UUID | None): Only the direct sub-findings of this finding. Defaults to None.
+            parent_finding_id (uuid.UUID | None): Only the direct sub-findings of this finding, oldest first.
+                Defaults to None.
             top_level_only (bool): Only findings without a parent. Defaults to False.
 
         Returns:
@@ -1169,7 +1171,8 @@ class MemoryInterface(abc.ABC):
             statement = statement.where(FindingEntry.parent_finding_id.is_(None))
         if title_query or title_pattern is not None:
             statement = statement.where(text_match(column=FindingEntry.title, value=title_query, pattern=title_pattern))
-        statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
+        order = self._sub_finding_order() if parent_finding_id is not None else self._finding_order()
+        statement = statement.order_by(*order).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
 
@@ -1419,6 +1422,11 @@ class MemoryInterface(abc.ABC):
             value=FindingEntry.severity,
         )
         return severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc()
+
+    @staticmethod
+    def _sub_finding_order() -> "tuple[ColumnElement[Any], ...]":
+        # A decomposition is usually written step by step, so a parent's sub-findings read oldest first.
+        return FindingEntry.created_at.asc(), FindingEntry.id.asc()
 
     def _uses_legacy_memory_override(self) -> bool:
         return any(
