@@ -63,6 +63,36 @@ that come back after a restart; targets from configuration keep their own sign-i
 the name of the user who saved it (null when it was saved with sign-in off), and `saved_by_me` says whether that's the
 signed-in user asking. The user's object ID isn't returned.
 
+### Manual attack creation
+
+`POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
+for example `{"target_registry_name": "my-target", "objective": "Evaluate the response"}`.
+An omitted, null, or empty objective creates a chat without a goal. The objective
+never sets the strategy type, and there is no separate attack display-name field.
+Objective edits use `PATCH /api/attacks/{attack_result_id}` without changing the
+strategy identifier. New attacks copied from conversations or saved through
+`POST /api/attacks/save-conversation` also use `ManualAttack`; their automated
+source results keep their original strategy types.
+New and edited manual objectives are marked as non-placeholder, so even the literal
+`"Manual attack via GUI"` is preserved in summaries. Unmarked historical manual
+placeholders retain their legacy empty-summary behavior.
+
+Until PyRIT 1.4, `name` remains a deprecated input alias for `objective`, with
+the same text validation. When `objective` is omitted or null, `name` supplies
+the goal. If both are non-null they must match exactly, including empty strings;
+conflicts return 422 rather than silently discarding either value.
+
+This fixes new results, not existing malformed identifiers. Older manual results
+may have their initial objective stored as the strategy class name. History,
+attack-type filters/options, and analytics still use those persisted class names.
+Manual editing and scoring remain available because they recognize the
+`pyrit.backend` strategy module, not the malformed class name. Objective edits
+do not repair identifiers. Any historical repair requires a separate, audited
+migration scoped to verified backend-created manual results, creating corrected
+content-addressed identifiers and relinking affected results rather than mutating
+shared identifiers. Do not infer manual status from objective text or GUI labels,
+or reclassify automated results.
+
 ### Saved conversations
 
 `GET /api/attacks/conversations/{conversation_id}` returns the saved chat history

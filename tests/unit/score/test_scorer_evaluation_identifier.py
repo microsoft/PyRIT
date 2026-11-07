@@ -37,7 +37,9 @@ class TestScorerEvaluationIdentifierConstants:
     def test_prompt_target_rule(self):
         """Test that prompt_target has the expected included params and fallbacks."""
         rule = ScorerEvaluationIdentifier.CHILD_EVAL_RULES["prompt_target"]
-        assert rule.included_params == frozenset({"underlying_model_name", "temperature", "top_p"})
+        assert rule.included_params == frozenset(
+            {"underlying_model_name", "temperature", "top_p", "http_request_fingerprint"}
+        )
         assert rule.param_fallbacks == {"underlying_model_name": "model_name"}
 
 
