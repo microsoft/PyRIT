@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Event
 from types import ModuleType
-from typing import Any
+from typing import Any, assert_type
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -335,7 +335,11 @@ def test_get_registry_singleton_converges_for_same_class() -> None:
             second = executor.submit(SlowConstructingRegistry.get_registry_singleton)
             SlowConstructingRegistry.construction_release.set()
 
-            assert first.result(timeout=5) is second.result(timeout=5)
+            first_registry = first.result(timeout=5)
+            second_registry = second.result(timeout=5)
+            assert_type(first_registry, SlowConstructingRegistry)
+            assert_type(second_registry, SlowConstructingRegistry)
+            assert first_registry is second_registry
     finally:
         SlowConstructingRegistry.reset_registry_singleton()
 
@@ -355,10 +359,14 @@ def test_get_registry_singleton_does_not_block_unrelated_registry_class() -> Non
             # Must complete promptly: different registry classes must not share a
             # construction lock.
             other = executor.submit(OtherSlowConstructingRegistry.get_registry_singleton)
-            assert isinstance(other.result(timeout=1), OtherSlowConstructingRegistry)
+            other_registry = other.result(timeout=1)
+            assert_type(other_registry, OtherSlowConstructingRegistry)
+            assert isinstance(other_registry, OtherSlowConstructingRegistry)
 
             SlowConstructingRegistry.construction_release.set()
-            assert isinstance(slow.result(timeout=5), SlowConstructingRegistry)
+            slow_registry = slow.result(timeout=5)
+            assert_type(slow_registry, SlowConstructingRegistry)
+            assert isinstance(slow_registry, SlowConstructingRegistry)
     finally:
         SlowConstructingRegistry.reset_registry_singleton()
         OtherSlowConstructingRegistry.reset_registry_singleton()

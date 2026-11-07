@@ -1,6 +1,15 @@
-import type { ScenarioProgressResult } from '@/types'
+import type { ScenarioProgressCounts, ScenarioProgressResult } from '@/types'
+import { formatAnalyticsPercent } from '@/utils/attackAnalytics'
 
 const OBJECTIVE_PREVIEW_LENGTH = 96
+
+export function formatProgressSuccess(counts: ScenarioProgressCounts): string {
+  if (counts.outcomes) {
+    return counts.outcomes.success_rate_decided === null ? 'Undetermined'
+      : formatAnalyticsPercent(counts.outcomes.success_rate_decided)
+  }
+  return counts.success_percentage === null ? 'Undetermined' : `${counts.success_percentage}%`
+}
 
 /**
  * Formatting for a single attack attempt.
@@ -11,11 +20,16 @@ const OBJECTIVE_PREVIEW_LENGTH = 96
 
 export function formatAttackSuccess(outcome: ScenarioProgressResult['outcome']): string {
   if (outcome === 'success') {
-    return 'Yes'
+    return 'True'
   }
   if (outcome === 'failure') {
-    return 'No'
+    return 'False'
   }
+  return outcome.replace(/^\w/, (letter) => letter.toUpperCase())
+}
+
+/** The attack's outcome as a word, for places headed "Attack outcome" rather than "Attack success". */
+export function formatAttackOutcome(outcome: ScenarioProgressResult['outcome']): string {
   return outcome.replace(/^\w/, (letter) => letter.toUpperCase())
 }
 
@@ -27,7 +41,7 @@ export function formatScore(score: ScenarioProgressResult['score']): string {
 }
 
 export function formatScoreRationale(rationale: string | null | undefined): string {
-  return rationale?.trim() || 'No score rationale was persisted.'
+  return rationale?.trim() || 'No rationale is available.'
 }
 
 export function formatTimestamp(timestamp: string): string {
@@ -69,5 +83,11 @@ export function objectivePreview(objective: string | null, fallbackId: string): 
   if (objective.length <= OBJECTIVE_PREVIEW_LENGTH) {
     return objective
   }
-  return `${objective.slice(0, OBJECTIVE_PREVIEW_LENGTH - 1)}…`
+  let sliceEnd = OBJECTIVE_PREVIEW_LENGTH - 1
+  const lead = objective.charCodeAt(sliceEnd - 1)
+  const trail = objective.charCodeAt(sliceEnd)
+  if (lead >= 0xd800 && lead <= 0xdbff && trail >= 0xdc00 && trail <= 0xdfff) {
+    sliceEnd -= 1
+  }
+  return `${objective.slice(0, sliceEnd)}…`
 }
