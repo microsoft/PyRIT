@@ -1,10 +1,15 @@
-import { useState } from 'react'
-
-import { Badge, MessageBar, MessageBarBody, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from '@fluentui/react-components'
+import { Button, MessageBar, MessageBarActions, MessageBarBody, Text, mergeClasses } from '@fluentui/react-components'
 import { Link } from 'react-router'
 
-import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
+import AttachToFindingsButton from '@/components/Chat/AttachToFindingsButton'
+import DetailFacts, { DetailFact } from '@/components/DetailFacts'
+import FindingSeverityBadge from '@/components/Operations/FindingSeverityBadge'
+import OutcomeBadge from '@/components/OutcomeBadge'
+import IdentityDisclosure from '@/components/Registry/IdentityDisclosure'
+import ScorerEvaluationDetails from '@/components/Scorers/ScorerEvaluationDetails'
+import { useAttackFindings } from '@/hooks/useAttackFindings'
 import type {
+  AttackDisplayOutcome,
   ScenarioActiveConversation,
   ScenarioAttackTechniqueDetails,
   ScenarioHierarchyNode,
@@ -12,20 +17,16 @@ import type {
   ScenarioProgressResult,
   ScenarioRunPlanAtomicGroup,
 } from '@/types'
+import { scoreSummaryFromProgressScore } from '@/utils/scoreSummary'
 
-import ComponentIdentityDetails, { DetailMetric } from './ComponentIdentityDetails'
-import ObjectiveScorerDetails from './ObjectiveScorerDetails'
-import {
-  formatAttackSuccess,
-  formatDuration,
-  formatScore,
-  formatScoreRationale,
-  formatTimestamp,
-} from './attackAttemptFormatting'
+import { formatAttemptTiming, formatScoreRationale } from './attackAttemptFormatting'
 import { useAttackAttemptDetailsStyles } from './AttackAttemptDetails.styles'
 
 interface AttackAttemptDetailsProps {
-  readonly attempt: ScenarioProgressResult | ScenarioActiveConversation | ScenarioHierarchyNode
+  /** A saved result or hierarchy node, a running attack, or null before the attack starts. */
+  readonly attempt: ScenarioProgressResult | ScenarioActiveConversation | ScenarioHierarchyNode | null
+  /** The attack has not started yet but will; otherwise a missing attempt is unavailable. */
+  readonly preparing?: boolean
   readonly objective?: string | null
   readonly atomicGroup?: ScenarioRunPlanAtomicGroup | null
   readonly techniqueDetails?: ScenarioAttackTechniqueDetails | null
@@ -33,107 +34,101 @@ interface AttackAttemptDetailsProps {
   /** Route to the attempt's conversation. Supplied by the host so this stays route-agnostic. */
   readonly conversationPath: string | null
   readonly conversationState?: unknown
+  /** Offered first when attaching this attack to a finding. */
+  readonly findingOperationId?: string | null
+  /** Frame the details as a standalone card when they are shown inline on a page. */
+  readonly framed?: boolean
 }
 
+/** One attack's objective and outcome, the components it ran with, its findings, and its conversation. */
 export default function AttackAttemptDetails({
   attempt,
+  preparing = false,
   objective,
   atomicGroup,
   techniqueDetails,
   objectiveScorer,
   conversationPath,
   conversationState,
+  findingOperationId,
+  framed = false,
 }: AttackAttemptDetailsProps) {
   const styles = useAttackAttemptDetailsStyles()
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const completed = 'outcome' in attempt ? attempt : null
-  const techniqueName = atomicGroup?.technique_name ?? atomicGroup?.display_group ?? attempt.atomic_attack_name
-  const seeds = 'seed_identifiers' in attempt ? attempt.seed_identifiers ?? [] : []
+  const completed = attempt && 'outcome' in attempt ? attempt : null
+  const { findings, loading: findingsLoading, error: findingsError, refresh: refreshFindings } = useAttackFindings(completed?.attack_result_id)
+  const techniqueName = atomicGroup?.technique_name ?? atomicGroup?.display_group ?? attempt?.atomic_attack_name ?? 'Not recorded'
+  const seeds = attempt && 'seed_identifiers' in attempt ? attempt.seed_identifiers ?? [] : []
   const datasetNames = [...new Set(seeds.flatMap((seed) =>
     typeof seed.parameters.dataset_name === 'string' ? [seed.parameters.dataset_name] : []))]
-  const identities = [
-    { key: 'technique', name: techniqueName, kind: 'Technique', type: techniqueDetails?.component_name ?? attempt.atomic_attack_name, identity: techniqueDetails },
-    { key: 'scorer', name: objectiveScorer?.component_name ?? 'Not recorded', kind: 'Scorer', type: 'Objective scorer', identity: objectiveScorer },
-    { key: 'dataset', name: datasetNames.join(', ') || 'Dataset seeds', kind: 'Dataset', type: 'Seed group', identity: seeds.length ? seeds : null },
-  ]
-  const techniqueDescription = atomicGroup?.description ?? 'No description is available for this attack technique.'
-  const techniqueTags = atomicGroup?.tags ?? []
-  const errorMessage = completed?.outcome === 'error'
-    ? completed.error_message ?? 'No error detail was persisted.'
-    : null
-
-  function toggle(key: string): void {
-    setExpanded((current: Set<string>) => {
-      const next = new Set(current)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
+  const outcome: AttackDisplayOutcome = completed ? completed.outcome
+    : attempt ? 'in_progress' : preparing ? 'preparing' : 'undetermined'
+  const rationale = completed
+    ? completed.outcome === 'error' ? 'This attack did not produce a scored outcome.' : formatScoreRationale(completed.score?.score_rationale)
+    : attempt || preparing ? 'The outcome will appear after scoring.' : 'Attack details are not available.'
 
   return (
-    <div className={styles.content}>
-      <section className={styles.section}>
-        <Text size={200} className={styles.sectionLabel}>Objective</Text>
-        <Text as="p" className={styles.bodyText}>{objective ?? 'Objective text is not available.'}</Text>
-      </section>
-      <section className={styles.surface} aria-label="Attack outcome">
-        <div><Badge appearance="tint" color={!completed ? 'brand' : completed.outcome === 'success' ? 'success' : completed.outcome === 'error' ? 'danger' : 'informative'}>
-          {completed ? formatAttackSuccess(completed.outcome) : 'In progress'}
-        </Badge></div>
-        <Text as="p" className={styles.bodyText}>
-          {!completed ? 'The outcome will appear after scoring.' : completed.outcome === 'error'
-            ? 'This attack did not produce a scored outcome.' : formatScoreRationale(completed.score?.score_rationale)}
-        </Text>
-      </section>
-      {completed && <div className={styles.summary}>
-        <DetailMetric label="Score" value={formatScore(completed.score)} />
-        <DetailMetric label="Execution time" value={formatDuration(completed.execution_time_ms)} />
-        <DetailMetric label="Retries" value={String(completed.total_retries)} />
-        <DetailMetric label="Timestamp" value={formatTimestamp(completed.timestamp)} />
-      </div>}
-      <section className={styles.section}>
-        <Text size={200} className={styles.sectionLabel}>Attack technique</Text>
-        <div className={styles.surface}>
-          <Text weight="semibold">{techniqueName}</Text>
-          <Text as="p" className={styles.bodyText}>{techniqueDescription}</Text>
-          {techniqueTags.length > 0 && (
-            <div className={styles.badgeList} aria-label="Technique tags">
-              {techniqueTags.map((tag) => <Badge key={tag} appearance="tint">{tag}</Badge>)}
-            </div>
-          )}
-          {techniqueDetails && <ComponentIdentityDetails identity={techniqueDetails} hideComponentName />}
-        </div>
-      </section>
-      <section className={styles.section}>
-        <Text size={200} className={styles.sectionLabel}>Objective Scorer</Text>
-        {objectiveScorer
-          ? <ObjectiveScorerDetails scorer={objectiveScorer} />
-          : <Text>Objective scorer information is unavailable for this attempt.</Text>}
-      </section>
-      {conversationPath ? (
-        <Link className={styles.conversationLink} to={conversationPath} state={conversationState}>
-          {completed ? 'Open conversation' : 'Watch live conversation'}
-        </Link>
-      ) : (
-        <Text>No conversation was saved for this result.</Text>
-      )}
-      <Table size="small" aria-label="Attack components">
-        <TableHeader><TableRow><TableHeaderCell>Name</TableHeaderCell><TableHeaderCell>Component</TableHeaderCell><TableHeaderCell>Type</TableHeaderCell></TableRow></TableHeader>
-        <TableBody>{identities.map((item: typeof identities[number]) => item.identity ? (
-          <RegistryIdentityRow key={item.key} name={item.name} identity={item.identity} columns={3}
-            expanded={expanded.has(item.key)} onToggle={() => { toggle(item.key) }}>
-            <TableCell>{item.kind}</TableCell><TableCell>{item.type}</TableCell>
-          </RegistryIdentityRow>
+    <div className={mergeClasses(styles.content, framed && styles.framed)}>
+      <DetailFacts label="Attack outcome">
+        <DetailFact label="Objective:" tone="primary" valueClassName={styles.objective}>
+          {objective ?? 'Objective text is not available.'}
+        </DetailFact>
+        <DetailFact label="Outcome:" tone="primary">
+          <OutcomeBadge appearance="tint" outcome={outcome} labelStyle="success"
+            label={!attempt && !preparing ? 'Not available' : undefined}
+            score={completed?.score ? scoreSummaryFromProgressScore(completed.score) : null}
+            scoreButtonLabel="View attack score" />
+          <Text className={styles.rationale}>{rationale}</Text>
+          {completed && <Text size={200} className={styles.meta} aria-label="Attack timing">
+            {formatAttemptTiming(completed)}
+          </Text>}
+          {completed?.outcome === 'error' && <MessageBar intent="error" className={styles.error}>
+            <MessageBarBody>
+              {completed.error_type ? `${completed.error_type}: ` : ''}{completed.error_message ?? 'No error detail was persisted.'}
+            </MessageBarBody>
+          </MessageBar>}
+        </DetailFact>
+      </DetailFacts>
+      <DetailFacts label="Attack components" className={mergeClasses(styles.divided, styles.components)}>
+        <DetailFact label="Technique"><IdentityDisclosure name={techniqueName} identity={techniqueDetails} /></DetailFact>
+        <DetailFact label="Objective scorer">
+          <IdentityDisclosure name={objectiveScorer?.component_name ?? 'Not recorded'} identity={objectiveScorer} />
+          <ScorerEvaluationDetails name={objectiveScorer?.component_name ?? 'Not recorded'}
+            metrics={objectiveScorer?.metrics ? { ...objectiveScorer.metrics } : null}
+            scoreType={typeof objectiveScorer?.parameters.scorer_type === 'string' ? objectiveScorer.parameters.scorer_type : undefined}
+            recorded />
+        </DetailFact>
+        <DetailFact label="Dataset">
+          <IdentityDisclosure name={datasetNames.join(', ') || 'Not recorded'} identity={seeds.length > 0 ? seeds : null} />
+        </DetailFact>
+        {(findings.length > 0 || findingsLoading || findingsError) && <DetailFact label="Findings">
+          {findingsLoading && <Text role="status">Loading attached findings...</Text>}
+          {findingsError && <MessageBar intent="error">
+            <MessageBarBody>Could not load attached findings: {findingsError}</MessageBarBody>
+            <MessageBarActions><Button className={styles.retry} disabled={findingsLoading} onClick={refreshFindings}>
+              Retry findings
+            </Button></MessageBarActions>
+          </MessageBar>}
+          {findings.length > 0 && <ul className={styles.findings} aria-label="Attached findings">
+            {findings.map((finding) => <li key={finding.evidence_id} className={styles.finding}>
+              <FindingSeverityBadge finding={finding} />
+              <Text>{finding.title}</Text>
+            </li>)}
+          </ul>}
+        </DetailFact>}
+      </DetailFacts>
+      <div className={mergeClasses(styles.actions, styles.divided)}>
+        {conversationPath ? (
+          <Link className={styles.conversationLink} to={conversationPath} state={conversationState}>
+            {completed ? 'Open conversation' : 'Watch live conversation'}
+          </Link>
+        ) : !attempt && preparing ? (
+          <Button disabled>Watch live conversation</Button>
         ) : (
-          <TableRow key={item.key}><TableCell>{item.name}</TableCell><TableCell>{item.kind}</TableCell><TableCell>No saved identity</TableCell></TableRow>
-        ))}</TableBody>
-      </Table>
-      {errorMessage && (
-        <MessageBar intent="error">
-          <MessageBarBody>{completed?.error_type ? `${completed.error_type}: ` : ''}{errorMessage}</MessageBarBody>
-        </MessageBar>
-      )}
+          <Text className={styles.meta}>No conversation was saved for this result.</Text>
+        )}
+        {attempt && <AttachToFindingsButton attackResultId={attempt.attack_result_id} defaultOperationId={findingOperationId}
+          disabled={!completed} onAttached={refreshFindings} />}
+      </div>
     </div>
   )
 }

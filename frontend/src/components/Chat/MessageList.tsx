@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from 'react'
 import {
   Text,
   Avatar,
@@ -31,9 +31,11 @@ import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import MediaPreview from '@/components/Media/MediaPreview'
 
 import type { DisplayScore, Message, MessageAttachment } from '@/types'
+import { scoreSummaryFromBackendScore, scoreSummaryValue } from '@/utils/scoreSummary'
 
 import { useMessageListStyles } from './MessageList.styles'
 import { formatStructuredMessage, getRenderMessagePieces } from './messageViewModel'
+import ScoreDetails from './ScoreDetails'
 
 interface MessageListProps {
   onEditConversation?: () => void
@@ -51,58 +53,20 @@ interface MessageListProps {
   getBranchConversationDescription?: (messageIndex: number) => string | undefined
   /** True while loading a historical attack's messages */
   isLoading?: boolean
-  /** Live Chat follows the latest response; saved evidence keeps the reader's position. */
-  autoScroll?: boolean
   /** Saved evidence uses one scroll surface with its controls on narrow screens. */
   savedEvidence?: boolean
+  /** Announce new live/manual messages, not an initial page of historical evidence. */
+  announceUpdates?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
 }
 
 function scoreDisplayValue(score: DisplayScore): string {
-  // An undetermined score has no value, so name its status instead.
-  return score.score_value ?? score.status ?? ''
+  return scoreSummaryValue(scoreSummaryFromBackendScore(score))
 }
 
 function scoreDisplayLabel(score: DisplayScore): string {
   return `${score.is_objective_score ? 'Final score' : 'Score'}: ${scoreDisplayValue(score)}`
-}
-
-function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }) {
-  const styles = useMessageListStyles()
-  const categories = score.score_category?.filter(Boolean) ?? []
-
-  return (
-    <div className={styles.scoreSurface} data-testid={testId}>
-      <Text weight="semibold">Score details</Text>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Score</Text>
-        <Badge appearance="tint" color="brand" size="small" className={styles.scoreValue}>{scoreDisplayValue(score)}</Badge>
-      </div>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
-        <Text size={200} className={styles.scoreValue}>{score.scorer_type}</Text>
-      </div>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Result role</Text>
-        <Text size={200} className={styles.scoreValue}>
-          {score.is_objective_score ? 'Final score' : 'Supporting score'}
-        </Text>
-      </div>
-      {categories.length > 0 && (
-        <div className={styles.scoreRow}>
-          <Text size={200} weight="semibold" className={styles.scoreLabel}>Category</Text>
-          <Text size={200} className={styles.scoreValue}>{categories.join(', ')}</Text>
-        </div>
-      )}
-      {score.score_rationale && (
-        <div className={styles.scoreRationale}>
-          <Text size={200} weight="semibold">Rationale</Text>
-          <Text size={200} className={styles.scoreRationaleText}>{score.score_rationale}</Text>
-        </div>
-      )}
-    </div>
-  )
 }
 
 function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
@@ -128,7 +92,7 @@ function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; gro
         </PopoverTrigger>
       </Tooltip>
       <PopoverSurface>
-        <ScoreDetails score={score} testId={`message-score-details-${groupId}-${scoreIndex}`} />
+        <ScoreDetails score={scoreSummaryFromBackendScore(score)} testId={`message-score-details-${groupId}-${scoreIndex}`} />
       </PopoverSurface>
     </Popover>
   )
@@ -165,6 +129,8 @@ interface ScoreOverflowMenuProps {
 const SCORE_TAB_WIDTH_PX = 152
 const SCORE_TAB_GAP_PX = 4
 const SCORE_OVERFLOW_BUTTON_WIDTH_PX = 112
+// Readers this close to the end keep following new messages; scrolling further up keeps their place.
+const FOLLOW_LATEST_THRESHOLD_PX = 48
 
 function scoreTabLabel({
   score,
@@ -427,7 +393,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
             id={`message-score-panel-${groupId}`}
             aria-labelledby={`message-score-tab-${groupId}-${selectedIndex}`}
           >
-            <ScoreDetails score={selectedScore} testId={`message-score-details-${groupId}-${selectedIndex}`} />
+            <ScoreDetails score={scoreSummaryFromBackendScore(selectedScore)} testId={`message-score-details-${groupId}-${selectedIndex}`} />
           </div>
         </PopoverSurface>
       </Popover>
@@ -445,10 +411,12 @@ export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   copyConversationDisabledReason,
   newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
-  isLoading, autoScroll = true, savedEvidence = false, globalMarkdown = false, onEditConversation,
+  isLoading, savedEvidence = false, announceUpdates = !savedEvidence, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const followedListRef = useRef<HTMLDivElement | null>(null)
+  const followLatestRef = useRef(true)
   const copyMenuId = useId()
   const isCopyConversationDisabled = copyConversationDisabled || Boolean(copyConversationDisabledReason)
 
@@ -472,9 +440,16 @@ export default function MessageList({
     }
   }
 
-  useEffect(() => {
-    if (autoScroll) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, autoScroll])
+  // Historical pages keep their reading position; live/manual transcripts follow near the end.
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || savedEvidence) return
+    if (list !== followedListRef.current) {
+      followedListRef.current = list
+      followLatestRef.current = true
+    }
+    if (followLatestRef.current) list.scrollTop = list.scrollHeight
+  }, [messages, savedEvidence])
 
   if (isLoading) {
     return (
@@ -495,7 +470,13 @@ export default function MessageList({
   }
 
   return (
-    <div className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list" onDoubleClick={(event) => {
+    <div ref={listRef} className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list"
+      role={announceUpdates ? 'log' : undefined} aria-live={announceUpdates ? 'polite' : undefined}
+      aria-relevant={announceUpdates ? 'additions text' : undefined} aria-atomic={announceUpdates ? false : undefined}
+      onScroll={(event: UIEvent<HTMLDivElement>) => {
+        const list = event.currentTarget
+        followLatestRef.current = list.scrollHeight - list.clientHeight - list.scrollTop <= FOLLOW_LATEST_THRESHOLD_PX
+      }} onDoubleClick={(event) => {
       if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, audio, video, [role="button"]')) return
       onEditConversation?.()
     }}>
@@ -747,7 +728,6 @@ export default function MessageList({
           </div>
         )
       })}
-      <div ref={messagesEndRef} />
     </div>
   )
 }

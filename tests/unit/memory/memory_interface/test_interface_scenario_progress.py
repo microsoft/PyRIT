@@ -83,6 +83,7 @@ async def test_scenario_progress_deltas_page_equal_timestamps_by_id(
     score = Score(
         score_value="true",
         score_type="true_false",
+        score_category=["jailbreak"],
         score_rationale="The objective was achieved.",
         scorer_class_identifier=ComponentIdentifier(
             class_name="TestScorer",
@@ -112,6 +113,7 @@ async def test_scenario_progress_deltas_page_equal_timestamps_by_id(
     assert first_page[0].score is not None
     assert first_page[0].score.scorer_name == "TestScorer"
     assert first_page[0].score.score_rationale == "The objective was achieved."
+    assert first_page[0].score.score_category == ["jailbreak"]
     assert has_more is True
     assert [row.attack_result_id for row in second_page] == [str(second_id)]
     assert second_has_more is False
@@ -151,6 +153,7 @@ async def test_scenario_progress_delta_uses_unknown_for_empty_scorer_identifier(
     assert has_more is False
     assert deltas[0].score is not None
     assert deltas[0].score.scorer_name == "Unknown"
+    assert deltas[0].score.score_category == []
 
 
 async def test_scenario_result_header_does_not_hydrate_attack_results(

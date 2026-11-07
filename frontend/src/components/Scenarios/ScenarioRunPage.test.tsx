@@ -7,8 +7,8 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-rou
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
-import { scenariosApi } from '@/services/api'
-import type { ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunPlan, ScenarioRunSummary } from '@/types'
+import { attacksApi, scenariosApi } from '@/services/api'
+import type { AttackFindingItem, ScenarioActiveConversation, ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunPlan, ScenarioRunSummary } from '@/types'
 import { scenarioRunAttackRoutePath, scenarioRunRoutePath } from '@/utils/routeParams'
 import { INITIAL_SCENARIO_RUN_PROGRESS_STATE, type ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
 
@@ -16,7 +16,7 @@ import ScenarioRunPage from './ScenarioRunPage'
 
 jest.mock('@/hooks/useScenarioRunProgress', () => ({ useScenarioRunProgress: jest.fn() }))
 jest.mock('@/hooks/useScenarioQueue', () => ({ useScenarioQueue: jest.fn() }))
-jest.mock('@/services/api', () => ({ scenariosApi: {
+jest.mock('@/services/api', () => ({ attacksApi: { getAttackFindings: jest.fn() }, scenariosApi: {
   cancelRun: jest.fn(), resumeRun: jest.fn(), getLaunchConfiguration: jest.fn(), startRun: jest.fn(), getQueue: jest.fn(),
   getRunHierarchy: jest.fn(() => new Promise(() => {})), getRunHierarchyNode: jest.fn(),
 } }))
@@ -123,6 +123,7 @@ beforeEach(() => {
     error: null,
     retry: queueRetry,
   })
+  jest.mocked(attacksApi.getAttackFindings).mockImplementation(async (id: string) => ({ attack_result_id: id, items: [] }))
   state = makeState()
   jest.mocked(useScenarioRunProgress).mockImplementation(() => ({ state, retry, applyRunSummary }))
 })
@@ -133,8 +134,10 @@ describe('ScenarioRunPage', () => {
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     expect(screen.getByRole('heading', { name: 'test.scenario' })).toBeInTheDocument()
     expect(screen.getByText(RUN.description)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Review operation' })).toHaveAttribute('href', `/operations/${RUN.operation_id}`)
-    expect(screen.getByText('review-model')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Operation: Review operation' })).toHaveAttribute('href', `/operations/${RUN.operation_id}`)
+    expect(screen.queryByLabelText('Scan summary')).not.toBeInTheDocument()
+    expect(screen.queryByText('review-model')).not.toBeInTheDocument()
+    expect(screen.queryByText('Errors / retries')).not.toBeInTheDocument()
     expect(screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent)).toEqual([
       'Atomic attack groups', 'Datasets & objectives', 'Scenario configuration',
     ])
@@ -142,8 +145,14 @@ describe('ScenarioRunPage', () => {
     expect(scenariosApi.getQueue).not.toHaveBeenCalled()
     expect(screen.getByRole('link', { name: 'View queue' })).toHaveAttribute('href', '/scanner/queue')
     await expand(user)
-    expect(screen.getByRole('columnheader', { name: 'Duration' })).toBeInTheDocument()
-    expect(screen.queryByRole('columnheader', { name: 'Timestamp' })).not.toBeInTheDocument()
+    const results = within(screen.getByRole('table', { name: 'Direct attack results' }))
+    expect(results.getAllByRole('columnheader').map((header: HTMLElement) => header.textContent)).toEqual([
+      'Objective', 'Outcome', 'Duration', 'Retries / error', 'Conversation',
+    ])
+    expect(results.getAllByRole('cell', { name: 'Duration' })).toHaveLength(2)
+    expect(results.queryByRole('cell', { name: 'Timestamp' })).not.toBeInTheDocument()
+    expect(results.queryByText('Target-facing')).not.toBeInTheDocument()
+    expect(results.getAllByText('direct')).toHaveLength(2)
     expect(screen.getByText('True', { exact: true })).toBeInTheDocument()
     expect(screen.getByText('False', { exact: true })).toBeInTheDocument()
   })
@@ -164,35 +173,62 @@ describe('ScenarioRunPage', () => {
     expect(screen.queryByRole('button', { name: 'Cancel', exact: true })).not.toBeInTheDocument()
   })
 
-  it('opens identity-only details by keyboard and restores focus on close', async () => {
+  it('opens attack details from a row by keyboard and restores focus on close', async () => {
     const user = userEvent.setup()
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     await expand(user)
-    const details = screen.getAllByRole('button', { name: /^Open details for PromptSendingAttack:/ })[0]
-    details.focus()
+    const row = screen.getByRole('row', { name: 'View attack details for PromptSendingAttack: First objective' })
+    row.focus()
     await user.keyboard('{Enter}')
     const dialog = within(await screen.findByRole('dialog'))
-    expect(dialog.queryByText(/total duration/i)).not.toBeInTheDocument()
-    expect(dialog.getByRole('link', { name: 'Open conversation' })).toBeInTheDocument()
+    expect(dialog.getByRole('link', { name: 'Operation: Review operation' })).toHaveAttribute('href', `/operations/${RUN.operation_id}`)
+    expect(dialog.getByText('Outcome:', { exact: true })).toBeInTheDocument()
     expect(dialog.getAllByText('The objective was met.', { exact: true })).toHaveLength(1)
-    expect(dialog.getAllByText('5s', { exact: true })).toHaveLength(1)
-    expect(dialog.queryByText(/5s · 1 retries/)).not.toBeInTheDocument()
-    expect(dialog.getAllByText('Execution time', { exact: true })).toHaveLength(1)
-    expect(dialog.getAllByText('Retries', { exact: true })).toHaveLength(1)
-    expect(dialog.getAllByText('Timestamp', { exact: true })).toHaveLength(1)
-    expect(dialog.queryByText('Attack Success', { exact: true })).not.toBeInTheDocument()
-    await user.click(dialog.getByRole('button', { name: 'Identity for direct' }))
-    expect(JSON.parse(dialog.getByRole('region', { name: 'Identity for direct' }).textContent ?? '')).toEqual(TECHNIQUE)
-    await user.click(dialog.getByRole('button', { name: 'Identity for TrueFalseCompositeScorer' }))
-    const scorer = JSON.parse(dialog.getByRole('region', { name: 'Identity for TrueFalseCompositeScorer' }).textContent ?? '')
+    expect(dialog.getByLabelText('Attack timing')).toHaveTextContent(/^5s · 1 retry · /)
+    expect(dialog.queryByText('Execution time', { exact: true })).not.toBeInTheDocument()
+    expect(dialog.queryByText('Attack technique', { exact: true })).not.toBeInTheDocument()
+    expect(dialog.queryByRole('list', { name: 'Attached findings' })).not.toBeInTheDocument()
+    expect(dialog.queryByRole('button', { name: 'Close', exact: true })).not.toBeInTheDocument()
+    const components = within(dialog.getByLabelText('Attack components'))
+    await user.click(components.getByRole('button', { name: 'Identity for direct' }))
+    expect(JSON.parse(components.getByRole('region', { name: 'Identity for direct' }).textContent ?? '')).toEqual(TECHNIQUE)
+    await user.click(components.getByRole('button', { name: 'Identity for TrueFalseCompositeScorer' }))
+    const scorer = JSON.parse(components.getByRole('region', { name: 'Identity for TrueFalseCompositeScorer' }).textContent ?? '')
     expect(scorer.children.sub_scorers[0].parameters.score_aggregator).toBe('OR')
-    await user.click(dialog.getByRole('button', { name: 'Identity for review' }))
-    expect(JSON.parse(dialog.getByRole('region', { name: 'Identity for review' }).textContent ?? '')).toEqual(SEEDS)
-    expect(dialog.queryByText('Configuration', { exact: true })).not.toBeInTheDocument()
+    await user.click(components.getByRole('button', { name: 'Identity for review' }))
+    expect(JSON.parse(components.getByRole('region', { name: 'Identity for review' }).textContent ?? '')).toEqual(SEEDS)
+    expect(dialog.getByRole('link', { name: 'Open conversation' })).toHaveAttribute(
+      'href', `/attack/chat/attempt-1/conversations/conversation-1?scenarioResultId=${RUN_ID}`,
+    )
+    expect(dialog.getByRole('button', { name: 'Attach to findings' })).toBeEnabled()
     await user.click(dialog.getByRole('button', { name: 'Close attack details' }))
-    await waitFor(() => expect(details).toHaveFocus())
+    await waitFor(() => expect(row).toHaveFocus())
   })
 
+  it('opens the shared score view from a result outcome without opening details', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await expand(user)
+    await user.click(screen.getByRole('button', { name: 'True: View score for PromptSendingAttack: First objective' }))
+    expect(await screen.findByText('Score details')).toBeInTheDocument()
+    expect(screen.getByText('The objective was met.')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('shows findings linked to the attack only when there are some', async () => {
+    const finding: AttackFindingItem = {
+      id: 'finding-1', operation_id: RUN.operation_id, operation_name: 'Review operation', evidence_id: 'evidence-1',
+      title: 'Protected instructions disclosed', description: 'Review the saved response.', severity: 'important',
+      created_at: RUN.created_at,
+    }
+    jest.mocked(attacksApi.getAttackFindings).mockResolvedValue({ attack_result_id: ATTEMPT.attack_result_id, items: [finding] })
+    render(<Wrapper path={scenarioRunAttackRoutePath(RUN_ID, ATTEMPT.attack_result_id)} />)
+    const dialog = within(screen.getByRole('dialog'))
+    const findings = await dialog.findByRole('list', { name: 'Attached findings' })
+    expect(within(findings).getAllByRole('listitem')).toHaveLength(1)
+    expect(findings).toHaveTextContent(finding.title)
+    expect(attacksApi.getAttackFindings).toHaveBeenCalledWith(ATTEMPT.attack_result_id)
+  })
   it('keeps canonical conversation navigation separate from row details', async () => {
     const user = userEvent.setup()
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
@@ -209,8 +245,8 @@ describe('ScenarioRunPage', () => {
     const dialog = within(await screen.findByRole('dialog'))
     expect(dialog.getByText('First seed prompt')).toBeInTheDocument()
     expect(dialog.getByRole('heading', { name: 'Atomic attacks' })).toBeInTheDocument()
-    expect(dialog.getAllByRole('button', { name: /^Open details for PromptSendingAttack:/ })).toHaveLength(1)
-    await user.click(dialog.getByRole('button', { name: /^Open details for PromptSendingAttack:/ }))
+    expect(dialog.getByText('direct')).toBeInTheDocument()
+    await user.click(dialog.getByRole('row', { name: 'View attack details for PromptSendingAttack: First objective' }))
     expect(await screen.findByRole('button', { name: 'Close attack details' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Close attack details' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'First objective' })).toHaveFocus())
@@ -218,7 +254,7 @@ describe('ScenarioRunPage', () => {
 
   it('shows per-group and per-objective success rates without restoring paired outcomes', () => {
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
-    expect(within(screen.getByLabelText('Scan summary')).getByText('50%', { exact: true })).toBeInTheDocument()
+    expect(screen.getByText('50%', { exact: true })).toBeInTheDocument()
     const objectives = within(screen.getByRole('table', { name: 'Datasets and objectives' }))
     expect(objectives.getByRole('row', { name: /First objective/ })).toHaveTextContent('100%')
     expect(objectives.getByRole('row', { name: /Second objective/ })).toHaveTextContent('0%')
@@ -235,9 +271,9 @@ describe('ScenarioRunPage', () => {
     })
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     expect(screen.getByRole('link', { name: 'Open saved conversation' })).toHaveAttribute(
-      'href', `/scanner/history/${RUN_ID}/conversations/saved`,
+      'href', `/attack/chat/interrupted/conversations/saved?scenarioResultId=${RUN_ID}`,
     )
-    expect(screen.queryByRole('row', { name: /View details for/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('row', { name: /View attack details for direct/ })).not.toBeInTheDocument()
   })
 
   it('keeps distinct interrupted retry conversations and excludes completed transcripts', () => {
@@ -257,7 +293,7 @@ describe('ScenarioRunPage', () => {
     const savedLinks = screen.getAllByRole('link', { name: 'Open saved conversation' })
     expect(savedLinks).toHaveLength(1)
     expect(savedLinks[0]).toHaveAttribute(
-      'href', `/scanner/history/${RUN_ID}/conversations/interrupted-retry`,
+      'href', `/attack/chat/attempt-1/conversations/interrupted-retry?scenarioResultId=${RUN_ID}`,
     )
   })
 
@@ -320,7 +356,7 @@ describe('ScenarioRunPage', () => {
     const user = userEvent.setup()
     jest.mocked(scenariosApi.getLaunchConfiguration).mockResolvedValue({ scenario_name: 'test.scenario', target_name: 'original' })
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
-    await user.click(screen.getByRole('button', { name: 'Rerun' }))
+    await user.click(screen.getByRole('button', { name: 'Rerun with changes' }))
     expect(scenariosApi.getLaunchConfiguration).toHaveBeenCalledWith(RUN_ID, expect.any(AbortSignal))
     await waitFor(() => expect(screen.getByLabelText('Location')).toHaveTextContent(`/scanner/launch/test.scenario?rerun=${RUN_ID}`))
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
@@ -335,7 +371,7 @@ describe('ScenarioRunPage', () => {
       requestSignal = signal
     }))
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
-    await user.click(screen.getByRole('button', { name: 'Rerun' }))
+    await user.click(screen.getByRole('button', { name: 'Rerun with changes' }))
     expect(requestSignal).toBeDefined()
     await user.click(screen.getByRole('button', { name: 'Leave run' }))
     expect(requestSignal?.aborted).toBe(true)
@@ -357,7 +393,7 @@ describe('ScenarioRunPage', () => {
     })
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     await expand(user)
-    await user.click(screen.getByRole('button', { name: /^Open details for PromptSendingAttack:/ }))
+    await user.click(screen.getByRole('row', { name: /^View attack details for PromptSendingAttack:/ }))
     const dialog = within(await screen.findByRole('dialog'))
     expect(dialog.getAllByText('TimeoutError: The target timed out.', { exact: true })).toHaveLength(1)
     expect(dialog.queryByRole('button', { name: 'Error details' })).not.toBeInTheDocument()
@@ -367,7 +403,7 @@ describe('ScenarioRunPage', () => {
     const user = userEvent.setup()
     jest.mocked(scenariosApi.getLaunchConfiguration).mockRejectedValue(new Error('Saved configuration is unavailable'))
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
-    await user.click(screen.getByRole('button', { name: 'Rerun' }))
+    await user.click(screen.getByRole('button', { name: 'Rerun with changes' }))
     expect(await screen.findByText('Saved configuration is unavailable')).toBeInTheDocument()
     expect(screen.getByLabelText('Location')).toHaveTextContent(scenarioRunRoutePath(RUN_ID))
     expect(scenariosApi.startRun).not.toHaveBeenCalled()
@@ -382,7 +418,7 @@ describe('ScenarioRunPage', () => {
       requestSignal = signal
     }))
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
-    await user.click(screen.getByRole('button', { name: 'Rerun' }))
+    await user.click(screen.getByRole('button', { name: 'Rerun with changes' }))
     await user.click(screen.getByRole('button', { name: 'Open attempt' }))
     expect(requestSignal?.aborted).toBe(true)
     const resolve = resolveConfiguration
@@ -450,7 +486,7 @@ describe('ScenarioRunPage', () => {
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     await user.click(screen.getByRole('button', { name: 'Resume' }))
     expect(await screen.findByText('Resume rejected')).toBeInTheDocument()
-    expect(within(screen.getByLabelText('Scan summary')).getByText('50%', { exact: true })).toBeInTheDocument()
+    expect(screen.getByText('50%', { exact: true })).toBeInTheDocument()
     expect(retry).toHaveBeenCalled()
   })
 
@@ -473,9 +509,12 @@ describe('ScenarioRunPage', () => {
     }] })
     render(<Wrapper path={scenarioRunAttackRoutePath(RUN_ID, 'live')} />)
     const dialog = within(screen.getByRole('dialog'))
-    expect(dialog.getByRole('link', { name: 'Watch live conversation' })).toHaveAttribute('href', `/scanner/history/${RUN_ID}/conversations/live-conversation`)
+    expect(dialog.getByRole('link', { name: 'Watch live conversation' })).toHaveAttribute(
+      'href', `/attack/chat/live/conversations/live-conversation?scenarioResultId=${RUN_ID}`,
+    )
     expect(dialog.getByText('In progress')).toBeInTheDocument()
-    expect(within(screen.getByLabelText('Scan summary')).getByText('50%', { exact: true })).toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: 'Attach to findings' })).toBeDisabled()
+    expect(screen.getByText('50%', { exact: true })).toBeInTheDocument()
   })
 
   it('retains explicit stale recovery and previously loaded data', async () => {
@@ -490,10 +529,176 @@ describe('ScenarioRunPage', () => {
   it.each(['loading', 'not-found', 'error'] as const)('renders the %s state with recovery', (loadStatus) => {
     state = makeState({ run: null, summary: null, loadStatus, error: loadStatus === 'loading' ? null : 'Scan unavailable' })
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
-    if (loadStatus === 'loading') expect(screen.getByText('Loading scan...')).toBeInTheDocument()
+    if (loadStatus === 'loading') expect(screen.getByText('Loading scan')).toBeInTheDocument()
     else expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
 
+  it('groups an attack with several live conversations into one live entry without listing them as saved', async () => {
+    const user = userEvent.setup()
+    const conversation: ScenarioActiveConversation = {
+      attack_result_id: 'live', conversation_id: 'branch-1', conversation_ids: ['branch-1', 'branch-2'],
+      atomic_attack_name: 'Branching attack', objective: 'First objective', started_at: RUN.started_at, seed_identifiers: [],
+    }
+    state = makeState({ results: [], activeConversations: [conversation], recordedConversations: [conversation, { ...conversation, conversation_id: 'branch-2' }] })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'View live attacks (1)' }))
+    expect(screen.getAllByRole('link', { name: 'Watch live conversation' })).toHaveLength(1)
+    expect(screen.getByText('2 live conversations')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Saved conversations' })).not.toBeInTheDocument()
+  })
+
+  it('keeps live attacks in the progress area instead of inserting a block above the results', async () => {
+    const user = userEvent.setup()
+    state = makeState({ results: [], summary: { ...SUMMARY, overall: { ...COUNTS, completed: 0 } } })
+    const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const progress = screen.getByRole('region', { name: 'Scan progress' })
+    const results = screen.getByRole('heading', { name: 'Atomic attack groups' })
+    expect(screen.getByRole('button', { name: 'View live attacks (0)' })).toBeDisabled()
+    expect(screen.getByText('Estimating time remaining')).toBeInTheDocument()
+    state = { ...state, summary: { ...SUMMARY, overall: { ...COUNTS, completed: 1 } }, activeConversations: [{
+      attack_result_id: 'live', conversation_id: 'branch', atomic_attack_name: 'PromptSendingAttack',
+      objective: 'First objective', seed_group_id: 'seed-1', started_at: RUN.started_at, seed_identifiers: [],
+    }] }
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByRole('region', { name: 'Scan progress' })).toBe(progress)
+    expect(screen.getByRole('heading', { name: 'Atomic attack groups' })).toBe(results)
+    await user.click(within(progress).getByRole('button', { name: 'View live attacks (1)' }))
+    expect(screen.getByRole('link', { name: 'Watch live conversation' })).toHaveAttribute(
+      'href', `/attack/chat/live/conversations/branch?scenarioResultId=${RUN_ID}`,
+    )
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('button', { name: 'View live attacks (1)' })).toHaveFocus()
+  })
+
+  it('keeps the finished progress area mounted but hidden and inert so the results do not move', () => {
+    const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const progress = screen.getByRole('region', { name: 'Scan progress' })
+    state = makeState({ run: { ...RUN, status: 'COMPLETED', completed_at: '2026-01-01T00:00:10Z' } })
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.queryByRole('region', { name: 'Scan progress' })).not.toBeInTheDocument()
+    expect(progress).toBeInTheDocument()
+    const wrapper = progress.closest('[aria-hidden="true"]')
+    expect(wrapper).not.toBeNull()
+    expect(wrapper).toHaveAttribute('inert')
+  })
+
+  it('shows a single completed atomic attack as one framed card without group sections', () => {
+    state = makeState({
+      run: { ...RUN, scenario_registry_name: 'technique.execute', status: 'COMPLETED' },
+      summary: { ...SUMMARY, overall: { ...COUNTS, completed: 1, planned: 1 } },
+      results: [ATTEMPT],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const details = within(screen.getByRole('region', { name: 'Attack details' }))
+    expect(screen.queryByRole('heading', { name: 'Atomic attack groups' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Datasets & objectives' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Scenario configuration' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'View live attacks (0)' })).not.toBeInTheDocument()
+    const outcome = within(details.getByLabelText('Attack outcome'))
+    expect(outcome.getByText('Objective:')).toBeInTheDocument()
+    expect(outcome.getByText('First objective')).toBeInTheDocument()
+    expect(outcome.getByText('Outcome:')).toBeInTheDocument()
+    expect(details.getByLabelText('Attack components')).toBeInTheDocument()
+    expect(details.getByRole('link', { name: 'Open conversation' })).toBeInTheDocument()
+  })
+
+  it('keeps the single attack details mounted from preparing through running to completed', async () => {
+    const user = userEvent.setup()
+    const live: ScenarioActiveConversation = {
+      attack_result_id: 'attempt-1', conversation_id: 'branch', atomic_attack_name: 'PromptSendingAttack',
+      seed_group_id: 'seed-1', objective: 'First objective', started_at: RUN.started_at, seed_identifiers: [],
+    }
+    const single = { ...SUMMARY, overall: { ...COUNTS, completed: 0, planned: 1 } }
+    state = makeState({ summary: single, results: [], activeConversations: [] })
+    const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const details = screen.getByRole('region', { name: 'Attack details' })
+    const components = screen.getByLabelText('Attack components')
+    expect(screen.getByText('Preparing', { exact: true })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Watch live conversation' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Identity for direct' }))
+
+    state = { ...state, activeConversations: [live] }
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByRole('region', { name: 'Attack details' })).toBe(details)
+    expect(screen.getByLabelText('Attack components')).toBe(components)
+    expect(screen.getByRole('button', { name: 'Identity for direct' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('In progress', { exact: true })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Watch live conversation' })).toHaveAttribute(
+      'href', `/attack/chat/attempt-1/conversations/branch?scenarioResultId=${RUN_ID}`,
+    )
+
+    state = makeState({
+      run: { ...RUN, status: 'COMPLETED' }, summary: { ...single, overall: { ...single.overall, completed: 1 } },
+      results: [ATTEMPT], activeConversations: [],
+    })
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByRole('region', { name: 'Attack details' })).toBe(details)
+    expect(screen.getByText('True', { exact: true })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Open conversation' })).toBeInTheDocument()
+  })
+
+  it('shows a completed single attack error once while keeping scan-level notices', () => {
+    state = makeState({
+      run: { ...RUN, status: 'FAILED', error: 'The target timed out.', error_type: 'TimeoutError' },
+      summary: { ...SUMMARY, overall: { ...COUNTS, completed: 1, planned: 1, errors: 1 } },
+      results: [{ ...ATTEMPT, outcome: 'error', score: null, error_type: 'TimeoutError', error_message: 'The target timed out.' }],
+      planComplete: false,
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getAllByText('TimeoutError: The target timed out.', { exact: true })).toHaveLength(1)
+    expect(screen.queryByText('Scan failed. Resume to continue remaining attacks.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Error details' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Scan notices')).toHaveTextContent('The saved execution plan is incomplete')
+    expect(screen.getByRole('button', { name: 'Resume', exact: true })).toBeInTheDocument()
+  })
+
+  it('keeps a distinct run failure when the single attack has its own error', async () => {
+    const user = userEvent.setup()
+    state = makeState({
+      run: { ...RUN, status: 'FAILED', error: 'The worker stopped unexpectedly.', error_type: 'WorkerError' },
+      summary: { ...SUMMARY, overall: { ...COUNTS, completed: 1, planned: 1, errors: 1 } },
+      results: [{ ...ATTEMPT, outcome: 'error', score: null, error_type: 'TimeoutError', error_message: 'The target timed out.' }],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText('TimeoutError: The target timed out.', { exact: true })).toBeInTheDocument()
+    expect(screen.getByText('Scan failed. Resume to continue remaining attacks.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'View attack' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Error details' }))
+    expect(screen.getByText('WorkerError: The worker stopped unexpectedly.', { exact: true })).toBeInTheDocument()
+  })
+
+  it('does not present a finished single attack without details as still preparing', () => {
+    state = makeState({
+      run: { ...RUN, status: 'COMPLETED' },
+      summary: { ...SUMMARY, overall: { ...COUNTS, completed: 1, planned: 1 } },
+      results: [],
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText('Attack details are not available.')).toBeInTheDocument()
+    expect(screen.queryByText('Preparing', { exact: true })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Watch live conversation' })).not.toBeInTheDocument()
+  })
+  it('reloads saved results once when the run finishes so they replace the running snapshot', async () => {
+    const projection = {
+      scenario_result_id: RUN_ID, scenario_name: 'TestScenario', scenario_version: 1, status: 'IN_PROGRESS' as const, groups: [],
+      overall_counts: COUNTS,
+      diagnostics: {
+        failed_attacks: [], failed_attacks_count: 0, failed_attacks_truncated: false,
+        attack_retries: [], attack_retries_count: 0, attack_retries_truncated: false,
+        total_retries: 0, rootless_result_ids: [], rootless_results_count: 0, rootless_results_truncated: false,
+      },
+      has_more: false, truncated: false,
+    }
+    jest.mocked(scenariosApi.getRunHierarchy).mockResolvedValueOnce(projection)
+      .mockResolvedValueOnce({ ...projection, status: 'COMPLETED' })
+    const view = render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await waitFor(() => expect(scenariosApi.getRunHierarchy).toHaveBeenCalledTimes(1))
+    state = makeState({ run: { ...RUN, status: 'COMPLETED', completed_at: '2026-01-01T00:00:10Z' } })
+    view.rerender(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await waitFor(() => expect(scenariosApi.getRunHierarchy).toHaveBeenCalledTimes(2))
+    await act(async () => { await Promise.resolve() })
+    expect(scenariosApi.getRunHierarchy).toHaveBeenCalledTimes(2)
+  })
   it('retains history filters and transient suite return navigation', () => {
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} navigationState={{ suiteExecutionId: 'suite', suiteName: 'Review suite' }} />)
     expect(screen.getByRole('link', { name: 'Back to Review suite' })).toHaveAttribute('href', '/scanner/history/suites/executions/suite')

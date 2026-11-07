@@ -374,6 +374,7 @@ class FindingEvidenceEntry(Base):
     __tablename__ = "FindingEvidenceEntries"
     __table_args__ = (
         Index("ix_FindingEvidenceEntries_finding_id", "finding_id"),
+        Index("ix_FindingEvidenceEntries_attack_result_id", "attack_result_id"),
         UniqueConstraint("finding_id", "attack_result_id", name="uq_finding_evidence_source"),
     )
 

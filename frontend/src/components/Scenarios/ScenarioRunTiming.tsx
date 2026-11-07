@@ -23,7 +23,7 @@ export default function ScenarioRunTiming({ run, overall }: ScenarioRunTimingPro
   }, [active, run.started_at])
   if (overall) {
     const eta = getEtaMilliseconds(run, overall, now)
-    return eta === null ? null : <Text>About {formatDuration(eta)} left</Text>
+    return <Text>{eta === null ? 'Estimating time remaining' : `About ${formatDuration(eta)} left`}</Text>
   }
   const elapsed = run.started_at ? formatDuration(getElapsedMilliseconds(run, now))
     : run.status === 'CREATED' || run.status === 'QUEUED' ? 'Not started' : 'Not recorded'

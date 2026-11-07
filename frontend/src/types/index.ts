@@ -786,6 +786,9 @@ export type AttackTargetResolutionStatus =
 
 export type AttackOutcome = 'undetermined' | 'success' | 'failure' | 'error'
 
+/** An attack's saved outcome, or where it is before one exists. */
+export type AttackDisplayOutcome = AttackOutcome | 'in_progress' | 'preparing'
+
 // Wire contracts from pyrit.models.analytics. The SDK selects and counts the cohort.
 export type AttackAnalyticsDimensionName =
   | 'operation'
@@ -987,6 +990,10 @@ export interface AttackSummary {
   chat_scorer?: RegisteredComponentReference | null
   chat_scorer_inherited?: boolean
   execution_read_only?: boolean
+  /** The attack is still running in a scan; its result is not saved yet. */
+  in_progress?: boolean
+  /** The scan run that produced this attack; null outside a scan. */
+  scenario_result_id?: string | null
   manual_continuation?: ManualContinuation | null
   last_score?: BackendScore | null
   last_response?: BackendMessagePiece | null
@@ -1012,7 +1019,7 @@ export interface AttackSummary {
 export interface AttackMetadata extends Pick<AttackSummary,
   | 'attack_result_id' | 'conversation_id' | 'objective' | 'labels' | 'operator'
   | 'target' | 'target_unbound' | 'outcome' | 'automated_score' | 'human_score'
-  | 'chat_scorer' | 'chat_scorer_inherited' | 'manual_continuation'
+  | 'chat_scorer' | 'chat_scorer_inherited' | 'manual_continuation' | 'in_progress' | 'scenario_result_id'
 > {
   readonly execution_read_only: boolean
   readonly last_response_message_piece_id: string | null
@@ -1185,6 +1192,20 @@ export interface DisplayScore extends BackendScore {
   sourceLabel: string
 }
 
+/**
+ * The fields a score popover shows, independent of where the score was recorded,
+ * so scan results do not need to fabricate a message-piece score.
+ */
+export interface ScoreSummary {
+  scorer: string
+  scoreType: string
+  value?: string | null
+  status?: string
+  rationale?: string | null
+  categories?: string[] | null
+  isObjective?: boolean
+}
+
 export interface BackendMessagePiece {
   id: string
   sequence?: number
@@ -1336,14 +1357,15 @@ export interface AttackListResponse {
 export interface ConversationSummary {
   conversation_id: string
   conversation_type?: 'main' | 'pruned'
-  message_count: number
+  /** Null when a recorded-only scan reference has no counted attack-result projection. */
+  message_count: number | null
   last_message_preview?: string | null
   created_at?: string | null
 }
 
 export interface AttackConversationsResponse {
   attack_result_id: string
-  main_conversation_id: string
+  main_conversation_id: string | null
   conversations: ConversationSummary[]
   pagination?: PaginationInfo | null
   total_count?: number | null
@@ -2082,13 +2104,14 @@ export interface ScenarioQueueSnapshot {
   queued: ScenarioQueueEntry[]
 }
 
-/** One persisted attack attempt in ascending progress order. */
+/** The objective score of one persisted scan attack attempt. */
 export interface ScenarioProgressScore {
   scorer_name: string
   score_type: 'true_false' | 'float_scale' | 'unknown'
   status: 'complete' | 'undetermined'
   score_value?: string | null
   score_rationale?: string | null
+  score_category?: string[]
 }
 
 export type ScenarioIdentityValue =
@@ -2311,7 +2334,7 @@ export interface ScenarioHierarchyProjection {
   truncated: boolean
 }
 
-export interface ScenarioObjectiveScorerMetrics {
+export interface ScenarioObjectiveScorerMetrics extends ScorerEvaluationMetrics {
   accuracy: number
   accuracy_standard_error?: number | null
   f1_score?: number | null
@@ -2338,7 +2361,10 @@ export interface ScenarioProgressSummary {
 
 export interface ScenarioActiveConversation {
   attack_result_id: string
+  /** The conversation the attack is working on, or the recorded objective conversation. */
   conversation_id: string
+  /** Every objective conversation the running attack has started so far, in first-use order. */
+  conversation_ids?: string[]
   atomic_attack_name: string
   seed_group_id?: string | null
   objective: string
@@ -2444,6 +2470,20 @@ export interface FindingListResponse {
 
 export interface FindingListItem extends Finding {
   evidence_count: number
+}
+
+/** A finding that links an attack as evidence. */
+export interface AttackFindingItem extends Finding {
+  /** Current name of the finding's Operation. */
+  operation_name: string
+  /** The evidence link; detach it through the Operation evidence route. */
+  evidence_id: string
+}
+
+/** Every finding that links an attack, highest severity first, then newest first. */
+export interface AttackFindingListResponse {
+  attack_result_id: string
+  items: AttackFindingItem[]
 }
 
 export interface FindingEvidenceCreateRequest {

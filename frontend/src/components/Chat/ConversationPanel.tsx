@@ -65,6 +65,10 @@ interface ConversationPanelProps {
   refreshKey?: number
   /** Saved evidence pages references independently from the selected transcript. */
   referencePageSize?: number
+  /** Re-reads the unpaged list at this interval, keeping its rows, such as while a scan runs the attack. */
+  pollIntervalMs?: number
+  /** A verified read-only source for interrupted scan conversations without a saved result. */
+  readConversations?: typeof attacksApi.getConversations
 }
 
 export default function ConversationPanel({
@@ -77,6 +81,8 @@ export default function ConversationPanel({
   lockedReason,
   refreshKey,
   referencePageSize,
+  pollIntervalMs,
+  readConversations = attacksApi.getConversations,
 }: ConversationPanelProps) {
   const styles = useConversationPanelStyles()
   const [unpagedConversations, setUnpagedConversations] = useState<ConversationSummary[]>([])
@@ -98,6 +104,14 @@ export default function ConversationPanel({
   // calling setState synchronously in an effect body.
   const [retryCount, setRetryCount] = useState(0)
   const selectionRefreshId = referencePageSize === undefined ? activeConversationId : null
+  const [pollCount, setPollCount] = useState(0)
+  useEffect(() => {
+    if (!pollIntervalMs || !attackResultId) return
+    const timer = setInterval(() => {
+      if (activeReadRef.current === null) setPollCount((count: number) => count + 1)
+    }, pollIntervalMs)
+    return () => { clearInterval(timer) }
+  }, [pollIntervalMs, attackResultId])
 
   const saveReferencePage = useCallback((page: SavedReferencePage): void => {
     savedReferencePageRef.current = page
@@ -110,7 +124,7 @@ export default function ConversationPanel({
       savedReferencePageRef.current = null
     }
     return () => { activeReadRef.current = null }
-  }, [attackResultId, referencePageSize, refreshKey, retryCount, selectionRefreshId])
+  }, [attackResultId, referencePageSize, refreshKey, retryCount, selectionRefreshId, readConversations])
 
   useEffect(() => {
     if (!attackResultId) {
@@ -121,8 +135,8 @@ export default function ConversationPanel({
     const readId = ++nextReadIdRef.current
     activeReadRef.current = readId
     const request = referencePageSize === undefined
-      ? attacksApi.getConversations(attackResultId)
-      : attacksApi.getConversations(attackResultId, { limit: referencePageSize })
+      ? readConversations(attackResultId)
+      : readConversations(attackResultId, { limit: referencePageSize })
     request
       .then((response) => {
         if (cancelled || activeReadRef.current !== readId) return
@@ -150,7 +164,7 @@ export default function ConversationPanel({
     return () => {
       cancelled = true
     }
-  }, [attackResultId, referencePageSize, selectionRefreshId, refreshKey, retryCount, saveReferencePage])
+  }, [attackResultId, referencePageSize, selectionRefreshId, refreshKey, retryCount, pollCount, saveReferencePage, readConversations])
 
   // Reset attack/paging identity, but retain keyed rows during manual background
   // refreshes so keyboard focus survives. Adjust state during render instead of
@@ -187,7 +201,7 @@ export default function ConversationPanel({
     let restartRequired = false
     const isCurrentRead = (): boolean => activeReadRef.current === readId && savedReferencePageRef.current === page
     try {
-      const incoming = await attacksApi.getConversations(page.attackResultId, { limit: page.pageSize, cursor })
+      const incoming = await readConversations(page.attackResultId, { limit: page.pageSize, cursor })
       if (!isCurrentRead()) return
       restartRequired = true
       const response = mergeReferencePage(page.response, incoming, page.attackResultId, cursor, page.consumedCursors)
@@ -363,7 +377,7 @@ export default function ConversationPanel({
                     />
                   </Tooltip>
                   <Badge appearance="tint" size="small">
-                    {conv.message_count}
+                    {conv.message_count ?? 'Not counted'}
                   </Badge>
                 </div>
               </div>

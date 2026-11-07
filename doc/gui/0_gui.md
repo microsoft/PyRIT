@@ -118,14 +118,14 @@ Decided attack outcomes use **True** and **False**; execution errors remain sepa
 Groups and objectives show success rates and completion counts separately.
 The results page does not include a paired-outcome comparison.
 
-**Watch live conversation** opens saved messages while an attack runs. This view
-is read-only and refreshes saved messages; it has no send controls. **Cancel scan**
-stops remaining scan work and keeps saved results. Ordinary manual chats do not
-have scan cancellation controls.
-After cancellation, saved messages remain available in the read-only chat.
-Saving these conversation links does not add attack outcomes or change success rates.
+**Watch live conversation** opens a running attack in Chat. While the scan runs it,
+Chat is read-only, shows **Attack in progress** in place of the prompt bar, and
+refreshes its messages and conversations; when the attack finishes, Chat shows its
+saved result on the same page. **Cancel** stops remaining scan work and keeps saved
+results; saved messages remain available in the read-only chat. Opening these
+conversations does not add attack outcomes or change success rates.
 
-**Rerun** opens the scenario launch page with saved settings filled in. It does
+**Rerun with changes** opens the scenario launch page with saved settings filled in. It does
 not start work or change the original run. Review or edit the settings before
 launching. Recorded target/scorer identities and the scenario version are checked.
 Settings that cannot be restored, including older records without a required identity,

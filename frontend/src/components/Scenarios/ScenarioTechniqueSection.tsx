@@ -5,7 +5,7 @@ import { ChevronDownRegular, ChevronRightRegular } from '@fluentui/react-icons'
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
-import { useRegistryIdentityRowStyles } from '@/components/Registry/RegistryIdentityRow.styles'
+import { useIdentityDisclosureStyles } from '@/components/Registry/IdentityDisclosure.styles'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import { exceedsTechniqueLimit, type SelectableTechnique } from './scenarioLaunchForm'
@@ -46,7 +46,7 @@ export default function ScenarioTechniqueSection({
   onRemoveToken,
 }: ScenarioTechniqueSectionProps) {
   const styles = useScenarioDetailStyles()
-  const identityStyles = useRegistryIdentityRowStyles()
+  const identityStyles = useIdentityDisclosureStyles()
   const identityId = useId()
   const [expandedIdentities, setExpandedIdentities] = useState<Set<string>>(new Set())
   const toggleIdentity = (name: string): void => {

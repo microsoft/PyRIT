@@ -66,10 +66,6 @@ export function scenarioRunAttackRoutePath(scenarioResultId: string, attackResul
   return `${scenarioRunRoutePath(scenarioResultId)}/${encodeURIComponent(attackResultId)}`
 }
 
-export function scenarioConversationRoutePath(scenarioResultId: string, conversationId: string): string {
-  return `${scenarioRunRoutePath(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`
-}
-
 export function scenarioRerunRoutePath(scenarioName: string, scenarioResultId: string): string {
   return `/scanner/launch/${encodeURIComponent(scenarioName)}?rerun=${encodeURIComponent(scenarioResultId)}`
 }
