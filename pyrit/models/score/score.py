@@ -24,7 +24,7 @@ from pydantic import (
     model_validator,
 )
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.score.expectation import ScoringExpectation
 from pyrit.models.score.scorable import (  # noqa: TC001  (runtime-required by Pydantic field annotations)
