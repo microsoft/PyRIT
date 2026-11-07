@@ -51,19 +51,19 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get
 
 from pydantic import JsonValue, ValidationError
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
+from pyrit.common import REQUIRED_VALUE
+from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.common.brick_contract import get_constructor_owners
-from pyrit.models import StructuredParameterValue
-from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
+from pyrit.models import ComponentType, Parameter, RegistryReference, StructuredParameterValue
 
 # Re-exported so ``from pyrit.registry.resolution import display_choices`` keeps working;
 # the single implementation now lives in ``pyrit.models.parameter``.
-from pyrit.models.parameter import display_choices as display_choices
+from pyrit.models import display_choices as display_choices
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
 
 # Constructor parameters that never describe a settable build input.
 _SKIPPED_PARAM_NAMES: frozenset[str] = frozenset({"self", "args", "kwargs"})

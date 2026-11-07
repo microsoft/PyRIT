@@ -12,13 +12,15 @@ from urllib.parse import urlencode
 
 import pytest
 
+from pyrit.backend.models import (
+    MessagePieceRequest,
+)
 from pyrit.backend.models.attacks import (
     ConversationMessageRequest,
     ConversationPieceRequest,
-    MessagePieceRequest,
     SaveConversationRequest,
 )
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.media_persistence import (
     MediaAccessDeniedError,
     MediaOrigin,

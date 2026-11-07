@@ -22,8 +22,9 @@ import {
 } from '@fluentui/react-components'
 
 import HelpField from '@/components/HelpField'
-import { convertersApi, targetsApi } from '@/services/api'
+import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
 import { mapMediaUrl } from '@/utils/media'
@@ -390,7 +391,7 @@ export default function CreateConverterDialog({
         setSubmitting(false)
         return Promise.all([
           convertersApi.listConverterTypes(),
-          targetsApi.listTargets(200),
+          listRegisteredTargets(),
           convertersApi.listConverters(),
         ])
       })
@@ -399,7 +400,7 @@ export default function CreateConverterDialog({
         const [response, targetResponse, converterResponse] = responses
         if (!cancelled) {
           setConverterTypes(editing ? response.items : response.items.filter(canConfigureConverterType))
-          setTargets(targetResponse.items)
+          setTargets(targetResponse)
           setConverters(converterResponse.items)
           if (editing) {
             const entry = response.items.find((item) => item.converter_type === editing.converter.identifier.class_name)
@@ -411,7 +412,7 @@ export default function CreateConverterDialog({
               ])),
               ...editing.spec?.params,
             }
-            const defaultTarget = resolveDefaultAdversarialTarget(preferences, targetResponse.items)
+            const defaultTarget = resolveDefaultAdversarialTarget(preferences, targetResponse)
             const defaultedParameters = new Set<string>()
             for (const parameter of entry?.parameters ?? []) {
               const reference = params[parameter.name]
@@ -421,7 +422,7 @@ export default function CreateConverterDialog({
               }
               if (!reference || typeof reference !== 'object' || !('hash' in reference)) continue
               if (parameter.reference_type === 'target') {
-                params[parameter.name] = targetResponse.items.find(
+                params[parameter.name] = targetResponse.find(
                   (target) => target.identifier.hash === reference.hash,
                 )?.target_registry_name ?? ''
               } else if (parameter.reference_type === 'converter') {

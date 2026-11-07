@@ -30,6 +30,7 @@ from pyrit.converter import (
     DiacriticConverter,
     EmojiConverter,
     FlipConverter,
+    IndexSelectionStrategy,
     LeetspeakConverter,
     LLMGenericTextConverter,
     MaliciousQuestionGeneratorConverter,
@@ -53,7 +54,6 @@ from pyrit.converter import (
     VariationConverter,
     VigenereConverter,
 )
-from pyrit.converter.text_selection_strategy import IndexSelectionStrategy
 from pyrit.executor.promptgen.fuzzer import FuzzerConverter
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import PromptDataType, SeedPrompt

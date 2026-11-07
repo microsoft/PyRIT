@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.garak_system_prompt_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     _GarakDrhSystemPromptDataset,
     _GarakTmSystemPromptDataset,
 )
