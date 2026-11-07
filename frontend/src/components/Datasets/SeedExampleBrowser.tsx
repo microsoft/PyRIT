@@ -270,21 +270,21 @@ export function SeedExampleBrowserView({
 
   const isDestinationDirty = useCallback(
     (destination: ImportDestinationType): boolean => {
-      const preserved = draftHandoff.preservedDraft
-      if (!preserved || !draftHandoff.isDraftDirty(preserved.draft)) return false
+      let targetAttackId: string | null = null
+      let targetConvId: string | null = null
       if (destination === 'new_attack') {
-        return preserved.originatingAttackId === null
+        targetAttackId = null
+        targetConvId = null
+      } else if (destination === 'current_conversation') {
+        targetAttackId = effectiveAttackId ?? null
+        targetConvId = effectiveConversationId ?? null
+      } else if (destination === 'new_conversation') {
+        targetAttackId = effectiveAttackId ?? null
+        targetConvId = null
       }
-      if (destination === 'current_conversation') {
-        return (
-          preserved.originatingAttackId === effectiveAttackId &&
-          preserved.originatingConversationId === effectiveConversationId
-        )
-      }
-      if (destination === 'new_conversation') {
-        return preserved.originatingAttackId === effectiveAttackId
-      }
-      return false
+      const preserved = draftHandoff.getPreservedDraft(targetAttackId, targetConvId)
+        ?? (destination === 'new_conversation' && effectiveAttackId ? draftHandoff.getPreservedDraft(effectiveAttackId) : null)
+      return Boolean(preserved && draftHandoff.isDraftDirty(preserved.draft))
     },
     [draftHandoff, effectiveAttackId, effectiveConversationId],
   )
@@ -315,11 +315,10 @@ export function SeedExampleBrowserView({
         }
       }
       if (importRequestRef.current !== requestId) return
-      const preserved = draftHandoff.preservedDraft
-      const setup = preserved && (destination === 'new_conversation'
-        ? preserved.originatingAttackId === effectiveAttackId
-        : preserved.originatingAttackId === (destination === 'new_attack' ? null : effectiveAttackId)
-          && preserved.originatingConversationId === targetConversationId)
+      const targetAttackId = destination === 'new_attack' ? null : effectiveAttackId
+      const preserved = draftHandoff.getPreservedDraft(targetAttackId, targetConversationId)
+        ?? (destination === 'new_conversation' && effectiveAttackId ? draftHandoff.getPreservedDraft(effectiveAttackId) : null)
+      const setup = preserved
         ? {
             ...preserved.draft, text: '', attachments: [], textMetadata: undefined,
             conversation: undefined,

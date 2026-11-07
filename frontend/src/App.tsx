@@ -235,11 +235,12 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     target: TargetReference | null
   }>({ pathname: location.pathname, key: 0, target: targetDefaults.objectiveReference })
   if (draftSession.pathname !== location.pathname) {
+    const unsavedPreserved = draftHandoff.getPreservedDraft(null, null)
     const isReturningToUnsavedChatWithPreservedDraft =
       location.pathname === VIEW_PATHS.chat &&
-      draftHandoff.preservedDraft?.originatingAttackId === null
-    const nextTarget = isReturningToUnsavedChatWithPreservedDraft && draftHandoff.preservedDraft?.draft.target !== undefined
-      ? draftHandoff.preservedDraft.draft.target
+      unsavedPreserved?.originatingAttackId === null
+    const nextTarget = isReturningToUnsavedChatWithPreservedDraft && unsavedPreserved?.draft.target !== undefined
+      ? unsavedPreserved.draft.target
       : targetDefaults.objectiveReference
     setDraftSession({
       pathname: location.pathname,
@@ -619,8 +620,9 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     }
     if (view === 'chat') {
       if (matchPath(VIEW_PATHS.chat, location.pathname) || routeAttackId !== null) return
-      if (draftHandoff.preservedDraft?.originatingPath) {
-        navigate(draftHandoff.preservedDraft.originatingPath, { state: draftHandoff.preservedDraft.originatingState })
+      const targetDraft = draftHandoff.getPreservedDraft()
+      if (targetDraft?.originatingPath) {
+        navigate(targetDraft.originatingPath, { state: targetDraft.originatingState })
         return
       }
       if (lastChatLocation.current.path) {
@@ -631,7 +633,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       return
     }
     navigate(VIEW_PATHS[view])
-  }, [navigate, draftHandoff.preservedDraft, location.pathname, routeAttackId])
+  }, [navigate, draftHandoff, location.pathname, routeAttackId])
 
   const handleNewAttack = useCallback(() => {
     const id = generateClientId()

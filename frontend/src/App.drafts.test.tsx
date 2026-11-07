@@ -59,6 +59,9 @@ jest.mock('@/components/Layout/MainLayout', () => {
         <button onClick={() => onNavigate('datasets')}>Datasets</button>
         <button onClick={() => onNavigate('chat')}>Chat</button>
         <button onClick={() => onNavigate('scenarios')}>Scanner</button>
+        <button onClick={() => onNavigate('operations')}>Operations</button>
+        <button onClick={() => onNavigate('home')}>Home</button>
+        <button onClick={() => onNavigate('registry')}>Registry</button>
         <button onClick={() => navigate('/attack/chat/saved/conversations/main')}>Open saved main</button>
         <button onClick={() => navigate('/attack/chat/saved/conversations/branch')}>Open another conversation</button>
         <button onClick={() => navigate(-1)}>Back</button>
@@ -647,6 +650,30 @@ describe('App draft handoff with the real chat and composer', () => {
     await visitDatasets(user)
     await returnToChat(user)
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+  })
+
+  it('should preserve unsent composer input across sidebar navigation and browser back (#3735)', async () => {
+    const user = userEvent.setup()
+    renderChat()
+    const composer = await screen.findByPlaceholderText('Type prompt here')
+    await user.type(composer, 'ROUND6 UNSAVED PRESERVATION CONTROL')
+
+    // Navigate to Operations and return via Back
+    await user.click(await screen.findByRole('button', { name: 'Operations', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('ROUND6 UNSAVED PRESERVATION CONTROL')
+
+    // Navigate to Datasets and return via Chat button
+    await visitDatasets(user)
+    await returnToChat(user)
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('ROUND6 UNSAVED PRESERVATION CONTROL')
+
+    // Navigate to Home and return via Back
+    await user.click(await screen.findByRole('button', { name: 'Home', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('ROUND6 UNSAVED PRESERVATION CONTROL')
   })
 
   it.each(['/attack/chat', '/attack/chat/saved/conversations/main'])(
