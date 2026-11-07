@@ -85,6 +85,12 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+    from pyrit.score.true_false.assert_policy_scorer import (
+        AssertJudgmentMode,
+        AssertScoringDimension,
+        build_assert_policy_scorer,
+        get_assert_failure_criterion,
+    )
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.file_write_scorer import FileWriteScorer
@@ -163,6 +169,10 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AssertJudgmentMode": "pyrit.score.true_false.assert_policy_scorer",
+    "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
+    "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",
+    "get_assert_failure_criterion": "pyrit.score.true_false.assert_policy_scorer",
     "ProgramExecutionScorer": "pyrit.score.true_false.program_execution_scorer",
     "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
     "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
