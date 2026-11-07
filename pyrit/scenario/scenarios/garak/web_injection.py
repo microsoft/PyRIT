@@ -11,32 +11,38 @@ import random
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetSelectionMode,
+    ScenarioDatasetOptions,
     ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
     DatasetSourceKind,
 )
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.score import TrueFalseCompositeScorer, TrueFalseScoreAggregator, TrueFalseScorer
-from pyrit.score.true_false.regex.markdown_injection import MarkdownInjectionScorer
-from pyrit.score.true_false.regex.xss_output_scorer import XSSOutputScorer
+from pyrit.score import (
+    MarkdownInjectionScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+    XSSOutputScorer,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

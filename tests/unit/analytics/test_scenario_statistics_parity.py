@@ -18,7 +18,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from pyrit.analytics import compute_scenario_statistics
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services import ScenarioRunService
 from pyrit.common.utils import to_sha256
 from pyrit.memory import AttackResultKeysetCursor, MemoryInterface
 from pyrit.models import (

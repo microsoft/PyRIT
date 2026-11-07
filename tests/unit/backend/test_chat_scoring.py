@@ -14,20 +14,20 @@ import sqlalchemy as sa
 from pydantic import PydanticUserError
 from sqlalchemy.orm import Session
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     CreateAttackRequest,
     CreateConversationRequest,
     MessagePieceRequest,
     MessageRequest,
-    SaveConversationRequest,
     ScoreView,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
 )
+from pyrit.backend.models.attacks import SaveConversationRequest
 from pyrit.backend.models.message_sends import MessageSendRequest
 from pyrit.backend.models.scores import ApplyChatScorerRequest
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.chat_scoring_service import ChatScoringError, ChatScoringService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendScheduler
 from pyrit.backend.services.message_send_service import MessageSendService
@@ -61,6 +61,7 @@ from pyrit.registry import ScorerRegistry
 from pyrit.score import (
     FloatScaleThresholdScorer,
     ManualScorer,
+    MessageFloatScaleScorer,
     MessageToolCallScorer,
     MessageTrueFalseScorer,
     ScorerPromptValidator,
@@ -73,7 +74,6 @@ from pyrit.score import (
     XSSOutputScorer,
     create_conversation_scorer,
 )
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, run_memory_session_async
 

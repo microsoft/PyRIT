@@ -34,9 +34,9 @@ from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import ColumnElement, TextClause
 
-from pyrit.auth.azure_auth import AsyncAzureAuth, AzureAuth
-from pyrit.common import default_values
-from pyrit.common.singleton import Singleton
+from pyrit.auth import AzureAuth
+from pyrit.auth.azure_auth import AsyncAzureAuth
+from pyrit.common import Singleton, default_values
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,

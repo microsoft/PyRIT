@@ -16,7 +16,7 @@ from pyrit.models import (
     ToolsCalled,
     scoring_expectation_fingerprint,
 )
-from pyrit.models.messages.chat_message import ToolCall as MessageToolCall
+from pyrit.models import ToolCall as MessageToolCall
 from pyrit.models.score.condition import _CONDITION_TYPES
 
 

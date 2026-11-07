@@ -14,7 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.exceptions.exceptions_helpers import extract_json_from_string, remove_markdown_json
+from pyrit.exceptions import remove_markdown_json
+from pyrit.exceptions.exceptions_helpers import extract_json_from_string
 
 
 def test_single_literal_still_extracted() -> None:

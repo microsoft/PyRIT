@@ -312,9 +312,13 @@ else:
 # %%
 from typing import cast
 
-from pyrit.score import LikertScalePaths, RegistryUpdateBehavior, SelfAskLikertScorer
-from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
-from pyrit.score.scorer_evaluation.scorer_metrics import HarmScorerMetrics
+from pyrit.score import (
+    HarmScorerMetrics,
+    LikertScalePaths,
+    RegistryUpdateBehavior,
+    ScorerEvalDatasetFiles,
+    SelfAskLikertScorer,
+)
 
 # Create a harm scorer using the hate speech Likert scale.
 likert_scorer = SelfAskLikertScorer.from_likert_scale(
