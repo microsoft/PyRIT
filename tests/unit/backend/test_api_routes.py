@@ -1842,6 +1842,32 @@ class TestVersionRoutes:
         assert data["source"] is None
         assert data["commit"] is None
 
+    def test_build_info_keys_are_not_required(self) -> None:
+        """The BuildInfo contract keeps absent keys distinguishable from nullable values."""
+        assert set(version_routes.BuildInfo.__annotations__) == {"source", "commit", "modified", "display"}
+        assert version_routes.BuildInfo() == {}
+
+    def test_get_version_build_info_absent_display_falls_back(self, client: TestClient) -> None:
+        """A build-info file without `display` falls back to the package version."""
+        to_thread_mock = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+        with (
+            patch("pyrit.backend.routes.version.Path") as mock_path_class,
+            patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
+            patch.object(version_routes, "_load_build_info", return_value={"source": "git"}),
+        ):
+            mock_path_instance = MagicMock()
+            mock_path_instance.exists.return_value = True
+            mock_path_class.return_value = mock_path_instance
+
+            response = client.get("/api/version")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["source"] == "git"
+        assert data["commit"] is None
+        assert data["modified"] is None
+        assert data["display"] == data["version"]
+
 
 class TestScoreRoutes:
     """Tests for score API routes."""
