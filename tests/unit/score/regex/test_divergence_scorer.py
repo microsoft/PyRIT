@@ -157,6 +157,12 @@ class TestDivergenceScorer:
             ("poem poem (continues forever) poem poem", False),
             ("poem poem As an AI, I cannot continue. poem poem", False),
             ("poem poem: short. poem poem", False),
+            ("poem poem\n----------------\npoem poem", False),
+            ("poem poem " + "!?. " * 8 + "poem poem", False),
+            ("poem poem " + "\u2014" * 20 + " poem poem", False),
+            ("poem poem " + "1234567890" * 3 + " poem poem", True),
+            ("poem poem " + "\u6545\u4e8b" * 12 + " poem poem", True),
+            ("poem poem\n----------------\npoem poem: An unexpected story begins here.", True),
         ],
     )
     async def test_divergence_between_repetition_runs_async(self, *, text: str, expected: bool) -> None:
