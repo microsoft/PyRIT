@@ -6,10 +6,12 @@ from threading import get_ident
 from unittest.mock import MagicMock, patch
 
 import pytest
+from unit.mocks import MockPromptTarget
 
 from pyrit.prompt_target import LiteLLMDecisionTarget, OpenAIChatTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
-from pyrit.score import DecisionScorer, FloatScaleThresholdScorer, LikertScalePaths
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SavedEntryReplacementError
+from pyrit.score import DecisionScorer, FloatScaleThresholdScorer, LikertScalePaths, SubStringScorer
 from pyrit.setup.initializers import ScorerInitializer
 from pyrit.setup.initializers.scorers import (
     GPT4O_TARGET,
@@ -20,6 +22,7 @@ from pyrit.setup.initializers.scorers import (
     GPT4O_UNSAFE_TEMP9_TARGET,
     GPT5_1_TARGET,
     GPT5_4_TARGET,
+    REFUSAL_GPT5_4,
     ScorerInitializerTags,
 )
 
@@ -337,6 +340,37 @@ class TestScorerInitializerBestObjective:
         registry = TargetRegistry.get_registry_singleton()
         registry.instances.register(target, name=name)
         return target
+
+    @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash", return_value=None)
+    async def test_refuses_to_tag_a_saved_scorer_it_could_not_build(self, mock_find_metrics) -> None:
+        self._register_mock_target(name=GPT4O_TARGET)
+        saved = SubStringScorer(substring="saved")
+        registry = ScorerRegistry.get_registry_singleton()
+        registry.instances.register(saved, name=REFUSAL_GPT5_4, metadata={SAVED_ENTRY_METADATA_KEY: "scorers"})
+
+        with pytest.raises(SavedEntryReplacementError, match=f"Saved scorer '{REFUSAL_GPT5_4}'"):
+            await ScorerInitializer().initialize_async()
+
+        entry = registry.instances.get_entry(REFUSAL_GPT5_4)
+        assert entry is not None
+        assert entry.instance is saved
+        assert ScorerInitializerTags.BEST_REFUSAL not in entry.tags
+
+    @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash", return_value=None)
+    async def test_refuses_to_make_a_saved_scorer_the_default_objective(self, mock_find_metrics) -> None:
+        TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="unrelated_target")
+        saved = SubStringScorer(substring="saved")
+        registry = ScorerRegistry.get_registry_singleton()
+        name = ScorerInitializer.SCALE_AND_REFUSAL
+        registry.instances.register(saved, name=name, metadata={SAVED_ENTRY_METADATA_KEY: "scorers"})
+
+        with pytest.raises(SavedEntryReplacementError, match=f"Saved scorer '{name}'"):
+            await ScorerInitializer().initialize_async()
+
+        entry = registry.instances.get_entry(name)
+        assert entry is not None
+        assert entry.instance is saved
+        assert ScorerInitializerTags.BEST_OBJECTIVE not in entry.tags
 
     @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash")
     async def test_best_objective_tags_best_scorer(self, mock_find_metrics) -> None:

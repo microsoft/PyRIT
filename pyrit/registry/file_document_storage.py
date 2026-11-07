@@ -12,13 +12,16 @@ module exists, so they could not be layered on top.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import logging
 import os
+import stat
 import sys
 import tempfile
 import time
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
@@ -32,6 +35,32 @@ if TYPE_CHECKING:
     from azure.storage.blob import ContainerClient
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class UnreadableDocument:
+    """A stored document with a valid name whose content could not be read."""
+
+    name: str
+    message: str
+
+
+@dataclass(frozen=True)
+class IgnoredDocument:
+    """A stored file whose name breaks the naming rule, so no single-document call can address it."""
+
+    file_name: str
+    message: str
+
+
+@dataclass(frozen=True)
+class DocumentListing:
+    """Every document a listing found, including the ones it could not use."""
+
+    documents: dict[str, bytes] = field(default_factory=dict)
+    unreadable: tuple[UnreadableDocument, ...] = ()
+    ignored: tuple[IgnoredDocument, ...] = ()
+
 
 # Both platforms lock a single byte at offset zero, which they allow past the end of an
 # empty file. The lock belongs to the open file handle, so it excludes other threads in
@@ -79,6 +108,52 @@ else:
         """Release the exclusive lock held on an open descriptor."""
         with suppress(OSError):
             fcntl.flock(descriptor, fcntl.LOCK_UN)
+
+
+# Opening without blocking keeps a pipe from hanging the read; it changes nothing for a regular
+# file. Windows has no O_NONBLOCK and needs O_BINARY so the bytes aren't translated.
+_READ_FLAGS = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+
+
+def _read_regular_file(path: str) -> bytes | None:
+    """
+    Read a file only if what was opened is a regular file.
+
+    The opened file is checked rather than the path, so the check still holds if the path
+    was replaced after it was listed.
+
+    Returns:
+        bytes | None: The content, or None if the path names something other than a regular file.
+    """
+    descriptor = os.open(path, _READ_FLAGS)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        with open(descriptor, "rb", closefd=False) as file:
+            return file.read()
+    finally:
+        os.close(descriptor)
+
+
+def describe_storage_error(error: Exception) -> str:
+    """
+    Describe a storage error in a few words, leaving out any path or URL it carries.
+
+    Args:
+        error (Exception): The error a local folder or Azure Blob Storage raised.
+
+    Returns:
+        str: For example ``Permission denied`` or ``HttpResponseError (403, AuthorizationPermissionMismatch)``.
+    """
+    if isinstance(error, OSError) and error.strerror:
+        return error.strerror
+    error_code = getattr(error, "error_code", None)
+    details = [
+        str(detail)
+        for detail in (getattr(error, "status_code", None), getattr(error_code, "value", error_code))
+        if detail is not None
+    ]
+    return f"{type(error).__name__} ({', '.join(details)})" if details else type(error).__name__
 
 
 class DocumentConflictError(ValueError):
@@ -191,49 +266,159 @@ class FileDocumentStorage:
         """
         Read every stored document that the single-document operations can address.
 
-        A name is checked before its content is read, so a file this class cannot address
-        is never opened and cannot fail the listing on its way out.
+        The documents ``_list_documents_with_issues`` can't use are logged and left out. A storage
+        location that can't be listed at all raises instead of looking empty.
 
         Returns:
             dict[str, bytes]: Document content keyed by name.
         """
-        return self._list_blob_documents() if self._is_blob else self._list_local_documents()
+        listing = self._list_documents_with_issues()
+        for ignored in listing.ignored:
+            logger.warning(
+                f"Ignoring stored document '{ignored.file_name}' in {self.display_source}: {ignored.message}"
+            )
+        for unreadable in listing.unreadable:
+            logger.warning(
+                f"Skipping unreadable document '{unreadable.name}{self._extension}' in {self.display_source}: "
+                f"{unreadable.message}"
+            )
+        return listing.documents
 
-    def _list_local_documents(self) -> dict[str, bytes]:
+    def _list_documents_with_issues(self) -> DocumentListing:
         """
-        Read addressable documents from the configured local directory.
+        Read every stored document and report the ones that can't be used.
+
+        A document that can't be read is reported as unreadable, and a file whose name breaks
+        the naming rule is reported as ignored without being read, because no single-document
+        call could address it. A storage location that can't be listed at all raises instead of
+        looking empty.
+
+        Messages carry only a short reason, never a path or URL, so they can be shown to users
+        without exposing server paths or a SAS token.
 
         Returns:
-            dict[str, bytes]: Document content keyed by file stem.
+            DocumentListing: Readable documents keyed by name, plus the unreadable and ignored ones.
+        """
+        return self._list_blob_documents_with_issues() if self._is_blob else self._list_local_documents_with_issues()
+
+    def _list_local_documents_with_issues(self) -> DocumentListing:
+        """
+        Read the local directory, reporting unreadable and badly named documents.
+
+        Returns:
+            DocumentListing: The documents and issues found in the directory.
         """
         directory = self._local_directory(create=True)
+        # ``Path.glob`` returns nothing for a directory it can't read; listing it directly raises instead.
+        # ``fnmatch`` applies the platform's case rule, as ``glob`` does.
+        with os.scandir(directory) as entries:
+            candidates = sorted(
+                (entry for entry in entries if fnmatch.fnmatch(entry.name, f"*{self._extension}")),
+                key=lambda entry: entry.name,
+            )
         documents: dict[str, bytes] = {}
-        for path in sorted(directory.glob(f"*{self._extension}")):
-            if not self._is_addressable_name(path.stem):
+        unreadable: list[UnreadableDocument] = []
+        ignored: list[IgnoredDocument] = []
+        for entry in candidates:
+            name = Path(entry.name).stem
+            problem = self._name_problem(name)
+            if problem is not None:
+                ignored.append(IgnoredDocument(file_name=entry.name, message=problem))
                 continue
-            try:
-                documents[path.stem] = path.read_bytes()
-            except OSError as error:
-                logger.warning(f"Skipping unreadable document '{path.name}' in {self.display_source}: {error}")
-        return documents
+            content = self._read_local_entry(entry=entry, name=name)
+            if isinstance(content, bytes):
+                documents[name] = content
+            elif content is not None:
+                unreadable.append(content)
+        return DocumentListing(documents=documents, unreadable=tuple(unreadable), ignored=tuple(ignored))
 
-    def _is_addressable_name(self, name: str) -> bool:
+    def _read_local_entry(self, *, entry: os.DirEntry[str], name: str) -> bytes | UnreadableDocument | None:
         """
-        Return whether a discovered document name is one this storage can address.
+        Read one listed local document.
 
-        Ordinary files such as ``__init__.py`` or ``My-Script.py`` can sit alongside
-        valid documents, and a caller that fed such a name back into a read, write, or
-        delete would get a ``ValueError`` it has no way to anticipate.
+        The directory can change after it is listed, so what is opened is checked again: an entry
+        deleted in between is skipped, whether or not it was a link, and anything that isn't a regular
+        file is reported without being read.
 
         Returns:
-            bool: Whether the name is a legal registry name.
+            bytes | UnreadableDocument | None: The content, why it can't be read, or None if it was
+                deleted after the directory was listed.
+        """
+        try:
+            content = _read_regular_file(entry.path) if entry.is_file() else None
+        except FileNotFoundError:
+            content = None
+        except OSError as error:
+            return UnreadableDocument(name=name, message=describe_storage_error(error))
+        if content is not None:
+            return content
+        return self._describe_non_file(path=entry.path, name=name)
+
+    @classmethod
+    def _describe_non_file(cls, *, path: str, name: str) -> UnreadableDocument | None:
+        """
+        Report a listed entry that isn't a regular file, unless it was deleted after the listing.
+
+        Returns:
+            UnreadableDocument | None: Why it can't be read, or None if it no longer exists.
+        """
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            return UnreadableDocument(name=name, message=describe_storage_error(error))
+        # A broken link, a folder, or a pipe, which would block if read.
+        return UnreadableDocument(name=name, message="Not a regular file")
+
+    def _list_blob_documents_with_issues(self) -> DocumentListing:
+        """
+        Read the blob container, reporting unreadable and badly named documents.
+
+        Returns:
+            DocumentListing: The documents and issues found under the configured prefix.
+        """
+        from azure.core.exceptions import AzureError
+        from azure.storage.blob import StorageErrorCode
+
+        documents: dict[str, bytes] = {}
+        unreadable: list[UnreadableDocument] = []
+        ignored: list[IgnoredDocument] = []
+        with self._open_container_client() as client:
+            prefix = f"{self._blob_prefix}/" if self._blob_prefix else None
+            blobs = client.list_blobs(name_starts_with=prefix) if prefix else client.list_blobs()
+            blob_names = sorted(
+                blob.name for blob in blobs if self._is_direct_document_blob(blob_name=blob.name, prefix=prefix)
+            )
+            for blob_name in blob_names:
+                file_name = blob_name.removeprefix(prefix or "")
+                name = PurePosixPath(file_name).stem
+                problem = self._name_problem(name)
+                if problem is not None:
+                    ignored.append(IgnoredDocument(file_name=file_name, message=problem))
+                    continue
+                try:
+                    documents[name] = client.download_blob(blob_name).readall()
+                except AzureError as error:
+                    if getattr(error, "error_code", None) == StorageErrorCode.BLOB_NOT_FOUND:
+                        # Deleted after the container was listed, so it is no longer part of the listing.
+                        continue
+                    unreadable.append(UnreadableDocument(name=name, message=describe_storage_error(error)))
+        return DocumentListing(documents=documents, unreadable=tuple(unreadable), ignored=tuple(ignored))
+
+    @staticmethod
+    def _name_problem(name: str) -> str | None:
+        """
+        Return why a discovered document name can't be addressed, or None if it can.
+
+        Returns:
+            str | None: The naming-rule error, or ``None`` for a legal name.
         """
         try:
             validate_registry_name(name)
         except ValueError as error:
-            logger.warning(f"Ignoring stored document '{name}{self._extension}' in {self.display_source}: {error}")
-            return False
-        return True
+            return str(error)
+        return None
 
     def _read_document_bytes(self, name: str) -> bytes | None:
         """
@@ -561,32 +746,6 @@ class FileDocumentStorage:
         if create:
             directory.mkdir(parents=True, exist_ok=True)
         return directory
-
-    def _list_blob_documents(self) -> dict[str, bytes]:
-        """
-        Read addressable documents from the configured Azure Blob container.
-
-        Returns:
-            dict[str, bytes]: Document content keyed by blob stem.
-        """
-        from azure.core.exceptions import AzureError
-
-        documents: dict[str, bytes] = {}
-        with self._open_container_client() as client:
-            prefix = f"{self._blob_prefix}/" if self._blob_prefix else None
-            blobs = client.list_blobs(name_starts_with=prefix) if prefix else client.list_blobs()
-            blob_names = sorted(
-                blob.name for blob in blobs if self._is_direct_document_blob(blob_name=blob.name, prefix=prefix)
-            )
-            for blob_name in blob_names:
-                name = PurePosixPath(blob_name.removeprefix(prefix or "")).stem
-                if not self._is_addressable_name(name):
-                    continue
-                try:
-                    documents[name] = client.download_blob(blob_name).readall()
-                except AzureError as error:
-                    logger.warning(f"Skipping unreadable document '{blob_name}' in {self.display_source}: {error}")
-        return documents
 
     def _parse_blob_source(self) -> tuple[str, str]:
         """

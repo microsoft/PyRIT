@@ -13,7 +13,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from pyrit.backend.services.scenario_run_service import ScenarioRunService, get_scenario_run_service
+from pyrit.backend.services.scenario_run_service import (
+    SavedEntryLaunchConflictError,
+    ScenarioRunService,
+    get_scenario_run_service,
+)
 from pyrit.models import (
     LaunchScenarioSuiteRequest,
     ScenarioRunState,
@@ -261,7 +265,7 @@ class ScenarioSuiteExecutionService:
                     )
                     async with state.lock:
                         entry.state = ScenarioSuiteSubmissionState.SUBMISSION_FAILED
-                        entry.error = self.SUBMISSION_FAILURE_MESSAGE
+                        entry.error = self._describe_submission_failure(exc)
                         entry.error_type = type(exc).__name__
                         state.updated_at = datetime.now(UTC)
                     continue
@@ -290,7 +294,7 @@ class ScenarioSuiteExecutionService:
                 except Exception as exc:
                     async with state.lock:
                         entry.state = ScenarioSuiteSubmissionState.SUBMISSION_FAILED
-                        entry.error = self.SUBMISSION_FAILURE_MESSAGE
+                        entry.error = self._describe_submission_failure(exc)
                         entry.error_type = type(exc).__name__
                         state.updated_at = datetime.now(UTC)
                 else:
@@ -546,6 +550,21 @@ class ScenarioSuiteExecutionService:
     def _get_run_service(self) -> ScenarioRunService:
         """Return the injected run service or process singleton."""
         return self._run_service if self._run_service is not None else get_scenario_run_service()
+
+    def _describe_submission_failure(self, error: Exception) -> str:
+        """
+        Describe why an entry's run couldn't be created, without exposing internal error text.
+
+        Args:
+            error (Exception): The error the run service raised.
+
+        Returns:
+            str: The message to show for the entry.
+        """
+        # A clash with a saved entry names only the launch script and the entry, so it's safe to show.
+        if isinstance(error, SavedEntryLaunchConflictError):
+            return str(error)
+        return self.SUBMISSION_FAILURE_MESSAGE
 
 
 _service_instance: ScenarioSuiteExecutionService | None = None

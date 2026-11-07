@@ -14,7 +14,7 @@ from uuid import UUID
 import pytest
 
 import pyrit.backend.services.scenario_suite_execution_service as _execution_mod
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
+from pyrit.backend.services.scenario_run_service import SavedEntryLaunchConflictError, ScenarioRunService
 from pyrit.backend.services.scenario_suite_execution_service import (
     ScenarioSuiteExecutionCapacityError,
     ScenarioSuiteExecutionService,
@@ -370,6 +370,32 @@ async def test_advisory_preset_issue_becomes_a_hard_launch_gate(
         )
 
     run_service.start_run_async.assert_not_awaited()
+
+
+async def test_submission_failure_names_a_saved_entry_a_launch_script_would_replace(
+    execution_context: tuple[
+        ScenarioSuiteExecutionService,
+        ScenarioSuiteRegistry,
+        MagicMock,
+        MagicMock,
+        list[tuple[RunScenarioRequest, dict[str, Any]]],
+        dict[str, ScenarioRunSummary],
+    ],
+) -> None:
+    service, suite_registry, _, run_service, _, _ = execution_context
+    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
+    clash = (
+        "The launch script 'converters' would replace the saved converter 'rot13'. Leave that script out of the launch."
+    )
+    run_service.start_run_async.side_effect = SavedEntryLaunchConflictError(clash)
+
+    accepted = await service.launch_async(name="weekly", request=_launch_request(suite_version=stored.version))
+    await _wait_for_submissions(service)
+    summary = await service.get_execution_async(execution_id=accepted.suite_execution_id)
+
+    assert summary is not None
+    assert [entry.error for entry in summary.entries] == [clash, clash]
+    assert summary.entries[0].error_type == "SavedEntryLaunchConflictError"
 
 
 async def test_submission_failure_does_not_prevent_later_entries_from_queueing(
