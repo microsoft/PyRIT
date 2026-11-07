@@ -7,6 +7,7 @@ import { getGraphScopes } from '../auth/msalConfig'
 import type {
   ApplyChatScorerRequest,
   ApplyChatScorerResponse,
+  AttackFindingListResponse,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -499,6 +500,12 @@ export const attacksApi = {
     const response = conversationId === undefined
       ? await apiClient.get(url)
       : await apiClient.get(url, { params: { conversation_id: conversationId } })
+    return response.data
+  },
+
+  /** Findings in any Operation that link this attack as evidence; empty for an unsaved running attack. */
+  getAttackFindings: async (attackResultId: string): Promise<AttackFindingListResponse> => {
+    const response = await apiClient.get(`/attacks/${encodeURIComponent(attackResultId)}/findings`)
     return response.data
   },
 
