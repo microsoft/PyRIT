@@ -17,7 +17,7 @@ from pyrit.score import (
     ObjectiveScorerMetrics,
     SubStringScorer,
 )
-from pyrit.setup.initializers import ScorerInitializer
+from pyrit.setup.initializers import ScorerInitializer, ScorerInitializerTags
 from pyrit.setup.initializers.scorers import (
     GPT4O_TARGET,
     GPT4O_TEMP0_TARGET,
@@ -27,7 +27,6 @@ from pyrit.setup.initializers.scorers import (
     GPT4O_UNSAFE_TEMP9_TARGET,
     GPT5_1_TARGET,
     GPT5_4_TARGET,
-    ScorerInitializerTags,
 )
 
 

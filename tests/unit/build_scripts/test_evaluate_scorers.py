@@ -29,8 +29,7 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
 )
 from pyrit.setup import IN_MEMORY
-from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
-from pyrit.setup.initializers.scorers import ScorerInitializerTags
+from pyrit.setup.initializers import ScorerInitializer, ScorerInitializerTags, TargetInitializer
 from pyrit.setup.initializers.targets import TargetInitializerTags
 
 

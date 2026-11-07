@@ -27,8 +27,7 @@ from pyrit.common.path import SCORER_EVALS_PATH
 from pyrit.exceptions.exception_context import ComponentRole, execution_context
 from pyrit.registry import ScorerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
-from pyrit.setup.initializers.scorers import ScorerInitializerTags
+from pyrit.setup.initializers import ScorerInitializer, ScorerInitializerTags, TargetInitializer
 
 
 async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int = 5) -> None:
