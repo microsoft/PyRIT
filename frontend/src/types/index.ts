@@ -1357,14 +1357,15 @@ export interface AttackListResponse {
 export interface ConversationSummary {
   conversation_id: string
   conversation_type?: 'main' | 'pruned'
-  message_count: number
+  /** Null when a recorded-only scan reference has no counted attack-result projection. */
+  message_count: number | null
   last_message_preview?: string | null
   created_at?: string | null
 }
 
 export interface AttackConversationsResponse {
   attack_result_id: string
-  main_conversation_id: string
+  main_conversation_id: string | null
   conversations: ConversationSummary[]
   pagination?: PaginationInfo | null
   total_count?: number | null
@@ -2333,7 +2334,7 @@ export interface ScenarioHierarchyProjection {
   truncated: boolean
 }
 
-export interface ScenarioObjectiveScorerMetrics {
+export interface ScenarioObjectiveScorerMetrics extends ScorerEvaluationMetrics {
   accuracy: number
   accuracy_standard_error?: number | null
   f1_score?: number | null

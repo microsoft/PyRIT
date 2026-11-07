@@ -148,9 +148,29 @@ scan's polling interval. A failed refresh keeps the loaded messages and offers
 **Retry**. When the attack finishes, Chat reloads its saved result in place on
 the same URL.
 
-Every transcript opens at its latest message and follows new messages only while
-the reader is within 48 px of the end; scrolling further up keeps the reading
-position.
+An interrupted scan can retain recorded conversations without a saved attack
+result. Chat verifies that run, attack and conversation together and reads the
+stored evidence through the run-scoped API, including after reload or an older
+scan link. These conversations stay read-only; no result, score, main
+conversation or message count is invented. Result-dependent actions remain
+unavailable.
+
+Live and manual transcripts follow new messages only while the reader is within
+48 px of the end; scrolling further up keeps the reading position. Historical
+saved evidence keeps its bounded paging and narrow-screen reading behavior
+described above.
+
+**Evaluation metrics** in attack details shows the official evaluation quality
+of the recorded objective-scorer configuration, including configurations no
+longer in the registry. This is separate from the individual attack score in
+the outcome popover and the scan's attack-success rate. Missing evaluation
+metrics have an explicit unavailable state and a link to the scorer-metrics guide.
+
+The Scorer Registry keeps its compact comparison table; each scorer's
+**Evaluation metrics** opens the complete supplied metrics, including standard
+errors and sample counts. Runtime identity and behavioral evaluation identity
+remain separate. Registry names are not used to substitute metrics for a
+recorded run.
 
 ## Dataset catalog
 

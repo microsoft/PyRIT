@@ -37,6 +37,34 @@ describe("ConversationPanel", () => {
     beforeEach(() => { jest.useFakeTimers(); });
     afterEach(() => { jest.useRealTimers(); });
 
+    it("should settle a slow read without overlapping polls and discard a prior attack's late response", async () => {
+      let finishFirst: (response: AttackConversationsResponse) => void = () => { throw new Error("No first read"); };
+      let finishNext: (response: AttackConversationsResponse) => void = () => { throw new Error("No next read"); };
+      mockedAttacksApi.getConversations.mockReset();
+      mockedAttacksApi.getConversations
+        .mockResolvedValue({ attack_result_id: "other", main_conversation_id: null, conversations: [] })
+        .mockImplementationOnce(() => new Promise<AttackConversationsResponse>((resolve) => { finishFirst = resolve; }))
+        .mockImplementationOnce(() => new Promise<AttackConversationsResponse>((resolve) => { finishNext = resolve; }));
+      const rendered = render(<TestWrapper><ConversationPanel {...defaultProps} pollIntervalMs={2_500} /></TestWrapper>);
+      await act(async () => { await jest.advanceTimersByTimeAsync(7_500); });
+      expect(mockedAttacksApi.getConversations).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        finishFirst({ attack_result_id: defaultProps.attackResultId, main_conversation_id: "attack-123", conversations: [conversation("attack-123", 1)] });
+      });
+      expect(screen.getByTestId("conversation-item-attack-123")).toBeInTheDocument();
+      await act(async () => { await jest.advanceTimersByTimeAsync(2_500); });
+      expect(mockedAttacksApi.getConversations).toHaveBeenCalledTimes(2);
+      rendered.rerender(<TestWrapper><ConversationPanel {...defaultProps} attackResultId="other" pollIntervalMs={2_500} /></TestWrapper>);
+      await act(async () => {
+        finishNext({ attack_result_id: defaultProps.attackResultId, main_conversation_id: "stale", conversations: [conversation("stale", 1)] });
+      });
+      expect(screen.queryByTestId("conversation-item-stale")).not.toBeInTheDocument();
+      rendered.unmount();
+      const calls = mockedAttacksApi.getConversations.mock.calls.length;
+      await act(async () => { await jest.advanceTimersByTimeAsync(10_000); });
+      expect(mockedAttacksApi.getConversations).toHaveBeenCalledTimes(calls);
+    });
+
     it("should refresh at the poll interval, keep rows through a failed read, and recover", async () => {
       mockedAttacksApi.getConversations
         .mockResolvedValueOnce({ attack_result_id: "ar-attack-123", main_conversation_id: "attack-123", conversations: [conversation("attack-123", 1)] })

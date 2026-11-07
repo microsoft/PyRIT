@@ -59,7 +59,7 @@ import type { ScenarioHistoryFilters } from './components/History/scenarioHistor
 import type { ViewName } from './components/Sidebar/Navigation'
 import type {
   AttackMetadata, AttackOutcome, AttackSummary, BackendScore, Operation, TargetInfo, TargetInstance, TargetReference,
-  UserPreferences,
+  AttackConversationsResponse, ConversationMessagesResponse, ScenarioActiveConversation, UserPreferences,
 } from './types'
 import {
   resolveTargetReference,
@@ -69,7 +69,8 @@ import {
   targetModelName,
   targetType,
 } from './utils/targetIdentity'
-import { attacksApi, authApi, versionApi } from './services/api'
+import { attacksApi, authApi, scenariosApi, versionApi } from './services/api'
+import { readRecordedScanConversations } from './services/recordedScanConversations'
 import { toApiError } from './services/errors'
 import { generateClientId } from './utils/clientId'
 import { resolveChatScorerReference } from '@/utils/scorerPresentation'
@@ -183,6 +184,8 @@ interface LoadedAttack {
   inProgress?: boolean
   /** The scan run that produced this attack. */
   scenarioResultId?: string | null
+  /** Verified SDK provenance for interrupted evidence that has no saved attack result. */
+  recordedConversations?: ScenarioActiveConversation[]
   manualContinuation?: ManualContinuation | null
   lastResponseMessagePieceId: string | null
   status: AttackLoadStatus
@@ -209,6 +212,7 @@ function savedAttackFields(attack: AttackMetadata): SavedAttackFields {
     executionReadOnly: attack.execution_read_only ?? false,
     inProgress: attack.in_progress ?? false,
     scenarioResultId: attack.scenario_result_id ?? null,
+    recordedConversations: undefined,
     manualContinuation: attack.manual_continuation ?? null,
     lastResponseMessagePieceId: attack.last_response_message_piece_id,
   }
@@ -390,6 +394,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     () => scenarioRunProvenance(searchParams),
     [searchParams],
   )
+  const routeAttackKey = JSON.stringify([routeAttackId, scenarioResultId])
+  const [metadataRevision, setMetadataRevision] = useState(0)
   const findingEvidenceId = useMemo(
     () => findingEvidenceOrigin(searchParams),
     [searchParams],
@@ -498,7 +504,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       skipNextLoadForAttackId.current = null
       return
     }
-    if (validatedConversationForAttack.current === routeAttackId) return
+    if (validatedConversationForAttack.current === routeAttackKey) return
     validatedConversationForAttack.current = null
     let cancelled = false
     const loadSequence = attackLoadSequence.current + 1
@@ -524,14 +530,39 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       ? attacksApi.getAttackMetadata(routeAttackId, routeConversationId)
       : attacksApi.getAttackMetadata(routeAttackId)
     request
-      .then(attack => {
+      .then((attack: AttackMetadata): SavedAttackFields & Pick<LoadedAttack, 'knownConversationIds'> => ({
+        ...savedAttackFields(attack),
+        knownConversationIds: attack.selected_conversation_valid ? [attack.selected_conversation_id] : [],
+      }))
+      .catch(async (cause: unknown): Promise<SavedAttackFields & Pick<LoadedAttack, 'knownConversationIds'>> => {
+        if (toApiError(cause).status !== 404 || !scenarioResultId || !routeConversationId) throw cause
+        const records = await readRecordedScanConversations(scenarioResultId, routeAttackId, routeConversationId)
+        const selected = records?.find((record: ScenarioActiveConversation) => record.conversation_id === routeConversationId)
+        if (!records || !selected) throw cause
+        try {
+          const saved = await attacksApi.getAttackMetadata(routeAttackId, routeConversationId)
+          return {
+            ...savedAttackFields(saved),
+            knownConversationIds: saved.selected_conversation_valid ? [saved.selected_conversation_id] : [],
+          }
+        } catch (savedCause: unknown) {
+          if (toApiError(savedCause).status !== 404) throw savedCause
+        }
+        return {
+          mainConversationId: null, labels: {}, operator: null, target: null,
+          knownConversationIds: records.map((record: ScenarioActiveConversation) => record.conversation_id),
+          relatedConversationCount: Math.max(0, records.length - 1), objective: selected.objective,
+          outcome: 'undetermined', automatedScore: null, humanScore: null, lastResponseMessagePieceId: null,
+          executionReadOnly: true, inProgress: false, scenarioResultId, recordedConversations: records,
+        }
+      })
+      .then((fields: SavedAttackFields & Pick<LoadedAttack, 'knownConversationIds'>) => {
         if (cancelled) return
         setLoadedAttack({
           id: routeAttackId,
           loadSequence,
           targetSource: 'persisted',
-          ...savedAttackFields(attack),
-          knownConversationIds: attack.selected_conversation_valid ? [attack.selected_conversation_id] : [],
+          ...fields,
           status: 'success',
         })
       })
@@ -561,7 +592,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       })
     // Drop a stale response once the route has moved on to another attack.
     return () => { cancelled = true }
-  }, [routeAttackId, routeConversationId])
+  }, [routeAttackId, routeConversationId, routeAttackKey, scenarioResultId, metadataRevision])
 
   // Only the attack named by the current URL may drive the chat. While a new
   // attack is loading, loadedAttack still holds the previous one, so this keeps
@@ -596,7 +627,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     })
   }, [])
   const handleLiveAttackGone = useCallback(() => {
-    setLoadedAttack((current) => current?.inProgress ? { ...current, inProgress: false } : current)
+    validatedConversationForAttack.current = null
+    setMetadataRevision((current) => current + 1)
   }, [])
   useLiveAttackMetadata({
     attackResultId: readyAttack?.inProgress ? readyAttack.id : null,
@@ -632,8 +664,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
   // just created or listed), so only the initial URL is checked.
   useEffect(() => {
     if (!readyAttack) return
-    if (validatedConversationForAttack.current === readyAttack.id) return
-    validatedConversationForAttack.current = readyAttack.id
+    if (validatedConversationForAttack.current === routeAttackKey) return
+    validatedConversationForAttack.current = routeAttackKey
     if (routeConversationId) {
       const isKnown =
         routeConversationId === readyAttack.mainConversationId ||
@@ -642,7 +674,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
         navigate(attackRoutePath(readyAttack.id, scenarioResultId), { replace: true, state: location.state })
       }
     }
-  }, [readyAttack, routeConversationId, navigate, scenarioResultId, findingEvidenceId, location.state])
+  }, [readyAttack, routeConversationId, routeAttackKey, navigate, scenarioResultId, findingEvidenceId, location.state])
 
   const handleNavigate = useCallback((view: ViewName) => {
     if (view === 'analytics') {
@@ -803,6 +835,26 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
     })
   }, [location.search, navigate])
 
+  const recordedConversations = readyAttack?.recordedConversations
+  const recordedRunId = readyAttack?.scenarioResultId
+  const recordedAttackId = readyAttack?.id
+  const readRecordedMessages = useCallback(async (conversationId: string): Promise<ConversationMessagesResponse> => {
+    if (!recordedRunId || !recordedConversations?.some((record: ScenarioActiveConversation) => record.conversation_id === conversationId)) {
+      throw new Error('This conversation is not part of the recorded scan attack.')
+    }
+    return scenariosApi.getRunConversation(recordedRunId, conversationId)
+  }, [recordedRunId, recordedConversations])
+  const readRecordedReferences = useCallback(async (attackResultId: string): Promise<AttackConversationsResponse> => {
+    if (attackResultId !== recordedAttackId || !recordedConversations) {
+      throw new Error('This attack is not part of the recorded scan.')
+    }
+    return {
+      attack_result_id: attackResultId, main_conversation_id: null,
+      conversations: recordedConversations.map((record: ScenarioActiveConversation) => ({ conversation_id: record.conversation_id, message_count: null })),
+      total_count: recordedConversations.length,
+    }
+  }, [recordedAttackId, recordedConversations])
+
   const chatElement = isAttackNotFound || isAttackError || isEvidenceConversationMissing ? (
     <AttackNotFound
       attackId={routeAttackId ?? ''}
@@ -860,6 +912,8 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
       chatScorerInherited={readyAttack?.chatScorerInherited}
       executionReadOnly={readyAttack?.executionReadOnly}
       inProgress={readyAttack?.inProgress}
+      readConversationById={recordedConversations ? readRecordedMessages : undefined}
+      readConversations={recordedConversations ? readRecordedReferences : undefined}
       attackScenarioResultId={readyAttack?.scenarioResultId}
       manualContinuation={readyAttack?.manualContinuation}
       defaultChatScorer={defaultChatScorer}

@@ -11,6 +11,14 @@ export const useAttackExecutionTableStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
   },
   table: { minWidth: '44rem', tableLayout: 'auto' },
+  semanticHeader: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    overflow: 'hidden',
+    clip: 'rect(0, 0, 0, 0)',
+    whiteSpace: 'nowrap',
+  },
   resultRow: {
     cursor: 'pointer',
     ':hover': { backgroundColor: tokens.colorNeutralBackground1Hover },

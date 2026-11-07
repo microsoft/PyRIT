@@ -8,6 +8,8 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableHeader,
+  TableHeaderCell,
   TableRow,
   Text,
 } from '@fluentui/react-components'
@@ -100,6 +102,16 @@ export default function AttackExecutionTable({
         </Text>
       )}
       <Table size="small" className={styles.table} aria-label={label}>
+        <TableHeader className={styles.semanticHeader}>
+          <TableRow>
+            <TableHeaderCell scope="col">Objective</TableHeaderCell>
+            <TableHeaderCell scope="col">Outcome</TableHeaderCell>
+            <TableHeaderCell scope="col">Duration</TableHeaderCell>
+            <TableHeaderCell scope="col">Retries / error</TableHeaderCell>
+            {showTimestamp && <TableHeaderCell scope="col">Timestamp</TableHeaderCell>}
+            {showConversationLink && <TableHeaderCell scope="col">Conversation</TableHeaderCell>}
+          </TableRow>
+        </TableHeader>
         <TableBody>
           {results.map((result) => {
             const key = `${result.atomic_group_id}:${result.attack_result_id}`

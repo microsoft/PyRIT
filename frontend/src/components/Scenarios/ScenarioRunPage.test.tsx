@@ -146,7 +146,9 @@ describe('ScenarioRunPage', () => {
     expect(screen.getByRole('link', { name: 'View queue' })).toHaveAttribute('href', '/scanner/queue')
     await expand(user)
     const results = within(screen.getByRole('table', { name: 'Direct attack results' }))
-    expect(results.queryByRole('columnheader')).not.toBeInTheDocument()
+    expect(results.getAllByRole('columnheader').map((header: HTMLElement) => header.textContent)).toEqual([
+      'Objective', 'Outcome', 'Duration', 'Retries / error', 'Conversation',
+    ])
     expect(results.getAllByRole('cell', { name: 'Duration' })).toHaveLength(2)
     expect(results.queryByRole('cell', { name: 'Timestamp' })).not.toBeInTheDocument()
     expect(results.queryByText('Target-facing')).not.toBeInTheDocument()
@@ -207,7 +209,7 @@ describe('ScenarioRunPage', () => {
     const user = userEvent.setup()
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     await expand(user)
-    await user.click(screen.getByRole('button', { name: 'View score for PromptSendingAttack: First objective' }))
+    await user.click(screen.getByRole('button', { name: 'True: View score for PromptSendingAttack: First objective' }))
     expect(await screen.findByText('Score details')).toBeInTheDocument()
     expect(screen.getByText('The objective was met.')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()

@@ -4,6 +4,7 @@ import { Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableH
 
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import ScorerEvaluationDetails from '@/components/Scorers/ScorerEvaluationDetails'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import type { RegisteredComponentReference, ScorerInstance } from '@/types'
@@ -134,6 +135,8 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
           <TableBody>{sorted.map((scorer: ScorerInstance) => (
             <RegistryIdentityRow key={scorer.scorer_registry_name}
               name={scorer.scorer_registry_name} identity={scorer.identifier} columns={metrics.length + 4}
+              nameContent={<ScorerEvaluationDetails name={scorer.scorer_registry_name} metrics={scorer.metrics}
+                scoreType={scorer.identifier.scorer_type} evaluationIdentity={scorer.evaluation_identifier} />}
               expanded={expanded.has(scorer.scorer_registry_name)}
               onToggle={() => toggleDetails(scorer.scorer_registry_name)}>
               <TableCell>

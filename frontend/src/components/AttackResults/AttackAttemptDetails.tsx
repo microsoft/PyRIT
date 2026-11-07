@@ -1,4 +1,4 @@
-import { Button, MessageBar, MessageBarBody, Text, mergeClasses } from '@fluentui/react-components'
+import { Button, MessageBar, MessageBarActions, MessageBarBody, Text, mergeClasses } from '@fluentui/react-components'
 import { Link } from 'react-router'
 
 import AttachToFindingsButton from '@/components/Chat/AttachToFindingsButton'
@@ -6,6 +6,7 @@ import DetailFacts, { DetailFact } from '@/components/DetailFacts'
 import FindingSeverityBadge from '@/components/Operations/FindingSeverityBadge'
 import OutcomeBadge from '@/components/OutcomeBadge'
 import IdentityDisclosure from '@/components/Registry/IdentityDisclosure'
+import ScorerEvaluationDetails from '@/components/Scorers/ScorerEvaluationDetails'
 import { useAttackFindings } from '@/hooks/useAttackFindings'
 import type {
   AttackDisplayOutcome,
@@ -54,7 +55,7 @@ export default function AttackAttemptDetails({
 }: AttackAttemptDetailsProps) {
   const styles = useAttackAttemptDetailsStyles()
   const completed = attempt && 'outcome' in attempt ? attempt : null
-  const { findings, refresh: refreshFindings } = useAttackFindings(completed?.attack_result_id)
+  const { findings, loading: findingsLoading, error: findingsError, refresh: refreshFindings } = useAttackFindings(completed?.attack_result_id)
   const techniqueName = atomicGroup?.technique_name ?? atomicGroup?.display_group ?? attempt?.atomic_attack_name ?? 'Not recorded'
   const seeds = attempt && 'seed_identifiers' in attempt ? attempt.seed_identifiers ?? [] : []
   const datasetNames = [...new Set(seeds.flatMap((seed) =>
@@ -91,17 +92,28 @@ export default function AttackAttemptDetails({
         <DetailFact label="Technique"><IdentityDisclosure name={techniqueName} identity={techniqueDetails} /></DetailFact>
         <DetailFact label="Objective scorer">
           <IdentityDisclosure name={objectiveScorer?.component_name ?? 'Not recorded'} identity={objectiveScorer} />
+          <ScorerEvaluationDetails name={objectiveScorer?.component_name ?? 'Not recorded'}
+            metrics={objectiveScorer?.metrics ? { ...objectiveScorer.metrics } : null}
+            scoreType={typeof objectiveScorer?.parameters.scorer_type === 'string' ? objectiveScorer.parameters.scorer_type : undefined}
+            recorded />
         </DetailFact>
         <DetailFact label="Dataset">
           <IdentityDisclosure name={datasetNames.join(', ') || 'Not recorded'} identity={seeds.length > 0 ? seeds : null} />
         </DetailFact>
-        {findings.length > 0 && <DetailFact label="Findings">
-          <ul className={styles.findings} aria-label="Attached findings">
+        {(findings.length > 0 || findingsLoading || findingsError) && <DetailFact label="Findings">
+          {findingsLoading && <Text role="status">Loading attached findings...</Text>}
+          {findingsError && <MessageBar intent="error">
+            <MessageBarBody>Could not load attached findings: {findingsError}</MessageBarBody>
+            <MessageBarActions><Button className={styles.retry} disabled={findingsLoading} onClick={refreshFindings}>
+              Retry findings
+            </Button></MessageBarActions>
+          </MessageBar>}
+          {findings.length > 0 && <ul className={styles.findings} aria-label="Attached findings">
             {findings.map((finding) => <li key={finding.evidence_id} className={styles.finding}>
               <FindingSeverityBadge finding={finding} />
               <Text>{finding.title}</Text>
             </li>)}
-          </ul>
+          </ul>}
         </DetailFact>}
       </DetailFacts>
       <div className={mergeClasses(styles.actions, styles.divided)}>

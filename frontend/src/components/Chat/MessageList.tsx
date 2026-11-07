@@ -55,6 +55,8 @@ interface MessageListProps {
   isLoading?: boolean
   /** Saved evidence uses one scroll surface with its controls on narrow screens. */
   savedEvidence?: boolean
+  /** Announce new live/manual messages, not an initial page of historical evidence. */
+  announceUpdates?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
 }
@@ -409,7 +411,7 @@ export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
   copyConversationDisabledReason,
   newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
-  isLoading, savedEvidence = false, globalMarkdown = false, onEditConversation,
+  isLoading, savedEvidence = false, announceUpdates = !savedEvidence, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const listRef = useRef<HTMLDivElement>(null)
@@ -438,16 +440,16 @@ export default function MessageList({
     }
   }
 
-  // A transcript opens at its latest message, then follows new ones while the reader stays near the end.
+  // Historical pages keep their reading position; live/manual transcripts follow near the end.
   useLayoutEffect(() => {
     const list = listRef.current
-    if (!list) return
+    if (!list || savedEvidence) return
     if (list !== followedListRef.current) {
       followedListRef.current = list
       followLatestRef.current = true
     }
     if (followLatestRef.current) list.scrollTop = list.scrollHeight
-  }, [messages])
+  }, [messages, savedEvidence])
 
   if (isLoading) {
     return (
@@ -469,6 +471,8 @@ export default function MessageList({
 
   return (
     <div ref={listRef} className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list"
+      role={announceUpdates ? 'log' : undefined} aria-live={announceUpdates ? 'polite' : undefined}
+      aria-relevant={announceUpdates ? 'additions text' : undefined} aria-atomic={announceUpdates ? false : undefined}
       onScroll={(event: UIEvent<HTMLDivElement>) => {
         const list = event.currentTarget
         followLatestRef.current = list.scrollHeight - list.clientHeight - list.scrollTop <= FOLLOW_LATEST_THRESHOLD_PX

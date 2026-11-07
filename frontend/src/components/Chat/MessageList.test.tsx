@@ -82,17 +82,34 @@ describe("MessageList", () => {
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
 
-  it("should follow saved evidence with the same policy as live Chat", () => {
+  it("should preserve historical saved evidence position instead of following its inner non-scrolling body", () => {
     const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} savedEvidence /></TestWrapper>);
     const list = screen.getByTestId("message-list");
     Object.defineProperties(list, {
       scrollHeight: { configurable: true, writable: true, value: 900 },
       clientHeight: { configurable: true, value: 300 },
     });
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages.slice(0, 2)} savedEvidence announceUpdates={false} /></TestWrapper>);
+    expect(list.scrollTop).toBe(0);
+    expect(screen.queryByRole("log")).not.toBeInTheDocument();
     list.scrollTop = 200;
     fireEvent.scroll(list);
     rendered.rerender(<TestWrapper><MessageList messages={mockMessages} savedEvidence /></TestWrapper>);
     expect(list.scrollTop).toBe(200);
+  });
+
+  it("should announce appended live messages politely without replacing existing keyed bubbles", () => {
+    const rendered = render(<TestWrapper><MessageList messages={[mockMessages[0]]} /></TestWrapper>);
+    const log = screen.getByRole("log");
+    const bubble = screen.getByTestId("message-bubble-0");
+    expect(log).toHaveAttribute("aria-live", "polite");
+    expect(log).toHaveAttribute("aria-relevant", "additions text");
+    expect(log).toHaveAttribute("aria-atomic", "false");
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
+    expect(screen.getByRole("log")).toBe(log);
+    expect(screen.getByTestId("message-bubble-0")).toBe(bubble);
+    rendered.rerender(<TestWrapper><MessageList messages={mockMessages} /></TestWrapper>);
+    expect(screen.getByTestId("message-bubble-0")).toBe(bubble);
   });
   it.each([2, 3])("should retain gapped sequence %s beside optimistic user and loading rows without duplicate keys", (sequence: number) => {
     const errors = jest.spyOn(console, "error").mockImplementation(() => {});

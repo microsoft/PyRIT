@@ -580,7 +580,11 @@ test('shows results in aligned columns with the attack outcome spelled out', asy
   await user.click(await screen.findByRole('button', { name: 'Expand children of attack parent: objective parent' }))
   await screen.findByText('objective c1')
 
-  expect(within(resultsTable()).queryByRole('columnheader')).not.toBeInTheDocument()
+  const headers = within(resultsTable()).getAllByRole('columnheader')
+  expect(headers.map((header: HTMLElement) => header.textContent)).toEqual([
+    'Objective', 'Outcome', 'Duration', 'Retries / error', 'Timestamp',
+  ])
+  for (const header of headers) expect(header).toHaveAttribute('scope', 'col')
   // A child row has the same cells in the same columns as its parent; only the first column is indented.
   const cells = (text: string) => within(rowWith(text)).getAllByRole('cell').map((cell) => cell.textContent)
   expect(cells('objective parent')).toEqual([

@@ -1,6 +1,6 @@
 import { makeStyles, tokens } from '@fluentui/react-components'
 
-import { MINIMUM_TOUCH_TARGET_SIZE, NARROW_VIEWPORT_QUERY } from '@/styles/touchTargets'
+import { MINIMUM_TOUCH_TARGET_SIZE, NARROW_VIEWPORT_QUERY, mobileTouchTarget } from '@/styles/touchTargets'
 
 export const useAttackAttemptDetailsStyles = makeStyles({
   content: {
@@ -43,6 +43,7 @@ export const useAttackAttemptDetailsStyles = makeStyles({
   error: {
     alignSelf: 'stretch',
   },
+  retry: { ...mobileTouchTarget },
   findings: {
     display: 'flex',
     flexDirection: 'column',

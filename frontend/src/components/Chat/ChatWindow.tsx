@@ -399,6 +399,9 @@ interface ChatWindowProps {
   scenarioResultId?: string | null
   onReturnToScan?: () => void
   findingEvidenceId?: string | null
+  /** Verified scan-scoped readers for recorded evidence without a saved attack result. */
+  readConversationById?: (conversationId: string) => Promise<ConversationMessagesResponse>
+  readConversations?: typeof attacksApi.getConversations
 }
 
 export default function ChatWindow({
@@ -450,6 +453,8 @@ export default function ChatWindow({
   scenarioResultId,
   onReturnToScan,
   findingEvidenceId,
+  readConversationById,
+  readConversations,
 }: ChatWindowProps) {
   const styles = useChatWindowStyles()
   const transcriptStatusId = useId()
@@ -546,6 +551,12 @@ export default function ChatWindow({
   const globalMarkdown = preferences.chatMarkdown
   const location = useLocation()
   const viewedConversationId = activeConversationId ?? conversationId
+  const transcriptKey = JSON.stringify([attackResultId, viewedConversationId])
+  const [transcriptSource, setTranscriptSource] = useState({ key: transcriptKey, openedLive: inProgress })
+  if (transcriptSource.key !== transcriptKey || (inProgress && !transcriptSource.openedLive)) {
+    setTranscriptSource({ key: transcriptKey, openedLive: inProgress })
+  }
+  const preservesLiveLayout = transcriptSource.key === transcriptKey && transcriptSource.openedLive
   useLayoutEffect(() => {
     const area = chatAreaRef.current
     if (area && (executionReadOnly || wasSavedEvidenceRef.current)) area.scrollTop = 0
@@ -699,7 +710,8 @@ export default function ChatWindow({
     return frontendMessages
   }, [])
   // Saved evidence is read in bounded pages; a running scan attack is re-read whole as it grows.
-  const pagesSavedEvidence = executionReadOnly && !inProgress
+  const pagesSavedEvidence = executionReadOnly && !inProgress && !readConversationById
+  const rendersSavedEvidence = pagesSavedEvidence && !preservesLiveLayout
   const {
     messages,
     setMessages,
@@ -730,6 +742,7 @@ export default function ChatWindow({
     conversationId,
     activeConversationId,
     findingEvidenceId,
+    readConversationById,
     messagePageSize: pagesSavedEvidence ? SAVED_MESSAGE_PAGE_SIZE : undefined,
     pollIntervalMs: inProgress ? LIVE_ATTACK_POLL_INTERVAL_MS : undefined,
     sendingConversations,
@@ -738,10 +751,7 @@ export default function ChatWindow({
   })
   const incompleteTranscriptReason = isTranscriptIncomplete ? INCOMPLETE_TRANSCRIPT_REASON : undefined
   // Refreshes of a running attack, including the reload when it finishes, keep the shown transcript in place.
-  const [liveAttackId, setLiveAttackId] = useState<string | null>(null)
-  if (inProgress && attackResultId && liveAttackId !== attackResultId) setLiveAttackId(attackResultId)
-  const refreshesInPlace = liveAttackId !== null && liveAttackId === attackResultId
-    && loadedConversationId === viewedConversationId
+  const refreshesInPlace = preservesLiveLayout && loadedConversationId === viewedConversationId
   const liveScanId = scenarioResultId ?? attackScenarioResultId
   const loadedPieceSummary = `${loadedPieceCount} message ${loadedPieceCount === 1 ? 'piece' : 'pieces'} loaded.`
   const savedRecovery = viewedConversationId
@@ -961,7 +971,7 @@ export default function ChatWindow({
     setSystemPrompt('')
   }
 
-  const isFindingActionDisabled = Boolean(editDraft !== null || !attackResultId || !activeConversationId
+  const isFindingActionDisabled = Boolean(readConversationById || editDraft !== null || !attackResultId || !activeConversationId
     || isEvidenceUnavailable || isLoadingAttack || isLoadingMessages || awaitingConversationLoad || isTranscriptIncomplete)
 
   const pending = draftHandoff.pendingImport
@@ -2464,7 +2474,9 @@ export default function ChatWindow({
     : isTargetResolutionLocked ? 'The source target cannot be safely resolved. Choose New attack.'
     : targetResolutionStatus !== 'unbound' && activeTarget ? historyReplayDisabledReason(activeTarget, editor.history)
     : undefined
-  const newAttackDisabledReason = !runtime.ready || !defaultsReady
+  const newAttackDisabledReason = readConversationById
+    ? 'No attack result was saved for this interrupted scan.'
+    : !runtime.ready || !defaultsReady
     ? newActivityBlockedReason ?? 'Default labels are not ready. Retry after default labels finish loading.'
     : !scorerSelectionReady ? 'The remembered chat scorer is loading. Wait for it to load.'
     : undefined
@@ -2800,22 +2812,24 @@ export default function ChatWindow({
           controller={converters}
         />
       )}
-      <FileDropZone ref={chatAreaRef} className={mergeClasses(styles.chatArea, pagesSavedEvidence && styles.savedChatArea)} testId="chat-area"
+      <FileDropZone ref={chatAreaRef} className={mergeClasses(styles.chatArea, rendersSavedEvidence && styles.savedChatArea)} testId="chat-area"
         disabled={inputDisabledReasons.length > 0}
         disabledReason={inputDisabledReasons.join(' ')}
         onFiles={(files: File[]) => inputBoxRef.current?.addFiles(files)}>
         {toolbarContainer ? createPortal(toolbar, toolbarContainer) : toolbar}
         {executionReadOnly && !inProgress && <MessageBar intent="info">
           <MessageBarBody>
-            This automated result is read-only. Continue in a separate manual attack to keep the original execution unchanged.
+            {readConversationById
+              ? 'Recorded conversation from an interrupted scan. No attack outcome was saved.'
+              : 'This automated result is read-only. Continue in a separate manual attack to keep the original execution unchanged.'}
           </MessageBarBody>
-          <MessageBarActions><Button className={styles.ribbonAction}
+          {!readConversationById && <MessageBarActions><Button className={styles.ribbonAction}
             disabled={isLoadingEdit || isLoadingAttack || isLoadingMessages || awaitingConversationLoad
               || isTranscriptIncomplete || Boolean(newAttackDisabledReason)}
             aria-describedby={messagePagination && isTranscriptIncomplete ? transcriptDisabledReasonId : undefined}
             onClick={() => { void copyConversation(recoverableSend?.failedRequestMessageIndex ?? messages.length - 1, 'new_attack') }}>
             {isLoadingEdit ? 'Creating continuation...' : 'Continue manually'}
-          </Button></MessageBarActions>
+          </Button></MessageBarActions>}
         </MessageBar>}
         {manualContinuation && <MessageBar intent="info"><MessageBarBody>
           Manual continuation of{' '}
@@ -2956,7 +2970,8 @@ export default function ChatWindow({
             ? 'Restore this prompt as an unsent draft in a new conversation in the same attack. The response is not copied.'
             : undefined}
           isLoading={isLoadingAttack || awaitingConversationLoad || (isLoadingMessages && !refreshesInPlace)}
-          savedEvidence={pagesSavedEvidence}
+          savedEvidence={rendersSavedEvidence}
+          announceUpdates={!executionReadOnly || inProgress || preservesLiveLayout}
           globalMarkdown={globalMarkdown}
           onEditConversation={executionReadOnly ? undefined : () => { void beginEdit() }}
         />}
@@ -3107,6 +3122,7 @@ export default function ChatWindow({
           attackResultId={attackResultId}
           referencePageSize={pagesSavedEvidence ? SAVED_REFERENCE_PAGE_SIZE : undefined}
           pollIntervalMs={inProgress ? LIVE_ATTACK_POLL_INTERVAL_MS : undefined}
+          readConversations={readConversations}
           activeConversationId={activeConversationId}
           onSelectConversation={handlePanelSelectConversation}
           onNewConversation={handleNewConversation}
