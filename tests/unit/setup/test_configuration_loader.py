@@ -85,6 +85,25 @@ class TestConfigurationLoader:
         with pytest.raises(ValueError, match="scenario_suites_source"):
             ConfigurationLoader(scenario_suites_source=invalid_value)  # type: ignore[arg-type]
 
+    def test_registry_recipes_source_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
+        """Test loading an Azure Blob container URI for saved registry entries."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "registry_recipes_source: https://account.blob.core.windows.net/pyrit-storage/registry-recipes\n",
+            encoding="utf-8",
+        )
+
+        config = ConfigurationLoader.from_yaml_file(config_path)
+
+        assert config.registry_recipes_source == "https://account.blob.core.windows.net/pyrit-storage/registry-recipes"
+        assert ConfigurationLoader().registry_recipes_source is None
+
+    @pytest.mark.parametrize("invalid_value", ["", "   ", 42])
+    def test_registry_recipes_source_rejects_invalid_value(self, invalid_value: object) -> None:
+        """Test rejecting empty or non-string sources for saved registry entries."""
+        with pytest.raises(ValueError, match="registry_recipes_source"):
+            ConfigurationLoader(registry_recipes_source=invalid_value)  # type: ignore[arg-type]
+
     def test_target_upload_directory_loads_from_yaml(self, tmp_path: pathlib.Path) -> None:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("target_upload_directory: /srv/uploads\n", encoding="utf-8")
