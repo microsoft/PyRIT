@@ -6,6 +6,7 @@
 import asyncio
 from typing import TYPE_CHECKING
 
+from starlette._utils import get_route_path
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -26,7 +27,7 @@ class RuntimeAdmissionMiddleware:
             await self.app(scope, receive, send)
             return
         runtime: RuntimeLifecycle | None = getattr(scope["app"].state, "runtime_lifecycle", None)
-        path = scope["path"]
+        path = get_route_path(scope)
         if (
             runtime is None
             or not path.startswith("/api/")

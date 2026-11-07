@@ -85,7 +85,28 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
     await runtime.apply_task
 
 
-async def test_target_deletion_rejects_active_work_async(runtime: RuntimeLifecycle) -> None:
+@pytest.fixture(
+    params=[
+        ("", "", ""),
+        ("", "/pyrit", "/pyrit"),
+        ("/pyrit", "", "/pyrit"),
+        ("/pyrit", "", ""),
+        ("/ap", "", ""),
+    ]
+)
+def runtime_deletion_route(runtime: RuntimeLifecycle, request: pytest.FixtureRequest) -> tuple[FastAPI, str]:
+    root_path, mount_path, prefix = request.param
+    runtime.app.root_path = root_path
+    app = runtime.app
+    if mount_path:
+        app = FastAPI()
+        app.mount(mount_path, runtime.app)
+    return app, prefix
+
+
+async def test_target_deletion_rejects_active_work_async(
+    runtime: RuntimeLifecycle, runtime_deletion_route: tuple[FastAPI, str]
+) -> None:
     cleanup = AsyncMock()
 
     @runtime.app.delete("/api/targets/shared")
@@ -93,14 +114,17 @@ async def test_target_deletion_rejects_active_work_async(runtime: RuntimeLifecyc
         await cleanup()
         return {"deleted": True}
 
+    app, prefix = runtime_deletion_route
     with patch.object(runtime, "_has_active_work", return_value=True):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-            response = await client.delete("/api/targets/shared")
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.delete(prefix + "/api/targets/shared")
     assert response.status_code == 409
     cleanup.assert_not_awaited()
 
 
-async def test_target_deletion_blocks_new_admission_until_cleanup_finishes_async(runtime: RuntimeLifecycle) -> None:
+async def test_target_deletion_blocks_new_admission_until_cleanup_finishes_async(
+    runtime: RuntimeLifecycle, runtime_deletion_route: tuple[FastAPI, str]
+) -> None:
     entered, release = asyncio.Event(), asyncio.Event()
 
     @runtime.app.delete("/api/targets/shared")
@@ -113,19 +137,20 @@ async def test_target_deletion_blocks_new_admission_until_cleanup_finishes_async
     async def send_async() -> dict[str, bool]:
         return {"sent": True}
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        deletion = asyncio.create_task(client.delete("/api/targets/shared"))
+    app, prefix = runtime_deletion_route
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        deletion = asyncio.create_task(client.delete(prefix + "/api/targets/shared"))
         try:
             await wait_for_event_async(event=entered, tasks=[deletion])
-            assert (await client.post("/api/sends")).status_code == 503
+            assert (await client.post(prefix + "/api/sends")).status_code == 503
             deletion.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await deletion
-            assert (await client.post("/api/sends")).status_code == 503
+            assert (await client.post(prefix + "/api/sends")).status_code == 503
         finally:
             release.set()
             await settle_tasks_async(*get_defined_tasks(deletion), *runtime.operations)
-        assert (await client.post("/api/sends")).status_code == 200
+        assert (await client.post(prefix + "/api/sends")).status_code == 200
 
 
 @pytest.mark.parametrize("state", ["initializing", "ready", "failed", "restart-required", None])

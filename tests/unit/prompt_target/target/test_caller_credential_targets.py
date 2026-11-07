@@ -17,7 +17,7 @@ from pyrit.auth import (
     create_caller_credential_provider,
 )
 from pyrit.models import Message
-from pyrit.prompt_target import LiteLLMChatTarget, OpenAIChatTarget, PromptTarget, RealtimeTarget
+from pyrit.prompt_target import LiteLLMChatTarget, OpenAIChatTarget, OpenAIResponseTarget, PromptTarget, RealtimeTarget
 from pyrit.registry import TargetRegistry
 
 
@@ -167,6 +167,43 @@ async def test_openai_reconstructed_copy_rejects_static_authentication_async(sto
             )
     finally:
         await source.cleanup_target_async()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("target_cls", [OpenAIChatTarget, OpenAIResponseTarget])
+@pytest.mark.parametrize("reconstruct", [False, True])
+@pytest.mark.parametrize("header", ["Authorization", "aPi-KeY"])
+async def test_openai_request_authentication_headers_are_rejected_async(
+    store: CallerCredentialStore,
+    target_cls: type[OpenAIChatTarget] | type[OpenAIResponseTarget],
+    reconstruct: bool,
+    header: str,
+) -> None:
+    options = {"extra_headers": {header: "static-key"}}
+    source = target_cls(
+        model_name="test-model",
+        endpoint="https://example.test/v1",
+        api_key=create_caller_credential_provider(store=store, credential_id="shared", component_name="shared"),
+        extra_body_parameters=None if reconstruct else options,
+    )
+    target = (
+        TargetRegistry.get_registry_singleton().recreate_instance(
+            source=source, params={"extra_body_parameters": options}
+        )
+        if reconstruct
+        else source
+    )
+    message = Message.from_prompt(prompt="hello", role="user")
+    try:
+        with pytest.raises(ValueError, match="authentication headers"):
+            await target._construct_request_body_async(
+                conversation=[message],
+                json_config=target._get_json_response_config(message_piece=message.message_pieces[0]),
+            )
+    finally:
+        await target.cleanup_target_async()
+        if target is not source:
+            await source.cleanup_target_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")

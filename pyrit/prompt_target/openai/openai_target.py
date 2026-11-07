@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from abc import abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar
 from urllib.parse import urlparse
 
@@ -500,6 +500,16 @@ class OpenAITarget(PromptTarget):
             api_key=self._api_key,
             **httpx_kwargs,
         )
+
+    def _validate_request_headers(self, *, body: Mapping[str, Any]) -> None:
+        """
+        Validate SDK request options after request-body passthrough merging.
+
+        Raises:
+            ValueError: If static authentication could override a token provider.
+        """
+        if callable(self._api_key):
+            validate_token_provider_headers(body.get("extra_headers"))
 
     async def _handle_openai_request_async(
         self,
