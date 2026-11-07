@@ -352,20 +352,20 @@ class Score(BaseModel):
             TypeError: If the value does not match the score type, or the score type is neither.
             ValueError: If a float scale value is outside [0, 1].
         """
+        if self.score_type not in ("true_false", "float_scale"):
+            raise TypeError(f"set_value supports true_false and float_scale scores, not {self.score_type!r}.")
         if value is None:
             new_value, status = None, ScoreStatus.UNDETERMINED
         elif self.score_type == "true_false":
             if not isinstance(value, bool):
                 raise TypeError(f"A true/false score takes a bool, got {type(value).__name__}.")
             new_value, status = ("true" if value else "false"), ScoreStatus.COMPLETE
-        elif self.score_type == "float_scale":
+        else:
             if isinstance(value, bool) or not isinstance(value, numbers.Real):
                 raise TypeError(f"A float scale score takes a number, got {type(value).__name__}.")
             if not 0 <= value <= 1:
                 raise ValueError(f"Float scale scorers must have a score value between 0 and 1. Got {value}")
             new_value, status = str(float(value)), ScoreStatus.COMPLETE
-        else:
-            raise TypeError(f"set_value supports true_false and float_scale scores, not {self.score_type!r}.")
         # BaseModel.__setattr__ records both fields as set without the deprecated-write path.
         BaseModel.__setattr__(self, "score_value", new_value)
         BaseModel.__setattr__(self, "status", status)

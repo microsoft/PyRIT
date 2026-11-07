@@ -140,8 +140,9 @@ def test_set_value_stores_a_canonical_true_false_verdict(value: bool, stored: st
     assert score.status is ScoreStatus.COMPLETE
 
 
-def test_set_value_none_marks_the_score_undetermined_in_one_step():
-    score = _make_score(score_type="true_false", score_value="false")
+@pytest.mark.parametrize(("score_type", "score_value"), [("true_false", "false"), ("float_scale", "0.5")])
+def test_set_value_none_marks_the_score_undetermined_in_one_step(score_type: str, score_value: str):
+    score = _make_score(score_type=score_type, score_value=score_value)
     score.set_value(None)
     assert score.score_value is None
     assert score.status is ScoreStatus.UNDETERMINED
@@ -189,11 +190,13 @@ def test_set_value_marks_both_fields_as_set():
     assert Score.model_validate(dumped).is_undetermined
 
 
-def test_set_value_rejects_an_unsupported_score_type():
-    score = Score.model_construct(score_type="unknown", score_value="x", status=ScoreStatus.COMPLETE)
+@pytest.mark.parametrize("value", [None, True, 0.5])
+def test_set_value_rejects_an_unsupported_score_type(value: bool | float | None):
+    score = Score(score_type="unknown", score_value="x", status=ScoreStatus.COMPLETE)
     with pytest.raises(TypeError, match="supports true_false and float_scale"):
-        score.set_value(0.5)
+        score.set_value(value)
     assert score.score_value == "x"
+    assert score.status is ScoreStatus.COMPLETE
 
 
 def test_assignment_on_a_constructed_score_without_type_still_works():
