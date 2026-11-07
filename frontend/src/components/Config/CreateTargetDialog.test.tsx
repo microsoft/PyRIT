@@ -918,7 +918,7 @@ describe("CreateTargetDialog", () => {
 
     await selectTargetType("HTTPTarget");
 
-    const requestField = screen.getByLabelText(/Http Request/) as HTMLTextAreaElement;
+    const requestField = screen.getByTestId('target-param-http_request') as HTMLTextAreaElement;
     fireEvent.change(requestField, { target: { value: "not an HTTP request" } });
 
     const createButton = screen.getByRole("button", { name: "Create Target" });
@@ -994,7 +994,7 @@ describe("CreateTargetDialog", () => {
 
     await selectTargetType("HTTPTarget");
 
-    const requestField = screen.getByLabelText(/Http Request/) as HTMLTextAreaElement;
+    const requestField = screen.getByTestId('target-param-http_request') as HTMLTextAreaElement;
     fireEvent.change(requestField, { target: { value: "not an HTTP request" } });
     const createButton = screen.getByRole("button", { name: "Create Target" });
     await user.click(createButton);
