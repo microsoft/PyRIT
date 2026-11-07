@@ -1084,6 +1084,43 @@ async def test_run_evaluation_deduplicates_csv_paths_async(*, tmp_path: Path, pa
     assert metrics.dataset_version == "1.0_1.0"
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "update_registry_behavior, checks_existing, writes_registry",
+    [
+        (RegistryUpdateBehavior.SKIP_IF_EXISTS, True, True),
+        (RegistryUpdateBehavior.ALWAYS_UPDATE, False, True),
+        (RegistryUpdateBehavior.NEVER_UPDATE, False, False),
+        ("never_update", False, True),
+    ],
+    ids=["skip-if-exists", "always-update", "never-update", "out-of-enum-fallback"],
+)
+async def test_run_evaluation_registry_update_behavior_async(
+    *, tmp_path: Path, update_registry_behavior: RegistryUpdateBehavior, checks_existing: bool, writes_registry: bool
+) -> None:
+    await asyncio.to_thread(
+        (tmp_path / "a.csv").write_text,
+        "# dataset_version=1.0\nassistant_response,objective,human_score\nmarker,Synthetic objective,1\n",
+        encoding="utf-8",
+    )
+    evaluator = ObjectiveScorerEvaluator(scorer=SubStringScorer(substring="marker"))
+
+    with (
+        patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH", tmp_path),
+        patch.object(evaluator, "_should_skip_evaluation", return_value=(False, None)) as should_skip,
+        patch.object(evaluator, "_write_metrics_to_registry") as write_metrics,
+    ):
+        metrics = await evaluator.run_evaluation_async(
+            dataset_files=ScorerEvalDatasetFiles(human_labeled_datasets_files=["a.csv"], result_file="unused.jsonl"),
+            num_scorer_trials=1,
+            update_registry_behavior=update_registry_behavior,
+        )
+
+    assert isinstance(metrics, ObjectiveScorerMetrics)
+    assert should_skip.called is checks_existing
+    assert write_metrics.called is writes_registry
+
+
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH")
 async def test_run_evaluation_async_combines_dataset_versions_with_duplicates(
