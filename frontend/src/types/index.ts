@@ -2318,6 +2318,8 @@ export interface ScenarioObjectiveScorerMetrics {
   precision?: number | null
   recall?: number | null
   average_score_time_seconds?: number | null
+  num_responses?: number | null
+  num_input_responses?: number | null
 }
 
 export type ScenarioScorerIdentity = ScenarioComponentIdentity
