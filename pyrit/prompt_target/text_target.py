@@ -4,7 +4,7 @@
 import sys
 from typing import IO, ClassVar
 
-from pyrit.common.auth_mode import AuthMode
+from pyrit.common import AuthMode
 from pyrit.models import Message
 from pyrit.prompt_target.common.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
