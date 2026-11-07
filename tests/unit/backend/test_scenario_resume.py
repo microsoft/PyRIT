@@ -15,6 +15,7 @@ import pytest
 
 from pyrit.backend.models.attacks import ConversationMessagesResponse
 from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.backend.services.scenario_run_service import (
     _LAUNCH_REFERENCES_METADATA_KEY,
     _LAUNCH_REQUEST_FIELDS,
@@ -338,6 +339,113 @@ async def test_real_scenario_live_retry_observation_and_terminal_ownership_async
                     await service.get_conversation_async(scenario_result_id=run_id, conversation_id=conversations[0])
                     is not None
                 )
+        finally:
+            release.set()
+
+
+async def test_running_scan_attack_reads_live_until_its_saved_result_wins_async(
+    resume_environment: tuple[ScenarioRunService, MockPromptTarget],
+) -> None:
+    service, target = resume_environment
+    entered, release = asyncio.Event(), asyncio.Event()
+    conversations: list[str] = []
+    original_send = target._send_prompt_to_target_async
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        conversations.append(normalized_conversation[-1].get_piece().conversation_id)
+        if len(conversations) == 2:
+            entered.set()
+            await release.wait()
+        return await original_send(normalized_conversation=normalized_conversation)
+
+    async def build_async(self: Scenario, *, context: ScenarioContext) -> list[AtomicAttack]:
+        strategy = PromptSendingAttack(
+            objective_target=context.objective_target,
+            attack_scoring_config=AttackScoringConfig(
+                objective_scorer=SubStringScorer(substring="never matches the response")
+            ),
+            max_attempts_on_failure=1,
+        )
+        return [
+            AtomicAttack(
+                atomic_attack_name="live",
+                attack_technique=AttackTechnique(attack=strategy),
+                seed_groups=[context.seed_groups[0]],
+                memory_labels=context.memory_labels,
+            )
+        ]
+
+    attacks = AttackService(
+        message_send_service=MagicMock(spec=MessageSendService),
+        memory=service._memory,
+        live_attack_lookup=lambda attack_result_id: service.find_live_attack(attack_result_id=attack_result_id),
+    )
+    with (
+        patch.object(_OfflineResumeScenario, "_build_atomic_attacks_async", new=build_async),
+        patch.object(target, "_send_prompt_to_target_async", side_effect=send_async),
+    ):
+        response = await service.start_run_async(
+            request=RunScenarioRequest(
+                scenario_name=_SCENARIO_NAME,
+                target_name=_TARGET_NAME,
+                include_baseline=False,
+                max_concurrency=1,
+                max_retries=0,
+            )
+        )
+        run_id = response.scenario_result_id
+        try:
+            await asyncio.wait_for(entered.wait(), TEST_WATCHDOG_SECONDS)
+            first, current = conversations
+            progress = await service.get_run_progress_async(scenario_result_id=run_id, since=None, limit=500)
+            assert progress is not None
+            active = progress.active_conversations[0]
+            assert active.conversation_id == current
+            assert active.conversation_ids == [first, current]
+            attack_id = active.attack_result_id
+
+            live = await attacks.get_attack_async(attack_result_id=attack_id)
+            assert live is not None
+            assert live.in_progress is True
+            assert live.execution_read_only is True
+            assert live.outcome == AttackOutcome.UNDETERMINED
+            assert live.scenario_result_id == run_id
+            assert live.objective == active.objective
+            assert live.conversation_id == current
+            assert live.related_conversation_ids == [first]
+
+            metadata = await attacks.get_attack_metadata_async(attack_result_id=attack_id, conversation_id=first)
+            assert metadata is not None
+            assert (metadata.in_progress, metadata.scenario_result_id) == (True, run_id)
+            assert metadata.related_conversation_count == 1
+            assert metadata.selected_conversation_valid is True
+
+            unpaged = await attacks.get_conversations_async(attack_result_id=attack_id)
+            assert unpaged is not None and unpaged.main_conversation_id == current
+            assert {conversation.conversation_id for conversation in unpaged.conversations} == {first, current}
+            paged = await attacks.get_conversations_async(attack_result_id=attack_id, limit=50)
+            assert paged is not None
+            assert [conversation.conversation_id for conversation in paged.conversations] == [current, first]
+
+            for limit in (None, 100):
+                messages = await attacks.get_conversation_messages_async(
+                    attack_result_id=attack_id, conversation_id=first, limit=limit
+                )
+                assert messages is not None
+                assert [message.role for message in messages.messages] == ["user", "assistant"]
+            with pytest.raises(ValueError, match="not part of attack"):
+                await attacks.get_conversation_messages_async(
+                    attack_result_id=attack_id, conversation_id="unrelated", limit=100
+                )
+
+            release.set()
+            await _wait_for_run_completion_async(service=service, scenario_result_id=run_id)
+            assert service.find_live_attack(attack_result_id=attack_id) is None
+            saved = await attacks.get_attack_async(attack_result_id=attack_id)
+            assert saved is not None
+            assert saved.in_progress is False
+            assert saved.scenario_result_id == run_id
+            assert saved.outcome == AttackOutcome.FAILURE
         finally:
             release.set()
 
