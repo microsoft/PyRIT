@@ -117,9 +117,11 @@ and transcript reads, including hierarchy node expansion.
 A scan saves each `AttackResult` only when its attack finishes. While an active scan
 is still running an attack, `GET /api/attacks/{attack_result_id}`, `/metadata`,
 `/conversations`, and `/messages` (paged or not) resolve it from the live run instead
-of returning 404. These responses set `in_progress: true`, report outcome
-`undetermined`, and set `execution_read_only: true`; write routes still require a
-saved result. The conversation the attack is working on is the main conversation,
+of returning 404. The attack summary and metadata responses set `in_progress: true`,
+report outcome `undetermined`, and set `execution_read_only: true`. Read these
+endpoints for running state; conversation and message responses do not include
+the running-state flags. Write routes still require a saved result. The
+conversation the attack is working on is the main conversation,
 and every other objective conversation started so far is listed as a pruned
 reference. Messages are read from memory as they are saved. A saved result always
 wins, so once the attack finishes the same IDs resolve to its saved result; restart

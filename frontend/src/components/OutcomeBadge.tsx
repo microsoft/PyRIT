@@ -56,7 +56,7 @@ interface OutcomeBadgeProps {
   readonly score?: ScoreSummary | null
   /** Shown in the score popover when no score was saved; also enables the popover without a score. */
   readonly scoreFallback?: string
-  /** Accessible name of the badge button that opens the score. */
+  /** Score action label, combined with the displayed outcome in the button's accessible name. */
   readonly scoreButtonLabel?: string
 }
 
@@ -92,6 +92,7 @@ export default function OutcomeBadge({
 }: OutcomeBadgeProps) {
   const styles = useOutcomeBadgeStyles()
   const normalizedOutcome = outcome ?? 'undetermined'
+  const displayLabel = label ?? outcomeLabel(normalizedOutcome, labelStyle)
 
   const badge = (
     <Badge
@@ -101,7 +102,7 @@ export default function OutcomeBadge({
       className={mergeClasses(styles[normalizedOutcome], styles[appearance], className)}
       data-testid={testId}
     >
-      {label ?? outcomeLabel(normalizedOutcome, labelStyle)}
+      {displayLabel}
     </Badge>
   )
   if (!score && !scoreFallback) return badge
@@ -109,7 +110,7 @@ export default function OutcomeBadge({
   return (
     <Popover withArrow>
       <PopoverTrigger disableButtonEnhancement>
-        <Button appearance="transparent" className={styles.scoreTrigger} aria-label={scoreButtonLabel}>
+        <Button appearance="transparent" className={styles.scoreTrigger} aria-label={`${displayLabel}: ${scoreButtonLabel}`}>
           {badge}
         </Button>
       </PopoverTrigger>
