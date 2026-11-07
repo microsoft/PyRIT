@@ -549,8 +549,8 @@ describe("CreateTargetDialog", () => {
     await openTargetTypePicker();
 
     const options = screen.getAllByRole("option");
-    expect(options).toHaveLength(12);
-    for (const entry of TARGET_TYPES.items.filter((item) => item.target_type !== "PlaywrightTarget")) {
+    expect(options).toHaveLength(11);
+    for (const entry of TARGET_TYPES.items.filter((item) => !["PlaywrightTarget", "TextTarget"].includes(item.target_type))) {
       const option = screen.getByRole("option", {
         name: new RegExp(`Implementation: ${entry.target_type}`),
       });
@@ -590,18 +590,47 @@ describe("CreateTargetDialog", () => {
     expect(selectedDetails).toHaveTextContent("Supported authentication: API key");
   });
 
-  it("should say a credential-free target needs no authentication", async () => {
+  it("should not offer the SDK-only TextTarget", async () => {
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
       </TestWrapper>
     );
 
-    await selectTargetType("TextTarget");
+    await openTargetTypePicker();
 
-    const selectedDetails = screen.getByRole("region", { name: /selected target details/i });
-    expect(selectedDetails).toHaveTextContent("No authentication required");
-    expect(selectedDetails).not.toHaveTextContent("API key");
+    expect(screen.queryByRole("option", { name: /Implementation: TextTarget/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Writes prompts to a local text stream.")).not.toBeInTheDocument();
+  });
+
+  it("should still describe other credential-free target types", async () => {
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [...TARGET_TYPES.items, {
+        target_type: "CredentialFreeTarget",
+        parameters: [],
+        supported_auth_modes: [],
+        description: "A credential-free endpoint.",
+      }],
+    });
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await openTargetTypePicker();
+    const option = screen.getByRole("option", { name: /Implementation: CredentialFreeTarget/ });
+    expect(option).toHaveTextContent("No authentication required");
+    expect(option).not.toHaveTextContent("API key");
+  });
+
+  it("should not offer SDK-only inner targets in a round-robin target", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} existingTargets={[
+          makeTarget({ target_registry_name: "demo", target_type: "TextTarget" }),
+          makeTarget({ target_registry_name: "endpoint", target_type: "OpenAIChatTarget" }),
+        ]} />
+      </TestWrapper>
+    );
+    await selectTargetType("RoundRobinTarget");
+    expect(screen.queryByRole("option", { name: /demo/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /endpoint/ })).toBeInTheDocument();
   });
 
   it("should keep the selected target displayed after focus moves to another field", async () => {

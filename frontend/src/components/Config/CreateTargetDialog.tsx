@@ -33,7 +33,9 @@ import {
 } from '@/components/Parameters/parameterForm'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetAuthMode, TargetInstance, TargetTypeEntry } from '@/types'
+import { isGuiTarget } from '@/utils/targetVisibility'
 import {
   targetIdentifierHash,
   targetModelName,
@@ -444,9 +446,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (!open || !isRoundRobin) return
     if (existingTargets && existingTargets.length > 0) return
     let cancelled = false
-    targetsApi.listTargets(200)
-      .then((res) => {
-        if (!cancelled) setAvailableTargets(res.items)
+    listRegisteredTargets()
+      .then((items) => {
+        if (!cancelled) setAvailableTargets(items)
       })
       .catch(() => {
         // Ignore fetch errors — the list will just be empty
@@ -472,6 +474,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     )
     const candidates = availableTargets.filter(
       (t) =>
+        isGuiTarget(t) &&
         getTargetType(t) !== 'RoundRobinTarget' &&
         !selectedNames.has(t.target_registry_name) &&
         !(targetIdentifierHash(t) && selectedHashes.has(targetIdentifierHash(t)!)),
