@@ -11,10 +11,10 @@ from sqlalchemy import UnicodeText, literal, select
 from sqlalchemy.dialects import mssql, sqlite
 
 from pyrit.common.text_search import compile_like_pattern, contains_pattern
-from pyrit.memory import AzureSQLMemory, MemoryInterface, SQLiteMemory
+from pyrit.memory import AzureSQLMemory, MemoryInterface, SeedEntry, SQLiteMemory
 from pyrit.memory.analytics_sql import text_match
 from pyrit.memory.memory_interface import _AttackResultQuery
-from pyrit.memory.memory_models import ScenarioResultEntry, SeedEntry
+from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
     AttackAnalyticsDimension,
     AttackAnalyticsFacetQuery,

@@ -8,8 +8,8 @@ from uuid import uuid4
 
 from sqlalchemy import delete
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import AttackResultEntry, FindingEntry, OperationEntry, ScenarioResultEntry, SeedEntry
+from pyrit.memory import AttackResultEntry, MemoryInterface, SeedEntry
+from pyrit.memory.memory_models import FindingEntry, OperationEntry, ScenarioResultEntry
 from pyrit.models import (
     AttackResult,
     Finding,
