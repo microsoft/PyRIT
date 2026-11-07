@@ -5,6 +5,7 @@
 Tests for backend initializer service and routes.
 """
 
+import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -494,9 +495,13 @@ class TestCustomInitializerRoutes:
         self,
         client_with_custom_initializers_enabled: TestClient,
         operation: str,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         error = PermissionError(13, "Permission denied", "/srv/secret/initializers")
-        with patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service:
+        with (
+            patch("pyrit.backend.routes.initializers.get_initializer_service") as mock_get_service,
+            caplog.at_level(logging.WARNING, logger="pyrit.backend.routes.initializers"),
+        ):
             mock_service = MagicMock()
             mock_service.list_custom_initializers_async = AsyncMock(side_effect=error)
             mock_service.unregister_initializer_async = AsyncMock(side_effect=error)
@@ -509,6 +514,8 @@ class TestCustomInitializerRoutes:
         assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
         assert response.json()["detail"] == "Custom initializer storage is temporarily unavailable"
         assert "/srv/secret" not in response.text
+        assert "Custom initializer storage is unavailable: Permission denied" in caplog.messages
+        assert "/srv/secret" not in caplog.text
 
     def test_post_root_still_registers_runtime_initializer(
         self, client_with_custom_initializers_enabled: TestClient
