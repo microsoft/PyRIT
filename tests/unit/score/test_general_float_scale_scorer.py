@@ -11,6 +11,7 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
+    JsonSchemaResponseHandler,
     NumericRange,
     NumericRubric,
     ScorerPromptValidator,
@@ -386,3 +387,80 @@ async def test_general_float_scorer_category_precedence_async(
     assert score[0].score_category == expected_category
     assert score[0].score_value == "0.5"
     chat_target.send_prompt_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("key_name", "custom_value"),
+    [
+        ("score_value_output_key", "custom_score"),
+        ("rationale_output_key", "custom_rationale"),
+        ("description_output_key", "custom_description"),
+        ("metadata_output_key", "custom_metadata"),
+        ("category_output_key", "custom_category"),
+    ],
+)
+def test_general_float_scale_scorer_identifier_differs_by_output_keys(key_name: str, custom_value: str) -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    default_scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+    )
+    custom_scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+        **{key_name: custom_value},
+    )
+
+    default_ident = default_scorer.get_identifier()
+    custom_ident = custom_scorer.get_identifier()
+
+    assert default_ident.unique_name != custom_ident.unique_name
+    assert custom_ident.params[key_name] == custom_value
+    assert default_ident.params[key_name] != custom_value
+
+
+def test_general_float_scale_scorer_identifier_deterministic() -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    scorer_1 = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+        score_value_output_key="rating",
+        rationale_output_key="explanation",
+    )
+    scorer_2 = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+        score_value_output_key="rating",
+        rationale_output_key="explanation",
+    )
+
+    assert scorer_1.get_identifier().unique_name == scorer_2.get_identifier().unique_name
+    assert scorer_1.get_identifier().params == scorer_2.get_identifier().params
+
+
+def test_general_float_scale_scorer_identifier_reflects_json_schema_response_handler() -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    handler = JsonSchemaResponseHandler(
+        score_value_output_key="custom_score_from_handler",
+        rationale_output_key="custom_rationale_from_handler",
+    )
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Prompt.",
+        scale=DEFAULT_RANGE,
+        response_handler=handler,
+    )
+
+    ident = scorer.get_identifier()
+    assert ident.params["score_value_output_key"] == "custom_score_from_handler"
+    assert ident.params["rationale_output_key"] == "custom_rationale_from_handler"

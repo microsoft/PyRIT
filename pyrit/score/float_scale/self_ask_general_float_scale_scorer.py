@@ -115,6 +115,19 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
         self._system_prompt_format_string = system_prompt_format_string
         self._prompt_format_string = prompt_format_string
         self._scale = scale
+        if isinstance(response_handler, JsonSchemaResponseHandler):
+            self._score_value_output_key = response_handler._score_value_output_key
+            self._rationale_output_key = response_handler._rationale_output_key
+            self._description_output_key = response_handler._description_output_key
+            self._metadata_output_key = response_handler._metadata_output_key
+            self._category_output_key = response_handler._category_output_key
+        else:
+            self._score_value_output_key = score_value_output_key
+            self._rationale_output_key = rationale_output_key
+            self._description_output_key = description_output_key
+            self._metadata_output_key = metadata_output_key
+            self._category_output_key = category_output_key
+
         # A caller-supplied handler owns its own wire format; otherwise the default JSON handler
         # carries the schema and enforces the numeric score contract for the round-trip.
         wire_format_handler = response_handler or JsonSchemaResponseHandler(
@@ -146,6 +159,11 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
                 "system_prompt_template": self._system_prompt_format_string,
                 "user_prompt_template": self._prompt_format_string,
                 "scale": self._scale.model_dump(),
+                "score_value_output_key": self._score_value_output_key,
+                "rationale_output_key": self._rationale_output_key,
+                "description_output_key": self._description_output_key,
+                "metadata_output_key": self._metadata_output_key,
+                "category_output_key": self._category_output_key,
                 "response_json_schema": self._response_handler.json_response_config.json_schema,
             },
             prompt_target=self._prompt_target.get_identifier(),
