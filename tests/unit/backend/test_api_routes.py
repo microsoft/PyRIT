@@ -53,17 +53,12 @@ from pyrit.backend.models.targets import (
     TargetTypeResponse,
 )
 from pyrit.backend.routes import version as version_routes
-from pyrit.backend.routes.common import parse_label_query_params
+from pyrit.backend.routes.common import parse_label_query_params, saved_entry_owner_from_request
 from pyrit.backend.routes.scores import _get_user_identifier
-from pyrit.backend.routes.targets import _saved_entry_owner
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, AttackService
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
-from pyrit.backend.services.target_service import (
-    SavedTargetConflictError,
-    SavedTargetRefusedError,
-    SavedTargetStorageError,
-)
+from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
@@ -1389,8 +1384,8 @@ class TestTargetRoutes:
     @pytest.mark.parametrize(
         ("error", "status_code"),
         [
-            (SavedTargetConflictError("A saved target named 'contoso' already exists."), status.HTTP_409_CONFLICT),
-            (SavedTargetStorageError("Saved targets can't be written right now."), status.HTTP_503_SERVICE_UNAVAILABLE),
+            (SavedEntryConflictError("A saved target named 'contoso' already exists."), status.HTTP_409_CONFLICT),
+            (SavedEntryStorageError("Saved targets can't be written right now."), status.HTTP_503_SERVICE_UNAVAILABLE),
         ],
     )
     def test_create_target_maps_save_errors(self, client: TestClient, error: Exception, status_code: int) -> None:
@@ -1407,7 +1402,7 @@ class TestTargetRoutes:
     def test_create_target_marks_a_save_refusal_so_the_target_can_be_created_without_saving(
         self, client: TestClient
     ) -> None:
-        refusal = SavedTargetRefusedError(
+        refusal = NotSaveableError(
             "Saved entries can't hold credentials ('api_key'). It can still be created without saving it."
         )
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
@@ -1457,7 +1452,7 @@ class TestTargetRoutes:
         owner = SavedEntryOwner(oid="user-oid", name="Ada")
         with (
             patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
-            patch("pyrit.backend.routes.targets._saved_entry_owner", return_value=owner),
+            patch("pyrit.backend.routes.targets.saved_entry_owner_from_request", return_value=owner),
         ):
             mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
 
@@ -1486,8 +1481,8 @@ class TestTargetRoutes:
         request = Request({"type": "http"})
         request.state.user = AuthenticatedUser(oid="user-oid", name=name, email="ada@example.invalid", groups=[])
 
-        assert _saved_entry_owner(request) == SavedEntryOwner(oid="user-oid", name=expected)
-        assert _saved_entry_owner(Request({"type": "http"})) is None
+        assert saved_entry_owner_from_request(request) == SavedEntryOwner(oid="user-oid", name=expected)
+        assert saved_entry_owner_from_request(Request({"type": "http"})) is None
 
     def test_create_target_passes_admin_flag_from_request(self, client: TestClient) -> None:
         """The route resolves administrator access and forwards it to the service."""

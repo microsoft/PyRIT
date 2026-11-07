@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from pyrit.models.catalog.registry_recipe import (
         ComponentRecipe,
         IgnoredRecipeFile,
+        RegistryEntryOrigin,
         RegistryRecipeKind,
         RegistryRestoreReport,
         RestoreFailure,
@@ -67,7 +68,7 @@ if TYPE_CHECKING:
         StoredScenarioSuite,
     )
     from pyrit.models.catalog.scorer import ScorerInstance
-    from pyrit.models.catalog.target import TargetInstance, TargetOrigin
+    from pyrit.models.catalog.target import TargetInstance
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AttackErrorSummary": "pyrit.models.catalog.scenario",
@@ -77,6 +78,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "PresetEntry": "pyrit.models.catalog.scenario_preset",
     "PresetIssue": "pyrit.models.catalog.scenario_preset",
     "RegisteredInitializer": "pyrit.models.catalog.initializer",
+    "RegistryEntryOrigin": "pyrit.models.catalog.registry_recipe",
     "RegistryRecipeKind": "pyrit.models.catalog.registry_recipe",
     "RegistryRestoreReport": "pyrit.models.catalog.registry_recipe",
     "RestoreFailure": "pyrit.models.catalog.registry_recipe",
@@ -110,7 +112,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "StoredRecipe": "pyrit.models.catalog.registry_recipe",
     "StoredScenarioSuite": "pyrit.models.catalog.scenario_suite",
     "TargetInstance": "pyrit.models.catalog.target",
-    "TargetOrigin": "pyrit.models.catalog.target",
     "TechniqueRecipe": "pyrit.models.catalog.registry_recipe",
 }
 

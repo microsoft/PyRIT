@@ -39,6 +39,14 @@ class RegistryRecipeKind(str, Enum):
     TECHNIQUES = "techniques"
 
 
+class RegistryEntryOrigin(str, Enum):
+    """Where a registered entry comes from, and so whether it is still there after a restart."""
+
+    SAVED = "saved"
+    CONFIGURATION = "configuration"
+    TEMPORARY = "temporary"
+
+
 class _RegistryRecipe(BaseModel):
     """Fields every saved recipe shares. The entry's name is its document name, so it isn't repeated."""
 

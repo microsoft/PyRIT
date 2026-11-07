@@ -17,16 +17,16 @@ import pytest
 from azure.core.exceptions import AzureError
 
 from pyrit.backend.models.targets import CreateTargetRequest
-from pyrit.backend.services.target_service import (
-    SavedTargetConflictError,
-    SavedTargetRefusedError,
-    SavedTargetStorageError,
-    TargetService,
-    get_target_service,
-)
+from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.backend.services.target_service import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
-from pyrit.models.catalog.registry_recipe import ComponentRecipe, RegistryRecipeKind, SavedEntryOwner
-from pyrit.models.catalog.target import TargetInstance, TargetOrigin
+from pyrit.models.catalog.registry_recipe import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    SavedEntryOwner,
+)
+from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities, TextTarget
 from pyrit.registry import TargetRegistry
@@ -1791,7 +1791,7 @@ class TestSaveTarget:
 
         target = await service.create_target_async(request=_save_request(), owner=owner, recipes_source=str(tmp_path))
 
-        assert target.origin is TargetOrigin.SAVED
+        assert target.origin is RegistryEntryOrigin.SAVED
         assert _saved_document(tmp_path, "contoso_gpt4o") == {
             "schema_version": 1,
             "class_module": "pyrit.prompt_target.openai.openai_chat_target",
@@ -1814,7 +1814,7 @@ class TestSaveTarget:
 
         target = await TargetService().create_target_async(request=request, recipes_source=str(tmp_path))
 
-        assert target.origin is TargetOrigin.SAVED
+        assert target.origin is RegistryEntryOrigin.SAVED
         document = _saved_document(tmp_path, "local_llm")
         assert document["params"]["auth_mode"] == "none"
         assert "owner" not in document
@@ -1838,7 +1838,7 @@ class TestSaveTarget:
 
         with (
             patch.dict(os.environ, {"OPENAI_CHAT_KEY": "sk-server-key"}),
-            pytest.raises(SavedTargetRefusedError, match=message) as refusal,
+            pytest.raises(NotSaveableError, match=message) as refusal,
         ):
             await service.create_target_async(request=request, recipes_source=str(tmp_path))
 
@@ -1867,7 +1867,7 @@ class TestSaveTarget:
         service = TargetService()
         request = CreateTargetRequest(name="unsaveable", type=target_type, params={}, persist=True)
 
-        with pytest.raises(SavedTargetRefusedError) as refusal:
+        with pytest.raises(NotSaveableError) as refusal:
             await service.create_target_async(request=request, is_admin=True, recipes_source=str(tmp_path))
 
         assert str(refusal.value) == f"{reason} It can still be created without saving it."
@@ -1878,12 +1878,12 @@ class TestSaveTarget:
         service = TargetService()
         await service.create_target_async(request=_save_request(persist=False))
 
-        with pytest.raises(SavedTargetConflictError, match="already exists"):
+        with pytest.raises(SavedEntryConflictError, match="already exists"):
             await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
         with pytest.raises(ValueError, match="already exists") as temporary_clash:
             await service.create_target_async(request=_save_request(persist=False))
 
-        assert not isinstance(temporary_clash.value, SavedTargetConflictError)
+        assert not isinstance(temporary_clash.value, SavedEntryConflictError)
         assert not (tmp_path / "targets").exists()
 
     async def test_a_saved_file_with_the_name_is_a_conflict_that_leaves_the_file(self, tmp_path: Path) -> None:
@@ -1894,7 +1894,7 @@ class TestSaveTarget:
 
         with (
             patch("pyrit.backend.services.target_service.release_component_async", new_callable=AsyncMock) as release,
-            pytest.raises(SavedTargetConflictError, match="A saved target named 'contoso_gpt4o' already exists."),
+            pytest.raises(SavedEntryConflictError, match="A saved target named 'contoso_gpt4o' already exists."),
         ):
             await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
 
@@ -1905,7 +1905,7 @@ class TestSaveTarget:
     @pytest.mark.parametrize(
         ("error", "raised"),
         [
-            (ValueError("Instance 'contoso_gpt4o' already exists"), SavedTargetConflictError),
+            (ValueError("Instance 'contoso_gpt4o' already exists"), SavedEntryConflictError),
             (RuntimeError("x"), RuntimeError),
         ],
     )
@@ -1928,8 +1928,8 @@ class TestSaveTarget:
 
         with (
             patch.object(RegistryRecipeStorage, "create_recipe", side_effect=error),
-            patch("pyrit.backend.services.target_service.logger") as log,
-            pytest.raises(SavedTargetStorageError, match="Saved targets can't be written right now."),
+            patch("pyrit.backend.services.saved_entries.logger") as log,
+            pytest.raises(SavedEntryStorageError, match="Saved targets can't be written right now."),
         ):
             await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
 
@@ -1949,7 +1949,7 @@ class TestSaveTarget:
             return_exceptions=True,
         )
 
-        assert sorted(type(result).__name__ for result in results) == ["SavedTargetConflictError", "TargetInstance"]
+        assert sorted(type(result).__name__ for result in results) == ["SavedEntryConflictError", "TargetInstance"]
         registered = service.get_target_object(target_registry_name="contoso_gpt4o")
         assert _saved_document(tmp_path, "contoso_gpt4o")["params"]["model_name"] == registered._model_name
 
@@ -1966,7 +1966,7 @@ class TestSaveTarget:
                 name=name, type="RoundRobinTarget", params={"targets": list(members)}, persist=True
             )
 
-        with pytest.raises(SavedTargetRefusedError, match="Uses temporary target 'launch_member'"):
+        with pytest.raises(NotSaveableError, match="Uses temporary target 'launch_member'"):
             await service.create_target_async(
                 request=pool("pool", "startup_one", "launch_member"), recipes_source=str(tmp_path)
             )
@@ -1977,7 +1977,7 @@ class TestSaveTarget:
             request=pool("mixed_pool", "startup_one", "saved_member"), recipes_source=str(tmp_path)
         )
 
-        assert (startup_pool.origin, mixed_pool.origin) == (TargetOrigin.SAVED, TargetOrigin.SAVED)
+        assert (startup_pool.origin, mixed_pool.origin) == (RegistryEntryOrigin.SAVED, RegistryEntryOrigin.SAVED)
         assert _saved_document(tmp_path, "mixed_pool")["params"] == {"targets": ["startup_one", "saved_member"]}
         assert not (tmp_path / "targets" / "pool.json").exists()
 
@@ -2001,8 +2001,8 @@ class TestSaveTarget:
         with (
             patch.object(service._registry.instances, "register", side_effect=ValueError("taken")),
             patch.object(RegistryRecipeStorage, "delete_recipe", side_effect=OSError("disk gone")),
-            patch("pyrit.backend.services.target_service.logger") as log,
-            pytest.raises(SavedTargetStorageError),
+            patch("pyrit.backend.services.saved_entries.logger") as log,
+            pytest.raises(SavedEntryStorageError),
         ):
             await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
 
@@ -2016,7 +2016,7 @@ class TestSaveTarget:
         with pytest.raises(ValueError, match="reserved") as refusal:
             await TargetService().create_target_async(request=_save_request(name="types"), recipes_source=str(tmp_path))
 
-        assert not isinstance(refusal.value, (SavedTargetConflictError, SavedTargetRefusedError))
+        assert not isinstance(refusal.value, (SavedEntryConflictError, NotSaveableError))
 
     async def test_an_address_that_is_not_a_full_web_address_is_an_error_to_fix(self, tmp_path: Path) -> None:
         service = TargetService()
@@ -2025,7 +2025,7 @@ class TestSaveTarget:
         with pytest.raises(ValueError) as refusal:
             await service.create_target_async(request=request, recipes_source=str(tmp_path))
 
-        assert not isinstance(refusal.value, SavedTargetRefusedError)
+        assert not isinstance(refusal.value, NotSaveableError)
         assert str(refusal.value) == "'endpoint' must be a full http(s) or ws(s) address in a saved target."
         assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
         assert not (tmp_path / "targets").exists()
@@ -2041,14 +2041,14 @@ class TestSaveTarget:
         listed = await service.list_targets_async()
 
         assert {item.target_registry_name: item.origin for item in listed.items} == {
-            "from_startup_script": TargetOrigin.CONFIGURATION,
-            "from_launch_script": TargetOrigin.TEMPORARY,
-            "temporary_one": TargetOrigin.TEMPORARY,
-            "saved_one": TargetOrigin.SAVED,
+            "from_startup_script": RegistryEntryOrigin.CONFIGURATION,
+            "from_launch_script": RegistryEntryOrigin.TEMPORARY,
+            "temporary_one": RegistryEntryOrigin.TEMPORARY,
+            "saved_one": RegistryEntryOrigin.SAVED,
         }
         fetched = await service.get_target_async(target_registry_name="temporary_one")
         assert isinstance(fetched, TargetInstance)
-        assert fetched.origin is TargetOrigin.TEMPORARY
+        assert fetched.origin is RegistryEntryOrigin.TEMPORARY
 
     async def test_says_who_saved_a_target_and_whether_it_was_the_caller_also_after_a_restart(
         self, tmp_path: Path

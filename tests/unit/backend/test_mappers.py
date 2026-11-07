@@ -26,7 +26,7 @@ from pyrit.backend.mappers.attack_mappers import (
     request_to_pyrit_message,
 )
 from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
-from pyrit.backend.mappers.target_mappers import target_object_to_instance, target_origin
+from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest, ScoreView
 from pyrit.message_normalizer import HistorySquashNormalizer
@@ -40,12 +40,10 @@ from pyrit.models import (
     PromptDataType,
     Score,
 )
-from pyrit.models.catalog.registry_recipe import SavedEntryOwner
-from pyrit.models.catalog.target import TargetOrigin
+from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin, SavedEntryOwner
 from pyrit.models.conversation_stats import ConversationStats
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, TextTarget, WebsocketTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName
-from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, SAVED_ENTRY_METADATA_KEY
 from unit.mocks import MockPromptTarget
 
 # ============================================================================
@@ -1555,26 +1553,11 @@ def test_target_instance_reports_effective_history_replay(mode: str) -> None:
 
 
 class TestTargetOrigin:
-    @pytest.mark.parametrize(
-        ("metadata", "origin"),
-        [
-            ({SAVED_ENTRY_METADATA_KEY: "targets"}, TargetOrigin.SAVED),
-            ({SAVED_ENTRY_METADATA_KEY: "targets", CONFIGURATION_ENTRY_METADATA_KEY: True}, TargetOrigin.SAVED),
-            ({CONFIGURATION_ENTRY_METADATA_KEY: True}, TargetOrigin.CONFIGURATION),
-            ({}, TargetOrigin.TEMPORARY),
-            ({"supports_tool_calls": True}, TargetOrigin.TEMPORARY),
-        ],
-    )
-    def test_tells_where_a_registered_target_comes_from(
-        self, metadata: dict[str, object], origin: TargetOrigin
-    ) -> None:
-        assert target_origin(metadata) is origin
-
     @pytest.mark.usefixtures("patch_central_database")
     def test_carries_the_origin_onto_the_instance(self) -> None:
-        result = target_object_to_instance("t-1", MockPromptTarget(), origin=TargetOrigin.SAVED)
+        result = target_object_to_instance("t-1", MockPromptTarget(), origin=RegistryEntryOrigin.SAVED)
 
-        assert result.origin is TargetOrigin.SAVED
+        assert result.origin is RegistryEntryOrigin.SAVED
         assert target_object_to_instance("t-1", MockPromptTarget()).origin is None
 
     @pytest.mark.usefixtures("patch_central_database")
@@ -1593,7 +1576,7 @@ class TestTargetOrigin:
         self, owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
     ) -> None:
         result = target_object_to_instance(
-            "t-1", MockPromptTarget(), origin=TargetOrigin.SAVED, owner=owner, current_user_oid=current_user_oid
+            "t-1", MockPromptTarget(), origin=RegistryEntryOrigin.SAVED, owner=owner, current_user_oid=current_user_oid
         )
 
         assert (result.saved_by, result.saved_by_me) == saved_by
@@ -2054,7 +2037,7 @@ class TestTargetObjectToInstanceRoundRobin:
         result = target_object_to_instance(
             "rr-1",
             rr,
-            origin=TargetOrigin.SAVED,
+            origin=RegistryEntryOrigin.SAVED,
             owner=SavedEntryOwner(oid="ada-oid", name="Ada"),
             current_user_oid="ada-oid",
         )

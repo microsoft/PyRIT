@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from pyrit.models import ComponentIdentifier, Identifiable
-from pyrit.models.catalog.registry_recipe import SavedEntryOwner
+from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin, SavedEntryOwner
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator, Mapping
@@ -107,6 +107,25 @@ def saved_entry_owner(metadata: Mapping[str, Any]) -> SavedEntryOwner | None:
     """
     owner = metadata.get(SAVED_ENTRY_OWNER_METADATA_KEY)
     return owner if isinstance(owner, SavedEntryOwner) else None
+
+
+def registry_entry_origin(metadata: Mapping[str, Any]) -> RegistryEntryOrigin:
+    """
+    Tell where a registered entry comes from, from its metadata.
+
+    Args:
+        metadata (Mapping[str, Any]): The entry's registry metadata.
+
+    Returns:
+        RegistryEntryOrigin: Saved when rebuilt from a saved recipe, configuration when the server's startup scripts
+            registered it, and temporary otherwise, such as an entry created through the API without saving it or
+            one a scan's launch scripts registered.
+    """
+    if SAVED_ENTRY_METADATA_KEY in metadata:
+        return RegistryEntryOrigin.SAVED
+    if metadata.get(CONFIGURATION_ENTRY_METADATA_KEY):
+        return RegistryEntryOrigin.CONFIGURATION
+    return RegistryEntryOrigin.TEMPORARY
 
 
 def refuse_saved_entry(entry: RegistryEntry[Any] | None) -> None:
