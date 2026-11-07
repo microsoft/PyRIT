@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,8 +32,24 @@ if TYPE_CHECKING:
         SamplingStrategy,
         SuffixInitializer,
     )
+    from pyrit.models import SeedDataset, SeedUnion
 
 _DEFAULT_CONTROL_INIT: str = "! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! ! !"
+
+
+def _validate_nonblank_string(*, value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a nonblank string.")
+    return value
+
+
+def _get_seed_target(*, seed: SeedUnion, target_metadata_key: str) -> str | None:
+    target = (seed.metadata or {}).get(target_metadata_key)
+    if target is None:
+        return None
+    if not isinstance(target, str):
+        raise ValueError(f"Seed {seed.value!r} metadata[{target_metadata_key!r}] must be a string.")
+    return target if target.strip() else None
 
 
 def _default_model_kwargs() -> dict[str, Any]:
@@ -81,39 +97,142 @@ class GCGModelConfig:
 @dataclass
 class GCGDataConfig:
     """
-    Goal/target dataset configuration for the GCG attack.
+    Goal/target dataset for the GCG attack, carried inline for AML transport.
 
-    Used as a typed bundle for AML transport (a job ships its data config as
-    a separate JSON file alongside the strategy ``GCGConfig``). Library
-    callers loading goals/targets from a CSV can construct one and pass it to
-    ``pyrit.executor.promptgen.gcg.data.load_goals_and_targets``.
+    The goals and their target completion strings are materialized into this
+    config so the JSON shipped to Azure ML contains the data itself rather than
+    a URL. The compute container therefore never fetches data from the public
+    internet, which is what makes GCG runnable in air-gapped subscriptions and
+    pins reproducibility to the submitted job.
+
+    Build one from a dataset whose seeds already contain target metadata via
+    ``from_seed_dataset``. For an arbitrary objective dataset, use
+    ``create_gcg_data_config_async`` to preserve provided completions and
+    generate missing ones with an adversarial target before serialization.
 
     Attributes:
-        train_data (str): URL or filesystem path to the training-data CSV. Empty
-            string falls back to the default Anthropic harmful-behaviors split
-            inside ``get_goals_and_targets``.
-        test_data (str): URL or filesystem path to the held-out CSV. Empty string
-            disables held-out evaluation.
-        n_train_data (int): Number of training rows to use. Defaults to 50.
-        n_test_data (int): Number of held-out rows to use. Defaults to 0.
+        train_goals (list[str]): Training goals (harmful behaviors) to optimize
+            a suffix against. Defaults to an empty list.
+        train_targets (list[str]): Target completion strings paired one-to-one
+            with ``train_goals``. Must be the same length. Defaults to an empty
+            list.
+        test_goals (list[str]): Held-out goals used for evaluation only.
+            Defaults to an empty list.
+        test_targets (list[str]): Target completion strings paired one-to-one
+            with ``test_goals``. Must be the same length. Defaults to an empty
+            list.
     """
 
-    train_data: str = ""
-    test_data: str = ""
-    n_train_data: int = 50
-    n_test_data: int = 0
+    TARGET_METADATA_KEY: ClassVar[str] = "gcg_target"
+
+    train_goals: list[str] = field(default_factory=list)
+    train_targets: list[str] = field(default_factory=list)
+    test_goals: list[str] = field(default_factory=list)
+    test_targets: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """
-        Validate requested dataset row counts.
+        Validate inline goal and target lists.
 
         Raises:
-            ValueError: If either requested row count is negative.
+            ValueError: If a field is not a list of nonblank strings or paired lengths differ.
         """
-        if self.n_train_data < 0:
-            raise ValueError(f"GCGDataConfig.n_train_data must be >= 0, got {self.n_train_data}.")
-        if self.n_test_data < 0:
-            raise ValueError(f"GCGDataConfig.n_test_data must be >= 0, got {self.n_test_data}.")
+        for field_name in ("train_goals", "train_targets", "test_goals", "test_targets"):
+            values = getattr(self, field_name)
+            if not isinstance(values, list):
+                raise ValueError(f"GCGDataConfig.{field_name} must be a list of nonblank strings.")
+            for index, value in enumerate(values):
+                _validate_nonblank_string(value=value, field_name=f"GCGDataConfig.{field_name}[{index}]")
+        if len(self.train_goals) != len(self.train_targets):
+            raise ValueError(
+                "GCGDataConfig train_goals and train_targets must have equal length, "
+                f"got {len(self.train_goals)} and {len(self.train_targets)}."
+            )
+        if len(self.test_goals) != len(self.test_targets):
+            raise ValueError(
+                "GCGDataConfig test_goals and test_targets must have equal length, "
+                f"got {len(self.test_goals)} and {len(self.test_targets)}."
+            )
+
+    @classmethod
+    def from_seed_dataset(
+        cls,
+        dataset: SeedDataset,
+        *,
+        test_dataset: SeedDataset | None = None,
+        target_metadata_key: str = TARGET_METADATA_KEY,
+    ) -> GCGDataConfig:
+        """
+        Materialize fully specified ``SeedDataset``(s) into an inline config.
+
+        Each seed's ``value`` becomes a goal and its
+        ``metadata[target_metadata_key]`` becomes the paired target string.
+        This strict synchronous path requires every seed to carry a target.
+        Use ``create_gcg_data_config_async`` when missing targets should be
+        generated through an adversarial target.
+
+        Args:
+            dataset (SeedDataset): Training dataset. Every seed must carry a
+                target string under ``metadata[target_metadata_key]``.
+            test_dataset (SeedDataset | None): Optional held-out dataset with the
+                same per-seed target requirement. Defaults to None (no held-out
+                evaluation).
+            target_metadata_key (str): Seed metadata key holding the target
+                completion string. Defaults to ``"gcg_target"``.
+
+        Returns:
+            GCGDataConfig: A config with goals and targets stored inline.
+
+        Raises:
+            ValueError: If a goal is blank or target metadata is missing, blank,
+                or not a string.
+        """
+        train_goals, train_targets = cls._resolve_goals_and_targets(
+            dataset=dataset, target_metadata_key=target_metadata_key
+        )
+        if test_dataset is not None:
+            test_goals, test_targets = cls._resolve_goals_and_targets(
+                dataset=test_dataset, target_metadata_key=target_metadata_key
+            )
+        else:
+            test_goals, test_targets = [], []
+        return cls(
+            train_goals=train_goals,
+            train_targets=train_targets,
+            test_goals=test_goals,
+            test_targets=test_targets,
+        )
+
+    @staticmethod
+    def _resolve_goals_and_targets(*, dataset: SeedDataset, target_metadata_key: str) -> tuple[list[str], list[str]]:
+        """
+        Extract paired goal/target lists from a ``SeedDataset``.
+
+        Args:
+            dataset (SeedDataset): The dataset whose seeds carry goals (``value``)
+                and targets (``metadata[target_metadata_key]``).
+            target_metadata_key (str): Seed metadata key holding the target string.
+
+        Returns:
+            tuple[list[str], list[str]]: ``(goals, targets)`` in seed order.
+
+        Raises:
+            ValueError: If a goal is blank or target metadata is missing, blank,
+                or not a string.
+        """
+        goals: list[str] = []
+        targets: list[str] = []
+        for seed in dataset.seeds:
+            goal = _validate_nonblank_string(value=seed.value, field_name="Seed goal")
+            target = _get_seed_target(seed=seed, target_metadata_key=target_metadata_key)
+            if target is None:
+                raise ValueError(
+                    f"Seed {seed.value!r} is missing metadata[{target_metadata_key!r}] or it is blank; "
+                    "GCG requires a nonblank target completion string for every goal."
+                )
+            goals.append(goal)
+            targets.append(target)
+        return goals, targets
 
     def to_json(self) -> str:
         """
@@ -139,6 +258,16 @@ class GCGDataConfig:
             data = json.loads(payload)
         except json.JSONDecodeError as e:
             raise ValueError(f"GCGDataConfig.from_json: payload is not valid JSON: {e}") from e
+        if not isinstance(data, dict):
+            raise ValueError("GCGDataConfig.from_json: payload must be a JSON object.")
+        if {"train_data", "test_data", "n_train_data", "n_test_data"} & data.keys():
+            raise ValueError(
+                "GCGDataConfig no longer accepts CSV paths or row counts. Load a SeedDataset, "
+                "select its seeds locally, and use from_seed_dataset or create_gcg_data_config_async."
+            )
+        unknown_fields = data.keys() - {"train_goals", "train_targets", "test_goals", "test_targets"}
+        if unknown_fields:
+            raise ValueError(f"GCGDataConfig.from_json: unknown fields: {sorted(unknown_fields)}.")
         return cls(**data)
 
     @classmethod
