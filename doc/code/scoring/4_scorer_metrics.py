@@ -371,18 +371,17 @@ print(likert_scorer.evaluation_file_mapping)
 # %% [markdown]
 # ## Batch Evaluation with `evaluate_scorers.py`
 #
-# While `evaluate_async()` runs evaluations for a single scorer, the `evaluate_scorers.py` script
-# evaluates **all registered scorers** in bulk. This is useful for benchmarking after changing scorer
-# prompts, adding new variants, or updating human-labeled datasets.
+# `evaluate_scorers.py` initializes registered scorers and benchmarks eligible entries in bulk.
+# Results are saved under `pyrit/datasets/scorer_evals/`.
 #
-# The script initializes PyRIT with `ScorerInitializer` (which registers all configured scorers),
-# then runs `evaluate_async()` on each one. Results are saved to the JSONL registry files in
-# `pyrit/datasets/scorer_evals/`.
+# `skip_batch_evaluation` excludes an entry even when matched by `--tags`. This skips raw Decision,
+# not its 0.7-threshold wrapper; both remain usable for scoring.
+# Missing evaluation configuration, evaluation failures, and empty eligible selections still fail the batch.
 #
 # ### Basic Usage
 #
 # ```bash
-# # Evaluate all registered scorers (long-running — can take hours)
+# # Evaluate all eligible registered scorers (long-running — can take hours)
 # python -m build_scripts.evaluate_scorers
 #
 # # Evaluate only scorers with specific tags
@@ -398,10 +397,13 @@ print(likert_scorer.evaluation_file_mapping)
 # `ScorerInitializer` applies tags to scorers during registration. These tags let you target
 # specific subsets for evaluation:
 #
-# - `refusal` — The 4 standalone refusal scorer variants
-# - `default` — All scorers registered by default
-# - `best_refusal_f1` — The refusal variant with the highest F1 (set dynamically from metrics)
-# - `best_objective_f1` — The objective scorer with the highest F1
+# - `refusal` — Registered standalone refusal scorer variants
+# - `best_refusal` — The configured preferred refusal variant, or the first available variant
+# - `best_objective` / `default_objective_scorer` — The objective scorer selected below
+#
+# F1 ranking requires a known positive input count with every response evaluated.
+# If none qualify, selection warns and uses the configured fallback (`scale_and_refusal`,
+# then the first available composite), not an F1-backed winner.
 #
 # ### Recommended Workflow: Refusal → Dependent Scorers
 #
@@ -413,9 +415,7 @@ print(likert_scorer.evaluation_file_mapping)
 # python -m build_scripts.evaluate_scorers --tags refusal
 # ```
 #
-# This evaluates only the 4 refusal variants and writes results to
-# `refusal_scorer/refusal_metrics.jsonl`. After this step, `ScorerInitializer` can determine which
-# refusal variant has the best F1 and tag it as `best_refusal_f1`.
+# Results are saved to `refusal_scorer/refusal_metrics.jsonl`.
 #
 # **Step 2: Re-evaluate all scorers**
 #
@@ -423,10 +423,7 @@ print(likert_scorer.evaluation_file_mapping)
 # python -m build_scripts.evaluate_scorers
 # ```
 #
-# On the next full run, `ScorerInitializer` reads the refusal metrics from Step 1, picks the best
-# refusal variant, and uses it to build dependent scorers (e.g., `TrueFalseInverterScorer` wrapping
-# the best refusal scorer). This ensures objective scorers that depend on refusal detection use the
-# best-performing refusal prompt.
+# Dependent scorers use the configured `best_refusal` variant.
 #
 # Scorers whose metrics are already up-to-date (same dataset version, sufficient trials) are
 # automatically skipped, so re-running the full script is efficient.
