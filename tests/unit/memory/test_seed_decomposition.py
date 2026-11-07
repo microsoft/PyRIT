@@ -107,6 +107,47 @@ class TestSeedDecompositionStorage:
         assert [seed.prompt_group_id for seed in second.seeds] == [seed.prompt_group_id for seed in first.seeds]
         assert _root(second).paths == _root(first).paths
 
+    @pytest.mark.parametrize("verify_order", [("x1", "x2"), ("x2", "x1")])
+    async def test_identical_siblings_deduplicate_in_any_order_async(
+        self, sqlite_instance: MemoryInterface, verify_order: tuple[str, str]
+    ) -> None:
+        def dataset(order: tuple[str, str]) -> SeedDataset:
+            children = {"x1": {"key": "x1", "value": "Verify"}, "x2": {"key": "x2", "value": "Verify"}}
+            return SeedDataset.from_dict(
+                {
+                    "dataset_name": DATASET,
+                    "seeds": [
+                        {
+                            "seed_type": "objective",
+                            "value": ROOT_VALUE,
+                            "sub_objectives": [
+                                {"key": "a", "value": "Recon"},
+                                children[order[0]],
+                                {"key": "b", "value": "Phish"},
+                                children[order[1]],
+                            ],
+                            "paths": [["a", "x1"], ["b", "x2"]],
+                        }
+                    ],
+                }
+            )
+
+        await _add(sqlite_instance, dataset(("x1", "x2")))
+
+        await _add(sqlite_instance, dataset(verify_order))
+
+        assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == 5
+
+    async def test_stored_tree_read_back_in_any_order_is_not_copied_async(
+        self, sqlite_instance: MemoryInterface
+    ) -> None:
+        await _add(sqlite_instance, _decomposed_dataset())
+        stored = await sqlite_instance.get_seeds_async(dataset_name=DATASET)
+
+        await sqlite_instance.add_seeds_to_memory_async(seeds=list(reversed(stored)), added_by="tester")
+
+        assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == len(stored)
+
     async def test_changed_tree_is_stored_separately_async(self, sqlite_instance: MemoryInterface) -> None:
         await _add(sqlite_instance, _decomposed_dataset())
 

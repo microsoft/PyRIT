@@ -220,12 +220,19 @@ def _canonicalize_node(
 ) -> tuple[dict[str, Any], list[Seed[Any]]]:
     objective = objectives[node_id]
     group = sorted(mates.get(objective.prompt_group_id, []) if objective.prompt_group_id else [], key=member_key)
+    # Identical siblings tie on content, so order them by where the parent's paths first use them;
+    # otherwise the path encoding would depend on the order the siblings were supplied or read.
+    first_use: dict[uuid.UUID, tuple[int, int]] = {}
+    for path_index, path in enumerate(objective.paths):
+        for step_index, step in enumerate(path.steps):
+            first_use.setdefault(step, (path_index, step_index))
+    unused = (len(objective.paths), 0)
     children = sorted(
         (
             _canonicalize_node(node_id=child_id, tree=tree, objectives=objectives, mates=mates, member_key=member_key)
             for child_id in tree.get_children(node_id)
         ),
-        key=lambda child: _dumps(child[0]),
+        key=lambda child: (_dumps(child[0]), first_use.get(child[1][0].id, unused)),
     )
     position = {child_seeds[0].id: index for index, (_, child_seeds) in enumerate(children)}
     form = {
