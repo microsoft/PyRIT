@@ -21,13 +21,16 @@ logger = logging.getLogger(__name__)
 class ScenarioSuiteConflictError(DocumentConflictError):
     """A stored scenario suite changed after the caller read it."""
 
-    def __init__(self, *, name: str, expected_version: str | None, actual_version: str | None) -> None:
+    def __init__(
+        self, *, name: str, expected_version: str | None, actual_version: str | None, action: str = "saved"
+    ) -> None:
         """Initialize the error with the versions that failed to match."""
         super().__init__(
             name=name,
             expected_version=expected_version,
             actual_version=actual_version,
             label="Scenario suite",
+            action=action,
         )
 
 
@@ -129,25 +132,35 @@ class ScenarioSuiteStorage(FileDocumentStorage):
         version = self._save_document_conditional(name=suite.name, content=content, expected_version=expected_version)
         return StoredScenarioSuite(suite=suite, version=version)
 
-    def delete_suite(self, name: str) -> bool:
+    def delete_suite(self, name: str, *, expected_version: str | None = None) -> bool:
         """
         Delete one stored scenario suite.
 
+        Args:
+            name (str): The suite name.
+            expected_version (str | None): The version the caller read, or ``None`` to
+                delete whatever is stored. Defaults to ``None``.
+
         Returns:
             bool: True if a document was deleted, False if it was already absent.
+
+        Raises:
+            ScenarioSuiteConflictError: If the stored version does not match ``expected_version``.
         """
-        return self._delete_document(name)
+        return self._delete_document(name, expected_version=expected_version)
 
     def _conflict_error(
-        self, *, name: str, expected_version: str | None, actual_version: str | None
+        self, *, name: str, expected_version: str | None, actual_version: str | None, action: str = "saved"
     ) -> ScenarioSuiteConflictError:
         """
-        Report a refused write as a scenario suite conflict.
+        Report a refused write or delete as a scenario suite conflict.
 
         Returns:
             ScenarioSuiteConflictError: The error describing the version mismatch.
         """
-        return ScenarioSuiteConflictError(name=name, expected_version=expected_version, actual_version=actual_version)
+        return ScenarioSuiteConflictError(
+            name=name, expected_version=expected_version, actual_version=actual_version, action=action
+        )
 
     @staticmethod
     def _serialize_suite(suite: ScenarioSuite) -> bytes:

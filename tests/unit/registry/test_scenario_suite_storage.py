@@ -137,6 +137,20 @@ def test_list_and_delete_suites(tmp_path: Path) -> None:
     assert storage.delete_suite("weekly") is False
 
 
+def test_delete_with_a_stale_version_is_a_conflict_and_keeps_the_suite(tmp_path: Path) -> None:
+    """Test that a suite delete confirmed against an old read cannot discard an edit made since."""
+    storage = ScenarioSuiteStorage(source=str(tmp_path))
+    first = storage.save_suite(suite=_suite(description="first"), expected_version=None)
+    second = storage.save_suite(suite=_suite(description="second"), expected_version=first.version)
+
+    with pytest.raises(ScenarioSuiteConflictError, match="Scenario suite 'weekly' could not be deleted") as error:
+        storage.delete_suite("weekly", expected_version=first.version)
+
+    assert error.value.actual_version == second.version
+    assert storage.delete_suite("weekly", expected_version=second.version) is True
+    assert storage.load_suite("weekly") is None
+
+
 def test_default_source_is_under_configuration_directory(tmp_path: Path) -> None:
     """Test the standard ``~/.pyrit/scenario_suites`` location."""
     with patch("pyrit.common.path.CONFIGURATION_DIRECTORY_PATH", tmp_path):

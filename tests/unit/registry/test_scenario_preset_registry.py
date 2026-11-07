@@ -155,6 +155,16 @@ class TestPresetCrud:
     ) -> None:
         assert registry.delete_preset(name="missing") is False
 
+    def test_delete_with_a_stale_version_conflicts_and_keeps_the_preset(self, registry: ScenarioPresetRegistry) -> None:
+        first = registry.save_preset(preset=_preset(description="first"), expected_version=None)
+        second = registry.save_preset(preset=_preset(description="second"), expected_version=first.version)
+
+        with pytest.raises(ScenarioPresetConflictError, match="could not be deleted"):
+            registry.delete_preset(name="quick_scan", expected_version=first.version)
+
+        assert registry.delete_preset(name="quick_scan", expected_version=second.version) is True
+        assert registry.get_preset(name="quick_scan") is None
+
     def test_only_the_delete_that_removed_the_preset_reports_that_it_did(
         self, registry: ScenarioPresetRegistry
     ) -> None:

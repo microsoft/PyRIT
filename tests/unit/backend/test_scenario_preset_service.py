@@ -200,6 +200,19 @@ class TestPresetCrud:
     ) -> None:
         assert await service.delete_preset_async(name="missing") is False
 
+    async def test_delete_with_a_stale_version_conflicts(
+        self, service: ScenarioPresetService, registered_scenario: RegisteredScenario
+    ) -> None:
+        created = await service.save_preset_async(preset=_preset(), expected_version=None)
+        updated = await service.save_preset_async(
+            preset=_preset(description="winner"), expected_version=created.version
+        )
+
+        with pytest.raises(ScenarioPresetConflictError):
+            await service.delete_preset_async(name="quick_scan", expected_version=created.version)
+
+        assert await service.delete_preset_async(name="quick_scan", expected_version=updated.version) is True
+
 
 class TestRegisteredPresets:
     """A preset contributed by code has no stored document behind it."""
