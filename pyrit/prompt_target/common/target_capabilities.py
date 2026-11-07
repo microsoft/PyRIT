@@ -104,6 +104,7 @@ class CapabilityHandlingPolicy:
 # Shared profiles are defined once and referenced by multiple model names.
 # ---------------------------------------------------------------------------
 
+
 _TEXT_IMAGE_INPUT: frozenset[frozenset[PromptDataType]] = cast(
     "frozenset[frozenset[PromptDataType]]",
     frozenset({frozenset({"text"}), frozenset({"image_path"}), frozenset({"text", "image_path"})}),
@@ -183,6 +184,8 @@ _KNOWN_CAPABILITIES: dict[str, TargetCapabilities] = {
 def get_known_capabilities(underlying_model: str) -> TargetCapabilities | None:
     """
     Return the known capabilities for a specific underlying model, or None if unrecognized.
+
+    Runtime generation support is resolved by target instances, not these model profiles.
 
     Args:
         underlying_model (str): The underlying model name (e.g., "gpt-4o").

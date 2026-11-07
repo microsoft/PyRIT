@@ -351,7 +351,7 @@ describe('Shared new run labels', () => {
   it('hosts Chat controls below the labels and above the objective, and removes them when navigating away', async () => {
     const user = userEvent.setup()
     jest.mocked(targetsApi.listTargets).mockResolvedValue({
-      items: [{ ...TARGET, supports_temperature_override: true }],
+      items: [{ ...TARGET, capabilities: { ...TARGET.capabilities, supports_temperature: true } }],
       pagination: { limit: 200, has_more: false },
     })
     renderApp('/attack/chat')
@@ -366,9 +366,13 @@ describe('Shared new run labels', () => {
     await waitFor(() => expect(targetPicker).toBeEnabled())
     await user.selectOptions(targetPicker, 'test_target')
     expect(targetPicker).toHaveValue('test_target')
-    const temperature = within(settings).getByRole('spinbutton', { name: 'Temperature' })
+    expect(within(settings).queryByRole('spinbutton', { name: 'Temperature' })).not.toBeInTheDocument()
+    const generation = screen.getByRole('button', { name: /^Adjust temperature/ })
+    await user.click(generation)
+    const temperature = screen.getByRole('textbox', { name: 'Temperature' })
     await user.type(temperature, '0.7')
-    expect(temperature).toHaveValue(0.7)
+    expect(temperature).toHaveValue('0.7')
+    await user.click(generation)
     expect(within(settings).getByRole('button', { name: 'Edit Conversation' })).toBeEnabled()
     expect(within(screen.getByTestId('chat-area')).queryByRole('group', { name: 'Chat controls' }))
       .not.toBeInTheDocument()
@@ -382,12 +386,15 @@ describe('Shared new run labels', () => {
 
     await user.click(screen.getByRole('button', { name: 'Home', exact: true }))
     expect(screen.queryByRole('group', { name: 'Chat controls' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Adjust temperature/ })).not.toBeInTheDocument()
     expect(screen.getAllByTestId('labels-bar')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Scanner', exact: true }))
     expect(screen.queryByRole('group', { name: 'Chat controls' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Attacks', exact: true }))
     expect(screen.getAllByRole('group', { name: 'Chat controls' })).toHaveLength(1)
     expect(within(screen.getByRole('group', { name: 'Conversation actions' })).getByRole('switch')).toBeChecked()
+    await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
+    expect(await screen.findByRole('textbox', { name: 'Temperature' })).toHaveValue('0.7')
   })
 
   it('preserves an edit made before the backend defaults arrive', async () => {

@@ -42,7 +42,8 @@ function attachmentIcon(kind: MessageAttachment['type']): string {
 }
 
 export default function PromptEditor({
-  text, attachments, onInputChange, onAttachmentsChange, disabled = false, disabledReason, fileDropEnabled = true, header, setup, warning, actions,
+  text, attachments, onInputChange, onAttachmentsChange, disabled = false, disabledReason, fileDropEnabled = true,
+  header, setup, warning, actions,
   attachmentMenuItems, showTextInput = true, textareaRef: externalTextareaRef, onKeyDown,
   onToggleConverterPanel, isConverterPanelOpen, undoLastSend, convertedValue, onConvertedValueChange,
   mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip,

@@ -111,7 +111,6 @@ export interface ConversationEditState {
   sourceConversationId?: string | null
   sourceAttackId?: string | null
   sourcePieceIds?: string[]
-  temperature?: string
   target?: TargetReference | null
   pendingPromptId?: string
   unsavedImport?: boolean
@@ -122,7 +121,7 @@ export interface ChatDraftContent {
   attachments: MessageAttachment[]
   systemPrompt?: string
   objective?: string
-  temperature?: string
+  generationDraft?: RequestGenerationDraft
   chatScorer?: RegisteredComponentReference | null
   target?: TargetReference | null
   converters?: ChatConverterSnapshot
@@ -260,6 +259,28 @@ export interface MessageMediaDisplayPiece {
 
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
+/** Provider-neutral options for one outbound send, not target defaults. */
+export interface RequestGenerationConfig {
+  readonly temperature?: number | null
+}
+
+/** Editable text is validated and converted to numeric request options at submission. */
+export type RequestGenerationDraft = {
+  readonly [Field in keyof RequestGenerationConfig]?: string
+}
+
+export interface ParameterResolution {
+  readonly requested: number | null
+  readonly resolved: number | null
+  readonly source: 'request' | 'target_default' | 'provider_default'
+}
+
+/** Framework-authored parameter evidence associated with the originating request. */
+export interface RequestGenerationInfo {
+  readonly temperature: ParameterResolution
+  readonly request_piece_ids: readonly string[]
+}
+
 export interface Message {
   /** Saved sequence used to keep a split turn stable across piece pages. */
   sequence?: number
@@ -288,6 +309,9 @@ export interface Message {
   originalContent?: string
   /** Original media attachments before conversion (when different from converted). */
   originalAttachments?: MessageAttachment[]
+  /** Saved provider parameter evidence, not a new request option. */
+  generationDescription?: string
+  generationDetails?: string
 }
 
 export interface MessageError {
@@ -428,6 +452,7 @@ export interface TargetCapabilities {
   supports_editable_history?: boolean
   supports_system_prompt: boolean
   supports_streaming_audio?: boolean
+  supports_temperature?: boolean
   supported_input_modalities: string[]
   supported_output_modalities: string[]
 }
@@ -450,13 +475,12 @@ export interface TargetIdentifier {
 
 export interface TargetInstance {
   target_registry_name: string
-  reconstructable?: boolean
-  reconstruction_error?: string | null
-  supports_temperature_override?: boolean
   binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
+  /** Inclusive runtime bounds; missing/null means no range is declared, not no support. */
+  temperature_range?: readonly [number, number] | null
   /** Effective replay support, including configured adapters and provider restoration. */
   supports_history_replay?: boolean
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
@@ -577,6 +601,7 @@ export interface TargetBinding {
 export interface UnregisteredTarget {
   identifier: TargetIdentifier
   capabilities: TargetCapabilities
+  temperature_range?: readonly [number, number] | null
 }
 
 export interface UnregisteredConverter {
@@ -1066,7 +1091,6 @@ export interface ConversationSaveInput {
   sourceConversationId: string | null
   labels?: Record<string, string>
   baselineMessages?: ConversationDraftMessage[]
-  temperature?: string
   unsavedImport?: boolean
   pendingPromptId?: string
 }

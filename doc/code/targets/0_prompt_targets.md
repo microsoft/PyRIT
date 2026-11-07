@@ -57,6 +57,31 @@ Target-side rate limiting remains independent and continues to use `limit_reques
 `_send_prompt_to_target_async(*, normalized_conversation: list[Message]) -> list[Message]` instead of
 overriding `send_prompt_async`.
 
+## Runtime generation configuration
+
+Use `RequestGenerationConfig` in a current request's `MessagePiece.prompt_metadata`
+to override temperature without changing shared target defaults:
+
+```python
+from pyrit.models import MessagePiece, RequestGenerationConfig
+
+piece = MessagePiece(
+    role="user",
+    original_value="Describe this scene.",
+    prompt_metadata=RequestGenerationConfig(temperature=0).to_metadata(),
+)
+```
+
+Check `target.capabilities.supports_temperature` and `target.temperature_range`
+before choosing a value. Bounds are inclusive; `None` means unspecified bounds,
+not lack of support. Missing or null temperature preserves existing defaults.
+Invalid, conflicting, or unsupported overrides fail before provider I/O.
+
+Read saved request and response evidence with
+`RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)` to inspect the
+requested temperature, resolved value, and source. Unknown provider defaults remain
+`None`. See [Chat temperature](../../gui/0_gui.md#temperature) for the UI.
+
 ## Chat-style targets vs general targets
 
 A `PromptTarget` is a generic place to send a prompt. With PyRIT, the idea is that it will eventually be consumed by an AI application, but that doesn't have to be immediate. For example, you could have a SharePoint target. Everything you send a prompt to is a `PromptTarget`. Many attacks work generically with any `PromptTarget` including `RedTeamingAttack` and `PromptSendingAttack`.
@@ -249,12 +274,16 @@ A `TargetConfiguration` composes three concerns:
 | `supports_system_prompt`         | The target natively supports a system-role message.                                                                                      |
 | `supports_json_output`           | The target supports a "json" response format that guarantees valid JSON output.                                                          |
 | `supports_json_schema`           | The target supports constraining output to a caller-provided JSON schema.                                                                |
+| `supports_temperature`           | The adapter and configured model mode support per-request temperature overrides.                                                        |
 | `input_modalities`               | The set of input modality combinations the target accepts (e.g. `{text}`, `{text, image_path}`).                                         |
 | `output_modalities`              | The set of output modality combinations the target produces.                                                                             |
 
 Each target class defines defaults; instances can override individual capabilities when they depend on deployment configuration (e.g. `HTTPTarget`, `PlaywrightTarget`).
 
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
+Profiles alone do not determine runtime temperature support; check the instance's
+capabilities and separate `temperature_range` property as described under
+[Runtime generation configuration](#runtime-generation-configuration).
 
 Tool-call history uses the existing `function_call` and `function_call_output` input
 modalities. These describe acceptance of prior calls and results, not tool execution.

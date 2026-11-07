@@ -38,6 +38,12 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+Registered and unregistered target descriptors expose `capabilities.supports_temperature`
+and a separate top-level `temperature_range`. Bounds are inclusive; `null` means no
+range is declared, not that temperature is unsupported. Clients must not substitute
+assumed bounds. Per-send values use
+[`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
@@ -243,6 +249,11 @@ maps the resulting stored data to the response, including stored target errors.
 All three use the application's `CentralMemory` instance. Both message endpoints use
 the same cached `MessageSendService`; the synchronous facade awaits its execution core
 directly, while the submission endpoint schedules that core and returns a transient handle.
+
+`_pyrit_generation` is server-authored evidence. Saves retain it only from verified,
+unchanged source pieces; edits, new pieces, prepended history, and `send=false`
+appends discard it. This does not strip unrelated metadata or
+[requested generation options](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
 
 All manual-message service instances share one process-local scheduler. It admits up to
 64 operations (active and waiting), with a semaphore allowing up to 4 to execute at once.

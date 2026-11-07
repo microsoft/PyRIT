@@ -129,14 +129,16 @@ reconstruction:
 }
 ```
 
-Use `source.params` for overrides; do not also supply `params`. The backend
+Use `source.params` to override constructor defaults; do not also supply `params`. The backend
 keeps the source's other constructor inputs, including authentication, on the
 server. It does not change the source. Missing, changed, or ambiguous sources
 produce an error. If a source was renamed, a unique matching hash can resolve it.
 An optional `effective_hash` checks the reconstructed object's identity.
-Registered descriptors report `reconstructable` and, for targets,
-`supports_temperature_override`. Unsupported inputs can also report
-`reconstruction_error`.
+Converter descriptors expose `reconstructable` and `reconstruction_error`;
+target runtime support is in `capabilities`, with bounds in the separate
+`temperature_range` field, independent of reconstruction. Use
+[runtime generation configuration](../targets/0_prompt_targets.md#runtime-generation-configuration)
+for per-request overrides instead of rebuilding a target.
 Constructor inputs that are not in the registry's build contract are not
 discarded silently: reconstruction is rejected. Such sources can still be used
 as registered objects.

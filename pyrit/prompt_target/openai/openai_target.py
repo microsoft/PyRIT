@@ -6,7 +6,7 @@ import logging
 import re
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypedDict
 from urllib.parse import urlparse
 
 from openai import (
@@ -21,6 +21,7 @@ from openai._exceptions import (
     APITimeoutError,
     AuthenticationError,
 )
+from pydantic import TypeAdapter
 
 from pyrit.auth import resolve_openai_auth
 from pyrit.common import default_values
@@ -28,9 +29,16 @@ from pyrit.exceptions.exception_classes import (
     RateLimitException,
     handle_bad_request_exception,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import (
+    Message,
+    MessagePiece,
+    ParameterResolution,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
+    TemperatureRange,
+)
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.openai._response_adapter import OpenAIResponseAdapter
 from pyrit.prompt_target.openai.openai_error_handling import (
@@ -40,6 +48,89 @@ from pyrit.prompt_target.openai.openai_error_handling import (
 )
 
 logger = logging.getLogger(__name__)
+_TEMPERATURE_RANGE_ADAPTER = TypeAdapter(TemperatureRange)
+
+
+class _GenerationDeclarations(TypedDict, total=False):
+    supports_temperature: bool
+    temperature_range: tuple[float, float]
+
+
+class _OpenAIModelSampling:
+    """Resolve shared OpenAI model sampling rules, independently of API-specific support."""
+
+    _REASONING_DEFAULT_MODELS: ClassVar[frozenset[str]] = frozenset(
+        {"gpt-5.5", "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+    )
+    _UNSUPPORTED_MODELS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-5-pro",
+            "gpt-5.2-pro",
+            "gpt-5.4-pro",
+            "gpt-5.5-pro",
+            "gpt-5-codex",
+            "gpt-5.1-codex",
+            "gpt-5.1-codex-mini",
+            "gpt-5.1-codex-max",
+            "gpt-5.2-codex",
+            "gpt-5.3-codex",
+            "o1",
+            "o1-mini",
+            "o1-preview",
+            "o1-pro",
+            "o3",
+            "o3-mini",
+            "o3-pro",
+            "o4-mini",
+            "gpt-4o-audio-preview",
+            "gpt-4o-mini-audio-preview",
+            "gpt-4o-realtime-preview",
+            "gpt-4o-mini-realtime-preview",
+        }
+    )
+    _SNAPSHOT_SUFFIX: ClassVar[re.Pattern[str]] = re.compile(r"-\d{4}-\d{2}-\d{2}$")
+
+    @classmethod
+    def temperature_range(cls, model_name: object) -> tuple[float, float]:
+        """
+        Return the model's inclusive runtime temperature bounds.
+
+        Returns:
+            tuple[float, float]: Provider parameter minimum and maximum.
+        """
+        model = cls._SNAPSHOT_SUFFIX.sub("", model_name).lower() if isinstance(model_name, str) else ""
+        return (0.0, 1.0) if model == "mistral-large-3" else (0.0, 2.0)
+
+    @classmethod
+    def supports_temperature(
+        cls, *, model_name: object, reasoning_effort: object = None, declared_support: bool | None = None
+    ) -> bool:
+        """
+        Resolve support from explicit declarations, then model inference.
+
+        Args:
+            model_name (object): Effective model or deployment name.
+            reasoning_effort (object): Explicit effective effort, or None when omitted.
+            declared_support (bool | None): Override model inference, including inferred reasoning defaults.
+                Explicit reasoning effort other than "none" still disables temperature.
+
+        Returns:
+            bool: Inferred support. Unrecognized models default to supported; providers may still reject them.
+        """
+        if not isinstance(model_name, str) or reasoning_effort not in (None, "none"):
+            return False
+        if declared_support is not None:
+            return declared_support
+        # Only dated snapshots inherit a named model's rule, not arbitrary prefixed variants.
+        model = cls._SNAPSHOT_SUFFIX.sub("", model_name)
+        if model in cls._UNSUPPORTED_MODELS:
+            return False
+        if model in cls._REASONING_DEFAULT_MODELS:
+            return reasoning_effort == "none"
+        return True
 
 
 class OpenAITarget(PromptTarget):
@@ -103,6 +194,7 @@ class OpenAITarget(PromptTarget):
         httpx_client_kwargs: dict[str, Any] | None = None,
         underlying_model: str | None = None,
         custom_configuration: TargetConfiguration | None = None,
+        temperature_range: tuple[float, float] | None = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -139,6 +231,8 @@ class OpenAITarget(PromptTarget):
                 Defaults to None.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. If None, uses the class-level defaults. Defaults to None.
+            temperature_range (tuple[float, float] | None): Inclusive runtime bounds overriding model inference.
+                Does not enable unsupported model modes or change the configured temperature default.
 
         Raises:
             ValueError: If identity auth is requested for an endpoint that is not a recognized
@@ -168,6 +262,15 @@ class OpenAITarget(PromptTarget):
         endpoint_value = default_values.get_required_value(
             env_var_name=self.endpoint_environment_variable, passed_value=endpoint
         )
+        self._declared_generation: _GenerationDeclarations = {}
+        if (
+            custom_configuration is not None
+            and "supports_temperature" in custom_configuration.capabilities.model_fields_set
+        ):
+            self._declared_generation["supports_temperature"] = custom_configuration.capabilities.supports_temperature
+        self._effective_generation = self._declared_generation.copy()
+        self.apply_temperature_range(temperature_range=temperature_range)
+        self._declared_generation = self._effective_generation.copy()
 
         # Initialize parent with endpoint and model_name
         PromptTarget.__init__(
@@ -187,6 +290,142 @@ class OpenAITarget(PromptTarget):
         )
 
         self._initialize_openai_client()
+        if self._SUPPORTED_GENERATION_CAPABILITIES:
+            self._refresh_generation_capabilities()
+
+    def set_model_name(self, *, model_name: str) -> None:
+        """Set the model name and refresh request-generation support for opted-in adapters."""
+        super().set_model_name(model_name=model_name)
+        if self._SUPPORTED_GENERATION_CAPABILITIES:
+            self._refresh_generation_capabilities()
+
+    def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
+        """Apply declared model support subject to the adapter's configured sampling mode."""
+        self._effective_generation.pop("supports_temperature", None)
+        if "supports_temperature" in capabilities.model_fields_set:
+            self._effective_generation["supports_temperature"] = capabilities.supports_temperature
+        if self._SUPPORTED_GENERATION_CAPABILITIES:
+            capabilities = self._generation_capabilities_for_mode(capabilities)
+        super().apply_capabilities(capabilities=capabilities)
+
+    @property
+    def temperature_range(self) -> tuple[float, float] | None:
+        """Resolved runtime bounds, independently of whether the current mode supports temperature."""
+        if CapabilityName.TEMPERATURE not in self._SUPPORTED_GENERATION_CAPABILITIES:
+            return None
+        return self._effective_generation.get("temperature_range") or _OpenAIModelSampling.temperature_range(
+            self._effective_generation_parameters()["model"]
+        )
+
+    def apply_temperature_range(self, *, temperature_range: tuple[float, float] | None) -> None:
+        """
+        Apply bounds until the next model change; None restores model inference.
+
+        Raises:
+            ValueError: Bounds are invalid or the adapter does not implement runtime temperature.
+        """
+        if temperature_range is None:
+            self._effective_generation.pop("temperature_range", None)
+            return
+        if CapabilityName.TEMPERATURE not in self._SUPPORTED_GENERATION_CAPABILITIES:
+            raise ValueError(f"{type(self).__name__} does not implement runtime temperature.")
+        self._effective_generation["temperature_range"] = _TEMPERATURE_RANGE_ADAPTER.validate_python(temperature_range)
+
+    def _refresh_generation_capabilities(self) -> None:
+        self._effective_generation = self._declared_generation.copy()
+        parameters = self._effective_generation_parameters()
+        support: dict[str, bool] = {}
+        if CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES:
+            support["supports_temperature"] = _OpenAIModelSampling.supports_temperature(
+                model_name=parameters["model"],
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=self._declared_generation.get("supports_temperature"),
+            )
+        super().apply_capabilities(
+            capabilities=self._generation_capabilities_for_mode(self.capabilities.model_copy(update=support))
+        )
+
+    def _effective_generation_parameters(self) -> dict[str, Any]:
+        parameters = getattr(self, "_extra_body_parameters", None) or {}
+        return {
+            "model": self._underlying_model or self._model_name,
+            **parameters,
+            **(parameters.get("extra_body") or {}),
+        }
+
+    def _generation_capabilities_for_mode(self, capabilities: TargetCapabilities) -> TargetCapabilities:
+        parameters = self._effective_generation_parameters()
+        temperature_supported = (
+            CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES
+            and capabilities.includes(capability=CapabilityName.TEMPERATURE)
+            and _OpenAIModelSampling.supports_temperature(
+                model_name=parameters["model"],
+                reasoning_effort=parameters.get("reasoning_effort"),
+                declared_support=self._effective_generation.get("supports_temperature"),
+            )
+            and not parameters.get("stream", False)
+        )
+        return capabilities.model_copy(update={"supports_temperature": temperature_supported})
+
+    def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
+        if config.temperature is None:
+            return
+        capabilities = self._generation_capabilities_for_mode(self.capabilities)
+        if not capabilities.includes(capability=CapabilityName.TEMPERATURE):
+            raise ValueError(
+                f"Runtime temperature is not supported for this {type(self).__name__} model configuration."
+            )
+        bounds = self.temperature_range
+        if bounds is None:
+            raise ValueError(f"Runtime temperature bounds are unavailable for {type(self).__name__}.")
+        minimum, maximum = bounds
+        if not minimum <= config.temperature <= maximum:
+            raise ValueError(f"OpenAI request temperature must be between {minimum:g} and {maximum:g} inclusive.")
+
+    def _prepare_request_generation(self, *, body: dict[str, Any], request: Message) -> None:
+        # Public sends and wrapper dispatch clear incoming evidence. Retries and tool
+        # continuations within this child invocation reuse its first resolution.
+        metadata = request.get_piece().prompt_metadata
+        info = RequestGenerationInfo.from_metadata(metadata=metadata)
+        if info is None:
+            config = self.validate_request_generation_config(request)
+            info = RequestGenerationInfo(temperature=self._resolve_request_temperature(body=body, config=config))
+        else:
+            self._apply_request_temperature(body=body, temperature=info.temperature.resolved)
+        metadata.update(info.to_metadata())
+
+    @staticmethod
+    def _apply_request_temperature(*, body: dict[str, Any], temperature: float | None) -> None:
+        nested = body.get("extra_body") or {}
+        if temperature is None:
+            body.pop("temperature", None)
+            # Preserve explicit passthrough nulls on retries, rather than changing the provider payload.
+            if nested.get("temperature") is not None:
+                nested.pop("temperature", None)
+        else:
+            body["temperature"] = temperature
+            # The SDK merges extra_body after its named arguments.
+            if "temperature" in nested:
+                nested["temperature"] = temperature
+
+    def _resolve_request_temperature(
+        self, *, body: dict[str, Any], config: RequestGenerationConfig
+    ) -> ParameterResolution:
+        nested = body.get("extra_body") or {}
+        if config.temperature is not None:
+            self._apply_request_temperature(body=body, temperature=config.temperature)
+        resolved = nested.get("temperature", body.get("temperature"))
+        return ParameterResolution(
+            requested=config.temperature,
+            resolved=resolved,
+            source=(
+                "request"
+                if config.temperature is not None
+                else "target_default"
+                if resolved is not None
+                else "provider_default"
+            ),
+        )
 
     def get_reconstruction_parameters(self) -> dict[str, object]:
         """
@@ -223,6 +462,7 @@ class OpenAITarget(PromptTarget):
             "httpx_client_kwargs": dict(self._httpx_client_kwargs),
             "underlying_model": self._underlying_model,
             "custom_configuration": self.configuration,
+            "temperature_range": self._effective_generation.get("temperature_range"),
         }
 
     async def cleanup_target_async(self) -> None:
