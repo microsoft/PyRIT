@@ -61,10 +61,10 @@ class TargetService:
     parameter coercion, reference resolution, and construction. Endpoint
     validation remains owned by the target classes.
 
-    A target that accepts caller credentials (``PromptTarget.caller_credential_parameter``)
-    and is registered with a submitted key holds no secret. The key is stored for its
-    caller, and the target gets a provider that returns the current caller's own
-    credential on every request, so other callers must set their own before using it.
+    A registered target created with ``requires_caller_credential`` holds no secret. A
+    submitted key is stored for its caller, and the target gets a provider that returns the
+    current caller's own credential on every request, so every other caller must set their
+    own before using it. Targets created without that option stay shared.
     """
 
     CREATED_BY_METADATA_KEY = "created_by"
@@ -429,9 +429,10 @@ class TargetService:
         GitHub Copilot requires an explicit or environment token rather than SDK
         login discovery in CoPyRIT. A target whose construction runs model
         repository code, or that would authenticate with this server's stored
-        credentials, is built only for an administrator. A registered target that
-        accepts caller credentials keeps no submitted key: the key is stored for
+        credentials, is built only for an administrator. A target created with
+        ``requires_caller_credential`` keeps no submitted key: the key is stored for
         ``caller`` and the target resolves each caller's own credential per request.
+        Without that option, a submitted key stays on the shared target.
         The response is built before the target is registered, so a failed request
         leaves no registered target or stored credential.
 
@@ -441,9 +442,8 @@ class TargetService:
                 or None when the server configures none.
             is_admin: Whether the caller may create a target that runs model repository code or
                 authenticates with this server's stored credentials.
-            caller: Principal of the requesting caller, recorded as the target's creator and owner
-                of a submitted credential. Without one, a submitted key stays on the target as it
-                does for direct Python use. Defaults to None.
+            caller: Principal of the requesting caller, recorded as the target's creator and, with
+                ``requires_caller_credential``, as the owner of a submitted credential. Defaults to None.
 
         Returns:
             TargetInstance with the new target's details.
@@ -451,13 +451,15 @@ class TargetService:
         Raises:
             ValueError: If the target type is not registered, ``params`` carries an
                 ``auth_mode`` that conflicts with the request-level choice, identity or
-                no-key auth is requested but unsupported by the target type, or a target that
+                no-key auth is requested but unsupported by the target type, a target that
                 uploads local files is requested with its upload folder or while
-                the server configures none. Construction errors (unknown params,
-                incompatible inner targets, unrecognized identity endpoints) are
-                raised by the registry / target classes.
-            PermissionError: If a non-administrator enables a target's model code execution, or
-                creates a target that would authenticate with this server's stored credentials.
+                the server configures none, or ``requires_caller_credential`` is requested
+                for an unsupported target, auth mode, or unregistered target. Construction
+                errors (unknown params, incompatible inner targets, unrecognized identity
+                endpoints) are raised by the registry / target classes.
+            PermissionError: If a non-administrator enables a target's model code execution,
+                creates a target that would authenticate with this server's stored credentials,
+                or requests caller credentials without a verified caller identity.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -547,7 +549,7 @@ class TargetService:
             is not target_cls
         ):
             raise ValueError("The source target type does not match the requested type")
-        credential_id = uuid.uuid4().hex if caller_credential is not None else None
+        credential_id = uuid.uuid4().hex if request.requires_caller_credential else None
         target_obj = (
             await self.build_from_source_async(request.source)
             if request.source
@@ -697,8 +699,8 @@ class TargetService:
         credential_id = entry.metadata.get(self.CALLER_CREDENTIAL_ID_METADATA_KEY)
         if credential_id is None:
             raise ValueError(
-                f"Target '{entry.name}' does not use caller credentials. Only targets created through the API "
-                "with a submitted key accept per-caller credentials."
+                f"Target '{entry.name}' is shared and does not use caller credentials. Only targets created with "
+                "requires_caller_credential accept per-caller credentials."
             )
         return str(credential_id)
 
@@ -711,27 +713,33 @@ class TargetService:
         caller: str | None,
     ) -> str | None:
         """
-        Remove a submitted key that a registered target will resolve per caller instead.
-
-        Without a caller identity (direct service use; API requests always have one), or for a
-        blank or non-string key, the target keeps today's key handling.
+        Validate an opt-in to caller credentials and remove the key the target will resolve per caller.
 
         Returns:
-            str | None: The submitted credential, or None when the target keeps today's key handling.
+            str | None: The creator's submitted credential, or None when the request does not opt in
+                or submits no key.
+
+        Raises:
+            ValueError: If the target type, auth mode, or registration does not support caller
+                credentials, or the submitted key is not a nonempty string.
+            PermissionError: If the request has no verified caller identity.
         """
+        if not request.requires_caller_credential:
+            return None
         parameter_name = target_cls.caller_credential_parameter
-        if (
-            parameter_name is None
-            or caller is None
-            or request.source is not None
-            or not request.register
-            or request.auth_mode != "api_key"
-        ):
+        if parameter_name is None:
+            raise ValueError(f"Target type '{request.type}' does not support requires_caller_credential.")
+        if request.auth_mode != "api_key":
+            raise ValueError("requires_caller_credential requires auth_mode 'api_key'.")
+        if not request.register:
+            raise ValueError("requires_caller_credential applies only to registered targets.")
+        if caller is None:
+            raise PermissionError("A verified caller identity is required to create a target with caller credentials.")
+        credential = params.pop(parameter_name, None)
+        if credential is None:
             return None
-        credential = params.get(parameter_name)
         if not isinstance(credential, str) or not credential.strip():
-            return None
-        del params[parameter_name]
+            raise ValueError(f"'{parameter_name}' must be a nonempty string.")
         return credential
 
     def _caller_credential_server_params(

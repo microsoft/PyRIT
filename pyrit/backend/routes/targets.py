@@ -131,10 +131,9 @@ async def create_target(
     Instantiates a target with the given type and parameters. Registration is
     optional; unregistered responses contain no reusable object handle.
 
-    Note: Sensitive parameters (API keys, tokens) are filtered from the response. A
-    registered target that accepts caller credentials (OpenAI-family except ``RealtimeTarget``,
-    and LiteLLM) does not keep a submitted ``api_key``; it is stored for this caller, and other
-    callers must set their own credential.
+    Note: Sensitive parameters (API keys, tokens) are filtered from the response. With
+    ``requires_caller_credential``, a supported target keeps no submitted ``api_key``: it is
+    stored only for this caller, and other callers must set their own credential to use it.
 
     Returns:
         TargetInstance | UnregisteredTarget: A named instance or an unregistered descriptor.
