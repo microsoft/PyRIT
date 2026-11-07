@@ -118,7 +118,7 @@ class GlobalDefaultValues:
         )
         self._default_values.pop(opposite_scope, None)
         self._default_values[scope] = value
-        logger.debug(f"Set default value for {class_type.__name__}.{parameter_name} = {value}")
+        logger.debug("Set default value for %s.%s = %s", class_type.__name__, parameter_name, value)
 
     def get_default_value(
         self,
@@ -275,8 +275,26 @@ def apply_defaults_to_method(method: Callable[..., T]) -> Callable[..., T]:
 
         _apply_default_arguments(class_type=cls, signature=sig, arguments=bound_args.arguments)
 
-        # Call the original method with updated arguments
-        return method(*bound_args.args, **bound_args.kwargs)
+        resolved: dict[str, object] | None = None
+        if getattr(method, "__name__", None) == "__init__" and getattr(
+            type(self).__init__, "__pyrit_capture_constructor__", False
+        ):
+            from pyrit.common.constructor_capture import copy_constructor_inputs
+
+            resolved = {}
+            for name, value in bound_args.arguments.items():
+                if name == "self":
+                    continue
+                if sig.parameters[name].kind is inspect.Parameter.VAR_KEYWORD:
+                    resolved.update({key: copy_constructor_inputs(item) for key, item in value.items()})
+                elif sig.parameters[name].kind is not inspect.Parameter.VAR_POSITIONAL:
+                    resolved[name] = copy_constructor_inputs(value)
+
+        result = method(*bound_args.args, **bound_args.kwargs)
+        if resolved is not None:
+            retained = vars(self).setdefault("_resolved_constructor_parameters", {})
+            retained[inspect.unwrap(method)] = resolved
+        return result
 
     setattr(wrapper, _APPLY_DEFAULTS_ATTRIBUTE, True)
     return wrapper
@@ -334,7 +352,7 @@ def _apply_default_arguments(
         found, default = _global_default_values.get_default_value(class_type=class_type, parameter_name=name)
         if found:
             arguments[name] = default
-            logger.debug(f"Applied default value for {class_type.__name__}.{name} = {default}")
+            logger.debug("Applied default value for %s.%s = %s", class_type.__name__, name, default)
         elif isinstance(value, _RequiredValueSentinel):
             raise ValueError(
                 f"{name} is required for {class_type.__name__}. "

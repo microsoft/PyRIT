@@ -14,7 +14,7 @@ from collections.abc import Generator
 from contextlib import contextmanager, suppress
 from typing import Any
 
-from pyrit.common.apply_defaults import get_global_default_values
+from pyrit.common.apply_defaults import REQUIRED_VALUE, get_global_default_values
 from pyrit.models.parameter import Parameter
 
 
@@ -29,23 +29,51 @@ class PyRITInitializer(ABC):
     Subclasses must implement `initialize_async`. Description is automatically
     derived from the class docstring. Initializers execute in the order they
     are provided — no explicit execution_order is needed.
+
+    Construction prepares defaults without requiring runtime inputs. Configuration
+    resolves supplied values once; validation checks the bag without replacing it.
     """
 
     def __init__(self) -> None:
         """Initialize the PyRIT initializer with no parameters."""
-        self.params: dict[str, list[str]] = {}
+        from pyrit.registry.resolution import resolve_declared_params
+
+        self.params: dict[str, Any] = resolve_declared_params(
+            declared=self.supported_parameters(),
+            raw_args={},
+            owner=f"Initializer '{type(self).__name__}'",
+            allow_missing_required=True,
+        )
 
     def set_params_from_args(self, *, args: dict[str, Any]) -> None:
         """
-        Set params from a YAML-style args dictionary.
-
-        Converts each value to a list of strings: lists are stringified element-wise,
-        scalars are wrapped in a single-element list.
+        Resolve typed parameters and defaults from YAML or CLI arguments.
 
         Args:
             args: Dictionary of argument names to values (scalars or lists).
+
+        Raises:
+            ValueError: If a parameter value or declaration is invalid.
         """
-        self.params = {k: [str(i) for i in v] if isinstance(v, list) else [str(v)] for k, v in args.items()}
+        from pyrit.registry.resolution import resolve_declared_params
+
+        declared = self.supported_parameters()
+        normalized = dict(args)
+        for parameter in declared:
+            value = normalized.get(parameter.name)
+            if value is None or value is REQUIRED_VALUE:
+                continue
+            if parameter.is_list and not isinstance(value, list):
+                normalized[parameter.name] = [value]
+            elif parameter.is_string_coercible and isinstance(value, list):
+                if len(value) != 1:
+                    raise ValueError(
+                        f"Initializer '{type(self).__name__}' parameter '{parameter.name}' expects exactly one value."
+                    )
+                normalized[parameter.name] = value[0]
+        self.params = resolve_declared_params(
+            declared=declared, raw_args=normalized, owner=f"Initializer '{type(self).__name__}'"
+        )
 
     @property
     def description(self) -> str:
@@ -75,16 +103,13 @@ class PyRITInitializer(ABC):
         """
         return []
 
-    @property
-    def supported_parameters(self) -> list[Parameter]:
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
         """
-        The list of parameters this initializer accepts.
+        Declare the parameters this initializer accepts.
 
-        Override this property to declare what parameters the initializer
+        Override this classmethod to declare what parameters the initializer
         supports. Parameters are set on self.params before initialize_async() is called.
-
-        Note: ``Scenario.supported_parameters`` is a classmethod (so ``--list-scenarios``
-        can introspect without instantiating). Aligning these is a future improvement.
 
         Returns:
             list[Parameter]: List of supported parameters. Defaults to empty list.
@@ -131,21 +156,19 @@ class PyRITInitializer(ABC):
         """
         Validate the configured parameters against supported_parameters.
 
-        Checks that every parameter in ``self.params`` is declared in
-        ``supported_parameters``. Unlike ``validate()``, this does not check
+        Checks required inputs, names, and resolved types without changing the bag.
+        Unlike ``validate()``, this does not check
         required environment variables, so it can be used to fail fast on
         parameter shape at configuration time — before the environment is set up.
 
         Raises:
-            ValueError: If unknown parameters are provided.
+            ValueError: If parameters or their declarations are invalid.
         """
-        supported_names = {p.name for p in self.supported_parameters}
-        unknown = set(self.params.keys()) - supported_names
-        if unknown:
-            raise ValueError(
-                f"Initializer '{type(self).__name__}' received unknown parameter(s): {', '.join(sorted(unknown))}. "
-                f"Supported parameters: {', '.join(sorted(supported_names)) if supported_names else 'none'}"
-            )
+        from pyrit.registry.resolution import validate_declared_params
+
+        validate_declared_params(
+            declared=self.supported_parameters(), params=self.params, owner=f"Initializer '{type(self).__name__}'"
+        )
 
     async def initialize_with_tracking_async(self) -> None:
         """
@@ -293,14 +316,14 @@ class PyRITInitializer(ABC):
         }
 
         # Add supported parameters if any are declared
-        if instance.supported_parameters:
+        if cls.supported_parameters():
             base_info["supported_parameters"] = [
                 {
                     "name": p.name,
                     "description": p.description,
                     "default": p.default,
                 }
-                for p in instance.supported_parameters
+                for p in cls.supported_parameters()
             ]
 
         # Add required environment variables if any are defined

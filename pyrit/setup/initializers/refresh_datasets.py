@@ -60,9 +60,14 @@ class RefreshDatasets(PyRITInitializer):
         """The list of required environment variables."""
         return []
 
-    @property
-    def supported_parameters(self) -> list[Parameter]:
-        """The list of parameters this initializer accepts."""
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        """
+        Declare the initializer parameters.
+
+        Returns:
+            list[Parameter]: Supported inputs and defaults.
+        """
         return [
             Parameter(
                 name="days",
@@ -70,7 +75,7 @@ class RefreshDatasets(PyRITInitializer):
                     "Refresh only datasets whose newest seed is older than this many days. "
                     "0 refreshes every selected dataset regardless of age."
                 ),
-                default=self.DEFAULT_DAYS,
+                default=cls.DEFAULT_DAYS,
                 param_type=int,
             ),
             Parameter(
@@ -82,8 +87,15 @@ class RefreshDatasets(PyRITInitializer):
         ]
 
     async def initialize_async(self) -> None:
-        """Refresh the selected stale datasets in CentralMemory, isolating per-dataset failures."""
-        days = self._parse_days()
+        """
+        Refresh the selected stale datasets, isolating per-dataset failures.
+
+        Raises:
+            ValueError: If the age limit is negative.
+        """
+        days = self.params["days"]
+        if days < 0:
+            raise ValueError("'days' must be non-negative")
         memory = CentralMemory.get_memory_instance()
 
         names_in_memory = set(await memory.get_seed_dataset_names_async())
@@ -195,29 +207,6 @@ class RefreshDatasets(PyRITInitializer):
             dataset_name=dataset_name, seeds=dataset.seeds, added_by=self.ADDED_BY
         )
         logger.info(f"Refreshed dataset '{dataset_name}': replaced {deleted} seeds with {len(dataset.seeds)}")
-
-    def _parse_days(self) -> int:
-        """
-        Parse and validate the ``days`` parameter.
-
-        Returns:
-            int: The validated non-negative staleness threshold.
-
-        Raises:
-            ValueError: If ``days`` is not a single non-negative integer.
-        """
-        raw = self.params.get("days", [])
-        if not raw:
-            return self.DEFAULT_DAYS
-        if len(raw) != 1:
-            raise ValueError(f"'days' must be a single non-negative integer, got {raw}")
-        try:
-            days = int(raw[0])
-        except (TypeError, ValueError):
-            raise ValueError(f"'days' must be a non-negative integer, got {raw[0]!r}") from None
-        if days < 0:
-            raise ValueError(f"'days' must be non-negative, got {days}")
-        return days
 
     @staticmethod
     def _require_matching_dataset(*, fetched: list[SeedDataset], dataset_name: str) -> SeedDataset:

@@ -21,23 +21,24 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.models.catalog.scenario import (
-    _RequestFilters,
+    ScenarioLaunchConfiguration,
     _RequestName,
-    _RequestNames,
     _RequestParams,
     _RequestTechniques,
-    _validate_dataset_filter_mapping,
 )
 from pyrit.models.identifiers.class_name_utils import validate_registry_name
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier, Identifiable
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_TEXT_LENGTH
+from pyrit.models.scenario_dataset import ScenarioDatasetRequest
 
 PRESET_SCHEMA_VERSION = 1
 
 # Excluded from the behavioral identity: ``name`` is the registry key rather than
-# configuration, ``schema_version`` describes the document shape, and ``description`` and
-# ``author`` are descriptive. Naming the exclusions rather than the inclusions means a
-# configuration field added later counts as behavioral without touching this.
-_NON_BEHAVIORAL_FIELDS = frozenset({"name", "schema_version", "description", "author"})
+# configuration, ``schema_version`` describes the document shape, ``description`` and
+# ``author`` are descriptive, and ``show_in_scanner`` only decides where the preset is
+# offered. Naming the exclusions rather than the inclusions means a configuration field
+# added later counts as behavioral without touching this.
+_NON_BEHAVIORAL_FIELDS = frozenset({"name", "schema_version", "description", "author", "show_in_scanner"})
 
 
 class ScenarioPreset(BaseModel, Identifiable):
@@ -58,20 +59,36 @@ class ScenarioPreset(BaseModel, Identifiable):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(..., description="Unique preset name, used as the storage key and as the reference from scans")
-    schema_version: int = Field(PRESET_SCHEMA_VERSION, ge=1, description="Shape of this document")
+    name: str = Field(
+        ...,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Unique preset name, used as the storage key and as the reference from scans",
+    )
+    # Literal rather than PRESET_SCHEMA_VERSION: a document written before this field existed
+    # is a version 1 document, and must keep reading back as one after the constant is bumped.
+    # Defaulting to the constant would relabel those documents as the newest version while they
+    # still hold the oldest content, so a migration would skip exactly the documents needing it.
+    schema_version: int = Field(1, ge=1, description="Shape of this document")
     scenario_name: _RequestName = Field(..., min_length=1, description="Registered scenario this preset configures")
-    description: str | None = Field(None, description="Human-readable summary of what this preset tests")
+    description: str | None = Field(
+        None, max_length=MAX_TEXT_LENGTH, description="Human-readable summary of what this preset tests"
+    )
     author: str | None = Field(
         None,
+        max_length=MAX_IDENTIFIER_LENGTH,
         description="Who created this preset; descriptive only, never used to authorize a read or a write",
     )
+    show_in_scanner: bool = Field(
+        True,
+        description=(
+            "Whether the Scanner lists this preset as an entry of its own. Hide a preset that exists only "
+            "to run inside a scenario suite; a hidden preset still runs through its suites."
+        ),
+    )
     techniques: _RequestTechniques | None = Field(None, description="Technique names; None uses the scenario default")
-    dataset_names: _RequestNames | None = Field(None, description="Dataset names; None uses the scenario default")
-    max_dataset_size: int | None = Field(None, ge=1, description="Maximum selected logical seed groups")
-    dataset_filters: _RequestFilters | None = Field(
+    datasets: ScenarioDatasetRequest | None = Field(
         None,
-        description="Dataset seed filters keyed by field. Accepted keys: harm_categories, data_types.",
+        description="Dataset sources, limits, fetch policy, and filters. Omit to use the scenario defaults.",
     )
     include_baseline: bool | None = Field(None, description="Override the scenario baseline default")
     scenario_params: _RequestParams | None = Field(
@@ -92,17 +109,6 @@ class ScenarioPreset(BaseModel, Identifiable):
         """
         validate_registry_name(value)
         return value
-
-    @field_validator("dataset_filters")
-    @classmethod
-    def _validate_dataset_filters(cls, value: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
-        """
-        Validate dataset filters against the shared allow-list.
-
-        Returns:
-            dict[str, list[str]] | None: Validated filters.
-        """
-        return _validate_dataset_filter_mapping(value)
 
     @field_validator("schema_version")
     @classmethod
@@ -153,6 +159,22 @@ class ScenarioPreset(BaseModel, Identifiable):
             ComponentIdentifier: Identity derived from the current field values.
         """
         return self._build_identifier()
+
+
+class ResolveScenarioPresetRequest(ScenarioLaunchConfiguration):
+    """
+    Launch-owned fields a preset deliberately omits.
+
+    ``expected_version`` is a precondition rather than launch configuration. A
+    caller that previewed a stored preset supplies that opaque version so an edit
+    landing before launch is reported instead of silently changing the run.
+    """
+
+    expected_version: str | None = Field(
+        None,
+        max_length=MAX_IDENTIFIER_LENGTH,
+        description="Version the caller resolved against; omit to resolve the current definition",
+    )
 
 
 class StoredPreset(BaseModel):

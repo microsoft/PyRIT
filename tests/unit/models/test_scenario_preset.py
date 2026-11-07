@@ -7,6 +7,7 @@ import pytest
 
 from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION, ScenarioPreset
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
+from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
 
 
 def test_init_defaults_every_optional_field_to_none() -> None:
@@ -14,9 +15,7 @@ def test_init_defaults_every_optional_field_to_none() -> None:
     preset = ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent")
 
     assert preset.techniques is None
-    assert preset.dataset_names is None
-    assert preset.max_dataset_size is None
-    assert preset.dataset_filters is None
+    assert preset.datasets is None
     assert preset.include_baseline is None
     assert preset.scenario_params is None
     assert preset.description is None
@@ -27,9 +26,25 @@ def test_preset_carries_no_storage_version() -> None:
     assert "version" not in ScenarioPreset.model_fields
 
 
+def test_show_in_scanner_defaults_to_listed() -> None:
+    """Test that a preset written before the flag existed stays listed in the Scanner."""
+    assert ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent").show_in_scanner is True
+
+
 def test_schema_version_defaults_so_a_document_without_it_still_reads() -> None:
     """Test that a document written before the field existed is read as the first shape."""
     assert ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent").schema_version == 1
+
+
+def test_schema_version_default_does_not_track_the_current_schema_version() -> None:
+    """
+    Test that the default stays pinned to 1 as PRESET_SCHEMA_VERSION grows.
+
+    A key-less document is a version 1 document. If the default tracked the constant, bumping
+    the constant would relabel every such document as the newest shape while it still held the
+    oldest content, and a migration keyed on the version would skip exactly those documents.
+    """
+    assert ScenarioPreset.model_fields["schema_version"].default == 1
 
 
 def test_init_rejects_a_document_shape_this_build_cannot_read() -> None:
@@ -65,7 +80,7 @@ def test_init_rejects_unknown_dataset_filter() -> None:
         ScenarioPreset(
             name="nightly",
             scenario_name="foundry.red_team_agent",
-            dataset_filters={"not_a_field": ["x"]},
+            datasets=ScenarioDatasetRequest(filters={"not_a_field": ["x"]}),
         )
 
 
@@ -74,16 +89,48 @@ def test_init_accepts_known_dataset_filters() -> None:
     preset = ScenarioPreset(
         name="nightly",
         scenario_name="foundry.red_team_agent",
-        dataset_filters={"harm_categories": ["violence"], "data_types": ["text"]},
+        datasets=ScenarioDatasetRequest(filters={"harm_categories": ["violence"], "data_types": ["text"]}),
     )
 
-    assert preset.dataset_filters == {"harm_categories": ["violence"], "data_types": ["text"]}
+    assert preset.datasets is not None
+    assert preset.datasets.filters == {"harm_categories": ["violence"], "data_types": ["text"]}
 
 
-def test_init_rejects_zero_max_dataset_size() -> None:
+def test_init_rejects_zero_dataset_limit() -> None:
     """Test that a dataset cap must select at least one item."""
     with pytest.raises(ValueError):
-        ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent", max_dataset_size=0)
+        ScenarioPreset(
+            name="nightly",
+            scenario_name="foundry.red_team_agent",
+            datasets=ScenarioDatasetRequest(max_total=0),
+        )
+
+
+def test_init_accepts_the_unbounded_dataset_limit() -> None:
+    """Test the limit the flat schema could not express, which motivated adopting this model."""
+    preset = ScenarioPreset(
+        name="nightly",
+        scenario_name="foundry.red_team_agent",
+        datasets=ScenarioDatasetRequest(max_total="all", max_per_dataset="all"),
+    )
+
+    assert preset.datasets is not None
+    assert preset.datasets.max_total == "all"
+    assert preset.datasets.max_per_dataset == "all"
+
+
+def test_init_carries_per_source_dataset_settings() -> None:
+    """Test that a preset can pin a limit to one named source, not only to the whole run."""
+    preset = ScenarioPreset(
+        name="nightly",
+        scenario_name="foundry.red_team_agent",
+        datasets=ScenarioDatasetRequest(sources=[DatasetSourceInput(name="harmbench", max_size=5)]),
+    )
+
+    assert preset.datasets is not None
+    assert preset.datasets.sources is not None
+    assert preset.datasets.sources[0].name == "harmbench"
+    assert preset.datasets.sources[0].max_size == 5
 
 
 def test_init_rejects_empty_scenario_name() -> None:
@@ -115,7 +162,7 @@ def test_init_rejects_a_preset_too_large_to_launch() -> None:
         ScenarioPreset(
             name="nightly",
             scenario_name="foundry.red_team_agent",
-            dataset_names=["x" * (MAX_IDENTIFIER_LENGTH + 1)],
+            datasets=ScenarioDatasetRequest(sources=[DatasetSourceInput(name="x" * (MAX_IDENTIFIER_LENGTH + 1))]),
         )
 
     with pytest.raises(ValueError):
@@ -155,6 +202,20 @@ def test_identity_covers_configuration_and_ignores_description() -> None:
     assert preset.get_identifier().unique_name != reconfigured.get_identifier().unique_name
 
 
+def test_identity_ignores_scanner_visibility() -> None:
+    """Test that hiding a preset from the Scanner does not change what it runs."""
+    preset = ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent", techniques=["crescendo"])
+    hidden = ScenarioPreset(
+        name="nightly",
+        scenario_name="foundry.red_team_agent",
+        techniques=["crescendo"],
+        show_in_scanner=False,
+    )
+
+    assert hidden.get_identifier().unique_name == preset.get_identifier().unique_name
+    assert "show_in_scanner" not in hidden.get_identifier().params
+
+
 def test_identity_is_rebuilt_so_a_modified_copy_does_not_report_the_original() -> None:
     """Test that a copy edited through ``model_copy`` is not given the original's identity."""
     preset = ScenarioPreset(name="nightly", scenario_name="foundry.red_team_agent", techniques=["crescendo"])
@@ -171,12 +232,12 @@ def test_identity_params_are_json_safe_for_nested_configuration() -> None:
     preset = ScenarioPreset(
         name="nightly",
         scenario_name="foundry.red_team_agent",
-        dataset_filters={"harm_categories": ["violence"]},
+        datasets=ScenarioDatasetRequest(filters={"harm_categories": ["violence"]}),
         scenario_params={"max_turns": 3},
     )
 
     params = preset.get_identifier().params
 
-    assert params["dataset_filters"] == {"harm_categories": ["violence"]}
+    assert params["datasets"]["filters"] == {"harm_categories": ["violence"]}
     assert params["scenario_params"] == {"max_turns": 3}
     assert "name" not in params

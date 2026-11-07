@@ -60,14 +60,24 @@ class OpenAITarget(PromptTarget):
     _response_adapter: OpenAIResponseAdapter[Any] = OpenAIResponseAdapter()
 
     # OpenAI-family targets can mint an Entra ID token for a recognized Azure
-    # endpoint (see ``is_azure_openai_endpoint``), so they support both modes.
-    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity")
+    # endpoint (see ``is_azure_openai_endpoint``), and OpenAI-compatible servers
+    # such as Ollama or vLLM may need no key at all.
+    supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity", "none")
 
     model_name_environment_variable: str
     endpoint_environment_variable: str
     api_key_environment_variable: str
 
     _async_client: AsyncOpenAI | None = None
+    _reconstruction_parameters: dict[str, object] = {}
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Opt in OpenAI implementations to server-only reconstruction."""
+        super().__init_subclass__(**kwargs)
+        if "__init__" in cls.__dict__:
+            from pyrit.common.constructor_capture import capture_constructor_parameters
+
+            type.__setattr__(cls, "__init__", capture_constructor_parameters(cls.__init__))
 
     @property
     def _client(self) -> AsyncOpenAI:
@@ -110,9 +120,13 @@ class OpenAITarget(PromptTarget):
             auth_mode (AuthMode, Optional): Explicitly selects how to authenticate. ``"identity"``
                 authenticates with a Microsoft Entra ID token minted for the endpoint; it ignores the
                 API key environment variable, rejects an explicit ``api_key``, and requires a
-                recognized Azure OpenAI / AI Foundry endpoint. Defaults to ``"api_key"``, which
-                resolves the key as described above.
-            headers (str, Optional): Extra headers of the endpoint (JSON).
+                recognized Azure OpenAI / AI Foundry endpoint. ``"none"`` is for OpenAI-compatible
+                endpoints that need no key: it reads neither the API key nor the
+                ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` environment variable, rejects an explicit
+                ``api_key``, and sends the non-secret placeholder ``not-needed`` because the OpenAI
+                SDK requires a key. Defaults to ``"api_key"``, which resolves the key as described above.
+            headers (str, Optional): Extra headers of the endpoint (JSON). Defaults to the
+                ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` environment variable unless ``auth_mode`` is ``"none"``.
             max_requests_per_minute (int, Optional): Number of requests the target can handle per
                 minute before hitting a rate limit. The number of requests sent to the target
                 will be capped at the value provided.
@@ -128,14 +142,20 @@ class OpenAITarget(PromptTarget):
 
         Raises:
             ValueError: If identity auth is requested for an endpoint that is not a recognized
-                Azure OpenAI / AI Foundry endpoint, or if ``"api_key"`` auth is requested and no
-                key is available via parameter or environment variable.
+                Azure OpenAI / AI Foundry endpoint, if identity or no-key auth is requested with an
+                explicit ``api_key``, or if ``"api_key"`` auth is requested and no key is available
+                via parameter or environment variable.
         """
         self._headers: dict[str, str] = {}
         self._httpx_client_kwargs = httpx_client_kwargs or {}
+        self._auth_mode = auth_mode
 
-        request_headers = default_values.get_non_required_value(
-            env_var_name=self.ADDITIONAL_REQUEST_HEADERS, passed_value=headers
+        request_headers = (
+            headers
+            if auth_mode == "none"
+            else default_values.get_non_required_value(
+                env_var_name=self.ADDITIONAL_REQUEST_HEADERS, passed_value=headers
+            )
         )
 
         self._headers = self._parse_request_headers(request_headers)
@@ -167,6 +187,52 @@ class OpenAITarget(PromptTarget):
         )
 
         self._initialize_openai_client()
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        """
+        Return server-only inputs, including resolved authentication.
+
+        Returns:
+            dict[str, object]: Resolved constructor inputs.
+
+        Raises:
+            ValueError: If the source has an unsupported resource or temperature setting.
+        """
+        if self._httpx_client_kwargs.get("http_client") is not None:
+            raise ValueError(
+                f"{type(self).__name__} cannot be recreated with different settings because it uses a custom "
+                "HTTP client supplied through httpx_client_kwargs['http_client']."
+            )
+        if "temperature" in (getattr(self, "_extra_body_parameters", None) or {}):
+            raise ValueError(
+                "Separate temperature settings are not supported when extra_body_parameters sets temperature"
+            )
+        identifier = self.get_identifier()
+        return {
+            **self._reconstruction_parameters,
+            **identifier.params,
+            **identifier.promoted_scalar_values(),
+            "model_name": self._model_name,
+            "endpoint": self._endpoint,
+            # Reuse the resolved key or token provider, not the original credential-selection mode. A no-key
+            # target stays no-key, so a copy that overrides api_key or headers can't pick up a server value.
+            "api_key": None if self._auth_mode == "none" else self._api_key,
+            "auth_mode": "none" if self._auth_mode == "none" else "api_key",
+            "headers": json.dumps(self._headers),
+            "max_requests_per_minute": self._max_requests_per_minute,
+            "httpx_client_kwargs": dict(self._httpx_client_kwargs),
+            "underlying_model": self._underlying_model,
+            "custom_configuration": self.configuration,
+        }
+
+    async def cleanup_target_async(self) -> None:
+        """Close this target's SDK client."""
+        if self._async_client is not None:
+            await self._async_client.close()
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """Share request pacing, not clients or behavioral configuration."""
+        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
     @classmethod
     def get_auth_mode_parameters(cls, *, auth_mode: AuthMode) -> dict[str, object]:

@@ -255,7 +255,8 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
     for conv in items:
         name = conv.get("converter_id", "unknown")
         _header(name)
-        print(f"    Class: {conv.get('converter_type', '')}")
+        identifier = conv.get("identifier") or {}
+        print(f"    Class: {identifier.get('class_name', '')}")
         display_name = conv.get("display_name") or ""
         if display_name:
             print(f"    Name: {display_name}")
@@ -495,7 +496,12 @@ async def _collect_conversation_entries_async(
     entries: list[tuple[str, Any, list[dict[str, Any]]]] = []
     for atomic_attack_name, attack_result in selected:
         source = RestApiConversationSource(client=client, attack_result_id=attack_result.attack_result_id)
-        messages = await source.get_messages_async(conversation_id=attack_result.conversation_id)
+        # Orchestration envelopes have no conversation of their own.
+        messages = (
+            await source.get_messages_async(conversation_id=attack_result.conversation_id)
+            if attack_result.conversation_id
+            else []
+        )
         structured = await JsonConversationPrinter(source=source).build_async(
             messages,
             include_scores=objective_scorer_identifier is not None,
@@ -543,7 +549,7 @@ async def print_conversations_async(
         return
 
     from pyrit.cli._sources import RestApiConversationSource
-    from pyrit.output._derivation import attack_score_display, select_attacks
+    from pyrit.output._derivation import attack_score_display, attack_technique_label, select_attacks
     from pyrit.output.conversation.pretty import PrettyConversationPrinter
 
     selected = select_attacks(result, attack_result_ids=attack_result_ids)
@@ -558,8 +564,9 @@ async def print_conversations_async(
     objective_scorer_identifier = result.objective_scorer_identifier
     _header(f"Conversations — scenario {scenario_result_id}")
     for index, (atomic_attack_name, attack_result) in enumerate(selected, start=1):
+        technique = attack_technique_label(atomic_attack_name=atomic_attack_name, attack=attack_result)
         _cprint(
-            f"  {index}. [{attack_result.outcome.value.upper()}] {atomic_attack_name}  "
+            f"  {index}. [{attack_result.outcome.value.upper()}] {technique}  "
             f"turns={attack_result.executed_turns}  score={attack_score_display(attack_result, none_value='-')}",
             color=_OUTCOME_COLORS.get(attack_result.outcome.value),
             bold=True,
@@ -567,7 +574,12 @@ async def print_conversations_async(
         print(f"       id:        {attack_result.attack_result_id}")
         print(f"       objective: {attack_result.objective}")
         source = RestApiConversationSource(client=client, attack_result_id=attack_result.attack_result_id)
-        messages = await source.get_messages_async(conversation_id=attack_result.conversation_id)
+        # Orchestration envelopes have no conversation of their own.
+        messages = (
+            await source.get_messages_async(conversation_id=attack_result.conversation_id)
+            if attack_result.conversation_id
+            else []
+        )
         printer = PrettyConversationPrinter(source=source)
         print(
             await printer.render_async(

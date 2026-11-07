@@ -76,6 +76,6 @@ class AudioTrueFalseScorer(MessageTrueFalseScorer):
             parent.scorable = None
             parent.message_piece_id = message_piece.id
             rationale = score.score_rationale or ""
-            parent.score_rationale = f"{rationale}\nAudio transcript scored: {rationale}"
+            parent.score_rationale = f"Audio transcript scored: {rationale}"
             results.append(parent)
         return results

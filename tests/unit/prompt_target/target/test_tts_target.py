@@ -193,6 +193,33 @@ async def test_tts_send_prompt_async_rate_limit_exception_retries(
             await tts_target.send_prompt_async(message=request)
 
 
+@pytest.mark.parametrize(
+    "speed",
+    [
+        0,
+        0.1,
+        -1.0,
+        4.5,
+        10,
+        float("nan"),
+        float("inf"),
+        True,
+        "1.5",
+        pytest.param(10**400, id="oversized-positive-int"),
+        pytest.param(-(10**400), id="oversized-negative-int"),
+    ],
+)
+def test_tts_rejects_invalid_speed(patch_central_database, speed) -> None:
+    with pytest.raises(ValueError, match="speed must be a finite number from 0.25 to 4.0"):
+        OpenAITTSTarget(model_name="test", endpoint="test", api_key="test", speed=speed)
+
+
+@pytest.mark.parametrize("speed", [None, 0.25, 1, 1.5, 4.0])
+def test_tts_accepts_valid_speed(patch_central_database, speed) -> None:
+    tts_target = OpenAITTSTarget(model_name="test", endpoint="test", api_key="test", speed=speed)
+    assert tts_target._speed == speed
+
+
 async def test_tts_send_prompt_with_speed_parameter(
     patch_central_database,
     sample_conversations: MutableSequence[MessagePiece],

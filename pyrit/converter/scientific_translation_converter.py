@@ -98,8 +98,10 @@ class ScientificTranslationConverter(LLMGenericTextConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter including the mode.
         """
+        base_identifier = super()._build_identifier()
         return self._create_identifier(
             params={
+                **base_identifier.params,
                 "mode": self._mode,
             },
             converter_target=self._converter_target.get_identifier(),

@@ -1,16 +1,19 @@
 import { useEffect } from 'react'
 
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { FluentProvider, Input, webLightTheme } from '@fluentui/react-components'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 
 import { attacksApi, convertersApi } from '@/services/api'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
-import type { AddMessageResponse, BackendMessage, ConversationDraftMessage, TargetInstance } from '@/types'
+import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import HelpField from '@/components/HelpField'
+import type { AddMessageResponse, BackendMessage, ChatConverterSnapshot, ConversationDraftMessage, TargetInstance } from '@/types'
 import { toConversationDraft } from '@/utils/conversationDraft'
 
 import ConversationEditor from './ConversationEditor'
+import * as converterPanelModule from './ConverterPanel/ConverterPanel'
 
 jest.mock('@/services/api', () => ({
   attacksApi: { saveConversation: jest.fn() },
@@ -38,8 +41,12 @@ function setupEditor(
   disabledReason?: string,
   target?: TargetInstance,
   newAttackDisabledReason?: string,
+  initialConverters?: ChatConverterSnapshot,
+  contextualHelp = false,
+  unsavedImport?: boolean,
 ) {
   const onSaved = jest.fn()
+  const onExit = jest.fn()
   function EditorHarness() {
     const controller = useConversationDraft()
     const { begin } = controller
@@ -47,17 +54,40 @@ function setupEditor(
       begin({
         messages, initialObjective: 'Objective', objective: 'Objective', target: target ?? null,
         sourceAttackId: 'source-attack', sourceConversationId: 'source-conversation', labels: { operator: 'owner' },
+        unsavedImport,
       })
     }, [begin])
-    return controller.draft && <ConversationEditor controller={controller}
-      sameAttackDisabledReason={disabledReason} newAttackDisabledReason={newAttackDisabledReason} onSaved={onSaved} />
+    const leaveEditor = async (): Promise<boolean> => {
+      onExit()
+      if (controller.dirty) return controller.save('same_attack', onSaved)
+      controller.discard()
+      return true
+    }
+    return controller.draft && <>
+      {contextualHelp && <>
+        <div data-conversation-editor-controls>
+          <HelpField label="Objective target" help="The model or endpoint you are testing."><Input /></HelpField>
+        </div>
+        <p>Outside the editor</p>
+      </>}
+      <ConversationEditor controller={controller}
+        initialConverters={initialConverters}
+        onExit={contextualHelp ? leaveEditor : undefined}
+        sameAttackDisabledReason={disabledReason} newAttackDisabledReason={newAttackDisabledReason} onSaved={onSaved} />
+    </>
   }
   const router = createMemoryRouter([{
     path: '/',
     element: <EditorHarness />,
   }, { path: '/next', element: <p>Next page</p> }])
-  const { unmount } = render(<FluentProvider theme={webLightTheme}><RouterProvider router={router} /></FluentProvider>)
-  return { onSaved, router, unmount }
+  const { unmount } = render(
+    <FluentProvider theme={webLightTheme}>
+      <UserPreferencesProvider accountKey={null}>
+        <RouterProvider router={router} />
+      </UserPreferencesProvider>
+    </FluentProvider>,
+  )
+  return { onSaved, onExit, router, unmount }
 }
 
 describe('ConversationEditor', () => {
@@ -66,6 +96,85 @@ describe('ConversationEditor', () => {
     jest.mocked(attacksApi.saveConversation).mockImplementation(() => new Promise(() => {}))
     jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [] })
     jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [] })
+  })
+
+  it.each(['note', 'tooltip'] as const)('keeps a dirty editor open when reading and selecting contextual help in a %s', async (role: 'note' | 'tooltip') => {
+    const user = userEvent.setup()
+    const { onExit, onSaved } = setupEditor(undefined, undefined, undefined, undefined, undefined, true)
+    const prompt = within(screen.getByRole('region', { name: 'Message 1' })).getAllByPlaceholderText('Type prompt here')[0]
+    await user.clear(prompt)
+    await user.type(prompt, 'Unsaved changes')
+    if (role === 'note') {
+      await user.click(screen.getByRole('button', { name: /Objective target.*information/i }))
+    } else {
+      await user.hover(screen.getByText('Objective target'))
+    }
+    const help = await screen.findByRole(role)
+    expect(help).toHaveTextContent('The model or endpoint you are testing.')
+    expect(help).toHaveAttribute('data-conversation-editor-controls')
+    await user.click(help)
+    expect(onExit).not.toHaveBeenCalled()
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    await user.pointer([
+      { keys: '[MouseLeft>]', target: help, offset: 0 },
+      { target: help, offset: 10 },
+      { keys: '[/MouseLeft]' },
+    ])
+    expect(window.getSelection()?.toString()).toBe('The model ')
+    expect(onExit).not.toHaveBeenCalled()
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(screen.getByTestId('conversation-editor')).toBeVisible()
+    expect(prompt).toHaveValue('Unsaved changes')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await user.click(screen.getByText('Outside the editor'))
+    expect(onExit).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].messages[0].pieces[0].original_value).toBe('Unsaved changes')
+  })
+
+  it('dismisses nested contextual help with Escape without saving or discarding a dirty editor', async () => {
+    const user = userEvent.setup()
+    const { onExit } = setupEditor(undefined, undefined, undefined, undefined, undefined, true)
+    const prompt = within(screen.getByRole('region', { name: 'Message 1' })).getAllByPlaceholderText('Type prompt here')[0]
+    await user.type(prompt, ' changed')
+    const information = screen.getByRole('button', { name: /Objective target.*information/i })
+    await user.click(information)
+    expect(await screen.findByRole('note')).toBeVisible()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('note')).not.toBeInTheDocument())
+    await waitFor(() => expect(information).toHaveFocus())
+    expect(onExit).not.toHaveBeenCalled()
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    expect(prompt).toHaveValue('First piece changed')
+    expect(screen.getByTestId('conversation-editor')).toBeVisible()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await user.click(screen.getByText('Objective target'))
+    expect(screen.getByRole('textbox', { name: 'Objective target' })).toHaveFocus()
+    expect(onExit).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])('cancels without a discard warning after unmatched conversions (empty: %s)', async (empty: boolean) => {
+    const user = userEvent.setup()
+    const panel = jest.spyOn(converterPanelModule, 'default').mockImplementation(({ onApply }: Parameters<typeof converterPanelModule.default>[0]) => (
+      <button onClick={() => onApply?.(empty ? {} : {
+        missing: {
+          pieceId: 'missing', pieceType: 'text', originalValue: 'Removed prompt',
+          convertedValue: 'Converted', convertedDataType: 'text', converterInstanceIds: ['converter'],
+        },
+      })}>Apply conversions</button>
+    ))
+    try {
+      setupEditor()
+      await user.click(within(screen.getByRole('region', { name: 'Message 1' })).getAllByRole('button', { name: 'Toggle converter panel' })[0])
+      await user.click(screen.getByRole('button', { name: 'Apply conversions' }))
+      await user.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('conversation-editor')).not.toBeInTheDocument()
+    } finally {
+      panel.mockRestore()
+    }
   })
 
   it('saves the active editor without Done and preserves piece order and source references', async () => {
@@ -85,6 +194,80 @@ describe('ConversationEditor', () => {
     expect(request.messages[0].pieces[1].converted_value).toBe('Converted second')
     expect(request.messages[1].role).toBe('simulated_assistant')
     expect(source[0].message_pieces[0].original_value).toBe('First piece')
+  })
+
+  it('preserves an untouched converted piece when editing and clearing another working input', async () => {
+    const user = userEvent.setup()
+    const messages = toConversationDraft(source)
+    messages[0].pieces[0] = {
+      ...messages[0].pieces[0], converted_value: 'Converted first',
+      converted_value_data_type: 'text', applied_converter_ids: ['first-converter'],
+    }
+    messages[0].pieces[1].applied_converter_ids = ['second-converter']
+    setupEditor(messages)
+    const first = within(screen.getByRole('region', { name: 'Message 1' }))
+    await user.click(first.getAllByRole('button', { name: 'Toggle converter panel' })[0])
+    const input = screen.getAllByRole('textbox', { name: 'Working input - Message 1: text' })[0]
+    await user.clear(input)
+    await user.type(input, 'Manual first')
+    expect(first.getAllByRole('textbox', { name: 'Converted prompt' })[1]).toHaveValue('Converted second')
+    await user.clear(input)
+    await user.type(input, 'First piece')
+    expect(first.getAllByRole('textbox', { name: 'Converted prompt' })).toHaveLength(1)
+    expect(first.getByRole('textbox', { name: 'Converted prompt' })).toHaveValue('Converted second')
+    await user.click(screen.getByRole('button', { name: 'Close converters' }))
+    await user.click(screen.getByRole('button', { name: 'Save conversation' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))
+    await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledTimes(1))
+    const pieces = jest.mocked(attacksApi.saveConversation).mock.calls[0][0].messages[0].pieces
+    expect(pieces[0].converted_value).toBeUndefined()
+    expect(pieces[1]).toMatchObject({
+      original_value: 'Second piece', converted_value: 'Converted second', converted_value_data_type: 'text',
+      applied_converter_ids: ['second-converter'], source_piece_id: 'source-2',
+    })
+  })
+
+  it('applies a temporary converter immediately and saves its signed provenance', async () => {
+    const user = userEvent.setup()
+    const temporary = { source_name: 'caesar', source_hash: 'registered-hash', params: { caesar_offset: 3 } }
+    jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [{
+      converter_id: 'caesar', is_llm_based: false, reconstructable: true,
+      identifier: {
+        class_name: 'CaesarConverter', class_module: 'pyrit.converter', hash: 'registered-hash',
+        pyrit_version: 'test', supported_input_types: ['text'], supported_output_types: ['text'],
+      },
+    }] })
+    jest.mocked(convertersApi.previewConversion).mockResolvedValue({
+      original_value: 'First piece', original_value_data_type: 'text',
+      converted_value: 'Private output', converted_value_data_type: 'text',
+      steps: [{
+        converter_id: 'caesar', converter_type: 'CaesarConverter',
+        input_value: 'First piece', input_data_type: 'text', output_value: 'Private output',
+        output_data_type: 'text', provenance: 'signed-private-stage',
+      }],
+    })
+    const messages = toConversationDraft([source[0]])
+    messages[0].pieces = messages[0].pieces.slice(0, 1)
+    setupEditor(messages, undefined, undefined, undefined, {
+      generation: '', pipelines: { text: [{ id: 'private-stage', converterId: 'caesar', temporary }] },
+      workingInputs: {}, stageResults: {}, errors: {}, applied: {},
+    })
+    await user.click(screen.getByRole('button', { name: 'Toggle converter panel' }))
+    const panel = await screen.findByTestId('converter-panel')
+    await user.click(within(panel).getByRole('button', { name: 'Convert 1 message' }))
+    expect(await screen.findByRole('textbox', { name: 'Converted prompt' })).toHaveValue('Private output')
+    expect(convertersApi.previewConversion).toHaveBeenCalledWith({
+      original_value: 'First piece', original_value_data_type: 'text',
+      converter_ids: ['caesar'], converter_specs: [temporary],
+    })
+    await user.click(screen.getByRole('button', { name: 'Close converters' }))
+    await user.click(screen.getByRole('button', { name: 'Save conversation' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))
+    await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].messages[0].pieces[0]).toMatchObject({
+      converted_value: 'Private output', applied_converter_ids: ['caesar'],
+      applied_converter_provenance: ['signed-private-stage'],
+    })
   })
 
   it('switches from one-message stage view to batch final-only view through chat selection', async () => {
@@ -135,7 +318,7 @@ describe('ConversationEditor', () => {
     setupEditor(undefined, 'No saved attack exists yet.', undefined, 'Default labels are not ready.')
     await user.click(screen.getByRole('button', { name: 'Save conversation' }))
     expect(screen.getByRole('radio', { name: 'New attack' })).toBeChecked()
-    expect(screen.getByText('Default labels are not ready.')).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('Default labels are not ready.')).toBeInTheDocument()
     const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' })
     expect(confirm).toBeDisabled()
     await user.click(confirm)
@@ -251,12 +434,15 @@ describe('ConversationEditor', () => {
     expect(screen.queryByText('Next page')).not.toBeInTheDocument()
   })
 
-  it('uploads a file as a separate ordered piece without persisting its object URL', async () => {
+  it.each(['picker', 'drop'])('should add a file from %s as an ordered piece without persisting its object URL', async (inputMethod: string) => {
     const user = userEvent.setup()
     setupEditor()
     const first = screen.getByRole('region', { name: 'Message 1' })
     const file = new File(['file bytes'], 'sample.txt', { type: 'text/plain' })
-    await user.upload(within(first).getAllByTestId('file-input')[0], file)
+    if (inputMethod === 'picker') await user.upload(within(first).getAllByTestId('file-input')[0], file)
+    else fireEvent.drop(within(first).getAllByTestId('prompt-editor')[0], {
+      dataTransfer: { types: ['Files'], files: [file] },
+    })
     expect(within(first).getAllByText(/sample\.txt/)).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Save conversation' }))
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))
@@ -287,6 +473,34 @@ describe('ConversationEditor', () => {
       })
     })
     expect(onSaved).not.toHaveBeenCalled()
+  })
+
+  it('protects untouched imported content from silent discard on cancel and navigation', async () => {
+    const user = userEvent.setup()
+    const { router } = setupEditor(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      true,
+    )
+    expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
+
+    // 1. Clicking Cancel without editing prompts for discard confirmation
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.queryByRole('dialog', { name: 'Discard conversation draft?' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
+
+    // 2. Navigating away without editing blocks navigation and prompts for discard confirmation
+    await act(async () => { await router.navigate('/next') })
+    expect(screen.getByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.queryByText('Next page')).not.toBeInTheDocument()
+    expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
   })
 })
 

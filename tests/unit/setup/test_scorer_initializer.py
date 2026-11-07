@@ -280,7 +280,7 @@ class TestScorerInitializerInitialize:
         os.environ.update(self.CONTENT_SAFETY_ENV_VARS)
 
         init = ScorerInitializer()
-        init.params = {"tags": ["default"]}
+        init.set_params_from_args(args={"tags": ["default"]})
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()

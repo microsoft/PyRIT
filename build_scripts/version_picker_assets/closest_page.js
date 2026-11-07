@@ -19,7 +19,7 @@
  * with the entire contents of this file.
  *
  * Tests load this file directly in node (tests/unit/build_scripts/
- * test_closest_page.py) and exercise findClosestPage() against fixtures so
+ * test_closest_page.cjs) and exercise findClosestPage() against fixtures so
  * we catch behavioral regressions in the real code, not a Python port.
  *
  * Conventions:

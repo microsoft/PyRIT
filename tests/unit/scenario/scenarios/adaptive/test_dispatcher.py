@@ -6,16 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy import select
 
-from pyrit.executor.attack import AttackStrategy, PromptSendingAttack
+from pyrit.executor.attack import AttackScoringConfig, AttackStrategy, PromptSendingAttack
 from pyrit.executor.attack.compound.sequential_attack import (
     SequenceCompletionPolicy,
     SequentialAttack,
 )
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
+    AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackOutcome,
+    AttackResult,
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
     SeedGroupRequirements,
@@ -25,6 +27,7 @@ from pyrit.models import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import (
     AttackTechnique,
+    AttackTechniqueFactory,
     IncompatibleTechniqueError,
     IncompatibleTechniquePolicy,
     TechniqueRequirements,
@@ -101,6 +104,39 @@ class TestDispatcherInit:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestCompatibleTechniques:
+    @pytest.mark.parametrize("case", ["neither", "both", "missing_scoring", "unused_scoring"])
+    def test_bundle_rejects_ambiguous_or_unused_construction_inputs(self, case: str) -> None:
+        attack = MagicMock(spec=PromptSendingAttack)
+        factory = AttackTechniqueFactory(name="factory", attack_class=PromptSendingAttack)
+        inputs = {
+            "neither": {},
+            "both": {"attack": attack, "factory": factory},
+            "missing_scoring": {"factory": factory},
+            "unused_scoring": {"attack": attack, "attack_scoring_config": AttackScoringConfig()},
+        }
+        with pytest.raises(ValueError, match="Supply an attack|scoring"):
+            TechniqueBundle(**inputs[case])
+
+    @pytest.mark.parametrize("policy", list(IncompatibleTechniquePolicy))
+    def test_preconstructed_attacks_cannot_silently_ignore_group_prompts(
+        self, *, policy: IncompatibleTechniquePolicy, target: PromptTarget, selector: _StubSelector
+    ) -> None:
+        group = AttackSeedGroup(
+            seeds=[SeedObjective(value="objective")],
+            adversarial_prompts=AdversarialPrompts(first_message=SeedPrompt(value="Ask about the policy.")),
+        )
+        dispatcher = AdaptiveTechniqueDispatcher(
+            objective_target=target,
+            techniques={"plain": _make_bundle(name="plain", outcomes=[AttackOutcome.SUCCESS])},
+            selector=selector,
+            incompatible_technique_policy=policy,
+        )
+        if policy is IncompatibleTechniquePolicy.RAISE:
+            with pytest.raises(IncompatibleTechniqueError, match="require a technique factory"):
+                dispatcher.compatible_techniques(seed_group=group)
+        else:
+            assert dispatcher.compatible_techniques(seed_group=group) == []
+
     def test_adaptation_requires_behavioral_identifier(self) -> None:
         with pytest.raises(ValueError, match="require a technique_identifier"):
             TechniqueBundle(
@@ -248,6 +284,9 @@ class TestBuildAttackAsync:
         # 1-based per-attempt label stamped on each child
         assert attack._child_attacks[0].memory_labels[ADAPTIVE_ATTEMPT_LABEL] == "1"
         assert attack._child_attacks[1].memory_labels[ADAPTIVE_ATTEMPT_LABEL] == "2"
+        # registered technique name recorded on each child's result
+        assert attack._child_attacks[0].result_metadata[AttackResult.TECHNIQUE_NAME_METADATA_KEY] == "a"
+        assert attack._child_attacks[1].result_metadata[AttackResult.TECHNIQUE_NAME_METADATA_KEY] == "b"
         # default policy is FIRST_SUCCESS
         assert attack._completion_policy is SequenceCompletionPolicy.FIRST_SUCCESS
 
@@ -464,6 +503,7 @@ class TestEvalHashRoundTrip:
             techniques={
                 expected_hash: TechniqueBundle(
                     attack=technique.attack,
+                    name="prompt_sending",
                     requirements=technique.requirements,
                     technique_identifier=technique.get_identifier(),
                 )
@@ -497,6 +537,7 @@ class TestEvalHashRoundTrip:
             "technique_eval_hash": expected_hash,
             "adaptation": "objective_only",
         }
+        assert result.technique_name == "prompt_sending"
         assert result.targeted_harm_categories == ["context"]
         assert (result.outcome is AttackOutcome.ERROR) is fail
         assert source.model_dump() == original

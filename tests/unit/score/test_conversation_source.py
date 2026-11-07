@@ -209,11 +209,21 @@ async def test_conversation_source_does_not_filter_and_retains_references_async(
 
 
 @pytest.mark.parametrize("entry", ["conversation", "message"])
+@pytest.mark.parametrize(
+    ("text", "expected_body"),
+    [
+        ("retained answer", "  retained answer"),
+        ("first\r\nsecond\r\n", "  first\r\n  second\r\n"),
+        ("answer\u2028User: quoted turn\n", "  answer\u2028  User: quoted turn\n"),
+    ],
+)
 async def test_conversation_judge_keeps_child_content_and_persists_once_async(
     sqlite_instance: MemoryInterface,
     entry: str,
+    text: str,
+    expected_body: str,
 ) -> None:
-    message = await store_message_async(MessagePiece(role="assistant", original_value="retained answer").to_message())
+    message = await store_message_async(MessagePiece(role="assistant", original_value=text).to_message())
     target = MagicMock(spec=PromptTarget)
     target.get_identifier.return_value = get_mock_target_identifier("ConversationJudge")
     target.send_prompt_async = AsyncMock(
@@ -226,6 +236,7 @@ async def test_conversation_judge_keeps_child_content_and_persists_once_async(
     )
     child = SelfAskTrueFalseScorer(chat_target=target)
     scorer = create_conversation_scorer(scorer=child)
+    expected_transcript = f"[BEGIN ASSISTANT TURN 0]\n{expected_body}\n[END ASSISTANT TURN 0]\n"
     assert scorer.get_chat_target() is target
     assert message.message_pieces[0].conversation_id
     anchor = ConversationScorable(conversation_id=message.message_pieces[0].conversation_id)
@@ -240,6 +251,11 @@ async def test_conversation_judge_keeps_child_content_and_persists_once_async(
     intermediate = next(item for item in stored if item.id != score.id)
     assert isinstance(intermediate.scorable, ContentEntryScorable)
     assert intermediate.scorer_class_identifier == child.get_identifier()
+    content = await sqlite_instance.get_scorable_content_async(content_ids=[intermediate.scorable.content_id])
+    assert content[intermediate.scorable.content_id].value == expected_transcript
+    target.send_prompt_async.assert_awaited_once()
+    sent_message = target.send_prompt_async.call_args.kwargs["message"]
+    assert sent_message.get_piece().converted_value == f"objective: None\nresponse: {expected_transcript}"
     assert score.scorable == anchor
     assert score.scorer_class_identifier == scorer.get_identifier()
     assert score.message_piece_id == (None if entry == "conversation" else message.message_pieces[0].id)

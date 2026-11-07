@@ -63,6 +63,8 @@ EXTRA_TECHNIQUE_NAMES: list[str] = [
     "goat",
     "split_payload",
     "code_attack_framed",
+    "char_split",
+    "context_wrap",
 ]
 
 PERSONA_CRESCENDO_TECHNIQUE_NAMES: list[str] = [
@@ -233,7 +235,7 @@ class TestTechniqueInitializerBasic:
         assert description
 
     def test_tags_parameter_defaults_to_core(self):
-        params = {p.name: p for p in TechniqueInitializer().supported_parameters}
+        params = {p.name: p for p in TechniqueInitializer.supported_parameters()}
         assert "tags" in params
         assert params["tags"].default == ["core"]
 
@@ -500,6 +502,8 @@ class TestTechniqueInitializerRegistration:
         assert "pair" not in names
         assert "violent_durian" not in names
         assert "split_payload" not in names
+        assert "char_split" not in names
+        assert "context_wrap" not in names
 
     async def test_registered_core_factory_carries_core_tag(self, mock_adversarial_target):
         init = TechniqueInitializer()
@@ -510,15 +514,24 @@ class TestTechniqueInitializerRegistration:
 
     async def test_extra_tag_registers_extra_techniques(self, mock_adversarial_target):
         init = TechniqueInitializer()
-        init.params = {"tags": ["extra"]}
+        init.set_params_from_args(args={"tags": ["extra"]})
         await init.initialize_async()
 
         names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
         assert set(EXTRA_TECHNIQUE_NAMES) <= names
 
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_context_wrap_retains_experimental_tag_async(self) -> None:
+        init = TechniqueInitializer()
+        init.set_params_from_args(args={"tags": ["extra"]})
+        await init.initialize_async()
+
+        factory = AttackTechniqueRegistry.get_registry_singleton().get_factories()["context_wrap"]
+        assert set(factory.technique_tags) == {"single_turn", "light", "experimental", "extra"}
+
     async def test_all_tag_registers_everything(self, mock_adversarial_target):
         init = TechniqueInitializer()
-        init.params = {"tags": ["all"]}
+        init.set_params_from_args(args={"tags": ["all"]})
         await init.initialize_async()
 
         names = set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
@@ -618,7 +631,7 @@ class TestViolentDurianTechnique:
 
     async def test_registered_when_extra_selected(self, mock_adversarial_target):
         init = TechniqueInitializer()
-        init.params = {"tags": ["extra"]}
+        init.set_params_from_args(args={"tags": ["extra"]})
         await init.initialize_async()
 
         assert "violent_durian" in set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())
@@ -824,7 +837,7 @@ class TestGoatTechnique:
 
     async def test_registered_when_extra_selected(self, mock_adversarial_target):
         init = TechniqueInitializer()
-        init.params = {"tags": ["extra"]}
+        init.set_params_from_args(args={"tags": ["extra"]})
         await init.initialize_async()
 
         assert "goat" in set(AttackTechniqueRegistry.get_registry_singleton().instances.get_names())

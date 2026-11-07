@@ -18,7 +18,9 @@ messages = await memory.get_conversation_messages_async(conversation_id="example
 
 Use the `_async` memory methods in async code. The synchronous methods remain
 available during deprecation. In-memory SQLite serializes transactions across
-threads and event loops to prevent shared-cache table locks.
+threads and event loops to prevent shared-cache table locks. File-backed SQLite
+waits up to 30 seconds for another connection's lock before raising
+`database is locked`.
 
 Repeated initialization reuses the existing memory without running schema setup
 again. Setup raises an error if `CentralMemory` and the requested backend singleton

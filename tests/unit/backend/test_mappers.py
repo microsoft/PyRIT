@@ -29,6 +29,7 @@ from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
 from pyrit.backend.mappers.target_mappers import target_object_to_instance
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest, ScoreView
+from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
@@ -40,7 +41,9 @@ from pyrit.models import (
     Score,
 )
 from pyrit.models.conversation_stats import ConversationStats
-from pyrit.prompt_target import PromptTarget, TargetCapabilities
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, TextTarget, WebsocketTarget
+from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from unit.mocks import MockPromptTarget
 
 # ============================================================================
 # Helpers
@@ -203,6 +206,22 @@ class TestAttackResultToSummary:
         assert summary.target.target_type == "RoundRobinTarget"
         assert summary.target.model_name is None
         assert summary.target.identifier_hash == target_identifier.hash
+        assert summary.target.identifier is not None
+        assert summary.model_dump(mode="json")["target"]["identifier"] == target_identifier.model_dump(mode="json")
+
+    async def test_target_includes_saved_configuration_for_inspection(self) -> None:
+        target_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"endpoint": "https://example.test", "model_name": "deployment", "temperature": 0.25},
+        )
+        ar = _make_attack_result(target_identifier=target_identifier, target_registry_name="configured-target")
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.target is not None
+        assert summary.target.target_registry_name == "configured-target"
+        assert summary.model_dump(mode="json")["target"]["identifier"] == target_identifier.model_dump(mode="json")
 
     async def test_target_includes_persisted_registry_name(self) -> None:
         """The registry alias is exposed as a lookup hint without changing canonical identity."""
@@ -370,6 +389,16 @@ class TestAttackResultToSummary:
         summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert summary.objective == ""
+
+    async def test_explicit_placeholder_text_is_preserved_async(self) -> None:
+        ar = _make_attack_result(name="ManualAttack")
+        ar.objective = "Manual attack via GUI"
+        ar.metadata["objective_is_placeholder"] = False
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.objective == ar.objective
+        assert summary.metadata["objective_is_placeholder"] is False
 
     async def test_non_manual_attack_preserves_placeholder_text_as_explicit_objective(self) -> None:
         """A non-manual attack may legitimately use the legacy placeholder text."""
@@ -1484,6 +1513,42 @@ class TestBuildFilename:
 # ============================================================================
 # Target Mapper Tests
 # ============================================================================
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "mode", ["native", "unsupported", "editable_adapter", "multi_turn_adapter", "restore_callback"]
+)
+def test_target_instance_reports_effective_history_replay(mode: str) -> None:
+    if mode == "native":
+        target: PromptTarget = MockPromptTarget()
+    elif mode == "unsupported":
+        target = TextTarget()
+    elif mode == "restore_callback":
+        target = WebsocketTarget(
+            endpoint="ws://localhost:9999",
+            protocol_identifier="offline-replay",
+            initialization_strings=[],
+            response_parser=str,
+            message_builder=str,
+            conversation_restore_callback=AsyncMock(),
+        )
+    else:
+        capability = CapabilityName.EDITABLE_HISTORY if mode == "editable_adapter" else CapabilityName.MULTI_TURN
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=mode == "editable_adapter"),
+                normalizer_overrides={capability: HistorySquashNormalizer()},
+            )
+        )
+    with patch.object(target, "validate_history_replay", wraps=target.validate_history_replay) as validate:
+        result = target_object_to_instance("replay-target", target)
+    validate.assert_called_once()
+    assert result.supports_history_replay is (mode != "unsupported")
+    assert result.model_dump()["supports_history_replay"] is (mode != "unsupported")
+    assert result.capabilities == target.capabilities
+    if mode not in ("native", "unsupported"):
+        assert not result.capabilities.supports_editable_history
 
 
 class TestTargetObjectToInstance:

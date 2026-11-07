@@ -18,7 +18,7 @@ import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, assert_never, cast, get_args, get_origin
 from uuid import UUID
 
 import aiofiles
@@ -242,7 +242,9 @@ def _build_client_parent() -> ArgumentParser:
     """
     parser = ArgumentParser(add_help=False)
     group = parser.add_argument_group("server options")
-    group.add_argument("--request-timeout", type=float, default=None, help=_REQUEST_TIMEOUT_HELP)
+    group.add_argument(
+        "--request-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_REQUEST_TIMEOUT_HELP
+    )
     group.add_argument("--start-server", action="store_true", help=_START_SERVER_HELP)
     group.add_argument(
         "--startup-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_STARTUP_TIMEOUT_HELP
@@ -327,7 +329,9 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
     )
     parser.add_argument("--max-total", type=parse_dataset_limit, help="Combined attack-group cap")
     parser.add_argument(
-        "--dataset-fetch", choices=["never", "if_missing"], help="Preparation policy for missing datasets"
+        "--dataset-fetch",
+        choices=["never", "if_missing", "always"],
+        help="Dataset preparation policy; omission keeps scenario settings. always replaces stored data.",
     )
     parser.add_argument(
         "--dataset-filters",
@@ -926,7 +930,7 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
                 attack_result_ids=parsed_args.attack_result_ids,
                 limit=limit,
             )
-        else:
+        elif view is ScenarioResultView.CONVERSATIONS:
             await _output.print_conversations_async(
                 result=result,
                 client=client,
@@ -936,6 +940,8 @@ async def _handle_results_async(*, client: Any, parsed_args: Namespace) -> int:
                 attack_result_ids=parsed_args.attack_result_ids,
                 limit=limit,
             )
+        else:
+            assert_never(view)
     except Exception as exc:
         _print_cli_exception(exc=exc)
         return 1
@@ -1108,11 +1114,12 @@ async def _run_scenario_async(
             client=client,
             scenario_result_id=scenario_result_id,
         )
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n\nCancelling scenario run...")
+        cancellation_task = asyncio.create_task(client.cancel_scenario_run_async(scenario_result_id=scenario_result_id))
         try:
-            await client.cancel_scenario_run_async(scenario_result_id=scenario_result_id)
-            print("Scenario run cancelled.")
+            await asyncio.shield(cancellation_task)
+            print("Cancellation request sent to server.")
         except Exception:
             print("Warning: could not cancel scenario run on server.")
         return 1

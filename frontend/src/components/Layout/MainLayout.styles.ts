@@ -5,7 +5,7 @@ export const useMainLayoutStyles = makeStyles({
   root: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100vh',
+    height: '100dvh',
     width: '100vw',
     overflow: 'hidden',
   },
@@ -100,15 +100,26 @@ export const useMainLayoutStyles = makeStyles({
     display: 'flex',
     flex: 1,
     minWidth: 0,
+    minHeight: 0,
     overflow: 'hidden',
   },
   sidebar: {
-    width: '60px',
+    width: '64px',
     flexShrink: 0,
     backgroundColor: tokens.colorNeutralBackground3,
     borderRight: `1px solid ${tokens.colorNeutralStroke1}`,
     display: 'flex',
     flexDirection: 'column',
+  },
+  sidebarExpanded: {
+    width: '224px',
+  },
+  navigationDrawer: {
+    width: 'min(280px, calc(100vw - 48px))',
+    backgroundColor: tokens.colorNeutralBackground3,
+  },
+  drawerBody: {
+    padding: 0,
   },
   main: {
     position: 'relative',
@@ -118,6 +129,9 @@ export const useMainLayoutStyles = makeStyles({
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    [NARROW_VIEWPORT_QUERY]: {
+      overflowY: 'auto',
+    },
   },
   labelsSection: {
     flexShrink: 0,
@@ -147,8 +161,15 @@ export const useMainLayoutStyles = makeStyles({
     },
   },
   toolbarSlot: {
+    display: 'flex',
+    alignItems: 'center',
+    flexShrink: 0,
+    minWidth: 0,
+    minHeight: '48px',
     maxWidth: '100%',
-    marginLeft: 'auto',
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalL}`,
+    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground3,
     ':empty': {
       display: 'none',
     },

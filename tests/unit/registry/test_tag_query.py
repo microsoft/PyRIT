@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from dataclasses import dataclass
+from typing import assert_type
 
 import pytest
 
@@ -227,3 +228,32 @@ class TestTagQueryEdgeCases:
     def test_empty_tags_only_match_empty_query(self, tags: set[str] | frozenset[str]) -> None:
         assert TagQuery().matches(tags) is True
         assert TagQuery(include_all=frozenset({"a"})).matches(tags) is False
+
+
+# ---------------------------------------------------------------------------
+# Subclass constructors return Self
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _CustomTagQuery(TagQuery):
+    pass
+
+
+def test_classmethod_constructors_return_subclass() -> None:
+    q_all = _CustomTagQuery.all("a")
+    q_any = _CustomTagQuery.any_of("a")
+    q_none = _CustomTagQuery.none_of("a")
+
+    assert_type(q_all, _CustomTagQuery)
+    assert_type(q_any, _CustomTagQuery)
+    assert_type(q_none, _CustomTagQuery)
+    assert type(q_all) is _CustomTagQuery
+    assert type(q_any) is _CustomTagQuery
+    assert type(q_none) is _CustomTagQuery
+
+
+def test_classmethod_constructors_on_base_return_tag_query() -> None:
+    assert_type(TagQuery.all("a"), TagQuery)
+    assert_type(TagQuery.any_of("a"), TagQuery)
+    assert_type(TagQuery.none_of("a"), TagQuery)

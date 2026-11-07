@@ -131,5 +131,4 @@ class RapidResponse(Scenario):
             context=context,
             objective_scorer=self._objective_scorer,
             display_group_fn=lambda combo: combo.dataset_name,
-            technique_converters=self._technique_converters,
         )

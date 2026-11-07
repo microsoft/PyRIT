@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import inspect
 import uuid
 from pathlib import Path
@@ -33,7 +34,10 @@ from pyrit.score import (
     ScorerPromptValidator,
 )
 from pyrit.score.message_scorable_resolver import MessageScorableResolver
-from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
+from pyrit.score.message_scorer import (
+    extract_objective_from_previous_turn,
+    extract_objective_from_previous_turn_async,
+)
 
 
 class UnsupportedScorable(Scorable):
@@ -593,6 +597,52 @@ class TestConflictingInputs:
 @pytest.mark.usefixtures("patch_central_database")
 class TestExtractObjectiveFromPreviousTurn:
     """The objective lookup belongs to whoever builds the expectation."""
+
+    @pytest.mark.parametrize("use_sync", [False, True], ids=["async", "sync"])
+    @pytest.mark.parametrize(
+        ("include_user", "expected_objective"),
+        [(False, ""), (True, "the request")],
+        ids=["non-user-only", "mixed-roles"],
+    )
+    @pytest.mark.parametrize(
+        "role", ["system", "developer", "assistant", "tool", "simulated_assistant", "simulated_tool"]
+    )
+    async def test_filters_previous_sequence_by_role_async(
+        self,
+        *,
+        sqlite_instance: MemoryInterface,
+        role: ChatMessageRole,
+        include_user: bool,
+        expected_objective: str,
+        use_sync: bool,
+    ) -> None:
+        conversation_id = str(uuid.uuid4())
+        previous_pieces = [
+            MessagePiece(role=role, original_value="other text", conversation_id=conversation_id, sequence=0)
+        ]
+        if include_user:
+            previous_pieces.insert(
+                0,
+                MessagePiece(
+                    role="user",
+                    original_value="the request",
+                    converted_value="not the objective",
+                    conversation_id=conversation_id,
+                    sequence=0,
+                ),
+            )
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=previous_pieces)
+        message = await _assistant_message_async("the response", conversation_id=conversation_id)
+
+        if use_sync:
+            with pytest.warns(DeprecationWarning):
+                objective = await asyncio.to_thread(
+                    extract_objective_from_previous_turn, message=message, memory=sqlite_instance
+                )
+        else:
+            objective = await extract_objective_from_previous_turn_async(message=message, memory=sqlite_instance)
+
+        assert objective == expected_objective
 
     async def test_reads_the_turn_before_the_response(self, sqlite_instance: MemoryInterface):
         conversation_id = str(uuid.uuid4())

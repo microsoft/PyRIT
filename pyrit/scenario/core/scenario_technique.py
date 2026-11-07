@@ -19,6 +19,8 @@ from pyrit.common.deprecation import print_deprecation_message
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pyrit.models import ComponentIdentifier
+
 
 class _DeprecatedEnumMeta(EnumMeta):
     """
@@ -125,6 +127,14 @@ class ScenarioTechnique(Enum, metaclass=_DeprecatedEnumMeta):
     def description(self) -> str | None:
         """The human-readable technique summary."""
         return self._description
+
+    @property
+    def identifier(self) -> ComponentIdentifier | None:
+        """Read the declaring factory's identity without constructing an attack."""
+        from pyrit.models import Identifiable
+
+        source = getattr(type(self), "_factory_sources", {}).get(self.value)
+        return source.get_identifier() if isinstance(source, Identifiable) else None
 
     @classmethod
     def default(cls) -> Self:

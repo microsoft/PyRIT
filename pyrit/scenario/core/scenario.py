@@ -11,9 +11,11 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 import ast
 import asyncio
 import logging
+import threading
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast, final
@@ -22,11 +24,15 @@ from tqdm.auto import tqdm
 
 from pyrit.common import default_values, get_global_default_values
 from pyrit.common.utils import to_sha256
-from pyrit.exceptions import ScenarioPartialFailureException
+from pyrit.exceptions import ScenarioPartialFailureException, ScenarioRunInProgressException
+from pyrit.exceptions.exceptions_helpers import summarize_exception
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
+from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution, _observe_interrupted_executions
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
+from pyrit.executor.attack.core.attack_strategy import AttackContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    SCENARIO_CONVERSATIONS_METADATA_KEY,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AllAvailableDatasetSize,
     AttackOutcome,
@@ -163,6 +169,16 @@ class Scenario(ABC):
     #: Maximum number of resolved concrete techniques; None leaves the selection unrestricted.
     MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = None
 
+    #: Active scenario result IDs currently executing in this process.
+    _active_runs: ClassVar[set[str]] = set()
+    _active_runs_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @classmethod
+    def _clear_active_runs(cls) -> None:
+        """Clear active scenario runs. Intended for test isolation."""
+        with cls._active_runs_lock:
+            cls._active_runs.clear()
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
         Enforce the keyword-only constructor contract on subclasses.
@@ -267,6 +283,7 @@ class Scenario(ABC):
         self._scenario_registry_name: str | None = None
         self._initial_metadata: dict[str, Any] = {}
         self._active_atomic_groups: dict[str, str] = {}
+        self._active_executor: AttackExecutor | None = None
 
         # Store prepared techniques for use in _build_atomic_attacks_async
         self._scenario_techniques: list[ScenarioTechnique] = []
@@ -324,6 +341,11 @@ class Scenario(ABC):
     def active_atomic_group_names(self) -> tuple[str, ...]:
         """The names of atomic groups currently executing."""
         return tuple(self._active_atomic_groups.values())
+
+    @property
+    def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
+        """Read the shared executor's in-flight attempts without treating them as results."""
+        return self._active_executor.active_executions if self._active_executor is not None else ()
 
     def set_scenario_registry_name(self, *, scenario_registry_name: str) -> None:
         """Record the requested registry name for durable run-plan attribution."""
@@ -463,9 +485,6 @@ class Scenario(ABC):
 
         Implemented as a classmethod so ``--list-scenarios`` can introspect without
         instantiating.
-
-        Note: ``PyRITInitializer.supported_parameters`` is an instance ``@property``;
-        this asymmetry is intentional pending a future alignment.
 
         Returns:
             list[Parameter]: Declared parameters (default: common run inputs + additional).
@@ -664,7 +683,13 @@ class Scenario(ABC):
         Returns:
             ScenarioRunSizeEstimate: Structured default-run estimate.
         """
-        self.set_params_from_args(args={})
+        self.params = resolve_declared_params(
+            declared=list(self.supported_parameters()),
+            raw_args={},
+            owner=f"Scenario '{type(self).__name__}'",
+            allow_missing_required=True,
+        )
+        self._params_resolved = True
         return await self.get_run_size_estimate_async(target_is_configured=False)
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = True
@@ -1018,13 +1043,15 @@ class Scenario(ABC):
         )
         supplied_labels = dict(self.params.get("memory_labels") or {})
         operation_name = supplied_labels.pop("operation", None)
+        stored_result: ScenarioResult | None = None
         if self._scenario_result_id:
             stored = await self._memory.get_scenario_results_async(scenario_result_ids=[self._scenario_result_id])
             if not stored:
                 raise ValueError(f"Scenario result id '{self._scenario_result_id}' not found in memory")
-            stored_id = stored[0].operation_id
+            stored_result = stored[0]
+            stored_id = stored_result.operation_id
             # A run may be resumed with the name it was started with, or a name of its saved Operation.
-            if operation_name is not None and operation_name != stored[0].labels.get("operation"):
+            if operation_name is not None and operation_name != stored_result.labels.get("operation"):
                 resolved = await self._memory.resolve_operation_id_async(
                     operation_id=None, operation_name=operation_name
                 )
@@ -1033,7 +1060,7 @@ class Scenario(ABC):
             if operation_id is not None and operation_id != stored_id:
                 raise ValueError("Operation attribution is immutable on resume")
             self._operation_id = stored_id
-            operation_name = stored[0].labels.get("operation")
+            operation_name = stored_result.labels.get("operation")
         else:
             if operation_name is None and operation_id is None:
                 operation_name = ast.literal_eval(
@@ -1049,19 +1076,7 @@ class Scenario(ABC):
             supplied_labels["operation"] = operation_name
         self.params["memory_labels"] = supplied_labels
         self._resolve_runtime_configuration(require_objective_target=True)
-        stored_result: ScenarioResult | None = None
-        stored_plan: ScenarioRunPlan | None = None
-        if self._scenario_result_id:
-            existing_results = await self._memory.get_scenario_results_async(
-                scenario_result_ids=[self._scenario_result_id]
-            )
-            if not existing_results:
-                raise ValueError(
-                    f"Scenario result id '{self._scenario_result_id}' not found in memory. "
-                    f"Drop scenario_result_id to start a new scenario."
-                )
-            stored_result = existing_results[0]
-            stored_plan = self._get_stored_run_plan(stored_result=stored_result)
+        stored_plan = self._get_stored_run_plan(stored_result=stored_result) if stored_result is not None else None
 
         # Build atomic attacks: resolve the seed groups once, snapshot the resolved inputs
         # into a ScenarioContext, and hand it to the subclass extension point. Baseline emission
@@ -1575,7 +1590,7 @@ class Scenario(ABC):
         Resolve the seed groups this scenario attacks, keyed by originating dataset.
 
         This is the single place seed resolution happens for a run. The base ``Scenario``
-        calls it once in the bridge, flattens the result into ``context.seed_groups``, and
+        calls it once during initialization, flattens the result into ``context.seed_groups``, and
         reuses the same population for every atomic attack and the baseline — so sampling
         under ``max_dataset_size`` stays consistent across all of them.
 
@@ -1604,8 +1619,8 @@ class Scenario(ABC):
         """
         Snapshot the resolved runtime inputs into a ``ScenarioContext``.
 
-        Called after ``initialize_async`` has populated the objective target, scorer,
-        techniques, dataset config, labels, and baseline flag. The resulting context is
+        Called after ``initialize_async`` has populated the objective target,
+        techniques, converters, dataset config, labels, and baseline flag. The resulting context is
         handed to ``_build_atomic_attacks_async`` so scenario authors never read
         half-initialized ``self._*`` state to build attacks.
 
@@ -1634,6 +1649,7 @@ class Scenario(ABC):
             scenario_techniques=tuple(self._scenario_techniques),
             dataset_config=self._dataset_config,
             memory_labels=dict(self._memory_labels),
+            technique_converters={name: list(converters) for name, converters in self._technique_converters.items()},
             include_baseline=self._include_baseline,
             incompatible_technique_policy=self._incompatible_technique_policy,
             seed_groups=seed_groups,
@@ -1684,6 +1700,7 @@ class Scenario(ABC):
                 attack results from all atomic attacks.
 
         Raises:
+            ScenarioRunInProgressException: If this scenario result run is already in progress in this process.
             asyncio.CancelledError: If the scenario task is cancelled. Completed results remain persisted
                 and a later call can resume the unfinished objectives.
             ValueError: If the scenario has no atomic attacks configured. If your scenario
@@ -1711,57 +1728,74 @@ class Scenario(ABC):
         # Type narrowing: create local variable that type checker knows is non-None
         scenario_result_id: str = self._scenario_result_id
 
-        # Implement retry logic
-        last_exception = None
-        for retry_attempt in range(self._max_retries + 1):  # +1 for initial attempt
-            try:
-                return await self._execute_scenario_async()
-            except asyncio.CancelledError:
-                try:
-                    (
-                        await self._memory.update_scenario_run_state_async(
-                            scenario_result_id=scenario_result_id,
-                            scenario_run_state=ScenarioRunState.CANCELLED,
-                            error_message="Scenario run was cancelled",
-                            error_type="CancelledError",
-                        )
-                    )
-                except Exception:
-                    logger.exception(f"Failed to persist cancellation state for scenario '{self._name}'")
-                raise
-            except Exception as e:
-                last_exception = e
-
-                # Get current scenario to check number of tries
-                scenario_results = await self._memory.get_scenario_results_async(
-                    scenario_result_ids=[scenario_result_id]
+        with Scenario._active_runs_lock:
+            if scenario_result_id in Scenario._active_runs:
+                raise ScenarioRunInProgressException(
+                    status_code=409,
+                    message=f"Scenario '{self._name}' execution is already in progress for run '{scenario_result_id}'.",
                 )
-                current_tries = scenario_results[0].number_tries if scenario_results else retry_attempt + 1
+            Scenario._active_runs.add(scenario_result_id)
 
-                # Check if we have more retries available
-                remaining_retries = self._max_retries - retry_attempt
+        try:
+            await self._prepare_run_async()
 
-                if remaining_retries > 0:
+            # Implement retry logic
+            last_exception = None
+            for retry_attempt in range(self._max_retries + 1):  # +1 for initial attempt
+                try:
+                    return await self._execute_scenario_async()
+                except asyncio.CancelledError:
+                    try:
+                        (
+                            await self._memory.update_scenario_run_state_async(
+                                scenario_result_id=scenario_result_id,
+                                scenario_run_state=ScenarioRunState.CANCELLED,
+                                error_message="Scenario run was cancelled",
+                                error_type="CancelledError",
+                            )
+                        )
+                    except Exception:
+                        logger.exception(f"Failed to persist cancellation state for scenario '{self._name}'")
+                    raise
+                except Exception as e:
+                    last_exception = e
+
+                    # Get current scenario to check number of tries
+                    scenario_results = await self._memory.get_scenario_results_async(
+                        scenario_result_ids=[scenario_result_id]
+                    )
+                    current_tries = scenario_results[0].number_tries if scenario_results else retry_attempt + 1
+
+                    # Check if we have more retries available
+                    remaining_retries = self._max_retries - retry_attempt
+
+                    if remaining_retries > 0:
+                        logger.error(
+                            f"Scenario '{self._name}' failed on attempt {current_tries} with error: {str(e)}. "
+                            f"Retrying... ({remaining_retries} retries remaining)",
+                            exc_info=True,
+                        )
+                        # Continue to next iteration for retry
+                        continue
+                    # No more retries, log final failure
                     logger.error(
-                        f"Scenario '{self._name}' failed on attempt {current_tries} with error: {str(e)}. "
-                        f"Retrying... ({remaining_retries} retries remaining)",
+                        f"Scenario '{self._name}' failed after {current_tries} attempts "
+                        f"(initial + {self._max_retries} retries) with error: {str(e)}. Giving up.",
                         exc_info=True,
                     )
-                    # Continue to next iteration for retry
-                    continue
-                # No more retries, log final failure
-                logger.error(
-                    f"Scenario '{self._name}' failed after {current_tries} attempts "
-                    f"(initial + {self._max_retries} retries) with error: {str(e)}. Giving up.",
-                    exc_info=True,
-                )
-                (await self._mark_scenario_failed_async(scenario_result_id=scenario_result_id, error=e))
-                raise
+                    (await self._mark_scenario_failed_async(scenario_result_id=scenario_result_id, error=e))
+                    raise
 
-        # This should never be reached, but just in case
-        if last_exception:
-            raise last_exception
-        raise RuntimeError(f"Scenario '{self._name}' completed unexpectedly without result")
+            # This should never be reached, but just in case
+            if last_exception:
+                raise last_exception
+            raise RuntimeError(f"Scenario '{self._name}' completed unexpectedly without result")
+        finally:
+            with Scenario._active_runs_lock:
+                Scenario._active_runs.discard(scenario_result_id)
+
+    async def _prepare_run_async(self) -> None:  # noqa: B027
+        """Run subclass pre-work while this process owns the run."""
 
     async def _execute_scenario_async(self) -> ScenarioResult:
         """
@@ -1787,15 +1821,9 @@ class Scenario(ABC):
             raise ValueError("self._scenario_result_id is not initialized")
         scenario_result_id: str = self._scenario_result_id
 
-        # Increment number_tries at the start of each run
-        scenario_results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
-        if scenario_results:
-            current_scenario = scenario_results[0]
-            current_scenario.number_tries += 1
-            await self._memory.update_scenario_result_async(scenario_result=current_scenario)
-            logger.info(f"Scenario '{self._name}' attempt #{current_scenario.number_tries}")
-        else:
-            raise ValueError(f"Scenario result with ID {scenario_result_id} not found")
+        # Increment number_tries atomically at the start of each run
+        current_tries = await self._memory.increment_scenario_number_tries_async(scenario_result_id=scenario_result_id)
+        logger.info(f"Scenario '{self._name}' attempt #{current_tries}")
 
         # Mark scenario as in progress
         (
@@ -1903,7 +1931,7 @@ class Scenario(ABC):
 
     async def _mark_scenario_failed_async(self, *, scenario_result_id: str, error: BaseException) -> None:
         """Mark the scenario run as FAILED, deriving message/type from ``error``."""
-        error_message = str(error)
+        error_message = summarize_exception(error)
         if error.__cause__ is not None:
             error_message = f"{error_message} Caused by {type(error.__cause__).__name__}: {str(error.__cause__)}"
         (
@@ -1947,8 +1975,24 @@ class Scenario(ABC):
         # the narrowed value in a local so the type checker can verify all uses below.
         assert self._max_concurrency is not None, "Scenario not initialized; call initialize_async first."
         max_concurrency: int = self._max_concurrency
+        interrupted: dict[tuple[str, str], dict[str, Any]] = {}
+
+        def record_interrupted(context: AttackContext[Any], started_at: datetime) -> None:
+            attribution = context._attribution
+            if attribution is None or attribution.parent_id != scenario_result_id or context.attack_result_id is None:
+                return
+            for conversation_id in context.objective_conversation_ids:
+                interrupted[(context.attack_result_id, conversation_id)] = {
+                    "attack_result_id": context.attack_result_id,
+                    "conversation_id": conversation_id,
+                    "atomic_attack_name": attribution.parent_collection,
+                    "seed_group_id": attribution.seed_group_id,
+                    "objective": context.objective,
+                    "started_at": started_at.isoformat(),
+                }
 
         shared_executor = AttackExecutor(max_concurrency=max_concurrency)
+        self._active_executor = shared_executor
         pbar = tqdm(
             desc=f"Executing {self._name}",
             unit="attack",
@@ -2013,7 +2057,9 @@ class Scenario(ABC):
         # without losing parallelism for the common case where remaining_attacks fits in
         # the budget.
         worker_count = min(max_concurrency, len(remaining_attacks))
-        workers = [asyncio.create_task(worker_async()) for _ in range(worker_count)]
+        # Workers and nested executors inherit this observation scope, not new scheduler state.
+        with _observe_interrupted_executions(record_interrupted):
+            workers = [asyncio.create_task(worker_async()) for _ in range(worker_count)]
         group = asyncio.gather(*workers)
         try:
             # The supervisor owns cancellation; gather must not forward it ahead of this handler.
@@ -2032,6 +2078,25 @@ class Scenario(ABC):
                 except asyncio.CancelledError as cancellation:
                     caller_cancellation = cancellation
             drain.result()
+            if interrupted:
+                publication = asyncio.create_task(
+                    self._persist_conversation_provenance_async(
+                        scenario_result_id=scenario_result_id, records=interrupted
+                    )
+                )
+                while not publication.done():
+                    try:
+                        await asyncio.shield(publication)
+                    except asyncio.CancelledError as cancellation:
+                        caller_cancellation = cancellation
+                    except Exception:
+                        break
+                try:
+                    publication.result()
+                except Exception:
+                    logger.exception(
+                        "Could not preserve interrupted conversations for scenario %s.", scenario_result_id
+                    )
             if caller_cancellation is not None:
                 raise caller_cancellation from None
             raise
@@ -2049,6 +2114,33 @@ class Scenario(ABC):
                 else ExceptionGroup(f"Multiple atomic attacks failed in scenario '{self._name}'", errors)
             )
             raise final_error
+
+    async def _persist_conversation_provenance_async(
+        self, *, scenario_result_id: str, records: Mapping[tuple[str, str], dict[str, Any]]
+    ) -> None:
+        """
+        Persist SDK-observed conversation links without producing attack outcomes.
+
+        Raises:
+            ValueError: If the scenario or its existing provenance is invalid.
+        """
+        stored = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if stored is None:
+            raise ValueError(f"Scenario result {scenario_result_id} is unavailable for conversation provenance.")
+        previous = stored.metadata.get(SCENARIO_CONVERSATIONS_METADATA_KEY, [])
+        if not isinstance(previous, list) or any(
+            not isinstance(record, dict)
+            or not isinstance(record.get("attack_result_id"), str)
+            or not isinstance(record.get("conversation_id"), str)
+            for record in previous
+        ):
+            raise ValueError("Stored scenario conversation provenance is invalid.")
+        merged = {(record["attack_result_id"], record["conversation_id"]): record for record in previous}
+        merged.update(records)
+        await self._memory.update_scenario_metadata_fields_async(
+            scenario_result_id=scenario_result_id,
+            fields={SCENARIO_CONVERSATIONS_METADATA_KEY: list(merged.values())},
+        )
 
     def _collect_errors_from_outcomes(
         self,

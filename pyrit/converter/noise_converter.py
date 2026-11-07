@@ -69,8 +69,10 @@ class NoiseConverter(LLMGenericTextConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        base_identifier = super()._build_identifier()
         return self._create_identifier(
             params={
+                **base_identifier.params,
                 "noise": self._noise,
                 "number_errors": self._number_errors,
             },

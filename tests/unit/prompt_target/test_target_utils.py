@@ -12,9 +12,12 @@ import pytest
 
 from pyrit.exceptions import PyritException, RateLimitException, pyrit_target_retry
 from pyrit.models import MessagePiece
+from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
+    validate_frequency_penalty,
+    validate_presence_penalty,
     validate_temperature,
     validate_top_p,
     warn_truncated_response,
@@ -61,6 +64,12 @@ def test_validate_temperature_above_two_raises():
         validate_temperature(2.1)
 
 
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), -float("inf")])
+def test_validate_temperature_non_finite_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="temperature must be between 0 and 2"):
+        validate_temperature(invalid_value)
+
+
 def test_validate_top_p_none():
     validate_top_p(None)
 
@@ -87,6 +96,44 @@ def test_validate_top_p_above_one_raises():
         validate_top_p(1.1)
 
 
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), -float("inf")])
+def test_validate_top_p_non_finite_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="top_p must be between 0 and 1"):
+        validate_top_p(invalid_value)
+
+
+def test_validate_presence_penalty_none() -> None:
+    validate_presence_penalty(None)
+
+
+def test_validate_presence_penalty_valid_bounds() -> None:
+    validate_presence_penalty(-2.0)
+    validate_presence_penalty(0.0)
+    validate_presence_penalty(2.0)
+
+
+@pytest.mark.parametrize("invalid_value", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_validate_presence_penalty_invalid_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="presence_penalty must be between -2 and 2"):
+        validate_presence_penalty(invalid_value)
+
+
+def test_validate_frequency_penalty_none() -> None:
+    validate_frequency_penalty(None)
+
+
+def test_validate_frequency_penalty_valid_bounds() -> None:
+    validate_frequency_penalty(-2.0)
+    validate_frequency_penalty(0.0)
+    validate_frequency_penalty(2.0)
+
+
+@pytest.mark.parametrize("invalid_value", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_validate_frequency_penalty_invalid_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="frequency_penalty must be between -2 and 2"):
+        validate_frequency_penalty(invalid_value)
+
+
 @pytest.mark.parametrize("rpm", [None, 30])
 async def test_limit_requests_per_minute_preserves_signature_and_result_async(rpm: int | None) -> None:
     class IntegerTarget:
@@ -108,7 +155,7 @@ async def test_limit_requests_per_minute_preserves_signature_and_result_async(rp
 
 
 async def test_limit_requests_per_minute_no_rpm():
-    mock_self = MagicMock()
+    mock_self = MagicMock(spec=PromptTarget)
     mock_self._max_requests_per_minute = None
 
     inner_func = AsyncMock(return_value="response")
@@ -121,7 +168,7 @@ async def test_limit_requests_per_minute_no_rpm():
 
 
 async def test_limit_requests_per_minute_with_rpm():
-    mock_self = MagicMock()
+    mock_self = MagicMock(spec=PromptTarget)
     mock_self._max_requests_per_minute = 30
 
     inner_func = AsyncMock(return_value="response")
@@ -134,7 +181,7 @@ async def test_limit_requests_per_minute_with_rpm():
 
 
 async def test_limit_requests_per_minute_zero_rpm():
-    mock_self = MagicMock()
+    mock_self = MagicMock(spec=PromptTarget)
     mock_self._max_requests_per_minute = 0
 
     inner_func = AsyncMock(return_value="response")
@@ -146,9 +193,16 @@ async def test_limit_requests_per_minute_zero_rpm():
     assert result == "response"
 
 
-async def test_limit_requests_per_minute_serializes_concurrent_starts() -> None:
-    target = MagicMock()
+@pytest.mark.parametrize("shared_source", [False, True])
+async def test_limit_requests_per_minute_serializes_concurrent_starts(shared_source: bool) -> None:
+    target = MagicMock(spec=PromptTarget)
     target._max_requests_per_minute = 60
+    targets = [target, target, target]
+    if shared_source:
+        temporary_target = MagicMock(spec=PromptTarget)
+        temporary_target._max_requests_per_minute = 60
+        temporary_target._rate_limit_source = target
+        targets[1] = temporary_target
     sleep_started: asyncio.Queue[int] = asyncio.Queue()
     release_sleep: asyncio.Queue[None] = asyncio.Queue()
     provider_calls: asyncio.Queue[int] = asyncio.Queue()
@@ -166,7 +220,10 @@ async def test_limit_requests_per_minute_serializes_concurrent_starts() -> None:
 
     decorated = limit_requests_per_minute(send_async)
     with patch("pyrit.prompt_target.common.utils.asyncio.sleep", side_effect=controlled_sleep_async):
-        tasks = [asyncio.create_task(decorated(target, request_index=index)) for index in range(3)]
+        tasks = [
+            asyncio.create_task(decorated(current_target, request_index=index))
+            for index, current_target in enumerate(targets)
+        ]
 
         assert await sleep_started.get() == 0
         assert delays == [1.0]
@@ -182,7 +239,7 @@ async def test_limit_requests_per_minute_serializes_concurrent_starts() -> None:
 
 
 async def test_limit_requests_per_minute_cancellation_releases_lock() -> None:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target._max_requests_per_minute = 60
     sleep_started = asyncio.Event()
     release_sleep = asyncio.Event()
@@ -214,7 +271,7 @@ async def test_limit_requests_per_minute_cancellation_releases_lock() -> None:
 
 
 async def test_target_retry_paces_every_attempt() -> None:
-    target = MagicMock()
+    target = MagicMock(spec=PromptTarget)
     target._max_requests_per_minute = 1
     attempts = 0
 
@@ -255,16 +312,23 @@ def test_retrying_rate_limited_targets_pace_every_attempt() -> None:
     )
 
 
-def test_limit_requests_per_minute_rebuilds_lock_for_new_event_loop() -> None:
-    target = MagicMock()
+@pytest.mark.parametrize("shared_source", [False, True])
+def test_limit_requests_per_minute_rebuilds_lock_for_new_event_loop(shared_source: bool) -> None:
+    target = MagicMock(spec=PromptTarget)
     target._max_requests_per_minute = 60
+    source = target
+    if shared_source:
+        source = MagicMock(spec=PromptTarget)
+        target._rate_limit_source = source
     decorated = limit_requests_per_minute(AsyncMock(return_value="response"))
 
     async def invoke_async() -> asyncio.Lock:
         with patch("pyrit.prompt_target.common.utils.asyncio.sleep", new_callable=AsyncMock):
             await decorated(target)
-        lock = vars(target)["_rate_limit_lock"]
+        lock = vars(source)["_rate_limit_lock"]
         assert isinstance(lock, asyncio.Lock)
+        if shared_source:
+            assert "_rate_limit_lock" not in vars(target)
         return lock
 
     first_lock = asyncio.run(invoke_async())

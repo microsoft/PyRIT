@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { test, expect, type APIRequestContext, type Locator, type Page, type Request } from "./_fixtures";
+import { test, expect, selectChatTarget, type APIRequestContext, type Locator, type Page, type Request } from "./_fixtures";
 
 import type {
   AddMessageRequest,
@@ -407,6 +407,7 @@ async function mockBackendAPIs(page: Page) {
               attack_result_id: "e2e-attack-001",
               conversation_id: MOCK_CONVERSATION_ID,
               attack_type: "ManualAttack",
+              objective: "Review this saved conversation",
               target: { target_type: "OpenAIChatTarget", model_name: "gpt-4o-mock" },
               converters: ["Base64Converter"],
               outcome: "undetermined",
@@ -460,17 +461,9 @@ async function mockBackendAPIs(page: Page) {
   });
 }
 
-/** Navigate to the target registry, set the objective default, then return to chat. */
+/** Select the mock target in a new chat. */
 async function activateMockTarget(page: Page) {
-  await page.getByTitle("Registry").click();
-  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10000 });
-
-  const objectiveDefault = page.getByRole("combobox", { name: "Default objective target", exact: true });
-  await expect(objectiveDefault).toBeVisible({ timeout: 5000 });
-  await objectiveDefault.selectOption({ index: 1 });
-
-  await page.getByTitle("Technique.execute", { exact: true }).click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5000 });
+  await selectChatTarget(page);
 }
 
 /** Open converter panel and add a registered converter to the active pipeline. */
@@ -532,6 +525,11 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
   const image = readFileSync(new URL("../public/roakey.png", import.meta.url));
 
   test.beforeAll(async ({ request }) => {
+    await expect.poll(async () => {
+      const readiness = await request.get("/api/runtime", { headers: compatibilityHeaders() });
+      expect(readiness.ok()).toBeTruthy();
+      return (await readiness.json()).ready;
+    }, { timeout: 60_000 }).toBe(true);
     const targetResponse = await request.post("/api/targets", {
       headers: compatibilityHeaders(),
       data: { type: "TextTarget", name: `e2e-converters-${randomUUID()}`, params: {} },
@@ -564,11 +562,7 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
   });
 
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    await page.getByTitle("Registry", { exact: true }).click();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true })
-      .selectOption(targetRegistryName);
-    await page.getByTitle("Technique.execute", { exact: true }).click();
+    await selectChatTarget(page, targetRegistryName);
     await expect(page.getByTestId("chat-input")).toBeEnabled();
   });
 
@@ -651,7 +645,6 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await addPipelineConverter(page, imageId);
     await page.getByRole("button", { name: "Convert", exact: true }).click();
     await expect(page.getByTestId("converter-preview-result")).toHaveCount(2);
-    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
     await page.getByRole("button", { name: "Close converters", exact: true }).click();
     await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(2);
   });
@@ -673,7 +666,6 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await page.getByRole("button", { name: "Convert", exact: true }).click();
     await expect(page.getByRole("textbox", { name: "Stage 1 output - Text", exact: true })).toHaveValue("aGVsbG8=");
     await expect(page.getByRole("textbox", { name: "Stage 2 output - Text", exact: true })).toHaveValue("bHWtcH9=");
-    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
     await expect(page.getByTestId("converted-value-input")).toHaveValue("bHWtcH9=");
 
     await page.getByRole("button", { name: "Close converters", exact: true }).click();
@@ -798,7 +790,6 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await expect(page.getByTestId("chat-input")).toHaveValue(source);
 
     await finalStage.fill(appliedOutput);
-    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
     await expect(page.getByTestId("converted-value-input")).toHaveValue(appliedOutput);
     await expect(page.getByTestId("chat-input")).toHaveValue(source);
     await page.getByRole("button", { name: "Close converters", exact: true }).click();
@@ -845,6 +836,79 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
       .toEqual([expectedPiece]);
   });
 
+  test("keeps original and converted prompts, stage edits, and edited history through save, send, and Undo", async ({
+    page, request,
+  }) => {
+    await page.getByRole("combobox", { name: "Objective target", exact: true }).selectOption("browser_offline");
+    const previews: ConverterPreviewRequest[] = [];
+    page.on("request", (preview: Request) => {
+      if (preview.method() === "POST" && new URL(preview.url()).pathname === "/api/converters/preview") {
+        previews.push(preview.postDataJSON());
+      }
+    });
+    await page.getByTestId("chat-input").fill("Original prompt");
+    await selectConverter(page, base64Id);
+    await addPipelineConverter(page, caesarId);
+    await page.getByRole("button", { name: "Convert", exact: true }).click();
+    const first = page.getByRole("textbox", { name: "Stage 1 output - Text", exact: true });
+    await expect(first).toHaveValue(Buffer.from("Original prompt").toString("base64"));
+    await first.fill("manual");
+    await page.getByRole("button", { name: "Convert Text from stage 2 to end", exact: true }).click();
+    const second = page.getByRole("textbox", { name: "Stage 2 output - Text", exact: true });
+    await expect(second).toHaveValue("nbovbm");
+    await second.fill("Exact converted prompt");
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    await page.getByRole("button", { name: "Edit Conversation", exact: true }).click();
+    await page.getByRole("button", { name: "Insert message at start", exact: true }).click();
+    const context = page.getByRole("region", { name: "Message 1", exact: true });
+    await context.getByRole("combobox", { name: "Role for message 1", exact: true }).selectOption("system");
+    await context.getByPlaceholder("Type prompt here", { exact: true }).fill("Keep edited context");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByTestId("conversation-editor")).toHaveCount(0);
+    await expect(page.getByTestId("chat-input")).toHaveValue("Original prompt");
+    await expect(page.getByRole("textbox", { name: "Converted prompt", exact: true })).toHaveValue("Exact converted prompt");
+    await page.getByRole("button", { name: "Toggle converter panel", exact: true }).click();
+    await expect(first).toHaveValue("manual");
+    await expect(second).toHaveValue("Exact converted prompt");
+    await page.getByRole("button", { name: "Close converters", exact: true }).click();
+    const [submission] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && /\/api\/attacks\/[^/]+\/message-sends$/.test(new URL(response.url()).pathname)),
+      page.getByRole("button", { name: "Send message", exact: true }).click(),
+    ]);
+    expect(submission.status()).toBe(202);
+    expect(submission.request().postDataJSON().pieces).toEqual([expect.objectContaining({
+      original_value: "Original prompt", converted_value: "Exact converted prompt",
+      applied_converter_ids: [base64Id, caesarId],
+    })]);
+    const accepted: MessageSendStatus = await submission.json();
+    await expect(page.getByText("Offline browser response.", { exact: true })).toBeVisible();
+    const undo = page.getByRole("button", { name: "Undo last send", exact: true });
+    await expect(undo).toBeEnabled();
+    const [branch] = await Promise.all([
+      page.waitForResponse((response) => response.request().method() === "POST"
+        && /\/api\/attacks\/[^/]+\/conversations$/.test(new URL(response.url()).pathname)),
+      undo.click(),
+    ]);
+    expect(branch.status()).toBe(201);
+    await expect(page.getByTestId("chat-input")).toHaveValue("Original prompt");
+    await expect(page.getByRole("textbox", { name: "Converted prompt", exact: true })).toHaveValue("Exact converted prompt");
+    await expect(page.getByText("Keep edited context", { exact: true })).toBeVisible();
+    await expect(page.getByText("Offline browser response.", { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Toggle converter panel", exact: true }).click();
+    await expect(first).toHaveValue("manual");
+    await expect(second).toHaveValue("Exact converted prompt");
+    expect(previews).toHaveLength(2);
+    const original = await request.get(
+      `/api/attacks/${accepted.attack_result_id}/messages?conversation_id=${accepted.conversation_id}`,
+      { headers: compatibilityHeaders() },
+    );
+    expect(original.ok()).toBeTruthy();
+    const history: AddMessageResponse["messages"] = await original.json();
+    expect(history.messages.map((message: BackendMessage) => message.role)).toEqual(["system", "user", "assistant"]);
+    expect(history.messages[0].message_pieces[0].converted_value).toBe("Keep edited context");
+  });
+
   test("should convert every configured input and keep duplicate image pieces independent", async ({ page }) => {
     const previewRequests: ConverterPreviewRequest[] = [];
     page.on("request", (request: Request) => {
@@ -865,7 +929,6 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     await page.getByRole("button", { name: "Convert", exact: true }).click();
     const results = page.getByTestId("converter-preview-result");
     await expect(results).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "Add converted value", exact: true })).toBeEnabled();
     expect(previewRequests).toHaveLength(3);
     expect(previewRequests.filter((preview: ConverterPreviewRequest) => preview.original_value_data_type === "text"))
       .toEqual([{ original_value: "hello", original_value_data_type: "text", converter_ids: [base64Id] }]);
@@ -883,7 +946,6 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
     const secondOutput = await results.nth(1).getByRole("img").getAttribute("src");
     expect(firstOutput).not.toBe(secondOutput);
 
-    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
     await page.getByRole("button", { name: "Close converters", exact: true }).click();
     await expect(page.getByTestId("converted-value-input")).toHaveValue("aGVsbG8=");
     await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(2);
@@ -916,14 +978,12 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
 
     await expect(page.getByTestId("converter-preview-error")).toContainText("broken.png");
     await expect(page.getByTestId("converter-preview-result")).toHaveCount(1);
-    await expect(page.getByRole("button", { name: "Add converted value", exact: true })).toBeEnabled();
     await page.getByRole("tab", { name: "Text (1)", exact: true }).click();
     await expect(page.getByTestId("converter-preview-result").getByRole("textbox")).toHaveValue(
       Buffer.from("original text").toString("base64"),
     );
     await page.getByTestId("chat-input").fill("changed after conversion");
     await expect(page.getByTestId("converter-preview-result")).toHaveCount(0);
-    await page.getByRole("button", { name: "Add converted value", exact: true }).click();
     await page.getByRole("button", { name: "Close converters", exact: true }).click();
 
     await expect(page.getByTestId("chat-input")).toHaveValue("changed after conversion");
@@ -990,8 +1050,7 @@ test.describe("Converter Panel", () => {
     await page.getByTestId("converter-preview-btn").click();
     await expect(page.getByTestId("converter-preview-result")).toBeVisible({ timeout: 10000 });
 
-    // Click "Add converted value"
-    await page.getByTestId("use-converted-btn").click();
+    await expect(page.getByTestId("converted-value-input")).toHaveValue("aGVsbG8=");
 
     // Original badge should appear in input area
     await expect(page.getByTestId("original-banner")).toBeVisible();
@@ -1011,13 +1070,12 @@ test.describe("Converter Panel", () => {
     await expect(page.locator('[data-testid="converted-label"]')).toBeVisible({ timeout: 5000 });
   });
 
-  test("should show converter badge in attack history after sending with converter", async ({ page }) => {
+  test("should show the objective instead of converter badges in attack history", async ({ page }) => {
     // Type text BEFORE opening panel
     await page.getByTestId("chat-input").fill("hello");
     await selectConverter(page, "Base64Converter");
     await page.getByTestId("converter-preview-btn").click();
-    await expect(page.getByTestId("use-converted-btn")).toBeEnabled({ timeout: 10000 });
-    await page.getByTestId("use-converted-btn").click();
+    await expect(page.getByTestId("converted-value-input")).toHaveValue("aGVsbG8=");
 
     // Close converter panel before sending
     await page.getByTestId("close-converter-panel-btn").click();
@@ -1028,10 +1086,12 @@ test.describe("Converter Panel", () => {
     await expect(page.getByText(/Mock response for:/)).toBeVisible({ timeout: 15000 });
 
     // Navigate to History view
-    await page.getByTitle("History").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await page.getByRole("tab", { name: "History", exact: true }).click();
 
-    // Converter badge should appear in the attack table
-    await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });
+    const table = page.getByTestId("attacks-table");
+    await expect(table.getByText("Review this saved conversation")).toBeVisible({ timeout: 10000 });
+    await expect(table.getByText("Base64Converter")).toHaveCount(0);
   });
 
   test("should select an already configured converter without showing constructor fields", async ({ page }) => {
@@ -1090,12 +1150,14 @@ test.describe("Converter Panel", () => {
     await expect(page.getByTestId("converter-option-ImageCompressionConverter")).not.toBeVisible();
   });
 
-  test("should show converter type in history filter options", async ({ page }) => {
+  test("should not offer converter or attack type filters in history", async ({ page }) => {
     // Navigate to History view
-    await page.getByTitle("History").click();
+    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await page.getByRole("tab", { name: "History", exact: true }).click();
 
-    // The converter badge should be visible in the attack table
-    await expect(page.getByText("Base64Converter")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("attacks-table")).toBeVisible();
+    await expect(page.getByTestId("converter-filter")).toHaveCount(0);
+    await expect(page.getByTestId("attack-type-filter")).toHaveCount(0);
   });
 
   test("should render inline image preview in input box after a text→image conversion", async ({ page }) => {
@@ -1108,9 +1170,6 @@ test.describe("Converter Panel", () => {
     // Convert the pipeline explicitly
     await page.getByTestId("converter-preview-btn").click();
     await expect(page.getByTestId("converter-preview-result")).toBeVisible({ timeout: 10000 });
-
-    // Apply the converted value to the input
-    await page.getByTestId("use-converted-btn").click();
 
     // Close converter panel so the input area is unobscured
     await page.getByTestId("close-converter-panel-btn").click();

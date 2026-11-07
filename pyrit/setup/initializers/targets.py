@@ -43,19 +43,6 @@ from pyrit.setup.pyrit_initializer import PyRITInitializer
 logger = logging.getLogger(__name__)
 
 
-def _auto_group_enabled(value: object) -> bool:
-    """
-    Normalize direct booleans and YAML string/list auto-group settings.
-
-    Returns:
-        bool: Whether automatic target grouping is enabled.
-    """
-    if isinstance(value, bool):
-        return value
-    scalar = value[0] if isinstance(value, list) else value
-    return str(scalar).lower() not in ("false", "0", "no")
-
-
 class TargetInitializerTags(str, Enum):
     """Tags used by TargetInitializer for filtering which targets to register."""
 
@@ -578,7 +565,7 @@ class TargetInitializer(PyRITInitializer):
         await initializer.initialize_async()
 
         # Register scorer temperature variants too
-        initializer.params = {"tags": ["default", "scorer"]}
+        initializer.set_params_from_args(args={"tags": ["default", "scorer"]})
         await initializer.initialize_async()
     """
 
@@ -596,9 +583,14 @@ class TargetInitializer(PyRITInitializer):
         # that other code may have registered directly into the registry.
         self._registered_names: list[str] = []
 
-    @property
-    def supported_parameters(self) -> list[Parameter]:
-        """The list of parameters this initializer accepts."""
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        """
+        Declare the initializer parameters.
+
+        Returns:
+            list[Parameter]: Supported inputs and defaults.
+        """
         return [
             Parameter(
                 name="tags",
@@ -645,7 +637,7 @@ class TargetInitializer(PyRITInitializer):
         if TargetInitializerTags.ALL in tags:
             tags = [tag for tag in TargetInitializerTags if tag != TargetInitializerTags.ALL]
 
-        auto_group = _auto_group_enabled(self.params.get("auto_group", True))
+        auto_group = self.params.get("auto_group", True)
 
         self._registered_names: list[str] = []
 

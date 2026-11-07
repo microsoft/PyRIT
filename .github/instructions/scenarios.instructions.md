@@ -165,9 +165,20 @@ Options:
   `dataset_name` must match the source name. It takes precedence over registry lookup.
   Configuration copies must preserve live providers by identity, not serialize or deep-copy them.
 - `fetch=DatasetFetchPolicy.IF_MISSING` prepares absent configured or registered datasets.
-  `NEVER` requires stored data. A filter miss must never fetch.
-- Stored rows win even if a configured provider's inputs change. Generation count and
-  selection limits are separate; use a new dataset name to keep another generated batch.
+  `NEVER` requires stored data. `ALWAYS` fetches with `cache=False` and atomically replaces
+  the complete stored dataset for a new run. It requires a configured or registered provider,
+  even when data is already stored. A filter miss must never trigger another fetch.
+- With `IF_MISSING`, stored rows win even if a configured provider's inputs change.
+  Refresh can remove manual edits and prevent older runs from resuming. All provider results
+  are fetched and checked before any dataset write. Candidates and retained sources must
+  pass the same filters, custom grouping, and child/compound validators used by normal reads,
+  without sampling. Memory prepares copied candidates first, including checksums, attribution,
+  timestamps, and media metadata. Commit that prepared snapshot without preparing it again.
+  A fetch, preparation, grouping, or validation failure keeps every dataset unchanged.
+  Media preparation may leave unreferenced files when validation fails; stored seed rows remain unchanged.
+  Storage commits remain per dataset: a later write failure does not undo an earlier successful write.
+  Generation count and selection limits are separate; filters and limits do not reduce the
+  replacement. Use a new dataset name to keep another generated batch.
   Use one writer per name; concurrent runs can generate and store different batches.
 - `seed_groups` and `seeds` are inline alternatives. They never use memory or providers.
 - Validators run on full filtered populations before any sampling.
@@ -185,6 +196,8 @@ Options:
 - Estimates expose `dataset_defaults`, `effective_datasets`, and `dataset_options`.
   These are response projections, not incoming edit state. Never read seeds for projections.
   The catalog reads options and defaults from registry metadata, never from an estimate.
+- Explicit `load_datasets_async()` remains missing-only, regardless of the scan's policy.
+  It does not refresh or change that policy.
 - Resume replays the saved launch request; the stored run plan fixes the selected seed groups,
   so caps and fetch policies cannot change a resumed run. Dataset names are checked by the
   stored scenario identity. Resume never prepares datasets.
@@ -273,10 +286,14 @@ async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list
 ```
 
 `initialize_async` resolves the run's inputs once (objective target, techniques, dataset
-config, memory labels, baseline flag, and seed groups), snapshots them into an immutable
+config, memory labels, technique converters, baseline flag, and seed groups), snapshots them into an immutable
 `ScenarioContext`, and calls this method. Each scenario emits its own baseline from within
 `_build_atomic_attacks_async` (see the Baseline section below). Scenario authors never read
 half-initialized `self._*` state to build attacks — read everything from `context`.
+Nested construction helpers must also use context inputs, not the corresponding
+`self._objective_target`, `self._scenario_techniques`, `self._memory_labels`,
+`self._incompatible_technique_policy`, or `self._technique_converters` fields.
+Scenario-specific scorers, selectors, and construction options stay on the scenario.
 
 On resume, `context.stored_run_plan` carries the original plan. Restore committed
 per-input technique choices from it instead of selecting again. The base restores
@@ -289,14 +306,15 @@ Scenarios whose construction is the plain technique × dataset cross-product del
 `build_matrix_atomic_attacks` helper in one line (see `Cyber`, `RapidResponse`):
 
 ```python
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 
 
 async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
-    return build_matrix_atomic_attacks(
+    return await run_legacy_sync_async(
+        build_matrix_atomic_attacks,
         context=context,
         objective_scorer=self._objective_scorer,
-        technique_converters=self._technique_converters,  # optional CLI converter stacks
     )
 ```
 
@@ -306,7 +324,7 @@ async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list
    raises ``TechniqueResolutionError`` if any selected technique has no registered factory).
 2. Iterates every (technique × dataset) pair from `context.seed_groups_by_dataset`.
 3. Calls `factory.create()` with the objective target, conditional scorer override, and any
-   per-technique converters (from `--techniques <technique>:converter.<name>`) as
+   `context.technique_converters` (from `--techniques <technique>:converter.<name>`) as
    `extra_request_converters`.
 4. Builds each `AtomicAttack` with a unique `atomic_attack_name` and a `display_group`
    (customizable via `display_group_fn`).

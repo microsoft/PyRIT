@@ -22,7 +22,9 @@ responsibilities:
   ``Parameter.coerce_value`` and resolving registry-reference parameters by name
   from the owning domain's registry. Defaults are left to the constructor.
   Callers building from external input (REST, CLI) select the external path,
-  which accepts only parameters with ``Parameter.is_external_input``.
+  which accepts only parameters with ``Parameter.is_external_input`` and rejects
+  parameters that can name a server file or folder unless the caller has made
+  them safe.
 - **Resolve from a declared list** (``resolve_declared_params``): the sibling for
   a component that declares an explicit ``list[Parameter]`` (e.g. a scenario's
   ``supported_parameters()``). It has no references, coerces every supplied
@@ -47,10 +49,10 @@ from collections.abc import Collection, Sequence
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get_origin, get_type_hints
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import JsonValue, ValidationError
 
 from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
-from pyrit.common.brick_contract import init_parameters_are_forwarded
+from pyrit.common.brick_contract import get_constructor_owners
 from pyrit.models import StructuredParameterValue
 from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
 
@@ -229,9 +231,8 @@ def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
     Raises:
         ValueError: If a constructor signature cannot be inspected.
     """
-    owners = [owner for owner in cls.__mro__ if "__init__" in owner.__dict__]
     sources: list[tuple[type, inspect.Signature]] = []
-    for index, owner in enumerate(owners):
+    for owner in get_constructor_owners(cls):
         init = owner.__dict__["__init__"]
         try:
             signature = inspect.signature(init)
@@ -253,8 +254,6 @@ def _constructor_sources(cls: type) -> list[tuple[type, inspect.Signature]]:
             parameters.append(param.replace(annotation=annotation))
         sources.append((owner, signature.replace(parameters=parameters)))
 
-        if not init_parameters_are_forwarded(init) or index + 1 == len(owners):
-            break
     return sources
 
 
@@ -277,8 +276,8 @@ def _parameters_from_signature(
             registry references keyed by constructor parameter name.
         sensitive_parameter_names (frozenset[str]): Identifier-declared names
             whose values must be obscured in user interfaces.
-        multiline_parameter_names (frozenset[str]): Identifier-declared names
-            whose values require multiline controls.
+        multiline_parameter_names (frozenset[str]): Identifier- or component-declared
+            names whose values require multiline controls.
         identity_conflicting_parameter_names (frozenset[str]): Identifier-declared
             names that must be omitted for identity-based authentication.
 
@@ -307,22 +306,28 @@ def _parameters_from_signature(
             continue
 
         param_type = None if param.annotation is inspect.Parameter.empty else param.annotation
-        parameters.append(
-            Parameter(
-                name=name,
-                description=descriptions.get(name, ""),
-                default=_default_for(param),
-                param_type=param_type,
-                variants=_structured_variant_parameters(param_type),
-                sensitive=name in sensitive_parameter_names,
-                multiline=name in multiline_parameter_names,
-                identity_conflicting=name in identity_conflicting_parameter_names,
-            )
+        parameter = Parameter(
+            name=name,
+            description=descriptions.get(name, ""),
+            default=_default_for(param),
+            param_type=param_type,
+            variants=_structured_variant_parameters(param_type),
+            sensitive=name in sensitive_parameter_names,
+            multiline=name in multiline_parameter_names,
+            identity_conflicting=name in identity_conflicting_parameter_names,
         )
+        if parameter.is_seed_prompt:
+            parameter = parameter.model_copy(update={"multiline": True})
+        parameters.append(parameter)
     return parameters
 
 
-def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] | None = None) -> list[Parameter]:
+def derive_parameters(
+    *,
+    cls: type,
+    identifier_type: type[ComponentIdentifier] | None = None,
+    seam_base_type: type | None = None,
+) -> list[Parameter]:
     """
     Derive the declarative ``Parameter`` list for ``cls`` from its constructor.
 
@@ -333,11 +338,26 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
     in MRO order is merged. Child declarations take precedence over same-named
     base declarations.
 
+    A component can declare ``MULTILINE_PARAMETER_NAMES`` as a ``frozenset[str]``
+    of constructor parameters whose controls must preserve line breaks. These
+    names supplement the identifier's shared multiline names for that component only.
+
+    A non-required reference parameter declared by ``seam_base_type`` is a
+    construction seam, not a build input of every subclass: the base accepts it so
+    subclasses can forward a value (e.g. for validation) through one construction
+    path, and a subclass that does not declare the parameter itself has nothing
+    for it to configure. Such a parameter is skipped unless a subclass redeclares
+    it. A required reference the base declares is kept, since the base's own
+    construction needs it supplied.
+
     Args:
         cls (type): The component class whose ``__init__`` drives derivation.
         identifier_type (type[ComponentIdentifier] | None): The domain identifier
             whose ``Param.*`` markers declare which parameters are registry
             references. When None, no parameter is treated as a reference.
+        seam_base_type (type | None): The domain base type whose non-required
+            declared references are construction seams. When None, every declared
+            parameter is included.
 
     Returns:
         list[Parameter]: One ``Parameter`` per settable constructor parameter,
@@ -353,6 +373,7 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
     multiline_parameter_names = (
         identifier_type.get_multiline_parameter_names() if identifier_type is not None else frozenset[str]()
     )
+    multiline_parameter_names |= getattr(cls, "MULTILINE_PARAMETER_NAMES", frozenset[str]())
     identity_conflicting_parameter_names = (
         identifier_type.get_identity_conflicting_parameter_names() if identifier_type is not None else frozenset[str]()
     )
@@ -368,6 +389,10 @@ def derive_parameters(*, cls: type, identifier_type: type[ComponentIdentifier] |
             identity_conflicting_parameter_names=identity_conflicting_parameter_names,
         ):
             if parameter.name in seen:
+                continue
+            if owner is seam_base_type and parameter.reference is not None and not parameter.required:
+                # A construction seam: the base tolerates the parameter so subclasses can
+                # forward it; a subclass that does not declare it has no such input.
                 continue
             parameters.append(parameter)
             seen.add(parameter.name)
@@ -556,12 +581,55 @@ def resolve_reference_value(
     return _resolve_registry_reference(value=value, getter=getter, owner=owner, name=name)
 
 
+def reference_name(*, component_type: ComponentType, value: Any) -> str | None:
+    """
+    Find the registered name of a live instance without reading its configuration.
+
+    Returns:
+        str | None: The matching name, or None when the object is not registered.
+    """
+    getter = _registry_getter_for_component_type(component_type)
+    if getter is None:
+        return None
+    registry = getter()
+    return next((name for name in registry.get_names() if registry.get(name) is value), None)
+
+
+def project_parameter_value(*, parameter: Parameter, value: Any) -> JsonValue:
+    """
+    Project a lossless scalar or named target/converter input without copying live objects.
+
+    Returns:
+        JsonValue: The source value or its registered names, preserving list order.
+
+    Raises:
+        ValueError: If a structured, opaque, or unregistered source cannot be edited losslessly.
+    """
+    if parameter.reference is None:
+        return parameter.project_json_value(value)
+    if parameter.reference.component_type not in {ComponentType.TARGET, ComponentType.CONVERTER}:
+        raise ValueError("Unsupported registry reference")
+    if value is None:
+        return None
+    values = value if isinstance(value, list) else [value]
+    names = [reference_name(component_type=parameter.reference.component_type, value=item) for item in values]
+    if None in names:
+        raise ValueError("Unregistered reference")
+    if isinstance(value, list):
+        result: list[JsonValue] = [name for name in names if name is not None]
+        return result
+    return names[0]
+
+
 def resolve_constructor_args(
     *,
     cls: type,
     raw_args: dict[str, Any],
     identifier_type: type[ComponentIdentifier] | None = None,
     external_input: bool = False,
+    strict_json: bool = False,
+    seam_base_type: type | None = None,
+    allowed_path_params: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
@@ -570,6 +638,10 @@ def resolve_constructor_args(
     ``raw_args``. For each raw argument: validate it is a declared parameter;
     resolve registry-reference parameters by name; coerce constrained values and simple string values
     via ``Parameter.coerce_value``; pass everything else through unchanged.
+    An empty string supplied for a registry reference is treated as unsupplied:
+    it is the "no selection" a cleared form field sends, not a registry name, so
+    the constructor's default (e.g. a target defaulted via ``apply_defaults``)
+    applies instead of an empty-name lookup failing.
 
     Args:
         cls (type): The class being built.
@@ -581,6 +653,13 @@ def resolve_constructor_args(
             External callers may set only parameters with ``Parameter.is_external_input``
             and must name registry references. Defaults to False (in-process callers, which
             may pass any Python object).
+        strict_json (bool): Validate JSON-native value types before resolution. Opt-in for REST
+            contracts; ordinary CLI and Python resolution remain unchanged.
+        seam_base_type (type | None): The domain base type whose non-required
+            declared references are construction seams (see ``derive_parameters``).
+        allowed_path_params (frozenset[str]): External-input parameters that can name a
+            server file or folder but that the caller has made safe, such as an uploaded
+            file the backend stored itself. Defaults to none.
 
     Returns:
         dict[str, Any]: Arguments ready to pass to ``cls(**resolved)``.
@@ -588,11 +667,20 @@ def resolve_constructor_args(
     Raises:
         ValueError: If an argument is not a declared parameter, a registry
             reference cannot be resolved, a simple value cannot be coerced, or
-            external input sets a parameter that is not an external input.
+            external input sets a parameter that is not an external input or that
+            names a server file or folder without being allowed.
     """
-    by_name = {param.name: param for param in derive_parameters(cls=cls, identifier_type=identifier_type)}
+    by_name = {
+        param.name: param
+        for param in derive_parameters(cls=cls, identifier_type=identifier_type, seam_base_type=seam_base_type)
+    }
     if external_input:
-        reject_non_external_params(params=raw_args, declared=list(by_name.values()), owner=cls.__name__)
+        reject_non_external_params(
+            params=raw_args,
+            declared=list(by_name.values()),
+            owner=cls.__name__,
+            allowed_path_params=allowed_path_params,
+        )
 
     resolved: dict[str, Any] = {}
     for name, value in raw_args.items():
@@ -601,9 +689,16 @@ def resolve_constructor_args(
             raise ValueError(
                 f"Unknown parameter '{name}' for '{cls.__name__}'. Valid parameters: {sorted(by_name.keys())}"
             )
+        if strict_json:
+            value = param.validate_json_value(value)
 
         value_type = _unwrap_optional(param.param_type)
         if param.reference is not None:
+            if value == "":
+                # A cleared selection: treat the empty string as unsupplied so the
+                # constructor default (or an apply_defaults-registered one) applies
+                # instead of looking up '' as a registry name and failing.
+                continue
             getter = _registry_getter_for_component_type(param.reference.component_type)
             if getter is None:
                 raise ValueError(
@@ -620,7 +715,8 @@ def resolve_constructor_args(
         elif param.variants is not None:
             resolved[name] = _resolve_structured_input(parameter=param, value=value)
         elif (
-            param.choices
+            param.is_seed_prompt
+            or param.choices
             or (isinstance(value, str) and param.is_string_coercible)
             or (isinstance(value_type, type) and issubclass(value_type, Enum))
         ):
@@ -634,33 +730,51 @@ def resolve_constructor_args(
     return resolved
 
 
-def reject_non_external_params(*, params: Mapping[str, Any], declared: Sequence[Parameter], owner: str) -> None:
+def reject_non_external_params(
+    *,
+    params: Mapping[str, Any],
+    declared: Sequence[Parameter],
+    owner: str,
+    allowed_path_params: frozenset[str] = frozenset(),
+) -> None:
     """
     Reject external input that is not an explicitly supported external input.
 
     Every name must be declared and have ``Parameter.is_external_input``, and registry
-    references must be given by name. Values are otherwise left to the component.
+    references must be given by name. A parameter that can name a server file or
+    folder is rejected unless it is in ``allowed_path_params``. Values are otherwise
+    left to the component.
 
     Args:
         params (Mapping[str, Any]): The parameter values supplied by an external caller.
         declared (Sequence[Parameter]): The parameters the component declares.
         owner (str): The owning class or scenario name, for error messages.
+        allowed_path_params (frozenset[str]): Parameters that can name a server file or
+            folder but that the caller has made safe. Defaults to none.
 
     Raises:
-        ValueError: If ``params`` sets an undeclared parameter or one that is not an external
-            input, or gives a registry reference as anything but a name.
+        ValueError: If ``params`` sets an undeclared parameter, one that is not an external
+            input, or one that names a server file or folder without being allowed, or
+            gives a registry reference as anything but a name.
     """
     declared_by_name = {parameter.name: parameter for parameter in declared}
+    settable_names = {
+        name
+        for name, parameter in declared_by_name.items()
+        if parameter.is_allowed_external_input(allowed_path_params=allowed_path_params)
+    }
     for name, value in params.items():
         parameter = declared_by_name.get(name)
         if parameter is None:
-            external_names = sorted(
-                known for known, candidate in declared_by_name.items() if candidate.is_external_input
-            )
-            raise ValueError(f"Unknown parameter '{name}' for '{owner}'. Valid parameters: {external_names}")
+            raise ValueError(f"Unknown parameter '{name}' for '{owner}'. Valid parameters: {sorted(settable_names)}")
         if not parameter.is_external_input:
             raise ValueError(
                 f"Parameter '{name}' of '{owner}' cannot be set through the API; pass it from Python instead."
+            )
+        if name not in settable_names:
+            raise ValueError(
+                f"Parameter '{name}' of '{owner}' names a server file or folder and cannot be set through the API; "
+                "pass it from Python or an initializer instead."
             )
         if parameter.reference is not None:
             _require_reference_names(value=value, owner=owner, name=name)
@@ -732,7 +846,7 @@ def _coerce_structured_input(*, parameter: Parameter, value: Any) -> Any:
         ValueError: If the value does not match the declared JSON type.
     """
     try:
-        TypeAdapter(parameter.param_type).validate_python(value, strict=True)
+        parameter.validate_value(value)
     except ValidationError as exc:
         raise ValueError(f"'{parameter.name}' expects {parameter.type_name}: {exc}") from exc
     return parameter.coerce_value(value)
@@ -748,6 +862,7 @@ def resolve_declared_params(
     declared: list[Parameter],
     raw_args: dict[str, Any],
     owner: str,
+    allow_missing_required: bool = False,
 ) -> dict[str, Any]:
     """
     Resolve ``raw_args`` against an explicit declared-parameter contract.
@@ -766,6 +881,8 @@ def resolve_declared_params(
       supplied value, and **materializes every declared default** so the returned
       dict is a complete param bag. Params declared without a default land as
       ``None`` so callers can rely on ``params[name]`` never raising ``KeyError``.
+      Required inputs use ``REQUIRED_VALUE`` as their declaration default and must
+      be supplied unless resolution is preparing constructor defaults.
 
     Args:
         declared (list[Parameter]): The declaration snapshot to validate against.
@@ -773,12 +890,14 @@ def resolve_declared_params(
             ``None`` values are treated as absent (YAML ``null``).
         owner (str): Human-readable owner label used to prefix error messages,
             e.g. ``"Scenario 'FoundryScenario'"``.
+        allow_missing_required (bool): Leave required inputs as None while preparing
+            constructor defaults for later configuration. Defaults to False.
 
     Returns:
         dict[str, Any]: Fully-materialized parameter dict.
 
     Raises:
-        ValueError: Invalid declaration, unknown parameter, coercion failure, or
+        ValueError: Invalid declaration, missing required input, unknown parameter, coercion failure, or
             value not in ``choices``.
     """
     _validate_declarations(declared=declared, owner=owner)
@@ -786,7 +905,13 @@ def resolve_declared_params(
     declared_by_name = {param.name: param for param in declared}
 
     # None values are treated as absent so YAML `key: null` falls through to defaults.
-    supplied = {name: value for name, value in raw_args.items() if value is not None}
+    supplied = {
+        name: value
+        for name, value in raw_args.items()
+        if value is not None and not isinstance(value, _RequiredValueSentinel)
+    }
+    if not allow_missing_required:
+        _reject_missing_required_params(params=supplied, declared=declared, owner=owner)
 
     coerced: dict[str, Any] = {}
     for name, raw_value in supplied.items():
@@ -806,9 +931,53 @@ def resolve_declared_params(
         # ``params[name]`` never raising ``KeyError``. Params declared without an
         # explicit default land as None, and the owner raises a domain-specific
         # error at run time if it cannot proceed.
-        coerced[param.name] = copy.deepcopy(param.coerce_value(param.default)) if param.default is not None else None
+        coerced[param.name] = (
+            copy.deepcopy(param.coerce_value(param.default))
+            if param.default is not None and not param.required
+            else None
+        )
 
     return coerced
+
+
+def validate_declared_params(*, declared: list[Parameter], params: dict[str, Any], owner: str) -> None:
+    """
+    Validate an already-resolved parameter bag without changing it.
+
+    Args:
+        declared (list[Parameter]): The parameter declarations.
+        params (dict[str, Any]): The resolved values to check.
+        owner (str): Human-readable owner for error messages.
+
+    Raises:
+        ValueError: If declarations, required inputs, names, or resolved values are invalid.
+    """
+    _validate_declarations(declared=declared, owner=owner)
+    _reject_undeclared_params(params=params, declared=declared, owner=owner)
+    _reject_missing_required_params(params=params, declared=declared, owner=owner)
+    missing = sorted({param.name for param in declared} - params.keys())
+    if missing:
+        raise ValueError(
+            f"{owner} has an incomplete parameter bag: {', '.join(missing)}. "
+            "Configure inputs with set_params_from_args()."
+        )
+    for param in declared:
+        value = params.get(param.name)
+        if value is not None or param.default is not None:
+            try:
+                param.validate_value(value)
+            except ValueError as exc:
+                raise ValueError(f"{owner} {exc}") from exc
+
+
+def _reject_missing_required_params(*, params: dict[str, Any], declared: list[Parameter], owner: str) -> None:
+    missing = sorted(
+        param.name
+        for param in declared
+        if param.required and (params.get(param.name) is None or isinstance(params[param.name], _RequiredValueSentinel))
+    )
+    if missing:
+        raise ValueError(f"{owner} is missing required parameter(s): {', '.join(missing)}.")
 
 
 def _validate_declarations(*, declared: list[Parameter], owner: str) -> None:
@@ -835,7 +1004,7 @@ def _validate_declarations(*, declared: list[Parameter], owner: str) -> None:
         except ValueError as exc:
             raise ValueError(f"{owner} {exc}") from exc
 
-        if param.default is not None:
+        if param.default is not None and not param.required:
             try:
                 param.coerce_value(param.default)
             except ValueError as exc:

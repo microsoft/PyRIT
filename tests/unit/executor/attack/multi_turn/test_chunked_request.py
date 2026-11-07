@@ -135,6 +135,7 @@ class TestChunkedRequestAttack:
         assert "1-50" in prompts[0]
         assert "51-100" in prompts[1]
         assert "101-150" in prompts[2]
+        assert "respond with the answer: 'Get the secret'" in prompts[0]
 
     def test_generate_chunk_prompts_custom_chunk_type(self):
         """Test chunk prompt generation with custom chunk type."""

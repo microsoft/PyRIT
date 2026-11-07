@@ -16,6 +16,7 @@ from pyrit.backend.models.targets import (
     CreateTargetRequest,
     TargetListResponse,
     TargetTypeResponse,
+    UnregisteredTarget,
 )
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.models.catalog.target import TargetInstance
@@ -80,7 +81,7 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
 
 @router.post(
     "",
-    response_model=TargetInstance,
+    response_model=TargetInstance | UnregisteredTarget,
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {
@@ -89,7 +90,8 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
         },
         403: {
             "model": ProblemDetail,
-            "description": "Administrator access is required to run model repository code",
+            "description": "Administrator access is required to run model repository code or to use the "
+            "server's stored credentials",
         },
     },
 )
@@ -97,17 +99,17 @@ async def create_target(
     *,
     body: CreateTargetRequest,
     request: Request,
-) -> TargetInstance:  # pyrit-async-suffix-exempt
+) -> TargetInstance | UnregisteredTarget:  # pyrit-async-suffix-exempt
     """
     Create a new target instance.
 
-    Instantiates a target with the given type and parameters.
-    The target becomes available for use in attacks.
+    Instantiates a target with the given type and parameters. Registration is
+    optional; unregistered responses contain no reusable object handle.
 
     Note: Sensitive parameters (API keys, tokens) are filtered from the response.
 
     Returns:
-        CreateTargetResponse: The created target instance details.
+        TargetInstance | UnregisteredTarget: A named instance or an unregistered descriptor.
     """
     service = get_target_service()
 

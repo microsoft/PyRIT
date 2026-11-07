@@ -13,6 +13,7 @@ import json
 from unittest.mock import patch
 
 import pytest
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import (
@@ -155,7 +156,7 @@ async def test_prepended_conversation_sends_next_message_first(
     async def record_send_async(*, normalized_conversation: list[Message]) -> list[Message]:
         message = normalized_conversation[-1]
         if sibling_sends_first and message.get_value() == "MY-CUSTOM-FIRST-PROMPT":
-            await asyncio.wait_for(sibling_sent.wait(), timeout=10)
+            await sibling_sent.wait()
         requests.append(message)
         responses = await send_async(normalized_conversation=normalized_conversation)
         if message.get_value() != "MY-CUSTOM-FIRST-PROMPT":
@@ -163,11 +164,20 @@ async def test_prepended_conversation_sends_next_message_first(
         return responses
 
     with patch.object(objective_target, "_send_prompt_to_target_async", side_effect=record_send_async):
-        await attack.execute_async(
-            objective="do X",
-            prepended_conversation=prepended,
-            next_message=Message.from_prompt(prompt="MY-CUSTOM-FIRST-PROMPT", role="user"),
+        running = asyncio.create_task(
+            attack.execute_async(
+                objective="do X",
+                prepended_conversation=prepended,
+                next_message=Message.from_prompt(prompt="MY-CUSTOM-FIRST-PROMPT", role="user"),
+            )
         )
+        try:
+            await wait_for_completion_async(future=running)
+        finally:
+            sibling_sent.set()
+            if not running.done():
+                running.cancel()
+            await wait_for_completion_async(future=asyncio.gather(running, return_exceptions=True))
 
     seeded_requests = [message for message in requests if message.get_value() == "MY-CUSTOM-FIRST-PROMPT"]
     assert len(seeded_requests) == 1

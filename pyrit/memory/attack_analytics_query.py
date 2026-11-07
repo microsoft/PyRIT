@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from sqlalchemy import (
     JSON,
+    Boolean,
+    Integer,
     Unicode,
     UnicodeText,
     and_,
@@ -38,6 +40,7 @@ from sqlalchemy import (
     or_,
     select,
     true,
+    type_coerce,
     union_all,
 )
 from sqlalchemy.sql import visitors
@@ -96,7 +99,9 @@ class _Source:
     display text (array labels come from members). ``converters`` permits legacy
     converter objects and distinguishes [] from missing metadata. ``insensitive``
     lowercases membership keys with the backend's Unicode-aware operation,
-    never their display labels.
+    never their display labels. ``kind``, when set, is a scalar key's kind;
+    otherwise only a NULL value is missing. ``sort_by_label`` lists options in
+    kind blocks (missing, value, then legacy names) by binary label, then key.
     """
 
     value: ColumnElement[Any]
@@ -104,6 +109,8 @@ class _Source:
     array: bool = False
     converters: bool = False
     insensitive: bool = False
+    kind: ColumnElement[Any] | None = None
+    sort_by_label: bool = False
 
 
 class AttackAnalyticsQueryCompiler:
@@ -169,7 +176,7 @@ class AttackAnalyticsQueryCompiler:
         self._label_columns = label_columns or {}
         self._from: FromClause = self.root
         self._sources: dict[str, _Source] = {}
-        self._operation_name: ColumnElement[Any] | None = None
+        self._operation: _Source | None = None
         self._identifiers_ready = False
         self.atomic = AtomicAttackIdentifierEntry.__table__.alias("analytics_atomic")
         self.technique = AttackTechniqueIdentifierEntry.__table__.alias("analytics_technique")
@@ -391,8 +398,9 @@ class AttackAnalyticsQueryCompiler:
         Select one bounded page of grouped raw outcome counts.
 
         Memberships are deduplicated within each profile before its weight is
-        added to a bucket. Groups sort by total count, then typed key; the extra
-        row indicates another page without changing cohort totals.
+        added to a bucket. Groups sort by total count; ties break by typed key, or
+        by option order for label-ordered dimensions. The extra row indicates
+        another page without changing cohort totals.
 
         Args:
             query (AttackAnalyticsQuery): Group dimension, offset, and visible group limit.
@@ -407,9 +415,12 @@ class AttackAnalyticsQueryCompiler:
         profiles = self._profiles(sources)
         members = self._memberships(profiles=profiles, sources=sources, dimensions=[0], name="group_members")
         grouped = self._aggregate(members, dimensions=[0])
+        ties = self._option_order(
+            source=sources[0], kind=grouped.c.kind0, value=grouped.c.value0, label=self._collate(grouped.c.label0)
+        )
         return (
             select(grouped)
-            .order_by(grouped.c.total.desc(), grouped.c.kind0, grouped.c.value0)
+            .order_by(grouped.c.total.desc(), *ties)
             .offset(query.group_offset)
             .limit(query.group_limit + 1)
         )
@@ -446,13 +457,16 @@ class AttackAnalyticsQueryCompiler:
             self._axis(profiles=profiles, sources=sources, index=index, limit=query.axis_limit + 1)
             for index in range(2)
         ]
-        visible = [
-            select(axis)
-            .order_by(axis.c[f"kind{index}"], axis.c[f"value{index}"])
-            .limit(query.axis_limit)
-            .cte(f"visible_axis{index}")
-            for index, axis in enumerate(candidates)
-        ]
+        visible: list[CTE] = []
+        for index, axis in enumerate(candidates):
+            kind, value, label = (axis.c[f"{field}{index}"] for field in ("kind", "value", "label"))
+            ranks = [self._kind_rank(kind).label(f"rank{index}")] if sources[index].sort_by_label else []
+            visible.append(
+                select(axis, *ranks)
+                .order_by(*self._option_order(source=sources[index], kind=kind, value=value, label=label))
+                .limit(query.axis_limit)
+                .cte(f"visible_axis{index}")
+            )
         members = self._memberships(profiles=profiles, sources=sources, dimensions=[0, 1], name="cell_members")
         selected = members.join(visible[0], self._same_key(left=members, right=visible[0], index=0)).join(
             visible[1], self._same_key(left=members, right=visible[1], index=1)
@@ -471,7 +485,8 @@ class AttackAnalyticsQueryCompiler:
             ),
             else_=False,
         ).label("truncated")
-        return self._matrix_output(axes=visible, cells=cells, truncated=truncated)
+        label_ordered = (sources[0].sort_by_label, sources[1].sort_by_label)
+        return self._matrix_output(axes=visible, cells=cells, truncated=truncated, label_ordered=label_ordered)
 
     def _compact_matrix(self, *, profiles: CTE, sources: list[_Source], limit: int) -> CompoundSelect[Any]:
         """
@@ -512,18 +527,26 @@ class AttackAnalyticsQueryCompiler:
             else_=False,
         ).label("truncated")
         bounded = select(ranked).where(ranked.c.rank0 <= limit, ranked.c.rank1 <= limit).cte("visible_cells")
-        return self._matrix_output(axes=axes, cells=bounded, truncated=truncated)
+        return self._matrix_output(axes=axes, cells=bounded, truncated=truncated, label_ordered=(False, False))
 
     @classmethod
-    def _matrix_output(cls, *, axes: list[CTE], cells: CTE, truncated: ColumnElement[Any]) -> CompoundSelect[Any]:
+    def _matrix_output(
+        cls, *, axes: list[CTE], cells: CTE, truncated: ColumnElement[Any], label_ordered: tuple[bool, bool]
+    ) -> CompoundSelect[Any]:
         """
         Put axis metadata and cell counts in one consistently shaped result stream.
+
+        A label-ordered axis carries ``rank{index}`` and sorts by it, its binary label,
+        then its key; other axes sort by typed key.
 
         Returns:
             CompoundSelect[Any]: UNION ALL rows tagged ``row``, ``column``, or ``cell``.
                 The truncation flag is repeated so no separate metadata query is needed.
         """
-        records = [cls._axis_record(axes[index], index=index, truncated=truncated) for index in range(2)]
+        records = [
+            cls._axis_record(axes[index], index=index, truncated=truncated, ranked=label_ordered[index])
+            for index in range(2)
+        ]
         records.append(
             select(
                 literal("cell").label("record"),
@@ -535,9 +558,20 @@ class AttackAnalyticsQueryCompiler:
                 cells.c.label1,
                 cells.c.counts,
                 truncated,
+                *[
+                    (cls._kind_rank(cells.c[f"kind{index}"]) if ordered else cast(null(), Integer())).label(
+                        f"rank{index}"
+                    )
+                    for index, ordered in enumerate(label_ordered)
+                ],
             )
         )
-        return union_all(*records).order_by("record", "kind0", "value0", "kind1", "value1")
+        order = ["record"]
+        for index, ordered in enumerate(label_ordered):
+            order.extend(
+                [f"rank{index}", f"label{index}", f"value{index}"] if ordered else [f"kind{index}", f"value{index}"]
+            )
+        return union_all(*records).order_by(*order)
 
     def facet(self, query: AttackAnalyticsFacetQuery) -> Select[*tuple[Any, ...]]:
         """
@@ -578,11 +612,11 @@ class AttackAnalyticsQueryCompiler:
         Read distinct scalar keys directly, avoiding profile and outcome aggregation.
 
         Returns:
-            Select[Any]: A key-ordered page plus one lookahead row. Labels use binary
+            Select[Any]: A page in option order plus one lookahead row. Labels use binary
                 MIN so case-insensitive database defaults do not choose arbitrary spellings.
         """
         conditions = self._conditions()
-        if self.dialect == "sqlite" and not source.insensitive and source.value is source.label:
+        if self.dialect == "sqlite" and not source.insensitive and source.kind is None and source.value is source.label:
             value = self._collate(source.value)
             projected = self._materialize_sqlite(
                 select(value.label("raw")).select_from(self._from).where(*conditions).cte("scalar_facet_values")
@@ -595,7 +629,9 @@ class AttackAnalyticsQueryCompiler:
             )
             kind, value, label = self._scalar_key(value=visible.c.raw, label=visible.c.raw)
             return select(kind.label("kind0"), value.label("value0"), label.label("label0")).order_by(kind, value)
-        kind, value, label = self._scalar_key(value=source.value, label=source.label, insensitive=source.insensitive)
+        kind, value, label = self._scalar_key(
+            value=source.value, label=source.label, insensitive=source.insensitive, kind=source.kind
+        )
         origin = self._from
         if self.dialect == "mssql":
             origin, projected = self._grouping_projection(
@@ -607,12 +643,13 @@ class AttackAnalyticsQueryCompiler:
             kind, value, label = projected
         if query.search:
             conditions.append(self._search_condition(label=label, search=query.search))
+        minimum = func.min(self._collate(label))
         return (
-            select(kind.label("kind0"), value.label("value0"), func.min(self._collate(label)).label("label0"))
+            select(kind.label("kind0"), value.label("value0"), minimum.label("label0"))
             .select_from(origin)
             .where(*conditions)
             .group_by(kind, value)
-            .order_by(kind, value)
+            .order_by(*self._option_order(source=source, kind=kind, value=value, label=minimum))
             .offset(query.offset)
             .limit(query.limit + 1)
         )
@@ -630,6 +667,15 @@ class AttackAnalyticsQueryCompiler:
             if sqlite3.sqlite_version_info >= (3, 35, 0)
             else values
         )
+
+    def _likely_sqlite(self, condition: ColumnElement[bool]) -> ColumnElement[bool]:
+        """
+        Mark a usually-true condition so SQLite's planner searches another term's index instead.
+
+        Returns:
+            ColumnElement[bool]: The hinted condition on SQLite, or the unchanged condition elsewhere.
+        """
+        return func.likely(condition, type_=Boolean) if self.dialect == "sqlite" else condition
 
     @staticmethod
     def _search_condition(*, label: ColumnElement[Any], search: str) -> ColumnElement[bool]:
@@ -669,7 +715,7 @@ class AttackAnalyticsQueryCompiler:
         target_content_hash = func.coalesce(self.target.c.hash, self._target_property(path="hash"))
         request = self._converter_source(direction=AttackAnalyticsConverterDirection.REQUEST)
         response = self._converter_source(direction=AttackAnalyticsConverterDirection.RESPONSE)
-        operation = self._operation_value()
+        operation = self._operation_source().label
         conditions = self._conditions()
         if after is not None:
             timestamp = after.timestamp.astimezone(UTC).replace(tzinfo=None)
@@ -688,6 +734,7 @@ class AttackAnalyticsQueryCompiler:
                 self.root.c.outcome,
                 self.root.c.timestamp.label("updated_at"),
                 operation.label("operation"),
+                self.root.c.operation_id,
                 self.root.c.operator,
                 attack.label.label("attack_type"),
                 model.label.label("target_model"),
@@ -721,10 +768,10 @@ class AttackAnalyticsQueryCompiler:
         """
         Map a validated dimension to its stored key, display text, and membership rules.
 
-        Operation, operator, labels, model names, and identifier hashes retain exact
-        spelling. Attack types, harm categories, and converter types fold case.
-        Scenario keys use the persisted run UUID, not a possibly non-unique
-        scenario name. Objective-target keys use the frozen v1 evaluation hash
+        Legacy Operation names, operator, labels, model names, and identifier hashes
+        retain exact spelling. Attack types, harm categories, and converter types fold case.
+        Operation and scenario keys use persisted UUIDs, not possibly renamed or
+        non-unique names. Objective-target keys use the frozen v1 evaluation hash
         stored on each result, not its exact content hash or its model label.
 
         Args:
@@ -737,8 +784,7 @@ class AttackAnalyticsQueryCompiler:
         """
         name = dimension.name
         if name is AttackAnalyticsDimensionName.OPERATION:
-            value = self._operation_value()
-            return _Source(value=value, label=value)
+            return self._operation_source()
         if name is AttackAnalyticsDimensionName.OPERATOR:
             value = self.root.c[name.value]
             return _Source(value=value, label=value)
@@ -784,24 +830,37 @@ class AttackAnalyticsQueryCompiler:
         )
         return _Source(value=value, label=value)
 
-    def _operation_value(self) -> ColumnElement[Any]:
+    def _operation_source(self) -> _Source:
         """
-        Resolve a result's Operation as its saved Operation's current name, else its stored name.
+        Key a result's Operation by its saved Operation ID, else by its stored legacy name.
 
-        History lists activity the same way, so results attributed by ID and by a matching name group
-        together. The saved Operation is joined once per compiler. Compacted facts already carry the
-        resolved name.
+        The saved Operation's current name is only the label, so a rename never changes a key.
+        A legacy name keeps its own kind and never merges with an ID, even when UUID-shaped.
+        The saved Operation is joined once per compiler; compacted facts carry both columns.
 
         Returns:
-            ColumnElement[Any]: The Operation name, or NULL for unassigned activity.
+            _Source: Kind, key, and label expressions. Without a saved Operation, the label
+                falls back to the stored name, then to the Operation ID.
         """
-        if "operation_id" not in self.root.c:
-            return self.root.c.operation
-        if self._operation_name is None:
+        if self._operation is None:
+            root = self.root.c
             saved = OperationEntry.__table__.alias("analytics_operation")
-            self._from = self._from.outerjoin(saved, saved.c.id == self.root.c.operation_id)
-            self._operation_name = func.coalesce(saved.c.name, self.root.c.operation)
-        return self._operation_name
+            self._from = self._from.outerjoin(saved, saved.c.id == root.operation_id)
+            linked = root.operation_id.isnot(None)
+            operation_id = func.lower(cast(root.operation_id, Unicode(36)))
+            # Inline literals: SQL Server does not match SELECT parameters to GROUP BY parameters in profiles.
+            kind = case(
+                (linked, literal("value", literal_execute=True)),
+                (root.operation.isnot(None), literal("legacy_operation_name", literal_execute=True)),
+                else_=literal("missing", literal_execute=True),
+            )
+            self._operation = _Source(
+                value=case((linked, operation_id), else_=root.operation),
+                label=func.coalesce(saved.c.name, root.operation, operation_id),
+                kind=kind,
+                sort_by_label=True,
+            )
+        return self._operation
 
     def _ensure_identifiers(self) -> None:
         """
@@ -1027,8 +1086,22 @@ class AttackAnalyticsQueryCompiler:
         values = [value for option in predicate.values if (value := option.value) is not None]
         missing = any(option.kind is AttackAnalyticsValueKind.MISSING for option in predicate.values)
         no_converters = any(option.kind is AttackAnalyticsValueKind.NO_CONVERTERS for option in predicate.values)
-        if predicate.dimension.name is AttackAnalyticsDimensionName.OPERATION and "operation_id" in self.root.c:
-            return self._operation_predicate(values=values, missing=missing, index=index)
+        if predicate.dimension.name is AttackAnalyticsDimensionName.OPERATION:
+            return self._operation_predicate(
+                ids=[
+                    value
+                    for option in predicate.values
+                    if option.kind is AttackAnalyticsValueKind.VALUE and (value := option.value) is not None
+                ],
+                names=[
+                    value
+                    for option in predicate.values
+                    if option.kind is AttackAnalyticsValueKind.LEGACY_OPERATION_NAME
+                    and (value := option.value) is not None
+                ],
+                missing=missing,
+                index=index,
+            )
         source = self._source(predicate.dimension)
         if not source.array:
             matches: list[ColumnElement[bool]] = [source.value.is_(None)] if missing else []
@@ -1097,26 +1170,31 @@ class AttackAnalyticsQueryCompiler:
             matches.append(JsonArrayEmpty(raw) == true())
         return and_(*matches) if predicate.match_mode is AttackAnalyticsMatchMode.ALL else or_(*matches)
 
-    def _operation_predicate(self, *, values: list[str], missing: bool, index: int) -> ColumnElement[bool]:
+    def _operation_predicate(
+        self, *, ids: list[str], names: list[str], missing: bool, index: int
+    ) -> ColumnElement[bool]:
         """
-        Match the resolved Operation name through the ``operation`` and ``operation_id`` indexes.
+        Match saved Operation IDs, legacy names, and unassigned activity through their indexes.
 
-        A result linked to a saved Operation also matches its own stored name, which may be
-        spelled differently.
+        A legacy name matches only results without an Operation ID, so an ID and a legacy
+        name never select each other's results, even when the name is UUID-shaped.
 
         Returns:
-            ColumnElement[bool]: Stored-name and saved-Operation lookups combined with OR.
+            ColumnElement[bool]: The requested ID, legacy-name, and unassigned lookups combined with OR.
         """
         root = self.root.c
-        matches: list[ColumnElement[bool]] = (
-            [and_(root.operation_id.is_(None), root.operation.is_(None))] if missing else []
-        )
-        if values:
-            requested = self._filter_values(values=values, index=index)
+        matches: list[ColumnElement[bool]] = []
+        if ids:
+            requested = self._filter_values(values=ids, index=index)
+            matches.append(root.operation_id.in_(select(cast(requested.c.value, CustomUUID())).select_from(requested)))
+        if names:
+            requested = self._filter_values(values=names, index=index)
             expected = select(self._collate(cast(requested.c.value, UnicodeText()))).select_from(requested)
-            saved = OperationEntry.__table__.alias(f"filter_operation_{index}")
-            matches.append(self._collate(root.operation).in_(expected))
-            matches.append(root.operation_id.in_(select(saved.c.id).where(self._collate(saved.c.name).in_(expected))))
+            matches.append(
+                and_(self._likely_sqlite(root.operation_id.is_(None)), self._collate(root.operation).in_(expected))
+            )
+        if missing:
+            matches.append(and_(root.operation_id.is_(None), root.operation.is_(None)))
         return or_(*matches)
 
     @staticmethod
@@ -1268,7 +1346,7 @@ class AttackAnalyticsQueryCompiler:
         Promoted columns and retained JSON can each supply normalized metadata.
         Legacy facts also group by their retained document, so unrelated missing
         or unresolved identifiers cannot collapse into one metadata value.
-        Text retains binary collation; native scenario UUIDs do not take collation.
+        Text retains binary collation; native scenario and Operation UUIDs do not take collation.
 
         The continuation compiler receives no filters: its root is already the
         filtered cohort, and columns needed only for filtering were deliberately
@@ -1320,7 +1398,8 @@ class AttackAnalyticsQueryCompiler:
         label_columns: dict[str, str] = {}
         for index, dimension in enumerate(dimensions):
             if dimension.name is AttackAnalyticsDimensionName.OPERATION:
-                values["operation"] = base._operation_value()
+                values["operation_id"] = base.root.c.operation_id
+                values["operation"] = base.root.c.operation
             elif dimension.name is AttackAnalyticsDimensionName.OPERATOR:
                 values["operator"] = base.root.c.operator
             elif dimension.name is AttackAnalyticsDimensionName.TARGETED_HARM_CATEGORY:
@@ -1403,7 +1482,7 @@ class AttackAnalyticsQueryCompiler:
         Coalesce equal raw source tuples before expanding any array memberships.
 
         Args:
-            sources (list[_Source]): Axis expressions, including scalar display labels.
+            sources (list[_Source]): Axis expressions, including scalar display labels and kinds.
             counts (bool): Include outcome and weight for charts. False selects only
                 distinct raw metadata for facets, with no outcome aggregation.
 
@@ -1419,6 +1498,8 @@ class AttackAnalyticsQueryCompiler:
             values.append(self._grouping_text(source.value).label(f"source{index}"))
             if not source.array:
                 values.append(self._grouping_text(source.label).label(f"display{index}"))
+                if source.kind is not None:
+                    values.append(self._grouping_text(source.kind).label(f"source_kind{index}"))
         origin, values = self._grouping_projection(origin=self._from, values=values, name="profile_values")
         if not counts:
             return select(*values).select_from(origin).where(*conditions).distinct().cte("analytics_profiles")
@@ -1481,7 +1562,10 @@ class AttackAnalyticsQueryCompiler:
                 kind, value, label = self._array_key(source=source, raw=raw, items=items)
             else:
                 kind, value, label = self._scalar_key(
-                    value=raw, label=profiles.c[f"display{index}"], insensitive=source.insensitive
+                    value=raw,
+                    label=profiles.c[f"display{index}"],
+                    insensitive=source.insensitive,
+                    kind=profiles.c[f"source_kind{index}"] if source.kind is not None else None,
                 )
             keys.extend([kind, value])
             member_keys = [kind.label(f"kind{index}"), value.label(f"value{index}")]
@@ -1505,18 +1589,26 @@ class AttackAnalyticsQueryCompiler:
         return statement.cte(name)
 
     def _scalar_key(
-        self, *, value: ColumnElement[Any], label: ColumnElement[Any], insensitive: bool = False
+        self,
+        *,
+        value: ColumnElement[Any],
+        label: ColumnElement[Any],
+        insensitive: bool = False,
+        kind: ColumnElement[Any] | None = None,
     ) -> tuple[ColumnElement[Any], ColumnElement[Any], ColumnElement[Any]]:
         """
         Encode scalar absence separately from the non-NULL text used for grouping and joins.
 
         Returns:
             tuple[ColumnElement[Any], ColumnElement[Any], ColumnElement[Any]]: Kind,
-                binary-collated key text, and display label. Only SQL NULL is missing:
-                an actual blank string or literal ``Unknown`` remains a value.
+                binary-collated key text, and display label. Without a source-supplied
+                kind, only SQL NULL is missing: an actual blank string or literal
+                ``Unknown`` remains a value.
         """
         key = UnicodeLower(value) if insensitive else value
-        return case((value.is_(None), "missing"), else_="value"), self._collate(func.coalesce(key, "")), label
+        if kind is None:
+            kind = case((value.is_(None), "missing"), else_="value")
+        return kind, self._collate(func.coalesce(key, "")), label
 
     def _array_key(
         self, *, source: _Source, raw: ColumnElement[Any], items: FromClause
@@ -1574,20 +1666,50 @@ class AttackAnalyticsQueryCompiler:
         Discover one axis independently before bounding high-cardinality cell combinations.
 
         Returns:
-            CTE: Distinct typed keys in binary order, normally including one extra key
-                for truncation detection. Axis selection does not rank by outcome counts.
+            CTE: Distinct typed keys in option order with binary-collated labels, normally
+                including one extra key for truncation detection. Axis selection does not
+                rank by outcome counts.
         """
         members = self._memberships(profiles=profiles, sources=sources, dimensions=[index], name=f"axis{index}_members")
+        kind, value = members.c[f"kind{index}"], members.c[f"value{index}"]
+        label = func.min(self._collate(members.c[f"label{index}"]))
         return (
-            select(
-                members.c[f"kind{index}"],
-                members.c[f"value{index}"],
-                func.min(members.c[f"label{index}"]).label(f"label{index}"),
-            )
-            .group_by(members.c[f"kind{index}"], members.c[f"value{index}"])
-            .order_by(members.c[f"kind{index}"], members.c[f"value{index}"])
+            select(kind, value, label.label(f"label{index}"))
+            .group_by(kind, value)
+            .order_by(*self._option_order(source=sources[index], kind=kind, value=value, label=label))
             .limit(limit)
             .cte(f"axis{index}_candidates")
+        )
+
+    @classmethod
+    def _option_order(
+        cls, *, source: _Source, kind: ColumnElement[Any], value: ColumnElement[Any], label: ColumnElement[Any]
+    ) -> list[ColumnElement[Any]]:
+        """
+        Order facet and axis options by typed key, or label-ordered options by kind block and label.
+
+        Returns:
+            list[ColumnElement[Any]]: ORDER BY terms ending in the key, so paging and truncation
+                stay deterministic. ``label`` must already use binary collation.
+        """
+        return [cls._kind_rank(kind), label, value] if source.sort_by_label else [kind, value]
+
+    @staticmethod
+    def _kind_rank(kind: ColumnElement[Any]) -> ColumnElement[int]:
+        """
+        Rank a label-ordered option's kind: missing first, then saved values, then legacy names.
+
+        Returns:
+            ColumnElement[int]: 0, 1, or 2. Inline literals let SQL Server repeat the rank
+                in SELECT and ORDER BY without positional parameters.
+        """
+        return type_coerce(
+            case(
+                (kind == literal("missing", literal_execute=True), literal(0, literal_execute=True)),
+                (kind == literal("value", literal_execute=True), literal(1, literal_execute=True)),
+                else_=literal(2, literal_execute=True),
+            ),
+            Integer(),
         )
 
     @staticmethod
@@ -1634,13 +1756,14 @@ class AttackAnalyticsQueryCompiler:
         )
 
     @staticmethod
-    def _axis_record(axis: CTE, *, index: int, truncated: ColumnElement[Any]) -> Select[*tuple[Any, ...]]:
+    def _axis_record(axis: CTE, *, index: int, truncated: ColumnElement[Any], ranked: bool) -> Select[*tuple[Any, ...]]:
         """
         Project an axis into the shared matrix row shape, filling the other axis with NULL.
 
         Returns:
-            Select[Any]: A row/column-tagged record with no counts. Explicit text types
-                keep SQL Server's UNION from inferring incompatible types for absent fields.
+            Select[Any]: A row/column-tagged record with no counts. Explicit text and
+                integer types keep SQL Server's UNION from inferring incompatible types
+                for absent fields.
         """
         empty = cast(null(), UnicodeText())
         return select(
@@ -1652,4 +1775,10 @@ class AttackAnalyticsQueryCompiler:
             ],
             empty.label("counts"),
             truncated,
+            *[
+                (axis.c[f"rank{index}"] if dimension == index and ranked else cast(null(), Integer())).label(
+                    f"rank{dimension}"
+                )
+                for dimension in range(2)
+            ],
         )

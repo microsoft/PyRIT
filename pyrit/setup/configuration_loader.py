@@ -114,6 +114,8 @@ class ConfigurationLoader(YamlLoadable):
             optionally followed by a blob prefix, used to persist custom initializer Python scripts.
         scenario_presets_source: Local directory or Azure Blob container URI, optionally
             followed by a blob prefix, used to persist scenario presets.
+        scenario_suites_source: Local directory or Azure Blob container URI, optionally
+            followed by a blob prefix, used to persist scenario suites.
         silent: Whether to suppress initialization messages.
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
@@ -168,6 +170,7 @@ class ConfigurationLoader(YamlLoadable):
     allow_custom_initializers: bool = False
     custom_initializers_source: str | None = None
     scenario_presets_source: str | None = None
+    scenario_suites_source: str | None = None
     target_upload_directory: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
@@ -196,6 +199,7 @@ class ConfigurationLoader(YamlLoadable):
         self._validate_env_akv_ref()
         self._validate_custom_initializers_source()
         self._validate_scenario_presets_source()
+        self._validate_scenario_suites_source()
         self._validate_target_upload_directory()
         self._normalize_server()
 
@@ -226,6 +230,15 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: If the source is not a non-empty string.
         """
         self._validate_document_source(name="scenario_presets_source", value=self.scenario_presets_source)
+
+    def _validate_scenario_suites_source(self) -> None:
+        """
+        Validate the optional scenario suite storage source.
+
+        Raises:
+            ValueError: If the source is not a non-empty string.
+        """
+        self._validate_document_source(name="scenario_suites_source", value=self.scenario_suites_source)
 
     @staticmethod
     def _validate_document_source(*, name: str, value: Any) -> None:

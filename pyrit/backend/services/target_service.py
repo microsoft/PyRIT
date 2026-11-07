@@ -25,10 +25,14 @@ from pyrit.backend.models.targets import (
     TargetListResponse,
     TargetTypeEntry,
     TargetTypeResponse,
+    UnregisteredTarget,
 )
+from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.common.auth_mode import AUTH_MODES, AuthMode
+from pyrit.models import TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
@@ -163,6 +167,25 @@ class TargetService:
             supported_auth_modes.append(auth_mode)
         return supported_auth_modes
 
+    @staticmethod
+    def _allowed_path_params(*, target_cls: type[PromptTarget]) -> frozenset[str]:
+        """
+        Return the path parameters a target built from API input may receive.
+
+        These are the path parameters callers may set, plus the upload folder of a
+        target that uploads local files, which only the server sets.
+
+        Args:
+            target_cls (type[PromptTarget]): Target class being described or built.
+
+        Returns:
+            frozenset[str]: Path parameter names the target may receive.
+        """
+        upload_directory = target_cls.upload_directory_parameter
+        if upload_directory is None:
+            return target_cls.caller_path_parameters
+        return target_cls.caller_path_parameters | {upload_directory}
+
     def _project_target_parameters(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> list[Parameter]:
         """
         Project registry parameters into the API contract.
@@ -171,7 +194,8 @@ class TargetService:
         can resolve them from dotenv configuration. The GUI must still collect them
         explicitly, so the API marks those values required without changing the
         target constructor signatures. The upload folder of a target that uploads
-        local files is set by the server, so it is left out.
+        local files is set by the server, so it is left out, and so are parameters
+        that take Python objects and path parameters callers may not set.
 
         Args:
             target_type (str): Registered target class name.
@@ -188,6 +212,7 @@ class TargetService:
             parameter.model_copy(update={"default": REQUIRED_VALUE}) if parameter.name in required_names else parameter
             for parameter in parameters
             if parameter.name != target_cls.upload_directory_parameter
+            and parameter.is_allowed_external_input(allowed_path_params=target_cls.caller_path_parameters)
         ]
 
     async def list_target_types_async(self, *, upload_directory: str | None = None) -> TargetTypeResponse:
@@ -197,9 +222,9 @@ class TargetService:
         Returns every target that external callers can build, with the
         constructor parameters they may supply, each described in the form callers
         send it, and the auth modes it supports, all projected from the registry's
-        ``TargetMetadata``; targets that need a Python object for a required
-        parameter are left out, and so are targets that upload local files when the
-        server has no upload folder. Deciding which entries to surface to a
+        ``TargetMetadata``; targets that need a Python object or a path callers may not
+        set for a required parameter are left out, and so are targets that upload local
+        files when the server has no upload folder. Deciding which entries to surface to a
         user is a presentation concern owned by the caller (e.g. the frontend),
         not this service.
 
@@ -220,16 +245,64 @@ class TargetService:
                         target_type=metadata.class_name,
                         parameters=metadata.parameters,
                     )
-                    if parameter.is_external_input
                 ],
                 supported_auth_modes=self._get_supported_auth_modes(metadata.supported_auth_modes),
                 description=metadata.class_description or None,
             )
             for metadata in metadata_items
-            if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+            if self._has_required_params(target_type=metadata.class_name, parameters=metadata.parameters)
             and self._has_upload_directory(target_type=metadata.class_name, upload_directory=upload_directory)
         ]
         return TargetTypeResponse(items=items)
+
+    async def build_from_source_async(self, spec: SourceInstanceSpec) -> PromptTarget:
+        """
+        Rebuild a private target and verify its saved effective identity.
+
+        Overrides may set the target's caller path parameters, as on create, but not
+        the upload folder, which only the server sets.
+
+        Returns:
+            PromptTarget: The caller-owned target.
+        """
+        source = self._registry.resolve_source(name=spec.source_name, identifier_hash=spec.source_hash)
+        target = self._registry.recreate_instance(
+            source=source,
+            params=spec.params,
+            external_input=True,
+            allowed_path_params=type(source).caller_path_parameters,
+        )
+        if spec.effective_hash and target.get_identifier().hash != spec.effective_hash:
+            await release_component_async(target)
+            raise ValueError("The saved target configuration cannot be reconstructed")
+        return target
+
+    async def resolve_binding_async(self, binding: TargetBinding) -> PromptTarget:
+        """
+        Rebuild an attack-owned configuration from its current source.
+
+        Returns:
+            PromptTarget: The caller-owned target.
+        """
+        return await self.build_from_source_async(binding.to_spec())
+
+    def _has_required_params(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> bool:
+        """
+        Return whether a target type can receive every required parameter when built from API input.
+
+        Args:
+            target_type (str): Registered target class name.
+            parameters (tuple[Parameter, ...]): Constructor parameters derived by the registry.
+
+        Returns:
+            bool: False when a required parameter needs a Python object or a path callers may not set.
+        """
+        allowed_path_params = self._allowed_path_params(target_cls=self._registry.get_class(target_type))
+        return all(
+            parameter.is_allowed_external_input(allowed_path_params=allowed_path_params)
+            for parameter in parameters
+            if parameter.required
+        )
 
     def _has_upload_directory(self, *, target_type: str, upload_directory: str | None) -> bool:
         """
@@ -280,7 +353,7 @@ class TargetService:
 
     async def create_target_async(
         self, *, request: CreateTargetRequest, upload_directory: str | None = None, is_admin: bool = False
-    ) -> TargetInstance:
+    ) -> TargetInstance | UnregisteredTarget:
         """
         Create a new target instance from API request.
 
@@ -292,13 +365,15 @@ class TargetService:
         ``params``, and for ``identity`` it confirms the target supports it and
         omits the api_key plus any registry-flagged identity-conflicting
         parameters so the target validates its own endpoint and authenticates
-        itself. The request-level ``auth_mode`` is authoritative and is forwarded
+        itself. For ``none`` it likewise confirms support and omits the api_key.
+        The request-level ``auth_mode`` is authoritative and is forwarded
         via ``get_auth_mode_parameters`` to targets that accept it, so the choice
         is explicit rather than inferred from a missing key. A target that uploads
         local files gets the server's upload folder, which callers cannot choose.
         GitHub Copilot requires an explicit or environment token rather than SDK
         login discovery in CoPyRIT. A target whose construction runs model
-        repository code is built only for an administrator. The response is built
+        repository code, or that would authenticate with this server's stored
+        credentials, is built only for an administrator. The response is built
         before the target is registered, so a failed request leaves no registered
         target.
 
@@ -306,20 +381,22 @@ class TargetService:
             request: The create target request with type, params, and auth_mode.
             upload_directory: Folder the server lets API-created targets upload files from,
                 or None when the server configures none.
-            is_admin: Whether the caller may create a target that runs model repository code.
+            is_admin: Whether the caller may create a target that runs model repository code or
+                authenticates with this server's stored credentials.
 
         Returns:
             TargetInstance with the new target's details.
 
         Raises:
             ValueError: If the target type is not registered, ``params`` carries an
-                ``auth_mode`` that conflicts with the request-level choice, identity
-                auth is requested but unsupported by the target type, or a target that
+                ``auth_mode`` that conflicts with the request-level choice, identity or
+                no-key auth is requested but unsupported by the target type, or a target that
                 uploads local files is requested with its upload folder or while
                 the server configures none. Construction errors (unknown params,
                 incompatible inner targets, unrecognized identity endpoints) are
                 raised by the registry / target classes.
-            PermissionError: If a non-administrator enables a target's model code execution.
+            PermissionError: If a non-administrator enables a target's model code execution, or
+                creates a target that would authenticate with this server's stored credentials.
         """
         if request.type not in self._registry:
             raise ValueError(
@@ -353,6 +430,11 @@ class TargetService:
                     if parameter.identity_conflicting:
                         params.pop(parameter.name, None)
 
+        if request.auth_mode == "none":
+            if "none" not in target_cls.supported_auth_modes:
+                raise ValueError(f"Target type '{request.type}' does not support no-key authentication.")
+            params.pop("api_key", None)
+
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
         self._apply_upload_directory(
             target_type=request.type, target_cls=target_cls, params=params, upload_directory=upload_directory
@@ -370,16 +452,59 @@ class TargetService:
                     "GITHUB_TOKEN for this CoPyRIT instance through its environment or loaded .env/.env.local files."
                 )
 
-        await self._enforce_code_execution_permission_async(target_type=request.type, params=params, is_admin=is_admin)
+        permission_params = params
+        if request.source is not None:
+            source = self._registry.resolve_source(
+                name=request.source.source_name, identifier_hash=request.source.source_hash
+            )
+            permission_params = {
+                **self._registry.get_reconstruction_parameters(source),
+                **request.source.params,
+            }
+        await self._enforce_code_execution_permission_async(
+            target_type=request.type, params=permission_params, is_admin=is_admin
+        )
+        self._enforce_server_credential_permission(
+            target_type=request.type, params=permission_params, is_admin=is_admin
+        )
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
         # Remove this generated fallback after that UI sends an explicit name.
         target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
-        self._registry.instances.validate_name_available(target_registry_name)
-        target_obj = self._registry.create_instance_from_external_input(request.type, params=params)
-        target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
-        self._registry.instances.register(target_obj, name=target_registry_name)
-        return target
+        if request.register:
+            self._registry.instances.validate_name_available(target_registry_name)
+        if (
+            request.source
+            and type(
+                self._registry.resolve_source(
+                    name=request.source.source_name, identifier_hash=request.source.source_hash
+                )
+            )
+            is not target_cls
+        ):
+            raise ValueError("The source target type does not match the requested type")
+        target_obj = (
+            await self.build_from_source_async(request.source)
+            if request.source
+            else self._registry.create_instance_from_external_input(
+                request.type, params=params, allowed_path_params=self._allowed_path_params(target_cls=target_cls)
+            )
+        )
+        if not request.register:
+            try:
+                return UnregisteredTarget(
+                    identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
+                    capabilities=target_obj.capabilities,
+                )
+            finally:
+                await release_component_async(target_obj)
+        try:
+            target = self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target_obj)
+            self._registry.instances.register(target_obj, name=target_registry_name)
+            return target
+        except Exception:
+            await release_component_async(target_obj)
+            raise
 
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool
@@ -423,6 +548,37 @@ class TargetService:
             raise PermissionError(
                 f"Creating '{target_type}' with '{parameter_name}' enabled runs model repository code and "
                 "requires administrator access."
+            )
+
+    def _enforce_server_credential_permission(
+        self, *, target_type: str, params: dict[str, Any], is_admin: bool
+    ) -> None:
+        """
+        Require administrator access when a target would authenticate with the server's own credentials.
+
+        A target names the parameter a caller supplies to authenticate with their own credential
+        through ``server_credential_parameter`` (e.g. ``"sas_token"``). When the caller does not
+        supply it, the target falls back to the server's stored credentials (an ambient managed
+        identity or a server-configured token), so a non-administrator could otherwise point those
+        credentials at a resource of their choice. The check runs after identity-mode normalization
+        has removed any conflicting credential, so an identity-mode request is covered too.
+
+        Args:
+            target_type (str): Registered target class name.
+            params (dict[str, Any]): Constructor parameters after auth-mode normalization.
+            is_admin (bool): Whether the caller may use the server's stored credentials.
+
+        Raises:
+            PermissionError: If the caller supplied no credential and is not an administrator.
+        """
+        parameter_name = self._registry.get_class(target_type).server_credential_parameter
+        if parameter_name is None:
+            return
+        if not params.get(parameter_name) and not is_admin:
+            raise PermissionError(
+                f"Creating '{target_type}' without '{parameter_name}' authenticates with this server's stored "
+                f"credentials and requires administrator access. Create it with 'api_key' authentication and your "
+                f"own '{parameter_name}', or ask an administrator."
             )
 
 

@@ -501,6 +501,30 @@ class TestLegacyReExports:
 class TestBuildMatrixAtomicAttacks:
     """``build_matrix_atomic_attacks`` wires the context into the builder in one call."""
 
+    @pytest.mark.parametrize("override", [False, True])
+    def test_context_converters_are_used_unless_explicitly_overridden(self, override: bool) -> None:
+        from pyrit.converter import Base64Converter
+
+        converter = Base64Converter()
+        context = _context(
+            techniques=[_technique("tech")],
+            seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
+        )
+        context.technique_converters["tech"] = [converter]
+        factory = _mock_factory(name="tech")
+        with _patch_registry({"tech": factory}):
+            build_matrix_atomic_attacks(
+                context=context,
+                objective_scorer=MagicMock(spec=TrueFalseScorer),
+                technique_converters={} if override else None,
+            )
+        extra = factory.create.call_args.kwargs["extra_request_converters"]
+        if override:
+            assert extra is None
+        else:
+            assert extra is not None
+            assert extra[0].converters == [converter]
+
     def test_builds_cross_product_grouped_by_technique(self):
         context = _context(
             techniques=[_technique("tech")],

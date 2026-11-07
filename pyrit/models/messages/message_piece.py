@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 from uuid import uuid4
 
 from pydantic import (
@@ -226,7 +226,7 @@ class MessagePiece(BaseModel):
     # Adversarial placeholder support
     # ------------------------------------------------------------------ #
     @classmethod
-    def adversarial_placeholder(cls, *, role: ChatMessageRole = "user") -> MessagePiece:
+    def adversarial_placeholder(cls, *, role: ChatMessageRole = "user") -> Self:
         """
         Build a placeholder text piece that signals the adversarial chat will
         generate the text content at this position.

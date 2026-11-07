@@ -23,6 +23,18 @@ _EAGER_PACKAGE_EXCEPTIONS = frozenset(
 
 _LAZY_IMPORT_SPOT_CHECKS = [
     (
+        "pyrit._code_execution",
+        "SandboxClient",
+        "pyrit._code_execution.client",
+        "pyrit._code_execution.docker_client",
+    ),
+    (
+        "pyrit._code_execution",
+        "DockerSandboxClient",
+        "pyrit._code_execution.docker_client",
+        "pyrit.score",
+    ),
+    (
         "pyrit.analytics",
         "compute_technique_stats_async",
         "pyrit.analytics.technique_analysis",
@@ -446,6 +458,55 @@ def test_analytics_foundations_do_not_load_higher_layers() -> None:
         forbidden = (
             "pyrit.analytics", "pyrit.backend", "pyrit.memory", "pyrit.executor",
             "pyrit.scenario", "pyrit.prompt_target", "pyrit.score", "fastapi", "sqlalchemy",
+        )
+        loaded = [
+            name for name in sys.modules
+            if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden)
+        ]
+        assert not loaded, loaded
+        """
+    )
+
+
+def test_code_execution_is_independent_of_component_layers() -> None:
+    _assert_subprocess_succeeds(
+        """
+        import importlib.util
+        import sys
+        import pyrit.models
+        import pyrit.models.code_execution as execution_models
+        from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxClient
+        from pyrit.models.code_execution import (
+            _ProgramExecutionEvent, _ProgramInvocation, _RuntimeProfileName, _SandboxRun,
+        )
+
+        for name in ("_ProgramExecutionEvent", "_ProgramInvocation", "_RuntimeProfileName", "_SandboxRun"):
+            assert name not in pyrit.models.__all__
+            assert not hasattr(pyrit.models, name)
+            public_name = name.removeprefix("_")
+            assert public_name not in pyrit.models.__all__
+            assert not hasattr(pyrit.models, public_name)
+            assert not hasattr(execution_models, public_name)
+
+        client = DockerSandboxClient(
+            profiles={"python": DockerRuntimeProfile(image="python@sha256:" + "a" * 64, command=("python3",))}
+        )
+        assert isinstance(client, SandboxClient)
+        assert client.get_runtime_profile_names() == frozenset({"python"})
+        assert client.get_identifier().class_module == "pyrit._code_execution.docker_client"
+        assert importlib.util.find_spec("pyrit.code_execution") is None
+        event = _ProgramExecutionEvent(
+            invocation_index=0, runtime_profile_name="python",
+            exit_code=0, stdout="result", duration_ms=1,
+        )
+        assert event.resolved_command is None
+        assert _SandboxRun(events=(event,)).events[0].stdout == "result"
+        assert _ProgramInvocation(stdin="input").stdin == "input"
+
+        forbidden = (
+            "pyrit.score", "pyrit.models.score", "pyrit.memory", "pyrit.executor",
+            "pyrit.prompt_target", "pyrit.converter", "pyrit.datasets", "pyrit.scenario",
+            "pyrit.backend", "sqlalchemy",
         )
         loaded = [
             name for name in sys.modules

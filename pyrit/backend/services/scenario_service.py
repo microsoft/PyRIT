@@ -59,6 +59,7 @@ def _metadata_to_registered_scenario(
         scenario_name=metadata.registry_name,
         scenario_type=metadata.class_name,
         scenario_version=metadata.scenario_version,
+        supports_objective_scorer=metadata.supports_objective_scorer,
         description=metadata.class_description,
         description_markdown=metadata.description_markdown,
         default_technique=metadata.default_technique,
@@ -269,11 +270,15 @@ class ScenarioService:
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 techniques=request.techniques,
+                technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 objective_target=objective_target,
                 include_baseline=request.include_baseline,
             )
-            scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name)
+            constructor_kwargs = resolver.resolve_constructor_kwargs(
+                scenario_class=scenario_class, objective_scorer=request.objective_scorer
+            )
+            scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name, **constructor_kwargs)
             scenario.set_params_from_args(args={**(request.scenario_params or {}), **kwargs})
             settings = await scenario.load_datasets_async()
         metadata = await get_dataset_service().list_datasets_async()
@@ -543,17 +548,22 @@ class ScenarioService:
         objective_target = resolver.resolve_target(target_name=request.target_name) if request.target_name else None
         adversarial_target = resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
         with override_default_adversarial_target(adversarial_target):
-            estimate_kwargs = resolver.resolve_configuration(
+            estimate_kwargs = await asyncio.to_thread(
+                resolver.resolve_configuration,
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
+                technique_override=request.technique_override,
                 datasets=request.dataset_request,
                 include_baseline=request.include_baseline,
             )
             return await self._registry.create_and_estimate_async(
                 name=scenario_name,
                 scenario_params=request.scenario_params or {},
+                constructor_kwargs=resolver.resolve_constructor_kwargs(
+                    scenario_class=scenario_class, objective_scorer=request.objective_scorer
+                ),
                 **estimate_kwargs,
             )
 

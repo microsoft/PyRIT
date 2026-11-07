@@ -38,6 +38,36 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+### Manual attack creation
+
+`POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
+for example `{"target_registry_name": "my-target", "objective": "Evaluate the response"}`.
+An omitted, null, or empty objective creates a chat without a goal. The objective
+never sets the strategy type, and there is no separate attack display-name field.
+Objective edits use `PATCH /api/attacks/{attack_result_id}` without changing the
+strategy identifier. New attacks copied from conversations or saved through
+`POST /api/attacks/save-conversation` also use `ManualAttack`; their automated
+source results keep their original strategy types.
+New and edited manual objectives are marked as non-placeholder, so even the literal
+`"Manual attack via GUI"` is preserved in summaries. Unmarked historical manual
+placeholders retain their legacy empty-summary behavior.
+
+Until PyRIT 1.4, `name` remains a deprecated input alias for `objective`, with
+the same text validation. When `objective` is omitted or null, `name` supplies
+the goal. If both are non-null they must match exactly, including empty strings;
+conflicts return 422 rather than silently discarding either value.
+
+This fixes new results, not existing malformed identifiers. Older manual results
+may have their initial objective stored as the strategy class name. History,
+attack-type filters/options, and analytics still use those persisted class names.
+Manual editing and scoring remain available because they recognize the
+`pyrit.backend` strategy module, not the malformed class name. Objective edits
+do not repair identifiers. Any historical repair requires a separate, audited
+migration scoped to verified backend-created manual results, creating corrected
+content-addressed identifiers and relinking affected results rather than mutating
+shared identifiers. Do not infer manual status from objective text or GUI labels,
+or reclassify automated results.
+
 ### Saved conversations
 
 `GET /api/attacks/conversations/{conversation_id}` returns the saved chat history
@@ -47,6 +77,104 @@ uses a verified main or pruned attack reference without changing stored rows.
 Missing IDs, standalone conversations, and internal conversations return 404.
 Saving from the scanner creates a copy through `POST /api/attacks/save-conversation`;
 it does not change the source or send to a target.
+
+For on-demand saved-result browsing, use
+`GET /api/attacks/{attack_result_id}/metadata?conversation_id={conversation_id}`
+for initial Chat metadata. It returns `related_conversation_count` (pruned
+references, excluding main) and `selected_conversation_valid`, independently of
+reference paging. An omitted conversation ID selects main. This response omits
+both complete reference arrays, transcript bodies, and result hierarchies; the
+stored SDK result and reference JSON are still materialized server-side.
+`GET /api/attacks/{attack_result_id}` keeps its full legacy summary contract.
+
+Use
+`GET /api/attacks/{attack_result_id}/conversations?limit=50` to page main and pruned
+references in saved-reference order. This reads counts
+and previews, not conversation bodies. The limit is 1-200; follow
+`pagination.next_cursor` while `pagination.has_more` is true.
+
+Load only the selected conversation with
+`GET /api/attacks/{attack_result_id}/messages?conversation_id={conversation_id}&limit=100`.
+Here the limit is 1-500 **message pieces**, not turns or bytes. Results use the
+canonical message, piece, and score views, ordered by sequence, full timestamp
+(including fractional seconds), and ID.
+A page can split a multimodal turn: `partial_message_sequences` identifies partial
+turns. Append pieces by ID to their turn across pages, and follow
+`pagination.next_cursor`. A page does not infer a final target-response status
+from an incomplete transcript.
+
+Message cursors belong to one attack and conversation. Reference cursors also
+validate the saved ordering and timestamp; restart reference paging if the saved
+attack changes. Invalid or mismatched cursors return 400. Passing a cursor requires
+a limit. Omitting both preserves the existing active-conversation listing and
+full-transcript behavior.
+Both paged and unpaged reads expose only main and pruned conversations.
+Adversarial and preparation contexts are excluded from lists, reference totals,
+and transcript reads, including hierarchy node expansion.
+
+The saved Scenario Chat viewer consumes these bounded reads with independent
+reference/message continuation controls. It merges stable piece IDs into their
+ordered turns and reconciles page-local partial-sequence markers against the
+accumulated prefix, rather than treating a leading partial marker as a new turn.
+Loaded evidence remains available after a continuation failure. Invalid cursors
+offer a bounded restart. Copy/branch, manual continuation, export and assessment
+stay disabled until the selected transcript is complete; legacy active/manual
+read behavior is unchanged.
+
+### Scenario result hierarchy
+
+These read-only APIs provide the backend foundation for compound-attack browsing.
+The Scenario run page integrates them into its existing "Atomic attack groups"
+tables, rather than displaying a second results section. Group summaries retain
+their server-derived totals while result rows expand into ordered saved children.
+Completion and success count logical execution units. The execution count uses
+the backend's raw producer attempt counts; neither is inferred from rendered
+rows. Missing or duplicate child references remain visible as saved positions,
+not additional results.
+Available flat execution rows remain usable while relationships load or if the
+hierarchy request fails, with an explicit loading/error notice.
+
+Clicking a result with a main conversation opens the existing chat view and
+preserves scenario-run provenance for its return breadcrumb. Conversationless
+compound results expand their children instead. A separate Details action reuses
+the existing metadata dialog. Hierarchy requests do not load transcript bodies;
+the Chat viewer loads saved evidence through the bounded conversation reads above.
+
+`GET /api/scenarios/runs/{scenario_result_id}/hierarchy?max_nodes=1000` returns a
+bounded tree preview grouped by atomic attack group. Roots are saved results with
+no incoming child reference from the same run, not results inferred from their
+attempt indexes. The node budget is 1-5000, with at most 500 roots per page and
+bounded descendant queries through depth 10. `has_more` and `next_cursor` refer
+only to **root continuation**. `truncated` also covers deferred descendants,
+depth limits, and other results not represented by the preview.
+
+Run/group completion, outcomes, producer counts, and raw error/retry diagnostics
+use the shared exact accounting path independently of the selected page. Exact
+statistics may scan lightweight summaries; a small tree request does not hydrate
+the full progress snapshot, attack results, or conversation bodies.
+
+Expand one result with
+`GET /api/scenarios/runs/{scenario_result_id}/hierarchy/nodes/{attack_result_id}?limit=200`.
+The limit is 1-500 saved child-reference positions. Follow `next_children_cursor`
+using `children_cursor`; `children_count` is the full reference count and
+`child_offset` locates this page. `child_index` remains the absolute position under
+the immediate parent. Missing, malformed, duplicate, cyclic, or cross-run references
+remain explicit and consume positions, so even a wholly unresolved page can advance.
+Child cursors validate the run, node, timestamp, and saved reference ordering;
+restart child paging after those references change.
+
+Tree previews leave conversation metadata deferred: `conversations` is empty,
+`conversations_count` is unknown, and `conversations_truncated` is true when saved
+references exist. The node's `conversation_id` still links to its main conversation.
+Node expansion returns up to 50 main/pruned conversation summaries, the exact reference
+count, and a clipping flag. These use the same metadata model as the generic attack API.
+Use the saved-conversation APIs above for reference continuation and all transcript
+bodies. There is no hierarchy-specific transcript format or conversation-preview mode.
+
+An entirely rootless saved graph, such as a closed cycle, returns a bounded
+`diagnostics.rootless_result_ids` sample with its total count and clipping flag.
+It does not invent lineage or promote a cycle member to a true root. The sampled
+IDs remain available through the single-node and saved-conversation APIs.
 
 ### Techniques
 
@@ -96,10 +224,13 @@ enums when registered factories change; it does not create attacks.
 Selections from an earlier enum remain valid in the same scenario and registry
 generation if their factories are unchanged. Earlier aggregate selections retain
 their original members; they do not gain newly registered techniques.
-Responses include `creation_statement`, a Python-style display of the factory's
+Responses include `identifier`, the canonical factory identity shown inline in
+the Registry. It can contain raw prompt and seed values, including nested
+technique seeds. This JSON is not a redacted or hash-only view.
+Responses also include `creation_statement`, a Python-style display of the factory's
 supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable
-or lossless source. Responses do not include identifier or expanded seed JSON.
+or lossless source. The GUI displays identity JSON, not the creation statement.
 
 ### Manual Messages
 
@@ -159,6 +290,10 @@ and no stage guarantees that retrying delivery is safe. Stored target errors and
 Terminal states are published only after finalization and ownership release. Progress also
 includes the `request_turn_number` assigned during preparation, so clients can distinguish
 this send's response from a later turn written by another client.
+Each conversation receipt also retains `target_invoked`, set only at the target
+invocation boundary. It remains false during preparation and retains its value
+after interruption. An allocated request turn alone is not evidence of target use,
+and an invocation does not guarantee successful delivery.
 
 The optional `wait_ms` query parameter (0-1000) waits for completion, returning immediately
 if the operation settles. Cancelling this read, disconnecting, or navigating away does not
@@ -197,12 +332,75 @@ Stop these test-owned servers after the run.
 ### Request Limits
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
-API requests with URLs over 8 KiB receive **414**. Identifiers, names, labels, filters,
-cursors, configuration files, and initializer scripts also have length or item limits,
-listed in the OpenAPI schema; values over a limit receive **422**. Prompt content (message
-pieces, system prompts, and converter preview input) and free-form values (prompt
+API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,
+labels, filters, cursors, configuration files, and initializer scripts also have length or
+item limits, listed in the OpenAPI schema; values over a limit receive **422**. Prompt content
+(message pieces, system prompts, and converter preview input) and free-form values (prompt
 metadata, scenario and initializer arguments, and target and converter parameter values)
 are limited only by the body size, so long prompts and base64 media keep working.
+
+### Input Validation and Trust Boundary
+
+The backend can accept requests from other machines, so it checks request values before it
+uses them:
+
+- Request bodies, URLs, and fields have the limits above.
+- Targets, converters, and scorers accept only the parameters their type catalogs list
+  (`GET /api/targets/types`, `GET /api/converters/types`, `GET /api/scorers/types`), and a
+  parameter that refers to another component takes the name of a registered one. Values are
+  passed to the component, which is responsible for checking them; a `ValueError` from its
+  constructor returns **400**.
+- File values (`image_path`, `audio_path`, `video_path`, and `binary_path`) in messages,
+  previews, and saved or prepended conversations must be uploaded content, a URL, or a file in
+  this server's media folders (`prompt-memory-entries` and `seed-prompt-entries` under the
+  memory results path), the folders `GET /api/media` serves. Converter file parameters must be
+  uploaded content, or an Azure Blob URL where the parameter accepts one.
+- When results are stored in Azure Blob Storage, URLs in those file values and converter file
+  parameters must name a file in those folders of the results container, and the server signs
+  only those URLs for display.
+- The configuration routes (`/api/config`), which read, change, and apply the server
+  configuration and environment files, require an administrator.
+- Through the API, only an administrator can create `HuggingFaceChatTarget` with
+  `trust_remote_code` enabled, which runs model repository code on the server, or
+  `AzureBlobStorageTarget` in identity mode or without a `sas_token`, which writes with this
+  server's credentials to a container the caller can choose.
+- `HTTPXAPITarget`, which uploads local files, can be created through the API only when
+  `target_upload_directory` is set in `.pyrit_conf`; it then uploads files only from that
+  folder, and callers cannot supply their own.
+
+Targets that need a setting the API does not allow can be registered in Python or with an
+initializer.
+
+In Entra mode (`PYRIT_AUTH_MODE=entra`), API callers are members of the `ENTRA_ALLOWED_GROUP_IDS`
+or `ENTRA_ADMIN_GROUP_ID` groups, and members of `ENTRA_ADMIN_GROUP_ID` are administrators. In
+local mode (`PYRIT_AUTH_MODE=local`), meant for loopback-only development, requests are not
+authenticated: anyone who can reach the server is an API caller, and callers are administrators
+only when the server sets `PYRIT_ALLOW_UNAUTHENTICATED_ADMIN=true`. Other API callers receive
+**403** for administrator-only operations.
+
+API callers are trusted operators, so these are intentional exceptions:
+
+- Callers choose target endpoints, headers, raw HTTP requests, and redirects, and converters
+  that accept `url` values download them. The backend has no network destination policy (no
+  host allow-list, private-network blocking, or DNS pinning); limit outbound network access in
+  the deployment instead.
+- Some targets use this server's credentials when the caller gives no key: an API key from the
+  server's environment, sent even to an endpoint the caller chose, or a token for the server's
+  Azure identity, sent to the Azure endpoint or container the caller chose. For an
+  OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
+  of these.
+- Registered targets, converters, and scorers are shared: any API caller can use them, whoever
+  created them.
+- Prompt content is not filtered; it is adversarial test data by design.
+- Any file type can be stored as a payload. `GET /api/media` renders only allow-listed image,
+  audio, and video file extensions inline; everything else downloads as a file.
+- `GET /api/media` does not require authentication, so the browser can load media. It serves
+  only files from the media folders above.
+- Initializers and custom initializer scripts are trusted Python. Uploading scripts requires
+  an administrator and `allow_custom_initializers: true`.
+- `GitHubCopilotTarget.working_directory`, `HuggingFaceChatTarget.model_path`, and
+  `LocalRefusalClassifierScorer.model_id` may name local folders; callers set them like any
+  other operator setting.
 
 ## Strict Lockstep Compatibility
 

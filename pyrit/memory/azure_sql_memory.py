@@ -43,6 +43,7 @@ from pyrit.memory.memory_models import (
     CustomUUID,
     PromptMemoryEntry,
     ScenarioResultEntry,
+    UTCDateTime,
 )
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import AzureBlobStorageIO
@@ -591,6 +592,48 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             )
         return and_(*are_parts)
 
+    def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
+        """
+        Azure SQL implementation that matches label names literally through OPENJSON.
+
+        Keys and values are bound parameters, so no key becomes part of a JSON path or SQL text.
+        DATALENGTH keeps keys that differ only by trailing spaces apart, since SQL Server pads
+        strings before comparing them.
+
+        Returns:
+            Any: SQLAlchemy condition with bound parameters.
+        """
+        literal_conditions: list[str] = []
+        bindparams: dict[str, str] = {}
+        for key_index, (key, raw_value) in enumerate(labels.items()):
+            values = [raw_value] if isinstance(raw_value, str) else list(raw_value)
+            if not values:
+                continue
+            key_param = f"are_literal_key_{key_index}"
+            bindparams[key_param] = key
+            placeholders = []
+            for value_index, value in enumerate(values):
+                value_param = f"are_literal_{key_index}_{value_index}"
+                bindparams[value_param] = str(value)
+                placeholders.append(f":{value_param}")
+            literal_conditions.append(
+                'EXISTS (SELECT 1 FROM OPENJSON("AttackResultEntries".labels) AS label_entry '
+                f"WHERE label_entry.[key] = :{key_param} "
+                f"AND DATALENGTH(label_entry.[key]) = DATALENGTH(CAST(:{key_param} AS NVARCHAR(MAX))) "
+                f"AND label_entry.[value] IN ({', '.join(placeholders)}))"
+            )
+
+        parts: list[Any] = [AttackResultEntry.labels.isnot(None)]
+        if literal_conditions:
+            combined = " AND ".join(literal_conditions)
+            parts.append(
+                cast(
+                    "ColumnElement[bool]",
+                    text(f'ISJSON("AttackResultEntries".labels) = 1 AND {combined}').bindparams(**bindparams),
+                )
+            )
+        return and_(*parts)
+
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
         Azure SQL implementation: extract unique class_name values from
@@ -651,57 +694,53 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         if not conversation_ids:
             return {}
 
-        placeholders = ", ".join(f":cid{i}" for i in range(len(conversation_ids)))
-        params = {f"cid{i}": cid for i, cid in enumerate(conversation_ids)}
-
-        sql = text(
-            f"""
-            SELECT
-                aggregate_rows.conversation_id,
-                aggregate_rows.msg_count,
-                latest.last_preview,
-                latest.last_data_type,
-                aggregate_rows.created_at
-            FROM (
-                SELECT
-                    pme.conversation_id,
-                    COUNT(DISTINCT pme.sequence) AS msg_count,
-                    MIN(pme.timestamp) AS created_at
-                FROM "PromptMemoryEntries" pme
-                WHERE pme.conversation_id IN ({placeholders})
-                GROUP BY pme.conversation_id
-            ) AS aggregate_rows
-            OUTER APPLY (
-                SELECT TOP 1
-                    LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
-                    p2.converted_value_data_type AS last_data_type
-                FROM "PromptMemoryEntries" p2
-                WHERE p2.conversation_id = aggregate_rows.conversation_id
-                ORDER BY p2.sequence DESC, p2.id DESC
-            ) AS latest
-            """
-        )
+        batch_size = max(1, self._MAX_BIND_VARS)
+        result: dict[str, ConversationStats] = {}
 
         with closing(self._get_session()) as session:
-            rows = session.execute(sql, params).fetchall()
+            for start in range(0, len(conversation_ids), batch_size):
+                chunk = conversation_ids[start : start + batch_size]
+                placeholders = ", ".join(f":cid{i}" for i in range(len(chunk)))
+                params = {f"cid{i}": cid for i, cid in enumerate(chunk)}
 
-        result: dict[str, ConversationStats] = {}
-        for row in rows:
-            conv_id, msg_count, last_preview, last_data_type, raw_created_at = row
+                sql = text(
+                    f"""
+                    SELECT
+                        aggregate_rows.conversation_id,
+                        aggregate_rows.msg_count,
+                        latest.last_preview,
+                        latest.last_data_type,
+                        aggregate_rows.created_at
+                    FROM (
+                        SELECT
+                            pme.conversation_id,
+                            COUNT(DISTINCT pme.sequence) AS msg_count,
+                            MIN(pme.timestamp) AS created_at
+                        FROM "PromptMemoryEntries" pme
+                        WHERE pme.conversation_id IN ({placeholders})
+                        GROUP BY pme.conversation_id
+                    ) AS aggregate_rows
+                    OUTER APPLY (
+                        SELECT TOP 1
+                            LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
+                            p2.converted_value_data_type AS last_data_type
+                        FROM "PromptMemoryEntries" p2
+                        WHERE p2.conversation_id = aggregate_rows.conversation_id
+                        ORDER BY p2.sequence DESC, p2.id DESC
+                    ) AS latest
+                    """
+                ).columns(created_at=UTCDateTime())
 
-            created_at = None
-            if raw_created_at is not None:
-                if isinstance(raw_created_at, str):
-                    created_at = datetime.fromisoformat(raw_created_at)
-                else:
-                    created_at = raw_created_at
+                rows = session.execute(sql, params).fetchall()
 
-            result[conv_id] = ConversationStats(
-                message_count=msg_count,
-                last_message_preview=last_preview,
-                last_message_data_type=last_data_type,
-                created_at=created_at,
-            )
+                for row in rows:
+                    conv_id, msg_count, last_preview, last_data_type, created_at = row
+                    result[conv_id] = ConversationStats(
+                        message_count=msg_count,
+                        last_message_preview=last_preview,
+                        last_message_data_type=last_data_type,
+                        created_at=created_at,
+                    )
 
         return result
 

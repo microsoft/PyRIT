@@ -1,11 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import sqlite3
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import func, insert, select
 from sqlalchemy.dialects import mssql
 from sqlalchemy.engine import ScalarResult
@@ -17,6 +20,7 @@ from pyrit.memory.memory_models import (
     AttackResultEntry,
     FindingEntry,
     FindingEvidenceEntry,
+    OperationEntry,
     PromptMemoryEntry,
     ScoreEntry,
 )
@@ -35,13 +39,71 @@ async def test_operations_are_unique_by_trimmed_case_folded_name(sqlite_instance
     assert await sqlite_instance.require_operation_async(operation_id=saved.id) == saved
 
 
-async def test_update_operation_replaces_only_the_description(sqlite_instance: SQLiteMemory) -> None:
+async def test_update_operation_renames_and_replaces_the_description(sqlite_instance: SQLiteMemory) -> None:
     saved = await sqlite_instance.add_operation_async(Operation(name="Scoped", description="First draft"))
-    updated = await sqlite_instance.update_operation_async(operation_id=saved.id, description="Final scope")
-    assert updated == saved.model_copy(update={"description": "Final scope"})
-    assert await sqlite_instance.require_operation_async(operation_id=saved.id) == updated
+    described = await sqlite_instance.update_operation_async(operation_id=saved.id, description="Final scope")
+    assert described == saved.model_copy(update={"description": "Final scope"})
+    recased = await sqlite_instance.update_operation_async(operation_id=saved.id, name="  SCOPED ")
+    assert recased == described.model_copy(update={"name": "SCOPED"})
+    renamed = await sqlite_instance.update_operation_async(operation_id=saved.id, name="Engagement", description="")
+    assert renamed == saved.model_copy(update={"name": "Engagement", "description": ""})
+    assert await sqlite_instance.get_operations_async(name="scoped") == []
+    assert await sqlite_instance.get_operations_async(name="engagement") == [renamed]
+
+
+async def test_update_operation_keeps_names_unique_and_valid(sqlite_instance: SQLiteMemory) -> None:
+    saved = await sqlite_instance.add_operation_async(Operation(name="Scoped"))
+    other = await sqlite_instance.add_operation_async(Operation(name="Other"))
+    taken = await sqlite_instance.update_operation_async(operation_id=saved.id, name=" OTHER ", description="Lost")
+    assert taken == other
+    assert await sqlite_instance.require_operation_async(operation_id=saved.id) == saved
+    with pytest.raises(ValidationError):
+        await sqlite_instance.update_operation_async(operation_id=saved.id, name=" ")
     with pytest.raises(LookupError):
         await sqlite_instance.update_operation_async(operation_id=uuid4(), description="Missing")
+    assert await sqlite_instance.get_operations_async() == [other, saved]
+
+
+async def test_add_finding_rejects_a_missing_operation(sqlite_instance: SQLiteMemory) -> None:
+    with pytest.raises(LookupError, match="Operation"):
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=uuid4(), title="Orphan", severity="low"))
+    assert await sqlite_instance.get_findings_async() == []
+
+
+async def test_add_finding_maps_a_foreign_key_failure_to_a_missing_operation(sqlite_instance: SQLiteMemory) -> None:
+    # SQL Server rejects the insert at flush when the Operation was deleted after the service checked it.
+    failure = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("FOREIGN KEY constraint failed")))
+    saved = await sqlite_instance.add_operation_async(Operation(name="Saved"))
+    with patch.object(AsyncSession, "flush", failure), pytest.raises(LookupError, match="Operation"):
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=uuid4(), title="Orphan", severity="low"))
+    with patch.object(AsyncSession, "flush", failure), pytest.raises(IntegrityError):
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=saved.id, title="Other", severity="low"))
+
+
+async def test_update_operation_deleted_after_it_was_read_is_not_found(tmp_path: Path) -> None:
+    db_path = tmp_path / "update-race.db"
+    # A second connection needs a real file, and SQLiteMemory(...) would return the fixture's singleton.
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=db_path, silent=True)
+    try:
+        operation = await memory.add_operation_async(Operation(name="Racing"))
+        read = OperationEntry.get_operation
+
+        def read_then_delete(entry: OperationEntry) -> Operation:
+            other = sqlite3.connect(db_path, timeout=5)
+            try:
+                other.execute("DELETE FROM OperationEntries")
+                other.commit()
+            finally:
+                other.close()
+            return read(entry)
+
+        with patch.object(OperationEntry, "get_operation", read_then_delete), pytest.raises(LookupError):
+            await memory.update_operation_async(operation_id=operation.id, name="Renamed")
+        assert await memory.get_operations_async() == []
+    finally:
+        await memory.dispose_engine_async()
 
 
 @pytest.mark.parametrize(
@@ -347,6 +409,80 @@ async def test_one_attack_result_can_support_multiple_findings_and_counts(sqlite
         findings[1].id: 1,
     }
     assert await sqlite_instance.get_finding_evidence_counts_async(finding_ids=[]) == {}
+
+
+async def test_get_findings_by_ids_follows_dashboard_order_and_scope(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Selected"))
+    other = await sqlite_instance.add_operation_async(Operation(name="Other"))
+    stamp = datetime(2026, 10, 6, tzinfo=UTC)
+    saved: dict[str, Finding] = {}
+    for title, severity, created_at in [
+        ("Low", "low", stamp),
+        ("Older critical", "critical", stamp),
+        ("Moderate", "moderate", stamp),
+        ("Newer critical", "critical", datetime(2026, 10, 7, tzinfo=UTC)),
+    ]:
+        saved[title] = await sqlite_instance.add_finding_async(
+            finding=Finding(operation_id=operation.id, title=title, severity=severity, created_at=created_at)
+        )
+    foreign = await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=other.id, title="Foreign", severity="critical")
+    )
+    requested = [saved["Moderate"].id, foreign.id, saved["Low"].id, uuid4(), saved["Newer critical"].id]
+    requested += [saved["Older critical"].id, saved["Low"].id]
+    findings = await sqlite_instance.get_findings_by_ids_async(operation_id=operation.id, finding_ids=requested)
+    assert [finding.title for finding in findings] == ["Newer critical", "Older critical", "Moderate", "Low"]
+
+
+async def test_get_findings_by_ids_reads_in_batches(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Batched"))
+    for number, severity in enumerate(["low", "critical", "moderate", "critical", "informational"]):
+        await sqlite_instance.add_finding_async(
+            finding=Finding(operation_id=operation.id, title=str(number), severity=severity)
+        )
+    expected = await sqlite_instance.get_findings_async(operation_id=operation.id, limit=10)
+    with patch.object(sqlite_instance, "_MAX_BIND_VARS", 2):
+        findings = await sqlite_instance.get_findings_by_ids_async(
+            operation_id=operation.id, finding_ids=[finding.id for finding in reversed(expected)]
+        )
+    assert len(expected) == 5
+    assert findings == expected
+
+
+async def test_get_finding_evidence_for_findings_groups_newest_first(sqlite_instance: SQLiteMemory) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Evidence"))
+    findings = [
+        await sqlite_instance.add_finding_async(finding=Finding(operation_id=operation.id, title=title, severity="low"))
+        for title in ["Two links", "One link", "No links"]
+    ]
+    older = FindingEvidence(
+        finding_id=findings[0].id, attack_result_id=uuid4(), attached_at=datetime(2026, 10, 8, tzinfo=UTC)
+    )
+    newer = FindingEvidence(
+        finding_id=findings[0].id, attack_result_id=uuid4(), attached_at=datetime(2026, 10, 9, tzinfo=UTC)
+    )
+    only = FindingEvidence(finding_id=findings[1].id, attack_result_id=uuid4())
+    for evidence in [older, newer, only]:
+        await sqlite_instance.add_finding_evidence_async(evidence=evidence)
+    expected = {
+        finding.id: await sqlite_instance.get_finding_evidence_async(finding_id=finding.id, limit=10, offset=0)
+        for finding in findings[:2]
+    }
+    assert expected[findings[0].id] == [newer, older]
+    finding_ids = [finding.id for finding in findings]
+    assert await sqlite_instance.get_finding_evidence_for_findings_async(finding_ids=finding_ids) == expected
+    with patch.object(sqlite_instance, "_MAX_BIND_VARS", 1):
+        batched = await sqlite_instance.get_finding_evidence_for_findings_async(
+            finding_ids=[*finding_ids, findings[0].id]
+        )
+    assert batched == expected
+
+
+async def test_batched_finding_reads_accept_empty_input(sqlite_instance: SQLiteMemory) -> None:
+    with patch.object(sqlite_instance, "get_session_async", new_callable=AsyncMock) as get_session:
+        assert await sqlite_instance.get_findings_by_ids_async(operation_id=uuid4(), finding_ids=[]) == []
+        assert await sqlite_instance.get_finding_evidence_for_findings_async(finding_ids=[]) == {}
+    get_session.assert_not_called()
 
 
 async def test_finding_severity_counts_group_by_operation(sqlite_instance: SQLiteMemory) -> None:

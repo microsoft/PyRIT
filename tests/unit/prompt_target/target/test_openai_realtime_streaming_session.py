@@ -7,6 +7,7 @@ import asyncio
 import base64
 import contextlib
 import uuid
+from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
@@ -23,6 +24,7 @@ from pyrit.prompt_target.common.realtime_audio import (
 from pyrit.prompt_target.openai._openai_realtime_streaming_session import (
     _OpenAIRealtimeStreamingSession,
 )
+from tests.unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 
 
 class _StubBadRequest(Exception):  # noqa: N818 - stand-in for openai.BadRequestError shape
@@ -118,7 +120,8 @@ def _build_normalizer() -> MagicMock:
 @contextlib.contextmanager
 def _patched_dispatcher():
     """Patch the dispatcher factory + BadRequestError symbol inside the session module."""
-    captured: dict[str, Any] = {}
+    failure_callback_registered = asyncio.Event()
+    captured: dict[str, Any] = {"failure_callback_registered": failure_callback_registered}
 
     def _factory(*, connection, on_user_audio_committed):
         captured["connection"] = connection
@@ -127,7 +130,7 @@ def _patched_dispatcher():
         d.start_async = AsyncMock()
         d.stop_async = AsyncMock()
         d.drain_callbacks_async = AsyncMock()
-        d.add_failure_callback = MagicMock()
+        d.add_failure_callback = MagicMock(side_effect=lambda callback: failure_callback_registered.set())
         captured["dispatcher"] = d
         return d
 
@@ -144,27 +147,84 @@ def _patched_dispatcher():
         yield captured
 
 
-async def _run_session_with_events(
-    session: _OpenAIRealtimeStreamingSession,
+async def _run_session_with_events_async(
     *,
+    session: _OpenAIRealtimeStreamingSession,
     finish: asyncio.Event,
     events: list[CommittedEvent],
 ) -> list[Message]:
     """Drive run_async to completion while firing the supplied committed events sequentially."""
     messages: list[Message] = []
+    chunk_delivered = asyncio.Event()
+    push_chunk_async = session._push_audio_chunk_async
 
-    async def _consume() -> None:
+    async def _push_chunk_async(chunk: bytes) -> None:
+        await push_chunk_async(chunk)
+        chunk_delivered.set()
+
+    async def _consume_async() -> None:
         messages.extend([msg async for msg in session.run_async()])
 
-    async def _fire() -> None:
-        # Let the consumer task start and create the dispatcher / queue.
-        await asyncio.sleep(0)
+    async def _fire_async() -> None:
+        await wait_for_event_async(event=chunk_delivered, tasks=[consumer])
         for event in events:
             await session._on_committed_async(event)
         finish.set()
 
-    await asyncio.gather(_consume(), _fire())
+    with patch.object(session, "_push_audio_chunk_async", side_effect=_push_chunk_async):
+        consumer = asyncio.create_task(_consume_async())
+        driver = asyncio.create_task(_fire_async())
+        joined = asyncio.gather(consumer, driver)
+        try:
+            await wait_for_completion_async(future=joined)
+        finally:
+            finish.set()
+            for task in (consumer, driver):
+                if not task.done():
+                    task.cancel()
+            await settle_tasks_async(consumer, driver)
+            await asyncio.gather(joined, return_exceptions=True)
     return messages
+
+
+@pytest.mark.parametrize("failure_source", ["consumer", "event-driver"])
+async def test_session_event_helper_drains_tasks_on_failure_async(failure_source: str) -> None:
+    target = _build_target()
+    finish = asyncio.Event()
+    source_finished = asyncio.Event()
+
+    async def _chunks_async() -> AsyncGenerator[bytes, None]:
+        try:
+            yield b"\x01" * 100
+            await finish.wait()
+        finally:
+            source_finished.set()
+
+    chunks = _chunks_async()
+    session = _OpenAIRealtimeStreamingSession(
+        target=target,
+        audio_chunks=chunks,
+        prompt_normalizer=_build_normalizer(),
+    )
+    _mock_session_wire(session)
+    if failure_source == "consumer":
+        session._push_audio_chunk_async = AsyncMock(side_effect=RuntimeError("consumer failed"))
+    else:
+        session._on_committed_async = AsyncMock(side_effect=RuntimeError("event-driver failed"))
+
+    tasks_before = asyncio.all_tasks()
+    with _patched_dispatcher() as captured:
+        with pytest.raises(RuntimeError, match=f"{failure_source} failed"):
+            await _run_session_with_events_async(
+                session=session, finish=finish, events=[CommittedEvent(item_id="item-1")]
+            )
+
+    assert finish.is_set()
+    assert not (asyncio.all_tasks() - tasks_before)
+    await chunks.aclose()
+    assert source_finished.is_set()
+    captured["dispatcher"].stop_async.assert_awaited_once()
+    target._connect_async.return_value.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +280,8 @@ async def test_run_async_yields_one_message_per_committed_turn():
     session._request_response_async = _make_request_response_async(transcripts=("hello", " world"))
 
     with _patched_dispatcher():
-        messages = await _run_session_with_events(
-            session,
+        messages = await _run_session_with_events_async(
+            session=session,
             finish=finish,
             events=[CommittedEvent(item_id="item-1"), CommittedEvent(item_id="item-2")],
         )
@@ -261,7 +321,9 @@ async def test_run_async_marks_assistant_pieces_when_turn_interrupted():
     session._request_response_async = _make_request_response_async(interrupted=True)
 
     with _patched_dispatcher():
-        messages = await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-1")])
+        messages = await _run_session_with_events_async(
+            session=session, finish=finish, events=[CommittedEvent(item_id="item-1")]
+        )
 
     assert len(messages) == 1
     for piece in messages[0].message_pieces:
@@ -290,7 +352,9 @@ async def test_run_async_applies_response_converters_to_assistant_message():
     _mock_session_wire(session)
 
     with _patched_dispatcher():
-        messages = await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-1")])
+        messages = await _run_session_with_events_async(
+            session=session, finish=finish, events=[CommittedEvent(item_id="item-1")]
+        )
 
     assert len(messages) == 1
     normalizer.convert_values_async.assert_awaited_once()
@@ -334,7 +398,7 @@ async def test_run_async_swaps_user_audio_and_records_identifiers_when_request_c
     _mock_session_wire(session)
 
     with _patched_dispatcher():
-        await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-A")])
+        await _run_session_with_events_async(session=session, finish=finish, events=[CommittedEvent(item_id="item-A")])
 
     normalizer.convert_audio_async.assert_awaited_once()
     session._swap_user_audio_async.assert_awaited_once()
@@ -368,7 +432,7 @@ async def test_run_async_skips_swap_and_identifiers_when_no_request_converters()
     _mock_session_wire(session)
 
     with _patched_dispatcher():
-        await _run_session_with_events(session, finish=finish, events=[CommittedEvent(item_id="item-B")])
+        await _run_session_with_events_async(session=session, finish=finish, events=[CommittedEvent(item_id="item-B")])
 
     normalizer.convert_audio_async.assert_not_called()
     session._swap_user_audio_async.assert_not_called()
@@ -431,7 +495,7 @@ async def test_run_async_persists_prepended_conversation_and_forwards_vad_config
 # ---------------------------------------------------------------------------
 
 
-async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
+async def test_run_propagates_dispatcher_failure_via_failure_callback_async() -> None:
     """If the dispatch loop dies without an active turn, the failure callback unblocks the consumer."""
     target = _build_target()
     normalizer = _build_normalizer()
@@ -448,23 +512,24 @@ async def test_run_async_propagates_dispatcher_failure_via_failure_callback():
 
     with _patched_dispatcher() as captured:
 
-        async def _consume() -> None:
+        async def _consume_async() -> None:
             async for _ in session.run_async():
                 pytest.fail("no message should be yielded before the failure surfaces")
 
-        async def _fire_failure() -> None:
-            # Let run_async progress past dispatcher.start_async() and the add_failure_callback registration.
-            for _ in range(5):
-                await asyncio.sleep(0)
+        consumer = asyncio.create_task(_consume_async())
+        try:
+            await wait_for_event_async(event=captured["failure_callback_registered"], tasks=[consumer])
             assert captured["dispatcher"].add_failure_callback.call_count == 1
             registered_cb = captured["dispatcher"].add_failure_callback.call_args.args[0]
             # Simulate the dispatch loop dying: invoke the registered failure callback synchronously.
             registered_cb(dispatcher_failure)
-            # Unblock the chunks iterator so the producer can exit cleanly after the consumer raises.
+            with pytest.raises(RuntimeError, match="dispatch loop died"):
+                await wait_for_completion_async(future=consumer)
+        finally:
             finish.set()
-
-        with pytest.raises(RuntimeError, match="dispatch loop died"):
-            await asyncio.gather(_consume(), _fire_failure())
+            if not consumer.done():
+                consumer.cancel()
+            await settle_tasks_async(consumer)
 
 
 async def test_run_async_propagates_audio_source_failure_and_cleans_up():
@@ -518,7 +583,7 @@ async def test_drain_skips_forced_commit_when_pending_below_minimum():
     _mock_session_wire(session)
 
     with _patched_dispatcher():
-        messages = await _run_session_with_events(session, finish=finish, events=[])
+        messages = await _run_session_with_events_async(session=session, finish=finish, events=[])
 
     assert messages == []
     connection.input_audio_buffer.commit.assert_not_awaited()
@@ -540,7 +605,7 @@ async def test_drain_forces_commit_when_pending_meets_minimum():
     _mock_session_wire(session)
 
     with _patched_dispatcher():
-        messages = await _run_session_with_events(session, finish=finish, events=[])
+        messages = await _run_session_with_events_async(session=session, finish=finish, events=[])
 
     assert messages == []
     connection.input_audio_buffer.commit.assert_awaited_once()
@@ -572,8 +637,8 @@ async def test_on_committed_trims_pre_speech_silence_before_persisting_user_audi
     _mock_session_wire(session)
 
     with _patched_dispatcher():
-        await _run_session_with_events(
-            session,
+        await _run_session_with_events_async(
+            session=session,
             finish=finish,
             events=[CommittedEvent(item_id="item-1", audio_start_ms=500)],
         )
@@ -604,8 +669,8 @@ async def test_on_committed_skips_trim_when_audio_start_ms_missing():
     _mock_session_wire(session)
 
     with _patched_dispatcher():
-        await _run_session_with_events(
-            session,
+        await _run_session_with_events_async(
+            session=session,
             finish=finish,
             events=[CommittedEvent(item_id="item-1", audio_start_ms=None)],
         )
@@ -615,7 +680,7 @@ async def test_on_committed_skips_trim_when_audio_start_ms_missing():
     assert len(saved_user_pcm) == buffer_ms * bytes_per_ms
 
 
-async def test_buffer_start_session_ms_advances_across_commits():
+async def test_buffer_start_session_ms_advances_across_commits_async() -> None:
     """Second commit's server-relative ``audio_start_ms`` is mapped through ``_buffer_start_session_ms``."""
     target = _build_target()
     normalizer = _build_normalizer()
@@ -649,23 +714,37 @@ async def test_buffer_start_session_ms_advances_across_commits():
         server_vad=ServerVadConfig(prefix_padding_ms=100),
     )
     _mock_session_wire(session)
+    first_chunk_delivered = asyncio.Event()
+    second_chunk_delivered = asyncio.Event()
 
-    async def _consume() -> None:
+    async def _push_chunk_async(chunk: bytes) -> None:
+        if chunk == chunk1:
+            first_chunk_delivered.set()
+        elif chunk == chunk2:
+            second_chunk_delivered.set()
+
+    session._push_audio_chunk_async = AsyncMock(side_effect=_push_chunk_async)
+
+    async def _consume_async() -> None:
         async for _msg in session.run_async():
             pass
 
-    async def _fire() -> None:
-        await asyncio.sleep(0)
-        await session._on_committed_async(CommittedEvent(item_id="t1", audio_start_ms=500))
-        gate2.set()
-        # Give the producer time to drain chunk2 into _pending_chunks.
-        for _ in range(20):
-            await asyncio.sleep(0)
-        await session._on_committed_async(CommittedEvent(item_id="t2", audio_start_ms=800))
-        finish.set()
-
     with _patched_dispatcher():
-        await asyncio.gather(_consume(), _fire())
+        consumer = asyncio.create_task(_consume_async())
+        try:
+            await wait_for_event_async(event=first_chunk_delivered, tasks=[consumer])
+            await session._on_committed_async(CommittedEvent(item_id="t1", audio_start_ms=500))
+            gate2.set()
+            await wait_for_event_async(event=second_chunk_delivered, tasks=[consumer])
+            await session._on_committed_async(CommittedEvent(item_id="t2", audio_start_ms=800))
+            finish.set()
+            await wait_for_completion_async(future=consumer)
+        finally:
+            gate2.set()
+            finish.set()
+            if not consumer.done():
+                consumer.cancel()
+            await settle_tasks_async(consumer)
 
     # save_audio call ordering per turn: raw_user, assistant. We requested no request converters
     # so converted_user_path == raw_user_path and only one user save_audio fires per turn.

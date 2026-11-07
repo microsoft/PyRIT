@@ -9,13 +9,14 @@ import inspect
 import threading
 import weakref
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from pyrit.analytics._execution import AnalyticsExecution
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.exceptions.analytics_exception import AnalyticsBusyException, AnalyticsTimeoutException
+from unit.async_utils import get_defined_tasks, wait_for_completion_async, wait_for_event_async
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Coroutine
@@ -114,24 +115,35 @@ async def test_default_execution_deadline_retains_capacity_until_cleanup(
         tasks: set[asyncio.Task[str]], *, timeout: float
     ) -> tuple[set[asyncio.Task[str]], set[asyncio.Task[str]]]:
         observed_timeouts.append(timeout)
-        await expire.wait()
-        return set(), tasks
+        expiry = asyncio.create_task(expire.wait())
+        try:
+            done, _ = await asyncio.wait(tasks | {expiry}, return_when=asyncio.FIRST_COMPLETED)
+            return {task for task in tasks if task in done}, tasks - done
+        finally:
+            expiry.cancel()
+            await asyncio.gather(expiry, return_exceptions=True)
 
     with (
         patch("pyrit.analytics._execution.monotonic", return_value=100.0),
         patch("pyrit.memory.query_control.time") as clock,
-        patch("pyrit.analytics._execution.asyncio.wait", side_effect=reach_deadline_async),
+        patch(
+            "pyrit.analytics._execution.asyncio",
+            wraps=asyncio,
+            wait=AsyncMock(side_effect=reach_deadline_async),
+            CancelledError=asyncio.CancelledError,
+        ),
     ):
         clock.monotonic.return_value = 100.0
         caller = harness.submit(execution=execution, operation=operation, report=report)
+        closing: asyncio.Task[None] | None = None
         try:
-            await operation.entered.wait()
+            await wait_for_event_async(event=operation.entered, tasks=[caller])
             assert observed_timeouts == [timeout]
             assert operation.control.deadline == 100.0 + timeout
             assert not caller.done()
             expire.set()
             with pytest.raises(AnalyticsTimeoutException):
-                await caller
+                await wait_for_completion_async(future=caller)
             assert operation.control.cancel_event.is_set()
             assert execution._lanes[report].active == 1
             assert not operation.exited.is_set()
@@ -140,13 +152,16 @@ async def test_default_execution_deadline_retains_capacity_until_cleanup(
             await asyncio.sleep(0)
             assert not closing.done()
             operation.release.set()
-            await closing
+            await wait_for_completion_async(future=closing)
             assert operation.exited.is_set()
             assert execution._lanes[report].active == 0
             assert execution.is_closed
         finally:
             expire.set()
             operation.release.set()
+            await wait_for_completion_async(
+                future=asyncio.gather(*get_defined_tasks(caller, closing), return_exceptions=True)
+            )
 
 
 @pytest.mark.parametrize("name", ["report_workers", "quick_workers", "max_queue"])

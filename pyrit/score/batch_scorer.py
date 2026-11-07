@@ -8,6 +8,7 @@ from datetime import datetime
 
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    AttackResultSelection,
     Message,
     MessagePiece,
     MessageScorable,
@@ -67,7 +68,8 @@ class BatchScorer:
             scorer (Scorer): The Scorer object to use for scoring.
             conversation_id (str | uuid.UUID | None): The ID of the conversation. Defaults to None.
             prompt_ids (list[str] | list[uuid.UUID] | None): A list of prompt IDs. Defaults to None.
-            labels (dict[str, str] | None): A dictionary of labels. Defaults to None.
+            labels (dict[str, str] | None): Attack labels. Responses come from the main conversation of
+                each attack result carrying these labels. Defaults to None.
             sent_after (datetime | None): Filter for prompts sent after this datetime. Defaults to None.
             sent_before (datetime | None): Filter for prompts sent before this datetime. Defaults to None.
             original_values (list[str] | None): A list of original values. Defaults to None.
@@ -86,19 +88,36 @@ class BatchScorer:
         Raises:
             ValueError: If no entries match the provided filters.
         """
-        message_pieces: Sequence[MessagePiece] = []
-        message_pieces = await self._memory.get_message_pieces_async(
-            conversation_id=conversation_id,
-            prompt_ids=prompt_ids,
-            labels=labels,
-            sent_after=sent_after,
-            sent_before=sent_before,
-            original_values=original_values,
-            converted_values=converted_values,
-            data_type=data_type,
-            not_data_type=not_data_type,
-            converted_value_sha256=converted_value_sha256,
-        )
+        conversation_ids: list[str | uuid.UUID | None] = [conversation_id]
+        if labels:
+            # Labels live on attack results, so pick their conversations before filtering messages. Envelope
+            # results such as SequentialAttack's have no conversation of their own, and an empty ID would mean
+            # "every conversation", so skip them.
+            results = await self._memory.get_attack_results_async(
+                labels=labels, result_selection=AttackResultSelection.ALL_RESULTS
+            )
+            labelled = sorted({result.conversation_id for result in results if result.conversation_id})
+            conversation_ids = [
+                labelled_id
+                for labelled_id in labelled
+                if conversation_id is None or labelled_id == str(conversation_id)
+            ]
+
+        message_pieces: list[MessagePiece] = []
+        for selected_conversation_id in conversation_ids:
+            message_pieces.extend(
+                await self._memory.get_message_pieces_async(
+                    conversation_id=selected_conversation_id,
+                    prompt_ids=prompt_ids,
+                    sent_after=sent_after,
+                    sent_before=sent_before,
+                    original_values=original_values,
+                    converted_values=converted_values,
+                    data_type=data_type,
+                    not_data_type=not_data_type,
+                    converted_value_sha256=converted_value_sha256,
+                )
+            )
 
         if not message_pieces:
             raise ValueError("No entries match the provided filters. Please check your filters.")

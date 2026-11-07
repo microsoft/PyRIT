@@ -16,8 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from pyrit.common.csv_helper import strip_leading_comment_block
 from pyrit.common.path import SCORER_EVALS_REFUSAL_SCORER_PATH
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreStatus
+from pyrit.models import ComponentIdentifier, Message, MessagePiece, Score, ScoreStatus, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.text_chunking import iter_chunk_spans
 from pyrit.score.true_false.true_false_score_aggregator import (
@@ -366,8 +367,8 @@ def _load_training_rows() -> tuple[list[tuple[str, str]], list[int]]:
                 f"({expected_hash}, found {actual_hash}). Re-validate the scorer and update the pin."
             )
         text = raw.decode("utf-8", errors="replace")
-        body = "".join(line for line in text.splitlines(keepends=True) if not line.startswith("#"))
-        for row in csv.DictReader(io.StringIO(body)):
+        body = strip_leading_comment_block(text)
+        for row in csv.DictReader(io.StringIO(body, newline="")):
             if row.get("data_type", "text") != "text" or row["human_score"] not in ("0", "1"):
                 continue
             pairs.append((row["objective"], row["assistant_response"]))
@@ -553,10 +554,11 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
             dict[str, str]: File name to current SHA-256, for re-pinning after a deliberate
             dataset update.
         """
-        return {
-            file_name: hashlib.sha256((_REFUSAL_EVALS_PATH / file_name).read_bytes()).hexdigest()
-            for file_name in _TRAINING_DATASETS
-        }
+        hashes: dict[str, str] = {}
+        for file_name in _TRAINING_DATASETS:
+            with (_REFUSAL_EVALS_PATH / file_name).open("rb") as dataset_file:
+                hashes[file_name] = hashlib.file_digest(dataset_file, "sha256").hexdigest()
+        return hashes
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -629,13 +631,15 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
             objective=objective,
         )
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         """
         Score one text piece.
 
         Args:
             message_piece (MessagePiece): The piece to score.
-            objective (str | None): The objective the response was meant to answer.
+            expectation (ScoringExpectation | None): The scoring criteria. Only its objective is read.
 
         Returns:
             list[Score]: A single true/false score, or an undetermined score inside the abstain band.
@@ -643,6 +647,7 @@ class LocalRefusalClassifierScorer(MessageTrueFalseScorer):
         Raises:
             RuntimeError: If the head is not trained.
         """
+        objective = expectation.objective if expectation else None
         if message_piece.is_blocked():
             return [self._build_blocked_refusal_score(message_piece=message_piece, objective=objective)]
         await self.load_model_async()

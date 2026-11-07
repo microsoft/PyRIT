@@ -219,7 +219,7 @@ class ScenarioResult(BaseModel):
         for results in techniques_to_process:
             objectives.extend(result.objective for result in results)
 
-        return list(set(objectives))
+        return list(dict.fromkeys(objectives))
 
     def objective_achieved_rate(self, *, atomic_attack_name: str | None = None) -> int:
         """

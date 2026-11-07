@@ -429,6 +429,106 @@ def test_construct_objective_entry_converts_strings_to_bools(sample_messages):
 # =============================================================================
 
 
+@pytest.mark.parametrize(
+    "label",
+    [
+        "2",
+        "-1",
+        "0.9",
+        "1.9",
+        "-0.2",
+        "inf",
+        "-inf",
+        "0.9999999999999999",
+        "1.0000000000000001",
+        "1e-400",
+        "-1e-400",
+        "1e-10000",
+        "sNaN",
+        "not-a-label",
+    ],
+)
+@pytest.mark.parametrize("encoding", ["utf-8", "latin-1"])
+def test_from_csv_rejects_nonbinary_objective_label(tmp_path: Path, label: str, encoding: str) -> None:
+    csv_path = tmp_path / "invalid_objective.csv"
+    csv_path.write_text(
+        f"assistant_response,objective,human_score\ncafé response,Is the answer correct?,{label}\n",
+        encoding=encoding,
+    )
+
+    with pytest.raises(ValueError, match="human_score.*binary"):
+        HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.OBJECTIVE, version="1.0")
+
+
+@pytest.mark.parametrize(
+    "label, expected",
+    [
+        ("0", False),
+        ("1", True),
+        ("0.0", False),
+        ("1.0", True),
+        ("True", True),
+        ("False", False),
+        ("FALSE", False),
+        ("-0.0", False),
+        ("+1", True),
+        ("1e0", True),
+        ("0e-400", False),
+        ("1.0000000000000000000000", True),
+        (" 1.0 ", True),
+    ],
+)
+def test_from_csv_preserves_binary_objective_label(tmp_path: Path, label: str, expected: bool) -> None:
+    csv_path = tmp_path / "valid_objective.csv"
+    csv_path.write_text(
+        f"assistant_response,objective,human_score\nexample response,Is the answer correct?,{label}\n",
+        encoding="utf-8",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.OBJECTIVE, version="1.0")
+
+    assert dataset.entries[0].human_scores == [expected]
+
+
+def test_from_csv_preserves_mixed_binary_objective_labels(tmp_path: Path) -> None:
+    csv_path = tmp_path / "mixed_binary.csv"
+    csv_path.write_text(
+        "assistant_response,objective,human_score_1,human_score_2\n"
+        "response 1,criterion,0,True\n"
+        "response 2,criterion,1.0,False\n"
+        "response 3,criterion,False,1\n"
+        "response 4,criterion,True,0.0\n"
+        "response 5,criterion,1e0,0e-400\n",
+        encoding="utf-8",
+    )
+
+    dataset = HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.OBJECTIVE, version="1.0")
+    dataset.validate()
+
+    assert [entry.human_scores for entry in dataset.entries] == [
+        [False, True],
+        [True, False],
+        [False, True],
+        [True, False],
+        [True, False],
+    ]
+    assert all(type(score) is bool for entry in dataset.entries for score in entry.human_scores)
+
+
+@pytest.mark.parametrize("label", ["0.9", "0.9999999999999999", "1e-400"])
+def test_from_csv_validates_each_objective_rater_column(tmp_path: Path, label: str) -> None:
+    csv_path = tmp_path / "multiple_raters.csv"
+    csv_path.write_text(
+        "assistant_response,objective,human_score_1,human_score_2\n"
+        "valid response,criterion,1,0\n"
+        f"invalid response,criterion,0,{label}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="human_score_2.*binary"):
+        HumanLabeledDataset.from_csv(csv_path=csv_path, metrics_type=MetricsType.OBJECTIVE, version="1.0")
+
+
 def test_from_csv_harm_dataset():
     """Load a harm dataset from the standard mini_hate_speech.csv."""
     csv_path = SCORER_EVALS_PATH / "harm" / "mini_hate_speech.csv"
@@ -618,6 +718,27 @@ def test_from_csv_objective_dataset_ignores_harm_category_column(tmp_path):
     # Should use objective column
     assert dataset.entries[0].objective == "Was this a refusal?"
     assert dataset.entries[1].objective == "Did it comply?"
+
+
+def test_from_csv_unknown_metrics_type_falls_back_to_objective_entries(tmp_path):
+    """Values outside MetricsType keep the historical runtime fallback to objective entries."""
+    csv_file = tmp_path / "unknown_metrics_type.csv"
+    with open(csv_file, "w") as f:
+        f.write("# dataset_version=1.0\n")
+        f.write("assistant_response,human_score,objective\n")
+        f.write("response1,1,Was this a refusal?\n")
+
+    unknown_metrics_type = "future_metrics_type"
+    dataset = HumanLabeledDataset.from_csv(
+        csv_path=str(csv_file),
+        metrics_type=unknown_metrics_type,  # type: ignore[arg-type]
+    )
+
+    assert dataset.metrics_type == unknown_metrics_type
+    assert len(dataset.entries) == 1
+    assert isinstance(dataset.entries[0], ObjectiveHumanLabeledEntry)
+    assert dataset.entries[0].objective == "Was this a refusal?"
+    assert dataset.entries[0].human_scores == [True]
 
 
 # =============================================================================

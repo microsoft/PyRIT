@@ -1,11 +1,14 @@
-import type { FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 
 import {
-  Button, Field, Popover, PopoverSurface, PopoverTrigger, Radio, RadioGroup, Text, Tooltip,
+  Button, Popover, PopoverSurface, PopoverTrigger, Radio, RadioGroup, Text, Tooltip,
 } from '@fluentui/react-components'
 import type { RadioGroupOnChangeData } from '@fluentui/react-components'
 import { AddRegular, SubtractRegular } from '@fluentui/react-icons'
 
+import ContextualHelpLabel from '@/components/ContextualHelpLabel'
+import HelpField from '@/components/HelpField'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import type { MultiSendOptions } from '@/types'
 
 import { useMultiSendSettingsStyles } from './MultiSendSettings.styles'
@@ -16,10 +19,12 @@ interface MultiSendSettingsProps {
   options: MultiSendOptions
   disabled: boolean
   onChange: (options: MultiSendOptions) => void
+  disabledReason?: string
 }
 
-export default function MultiSendSettings({ options, disabled, onChange }: MultiSendSettingsProps) {
+export default function MultiSendSettings({ options, disabled, onChange, disabledReason }: MultiSendSettingsProps) {
   const styles = useMultiSendSettingsStyles()
+  const [open, setOpen] = useState(false)
   const handleConverterChange = (_event: FormEvent<HTMLDivElement>, data: RadioGroupOnChangeData): void => {
     if (data.value === 'shared' || data.value === 'per_branch') {
       onChange({ ...options, requestConverterMode: data.value })
@@ -27,24 +32,30 @@ export default function MultiSendSettings({ options, disabled, onChange }: Multi
   }
 
   return (
-    <Popover positioning="above-end">
-      <PopoverTrigger disableButtonEnhancement>
-        <Tooltip content="Choose how many conversations receive this prompt" relationship="description">
+    <Popover positioning="above-end" open={open && !disabled && !disabledReason}
+      onOpenChange={(_event, data) => setOpen(data.open && !disabled && !disabledReason)}>
+      <Tooltip content={disabledReason ?? 'Choose how many conversations receive this prompt'} relationship="description">
+        <span tabIndex={disabledReason ? 0 : undefined} aria-label={disabledReason}
+            aria-disabled={disabled || Boolean(disabledReason)}>
+          <PopoverTrigger disableButtonEnhancement>
           <Button
             appearance={options.count > 1 ? 'secondary' : 'subtle'}
             size="small"
             className={styles.touchTarget}
-            disabled={disabled}
+            disabled={disabled || Boolean(disabledReason)}
             aria-label={`Repetitions: ${options.count}`}
             data-testid="multi-send-settings"
           >
             n={options.count}
           </Button>
-        </Tooltip>
-      </PopoverTrigger>
+          </PopoverTrigger>
+        </span>
+      </Tooltip>
       <PopoverSurface aria-label="Prompt repetitions">
         <div className={styles.content}>
-          <Text weight="semibold">Prompt repetitions</Text>
+          <ContextualHelpLabel term="Prompt repetitions" labelProps={{ weight: 'semibold' }}>
+            {HELP_DEFINITIONS.promptRepetitions}
+          </ContextualHelpLabel>
           <div className={styles.count}>
             <Button
               icon={<SubtractRegular />}
@@ -68,15 +79,16 @@ export default function MultiSendSettings({ options, disabled, onChange }: Multi
               : `Keep this conversation and create ${options.count - 1} copies of its history. Send the next prompt in each.`}
             {' '}The count resets to 1 after sending.
           </Text>
-          <Field label="Request converters">
+          <HelpField label="Request converters" help={HELP_DEFINITIONS.requestConverters}>
             <RadioGroup value={options.requestConverterMode} onChange={handleConverterChange} disabled={disabled}>
               <Radio value="shared" label="Convert once, reuse for all" />
               <Radio value="per_branch" label="Convert independently for each" />
             </RadioGroup>
-          </Field>
+          </HelpField>
           <Text size={200}>
-            Single sends and shared repeats use only applied conversions. Use Add converted value before sending.
-            {' '}Independent repeats run unapplied pipelines on original inputs. Applied previews stay unchanged in either mode.
+            Completed conversions are added to the prompt automatically.
+            {' '}Shared repeats use that prompt. Independent repeats run unapplied pipelines on original inputs.
+            {' '}Repeated sends are unavailable for edited or partially converted prompts.
           </Text>
         </div>
       </PopoverSurface>

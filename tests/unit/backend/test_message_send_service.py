@@ -4,6 +4,7 @@
 """Tests for the shared synchronous manual-message owner."""
 
 import asyncio
+import inspect
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -15,8 +16,10 @@ from urllib.parse import urlencode
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from pyrit.backend.mappers import request_piece_to_pyrit_message_piece
 from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
 from pyrit.backend.models.attacks import (
     AddMessageRequest,
@@ -47,11 +50,13 @@ from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.utils import to_sha256
 from pyrit.converter import Base64Converter, Converter, ConverterResult
 from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.memory.memory_models import ConverterIdentifierEntry, PromptConverterIdentifierEntry
 from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackResult,
+    ChatMessageRole,
     ComponentIdentifier,
     Conversation,
     ConversationReference,
@@ -60,10 +65,16 @@ from pyrit.models import (
     MessagePiece,
     PromptDataType,
 )
+from pyrit.models.target.target_capabilities import TargetCapabilities
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from unit.async_utils import wait_for_completion_async
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    settle_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.backend.mocks import (
     _make_matching_target_mock,
     _settle_send_async,
@@ -303,8 +314,8 @@ class TestAddMessage:
             sequence=1,
         )
         mock_memory.get_attack_results_async.return_value = [ar]
-        mock_memory.get_message_pieces_async.side_effect = [[], [response_piece]]
-        mock_memory.get_conversation_messages_async.return_value = []
+        mock_memory.get_message_pieces_async.return_value = []
+        mock_memory.get_conversation_messages_async.return_value = [response_piece.to_message()]
 
         with (
             patch("pyrit.backend.services.message_send_service.get_target_service") as mock_get_target_svc,
@@ -1317,6 +1328,134 @@ class TestAddMessageGuards:
             message_send_service._validate_target_match(attack_identifier=attack_identifier, target=request_target)
 
 
+@pytest.mark.usefixtures("patch_central_database")
+class TestStoreMessageOnly:
+    @pytest.mark.parametrize(
+        "role", ["system", "user", "assistant", "simulated_assistant", "tool", "simulated_tool", "developer"]
+    )
+    async def test_store_message_only_batches_pieces_in_order_async(
+        self,
+        *,
+        sqlite_instance: SQLiteMemory,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        role: ChatMessageRole,
+    ) -> None:
+        service, attack, target, converter = real_send_context
+        conversation_id = attack.conversation_id
+        first = converter.get_identifier()
+        second_converter = Base64Converter(encoding_func="b32encode")
+        second = second_converter.get_identifier()
+        await sqlite_instance.add_conversation_to_memory_async(
+            conversation=Conversation(conversation_id=conversation_id, target_identifier=target.get_identifier())
+        )
+        request = AddMessageRequest(
+            target_conversation_id=conversation_id,
+            role=role,
+            send=False,
+            pieces=[
+                MessagePieceRequest(
+                    original_value="first",
+                    converted_value="converted first",
+                    applied_converter_ids=["first", "second", "first"],
+                ),
+                MessagePieceRequest(original_value="second"),
+                MessagePieceRequest(original_value="third", converted_value="third", applied_converter_ids=["second"]),
+            ],
+        )
+        with (
+            patch("pyrit.backend.services.message_send_service.get_converter_service") as registry,
+            patch.object(
+                sqlite_instance,
+                "add_conversation_to_memory_async",
+                wraps=sqlite_instance.add_conversation_to_memory_async,
+            ) as register,
+            patch.object(
+                sqlite_instance,
+                "add_message_pieces_to_memory_async",
+                wraps=sqlite_instance.add_message_pieces_to_memory_async,
+            ) as batch,
+        ):
+            registry.return_value.get_converter_objects_for_ids.side_effect = lambda *, converter_ids: [
+                {"first": converter, "second": second_converter}[name] for name in converter_ids
+            ]
+            await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
+
+        register.assert_awaited_once()
+        registered = register.call_args.kwargs["conversation"]
+        assert registered.target_identifier == target.get_identifier()
+        assert registered.attack_result_id == attack.attack_result_id
+        batch.assert_awaited_once()
+        submitted = batch.call_args.kwargs["message_pieces"]
+        persisted = await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id)
+        assert [piece.id for piece in persisted] == [piece.id for piece in submitted]
+        assert [piece.original_value for piece in persisted] == ["first", "second", "third"]
+        assert [piece.converted_value for piece in persisted] == ["converted first", "second", "third"]
+        assert [piece.sequence for piece in persisted] == [0, 0, 0]
+        assert [piece.role for piece in persisted] == [
+            {"assistant": "simulated_assistant", "tool": "simulated_tool"}.get(role, role)
+        ] * 3
+        assert all(piece.prompt_metadata[MessagePiece.PREPENDED_HISTORY_METADATA_KEY] for piece in persisted)
+        assert [piece.converter_identifiers for piece in persisted] == [[first, second, first], [], [second]]
+        conversation = await sqlite_instance.get_conversation_metadata_async(conversation_id=conversation_id)
+        assert conversation is not None
+        assert conversation.target_identifier == target.get_identifier()
+        assert conversation.attack_result_id == attack.attack_result_id
+
+    @pytest.mark.parametrize("failure", ["construction", "batch"])
+    async def test_store_message_only_failure_does_not_save_partial_message_async(
+        self,
+        *,
+        sqlite_instance: SQLiteMemory,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        failure: str,
+    ) -> None:
+        service, attack, _, _ = real_send_context
+        conversation_id = attack.conversation_id
+        request = AddMessageRequest(
+            target_conversation_id=conversation_id,
+            send=False,
+            pieces=[
+                MessagePieceRequest(original_value="first", converted_value="first", applied_converter_ids=["first"]),
+                MessagePieceRequest(original_value="second"),
+            ],
+        )
+        pieces = [
+            request_piece_to_pyrit_message_piece(
+                piece=piece, role=request.role, conversation_id=conversation_id, sequence=0
+            )
+            for piece in request.pieces
+        ]
+        pieces[1].id = pieces[0].id
+        with (
+            patch(
+                "pyrit.backend.services.message_send_service.request_to_pyrit_message",
+                return_value=Message(message_pieces=pieces),
+                side_effect=ValueError("invalid second piece") if failure == "construction" else None,
+            ),
+            patch.object(
+                sqlite_instance,
+                "add_message_pieces_to_memory_async",
+                wraps=sqlite_instance.add_message_pieces_to_memory_async,
+            ) as batch,
+            pytest.raises(
+                IntegrityError if failure == "batch" else ValueError,
+                match="UNIQUE constraint failed" if failure == "batch" else "invalid second piece",
+            ),
+        ):
+            await service.add_message_async(attack_result_id=attack.attack_result_id, request=request)
+
+        assert await sqlite_instance.get_message_pieces_async(conversation_id=conversation_id) == []
+        assert sqlite_instance._query_entries(PromptConverterIdentifierEntry) == []
+        assert sqlite_instance._query_entries(ConverterIdentifierEntry) == []
+        conversation = await sqlite_instance.get_conversation_metadata_async(conversation_id=conversation_id)
+        assert conversation is not None
+        assert conversation.attack_result_id == attack.attack_result_id
+        if failure == "batch":
+            batch.assert_awaited_once()
+        else:
+            batch.assert_not_awaited()
+
+
 class TestResolveVideoRemixMetadata:
     "Tests for _resolve_video_remix_metadata_async."
 
@@ -1957,6 +2096,7 @@ class TestConcurrentMessages:
         send.side_effect = None
         await message_send_service.add_message_async(attack_result_id="attack", request=_request())
 
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
     @pytest.mark.parametrize("write_method", ["add_message_pieces_to_memory_async", "update_attack_result_by_id_async"])
     async def test_cancellation_joins_memory_write_before_releasing_ownership_async(
         self,
@@ -1970,7 +2110,7 @@ class TestConcurrentMessages:
 
         async def hold_write_async(**_: Any) -> None:
             started.set()
-            await asyncio.wait_for(release.wait(), timeout=5)
+            await release.wait()
             finished.set()
 
         with patch.object(mock_memory, write_method, side_effect=hold_write_async):
@@ -1978,7 +2118,7 @@ class TestConcurrentMessages:
                 message_send_service.add_message_async(attack_result_id="attack", request=_request(send=False))
             )
             try:
-                await started.wait()
+                await wait_for_event_async(event=started, tasks=[active])
                 for _ in range(2):
                     active.cancel()
                     await asyncio.sleep(0)
@@ -1991,8 +2131,9 @@ class TestConcurrentMessages:
                     )
             finally:
                 release.set()
-                with pytest.raises(asyncio.CancelledError):
-                    await active
+                await settle_tasks_async(active)
+            with pytest.raises(asyncio.CancelledError):
+                active.result()
         assert finished.is_set()
         assert not message_send_service._scheduler._conversations
         assert not message_send_service._scheduler._metadata_updates
@@ -2095,6 +2236,7 @@ class TestConcurrentMessages:
         assert stored_target is not None
         assert stored_target.hash == target.get_identifier().hash
 
+    @pytest.mark.timeout(TEST_WATCHDOG_SECONDS)
     @pytest.mark.parametrize("preconverted", [False, True])
     async def test_parallel_sends_serialize_complete_metadata_updates_async(
         self,
@@ -2121,6 +2263,7 @@ class TestConcurrentMessages:
 
         second_target_started, first_write_started = asyncio.Event(), asyncio.Event()
         second_metadata_attempted, release_first_write = asyncio.Event(), asyncio.Event()
+        second_metadata_acquired = asyncio.Event()
         writes: list[dict[str, Any]] = []
         attempts = 0
         send = target._send_prompt_to_target_async
@@ -2140,16 +2283,19 @@ class TestConcurrentMessages:
         async def observe_metadata_async(*, attack_result_id: str) -> AsyncGenerator[None, None]:
             nonlocal attempts
             attempts += 1
-            if attempts == 2:
+            second_attempt = attempts == 2
+            if second_attempt:
                 second_metadata_attempted.set()
             async with guard(attack_result_id=attack_result_id):
+                if second_attempt:
+                    second_metadata_acquired.set()
                 yield
 
         async def delay_first_write_async(*, attack_result_id: str, update_fields: dict[str, Any]) -> None:
             writes.append(update_fields)
             if len(writes) == 1:
                 first_write_started.set()
-                await asyncio.wait_for(release_first_write.wait(), timeout=5)
+                await release_first_write.wait()
             await update(attack_result_id=attack_result_id, update_fields=update_fields)
 
         with (
@@ -2166,15 +2312,18 @@ class TestConcurrentMessages:
                 for service, request in zip([first, second], requests, strict=True)
             ]
             try:
-                await second_metadata_attempted.wait()
+                await wait_for_event_async(event=second_metadata_attempted, tasks=tasks)
                 assert all(not task.done() for task in tasks)
-                with pytest.raises(TimeoutError):
-                    await asyncio.wait_for(asyncio.shield(tasks[1]), timeout=0.1)
+                assert not second_metadata_acquired.is_set()
                 assert len(writes) == 1
                 assert not tasks[1].done()
             finally:
+                second_target_started.set()
+                first_write_started.set()
                 release_first_write.set()
-                await asyncio.gather(*tasks)
+                await settle_tasks_async(*tasks)
+            for task in tasks:
+                task.result()
 
         assert len(writes) == 2
         assert writes[0]["timestamp"] <= writes[1]["timestamp"]
@@ -2770,9 +2919,84 @@ def _submission(
     )
 
 
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(2 * TEST_WATCHDOG_SECONDS)
 @pytest.mark.usefixtures("patch_central_database")
 class TestAsyncMessageSend:
+    async def test_repetitions_cannot_bypass_original_capabilities_through_an_alias_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+    ) -> None:
+        service, attack, original, _ = real_send_context
+        alias = MockPromptTarget()
+        original.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True))
+        assert original.get_identifier().hash == alias.get_identifier().hash
+        await sqlite_instance.update_attack_result_by_id_async(
+            attack_result_id=attack.attack_result_id,
+            update_fields={"attack_metadata": {"target_registry_name": "origin"}},
+        )
+        await sqlite_instance.add_message_to_memory_async(
+            request=MessagePiece(
+                role="assistant", original_value="Existing response", conversation_id=attack.conversation_id
+            ).to_message()
+        )
+        target_service = MagicMock(spec=TargetService)
+        target_service.get_target_object.side_effect = lambda target_registry_name: (
+            original if target_registry_name == "origin" else alias
+        )
+        with patch("pyrit.backend.services.message_send_service.get_target_service", return_value=target_service):
+            with pytest.raises(ValueError, match="editable history"):
+                await service.submit_async(
+                    attack_result_id=attack.attack_result_id,
+                    request=_submission(conversation_id=attack.conversation_id, count=2),
+                )
+        assert original.prompt_sent == alias.prompt_sent == []
+        [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert stored.get_active_conversation_ids() == {attack.conversation_id}
+
+    @pytest.mark.parametrize("with_history,count", [(False, 2), (True, 2), (True, 1)])
+    async def test_repetitions_require_replay_but_live_continuation_does_not_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        sqlite_instance: SQLiteMemory,
+        with_history: bool,
+        count: int,
+    ) -> None:
+        service, attack, target, _ = real_send_context
+        target.apply_capabilities(capabilities=TargetCapabilities(supports_multi_turn=True))
+        if with_history:
+            for role in ("user", "assistant"):
+                await sqlite_instance.add_message_to_memory_async(
+                    request=MessagePiece(
+                        role=role,
+                        original_value="Previous turn",
+                        conversation_id=attack.conversation_id,
+                    ).to_message()
+                )
+        before = list(await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id))
+        if with_history and count > 1:
+            with pytest.raises(ValueError, match="editable history"):
+                await service.submit_async(
+                    attack_result_id=attack.attack_result_id,
+                    request=_submission(conversation_id=attack.conversation_id, count=count),
+                )
+            assert target.prompt_sent == []
+            assert (
+                list(await sqlite_instance.get_message_pieces_async(conversation_id=attack.conversation_id)) == before
+            )
+        else:
+            status = await service.submit_async(
+                attack_result_id=attack.attack_result_id,
+                request=_submission(conversation_id=attack.conversation_id, count=count),
+            )
+            status = await _settle_send_async(service=service, status=status)
+            assert status.state == MessageSendState.COMPLETED
+            assert target.prompt_sent == ["Hello"] * count
+        [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
+        assert len(stored.get_active_conversation_ids()) == (1 if with_history and count > 1 else count)
+
     @pytest.mark.parametrize(
         "terminal_state", [MessageSendState.COMPLETED, MessageSendState.FAILED, MessageSendState.INTERRUPTED]
     )
@@ -2791,6 +3015,48 @@ class TestAsyncMessageSend:
             call.kwargs == {"attack_result_id": "attack", "send_id": "send", "wait_ms": 1000}
             for call in service.get_status_async.await_args_list
         )
+
+    def test_settle_send_defaults_to_shared_watchdog(self, request: pytest.FixtureRequest) -> None:
+        parameter = inspect.signature(_settle_send_async).parameters["timeout_seconds"]
+        assert parameter.default == TEST_WATCHDOG_SECONDS
+        timeout = request.node.get_closest_marker("timeout")
+        assert timeout is not None
+        assert timeout.args[0] > TEST_WATCHDOG_SECONDS
+
+    async def test_settle_send_timeout_preserves_send_until_success_async(
+        self,
+        *,
+        message_send_service: MessageSendService,
+        send_dependencies: tuple[MagicMock, AsyncMock],
+    ) -> None:
+        started: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        release = asyncio.Event()
+
+        async def hold_send_async(**_: Any) -> None:
+            started.set_result(None)
+            await release.wait()
+
+        send_dependencies[1].side_effect = hold_send_async
+        async with message_send_lifecycle_async(message_send_service):
+            try:
+                status = await message_send_service.submit_async(attack_result_id="attack", request=_submission())
+                await wait_for_completion_async(future=started)
+                task = message_send_service._sends[status.send_id].task
+                assert task is not None
+
+                with pytest.raises(TimeoutError):
+                    await _settle_send_async(service=message_send_service, status=status, timeout_seconds=0)
+                assert not task.done()
+                assert task.cancelling() == 0
+
+                release.set()
+                final = await _settle_send_async(service=message_send_service, status=status)
+                assert final.state == MessageSendState.COMPLETED
+                assert task.done()
+                assert not task.cancelled()
+                assert not message_send_service._scheduler._conversations
+            finally:
+                release.set()
 
     @pytest.mark.parametrize("failure", ["assertion", "timeout"])
     async def test_send_lifecycle_drains_pending_work_on_test_failure_async(
@@ -2822,9 +3088,10 @@ class TestAsyncMessageSend:
                 if failure == "assertion":
                     raise AssertionError("controlled test failure")
                 try:
-                    await _settle_send_async(service=message_send_service, status=status, timeout_seconds=0.01)
+                    await _settle_send_async(service=message_send_service, status=status, timeout_seconds=0)
                 except TimeoutError:
                     assert not task.done()
+                    assert task.cancelling() == 0
                     assert not cancelled.is_set()
                     raise
 
@@ -3242,6 +3509,7 @@ class TestAsyncMessageSend:
         assert status.state == MessageSendState.FAILED
         assert status.failure_stage == MessageSendFailureStage.PREPARATION
         assert status.error
+        assert not status.target_invoked
 
     @pytest.mark.parametrize("count", [1, 3])
     @pytest.mark.parametrize("failure", ["conversion", "normalization", "validation", "target", "metadata"])
@@ -3279,10 +3547,49 @@ class TestAsyncMessageSend:
         )
         pieces = await sqlite_instance.get_message_pieces_async(conversation_id=ar.conversation_id)
         assert len(pieces) == (2 if failure in ("target", "metadata") else 0)
+        receipts = status.conversations or [status]
+        assert all(progress.target_invoked == (failure in ("target", "metadata")) for progress in receipts)
         if failure == "target":
             assert pieces[-1].response_error == "processing"
         assert not service._scheduler._conversations
         assert request.pieces[0].original_value == "Hello"
+
+    @pytest.mark.parametrize("count", [1, 3])
+    async def test_interrupted_preparation_retains_uninvoked_receipt_after_turn_allocation_async(
+        self,
+        *,
+        real_send_context: tuple[MessageSendService, AttackResult, MockPromptTarget, Base64Converter],
+        count: int,
+    ) -> None:
+        service, attack, target, converter = real_send_context
+        preparing = asyncio.Event()
+
+        async def hold_conversion_async(**_: Any) -> None:
+            preparing.set()
+            await asyncio.Event().wait()
+
+        request = _submission(conversation_id=attack.conversation_id, count=count)
+        request.request_converter_mode = RequestConverterMode.PER_BRANCH
+        request.request_converter_configurations = [ConverterConfigurationRequest(converter_ids=["base64"])]
+        with (
+            patch.object(converter, "convert_async", side_effect=hold_conversion_async),
+            patch.object(target, "_send_prompt_to_target_async", wraps=target._send_prompt_to_target_async) as send,
+        ):
+            status = await service.submit_async(attack_result_id=attack.attack_result_id, request=request)
+            try:
+                task = service._sends[status.send_id].task
+                assert task is not None
+                await wait_for_event_async(event=preparing, tasks=[task])
+                during = await service.get_status_async(
+                    attack_result_id=attack.attack_result_id, send_id=status.send_id
+                )
+                assert any(progress.request_turn_number is not None for progress in (during.conversations or [during]))
+            finally:
+                await service.shutdown_async()
+            final = await service.get_status_async(attack_result_id=attack.attack_result_id, send_id=status.send_id)
+            assert final.state == MessageSendState.INTERRUPTED
+            assert all(not progress.target_invoked for progress in (final.conversations or [final]))
+            send.assert_not_called()
 
     @pytest.mark.parametrize("preflight_method", ["_get_normalized_conversation_async", "_validate_request"])
     async def test_preflight_retry_preserves_history_and_provider_boundary_async(
@@ -3395,6 +3702,8 @@ class TestAsyncMessageSend:
         status = await message_send_service.get_status_async(attack_result_id="attack", send_id=status.send_id)
         assert status.state == MessageSendState.INTERRUPTED
         assert status.failure_stage == MessageSendFailureStage.INTERRUPTED
+        receipts = status.conversations or [status]
+        assert all(progress.target_invoked == (not before_start) for progress in receipts)
         assert not message_send_service._scheduler._conversations
         for operation in [
             message_send_service.submit_async(attack_result_id="attack", request=_submission()),
@@ -3446,9 +3755,14 @@ class TestAsyncMessageSend:
         ).state == MessageSendState.INTERRUPTED
 
 
-@pytest.mark.timeout(20)
+@pytest.mark.timeout(2 * TEST_WATCHDOG_SECONDS)
 @pytest.mark.usefixtures("patch_central_database")
 class TestRepeatedMessageSend:
+    def test_whole_test_timeout_exceeds_send_watchdog(self, request: pytest.FixtureRequest) -> None:
+        timeout = request.node.get_closest_marker("timeout")
+        assert timeout is not None
+        assert timeout.args[0] > TEST_WATCHDOG_SECONDS
+
     async def test_missing_validated_target_fails_before_branch_registration_async(
         self,
         *,
@@ -3780,8 +4094,7 @@ class TestRepeatedMessageSend:
             return await send(normalized_conversation=normalized_conversation)
 
         async def finalize_async(**kwargs: Any) -> None:
-            pieces = await sqlite_instance.get_message_pieces_async(prompt_ids=[kwargs["last_response_id"]])
-            if pieces[0].conversation_id == attack.conversation_id:
+            if kwargs["last_response"].conversation_id == attack.conversation_id:
                 finalizing.set()
                 await release_metadata.wait()
             await finalize(**kwargs)

@@ -174,6 +174,7 @@ class FileWriteScorer(TrueFalseScorer):
     must still run one at a time. A baseline does not identify the writer.
     """
 
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable, SurfaceScorable)
     CONDITION_TYPE = ContentWritten
     _LATER_TURN_RATIONALE = (
         "The conversation continued after this message, and a later turn can change the location. "

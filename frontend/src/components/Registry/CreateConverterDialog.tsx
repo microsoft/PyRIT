@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import {
   Button,
@@ -9,7 +9,6 @@ import {
   DialogSurface,
   DialogTitle,
   Dropdown,
-  Field,
   Input,
   MessageBar,
   MessageBarBody,
@@ -19,12 +18,22 @@ import {
   Spinner,
   Switch,
   Text,
+  type FieldControlProps,
 } from '@fluentui/react-components'
 
+import HelpField from '@/components/HelpField'
 import { convertersApi, targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance } from '@/types'
+import { useTargetPreferences } from '@/hooks/useTargetPreferences'
+import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
+import { mapMediaUrl } from '@/utils/media'
+import { formatFileSize } from '@/utils/formatFileSize'
+import type {
+  ConverterInstance, ConverterTypeEntry, Parameter, TargetInstance, SourceInstanceSpec, ConverterIdentifier,
+} from '@/types'
 import ParameterField from '@/components/Parameters/ParameterField'
+import FileDropZone from '@/components/Media/FileDropZone'
+import MediaPreview from '@/components/Media/MediaPreview'
 import {
   buildParametersFromForm,
   getInitialFormValues,
@@ -61,21 +70,35 @@ function getModalityLabel(converterType: ConverterTypeEntry): string {
 interface DialogError {
   message: string
   fromSubmit: boolean
+  fileReadParameter?: string
 }
 
 interface CreateConverterDialogProps {
   open: boolean
   onClose: () => void
-  onCreated: (converterId: string) => void
+  onCreated: (converterId: string, isCurrentOpening: boolean) => void
+  editing?: { converter: ConverterInstance; spec?: SourceInstanceSpec }
+  onTemporary?: (spec: SourceInstanceSpec, identifier: ConverterIdentifier) => void
+  allowUploads?: boolean
 }
 
 interface ParameterInputProps {
   parameter: Parameter
-  referenceOptions: Array<{ name: string; type: string }>
+  referenceOptions: Array<{ name: string; type: string; isDefault?: boolean }>
   value: string
   showError: boolean
   onChange: (value: string) => void
   onBrowse: () => void
+  onFiles: (files: File[], onReadSuccess?: () => void) => void
+  allowUploads: boolean
+  disabled?: boolean
+  selectedFile?: SelectedFile
+}
+
+interface SelectedFile {
+  readonly value: string
+  readonly name: string
+  readonly size: number
 }
 
 function isEditableParameter(parameter: Parameter): boolean {
@@ -142,6 +165,11 @@ function formValueIsSet(value: ParameterFormValue | undefined): boolean {
   return typeof value === 'string' ? Boolean(value.trim()) : Boolean(value?.length)
 }
 
+function acceptsEmptySearchReplaceValue(converterType: string | undefined, parameterName: string): boolean {
+  return converterType === 'SearchReplaceConverter'
+    && (parameterName === 'pattern' || parameterName === 'replace')
+}
+
 function stringFormValue(value: ParameterFormValue | undefined): string {
   return typeof value === 'string' ? value : ''
 }
@@ -153,60 +181,92 @@ function ParameterInput({
   showError,
   onChange,
   onBrowse,
+  onFiles,
+  allowUploads,
+  disabled = false,
+  selectedFile,
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
+  const pathInputRef = useRef<HTMLInputElement>(null)
+  const focusPathInput = useRef(false)
+  const focusReplaceButton = useRef(false)
+  const replaceButtonRef = useRef<HTMLButtonElement>(null)
+  const [manualValue, setManualValue] = useState<string | null>(null)
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
+  const help = parameter.description?.trim()
+  const uploadsDisabled = disabled || !allowUploads
+
+  useLayoutEffect(() => {
+    if (focusPathInput.current && pathInputRef.current) {
+      focusPathInput.current = false
+      pathInputRef.current.focus()
+      return
+    }
+    if (focusReplaceButton.current) {
+      focusReplaceButton.current = false
+      replaceButtonRef.current?.focus()
+    }
+  }, [value, selectedFile])
+
+  const handleFiles = (files: File[]): void => {
+    onFiles(files, () => {
+      focusReplaceButton.current = document.activeElement === pathInputRef.current
+    })
+  }
 
   if (parameter.reference_type) {
     return (
-      <Field
+      <HelpField
         label={label}
-        hint={`Select a registered ${parameter.reference_type}.`}
+        help={parameter.reference_type === 'target'
+          ? `${parameter.name} is the target used by the converter to convert or rewrite the prompt. It uses the default adversarial target when available. You can select a different target.`
+          : `Select a registered ${parameter.reference_type}.`}
         validationMessage={showError ? 'Required' : undefined}
       >
-        <Select value={value} onChange={(_, data) => onChange(data.value)}>
+        <Select disabled={disabled} value={value} onChange={(_, data) => onChange(data.value)}>
           <option value="">Select a registered {parameter.reference_type}</option>
           {referenceOptions.map((option) => (
             <option key={option.name} value={option.name}>
-              {option.name} ({option.type})
+              {option.name} ({option.type}){option.isDefault ? ' (default)' : ''}
             </option>
           ))}
         </Select>
-      </Field>
+      </HelpField>
     )
   }
 
   if (parameter.type_name === 'bool') {
     const checked = (value || parameterDefaultValue(parameter) || 'false').toLowerCase() === 'true'
     return (
-      <Field label={label} validationMessage={showError ? 'Required' : undefined}>
+      <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
         <Switch
+          disabled={disabled}
           checked={checked}
           label={checked ? 'True' : 'False'}
           onChange={(_, data) => onChange(data.checked ? 'true' : 'false')}
         />
-      </Field>
+      </HelpField>
     )
   }
 
   if (parameter.choices?.length) {
     return (
-      <Field label={label} validationMessage={showError ? 'Required' : undefined}>
-        <Select value={value || parameterDefaultValue(parameter)} onChange={(_, data) => onChange(data.value)}>
+      <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
+        <Select disabled={disabled} value={value || parameterDefaultValue(parameter)} onChange={(_, data) => onChange(data.value)}>
           {parameter.required && !parameter.default && <option value="">Select a value</option>}
           {parameter.choices.map((choice) => (
             <option key={choice} value={choice}>{choice}</option>
           ))}
         </Select>
-      </Field>
+      </HelpField>
     )
   }
 
   if (!isEditableParameter(parameter)) {
     return (
-      <Field label={label} hint="This parameter cannot be configured here. Omit it to use the converter default.">
+      <HelpField label={label} help={help} hint="This parameter cannot be configured here. Omit it to use the converter default.">
         <Input disabled value="" />
-      </Field>
+      </HelpField>
     )
   }
 
@@ -214,35 +274,70 @@ function ParameterInput({
     || parameter.type_name === 'Path | str'
     || /path|file/i.test(parameter.name)
     || /path|file/i.test(parameter.description ?? '')
+  const mappedImage = isFile && value.startsWith('data:')
+    ? mapMediaUrl({ dataType: 'image_path', value }) : null
+  const imagePreview = mappedImage?.status === 'preview' && mappedImage.kind === 'image' ? mappedImage.url : null
+  const fileDetails = selectedFile?.value === value ? selectedFile : undefined
+  const hasFileValue = isFile && value.startsWith('data:') && (Boolean(fileDetails) || manualValue !== value)
+  const defaultValue = parameterDefaultValue(parameter)
+  const pathPlaceholder = parameter.type_name === 'Path | str'
+    ? 'Upload a file or enter a URL' : 'Upload a file or enter a server path'
 
   return (
-    <Field
+    <HelpField
       label={label}
-      hint={parameter.description || parameter.type_name}
+      help={help}
+      hint={isFile && !allowUploads
+        ? 'To change this file, create a registered converter with the new upload.'
+        : undefined}
       validationMessage={showError ? 'Required' : undefined}
     >
-      {isFile ? (
-        <div className={styles.fileRow}>
-          <Input
-            className={styles.fileInput}
-            value={value}
-            placeholder={parameterDefaultValue(parameter) || (
-              parameter.type_name === 'Path | str'
-                ? 'Upload a file or enter a URL'
-                : 'Upload a file or enter a server path'
-            )}
-            onChange={(_, data) => onChange(data.value)}
-          />
-          <Button type="button" onClick={onBrowse}>Upload</Button>
-        </div>
+      {(controlProps: FieldControlProps) => isFile ? (
+        <FileDropZone disabled={uploadsDisabled}
+          label="Drop file" onFiles={handleFiles}>
+          <div {...(hasFileValue ? controlProps : {})} role={hasFileValue ? 'group' : undefined} className={styles.fileRow}>
+            {hasFileValue ? <div className={styles.filePreview}>
+              {imagePreview && <MediaPreview key={imagePreview} type="image" src={imagePreview} alt={`Preview for ${parameter.name}`}
+                className={styles.fileThumbnail} containerClassName={styles.fileThumbnailContainer} />}
+              <div className={styles.fileDetails}>
+                <Text size={200} className={styles.fileName} title={fileDetails?.name}>
+                  {fileDetails?.name ?? (imagePreview ? 'Image value' : 'File value')}
+                </Text>
+                {fileDetails && <Text size={100}>{formatFileSize(fileDetails.size)}</Text>}
+              </div>
+            </div> : <Input
+              input={{ ref: pathInputRef }}
+              disabled={uploadsDisabled}
+              className={styles.fileInput}
+              value={value}
+              placeholder={defaultValue && !defaultValue.startsWith('data:') ? defaultValue : pathPlaceholder}
+              onChange={(_, data) => {
+                setManualValue(data.value)
+                onChange(data.value)
+              }}
+            />}
+            <Button ref={replaceButtonRef} type="button" className={styles.fileButton} disabled={uploadsDisabled} onClick={onBrowse}>
+              {hasFileValue ? 'Replace' : 'Upload'}
+            </Button>
+            {hasFileValue && <Button type="button" className={styles.fileButton} disabled={uploadsDisabled}
+              aria-label={`Remove ${imagePreview ? 'image' : 'file'} for ${parameter.name}`} onClick={() => {
+                focusPathInput.current = true
+                onChange('')
+              }}>Remove</Button>}
+          </div>
+        </FileDropZone>
       ) : (
         <Input
+          // Read-only, not disabled: a disabled input drops focus to <body>
+          // when the form is submitted with Enter, and Escape stops closing the dialog.
+          readOnly={disabled}
+          type={parameter.sensitive ? 'password' : 'text'}
           value={value}
           placeholder={parameterDefaultValue(parameter) || undefined}
           onChange={(_, data) => onChange(data.value)}
         />
       )}
-    </Field>
+    </HelpField>
   )
 }
 
@@ -250,28 +345,37 @@ export default function CreateConverterDialog({
   open,
   onClose,
   onCreated,
+  editing,
+  onTemporary,
+  allowUploads = true,
 }: CreateConverterDialogProps) {
   const styles = useCreateConverterDialogStyles()
   const [converterTypes, setConverterTypes] = useState<ConverterTypeEntry[]>([])
   const [targets, setTargets] = useState<TargetInstance[]>([])
+  const { adversarialTarget, preferences } = useTargetPreferences(targets)
   const [converters, setConverters] = useState<ConverterInstance[]>([])
   const [selectedType, setSelectedType] = useState('')
   const [registryName, setRegistryName] = useState('')
   const [nameEdited, setNameEdited] = useState(false)
   const [parameterValues, setParameterValues] = useState<Record<string, ParameterFormValue>>({})
+  const [changedParameters, setChangedParameters] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
   const [error, setError] = useState<DialogError | null>(null)
+  const [fileNotice, setFileNotice] = useState<string | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<Record<string, SelectedFile>>({})
   const errorRef = useRef<HTMLDivElement>(null)
   // The dialog instance is reused across openings, so a create response can
   // land after the opening that started it has gone.
   const openEpochRef = useRef(0)
+  const fileReads = useRef(new Map<string, symbol>())
 
   useEffect(() => {
     // Every change of `open` ends the opening before it, so a response from the
     // previous one leaves this opening's own state alone.
     openEpochRef.current += 1
+    fileReads.current.clear()
     if (!open) return
     let cancelled = false
     Promise.resolve()
@@ -279,6 +383,8 @@ export default function CreateConverterDialog({
         if (cancelled) return null
         setLoading(true)
         setError(null)
+        setFileNotice(null)
+        setSelectedFiles({})
         // A request from the previous opening keeps its own "Adding..." state, so
         // clear it here rather than letting that response clear it for this one.
         setSubmitting(false)
@@ -292,11 +398,41 @@ export default function CreateConverterDialog({
         if (!responses) return
         const [response, targetResponse, converterResponse] = responses
         if (!cancelled) {
-          setConverterTypes(
-            response.items.filter(canConfigureConverterType),
-          )
+          setConverterTypes(editing ? response.items : response.items.filter(canConfigureConverterType))
           setTargets(targetResponse.items)
           setConverters(converterResponse.items)
+          if (editing) {
+            const entry = response.items.find((item) => item.converter_type === editing.converter.identifier.class_name)
+            setSelectedType(editing.converter.identifier.class_name)
+            const params: Record<string, unknown> = {
+              ...editing.converter.identifier,
+              ...Object.fromEntries((editing.converter.parameters ?? []).map((parameter) => [
+                parameter.name, parameter.default,
+              ])),
+              ...editing.spec?.params,
+            }
+            const defaultTarget = resolveDefaultAdversarialTarget(preferences, targetResponse.items)
+            const defaultedParameters = new Set<string>()
+            for (const parameter of entry?.parameters ?? []) {
+              const reference = params[parameter.name]
+              if (parameter.reference_type === 'target' && (reference == null || reference === '') && defaultTarget) {
+                params[parameter.name] = defaultTarget.target_registry_name
+                defaultedParameters.add(parameter.name)
+              }
+              if (!reference || typeof reference !== 'object' || !('hash' in reference)) continue
+              if (parameter.reference_type === 'target') {
+                params[parameter.name] = targetResponse.items.find(
+                  (target) => target.identifier.hash === reference.hash,
+                )?.target_registry_name ?? ''
+              } else if (parameter.reference_type === 'converter') {
+                params[parameter.name] = converterResponse.items.find(
+                  (converter) => converter.identifier.hash === reference.hash,
+                )?.converter_id ?? ''
+              }
+            }
+            setParameterValues(getInitialFormValues(entry?.parameters ?? [], params, { prefillDefaults: false }))
+            setChangedParameters(defaultedParameters)
+          }
         }
       })
       .catch((err) => {
@@ -310,8 +446,8 @@ export default function CreateConverterDialog({
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
-    return () => { cancelled = true }
-  }, [open])
+    return () => { cancelled = true; openEpochRef.current += 1 }
+  }, [open, editing, preferences])
 
   // Hand the keyboard to the failure once React has committed it. A frame
   // callback can run before the render that adds the message bar, and focusing
@@ -341,11 +477,12 @@ export default function CreateConverterDialog({
       }))
   }, [converterTypes])
 
-  const referenceOptions = (parameter: Parameter): Array<{ name: string; type: string }> => {
+  const referenceOptions = (parameter: Parameter): Array<{ name: string; type: string; isDefault?: boolean }> => {
     if (parameter.reference_type === 'target') {
       return targets.map((target) => ({
         name: target.target_registry_name,
         type: target.identifier.class_name,
+        isDefault: target.target_registry_name === adversarialTarget?.target_registry_name,
       }))
     }
     if (parameter.reference_type === 'converter') {
@@ -358,12 +495,16 @@ export default function CreateConverterDialog({
   }
 
   const reset = () => {
+    fileReads.current.clear()
     setSelectedType('')
     setRegistryName('')
     setNameEdited(false)
     setParameterValues({})
+    setChangedParameters(new Set())
     setShowValidation(false)
     setError(null)
+    setFileNotice(null)
+    setSelectedFiles({})
   }
 
   const close = () => {
@@ -372,6 +513,7 @@ export default function CreateConverterDialog({
   }
 
   const selectType = (converterType: string) => {
+    fileReads.current.clear()
     setSelectedType(converterType)
     if (!nameEdited) setRegistryName(converterType)
     const typeEntry = converterTypes.find((item) => item.converter_type === converterType)
@@ -384,25 +526,68 @@ export default function CreateConverterDialog({
             && isEditableParameter(parameter) && parameter.default != null)
           .map((parameter) => [parameter.name, parameterDefaultValue(parameter)]),
       ),
+      ...(adversarialTarget ? Object.fromEntries(
+        parameters
+          .filter((parameter: Parameter) => !parameter.variants
+            && parameter.reference_type === 'target')
+          .map((parameter: Parameter) => [parameter.name, adversarialTarget.target_registry_name]),
+      ) : {}),
     })
     setShowValidation(false)
     setError(null)
+    setFileNotice(null)
+    setSelectedFiles({})
+  }
+
+  const readFiles = (parameterName: string, files: File[], onReadSuccess?: () => void): void => {
+    const file = files[0]
+    if (!allowUploads || !file) return
+    const extraCount = files.length - 1
+    setFileNotice(extraCount > 0
+      ? `${parameterName}: ignored ${extraCount} extra ${extraCount === 1 ? 'file' : 'files'}. This field uses only the first file.`
+      : null)
+    const epoch = openEpochRef.current
+    const selection = Symbol(parameterName)
+    fileReads.current.set(parameterName, selection)
+    const isCurrentSelection = (): boolean =>
+      openEpochRef.current === epoch && fileReads.current.get(parameterName) === selection
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (!isCurrentSelection()) return
+      fileReads.current.delete(parameterName)
+      const value = String(reader.result ?? '')
+      onReadSuccess?.()
+      setError((current) => current?.fileReadParameter === parameterName ? null : current)
+      setChangedParameters((current) => new Set([...current, parameterName]))
+      setParameterValues((current) => ({
+        ...current,
+        [parameterName]: value,
+      }))
+      setSelectedFiles((current) => ({
+        ...current, [parameterName]: { value, name: file.name, size: file.size },
+      }))
+    }
+    const reportReadFailure = (): void => {
+      if (!isCurrentSelection()) return
+      fileReads.current.delete(parameterName)
+      setError({
+        message: `Could not read "${file.name}". Select a file you can open and try again.`,
+        fromSubmit: false,
+        fileReadParameter: parameterName,
+      })
+    }
+    reader.onerror = reportReadFailure
+    reader.onabort = reportReadFailure
+    reader.readAsDataURL(file)
   }
 
   const browse = (parameterName: string) => {
+    const epoch = openEpochRef.current
     const input = document.createElement('input')
     input.type = 'file'
     input.onchange = () => {
-      const file = input.files?.[0]
-      if (!file) return
-      const reader = new FileReader()
-      reader.onload = () => {
-        setParameterValues((current) => ({
-          ...current,
-          [parameterName]: String(reader.result ?? ''),
-        }))
-      }
-      reader.readAsDataURL(file)
+      if (openEpochRef.current !== epoch) return
+      if (input.files) readFiles(parameterName, Array.from(input.files))
     }
     input.click()
   }
@@ -411,20 +596,26 @@ export default function CreateConverterDialog({
     const missingParameters = (selectedConverterType?.parameters ?? []).some(
       (parameter) => parameter.required
         && !parameter.default
+        && !acceptsEmptySearchReplaceValue(selectedType, parameter.name)
         && !formValueIsSet(parameterValues[parameter.name]),
     )
-    if (!selectedType || !registryName.trim() || missingParameters) {
+    if (!selectedType || (!editing && (!registryName.trim() || missingParameters))) {
       setShowValidation(true)
       return
     }
 
-    const parameters = selectedConverterType?.parameters ?? []
+    const parameters = (selectedConverterType?.parameters ?? []).filter(
+      (parameter) => !editing || changedParameters.has(parameter.name),
+    )
     const params: Record<string, unknown> = Object.fromEntries(
       parameters
         .filter((parameter) => !sendsTypedValue(parameter))
         .flatMap((parameter) => {
           const value = parameterValues[parameter.name]
-          return typeof value === 'string' ? [[parameter.name, value]] : []
+          if (typeof value === 'string') return [[parameter.name, value]]
+          return acceptsEmptySearchReplaceValue(selectedType, parameter.name)
+            ? [[parameter.name, '']]
+            : []
         }),
     )
     const typed = buildParametersFromForm(parameters.filter(sendsTypedValue), parameterValues)
@@ -442,6 +633,21 @@ export default function CreateConverterDialog({
     setSubmitting(true)
     setError(null)
     try {
+      if (editing) {
+        if (!onTemporary) throw new Error('Temporary converter settings need an apply handler.')
+        const spec: SourceInstanceSpec = {
+          source_name: editing.spec?.source_name ?? editing.converter.converter_id,
+          source_hash: editing.spec?.source_hash ?? editing.converter.identifier.hash,
+          params: {
+            ...Object.fromEntries(Object.entries(editing.spec?.params ?? {})
+              .filter(([name]: [string, unknown]) => !changedParameters.has(name))),
+            ...params,
+          },
+        }
+        const response = await convertersApi.buildConverter(selectedType, spec)
+        if (openEpochRef.current === epoch) onTemporary(spec, response.identifier)
+        return
+      }
       const response = await convertersApi.createConverter({
         name: registryName.trim(),
         type: selectedType,
@@ -453,7 +659,7 @@ export default function CreateConverterDialog({
       if (openEpochRef.current === epoch) {
         reset()
       }
-      onCreated(response.converter_id)
+      onCreated(response.converter_id, openEpochRef.current === epoch)
     } catch (err) {
       // A failure from an opening the user has already left stays out of the
       // one in front of them, and out of its focus.
@@ -478,7 +684,7 @@ export default function CreateConverterDialog({
     <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) close() }}>
       <DialogSurface className={styles.surface}>
         <DialogBody>
-          <DialogTitle>Add Converter</DialogTitle>
+          <DialogTitle>{editing ? 'Converter Settings' : 'Add Converter'}</DialogTitle>
           <DialogContent className={styles.content}>
             <form
               className={styles.form}
@@ -492,19 +698,27 @@ export default function CreateConverterDialog({
                   <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error.message}</MessageBarBody>
                 </MessageBar>
               )}
+              {fileNotice && <MessageBar intent="info">
+                <MessageBarBody role="status">{fileNotice}</MessageBarBody>
+              </MessageBar>}
               {loading && <Spinner label="Loading converter types..." />}
+              {editing && <Text>
+                Only changed fields replace source settings. These settings apply to this stage,
+                not the registered converter.
+              </Text>}
               {!loading && converterTypes.length === 0 && !error && (
                 <Text>No converter types are available.</Text>
               )}
               {!loading && converterTypes.length > 0 && (
                 <>
-                  <Field
+                  <HelpField
                     label="Converter type"
-                    hint="Converter types are grouped by input and output modality."
+                    help="The transformation to apply. Types are grouped by the content they accept and produce, such as text to text or text to image."
                     required
                     validationMessage={showValidation && !selectedType ? 'Select a converter type' : undefined}
                   >
                     <Dropdown
+                      disabled={Boolean(editing) || submitting}
                       aria-label="Converter type"
                       className={styles.typeDropdown}
                       listbox={{ className: styles.typeListbox }}
@@ -557,7 +771,7 @@ export default function CreateConverterDialog({
                         </OptionGroup>
                       ))}
                     </Dropdown>
-                  </Field>
+                  </HelpField>
                   {selectedConverterType && (
                     <div className={styles.selectedTypeSummary}>
                       <div className={styles.selectedTypeHeader}>
@@ -572,36 +786,38 @@ export default function CreateConverterDialog({
                       </Text>
                     </div>
                   )}
-                  <Field
+                  {!editing && <HelpField
                     label="Registry name"
                     required
-                    hint="The unique name used to select this configured converter."
+                    help="A unique name used to select this configured converter in chats and techniques."
                     validationMessage={
                       showValidation && !registryName.trim() ? 'Enter a registry name' : undefined
                     }
                   >
                     <Input
+                      readOnly={submitting}
                       value={registryName}
                       onChange={(_, data) => {
                         setRegistryName(data.value)
                         setNameEdited(true)
                       }}
                     />
-                  </Field>
+                  </HelpField>}
+                  {editing && <Text>Changes apply only to this stage. The registered converter stays unchanged.</Text>}
                   <div className={styles.parameterGrid}>
                     {selectedConverterType?.parameters.map((parameter) => (
-                      <div key={parameter.name} className={styles.parameterRow}>
-                        {parameter.variants ? (
+                      <div key={`${selectedType}:${parameter.name}`} className={styles.parameterRow}>
+                        {parameter.variants || parameter.multiline ? (
                           <ParameterField
                             parameter={parameter}
                             value={parameterValues[parameter.name] ?? ''}
                             disabled={submitting}
                             showRequiredError={showValidation && parameter.required}
                             testIdPrefix="structured"
-                            onChange={(name, value) => setParameterValues((current) => ({
-                              ...current,
-                              [name]: value,
-                            }))}
+                            onChange={(name, value) => {
+                              setChangedParameters((current) => new Set([...current, name]))
+                              setParameterValues((current) => ({ ...current, [name]: value }))
+                            }}
                           />
                         ) : <ParameterInput
                           parameter={parameter}
@@ -611,13 +827,26 @@ export default function CreateConverterDialog({
                             showValidation
                             && parameter.required
                             && !parameter.default
+                            && !acceptsEmptySearchReplaceValue(selectedType, parameter.name)
                             && !formValueIsSet(parameterValues[parameter.name])
                           }
-                          onChange={(value) => setParameterValues((current) => ({
-                            ...current,
-                            [parameter.name]: value,
-                          }))}
+                          onChange={(value) => {
+                            fileReads.current.delete(parameter.name)
+                            setFileNotice(null)
+                            setSelectedFiles((current) => {
+                              const next = { ...current }
+                              delete next[parameter.name]
+                              return next
+                            })
+                            setChangedParameters((current) => new Set([...current, parameter.name]))
+                            setParameterValues((current) => ({ ...current, [parameter.name]: value }))
+                          }}
                           onBrowse={() => browse(parameter.name)}
+                          onFiles={(files: File[], onReadSuccess?: () => void) =>
+                            readFiles(parameter.name, files, onReadSuccess)}
+                          allowUploads={allowUploads}
+                          disabled={submitting}
+                          selectedFile={selectedFiles[parameter.name]}
                         />}
                       </div>
                     ))}
@@ -634,7 +863,7 @@ export default function CreateConverterDialog({
               disabledFocusable={submitDisabled}
               onClick={() => void submit()}
             >
-              {submitting ? 'Adding...' : 'Add Converter'}
+              {submitting ? editing ? 'Saving...' : 'Adding...' : editing ? 'Apply Settings' : 'Add Converter'}
             </Button>
           </DialogActions>
         </DialogBody>

@@ -8,8 +8,9 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pyrit.backend.models.common import IdentifierStr, PaginationInfo, TextStr
-from pyrit.models import Parameter
+from pyrit.models import ComponentIdentifier, Parameter
 from pyrit.models.request_limits import MAX_ITEMS
+from pyrit.models.technique_edit import TechniqueOverride, TechniqueSettings
 
 TechniqueSelector = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
 
@@ -23,6 +24,7 @@ class TechniqueInstance(BaseModel):
     tags: list[str] = Field(default_factory=list)
     uses_adversarial: bool
     uses_default_adversarial_target: bool
+    identifier: ComponentIdentifier
     creation_statement: str
 
 
@@ -47,6 +49,28 @@ class TechniqueTypeResponse(BaseModel):
     """Attack constructor metadata for the basic creation form."""
 
     items: list[TechniqueTypeEntry]
+
+
+class TechniqueConfiguration(BaseModel):
+    """Typed effective settings for an editor; opaque values remain on the source factory."""
+
+    source_name: str
+    source_identity: str
+    attack_type: str
+    settings: TechniqueSettings
+    parameters: list[Parameter]
+    editable_fields: list[str]
+    supplied_parameters: list[str]
+    read_only: dict[str, str]
+    supports_prepended_conversation: bool = False
+    supports_prompt: bool = False
+
+
+class TechniqueEditResponse(BaseModel):
+    """Validated local settings and a serializable replay specification; nothing is registered."""
+
+    configuration: TechniqueConfiguration
+    override: TechniqueOverride
 
 
 class CreateTechniqueRequest(BaseModel):

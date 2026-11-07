@@ -15,11 +15,6 @@ export const useObjectiveScorerDetailsStyles = makeStyles({
     flexDirection: 'column',
     gap: tokens.spacingVerticalM,
   },
-  metrics: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(9rem, 1fr))',
-    gap: `${tokens.spacingVerticalM} ${tokens.spacingHorizontalL}`,
-  },
   hint: {
     color: tokens.colorNeutralForeground3,
   },

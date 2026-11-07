@@ -15,7 +15,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
-from pyrit.analytics.scenario_statistics import combine_execution_counts, compute_scenario_statistics
+from pyrit.analytics.scenario_statistics import (
+    combine_execution_counts,
+    compute_scenario_statistics,
+    select_execution_attack_result_ids,
+)
 
 if TYPE_CHECKING:
     from pyrit.models import (
@@ -144,11 +148,31 @@ def attack_score_display(attack: AttackResult, *, none_value: str | None = None)
     return score.score_value if score.score_value is not None else score.status.value
 
 
+def attack_technique_label(*, atomic_attack_name: str, attack: AttackResult) -> str:
+    """
+    Derive the technique label shown for an attack.
+
+    Args:
+        atomic_attack_name (str): The atomic attack the result belongs to.
+        attack (AttackResult): The attack to label.
+
+    Returns:
+        str: The technique name recorded on the result (for example, the technique an adaptive
+            scenario selected), otherwise *atomic_attack_name*.
+    """
+    return attack.technique_name or atomic_attack_name
+
+
 def select_attacks(
     result: ScenarioResult, *, attack_result_ids: list[str] | None = None
 ) -> list[tuple[str, AttackResult]]:
     """
-    Return ``(atomic_attack_name, attack)`` pairs, optionally filtered by id.
+    Return ``(atomic_attack_name, attack)`` pairs in scenario order.
+
+    By default, these are the execution attempts that ``scenario_overview`` counts. An orchestration
+    envelope, such as a ``SequentialAttack`` result, has no conversation or score of its own, so it is
+    left out when its child attempts are present, unless it has an ERROR outcome that none of its
+    linked children record. Explicit ids select any stored result.
 
     Args:
         result (ScenarioResult): The scenario result whose attacks to walk.
@@ -157,12 +181,12 @@ def select_attacks(
     Returns:
         list[tuple[str, AttackResult]]: The selected pairs in scenario order.
     """
-    id_filter = set(attack_result_ids) if attack_result_ids else None
+    id_filter = set(attack_result_ids) if attack_result_ids else select_execution_attack_result_ids(result)
     return [
         (atomic_attack_name, attack)
         for atomic_attack_name, attacks in result.attack_results.items()
         for attack in attacks
-        if id_filter is None or attack.attack_result_id in id_filter
+        if attack.attack_result_id in id_filter
     ]
 
 

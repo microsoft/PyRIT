@@ -83,3 +83,31 @@ async def test_denylist_phrase_and_word_match(sqlite_instance) -> None:
     assert "cut down" not in output.output_text
     assert "tree" not in output.output_text
     assert output.output_type == "text"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_denylist_identifier_differs_by_denylist() -> None:
+    target = MockPromptTarget()
+    first = DenylistConverter(converter_target=target, denylist=["bomb"])
+    second = DenylistConverter(converter_target=target, denylist=["password", "exploit"])
+
+    assert first.get_identifier().params["denylist_hash"] != second.get_identifier().params["denylist_hash"]
+    assert first.get_identifier().hash != second.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_denylist_identifier_same_for_same_denylist() -> None:
+    target = MockPromptTarget()
+    first = DenylistConverter(converter_target=target, denylist=["bomb", "exploit"])
+    second = DenylistConverter(converter_target=target, denylist=["bomb", "exploit"])
+
+    assert first.get_identifier().hash == second.get_identifier().hash
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_denylist_identifier_omits_empty_denylist() -> None:
+    converter = DenylistConverter(converter_target=MockPromptTarget())
+
+    params = converter.get_identifier().params
+    assert "denylist_hash" not in params
+    assert params["system_prompt_template_hash"] is not None

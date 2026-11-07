@@ -8,16 +8,18 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Generic
 
-from pydantic import AwareDatetime, Field, field_serializer, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 from typing_extensions import TypeVar
 
 from pyrit.common.deprecation import print_deprecation_message
+from pyrit.models.component_spec import RegisteredComponentReference  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.messages.conversation_reference import ConversationReference, ConversationType
 from pyrit.models.messages.message_piece import MessagePiece
 from pyrit.models.results.strategy_result import StrategyResult
 from pyrit.models.retry_event import RetryEvent
 from pyrit.models.score import Score
+from pyrit.models.score.expectation import ScoringExpectation
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -120,10 +122,65 @@ class AttackResultRole(str, Enum):
     UNKNOWN = "unknown"
 
 
+class ManualContinuation(BaseModel):
+    """The source and handoff point of a copied automated conversation."""
+
+    METADATA_KEY: ClassVar[str] = "manual_continuation"
+    source_attack_result_id: str
+    source_conversation_id: str
+    source_response_id: str | None = None
+
+
+class ScoringFailure(BaseModel):
+    """Diagnostics for delivered evidence whose scoring failed without a score."""
+
+    scorer: RegisteredComponentReference
+    objective: str
+    response_id: str
+    conversation_id: str
+    error: str
+
+
+class AttackScoringInputs(BaseModel):
+    """Attack-owned inputs for future evaluations, separate from completed scores."""
+
+    model_config = ConfigDict(strict=True)
+    METADATA_KEY: ClassVar[str] = "chat_scoring"
+    scorer: RegisteredComponentReference | None = None
+    revision: str = ""
+    inherited: bool = False
+    expectation: ScoringExpectation | None = None
+
+    @field_validator("expectation", mode="before")
+    @classmethod
+    def _load_expectation(cls, value: Any) -> Any:
+        """
+        Restore versioned criteria without losing condition types.
+
+        Returns:
+            The reconstructed expectation or unchanged runtime input.
+        """
+        return ScoringExpectation.model_validate_persisted(value) if isinstance(value, dict) else value
+
+    def to_metadata(self) -> dict[str, Any]:
+        """
+        Serialize the inputs into their attack metadata namespace.
+
+        Returns:
+            The metadata update, including an explicit Off when scorer is None.
+        """
+        return {self.METADATA_KEY: self.model_dump(mode="json")}
+
+
 class AttackResult(StrategyResult, Generic[_ResponsePieceT, _ScoreT]):
     """Base class for all attack results."""
 
     ATTRIBUTION_VALUE_MAX_LENGTH: ClassVar[int] = ATTRIBUTION_VALUE_MAX_LENGTH
+    SCORING_ERRORS_KEY: ClassVar[str] = "chat_scoring_errors"
+
+    #: ``metadata`` key for the registered name of the technique that produced this result, recorded
+    #: when the atomic attack name alone does not identify it (for example, adaptive scenarios).
+    TECHNIQUE_NAME_METADATA_KEY: ClassVar[str] = "technique_name"
 
     # Identity
     # Unique identifier of the conversation that produced this result
@@ -203,6 +260,26 @@ class AttackResult(StrategyResult, Generic[_ResponsePieceT, _ScoreT]):
     attribution_parent_id: str | None = None
     attribution_data: dict[str, Any] | None = None
 
+    @property
+    def scoring_inputs(self) -> AttackScoringInputs | None:
+        """The future evaluation inputs; None is unset, while a scorer of None is Off."""
+        if AttackScoringInputs.METADATA_KEY not in self.metadata:
+            return None
+        return AttackScoringInputs.model_validate(self.metadata[AttackScoringInputs.METADATA_KEY])
+
+    def get_scoring_failure(self, conversation_id: str) -> ScoringFailure | None:
+        """
+        Read a conversation's scoring error for the current objective.
+
+        Returns:
+            The retained diagnostics, or None when the conversation has no current failure.
+        """
+        value = self.metadata.get(self.SCORING_ERRORS_KEY, {}).get(conversation_id)
+        if value is None:
+            return None
+        failure = ScoringFailure.model_validate(value)
+        return failure if failure.objective == self.objective else None
+
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_attribution_labels(cls, data: Any) -> Any:
@@ -233,6 +310,12 @@ class AttackResult(StrategyResult, Generic[_ResponsePieceT, _ScoreT]):
     def last_score(self) -> Score | None:
         """The human score when present, otherwise the automated score."""
         return self.human_score or self.automated_score
+
+    @property
+    def technique_name(self) -> str | None:
+        """The registered technique name recorded in ``metadata``, or None when absent."""
+        name = self.metadata.get(self.TECHNIQUE_NAME_METADATA_KEY)
+        return name if isinstance(name, str) and name else None
 
     def get_attack_strategy_identifier(self) -> ComponentIdentifier | None:
         """

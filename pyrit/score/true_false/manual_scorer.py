@@ -10,6 +10,8 @@ from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 class ManualScorer(TrueFalseScorer):
     """Create a user-supplied score for one persisted message piece."""
 
+    SUPPORTED_SCORABLE_TYPES = (MessageScorable,)
+
     def __init__(self, *, value: bool, rationale: str, user_identifier: str) -> None:
         """
         Initialize the scorer.

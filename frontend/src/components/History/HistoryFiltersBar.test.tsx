@@ -1,6 +1,24 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import type { ReactNode } from 'react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import HistoryFiltersBar from './HistoryFiltersBar'
+
+// jsdom cannot drive the IntersectionObserver based virtualizer, so render every
+// item through a pass through and verify the combobox wiring around it.
+jest.mock('@fluentui-contrib/react-virtualizer', () => ({
+  Virtualizer: ({ numItems, children }: { numItems: number; children: (index: number, isScrolling: boolean) => ReactNode }) => (
+    <>
+      {Array.from({ length: numItems }, (_, index) => children(index, false))}
+    </>
+  ),
+  useStaticVirtualizerMeasure: () => ({
+    virtualizerLength: 0,
+    bufferItems: 0,
+    bufferSize: 0,
+    scrollRef: jest.fn(),
+    containerSizeRef: { current: 0 },
+  }),
+}))
 import { DEFAULT_HISTORY_FILTERS } from './historyFilters'
 import type { FilterOption } from '@/types'
 
@@ -16,8 +34,6 @@ describe('HistoryFiltersBar', () => {
   const defaultProps = {
     filters: { ...DEFAULT_HISTORY_FILTERS },
     onFiltersChange: jest.fn(),
-    attackTypeOptions: [] as string[],
-    converterOptions: [] as string[],
     operatorOptions: [] as string[],
     operationOptions: [] as FilterOption[],
     otherLabelOptions: [] as string[],
@@ -38,8 +54,10 @@ describe('HistoryFiltersBar', () => {
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
     expect(screen.getByTestId('label-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
+    expect(screen.queryByTestId('attack-type-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-match-mode-toggle')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('combobox')).toHaveLength(4)
     expect(screen.getByTestId('scanner-attack-filter-row')).toContainElement(
       screen.getByRole('switch', { name: 'Include scanner attacks' }),
     )
@@ -98,31 +116,6 @@ describe('HistoryFiltersBar', () => {
     })
   })
 
-  it('should call onFiltersChange when attack type filter is selected', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      attackTypeOptions: ['CrescendoAttack', 'ManualAttack'],
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    const dropdown = screen.getByTestId('attack-type-filter')
-    fireEvent.click(dropdown)
-
-    const option = await screen.findByText('CrescendoAttack')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ attackTypes: ['CrescendoAttack'] })
-    )
-  })
-
   it('should call onFiltersChange when outcome filter is selected', async () => {
     const onFiltersChange = jest.fn()
 
@@ -140,31 +133,6 @@ describe('HistoryFiltersBar', () => {
 
     expect(onFiltersChange).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'failure' })
-    )
-  })
-
-  it('should call onFiltersChange when converter filter is selected', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    const dropdown = screen.getByTestId('converter-filter')
-    fireEvent.click(dropdown)
-
-    const option = await screen.findByText('ROT13Converter')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: ['ROT13Converter'] })
     )
   })
 
@@ -216,6 +184,124 @@ describe('HistoryFiltersBar', () => {
     expect(onFiltersChange).toHaveBeenCalledWith(
       expect.objectContaining({ operationId: ['id-beta'] })
     )
+  })
+
+  it('should show every matching label through the virtualized list while searching', async () => {
+    const labels = [
+      ...Array.from({ length: 60 }, (_, i) => `label:${String(i).padStart(3, '0')}`),
+      ...Array.from({ length: 40 }, (_, i) => `other:${String(i).padStart(3, '0')}`),
+    ]
+    const props = {
+      ...defaultProps,
+      otherLabelOptions: labels,
+      filters: { ...defaultProps.filters, labelSearchText: 'label:' },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('label-filter'))
+    // The whole filtered set is one scrollable list: matches render, non matches do
+    // not, and the capped page with its search hint is gone.
+    expect(await screen.findByText('label:000')).toBeInTheDocument()
+    expect(await screen.findByText('label:059')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.body.textContent).not.toContain('other:000')
+    })
+    expect(document.body.textContent).not.toContain('Type to search')
+  })
+
+  it('should select a label option from the virtualized list', async () => {
+    const onFiltersChange = jest.fn()
+    const labels = Array.from({ length: 80 }, (_, i) => `label:${String(i).padStart(3, '0')}`)
+    const props = {
+      ...defaultProps,
+      onFiltersChange,
+      otherLabelOptions: labels,
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+    fireEvent.click(screen.getByTestId('label-filter'))
+    const first = await screen.findByText('label:000')
+    fireEvent.click(first)
+    await waitFor(() => {
+      expect(onFiltersChange).toHaveBeenCalledWith(
+        expect.objectContaining({ otherLabels: [first.textContent] })
+      )
+    })
+  })
+
+  it('should activate the last filtered option when End is pressed', async () => {
+    const labels = Array.from({ length: 60 }, (_, i) => `label:${String(i).padStart(3, '0')}`)
+    const props = {
+      ...defaultProps,
+      otherLabelOptions: labels,
+      filters: { ...defaultProps.filters, labelSearchText: 'label:' },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    fireEvent.click(screen.getByTestId('label-filter'))
+    await screen.findByText('label:059')
+
+    fireEvent.keyDown(screen.getByTestId('label-filter'), { key: 'End' })
+
+    const active = document.querySelector('[data-activedescendant]')
+    expect(active?.textContent).toBe('label:059')
+  })
+
+  it('should activate the first filtered option when Home is pressed after jumping to the end', async () => {
+    const labels = Array.from({ length: 60 }, (_, i) => `label:${String(i).padStart(3, '0')}`)
+    const props = {
+      ...defaultProps,
+      otherLabelOptions: labels,
+      filters: { ...defaultProps.filters, labelSearchText: 'label:' },
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    const input = screen.getByTestId('label-filter')
+    fireEvent.click(input)
+    await screen.findByText('label:059')
+
+    fireEvent.keyDown(input, { key: 'End' })
+    fireEvent.keyDown(input, { key: 'Home' })
+
+    const active = document.querySelector('[data-activedescendant]')
+    expect(active?.textContent).toBe('label:000')
+  })
+
+  it('should leave Home and End to the input while the dropdown is closed', () => {
+    const props = {
+      ...defaultProps,
+      otherLabelOptions: ['team:red', 'team:blue'],
+    }
+
+    render(
+      <TestWrapper>
+        <HistoryFiltersBar {...props} />
+      </TestWrapper>
+    )
+
+    fireEvent.keyDown(screen.getByTestId('label-filter'), { key: 'End' })
+
+    expect(document.querySelector('[data-activedescendant]')).toBeNull()
+    expect(document.querySelector('[role="menu"]')).toBeNull()
   })
 
   it('should update label search text when typing in label combobox', () => {
@@ -274,118 +360,6 @@ describe('HistoryFiltersBar', () => {
     )
 
     expect(screen.getByTestId('reset-filters-btn')).toBeInTheDocument()
-  })
-
-  it('should set hasConverters=false and clear converter list when "(No converters)" sentinel is selected', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    fireEvent.click(screen.getByTestId('converter-filter'))
-    const option = await screen.findByText('(No converters)')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: [], hasConverters: false })
-    )
-  })
-
-  it('should replace sentinel with real converter when user picks a converter while sentinel is active', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-      filters: { ...DEFAULT_HISTORY_FILTERS, hasConverters: false as boolean | undefined },
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    fireEvent.click(screen.getByTestId('converter-filter'))
-    const option = await screen.findByText('ROT13Converter')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: ['ROT13Converter'], hasConverters: undefined })
-    )
-  })
-
-  it('should replace real converters with sentinel when user picks sentinel while real converters are active', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-      filters: { ...DEFAULT_HISTORY_FILTERS, converter: ['Base64Converter'] },
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    fireEvent.click(screen.getByTestId('converter-filter'))
-    const option = await screen.findByText('(No converters)')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: [], hasConverters: false })
-    )
-  })
-
-  it('should not render the match-mode toggle when fewer than two converters are selected', () => {
-    const props = {
-      ...defaultProps,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-      filters: { ...DEFAULT_HISTORY_FILTERS, converter: ['Base64Converter'] },
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    expect(screen.queryByTestId('converter-match-mode-toggle')).not.toBeInTheDocument()
-  })
-
-  it('should render the match-mode toggle and emit "all" when flipped with two converters selected', () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-      filters: { ...DEFAULT_HISTORY_FILTERS, converter: ['Base64Converter', 'ROT13Converter'] },
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    const toggle = screen.getByTestId('converter-match-mode-toggle')
-    expect(toggle).toBeInTheDocument()
-
-    fireEvent.click(toggle)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converterMatchMode: 'all' })
-    )
   })
 
   it('should display "name (+N)" when multiple values are selected in a multi-select Combobox', () => {
@@ -455,7 +429,7 @@ describe('HistoryFiltersBar', () => {
   it('should keep the outcome Dropdown display label after a sibling filter changes', () => {
     const props = {
       ...defaultProps,
-      attackTypeOptions: ['PromptSendingAttack'],
+      operatorOptions: ['alice'],
       filters: { ...DEFAULT_HISTORY_FILTERS, outcome: 'success' },
     }
 
@@ -472,7 +446,7 @@ describe('HistoryFiltersBar', () => {
       <TestWrapper>
         <HistoryFiltersBar
           {...props}
-          filters={{ ...props.filters, attackTypes: ['PromptSendingAttack'] }}
+          filters={{ ...props.filters, operator: ['alice'] }}
         />
       </TestWrapper>
     )

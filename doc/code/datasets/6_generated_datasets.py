@@ -151,7 +151,7 @@ print(f"Stored {len(automatic_seeds)} objectives through scenario preparation.")
 # Use a new dataset name to generate and keep another batch.
 #
 # `NEVER` also uses stored data, but fails if the dataset is missing, even when a provider
-# is attached. There is no automatic refresh policy in this example.
+# is attached. Use `ALWAYS` below only when replacement is intended.
 #
 # The next scenario initializes from the same configuration. It does not run the attacks
 # again. Seed IDs stay unchanged because preparation did not replace or append data.
@@ -163,3 +163,32 @@ await reused_scenario.initialize_async()  # type: ignore
 reused_seeds = await memory.get_seeds_async(dataset_name=automatic_dataset_name)  # type: ignore
 assert {seed.id for seed in reused_seeds} == {seed.id for seed in automatic_seeds}
 print(f"Reused {len(reused_seeds)} stored objectives without generation.")
+
+# %% [markdown]
+# ## Explicitly Refresh a Dataset
+#
+# `ALWAYS` calls the configured provider with caching disabled when a new scenario
+# initializes. It generates a fresh batch and atomically replaces all stored seeds
+# for that dataset. It also works with registered providers, but a memory-only
+# dataset without a provider cannot refresh.
+#
+# Before any dataset write, fetched and retained sources pass the configuration's filters,
+# grouping, and validators without sampling. A fetch, grouping, or validation failure keeps
+# every selected dataset unchanged. Storage writes are atomic
+# per dataset, not across all selected datasets: a later write failure does not undo
+# an earlier successful write. Filters and selection limits do not reduce replacement.
+# Refresh removes manual edits and can prevent older runs from resuming if their seed
+# identities are no longer present.
+# Use a new dataset name to keep both batches. Require one writer per dataset name.
+#
+# This initialization incurs another generation call, but does not run another attack
+# batch. Reads, estimates, discovery, and resume never refresh. Explicit missing-only
+# loading does not consume or change this refresh policy.
+
+# %%
+refresh_config = automatic_config.with_overrides(fetch=DatasetFetchPolicy.ALWAYS)
+refresh_scenario = RapidResponse(objective_scorer=SelfAskTrueFalseScorer(chat_target=OpenAIChatTarget()))
+refresh_scenario.set_params_from_args(args={**automatic_params, "dataset_config": refresh_config})
+await refresh_scenario.initialize_async()  # type: ignore
+refreshed_seeds = await memory.get_seeds_async(dataset_name=automatic_dataset_name)  # type: ignore
+print(f"Refreshed {len(refreshed_seeds)} stored objectives.")

@@ -82,9 +82,10 @@
 #    - `objective_scorer`: The scorer used to judge responses
 #    - `scenario_result_id`: Optional ID to resume an existing scenario (optional)
 #
-# 5. **Initialization**: Call `await scenario.initialize_async()` to populate atomic attacks:
+# 5. **Initialization**: Set run inputs with `scenario.set_params_from_args(args={...})`,
+#    then call the argument-free `await scenario.initialize_async()` to populate atomic attacks:
 #    - `objective_target`: The target system being tested (required)
-#    - `scenario_techniques`: List of techniques to execute (optional, defaults to ALL)
+#    - `scenario_techniques`: List of techniques to execute (optional, uses the catalog's default)
 #    - `max_concurrency`: Number of concurrent operations (default: 4)
 #    - `max_retries`: Number of retry attempts on failure (default: 0)
 #    - `memory_labels`: Optional labels for tracking (optional)
@@ -97,8 +98,12 @@
 # implement `_build_atomic_attacks_async(context)`. Matrix-shaped scenarios delegate to the
 # `build_matrix_atomic_attacks` helper, which builds atomic attacks automatically from the
 # registered attack techniques.
+# Common construction inputs, including per-technique converters, come from
+# `context`, including inside nested helper methods. Scenario-specific scorers
+# and other construction options stay on the scenario.
 # %%
 from pyrit.common import apply_defaults
+from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.scenario import (
     DatasetAttackConfiguration,
     DatasetSource,
@@ -157,7 +162,8 @@ class MyScenario(Scenario):
     # to build_matrix_atomic_attacks; pass display_group_fn to customize result grouping
     # (default groups by technique; here we group by dataset instead).
     async def _build_atomic_attacks_async(self, *, context):
-        return build_matrix_atomic_attacks(
+        return await run_legacy_sync_async(
+            build_matrix_atomic_attacks,
             context=context,
             objective_scorer=self._objective_scorer,
             display_group_fn=lambda combo: combo.dataset_name,

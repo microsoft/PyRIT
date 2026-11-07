@@ -45,6 +45,8 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
     examples to bypass safety measures.
     """
 
+    FIXED_PARAMS_TYPE = ManyShotJailbreakParameters
+
     @apply_defaults
     def __init__(
         self,
@@ -65,12 +67,12 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
             prompt_normalizer (PromptNormalizer, Optional): Normalizer for handling prompts.
             max_attempts_on_failure (int, Optional): Maximum number of attempts to retry on failure. Defaults to 0.
             example_count (int): The number of examples to include from many_shot_examples or the Many
-                Shot Jailbreaking dataset. Defaults to the first 100.
+                Shot Jailbreaking dataset. Must be a positive integer. Defaults to the first 100.
             many_shot_examples (list[dict[str, str]], Optional): The many shot jailbreaking examples to use.
                 If not provided, takes the first `example_count` examples from Many Shot Jailbreaking dataset.
 
         Raises:
-            ValueError: If many_shot_examples is empty.
+            ValueError: If example_count is not a positive integer or many_shot_examples is empty.
         """
         ManyShotJailbreakAttack.validate_constructor_parameters(
             {
@@ -85,7 +87,6 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
             attack_scoring_config=attack_scoring_config,
             prompt_normalizer=prompt_normalizer,
             max_attempts_on_failure=max_attempts_on_failure,
-            params_type=ManyShotJailbreakParameters,
         )
 
         # Template for the faux dialogue to be prepended
@@ -106,12 +107,16 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
         Validate the supplied example selection without loading the default dataset.
 
         Raises:
-            ValueError: If the supplied example selection is empty.
+            ValueError: If ``example_count`` is not a positive integer or the supplied example
+                selection is empty.
         """
         super().validate_constructor_parameters(params)
         examples = params.get("many_shot_examples")
         count = params.get("example_count", 100)
-        if count == 0 or (examples is not None and not examples[:count]):
+        # The count is a slice bound, so a negative value would drop examples from the end.
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise ValueError(f"example_count must be a positive integer, got {count!r}.")
+        if examples is not None and not examples:
             raise ValueError("Many shot examples must be provided.")
 
     async def _perform_async(self, *, context: SingleTurnAttackContext[Any]) -> AttackResult:

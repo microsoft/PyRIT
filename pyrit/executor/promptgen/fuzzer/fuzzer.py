@@ -717,6 +717,7 @@ class FuzzerGenerator(
                 Defaults to None.
             scorer (Scorer | None): Configuration for scoring responses. Defaults to None.
             scoring_success_threshold (float): The score threshold to consider a jailbreak successful.
+                Must be between 0.0 and 1.0, inclusive. Defaults to 0.8.
             prompt_normalizer (PromptNormalizer | None): The prompt normalizer to use. Defaults to None.
             frequency_weight (float): Constant that balances between high reward and selection frequency.
                 Defaults to 0.5.
@@ -727,7 +728,8 @@ class FuzzerGenerator(
             non_leaf_node_probability (float): Probability of selecting a non-leaf node.
                 Defaults to 0.1.
             batch_size (int): The (max) batch size for sending prompts. Defaults to 10.
-            target_jailbreak_goal_count (int): Target number of jailbreaks to find. Defaults to 1.
+            target_jailbreak_goal_count (int): Target number of jailbreaks to find. Must be at least 1.
+                Defaults to 1.
 
         Raises:
             ValueError: If required parameters are invalid or missing.
@@ -736,7 +738,12 @@ class FuzzerGenerator(
         super().__init__(logger=logger, context_type=FuzzerContext)
 
         # Validate inputs
-        self._validate_inputs(template_converters=template_converters, batch_size=batch_size)
+        self._validate_inputs(
+            template_converters=template_converters,
+            batch_size=batch_size,
+            target_jailbreak_goal_count=target_jailbreak_goal_count,
+            scoring_success_threshold=scoring_success_threshold,
+        )
 
         # Store configuration
         self._objective_target = objective_target
@@ -807,6 +814,8 @@ class FuzzerGenerator(
         *,
         template_converters: list[FuzzerConverter],
         batch_size: int,
+        target_jailbreak_goal_count: int,
+        scoring_success_threshold: float,
     ) -> None:
         """
         Validate input parameters.
@@ -814,6 +823,8 @@ class FuzzerGenerator(
         Args:
             template_converters (list[FuzzerConverter]): List of template converters.
             batch_size (int): The batch size for sending prompts.
+            target_jailbreak_goal_count (int): Target number of jailbreaks to find.
+            scoring_success_threshold (float): The score threshold to consider a jailbreak successful.
 
         Raises:
             ValueError: If validation fails.
@@ -822,6 +833,12 @@ class FuzzerGenerator(
             raise ValueError("Template converters cannot be empty.")
         if batch_size < 1:
             raise ValueError("Batch size must be at least 1.")
+        if target_jailbreak_goal_count < 1:
+            raise ValueError(f"target_jailbreak_goal_count must be at least 1, got {target_jailbreak_goal_count!r}.")
+        if not 0.0 <= scoring_success_threshold <= 1.0:
+            raise ValueError(
+                f"scoring_success_threshold must be between 0.0 and 1.0, got {scoring_success_threshold!r}."
+            )
 
     def _validate_context(self, *, context: FuzzerContext) -> None:
         """
@@ -1169,18 +1186,22 @@ class FuzzerGenerator(
         """
         jailbreak_count = 0
         response_pieces = [response.message_pieces[0] for response in responses]
+        # score_batch_async returns one flattened list where a scorable may yield
+        # zero or several scores, so a jailbreak verdict is attributed to its
+        # response by the scored piece id rather than by position in that list.
+        conversation_by_piece_id = {str(piece.id): piece.conversation_id for piece in response_pieces}
 
-        for index, score in enumerate(scores):
+        for score in scores:
             if self._is_jailbreak(score):
                 jailbreak_count += 1
-                conversation_id = response_pieces[index].conversation_id
+                conversation_id = conversation_by_piece_id.get(str(score.message_piece_id))
                 if conversation_id is None:
                     raise ValueError("Response piece has no conversation_id; cannot record jailbreak conversation.")
                 context.jailbreak_conversation_ids.append(conversation_id)
 
         # Update tracking
         context.total_jailbreak_count += jailbreak_count
-        context.total_target_query_count += len(scores)
+        context.total_target_query_count += len(responses)
 
         # Add successful template to results
         if jailbreak_count > 0:
@@ -1242,8 +1263,10 @@ class FuzzerGenerator(
         if num_queries == 0:
             return
 
-        # Calculate reward (normalized by number of prompts tested)
-        reward = jailbreak_count / (len(context.prompts) * 1)
+        # The reward must stay a rate in [0, 1]: jailbreak_count counts flattened
+        # scores, and score_batch_async may yield several scores per response, so
+        # the denominator is the actual number of scored queries passed in.
+        reward = jailbreak_count / num_queries
 
         # Use MCTS explorer to update rewards
         self._mcts_explorer.update_rewards(

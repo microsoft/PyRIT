@@ -16,8 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from pyrit.common.csv_helper import strip_leading_comment_block
 from pyrit.common.path import SCORER_EVALS_HARM_PATH
-from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus
+from pyrit.models import ComponentIdentifier, MessagePiece, Score, ScoreStatus, ScoringExpectation
 from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.text_chunking import iter_chunk_spans
@@ -307,9 +308,8 @@ def _load_training_rows() -> tuple[list[str], list[int]]:
                 "If the dataset was updated deliberately, re-validate the scorer and update "
                 "LocalViolenceClassifierScorer's pinned hashes rather than scoring with an unchecked model."
             )
-        lines = raw.decode("utf-8").splitlines()
-        start = 1 if lines and lines[0].startswith("#") else 0
-        for row in csv.DictReader(io.StringIO("\n".join(lines[start:]))):
+        body = strip_leading_comment_block(raw.decode("utf-8"))
+        for row in csv.DictReader(io.StringIO(body, newline="")):
             raw_scores = [row.get(key) for key in ("human_score", "human_score_1", "human_score_2", "human_score_3")]
             scores = [float(value) for value in raw_scores if value not in (None, "")]
             response = (row.get("assistant_response") or "").strip()
@@ -547,10 +547,11 @@ class LocalViolenceClassifierScorer(MessageFloatScaleScorer):
             dict[str, str]: File name to current SHA-256, for re-pinning after a deliberate
             dataset update.
         """
-        return {
-            file_name: hashlib.sha256((_HARM_EVALS_PATH / file_name).read_bytes()).hexdigest()
-            for file_name in _TRAINING_DATASETS
-        }
+        hashes: dict[str, str] = {}
+        for file_name in _TRAINING_DATASETS:
+            with (_HARM_EVALS_PATH / file_name).open("rb") as dataset_file:
+                hashes[file_name] = hashlib.file_digest(dataset_file, "sha256").hexdigest()
+        return hashes
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -597,12 +598,10 @@ class LocalViolenceClassifierScorer(MessageFloatScaleScorer):
             }
         )
 
-    async def _score_piece_async(
-        self,
-        message_piece: MessagePiece,
-        *,
-        objective: str | None = None,
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
     ) -> list[Score]:
+        objective = expectation.objective if expectation else None
         await self.load_model_async()
         head = self._head
         if head is None:  # pragma: no cover - load_model_async either sets it or raises.

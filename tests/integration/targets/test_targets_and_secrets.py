@@ -1,28 +1,27 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import os
-import tempfile
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from PIL import Image
 
-from pyrit.auth import get_azure_openai_auth, get_azure_token_provider
+from pyrit.auth import get_azure_openai_auth, get_azure_token_provider, is_azure_openai_endpoint
 from pyrit.common.path import HOME_PATH
 from pyrit.executor.attack import AttackExecutor, PromptSendingAttack
 from pyrit.memory.sqlite_memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import (
-    AzureMLChatTarget,
     OpenAIChatTarget,
     OpenAICompletionTarget,
     OpenAIImageTarget,
     OpenAIResponseTarget,
     OpenAITTSTarget,
-    OpenAIVideoTarget,
     PromptShieldTarget,
     PromptTarget,
     RealtimeTarget,
@@ -61,6 +60,15 @@ def _get_openai_auth(
     if api_key_env_var:
         return _get_required_env_var(api_key_env_var)
     return get_azure_openai_auth(endpoint)
+
+
+def _assert_image_format(*, image_path: Path, output_format: str) -> None:
+    """Validate the saved image's extension and encoded format."""
+    assert image_path.is_file(), f"Image file not found at path: {image_path}"
+    assert image_path.suffix == f".{output_format}"
+    with Image.open(image_path) as image:
+        assert image.format == output_format.upper()
+        image.verify()
 
 
 async def _assert_can_send_prompt(
@@ -109,25 +117,6 @@ async def _send_realtime_text_async(
     ).to_message()
     response = await target.send_prompt_async(message=message)
     return str(response[0].get_value())
-
-
-async def _assert_can_send_video_prompt(*, target: PromptTarget) -> None:
-    """Helper function to test video generation targets."""
-    video_prompt = "A raccoon sailing a pirate ship"
-    attack = PromptSendingAttack(objective_target=target)
-    result = await attack.execute_async(objective=video_prompt)
-
-    # For video generation, verify we got a successful response
-    assert result.last_response is not None
-    assert result.last_response.converted_value is not None
-    assert result.last_response.response_error == "none", (
-        f"Expected successful response, got error: {result.last_response.response_error}"
-    )
-
-    # Validate we got a valid video file path
-    video_path = Path(result.last_response.converted_value)
-    assert video_path.exists(), f"Video file not found at path: {video_path}"
-    assert video_path.is_file(), f"Path exists but is not a file: {video_path}"
 
 
 @pytest.mark.parametrize(
@@ -591,25 +580,6 @@ async def test_realtime_target_same_conversation_multi_turn(
         await target.cleanup_target_async()
 
 
-@pytest.mark.parametrize(
-    ("endpoint", "api_key"),
-    [
-        ("AZURE_ML_MANAGED_ENDPOINT", "AZURE_ML_KEY"),
-        ("AZURE_ML_PHI_ENDPOINT", "AZURE_ML_PHI_KEY"),
-    ],
-)
-async def test_connect_required_aml_text_targets(sqlite_instance, endpoint, api_key):
-    endpoint_value = _get_required_env_var(endpoint)
-    api_key_value = _get_required_env_var(api_key)
-
-    target = AzureMLChatTarget(
-        endpoint=endpoint_value,
-        api_key=api_key_value,
-    )
-
-    await _assert_can_send_prompt(target=target)
-
-
 async def test_connect_openai_completion(sqlite_instance: SQLiteMemory) -> None:
     endpoint_value = _get_required_env_var("OPENAI_COMPLETION_ENDPOINT")
     api_key_value = _get_required_env_var("OPENAI_COMPLETION_API_KEY")
@@ -624,6 +594,7 @@ async def test_connect_openai_completion(sqlite_instance: SQLiteMemory) -> None:
     await _assert_can_send_prompt(target=target, check_if_llm_interpreted_request=False)
 
 
+@pytest.mark.parametrize("output_format", ["png", "jpeg", "webp"])
 @pytest.mark.parametrize(
     ("endpoint", "api_key_env_var", "model_name"),
     [
@@ -662,14 +633,19 @@ async def test_connect_image(
     endpoint: str,
     api_key_env_var: str | None,
     model_name: str,
+    output_format: Literal["png", "jpeg", "webp"],
 ) -> None:
     endpoint_value = _get_required_env_var(endpoint)
+    if output_format == "webp" and is_azure_openai_endpoint(endpoint_value):
+        pytest.skip("Azure OpenAI supports only PNG and JPEG image output.")
     model_name_value = os.getenv(model_name) if model_name else ""
 
     target = OpenAIImageTarget(
         endpoint=endpoint_value,
         api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
         model_name=model_name_value,
+        output_format=output_format,
+        quality="low",
     )
 
     image_prompt = "A simple test image of a raccoon"
@@ -683,10 +659,14 @@ async def test_connect_image(
         f"Expected successful response, got error: {result.last_response.response_error}"
     )
 
-    # Validate we got a valid image file path
     image_path = Path(result.last_response.converted_value)
-    assert image_path.exists(), f"Image file not found at path: {image_path}"
-    assert image_path.is_file(), f"Path exists but is not a file: {image_path}"
+    await asyncio.to_thread(_assert_image_format, image_path=image_path, output_format=output_format)
+
+    conversation = await sqlite_instance.get_conversation_metadata_async(conversation_id=result.conversation_id)
+    assert conversation is not None
+    assert conversation.target_identifier is not None
+    assert conversation.target_identifier.params["output_format"] == output_format
+    assert conversation.target_identifier.hash == target.get_identifier().hash
 
 
 @pytest.mark.parametrize(
@@ -851,246 +831,6 @@ async def test_connect_tts(
     )
 
     await _assert_can_send_prompt(target=target, check_if_llm_interpreted_request=False)
-
-
-@pytest.mark.parametrize(
-    ("endpoint", "api_key_env_var", "model_name"),
-    [
-        ("AZURE_OPENAI_VIDEO_ENDPOINT", None, "AZURE_OPENAI_VIDEO_MODEL"),
-        pytest.param(
-            "AZURE_OPENAI_VIDEO_ENDPOINT",
-            "AZURE_OPENAI_VIDEO_KEY",
-            "AZURE_OPENAI_VIDEO_MODEL",
-            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
-            id="azure-video-api-key",
-        ),
-        # OpenAI Platform endpoint returns HTTP 401 "Missing scopes: api.videos.write" for all requests
-        # ("PLATFORM_OPENAI_VIDEO_ENDPOINT", "PLATFORM_OPENAI_VIDEO_KEY",
-        #  "PLATFORM_OPENAI_VIDEO_MODEL"),
-    ],
-)
-async def test_connect_video(
-    sqlite_instance: SQLiteMemory,
-    endpoint: str,
-    api_key_env_var: str | None,
-    model_name: str,
-) -> None:
-    """Test OpenAIVideoTarget with video API."""
-    endpoint_value = _get_required_env_var(endpoint)
-    model_name_value = _get_required_env_var(model_name)
-
-    target = OpenAIVideoTarget(
-        endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
-        model_name=model_name_value,
-        resolution_dimensions="1280x720",  # Supported by both v1 and v2
-        n_seconds=4,  # Supported by both v1 (up to 20s) and v2 (4, 8, or 12s)
-    )
-
-    await _assert_can_send_video_prompt(target=target)
-
-
-@pytest.mark.run_only_if_all_tests
-@pytest.mark.parametrize(
-    "api_key_env_var",
-    [
-        pytest.param(None, id="entra"),
-        pytest.param(
-            "AZURE_OPENAI_VIDEO_KEY",
-            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
-            id="api-key",
-        ),
-    ],
-)
-async def test_video_multiple_prompts_create_separate_files(
-    sqlite_instance: SQLiteMemory,
-    api_key_env_var: str | None,
-) -> None:
-    """
-    Test that sending multiple prompts to video API using PromptSendingAttack
-    creates separate video files and doesn't override previous files.
-
-    This verifies that each video generation creates a unique file based on
-    the video ID mechanism.
-    """
-    endpoint_value = _get_required_env_var("AZURE_OPENAI_VIDEO_ENDPOINT")
-    model_name_value = _get_required_env_var("AZURE_OPENAI_VIDEO_MODEL")
-
-    target = OpenAIVideoTarget(
-        endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
-        model_name=model_name_value,
-        resolution_dimensions="1280x720",
-        n_seconds=4,
-    )
-
-    attack = PromptSendingAttack(objective_target=target)
-    executor = AttackExecutor()
-
-    # Send two prompts using execute_attack_async
-    objectives = ["A cat walking on a beach", "A dog running in a park"]
-    results = await executor.execute_attack_async(attack=attack, objectives=objectives)
-
-    # Verify we got 2 results
-    assert len(results) == 2, f"Expected 2 results, got {len(results)}"
-
-    # Verify both prompts succeeded
-    result1 = results[0]
-    result2 = results[1]
-
-    assert result1.last_response is not None
-    assert result1.last_response.response_error == "none", (
-        f"First prompt failed with error: {result1.last_response.response_error}. "
-        f"Response: {result1.last_response.converted_value}"
-    )
-
-    assert result2.last_response is not None
-    assert result2.last_response.response_error == "none", (
-        f"Second prompt failed with error: {result2.last_response.response_error}. "
-        f"Response: {result2.last_response.converted_value}"
-    )
-
-    # Extract video paths
-    video_path1 = Path(result1.last_response.converted_value)
-    video_path2 = Path(result2.last_response.converted_value)
-
-    # Verify both files exist
-    assert video_path1.exists(), f"First video file not found at path: {video_path1}"
-    assert video_path1.is_file(), f"First path exists but is not a file: {video_path1}"
-
-    assert video_path2.exists(), f"Second video file not found at path: {video_path2}"
-    assert video_path2.is_file(), f"Second path exists but is not a file: {video_path2}"
-
-    # Verify they are different files (not overridden)
-    assert video_path1 != video_path2, (
-        f"Both prompts resulted in the same file path: {video_path1}. Expected separate files for different prompts."
-    )
-
-    # Verify both files still exist (first wasn't overridden)
-    assert video_path1.exists(), (
-        f"First video file was overridden or deleted. File 1: {video_path1}, File 2: {video_path2}"
-    )
-
-
-@pytest.mark.parametrize(
-    "api_key_env_var",
-    [
-        pytest.param(None, id="entra"),
-        pytest.param(
-            "OPENAI_VIDEO_KEY",
-            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
-            id="api-key",
-        ),
-    ],
-)
-async def test_video_remix_chain(
-    sqlite_instance: SQLiteMemory,
-    api_key_env_var: str | None,
-) -> None:
-    """Test text-to-video followed by remix using the returned video_id."""
-    endpoint_value = _get_required_env_var("OPENAI_VIDEO_ENDPOINT")
-    model_name_value = _get_required_env_var("OPENAI_VIDEO_MODEL")
-
-    target = OpenAIVideoTarget(
-        endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
-        model_name=model_name_value,
-        resolution_dimensions="1280x720",
-        n_seconds=4,
-    )
-
-    # Step 1: Generate initial video
-    text_piece = MessagePiece(
-        role="user",
-        original_value="A cat sitting on a windowsill",
-        converted_value="A cat sitting on a windowsill",
-    )
-    result = await target.send_prompt_async(message=Message(message_pieces=[text_piece]))
-    assert len(result) == 1
-    response_piece = result[0].message_pieces[0]
-    assert response_piece.response_error == "none"
-    assert response_piece.prompt_metadata is not None
-    video_id = response_piece.prompt_metadata.get("video_id")
-    assert video_id, "Response must include video_id in prompt_metadata for chaining"
-
-    # Step 2: Remix using the returned video_id
-    remix_piece = MessagePiece(
-        role="user",
-        original_value="Make it a watercolor painting style",
-        converted_value="Make it a watercolor painting style",
-        prompt_metadata={"video_id": video_id},
-    )
-    remix_result = await target.send_prompt_async(message=Message(message_pieces=[remix_piece]))
-    assert len(remix_result) == 1
-    remix_response = remix_result[0].message_pieces[0]
-    assert remix_response.response_error == "none"
-
-    remix_path = Path(remix_response.converted_value)
-    assert remix_path.exists(), f"Remixed video file not found: {remix_path}"
-    assert remix_path.is_file()
-
-
-@pytest.mark.run_only_if_all_tests
-@pytest.mark.parametrize(
-    "api_key_env_var",
-    [
-        pytest.param(None, id="entra"),
-        pytest.param(
-            "OPENAI_VIDEO_KEY",
-            marks=pytest.mark.skip(reason=_AZURE_KEY_AUTH_DISABLED_REASON),
-            id="api-key",
-        ),
-    ],
-)
-async def test_video_image_to_video(
-    sqlite_instance: SQLiteMemory,
-    api_key_env_var: str | None,
-) -> None:
-    """Test image-to-video mode using an image as the first frame."""
-    endpoint_value = _get_required_env_var("OPENAI_VIDEO_ENDPOINT")
-    model_name_value = _get_required_env_var("OPENAI_VIDEO_MODEL")
-
-    target = OpenAIVideoTarget(
-        endpoint=endpoint_value,
-        api_key=_get_openai_auth(endpoint=endpoint_value, api_key_env_var=api_key_env_var),
-        model_name=model_name_value,
-        resolution_dimensions="1280x720",
-        n_seconds=4,
-    )
-
-    # Prepare an image matching the video resolution (API requires exact match).
-    # Resize a sample image to 1280x720 and save as a temporary JPEG.
-    sample_image = HOME_PATH / "assets" / "pyrit_architecture.png"
-    resized = Image.open(sample_image).resize((1280, 720)).convert("RGB")
-
-    tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)  # noqa: SIM115
-    resized.save(tmp, format="JPEG")
-    tmp.close()
-    image_path = tmp.name
-
-    # Use the image for image-to-video
-    conversation_id = str(uuid.uuid4())
-    text_piece = MessagePiece(
-        role="user",
-        original_value="Animate this image with gentle motion",
-        converted_value="Animate this image with gentle motion",
-        conversation_id=conversation_id,
-    )
-    image_piece = MessagePiece(
-        role="user",
-        original_value=image_path,
-        converted_value=image_path,
-        converted_value_data_type="image_path",
-        conversation_id=conversation_id,
-    )
-    result = await target.send_prompt_async(message=Message(message_pieces=[text_piece, image_piece]))
-    assert len(result) == 1
-    response_piece = result[0].message_pieces[0]
-    assert response_piece.response_error == "none", f"Image-to-video failed: {response_piece.converted_value}"
-
-    video_path = Path(response_piece.converted_value)
-    assert video_path.exists(), f"Video file not found: {video_path}"
-    assert video_path.is_file()
 
 
 async def test_prompt_shield_target(sqlite_instance: SQLiteMemory) -> None:

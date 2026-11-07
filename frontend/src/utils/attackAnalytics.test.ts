@@ -1,9 +1,12 @@
+import { ANALYTICS_NIGHTLY_ID } from '@/test-utils/analyticsFixtures'
 import type { AttackAnalyticsFilter, AttackAnalyticsViewState } from '@/types'
 
 import {
-  DEFAULT_ANALYTICS_VIEW, analyticsDateRangeError, analyticsDimensionKey, analyticsFiltersKey, analyticsOptionLabel,
-  analyticsQuery, analyticsQueryKey, analyticsSuccessCountsLabel, analyticsValueKey, analyticsViewError, analyticsViewFromLocation,
-  analyticsViewFromSearchParams, analyticsViewToHash, analyticsViewToSearchParams, appendAnalyticsDrilldown, formatAnalyticsPercent,
+  DEFAULT_ANALYTICS_VIEW, analyticsDateRangeError, analyticsDimensionKey, analyticsFiltersKey, analyticsLegacyOperationLabel,
+  analyticsOptionLabel, analyticsOptionLabelKey,
+  analyticsQuery, analyticsQueryKey, analyticsSuccessCountsLabel, analyticsValueKey, analyticsValueLabel, analyticsViewError,
+  analyticsViewFromLocation, analyticsViewFromSearchParams, analyticsViewToHash, analyticsViewToSearchParams,
+  appendAnalyticsDrilldown, formatAnalyticsPercent, withoutAnalyticsOperationIdLabels,
 } from './attackAnalytics'
 
 describe('attack analytics view state', () => {
@@ -49,7 +52,7 @@ describe('attack analytics view state', () => {
       filters: {
         dimensions: [converters, extra, {
           dimension: { name: 'operation' },
-          values: [{ kind: 'missing', value: null }, { kind: 'value', value: 'Unknown' }],
+          values: [{ kind: 'missing', value: null }, { kind: 'legacy_operation_name', value: 'Unknown' }],
           match_mode: 'any',
         }],
         outcomes: ['success', 'error'],
@@ -82,6 +85,67 @@ describe('attack analytics view state', () => {
     expect(analyticsOptionLabel({ key: { kind: 'missing', value: null }, label: 'Unknown' })).toBe('Unknown (missing metadata)')
     expect(analyticsOptionLabel({ key: { kind: 'value', value: 'Unknown' }, label: 'Unknown' })).toBe('Unknown')
     expect(analyticsDimensionKey({ name: 'operation' })).toBe(analyticsDimensionKey({ name: 'operation', converter_direction: 'request' }))
+  })
+
+  it('should restore an uppercase Operation ID in lowercase', () => {
+    const restored = analyticsViewFromSearchParams(analyticsViewToSearchParams({
+      ...DEFAULT_ANALYTICS_VIEW,
+      filters: { ...DEFAULT_ANALYTICS_VIEW.filters, dimensions: [{
+        dimension: { name: 'operation' }, values: [{ kind: 'value', value: ANALYTICS_NIGHTLY_ID.toUpperCase() }], match_mode: 'any',
+      }] },
+    }))
+    expect(restored.error).toBeNull()
+    expect(restored.view.filters.dimensions[0].values).toEqual([{ kind: 'value', value: ANALYTICS_NIGHTLY_ID }])
+  })
+
+  it('should reject an Operation name in value', () => {
+    const restored = analyticsViewFromSearchParams(new URLSearchParams({
+      analytics: JSON.stringify({
+        ...DEFAULT_ANALYTICS_VIEW,
+        filters: { outcomes: [], dimensions: [{ dimension: { name: 'operation' }, values: [{ kind: 'value', value: 'Nightly' }] }] },
+      }),
+    }))
+    expect(restored.error).toMatch(/^Cannot restore/)
+    expect(restored.error).toContain('Operation values must be saved Operation IDs; use legacy_operation_name for legacy activity')
+  })
+
+  it('should accept legacy_operation_name only on Operation', () => {
+    const legacy: AttackAnalyticsFilter = {
+      dimension: { name: 'operation' },
+      values: [{ kind: 'legacy_operation_name', value: 'Nightly' }, { kind: 'legacy_operation_name', value: '  ' }],
+      match_mode: 'any',
+    }
+    const view: AttackAnalyticsViewState = { ...DEFAULT_ANALYTICS_VIEW, filters: { ...DEFAULT_ANALYTICS_VIEW.filters, dimensions: [legacy] } }
+    expect(analyticsViewFromSearchParams(analyticsViewToSearchParams(view))).toEqual({ view, error: null })
+    expect(analyticsViewError({ ...view, filters: { ...view.filters, dimensions: [{ ...legacy, dimension: { name: 'operator' } }] } }))
+      .toBe('The legacy_operation_name bucket applies only to operation')
+    expect(analyticsViewError({ ...view, filters: { ...view.filters, dimensions: [{
+      ...legacy, values: [{ kind: 'legacy_operation_name', value: 'x'.repeat(129) }],
+    }] } })).toMatch(/128 characters/)
+  })
+
+  it('should label legacy Operation names with one suffix', () => {
+    expect(analyticsOptionLabel({ key: { kind: 'legacy_operation_name', value: 'Nightly' }, label: 'Nightly (legacy name)' }))
+      .toBe('Nightly (legacy name)')
+    expect(analyticsOptionLabel({ key: { kind: 'legacy_operation_name', value: '  ' }, label: '(Blank) (legacy name)' }))
+      .toBe('(Blank) (legacy name)')
+    expect(analyticsValueLabel({ kind: 'legacy_operation_name', value: 'Nightly' })).toBe('Nightly (legacy name)')
+    expect(analyticsOptionLabel({ key: { kind: 'value', value: ANALYTICS_NIGHTLY_ID }, label: 'Nightly' })).toBe('Nightly')
+    expect(analyticsLegacyOperationLabel('')).toBe('(Blank) (legacy name)')
+    expect(analyticsLegacyOperationLabel('   ')).toBe('(Blank) (legacy name)')
+    expect(analyticsValueLabel({ kind: 'legacy_operation_name', value: '  ' })).toBe('(Blank) (legacy name)')
+    expect(analyticsValueLabel({ kind: 'value', value: '' })).toBe('(Empty value)')
+  })
+
+  it('should drop only Operation ID labels from a label cache', () => {
+    const operationId = analyticsOptionLabelKey({ name: 'operation' }, { kind: 'value', value: ANALYTICS_NIGHTLY_ID })
+    const kept = {
+      [analyticsOptionLabelKey({ name: 'operation' }, { kind: 'legacy_operation_name', value: 'Nightly' })]: 'Nightly (legacy name)',
+      [analyticsOptionLabelKey({ name: 'operation' }, { kind: 'missing', value: null })]: 'Unknown',
+      [analyticsOptionLabelKey({ name: 'scenario' }, { kind: 'value', value: ANALYTICS_NIGHTLY_ID })]: 'Nightly scan (1d385514)',
+      [analyticsOptionLabelKey({ name: 'label', label_key: 'operation' }, { kind: 'value', value: ANALYTICS_NIGHTLY_ID })]: 'Team label',
+    }
+    expect(withoutAnalyticsOperationIdLabels({ ...kept, [operationId]: 'Nightly' })).toEqual(kept)
   })
 
   it('should format an unavailable rate differently from zero without deriving a metric', () => {

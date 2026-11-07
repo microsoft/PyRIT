@@ -600,6 +600,17 @@ class TestDefaultAttackStrategyEventHandler:
         expected_message = f"{event_handler.__class__.__name__} failed with an error. Reason: Connection timeout"
         mock_logger.info.assert_called_with(expected_message)
 
+    def test_log_attack_outcome_rejects_unrecognized_outcome(self, event_handler) -> None:
+        """An unrecognized outcome cannot silently use the failure message."""
+        result = AttackResult.model_construct(
+            conversation_id="test-conversation-id",
+            objective="Test objective",
+            outcome="future_outcome",
+        )
+
+        with pytest.raises(AssertionError, match="future_outcome"):
+            event_handler._log_attack_outcome(result)
+
     async def test_on_post_execute_does_not_persist_result(self, mock_memory):
         """Completed results are persisted only after the full lifecycle."""
         with patch("pyrit.memory.central_memory.CentralMemory.get_memory_instance", return_value=mock_memory):

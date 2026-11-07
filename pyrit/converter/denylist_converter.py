@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
+import json
 import logging
 import pathlib
 
@@ -8,7 +10,7 @@ from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import ConverterResult
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
-from pyrit.models import PromptDataType, SeedPrompt
+from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -48,8 +50,28 @@ class DenylistConverter(LLMGenericTextConverter):
             else SeedPrompt.from_yaml_file(pathlib.Path(CONVERTER_SEED_PROMPT_PATH) / "denylist_converter.yaml")
         )
 
+        self._denylist = denylist
+
         super().__init__(
             converter_target=converter_target, system_prompt_template=system_prompt_template, denylist=denylist
+        )
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with the denylist.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        # The denylist is rendered into the system prompt, so it is part of the converter's identity.
+        denylist_hash = None
+        if self._denylist:
+            denylist_hash = hashlib.sha256(json.dumps(self._denylist).encode("utf-8")).hexdigest()[:16]
+
+        base_identifier = super()._build_identifier()
+        return self._create_identifier(
+            params={**base_identifier.params, "denylist_hash": denylist_hash},
+            converter_target=self._converter_target.get_identifier(),
         )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:

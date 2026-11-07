@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
@@ -188,6 +189,8 @@ class AttackAnalyticsDimensionName(str, Enum):
     Objective-target keys use a persisted, versioned evaluation identity so
     deployment details do not split equivalent configurations. Scenario keys
     identify saved runs, not their possibly repeated display names.
+    Operation keys are saved Operation IDs; legacy activity saved with only an
+    Operation name uses ``legacy_operation_name`` keys.
     Harm categories describe the attack's intended coverage, not detected harms.
     Converter membership describes recorded usage, not an ordered per-turn pipeline.
     """
@@ -218,11 +221,12 @@ class AttackAnalyticsMatchMode(str, Enum):
 
 
 class AttackAnalyticsValueKind(str, Enum):
-    """Disambiguate real metadata from missing values and empty pipelines."""
+    """Disambiguate real metadata from missing values, empty pipelines, and legacy Operation names."""
 
     VALUE = "value"
     MISSING = "missing"
     NO_CONVERTERS = "no_converters"
+    LEGACY_OPERATION_NAME = "legacy_operation_name"
 
 
 class _AnalyticsModel(BaseModel):
@@ -268,9 +272,11 @@ class AttackAnalyticsDimension(_AnalyticsModel):
 
 class AttackAnalyticsValue(_AnalyticsModel):
     """
-    An exact metadata value or an explicit absence bucket.
+    An exact metadata value, a legacy Operation name, or an explicit absence bucket.
 
     A real empty string or a label named "Unknown" remains a ``VALUE``.
+    ``LEGACY_OPERATION_NAME`` carries the stored name, possibly empty, of activity
+    saved without an Operation ID.
     ``MISSING`` and ``NO_CONVERTERS`` carry no string, so neither can collide with
     user metadata; an absent identifier is different from a known empty pipeline.
     """
@@ -289,10 +295,11 @@ class AttackAnalyticsValue(_AnalyticsModel):
             Self: The validated key.
 
         Raises:
-            ValueError: If a real value has no string or an absence key carries a string.
+            ValueError: If a value or legacy name has no string or an absence key carries a string.
         """
-        if (self.kind is AttackAnalyticsValueKind.VALUE) != (self.value is not None):
-            raise ValueError("Only a value bucket has a string value")
+        carries_text = self.kind in {AttackAnalyticsValueKind.VALUE, AttackAnalyticsValueKind.LEGACY_OPERATION_NAME}
+        if carries_text != (self.value is not None):
+            raise ValueError("Only value and legacy_operation_name buckets have a string value")
         return self
 
 
@@ -312,20 +319,23 @@ class AttackAnalyticsFilter(_AnalyticsModel):
     @model_validator(mode="after")
     def _validate_values(self) -> Self:
         """
-        Restrict ALL/empty-pipeline semantics to converters and bound attribution values.
+        Restrict special buckets to their dimensions, bound attribution values, and canonicalize Operation IDs.
 
         Returns:
-            Self: The validated predicate.
+            Self: The validated predicate, with Operation ``VALUE`` keys stored as lowercase UUID strings.
 
         Raises:
-            ValueError: If matching semantics or attribution lengths are incompatible.
+            ValueError: If matching semantics, bucket kinds, attribution lengths, or Operation IDs are invalid.
         """
         converter = self.dimension.name is AttackAnalyticsDimensionName.CONVERTER_TYPE
+        operation = self.dimension.name is AttackAnalyticsDimensionName.OPERATION
         if self.match_mode is AttackAnalyticsMatchMode.ALL and not converter:
             raise ValueError("ALL matching is supported only for converter_type")
         for value in self.values:
             if value.kind is AttackAnalyticsValueKind.NO_CONVERTERS and not converter:
                 raise ValueError("The no_converters bucket applies only to converter_type")
+            if value.kind is AttackAnalyticsValueKind.LEGACY_OPERATION_NAME and not operation:
+                raise ValueError("The legacy_operation_name bucket applies only to operation")
             if (
                 self.dimension.name
                 in {
@@ -336,7 +346,30 @@ class AttackAnalyticsFilter(_AnalyticsModel):
                 and len(value.value) > 128
             ):
                 raise ValueError("Operator and operation values must not exceed 128 characters")
+        if operation:
+            self.values = [self._canonical_operation_key(value) for value in self.values]
         return self
+
+    @staticmethod
+    def _canonical_operation_key(value: AttackAnalyticsValue) -> AttackAnalyticsValue:
+        """
+        Copy a saved Operation ID key into canonical form, leaving the caller's key unchanged.
+
+        Returns:
+            AttackAnalyticsValue: A canonical copy of a ``VALUE`` key, or any other key as given.
+
+        Raises:
+            ValueError: If a ``VALUE`` key is not a UUID.
+        """
+        if value.kind is not AttackAnalyticsValueKind.VALUE or value.value is None:
+            return value
+        try:
+            operation_id = uuid.UUID(value.value)
+        except ValueError as error:
+            raise ValueError(
+                "Operation values must be saved Operation IDs; use legacy_operation_name for legacy activity"
+            ) from error
+        return value.model_copy(update={"value": str(operation_id)})
 
 
 class AttackAnalyticsFilters(_AnalyticsModel):
@@ -501,6 +534,7 @@ class AttackAnalyticsResultRow(_AnalyticsModel):
     outcome: AttackOutcome
     updated_at: AwareDatetime
     operation: str | None
+    operation_id: str | None
     operator: str | None
     attack_type: str | None
     target_model: str | None

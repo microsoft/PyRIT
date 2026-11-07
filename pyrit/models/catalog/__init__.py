@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         ScenarioDatasetSizeCap,
         ScenarioDatasetSummary,
         ScenarioDefaultRunSizeEstimate,
+        ScenarioLaunchConfiguration,
         ScenarioProducerCategoryCounts,
         ScenarioProducerCounts,
         ScenarioRunListItem,
@@ -40,7 +41,19 @@ if TYPE_CHECKING:
         ScenarioRunSummary,
         ScenarioTechniqueSummary,
     )
-    from pyrit.models.catalog.scenario_preset import PresetEntry, PresetIssue, ScenarioPreset, StoredPreset
+    from pyrit.models.catalog.scenario_preset import (
+        PresetEntry,
+        PresetIssue,
+        ResolveScenarioPresetRequest,
+        ScenarioPreset,
+        StoredPreset,
+    )
+    from pyrit.models.catalog.scenario_suite import (
+        ScenarioSuite,
+        ScenarioSuiteEntry,
+        ScenarioSuiteRegistryEntry,
+        StoredScenarioSuite,
+    )
     from pyrit.models.catalog.scorer import ScorerInstance
     from pyrit.models.catalog.target import TargetInstance
 
@@ -53,10 +66,15 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScorerInstance": "pyrit.models.catalog.scorer",
     "RegisteredScenario": "pyrit.models.catalog.scenario",
     "RunScenarioRequest": "pyrit.models.catalog.scenario",
+    "ScenarioLaunchConfiguration": "pyrit.models.catalog.scenario",
     "ScenarioDatasetSizeCap": "pyrit.models.catalog.scenario",
     "ScenarioDatasetSummary": "pyrit.models.catalog.scenario",
     "ScenarioDefaultRunSizeEstimate": "pyrit.models.catalog.scenario",
     "ScenarioPreset": "pyrit.models.catalog.scenario_preset",
+    "ResolveScenarioPresetRequest": "pyrit.models.catalog.scenario_preset",
+    "ScenarioSuite": "pyrit.models.catalog.scenario_suite",
+    "ScenarioSuiteEntry": "pyrit.models.catalog.scenario_suite",
+    "ScenarioSuiteRegistryEntry": "pyrit.models.catalog.scenario_suite",
     "ScenarioProducerCategoryCounts": "pyrit.models.catalog.scenario",
     "ScenarioProducerCounts": "pyrit.models.catalog.scenario",
     "ScenarioRunListItem": "pyrit.models.catalog.scenario",
@@ -69,6 +87,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ScenarioRunSummary": "pyrit.models.catalog.scenario",
     "ScenarioTechniqueSummary": "pyrit.models.catalog.scenario",
     "StoredPreset": "pyrit.models.catalog.scenario_preset",
+    "StoredScenarioSuite": "pyrit.models.catalog.scenario_suite",
     "TargetInstance": "pyrit.models.catalog.target",
 }
 

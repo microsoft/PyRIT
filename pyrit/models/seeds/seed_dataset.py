@@ -36,9 +36,28 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from pydantic.types import PositiveInt
+    from pydantic.types import NonNegativeInt
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_count(*, name: str, count: object) -> None:
+    """
+    Reject a prompt count that is not a non-negative integer.
+
+    The count annotations on the public methods are not enforced at runtime, and a
+    negative count would silently slice from the other end of the prompt list.
+
+    Args:
+        name (str): The parameter name, used in the error message.
+        count (object): The value to validate.
+
+    Raises:
+        ValueError: If ``count`` is a bool, not an integer, or negative.
+    """
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        raise ValueError(f"{name} must be a non-negative integer, got {count!r}")
+
 
 # Dataset-level defaults that get merged into each dict seed when missing on the seed.
 # date_added/added_by/metadata are intentionally excluded — per-seed Pydantic defaults
@@ -178,8 +197,8 @@ class SeedDataset(BaseModel):
     def get_values(
         self,
         *,
-        first: PositiveInt | None = None,
-        last: PositiveInt | None = None,
+        first: NonNegativeInt | None = None,
+        last: NonNegativeInt | None = None,
         harm_categories: Sequence[str] | None = None,
     ) -> Sequence[str]:
         """
@@ -194,7 +213,13 @@ class SeedDataset(BaseModel):
         Returns:
             Sequence[str]: A list of prompt values.
 
+        Raises:
+            ValueError: If ``first`` or ``last`` is not a non-negative integer.
         """
+        for name, count in (("first", first), ("last", last)):
+            if count is not None:
+                _validate_count(name=name, count=count)
+
         # Filter by harm categories if specified
         seeds = self.seeds
         if harm_categories:
@@ -216,7 +241,9 @@ class SeedDataset(BaseModel):
 
         return first_part + last_part
 
-    def get_random_values(self, *, number: PositiveInt, harm_categories: Sequence[str] | None = None) -> Sequence[str]:
+    def get_random_values(
+        self, *, number: NonNegativeInt, harm_categories: Sequence[str] | None = None
+    ) -> Sequence[str]:
         """
         Extract and return random prompt values from the dataset.
 
@@ -228,7 +255,10 @@ class SeedDataset(BaseModel):
         Returns:
             Sequence[str]: A list of prompt values.
 
+        Raises:
+            ValueError: If ``number`` is not a non-negative integer.
         """
+        _validate_count(name="number", count=number)
         prompts = self.get_values(harm_categories=harm_categories)
         return random.sample(prompts, min(len(prompts), number))
 

@@ -1,10 +1,10 @@
 import { isThemeMode } from '@/themes/themePresets'
-import type { OperationSelection, TargetReference, UserPreferences } from '@/types'
+import type { RegisteredComponentReference, OperationSelection, TargetPreferences, TargetReference, UserPreferences } from '@/types'
 
 const STORAGE_PREFIX = 'pyrit.userPreferences.v1.'
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
-  targets: { objective: null, adversarial: null },
+  targets: { adversarial: null },
   hiddenTargetRegistryNames: [],
   labels: {},
   theme: 'system',
@@ -32,6 +32,17 @@ function isOperationSelection(value: unknown): value is OperationSelection | nul
   return typeof reference === 'string' && reference.length > 0
 }
 
+function isTargetPreferences(value: unknown): value is TargetPreferences {
+  return isRecord(value) && isTargetReference(value.objective) && isTargetReference(value.adversarial)
+}
+
+function isScorerReference(value: unknown): value is RegisteredComponentReference | null {
+  return value === null || (
+    isRecord(value) && typeof value.registry_name === 'string' && value.registry_name.length > 0
+    && typeof value.identifier_hash === 'string' && value.identifier_hash.length > 0
+  )
+}
+
 /** Earlier versions kept the Operation's name as a label. It becomes a name selection that the user must resolve. */
 function withMigratedOperation(preferences: UserPreferences): UserPreferences {
   if (!('operation' in preferences.labels)) return preferences
@@ -46,12 +57,15 @@ function parsePreferences(raw: string): UserPreferences {
   if (
     !isRecord(value)
     || !isRecord(value.targets)
-    || !isTargetReference(value.targets.objective)
     || !isTargetReference(value.targets.adversarial)
+    || (value.lastUsedTargets !== undefined && !isTargetPreferences(value.lastUsedTargets))
+    || (value.lastUsedChatScorer !== undefined && !isScorerReference(value.lastUsedChatScorer))
     || !isRecord(value.labels)
     || !Object.values(value.labels).every((label: unknown) => label === null || typeof label === 'string')
     || !isThemeMode(value.theme)
     || typeof value.chatMarkdown !== 'boolean'
+    || (value.sidebarExpanded !== undefined && typeof value.sidebarExpanded !== 'boolean')
+    || (value.chatScorer !== undefined && !isScorerReference(value.chatScorer))
     || (value.operation !== undefined && !isOperationSelection(value.operation))
     || (
       value.hiddenTargetRegistryNames !== undefined
@@ -64,7 +78,11 @@ function parsePreferences(raw: string): UserPreferences {
     throw new Error('Saved user preferences are invalid.')
   }
   return {
-    targets: { objective: value.targets.objective, adversarial: value.targets.adversarial },
+    targets: { adversarial: value.targets.adversarial },
+    ...(value.lastUsedTargets !== undefined ? { lastUsedTargets: {
+      objective: value.lastUsedTargets.objective, adversarial: value.lastUsedTargets.adversarial,
+    } } : {}),
+    ...(value.lastUsedChatScorer !== undefined ? { lastUsedChatScorer: value.lastUsedChatScorer } : {}),
     hiddenTargetRegistryNames: value.hiddenTargetRegistryNames ?? [],
     labels: Object.fromEntries(
       Object.entries(value.labels).map(([key, label]) => [key, typeof label === 'string' ? label : null]),
@@ -72,6 +90,8 @@ function parsePreferences(raw: string): UserPreferences {
     ...(value.operation !== undefined ? { operation: value.operation } : {}),
     theme: value.theme,
     chatMarkdown: value.chatMarkdown,
+    ...(value.sidebarExpanded !== undefined ? { sidebarExpanded: value.sidebarExpanded } : {}),
+    ...(value.chatScorer !== undefined ? { chatScorer: value.chatScorer } : {}),
   }
 }
 
@@ -81,10 +101,10 @@ function readLegacyPreferences(accountKey: string): UserPreferences {
   const targets = window.localStorage.getItem(`pyrit.targetDefaults.v1.${accountKey}`)
   if (targets !== null) {
     const value: unknown = JSON.parse(targets)
-    if (!isRecord(value) || !isTargetReference(value.objective) || !isTargetReference(value.adversarial)) {
+    if (!isRecord(value) || !isTargetReference(value.adversarial)) {
       throw new Error('Saved target defaults are invalid.')
     }
-    preferences.targets = { objective: value.objective, adversarial: value.adversarial }
+    preferences.targets = { adversarial: value.adversarial }
   }
   if (accountKey !== 'local') return preferences
 

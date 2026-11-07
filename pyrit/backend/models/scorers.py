@@ -3,10 +3,10 @@
 
 """Request and response models for scorer registry endpoints."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
-from pyrit.models import JSONValue, Parameter
+from pyrit.models import JSONValue, Parameter, ScorerIdentifier
 from pyrit.models.catalog.scorer import ScorerInstance
 
 
@@ -35,8 +35,23 @@ class ScorerListResponse(BaseModel):
 class CreateScorerRequest(BaseModel):
     """Request to construct and register a named scorer."""
 
-    name: str = Field(..., min_length=1, pattern=REGISTRY_INSTANCE_NAME_PATTERN, description="Unique registry name")
+    name: str | None = Field(
+        None, min_length=1, pattern=REGISTRY_INSTANCE_NAME_PATTERN, description="Unique registry name"
+    )
+    register: bool = Field(True, description="Register the object; false returns only its descriptor")
     type: IdentifierStr = Field(..., description="Scorer class name")
     params: dict[IdentifierStr, JSONValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Scorer constructor parameters"
     )
+
+    @model_validator(mode="after")
+    def _validate_registration(self) -> "CreateScorerRequest":
+        if self.register and not self.name:
+            raise ValueError("name is required when register=true")
+        return self
+
+
+class UnregisteredScorer(BaseModel):
+    """A scorer descriptor without a registry key."""
+
+    identifier: ScorerIdentifier

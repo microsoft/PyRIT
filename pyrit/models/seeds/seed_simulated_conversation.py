@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
     from pydantic import ValidatorFunctionWrapHandler
 
+    from pyrit.models.technique_edit import SimulationChanges
+
 logger = logging.getLogger(__name__)
 
 SIMULATED_TARGET_REQUIRED_PARAMETERS = ["objective", "num_turns"]
@@ -408,6 +410,46 @@ class SeedSimulatedConversation(Seed[Literal["text"]]):
         identifier = self.get_identifier()
         config_json = json.dumps(identifier, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(config_json.encode("utf-8")).hexdigest()
+
+    @property
+    def text_settings(self) -> dict[str, Any] | None:
+        """The supported text settings, with resolved defaults and explicit absent prompts."""
+        names = ("adversarial_chat_system_prompt", "simulated_target_system_prompt", "next_message_system_prompt")
+        prompts = {name: getattr(self, name) for name in names}
+        if any(prompt is not None and prompt.data_type != "text" for prompt in prompts.values()):
+            return None
+        return {
+            "num_turns": self.num_turns,
+            **{name: prompt.value if prompt is not None else None for name, prompt in prompts.items()},
+        }
+
+    def with_settings(self, changes: SimulationChanges) -> SeedSimulatedConversation:
+        """
+        Rebuild generation settings without changing message modes or prompt metadata.
+
+        Returns:
+            SeedSimulatedConversation: A validated independent seed with recomputed identity.
+
+        Raises:
+            ValueError: If a supplied clear would change the message mode or turn count is null.
+        """
+        prompt_names = (
+            "adversarial_chat_system_prompt",
+            "simulated_target_system_prompt",
+            "next_message_system_prompt",
+        )
+        data = self.model_dump(exclude={"id", "value", "value_sha256", *prompt_names})
+        for name in prompt_names:
+            original = getattr(self, name)
+            text = getattr(changes, name)
+            if name in changes.model_fields_set and (original is None or text is None):
+                raise ValueError(f"Cannot change the existing simulation message mode through '{name}'")
+            data[name] = original.with_value(text) if text is not None else original
+        if "num_turns" in changes.model_fields_set:
+            if changes.num_turns is None:
+                raise ValueError("num_turns must be a positive integer")
+            data["num_turns"] = changes.num_turns
+        return type(self).model_validate(data)
 
     def with_layered_prefix(self, prefix: str) -> SeedSimulatedConversation:
         """

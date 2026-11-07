@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import get_mock_target
 
 from pyrit.exceptions import ComponentRole, execution_context, get_execution_context
@@ -841,14 +842,19 @@ async def test_group_failure_keeps_other_root_commit_and_no_orphan_observations_
     with (
         patch.object(auxiliary, "_validate_and_persist_scores_async", side_effect=persist_auxiliary_async),
         patch.object(objective, "_validate_and_persist_scores_async", side_effect=fail_objective_async),
-        pytest.raises(ValueError, match="test persistence failure"),
     ):
-        await asyncio.wait_for(
+        scoring_task = asyncio.create_task(
             _score_response_async(
                 response=response, scorers=[objective, auxiliary], multiple=False, expectation=expectation
-            ),
-            timeout=10,
+            )
         )
+        try:
+            with pytest.raises(ValueError, match="test persistence failure"):
+                await wait_for_completion_async(future=scoring_task)
+        finally:
+            if not scoring_task.done():
+                scoring_task.cancel()
+            await wait_for_completion_async(future=asyncio.gather(scoring_task, return_exceptions=True))
 
     stored = await sqlite_instance.get_scores_async(score_type="true_false")
     assert len(stored) == 1

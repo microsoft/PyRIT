@@ -11,17 +11,20 @@ import re
 import threading
 import uuid
 import weakref
+from collections import Counter
 from collections.abc import Callable, Collection, Iterator, Mapping, MutableSequence, Sequence
 from contextlib import closing
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, ParamSpec, TypeVar, cast
 from urllib.parse import urlparse
 
 from sqlalchemy import (
+    Column,
     MetaData,
+    Select,
     String,
     Unicode,
     and_,
@@ -36,6 +39,7 @@ from sqlalchemy import (
     or_,
     select,
     type_coerce,
+    union_all,
     update,
 )
 from sqlalchemy import cast as sql_cast
@@ -45,12 +49,17 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute, flag_modified
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm.session import Session
+from sqlalchemy.sql import visitors
+from sqlalchemy.sql.elements import ClauseElement
 
+from pyrit.analytics.outcome_statistics import compute_outcome_statistics, success_percentage
+from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
-from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonContainer, JsonScalar
+from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonArrayValue, JsonContainer, JsonScalar, UuidHex
 
 if TYPE_CHECKING:
     from pyrit.memory.memory_embedding import MemoryEmbedding
@@ -91,6 +100,7 @@ from pyrit.memory.storage import (
 )
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
+    AdversarialPrompts,
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -106,6 +116,7 @@ from pyrit.models import (
     ConversationRetry,
     ConversationRetryReason,
     ConversationStats,
+    ConversationType,
     ConverterIdentifier,
     Finding,
     FindingCreate,
@@ -118,10 +129,15 @@ from pyrit.models import (
     MessageScorable,
     Observation,
     Operation,
+    OperationUsage,
     PromptDataType,
+    RequestTraceContext,
     RetryEvent,
     ScenarioAttackResultDelta,
     ScenarioIdentifier,
+    ScenarioProducerCategoryCounts,
+    ScenarioProducerCounts,
+    ScenarioProgressCounts,
     ScenarioProgressScore,
     ScenarioResult,
     ScenarioRunState,
@@ -133,12 +149,12 @@ from pyrit.models import (
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
-    SeedObjective,
     SeedOrigin,
     SeedPrompt,
     SeedRecord,
     SeedType,
     TargetIdentifier,
+    config_hash,
     group_conversation_message_pieces_by_sequence,
     sort_message_pieces,
 )
@@ -152,12 +168,48 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class PreparedSeedBatch:
+    """A storage-ready seed snapshot created by memory, before database writes."""
+
+    _seeds: tuple[Seed[Any], ...]
+
+    @property
+    def seeds(self) -> list[Seed[Any]]:
+        """Independent copies of the prepared seeds for candidate validation."""
+        return [seed.model_copy(deep=True) for seed in self._seeds]
+
+
+def _deprecate_message_labels(*, method: str) -> None:
+    """
+    Warn that message-level label filtering is going away.
+
+    Labels live on attack results, so callers should pick conversations from those results.
+
+    Args:
+        method (str): The memory method that received ``labels``.
+    """
+    print_deprecation_message(
+        old_item=f"MemoryInterface.{method}(labels=...)",
+        new_item=(
+            "MemoryInterface.get_attack_results_async(labels=...), then fetch messages for each result's "
+            "conversation_id, get_active_conversation_ids() or get_all_conversation_ids()"
+        ),
+        removed_in="1.4.0",
+    )
+
+
 class AttackStateConflictError(ValueError):
     """An atomic attack write no longer matches the state read by its caller."""
 
 
-#: Canonical criteria key of a seed that carries no conditions.
-_NO_CONDITIONS_KEY = json.dumps([], separators=(",", ":"))
+class OperationInUseError(ValueError):
+    """An Operation still has findings or activity attributed to it by ID, so it cannot be deleted."""
+
+    def __init__(self, *, operation_id: uuid.UUID, usage: OperationUsage) -> None:
+        """Keep the usage so callers can say what still refers to the Operation."""
+        super().__init__(f"Operation '{operation_id}' is in use and cannot be deleted.")
+        self.usage = usage
 
 
 Model = TypeVar("Model")
@@ -218,6 +270,20 @@ def _check_operation_name_change(*, existing: AttackResultEntry | ScenarioResult
     print_deprecation_message(
         old_item="Changing the Operation name of saved activity", new_item="operation_id", removed_in="1.4.0"
     )
+
+
+def _operation_ids(items: Sequence[object]) -> set[uuid.UUID]:
+    """
+    Collect the Operation IDs that attacks or scenario runs refer to, ignoring anything else.
+
+    Returns:
+        set[uuid.UUID]: The referenced Operation IDs.
+    """
+    return {
+        item.operation_id
+        for item in items
+        if isinstance(item, (AttackResult, AttackResultEntry, ScenarioResultEntry)) and item.operation_id is not None
+    }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -323,6 +389,17 @@ class ScenarioHistoryAggregate:
     unknown_role_error_attempts: int
     unknown_role_retries: int
 
+    outcome_successes: int = 0
+    outcome_failures: int = 0
+    outcome_errors: int = 0
+    outcome_undetermined: int = 0
+
+    raw_total_errors: int = 0
+    raw_total_retries: int = 0
+    raw_retrying_attacks_count: int = 0
+
+    group_counts: dict[str, ScenarioProgressCounts] = field(default_factory=dict)
+
     @classmethod
     def empty(cls, *, scenario_result_id: str) -> "ScenarioHistoryAggregate":
         """
@@ -349,6 +426,14 @@ class ScenarioHistoryAggregate:
             unknown_role_attempts=0,
             unknown_role_error_attempts=0,
             unknown_role_retries=0,
+            outcome_successes=0,
+            outcome_failures=0,
+            outcome_errors=0,
+            outcome_undetermined=0,
+            raw_total_errors=0,
+            raw_total_retries=0,
+            raw_retrying_attacks_count=0,
+            group_counts={},
         )
 
 
@@ -358,6 +443,65 @@ class ScenarioRunStateRecord:
 
     scenario_result_id: str
     state: ScenarioRunState
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScenarioAttemptSeedSummary:
+    """
+    Lightweight projection of attempt seed and outcome fields for scenario recount.
+
+    Contains only the scalar fields required to resolve logical execution units and
+    aggregate attempt counts during legacy recount. Never loads prompt entries, score
+    records, retry events, or large conversation payloads.
+    """
+
+    attack_result_id: str
+    objective: str
+    objective_sha256: str | None
+    atomic_attack_identifier: AtomicAttackIdentifier | None
+    outcome: AttackOutcome
+    timestamp: datetime
+    total_retries: int
+    attribution_data: dict[str, Any]
+    has_retries: bool = False
+    child_attack_result_ids: tuple[str, ...] = ()
+
+
+class MessagePieceKeysetCursor(NamedTuple):
+    """Ascending saved-message order, including pieces within the same turn."""
+
+    sequence: int
+    timestamp: datetime
+    message_piece_id: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ConversationMessagePage:
+    """A bounded page of canonical saved messages, possibly splitting a multimodal turn."""
+
+    messages: tuple[Message, ...]
+    next_cursor: MessagePieceKeysetCursor | None
+    partial_message_sequences: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AttackConversationRecord:
+    """A saved main or related conversation reference, without presentation labels."""
+
+    conversation_id: str
+    conversation_type: ConversationType | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AttackConversationPage:
+    """Bounded conversation references and the revision of their stored ordering."""
+
+    main_conversation_id: str
+    conversations: tuple[AttackConversationRecord, ...]
+    total_count: int
+    timestamp: datetime
+    reference_revision: str
+    objective_score_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -680,23 +824,98 @@ class MemoryInterface(abc.ABC):
             raise LookupError(f"Operation {operation_id} not found")
         return operations[0]
 
-    async def update_operation_async(self, *, operation_id: uuid.UUID, description: str) -> Operation:
+    async def update_operation_async(
+        self, *, operation_id: uuid.UUID, name: str | None = None, description: str | None = None
+    ) -> Operation:
         """
-        Replace an operation's description. The last save wins; the name and identity are unchanged.
+        Rename an operation or replace its description. Omitted fields are unchanged and the last save wins.
+
+        Names stay unique, ignoring case and surrounding whitespace, so a rename that only changes case is allowed.
 
         Returns:
-            Operation: The updated operation.
+            Operation: The updated operation, or the other operation that already has the name, unchanged.
 
         Raises:
             LookupError: If the Operation does not exist.
+            IntegrityError: If the update fails for a reason other than a taken name.
         """
-        async with await self.get_session_async() as session, session.begin():
-            entry = await session.get(OperationEntry, operation_id)
-            if entry is None:
-                raise LookupError(f"Operation {operation_id} not found")
-            entry.description = description
-            await session.flush()
-            return entry.get_operation()
+        changes = {key: value for key, value in {"name": name, "description": description}.items() if value is not None}
+        try:
+            async with await self.get_session_async() as session, session.begin():
+                entry = await session.get(OperationEntry, operation_id)
+                if entry is None:
+                    raise LookupError(f"Operation {operation_id} not found")
+                updated = Operation.model_validate(entry.get_operation().model_dump() | changes)
+                entry.name, entry.name_key = updated.name, operation_name_key(updated.name)
+                entry.description = updated.description
+                await session.flush()
+                return entry.get_operation()
+        except StaleDataError as exc:
+            # A concurrent delete landed between the read and the update.
+            raise LookupError(f"Operation {operation_id} not found") from exc
+        except IntegrityError:
+            existing = await self.get_operations_async(name=name) if name is not None else []
+            if not existing:
+                raise
+            return existing[0]
+
+    async def get_operation_usage_async(self, *, operation_id: uuid.UUID) -> OperationUsage:
+        """
+        Count the findings, attacks, and scenario runs that refer to an Operation by ID, in one indexed query.
+
+        Returns:
+            OperationUsage: The counts, which are all zero for an unknown ID.
+        """
+        counts = [
+            select(func.count())
+            .select_from(table)
+            .where(table.operation_id == operation_id)
+            .scalar_subquery()
+            .label(field)
+            for field, table in (
+                ("findings", FindingEntry),
+                ("attacks", AttackResultEntry),
+                ("scenario_runs", ScenarioResultEntry),
+            )
+        ]
+        async with await self.get_session_async() as session:
+            return OperationUsage.model_validate(dict((await session.execute(select(*counts))).one()._mapping))
+
+    async def delete_operation_async(self, *, operation_id: uuid.UUID) -> None:
+        """
+        Permanently remove an Operation that no findings, attacks, or scenario runs refer to by ID.
+
+        Activity attributed only by a deprecated Operation name does not prevent deletion and is unchanged.
+
+        Raises:
+            LookupError: If the Operation does not exist.
+            OperationInUseError: If findings, attacks, or scenario runs refer to the Operation by ID.
+            RuntimeError: If the database does not return a cursor result.
+        """
+        # SQLite does not enforce foreign keys, so the delete statement itself checks for references.
+        unreferenced = [
+            ~select(table.operation_id).where(table.operation_id == operation_id).exists()
+            for table in (FindingEntry, AttackResultEntry, ScenarioResultEntry)
+        ]
+        try:
+            async with await self.get_session_async() as session, session.begin():
+                result = await session.execute(
+                    delete(OperationEntry)
+                    .where(OperationEntry.id == operation_id, *unreferenced)
+                    .execution_options(synchronize_session=False)
+                )
+                if not isinstance(result, CursorResult):
+                    raise RuntimeError("Operation deletion did not return a database cursor result.")
+                if result.rowcount > 0:
+                    return
+                if await session.get(OperationEntry, operation_id) is None:
+                    raise LookupError(f"Operation {operation_id} not found")
+        except IntegrityError as exc:
+            # SQL Server's foreign keys reject the delete when a reference commits while it runs.
+            usage = await self.get_operation_usage_async(operation_id=operation_id)
+            raise OperationInUseError(operation_id=operation_id, usage=usage) from exc
+        usage = await self.get_operation_usage_async(operation_id=operation_id)
+        raise OperationInUseError(operation_id=operation_id, usage=usage)
 
     async def resolve_operation_id_async(
         self, *, operation_id: uuid.UUID | str | None, operation_name: str | None = None
@@ -737,6 +956,7 @@ class MemoryInterface(abc.ABC):
             Finding: The saved finding, or the finding already saved with this ID.
 
         Raises:
+            LookupError: If the finding's Operation does not exist.
             IntegrityError: If the insert fails for a reason other than a taken ID.
         """
         entry = FindingEntry(finding)
@@ -744,16 +964,22 @@ class MemoryInterface(abc.ABC):
             async with await self.get_session_async() as session, session.begin():
                 session.add(entry)
                 await session.flush()
+                # Checked after the insert so the write lock is held; SQLite does not enforce the foreign key.
+                if await session.get(OperationEntry, finding.operation_id) is None:
+                    raise LookupError(f"Operation {finding.operation_id} not found")
                 if evidence is not None:
                     session.add(FindingEvidenceEntry(evidence))
                     await session.flush()
                 return entry.get_finding()
-        except IntegrityError:
+        except IntegrityError as exc:
             async with await self.get_session_async() as session:
                 existing = await session.get(FindingEntry, finding.id)
-                if existing is None:
-                    raise
-                return existing.get_finding()
+                if existing is not None:
+                    return existing.get_finding()
+                # SQL Server's foreign key rejects the insert when the Operation was deleted meanwhile.
+                if await session.get(OperationEntry, finding.operation_id) is None:
+                    raise LookupError(f"Operation {finding.operation_id} not found") from exc
+            raise
 
     async def update_finding_async(
         self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, request: FindingCreate
@@ -826,10 +1052,6 @@ class MemoryInterface(abc.ABC):
         """
         if limit < 1 or offset < 0:
             raise ValueError("Finding limit must be positive and offset must be nonnegative.")
-        severity_order = case(
-            {severity.value: position for position, severity in enumerate(FindingSeverity)},
-            value=FindingEntry.severity,
-        )
         statement = select(FindingEntry)
         if operation_id is not None:
             statement = statement.where(FindingEntry.operation_id == operation_id)
@@ -837,13 +1059,41 @@ class MemoryInterface(abc.ABC):
             # SQL Server also treats "[" as a LIKE wildcard.
             escaped_title = title_query.replace("/", "//").replace("%", "/%").replace("_", "/_").replace("[", "/[")
             statement = statement.where(FindingEntry.title.ilike(f"%{escaped_title}%", escape="/"))
-        statement = (
-            statement.order_by(severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
+
+    async def get_findings_by_ids_async(
+        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+    ) -> list[Finding]:
+        """
+        Read selected findings of one operation, highest severity first, then newest first.
+
+        IDs that are not in the operation are omitted.
+
+        Returns:
+            list[Finding]: The selected findings, in the same order as ``get_findings_async``.
+        """
+        if not finding_ids:
+            return []
+        requested = set(finding_ids)
+        # The operation filter takes one of the statement's binds.
+        chunk_size = max(1, self._MAX_BIND_VARS - 1)
+        async with await self.get_session_async() as session:
+            ordered_ids = await session.scalars(
+                select(FindingEntry.id)
+                .where(FindingEntry.operation_id == operation_id)
+                .order_by(*self._finding_order())
+            )
+            selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
+            findings: dict[uuid.UUID, Finding] = {}
+            for start in range(0, len(selected_ids), chunk_size):
+                statement = select(FindingEntry).where(
+                    FindingEntry.id.in_(selected_ids[start : start + chunk_size]),
+                    FindingEntry.operation_id == operation_id,
+                )
+                findings.update({entry.id: entry.get_finding() for entry in await session.scalars(statement)})
+        return [findings[finding_id] for finding_id in selected_ids if finding_id in findings]
 
     async def get_finding_async(self, *, operation_id: uuid.UUID, finding_id: uuid.UUID) -> Finding | None:
         """
@@ -915,6 +1165,34 @@ class MemoryInterface(abc.ABC):
         async with await self.get_session_async() as session:
             return [entry.get_evidence() for entry in (await session.scalars(statement)).all()]
 
+    async def get_finding_evidence_for_findings_async(
+        self, *, finding_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, list[FindingEvidence]]:
+        """
+        Read all evidence of several findings, most recently linked first.
+
+        Returns:
+            dict[uuid.UUID, list[FindingEvidence]]: Evidence for findings that have evidence.
+        """
+        if not finding_ids:
+            return {}
+        unique_ids = list(dict.fromkeys(finding_ids))
+        evidence: dict[uuid.UUID, list[FindingEvidence]] = {}
+        async with await self.get_session_async() as session:
+            for start in range(0, len(unique_ids), self._MAX_BIND_VARS):
+                statement = (
+                    select(FindingEvidenceEntry)
+                    .where(FindingEvidenceEntry.finding_id.in_(unique_ids[start : start + self._MAX_BIND_VARS]))
+                    .order_by(
+                        FindingEvidenceEntry.finding_id,
+                        FindingEvidenceEntry.attached_at.desc(),
+                        FindingEvidenceEntry.id.desc(),
+                    )
+                )
+                for entry in await session.scalars(statement):
+                    evidence.setdefault(entry.finding_id, []).append(entry.get_evidence())
+        return evidence
+
     async def get_finding_evidence_by_source_async(
         self, *, finding_id: uuid.UUID, attack_result_id: uuid.UUID
     ) -> FindingEvidence | None:
@@ -984,6 +1262,14 @@ class MemoryInterface(abc.ABC):
             for operation_id, severity, count in (await session.execute(statement)).all():
                 counts.setdefault(operation_id, {})[FindingSeverity(severity)] = count
         return counts
+
+    @staticmethod
+    def _finding_order() -> "tuple[ColumnElement[Any], ...]":
+        severity_order = case(
+            {severity.value: position for position, severity in enumerate(FindingSeverity)},
+            value=FindingEntry.severity,
+        )
+        return severity_order, FindingEntry.created_at.desc(), FindingEntry.id.desc()
 
     def _uses_legacy_memory_override(self) -> bool:
         return any(
@@ -1652,6 +1938,8 @@ class MemoryInterface(abc.ABC):
         for dependency in cls._iter_identifier_dependencies(identifier):
             cls._persist_identifier(session=session, identifier=dependency)
 
+        # Without an outer SQLite transaction, releasing the savepoint would commit this row early.
+        _begin_sqlite_write(session)
         try:
             with session.begin_nested():
                 session.add(entry_type.from_domain_model(identifier))
@@ -2331,13 +2619,18 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
+                existing = None
                 if isinstance(entry, (AttackResultEntry, ScenarioResultEntry)):
                     existing = session.get(type(entry), entry.id)
                     self._validate_activity_operation(session=session, entry=entry, existing=existing)
                 session.merge(entry)
+                if existing is None:
+                    self._recheck_activity_operations(session=session, entries=[entry])
                 session.commit()
             except SQLAlchemyError as e:
                 session.rollback()
+                if isinstance(e, IntegrityError):
+                    self._raise_if_operations_missing(session=session, operation_ids=_operation_ids([entry]), error=e)
                 logger.exception(f"Error updating entry in the table: {e}")
                 raise
 
@@ -2474,6 +2767,25 @@ class MemoryInterface(abc.ABC):
             Database-specific SQLAlchemy condition.
         """
 
+    def _get_attack_result_literal_label_condition(self, *, labels: dict[str, str | Sequence[str]]) -> Any:
+        """
+        Return a condition matching AttackResult label names literally.
+
+        Same semantics as ``_get_attack_result_label_condition``, but each key is compared to the
+        stored label names as a bound value instead of being turned into a JSON path, so any key
+        string is safe. Backends that don't override it can still filter by allowlisted keys.
+
+        Args:
+            labels: Label-name-to-value(s) map.
+
+        Raises:
+            NotImplementedError: If the memory backend does not support literal label keys.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _get_attack_result_literal_label_condition "
+            "to filter attack results by label keys outside [A-Za-z0-9_.-]+."
+        )
+
     def _execute_get_unique_attack_class_names(self) -> list[str]:
         """
         Return sorted unique attack class names from all stored attack results.
@@ -2514,8 +2826,8 @@ class MemoryInterface(abc.ABC):
 
         Computes per-conversation message count (distinct sequence numbers),
         a truncated last-message preview, the first non-empty labels dict,
-        and the earliest message timestamp using efficient SQL aggregation
-        instead of loading full pieces.
+        and the earliest message timestamp (timezone-aware UTC) using efficient
+        SQL aggregation instead of loading full pieces.
 
         Args:
             conversation_ids: The conversation IDs to query.
@@ -3200,7 +3512,7 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): The category of the score to filter by.
+            score_category (str | None): Return only scores whose category list contains this category.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -3219,7 +3531,14 @@ class MemoryInterface(abc.ABC):
         if score_type:
             conditions.append(ScoreEntry.score_type == score_type)
         if score_category:
-            conditions.append(ScoreEntry.score_category == score_category)
+            # score_category is stored as a JSON array, so match by element membership.
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=ScoreEntry.score_category,
+                    property_path="$",
+                    array_to_match=[score_category],
+                )
+            )
         if sent_after:
             conditions.append(ScoreEntry.timestamp >= sent_after)
         if sent_before:
@@ -3484,6 +3803,10 @@ class MemoryInterface(abc.ABC):
         """
         Retrieve the request that produced the given response.
 
+        Outbound request markers identify caller-supplied messages of any role, skipping
+        target-generated tool calls and outputs. Unmarked history falls back to the last
+        user message, or the preceding message when no user message exists.
+
         Args:
             response (Message): The response message object to match.
 
@@ -3508,6 +3831,12 @@ class MemoryInterface(abc.ABC):
             raise ValueError(
                 f"The provided request does not have a preceding request in conversation '{response.conversation_id}'."
             )
+        for message in reversed(preceding_messages):
+            if message.api_role == "user" or any(
+                piece.prompt_metadata.get(RequestTraceContext.REQUEST_METADATA_KEY) == 1
+                for piece in message.message_pieces
+            ):
+                return message
         return preceding_messages[-1]
 
     def _build_message_piece_identifier_conditions(
@@ -4162,6 +4491,69 @@ class MemoryInterface(abc.ABC):
 
         return conditions
 
+    async def filter_seed_candidates_async(
+        self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]
+    ) -> list[Seed[Any]]:
+        """
+        Apply the backend's seed predicates to storage-ready candidates without storing them.
+
+        Use ``prepare_seed_batch_async`` before this read so storage-derived fields have
+        the same values as persisted rows.
+
+        Returns:
+            list[Seed]: Matching candidates in input order, with their original identities.
+        """
+        if not seeds or not filters:
+            return list(seeds)
+        return await self._run_database_operation_async(self._filter_seed_candidates, seeds=seeds, filters=filters)
+
+    def _filter_seed_candidates(self, *, seeds: Sequence[Seed[Any]], filters: Mapping[str, Any]) -> list[Seed[Any]]:
+        if self.engine is None:
+            raise RuntimeError("Memory engine is not initialized.")
+        conditions = self._build_seed_filter_conditions(**filters)
+        referenced = [
+            element
+            for condition in conditions
+            for element in visitors.iterate(condition)
+            if isinstance(element, Column) and element.table is SeedEntry.__table__
+        ]
+        columns = [
+            column for column in SeedEntry.__table__.columns if any(column.shares_lineage(ref) for ref in referenced)
+        ]
+        filter_binds = len(
+            select(literal(1))
+            .where(*conditions)
+            .compile(dialect=self.engine.dialect, compile_kwargs={"render_postcompile": True})
+            .params
+        )
+        chunk_size = min(100, max(1, (self._MAX_BIND_VARS - filter_binds - 1) // (len(columns) + 1)))
+        matched: set[int] = set()
+        with closing(self._get_session()) as session:
+            for start in range(0, len(seeds), chunk_size):
+                rows = []
+                for index in range(start, min(start + chunk_size, len(seeds))):
+                    entry = SeedEntry(entry=seeds[index])
+                    rows.append(
+                        select(
+                            literal(index).label("candidate_index"),
+                            *[
+                                literal(getattr(entry, column.key), type_=column.type).label(column.name)
+                                for column in columns
+                            ],
+                        )
+                    )
+                candidates = union_all(*rows).subquery()
+                replacements = {column: candidates.c[column.name] for column in referenced}
+
+                def replace_column(
+                    element: ClauseElement, *, mapping: Mapping[Column[Any], ClauseElement] = replacements, **kw: Any
+                ) -> ClauseElement | None:
+                    return mapping.get(element) if isinstance(element, Column) else None
+
+                predicates = [visitors.replacement_traverse(condition, {}, replace_column) for condition in conditions]
+                matched.update(session.scalars(select(candidates.c.candidate_index).where(*predicates)).all())
+        return [seed for index, seed in enumerate(seeds) if index in matched]
+
     def _execute_get_seeds(
         self,
         *,
@@ -4583,16 +4975,58 @@ class MemoryInterface(abc.ABC):
 
         await set_seed_sha256_async(prompt)
 
+    async def _prepare_seeds_for_storage_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None) -> None:
+        current_time = datetime.now(tz=UTC)
+        for seed in seeds:
+            await self._prepare_seed_for_storage_async(prompt=seed, added_by=added_by, current_time=current_time)
+
+    async def prepare_seed_batch_async(
+        self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None
+    ) -> PreparedSeedBatch:
+        """
+        Prepare copied seeds once for validation and subsequent persistence.
+
+        Computes checksums, attribution, timestamps, and encoding metadata through the
+        normal storage path. Media may be copied into managed storage; no database rows
+        are written. Rejected batches can leave unreferenced media, not changed seed rows.
+
+        Args:
+            seeds (Sequence[Seed]): Caller-owned seeds to copy and prepare.
+            added_by (str | None): Attribution override, matching normal insertion.
+
+        Returns:
+            PreparedSeedBatch: Storage-ready seeds, isolated from caller and validator mutations.
+        """
+        copies = [seed.model_copy(deep=True) for seed in seeds]
+        SeedDataset.group_seed_prompts_by_prompt_group_id(copies)
+        await self._prepare_seeds_for_storage_async(seeds=copies, added_by=added_by)
+        return PreparedSeedBatch(_seeds=tuple(SeedEntry(entry=seed).get_seed() for seed in copies))
+
+    async def add_prepared_seed_batch_async(self, batch: PreparedSeedBatch) -> None:
+        """
+        Insert prepared seeds with normal deduplication, without preparing them again.
+
+        Args:
+            batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
+        """
+        await self._run_database_operation_async(self._insert_prepared_seeds, seeds=batch.seeds)
+
     async def add_seeds_to_memory_async(self, *, seeds: Sequence[Seed[Any]], added_by: str | None = None) -> None:
         """
         Insert a list of seeds into the memory storage.
 
-        Seeds with the same value hash, dataset, and canonical conditions already present
-        in storage are skipped. Duplicates *within* ``seeds`` are all inserted, because the
-        check looks at what storage held when the call started.
-        Groups introducing new objective criteria retain the other seeds in the same group
-        even when their content is already stored in another group. When a stored seed is
-        copied to a new group, its caller-visible ID is updated after successful insertion.
+        Seeds already present in storage are skipped by execution identity: value hash, dataset,
+        seed type, data type, role (``None`` counts as ``user``), response schema, and behavioral
+        inputs. Non-execution metadata such as harm categories or descriptions is not part of that
+        identity, so a metadata-only edit does not create a duplicate and sending a seed standalone
+        or inside a singleton group deduplicates the same way. Retained multi-seed groups keep their
+        complete membership; they are compared as complete groups by full member identity, including
+        roles, sequence, metadata, and behavioral inputs, so shared content cannot strip members from
+        a different conversation. Duplicates *within* ``seeds`` are all inserted, because the check
+        looks at what storage held when the call started.
+        When a stored seed is copied to a new group, its caller-visible ID is updated after
+        successful insertion; a copy that would otherwise reuse the stored group ID is moved to a
+        new group so editing it cannot alter the original group.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -4601,27 +5035,49 @@ class MemoryInterface(abc.ABC):
         Raises:
             ValueError: If the 'added_by' attribute is not set for each prompt.
         """
-        current_time = datetime.now(tz=UTC)
-        for prompt in seeds:
-            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
-
+        await self._prepare_seeds_for_storage_async(seeds=seeds, added_by=added_by)
         await self._run_database_operation_async(self._insert_prepared_seeds, seeds=seeds)
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
-        existing_pairs, existing_hashes = self._get_existing_seed_keys(seeds=seeds)
-        new_condition_group_ids = self._get_new_condition_group_ids(
-            seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
-        )
-        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in new_condition_group_ids]
+        existing_seeds = self._get_existing_seed_keys(seeds=seeds)
+        # Compute each stored seed's full member identity once; retained groups and the
+        # complete-group check both use it.
+        existing_group_members: list[tuple[uuid.UUID, str | None, str, uuid.UUID | None]] = []
+        for dataset, seed in existing_seeds:
+            if seed.prompt_group_id is not None:
+                existing_group_members.append(
+                    (seed.prompt_group_id, dataset, self._seed_group_member_key(seed), seed.id)
+                )
+        retained_group_ids = self._get_new_seed_group_ids(seeds=seeds, existing_group_members=existing_group_members)
+        stored_group_members = {
+            (group_id, dataset, member_key)
+            for group_id, dataset, member_key, _ in existing_group_members
+            if group_id in retained_group_ids
+        }
+        # Everything not retained as a new group is deduplicated by one execution key, computed
+        # once per stored seed. Seeds that are not retained include singleton groups and groups
+        # whose complete membership is already stored, so a metadata-only edit and the same seed
+        # arriving grouped or standalone deduplicate identically.
+        stored_standalone_pairs: set[tuple[str | None, str | None, str]] = set()
+        stored_standalone_hashes: set[tuple[str | None, str]] = set()
+        if any(prompt.value_sha256 and prompt.prompt_group_id not in retained_group_ids for prompt in seeds):
+            for dataset, seed in existing_seeds:
+                standalone_key = self._seed_standalone_key(seed)
+                if dataset:
+                    stored_standalone_pairs.add((seed.value_sha256, dataset, standalone_key))
+                else:
+                    stored_standalone_hashes.add((seed.value_sha256, standalone_key))
+        # Any incoming seed may be a copy of a stored row, not only retained group members, so look
+        # up every seed ID before inserting. A copy keeps its caller-visible ID, but it must not
+        # reuse the stored primary key when its execution identity changed.
+        seed_ids = [seed.id for seed in seeds if seed.id is not None]
         stored_groups = (
             {
                 entry.id: entry.prompt_group_id
-                for entry in self._execute_batched_query(
-                    SeedEntry, batch_column=SeedEntry.id, batch_values=retained_seed_ids
-                )
+                for entry in self._execute_batched_query(SeedEntry, batch_column=SeedEntry.id, batch_values=seed_ids)
             }
-            if retained_seed_ids
+            if seed_ids
             else {}
         )
 
@@ -4630,11 +5086,16 @@ class MemoryInterface(abc.ABC):
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
-            conditions_key = self._seed_conditions_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
-            if prompt.prompt_group_id in new_condition_group_ids:
+            if prompt.prompt_group_id in retained_group_ids:
                 if prompt.id in stored_groups and stored_groups[prompt.id] == prompt.prompt_group_id:
+                    continue
+                if (
+                    prompt.prompt_group_id,
+                    prompt.dataset_name or None,
+                    self._seed_group_member_key(prompt),
+                ) in stored_group_members:
                     continue
                 entry = SeedEntry(entry=prompt)
                 if prompt.id in stored_groups:
@@ -4642,69 +5103,155 @@ class MemoryInterface(abc.ABC):
                     copied_seed_ids.append((prompt, entry.id))
                 entries.append(entry)
                 continue
+            standalone_key = self._seed_standalone_key(prompt)
             if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name, conditions_key) in existing_pairs:
+                if (prompt.value_sha256, prompt.dataset_name, standalone_key) in stored_standalone_pairs:
                     continue
-            elif (prompt.value_sha256, conditions_key) in existing_hashes:
+            elif (prompt.value_sha256, standalone_key) in stored_standalone_hashes:
                 continue
-            entries.append(SeedEntry(entry=prompt))
+            entry = SeedEntry(entry=prompt)
+            if prompt.id in stored_groups:
+                entry.id = uuid.uuid4()
+                # A caller that wraps a stored seed in a new group keeps the stored group ID.
+                # Move the independent copy to its own group so editing it cannot alter the
+                # original group's membership.
+                if prompt.prompt_group_id is not None and stored_groups[prompt.id] == prompt.prompt_group_id:
+                    entry.prompt_group_id = uuid.uuid4()
+                copied_seed_ids.append((prompt, entry.id))
+            entries.append(entry)
 
+        group_ids_by_entry = {entry.id: entry.prompt_group_id for entry in entries}
         self._insert_entries(entries=entries)
         for prompt, new_id in copied_seed_ids:
             prompt.id = new_id
+            prompt.prompt_group_id = group_ids_by_entry[new_id]
 
     @staticmethod
-    def _seed_conditions_key(seed: Seed[Any]) -> str:
+    def _seed_group_member_key(seed: Seed[Any]) -> str:
         """
-        Serialize criteria canonically, preserving condition order.
+        Identify a member by persisted content and context, excluding IDs and import attribution.
 
         Returns:
-            str: Canonical JSON used for criteria identity.
+            str: Canonical persisted member identity.
         """
-        conditions = seed.model_dump(mode="json", include={"conditions"}).get("conditions", [])
-        if not conditions:
-            return _NO_CONDITIONS_KEY
-        return json.dumps(conditions, sort_keys=True, separators=(",", ":"))
+        entry = SeedEntry(entry=seed)
+        metadata = dict(entry.prompt_metadata or {})
+        prompts = AdversarialPrompts.from_metadata(metadata)
+        if prompts is not None:
+            metadata[AdversarialPrompts.METADATA_KEY] = prompts.identity
+        return json.dumps(
+            {
+                "value_sha256": entry.value_sha256,
+                "data_type": entry.data_type,
+                "seed_type": entry.seed_type,
+                "role": entry.role,
+                "sequence": entry.sequence,
+                "metadata": metadata,
+                "conditions": entry.conditions or [],
+                "parameters": entry.parameters or [],
+                "harm_categories": entry.harm_categories or [],
+                "name": entry.name,
+                "description": entry.description,
+                "authors": entry.authors or [],
+                "groups": entry.groups or [],
+                "source": entry.source,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
-    def _get_new_condition_group_ids(
+    @staticmethod
+    def _seed_standalone_key(seed: Seed[Any]) -> str:
+        """
+        Identify a standalone seed by its execution fields and behavioral inputs.
+
+        Returns:
+            str: Canonical standalone identity.
+        """
+        entry = SeedEntry(entry=seed)
+        return json.dumps(
+            {
+                "seed_type": entry.seed_type,
+                "data_type": entry.data_type,
+                "role": entry.role or "user",
+                "response_json_schema": getattr(seed, "response_json_schema", None),
+                "behavioral_parameters": SeedIdentifier.get_behavioral_parameters(seed),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def _get_new_seed_group_ids(
         self,
         *,
         seeds: Sequence[Seed[Any]],
-        existing_pairs: set[tuple[str, str, str]],
-        existing_hashes: set[tuple[str, str]],
+        existing_group_members: Sequence[tuple[uuid.UUID, str | None, str, uuid.UUID | None]],
     ) -> set[uuid.UUID]:
         """
-        Identify groups whose newly authored criteria require retaining all input seeds.
-
-        Other seeds in the same group do not own conditions. Their ordinary content
-        deduplication must not strip them from a new condition-bearing group, or from a group that
-        removes previously stored criteria. Purely condition-free loading is unchanged.
+        Retain multi-seed groups unless an equivalent complete group is already stored.
 
         Returns:
             set[uuid.UUID]: Group IDs whose complete input membership must be retained.
         """
-        conditions_by_value: dict[tuple[str, str | None], set[str]] = {}
-        for value_hash, dataset, conditions in existing_pairs:
-            conditions_by_value.setdefault((value_hash, dataset), set()).add(conditions)
-        for value_hash, conditions in existing_hashes:
-            conditions_by_value.setdefault((value_hash, None), set()).add(conditions)
-
-        group_ids: set[uuid.UUID] = set()
+        members_by_group: dict[uuid.UUID, Counter[tuple[str | None, str]]] = {}
         for seed in seeds:
-            if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
-                continue
-            stored_conditions = conditions_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
-            if self._seed_conditions_key(seed) in stored_conditions:
-                continue
-            if seed.conditions or stored_conditions - {_NO_CONDITIONS_KEY}:
-                group_ids.add(seed.prompt_group_id)
-        return group_ids
+            if seed.prompt_group_id is not None:
+                key = (seed.dataset_name or None, self._seed_group_member_key(seed))
+                members_by_group.setdefault(seed.prompt_group_id, Counter())[key] += 1
+        members_by_group = {group_id: members for group_id, members in members_by_group.items() if members.total() > 1}
+        if not members_by_group:
+            return set()
 
-    def _get_existing_seed_keys(
-        self, *, seeds: Sequence[Seed[Any]]
-    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]]]:
+        matches: dict[tuple[str | None, str], dict[uuid.UUID, set[uuid.UUID | None]]] = {}
+        for group_id, dataset, member_key, seed_id in existing_group_members:
+            matches.setdefault((dataset, member_key), {}).setdefault(group_id, set()).add(seed_id)
+
+        candidate_groups: dict[uuid.UUID, set[uuid.UUID]] = {}
+        for group_id, members in members_by_group.items():
+            candidates: set[uuid.UUID] | None = None
+            for key, count in members.items():
+                matching_groups = {
+                    stored_group_id
+                    for stored_group_id, member_ids in matches.get(key, {}).items()
+                    if len(member_ids) >= count
+                }
+                candidates = matching_groups if candidates is None else candidates & matching_groups
+                if not candidates:
+                    break
+            candidate_groups[group_id] = candidates or set()
+
+        candidate_ids = {candidate_id for candidates in candidate_groups.values() for candidate_id in candidates}
+        stored_sizes = (
+            Counter(
+                entry.prompt_group_id
+                for entry in self._execute_batched_query(
+                    SeedEntry, batch_column=SeedEntry.prompt_group_id, batch_values=list(candidate_ids)
+                )
+            )
+            if candidate_ids
+            else Counter()
+        )
+        new_group_ids: set[uuid.UUID] = set()
+        for group_id, members in members_by_group.items():
+            for candidate_id in candidate_groups[group_id]:
+                if stored_sizes[candidate_id] != members.total():
+                    continue
+                matched_ids: set[uuid.UUID | None] = set()
+                # Match named filters before wildcards; collated dataset names can overlap.
+                for key, count in sorted(members.items(), key=lambda item: item[0][0] is None):
+                    available_ids = matches[key][candidate_id] - matched_ids
+                    if len(available_ids) < count:
+                        break
+                    matched_ids.update(list(available_ids)[:count])
+                else:
+                    break
+            else:
+                new_group_ids.add(group_id)
+        return new_group_ids
+
+    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed[Any]]) -> list[tuple[str | None, Seed[Any]]]:
         """
-        Look up which value hashes and canonical conditions are already stored.
+        Look up stored seeds matching incoming value hashes and dataset filters.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -4721,9 +5268,9 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple[set[tuple[str, str, str]], set[tuple[str, str]]]: The stored
-                (value_sha256, dataset_name, conditions) keys, using the requested
-                dataset name, and (value_sha256, conditions) keys irrespective of dataset.
+            list[tuple[str | None, Seed[Any]]]: Matched seeds paired with their requested
+                dataset filter. The requested name is retained because the database may
+                match a different stored spelling under its collation.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -4733,8 +5280,7 @@ class MemoryInterface(abc.ABC):
                 # cannot disagree.
                 hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
 
-        existing_pairs: set[tuple[str, str, str]] = set()
-        existing_hashes: set[tuple[str, str]] = set()
+        existing_seeds: list[tuple[str | None, Seed[Any]]] = []
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
             # _MAX_BIND_VARS is the whole statement's budget, and the name takes one of those
@@ -4747,16 +5293,9 @@ class MemoryInterface(abc.ABC):
                 ):
                     if not existing.value_sha256:
                         continue
-                    conditions_key = self._seed_conditions_key(existing)
-                    if dataset_name:
-                        # The database decided the name matched, so record the name that was
-                        # asked for; the stored spelling can differ under a case-insensitive
-                        # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name, conditions_key))
-                    else:
-                        existing_hashes.add((existing.value_sha256, conditions_key))
+                    existing_seeds.append((dataset_name, existing))
 
-        return existing_pairs, existing_hashes
+        return existing_seeds
 
     async def add_seed_datasets_to_memory_async(self, *, datasets: Sequence[SeedDataset], added_by: str) -> None:
         """
@@ -5116,10 +5655,36 @@ class MemoryInterface(abc.ABC):
             int: The number of ``SeedPromptEntries`` deleted before the new seeds were inserted.
 
         Raises:
-            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, or any seed's
-                ``dataset_name`` does not match ``dataset_name``.
+            ValueError: If ``dataset_name`` is empty, ``seeds`` is empty, a seed belongs
+                to another dataset, or the seed groups are structurally invalid.
             SQLAlchemyError: If the replacement fails; the transaction is rolled back first.
         """
+        self._validate_seed_replacement(dataset_name=dataset_name, seeds=seeds)
+        await self._prepare_seeds_for_storage_async(seeds=seeds, added_by=added_by)
+        return await self.replace_prepared_seed_batch_async(
+            dataset_name=dataset_name, batch=PreparedSeedBatch(_seeds=tuple(seeds))
+        )
+
+    async def replace_prepared_seed_batch_async(self, *, dataset_name: str, batch: PreparedSeedBatch) -> int:
+        """
+        Atomically replace a dataset with the prepared snapshot, without reprocessing media or hashes.
+
+        Args:
+            dataset_name (str): Dataset whose rows are replaced.
+            batch (PreparedSeedBatch): The snapshot returned by ``prepare_seed_batch_async``.
+
+        Returns:
+            int: The number of replaced seed rows.
+        """
+        seeds = batch.seeds
+        self._validate_seed_replacement(dataset_name=dataset_name, seeds=seeds)
+        entries = [SeedEntry(entry=seed) for seed in seeds]
+        return await self._run_database_operation_async(
+            self._replace_prepared_seeds, dataset_name=dataset_name, entries=entries
+        )
+
+    @staticmethod
+    def _validate_seed_replacement(*, dataset_name: str, seeds: Sequence[Seed[Any]]) -> None:
         if not dataset_name:
             raise ValueError("dataset_name must be a non-empty string.")
         if not seeds:
@@ -5135,15 +5700,7 @@ class MemoryInterface(abc.ABC):
                 "seeds tagged for another dataset."
             )
 
-        current_time = datetime.now(tz=UTC)
-        entries: list[SeedEntry] = []
-        for prompt in seeds:
-            await self._prepare_seed_for_storage_async(prompt=prompt, added_by=added_by, current_time=current_time)
-            entries.append(SeedEntry(entry=prompt))
-
-        return await self._run_database_operation_async(
-            self._replace_prepared_seeds, dataset_name=dataset_name, entries=entries
-        )
+        SeedDataset.group_seed_prompts_by_prompt_group_id(seeds)
 
     def _replace_prepared_seeds(self, *, dataset_name: str, entries: Sequence[SeedEntry]) -> int:
         """
@@ -5308,11 +5865,18 @@ class MemoryInterface(abc.ABC):
         """
         with closing(self._get_session()) as session:
             try:
-                for attack_result in attack_results:
+                entries = [
                     self._add_attack_result_to_session(session=session, attack_result=attack_result)
+                    for attack_result in attack_results
+                ]
+                self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as error:
                 session.rollback()
+                if isinstance(error, IntegrityError):
+                    self._raise_if_operations_missing(
+                        session=session, operation_ids=_operation_ids(attack_results), error=error
+                    )
                 raise
 
     def _add_attack_result_to_session(self, *, session: Session, attack_result: AttackResult) -> AttackResultEntry:
@@ -5361,6 +5925,37 @@ class MemoryInterface(abc.ABC):
         if entry.operation_id is not None and session.get(OperationEntry, entry.operation_id) is None:
             raise LookupError(f"Operation {entry.operation_id} not found")
 
+    @staticmethod
+    def _recheck_activity_operations(*, session: Session, entries: Sequence[Base]) -> None:
+        """
+        Check new activity's Operations again after inserting it, while this transaction holds the write lock.
+
+        Raises:
+            LookupError: If an Operation was deleted after the first check.
+        """
+        # SQLite does not enforce foreign keys, so a concurrent delete would otherwise orphan the activity.
+        session.flush()
+        MemoryInterface._raise_if_operations_missing(session=session, operation_ids=_operation_ids(entries))
+
+    @staticmethod
+    def _raise_if_operations_missing(
+        *, session: Session, operation_ids: set[uuid.UUID], error: Exception | None = None
+    ) -> None:
+        """
+        Report activity whose Operation no longer exists as a missing Operation.
+
+        After a rolled-back insert, this separates a foreign-key failure from a deleted Operation, which
+        SQL Server raises before the post-insert check runs, from unrelated integrity errors.
+
+        Raises:
+            LookupError: If one of the Operations does not exist.
+        """
+        if not operation_ids:
+            return
+        saved = set(session.scalars(select(OperationEntry.id).where(OperationEntry.id.in_(operation_ids))))
+        if missing := operation_ids - saved:
+            raise LookupError(f"Operation {next(iter(missing))} not found") from error
+
     def _execute_add_conversation_branches_to_attack(
         self,
         *,
@@ -5372,6 +5967,7 @@ class MemoryInterface(abc.ABC):
         expected_fields: Mapping[str, Any] | None = None,
         update_fields: Mapping[str, Any] | None = None,
         request_fingerprint: str | None = None,
+        replace_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
     ) -> bool:
         """
         Atomically store initial or related conversations, pieces, and attack references.
@@ -5393,6 +5989,9 @@ class MemoryInterface(abc.ABC):
         conversation_ids = [conversation.conversation_id for conversation in conversations]
         if len(set(conversation_ids)) != len(conversation_ids):
             raise ValueError("Prepared branch conversation IDs must be unique")
+        replacements = replace_conversation_pieces or {}
+        if not set(replacements).issubset(conversation_ids):
+            raise ValueError("Replacement snapshots must belong to the prepared conversations")
         if source_conversation and source_conversation.conversation_id in conversation_ids:
             raise ValueError("A prepared branch cannot replace the source conversation")
         if any(not piece.not_in_memory and piece.conversation_id not in conversation_ids for piece in message_pieces):
@@ -5412,7 +6011,10 @@ class MemoryInterface(abc.ABC):
                 if (
                     request_fingerprint
                     and entry is not None
-                    and (entry.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                    and (
+                        (entry.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                        or (entry.attack_metadata or {}).get(f"{receipt_key}:{request_fingerprint}")
+                    )
                 ):
                     return False
                 if new_attack is not None:
@@ -5422,6 +6024,27 @@ class MemoryInterface(abc.ABC):
                 elif entry is None:
                     return False
                 self._check_attack_fields(entry=entry, expected_fields=expected_fields or {})
+                if replacements:
+                    active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
+                    if not set(replacements).issubset(active_ids):
+                        raise ValueError("Replacement conversations must belong to the destination attack")
+                    self._check_conversation_history(session=session, expected=replacements)
+                    piece_ids = [piece.id for pieces in replacements.values() for piece in pieces]
+                    if piece_ids:
+                        if (
+                            session.query(ScoreEntry.id)
+                            .filter(ScoreEntry.prompt_request_response_id.in_(piece_ids))
+                            .first()
+                        ):
+                            raise AttackStateConflictError(
+                                "Scored history cannot be replaced. Save a new conversation."
+                            )
+                        session.query(EmbeddingDataEntry).filter(EmbeddingDataEntry.id.in_(piece_ids)).delete(
+                            synchronize_session=False
+                        )
+                        session.query(PromptMemoryEntry).filter(PromptMemoryEntry.id.in_(piece_ids)).delete(
+                            synchronize_session=False
+                        )
                 if source_conversation is not None:
                     active_ids = {entry.conversation_id, *(entry.pruned_conversation_ids or [])}
                     if source_conversation.conversation_id not in active_ids:
@@ -5431,7 +6054,11 @@ class MemoryInterface(abc.ABC):
                         conversation=source_conversation.model_copy(update={"attack_result_id": attack_result_id}),
                     )
                 for conversation in conversations:
-                    if request_fingerprint and session.get(ConversationEntry, conversation.conversation_id) is not None:
+                    if (
+                        request_fingerprint
+                        and conversation.conversation_id not in replacements
+                        and session.get(ConversationEntry, conversation.conversation_id) is not None
+                    ):
                         raise AttackStateConflictError("The creation identity is already in use")
                     self._insert_conversation_in_session(
                         session=session,
@@ -5445,19 +6072,31 @@ class MemoryInterface(abc.ABC):
                 entry.pruned_conversation_ids = pruned_ids or None
                 self._apply_attack_fields_in_session(session=session, entry=entry, update_fields=update_fields or {})
                 if request_fingerprint:
-                    entry.attack_metadata = {**(entry.attack_metadata or {}), receipt_key: request_fingerprint}
+                    entry.attack_metadata = {
+                        **(entry.attack_metadata or {}),
+                        receipt_key: request_fingerprint,
+                        f"{receipt_key}:{request_fingerprint}": True,
+                    }
                 entry.timestamp = datetime.now(UTC)
+                if new_attack is not None:
+                    self._recheck_activity_operations(session=session, entries=[entry])
             return True
-        except IntegrityError:
+        except IntegrityError as error:
             # A concurrent retry may have committed the same new attack before our insert.
             with closing(self._get_session()) as session:
                 existing = session.get(AttackResultEntry, uuid.UUID(attack_result_id))
                 if (
                     request_fingerprint
                     and existing is not None
-                    and (existing.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                    and (
+                        (existing.attack_metadata or {}).get(receipt_key) == request_fingerprint
+                        or (existing.attack_metadata or {}).get(f"{receipt_key}:{request_fingerprint}")
+                    )
                 ):
                     return False
+                self._raise_if_operations_missing(
+                    session=session, operation_ids=_operation_ids([new_attack]), error=error
+                )
             raise
 
     def _execute_update_attack_result_conditionally(
@@ -6002,8 +6641,9 @@ class MemoryInterface(abc.ABC):
         Returns:
             list[Any]: The backend-specific label condition, if labels are effective.
 
-        Raises:
-            ValueError: If a label key falls outside the safe allowlist.
+        Keys in the ``[A-Za-z0-9_.-]+`` allowlist use the JSON-path condition. Other keys, such as
+        ones with spaces, quotes or non-ASCII characters, are matched literally against the stored
+        label names with bound parameters, so they never become part of a JSON path or SQL text.
         """
         if not query.labels:
             return []
@@ -6012,14 +6652,14 @@ class MemoryInterface(abc.ABC):
             for key, value in query.labels.items()
             if not (isinstance(value, (list, tuple)) and len(value) == 0)
         }
-        invalid_keys = [key for key in effective_labels if not self._LABEL_KEY_PATTERN.match(key)]
-        if invalid_keys:
-            raise ValueError(
-                f"Invalid label key(s) {invalid_keys!r}: keys must match {self._LABEL_KEY_PATTERN.pattern}."
-            )
-        if not effective_labels:
-            return []
-        return [self._get_attack_result_label_condition(labels=effective_labels)]
+        path_labels = {key: value for key, value in effective_labels.items() if self._LABEL_KEY_PATTERN.match(key)}
+        literal_labels = {key: value for key, value in effective_labels.items() if key not in path_labels}
+        conditions: list[Any] = []
+        if path_labels:
+            conditions.append(self._get_attack_result_label_condition(labels=path_labels))
+        if literal_labels:
+            conditions.append(self._get_attack_result_literal_label_condition(labels=literal_labels))
+        return conditions
 
     def _build_attack_result_category_conditions(self, *, query: _AttackResultQuery) -> list[Any]:
         """
@@ -6326,9 +6966,14 @@ class MemoryInterface(abc.ABC):
                 for entry in entries:
                     self._validate_activity_operation(session=session, entry=entry)
                 session.add_all(entries)
+                self._recheck_activity_operations(session=session, entries=entries)
                 session.commit()
-            except SQLAlchemyError:
+            except SQLAlchemyError as error:
                 session.rollback()
+                if isinstance(error, IntegrityError):
+                    self._raise_if_operations_missing(
+                        session=session, operation_ids=_operation_ids(entries), error=error
+                    )
                 raise
 
     @classmethod
@@ -6515,6 +7160,38 @@ class MemoryInterface(abc.ABC):
             flag_modified(entry, "scenario_metadata")
             session.commit()
 
+    def _execute_increment_scenario_number_tries(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Atomically increment and return the number_tries counter for a scenario result.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+
+        Raises:
+            ValueError: If the scenario result is not found in memory.
+        """
+        with closing(self._get_session()) as session:
+            updated_rows = (
+                session.query(ScenarioResultEntry)
+                .filter(ScenarioResultEntry.id == scenario_result_id)
+                .update(
+                    {ScenarioResultEntry.number_tries: ScenarioResultEntry.number_tries + 1},
+                    synchronize_session=False,
+                )
+            )
+            if not updated_rows:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            new_tries: int = session.query(ScenarioResultEntry.number_tries).filter_by(id=scenario_result_id).scalar()
+            session.commit()
+            return new_tries
+
     def _execute_get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
         with closing(self._get_session()) as session:
@@ -6568,8 +7245,10 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
         Return one descending scenario-history page and its database-side attempt metrics.
@@ -6595,8 +7274,10 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
+            sort_by=sort_by,
         )
         aggregates = self._dispatch_memory_operation(
             "get_scenario_history_aggregates",
@@ -6655,6 +7336,15 @@ class MemoryInterface(abc.ABC):
                 .mappings()
                 .all()
             )
+            group_rows = (
+                session.execute(
+                    self._build_scenario_history_group_aggregate_statement(
+                        entry_ids=entry_ids, plan_entry_ids=plan_entry_ids
+                    )
+                )
+                .mappings()
+                .all()
+            )
             name_rows = session.execute(
                 select(AttackResultEntry.attribution_parent_id, self._get_scenario_attempt_unit_expressions()[0])
                 .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
@@ -6673,6 +7363,61 @@ class MemoryInterface(abc.ABC):
                     .distinct()
                 ).all()
             }
+
+        groups_by_run: dict[str, dict[str, ScenarioProgressCounts]] = {}
+        for grow in group_rows:
+            if grow["scenario_result_id"] is None or not grow["unit_group_id"]:
+                continue
+            run_id = str(grow["scenario_result_id"])
+            raw_gid = str(grow["unit_group_id"])
+            canonical_gid = raw_gid
+            if "\x1f" in raw_gid:
+                name, _, eval_hash = raw_gid.partition("\x1f")
+                canonical_gid = config_hash({"atomic_attack_name": name, "technique_eval_hash": eval_hash})
+            g_outcomes = compute_outcome_statistics(
+                {
+                    AttackOutcome.SUCCESS: grow["outcome_successes"] or 0,
+                    AttackOutcome.FAILURE: grow["outcome_failures"] or 0,
+                    AttackOutcome.ERROR: grow["outcome_errors"] or 0,
+                    AttackOutcome.UNDETERMINED: grow["outcome_undetermined"] or 0,
+                }
+            )
+            g_producer_counts = ScenarioProducerCounts(
+                target_facing=ScenarioProducerCategoryCounts(
+                    attempts=grow["target_facing_attempts"] or 0,
+                    errors=grow["target_facing_error_attempts"] or 0,
+                    retries=grow["target_facing_retries"] or 0,
+                ),
+                orchestration=ScenarioProducerCategoryCounts(
+                    attempts=grow["orchestration_attempts"] or 0,
+                    errors=grow["orchestration_error_attempts"] or 0,
+                    retries=grow["orchestration_retries"] or 0,
+                ),
+                unknown=ScenarioProducerCategoryCounts(
+                    attempts=grow["unknown_role_attempts"] or 0,
+                    errors=grow["unknown_role_error_attempts"] or 0,
+                    retries=grow["unknown_role_retries"] or 0,
+                ),
+            )
+            g_completed = grow["completed_units"] or 0
+            g_succeeded = grow["successful_units"] or 0
+            counts = ScenarioProgressCounts(
+                completed=g_completed,
+                planned=None,
+                succeeded=g_succeeded,
+                success_percentage=success_percentage(succeeded=g_succeeded, completed=g_completed),
+                errors=grow["error_attempts"] or 0,
+                retries=grow["total_retries"] or 0,
+                producer_counts=g_producer_counts,
+                outcomes=g_outcomes,
+            )
+            run_groups = groups_by_run.setdefault(run_id, {})
+            if canonical_gid in run_groups:
+                run_groups[canonical_gid] = combine_execution_counts([run_groups[canonical_gid], counts])
+            else:
+                run_groups[canonical_gid] = counts
+            if canonical_gid != raw_gid:
+                run_groups[raw_gid] = counts
 
         names_by_run: dict[str, list[str]] = {}
         for scenario_result_id, atomic_attack_name in name_rows:
@@ -6702,41 +7447,53 @@ class MemoryInterface(abc.ABC):
                 unknown_role_attempts=row["unknown_role_attempts"] or 0,
                 unknown_role_error_attempts=row["unknown_role_error_attempts"] or 0,
                 unknown_role_retries=row["unknown_role_retries"] or 0,
+                outcome_successes=row["outcome_successes"] or 0,
+                outcome_failures=row["outcome_failures"] or 0,
+                outcome_errors=row["outcome_errors"] or 0,
+                outcome_undetermined=row["outcome_undetermined"] or 0,
+                raw_total_errors=row["raw_total_errors"] or 0,
+                raw_total_retries=row["raw_total_retries"] or 0,
+                raw_retrying_attacks_count=row["raw_retrying_attacks_count"] or 0,
+                group_counts=groups_by_run.get(run_id, {}),
             )
         return aggregates
 
-    def _build_scenario_history_aggregate_statement(
+    def _build_scenario_history_ranked_units(
         self,
         *,
         entry_ids: Sequence[uuid.UUID],
         plan_entry_ids: Sequence[uuid.UUID],
-    ) -> Any:
+    ) -> tuple[Any, Any, Any, Any, Any, Any]:
         """
-        Build the statement that reduces linked attempts to one metrics row per run.
+        Build the intermediate ranked-units subquery and role match conditions for scenario history.
 
         Returns:
-            Any: A statement selecting one aggregate row per scenario run with attempts.
+            tuple: (ranked, counted, completed, is_target_facing, is_orchestration, is_unknown)
         """
-        atomic_name, technique_hash, attributed_seed_group_id, _ = self._get_scenario_attempt_unit_expressions()
+        atomic_name, technique_hash, attributed_seed_group_id, identifier_seed_key = (
+            self._get_scenario_attempt_unit_expressions()
+        )
         parents = AttackResultEntry.__table__.alias("history_parents")
         children = AttackResultEntry.__table__.alias("history_children")
         links = JsonArrayItems(parents.c.attack_metadata, literal("$.child_attack_result_ids")).table_valued(
             "key", "value", "type"
         )
-        duplicate_errors = (
-            select(parents.c.id.label("parent_id"))
+        child_links = (
+            select(
+                parents.c.id.label("parent_id"),
+                func.max(case((children.c.outcome == AttackOutcome.ERROR.value, 1), else_=0)).label(
+                    "duplicates_child_error"
+                ),
+            )
             .select_from(JsonArrayJoin(parents, links, literal(True)))
-            .join(
+            .outerjoin(
                 children,
                 func.replace(sql_cast(children.c.id, String(36)), "-", "") == func.replace(links.c.value, "-", ""),
             )
-            .where(parents.c.attribution_parent_id.in_(entry_ids), children.c.outcome == AttackOutcome.ERROR.value)
-            .distinct()
-            .subquery("history_duplicate_errors")
+            .where(parents.c.attribution_parent_id.in_(entry_ids), links.c.value.is_not(None))
+            .group_by(parents.c.id)
+            .subquery("history_child_links")
         )
-        # Explicit seed attribution is authoritative, then the objective hash. Runs with attempts identified only by
-        # their atomic identifier's seeds are flagged instead (see _get_scenario_history_runs_needing_sdk_statistics),
-        # because SQL can't derive the logical seed group from those seeds.
         attempts = (
             select(
                 AttackResultEntry.id.label("attempt_id"),
@@ -6744,7 +7501,9 @@ class MemoryInterface(abc.ABC):
                 atomic_name.label("atomic_attack_name"),
                 technique_hash.label("technique_eval_hash"),
                 attributed_seed_group_id.label("attributed_seed_group_id"),
-                func.coalesce(attributed_seed_group_id, AttackResultEntry.objective_sha256, "").label("seed_group_id"),
+                func.coalesce(
+                    attributed_seed_group_id, identifier_seed_key, AttackResultEntry.objective_sha256, ""
+                ).label("seed_group_id"),
                 AttackResultEntry.objective_sha256.label("objective_sha256"),
                 AttackResultEntry.outcome.label("outcome"),
                 AttackResultEntry.timestamp.label("timestamp"),
@@ -6755,14 +7514,23 @@ class MemoryInterface(abc.ABC):
                     ),
                     else_=0,
                 ).label("total_retries"),
+                case(
+                    (
+                        or_(
+                            func.coalesce(AttackResultEntry.total_retries, 0) > 0,
+                            AttackResultEntry.retry_events_json.is_not(None),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                ).label("has_retries"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.result_role")).label("result_role"),
                 JsonScalar(AttackResultEntry.attribution_data, literal("$.attempt_index")).label("attempt_index"),
-                case((duplicate_errors.c.parent_id.is_not(None), 1), else_=0).label("duplicates_child_error"),
+                case((child_links.c.parent_id.is_not(None), 1), else_=0).label("has_child_links"),
+                func.coalesce(child_links.c.duplicates_child_error, 0).label("duplicates_child_error"),
             )
             .select_from(
-                AttackResultEntry.__table__.outerjoin(
-                    duplicate_errors, AttackResultEntry.id == duplicate_errors.c.parent_id
-                )
+                AttackResultEntry.__table__.outerjoin(child_links, AttackResultEntry.id == child_links.c.parent_id)
             )
             .where(AttackResultEntry.attribution_parent_id.in_(entry_ids))
             .subquery("history_attempts")
@@ -6772,29 +7540,14 @@ class MemoryInterface(abc.ABC):
         )
 
         unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
-        is_execution = or_(
-            units.c.result_role.is_(None),
-            not_(
-                self._get_scenario_role_match_condition(
-                    role_expression=units.c.result_role, role=AttackResultRole.ORCHESTRATION
-                )
-            ),
-        )
         units = select(
             units,
-            func.max(case((is_execution, 1), else_=0))
+            func.max(case((self._get_scenario_execution_attempt_condition(attempts=units), 1), else_=0))
             .over(partition_by=unit_partition)
             .label("has_execution_attempts"),
         ).subquery("history_classified_units")
         unit_partition = (units.c.scenario_result_id, units.c.unit_group_id, units.c.unit_seed_id)
-        is_execution = or_(
-            units.c.result_role.is_(None),
-            not_(
-                self._get_scenario_role_match_condition(
-                    role_expression=units.c.result_role, role=AttackResultRole.ORCHESTRATION
-                )
-            ),
-        )
+        is_execution = self._get_scenario_execution_attempt_condition(attempts=units)
         independent_error = and_(units.c.outcome == AttackOutcome.ERROR.value, units.c.duplicates_child_error == 0)
         pressure_attempt = case((or_(units.c.has_execution_attempts == 0, is_execution, independent_error), 1), else_=0)
         is_completion = case((units.c.attempt_index.is_(None), 1), else_=0)
@@ -6804,18 +7557,28 @@ class MemoryInterface(abc.ABC):
             + func.sum(pressure_attempt).over(partition_by=unit_partition)
             - 1
         )
+        raw_unit_retries = (
+            func.sum(units.c.total_retries).over(partition_by=unit_partition)
+            + func.count().over(partition_by=unit_partition)
+            - 1
+        )
         ranked = select(
             units.c.scenario_result_id,
+            units.c.unit_group_id,
             units.c.timestamp,
             units.c.outcome.label("latest_outcome"),
+            units.c.outcome.label("attempt_outcome"),
+            units.c.has_retries.label("has_retries"),
             func.max(units.c.is_planned).over(partition_by=unit_partition).label("is_planned"),
             unit_retries.label("unit_retries"),
+            raw_unit_retries.label("raw_unit_retries"),
             func.sum(case((is_error, pressure_attempt), else_=0))
             .over(partition_by=unit_partition)
             .label("unit_errors"),
             is_completion.label("is_completion"),
             units.c.result_role.label("result_role"),
             units.c.total_retries.label("attempt_retries"),
+            func.max(units.c.has_retries).over(partition_by=unit_partition).label("unit_has_retries"),
             func.row_number()
             .over(
                 partition_by=unit_partition,
@@ -6839,6 +7602,23 @@ class MemoryInterface(abc.ABC):
             ranked.c.result_role.is_(None),
             and_(not_(is_target_facing), not_(is_orchestration)),
         )
+        return ranked, counted, completed, is_target_facing, is_orchestration, is_unknown
+
+    def _build_scenario_history_aggregate_statement(
+        self,
+        *,
+        entry_ids: Sequence[uuid.UUID],
+        plan_entry_ids: Sequence[uuid.UUID],
+    ) -> Any:
+        """
+        Build the statement that reduces linked attempts to one metrics row per run.
+
+        Returns:
+            Any: A statement selecting one aggregate row per scenario run with attempts.
+        """
+        ranked, counted, completed, is_target_facing, is_orchestration, is_unknown = (
+            self._build_scenario_history_ranked_units(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
+        )
         return (
             select(
                 ranked.c.scenario_result_id,
@@ -6852,6 +7632,28 @@ class MemoryInterface(abc.ABC):
                 func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
                     "total_retries"
                 ),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
+                ).label("outcome_successes"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.FAILURE.value), 1), else_=0)
+                ).label("outcome_failures"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1), else_=0)
+                ).label("outcome_errors"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.UNDETERMINED.value), 1), else_=0)
+                ).label("outcome_undetermined"),
+                func.sum(case((ranked.c.attempt_outcome == AttackOutcome.ERROR.value, 1), else_=0)).label(
+                    "raw_total_errors"
+                ),
+                func.sum(
+                    case(
+                        (and_(ranked.c.unit_rank == 1, ranked.c.raw_unit_retries > 0), ranked.c.raw_unit_retries),
+                        else_=0,
+                    )
+                ).label("raw_total_retries"),
+                func.sum(case((ranked.c.has_retries == 1, 1), else_=0)).label("raw_retrying_attacks_count"),
                 func.sum(case((is_target_facing, 1), else_=0)).label("target_facing_attempts"),
                 func.sum(
                     case(
@@ -6881,6 +7683,104 @@ class MemoryInterface(abc.ABC):
             .order_by(ranked.c.scenario_result_id)
         )
 
+    def _build_scenario_history_group_aggregate_statement(
+        self,
+        *,
+        entry_ids: Sequence[uuid.UUID],
+        plan_entry_ids: Sequence[uuid.UUID],
+    ) -> Any:
+        """
+        Build the statement that reduces linked attempts to metrics rows per group.
+
+        Returns:
+            Any: A statement selecting aggregate rows grouped by scenario run and atomic group.
+        """
+        ranked, counted, completed, is_target_facing, is_orchestration, is_unknown = (
+            self._build_scenario_history_ranked_units(entry_ids=entry_ids, plan_entry_ids=plan_entry_ids)
+        )
+        return (
+            select(
+                ranked.c.scenario_result_id,
+                ranked.c.unit_group_id,
+                func.sum(case((completed, 1), else_=0)).label("completed_units"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
+                ).label("successful_units"),
+                func.sum(case((counted, ranked.c.unit_errors), else_=0)).label("error_attempts"),
+                func.sum(case((and_(counted, ranked.c.unit_retries > 0), ranked.c.unit_retries), else_=0)).label(
+                    "total_retries"
+                ),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.SUCCESS.value), 1), else_=0)
+                ).label("outcome_successes"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.FAILURE.value), 1), else_=0)
+                ).label("outcome_failures"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1), else_=0)
+                ).label("outcome_errors"),
+                func.sum(
+                    case((and_(completed, ranked.c.latest_outcome == AttackOutcome.UNDETERMINED.value), 1), else_=0)
+                ).label("outcome_undetermined"),
+                func.sum(case((is_target_facing, 1), else_=0)).label("target_facing_attempts"),
+                func.sum(
+                    case(
+                        (and_(is_target_facing, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
+                        else_=0,
+                    )
+                ).label("target_facing_error_attempts"),
+                func.sum(case((is_target_facing, ranked.c.attempt_retries), else_=0)).label("target_facing_retries"),
+                func.sum(case((is_orchestration, 1), else_=0)).label("orchestration_attempts"),
+                func.sum(
+                    case(
+                        (and_(is_orchestration, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
+                        else_=0,
+                    )
+                ).label("orchestration_error_attempts"),
+                func.sum(case((is_orchestration, ranked.c.attempt_retries), else_=0)).label("orchestration_retries"),
+                func.sum(case((is_unknown, 1), else_=0)).label("unknown_role_attempts"),
+                func.sum(
+                    case(
+                        (and_(is_unknown, ranked.c.latest_outcome == AttackOutcome.ERROR.value), 1),
+                        else_=0,
+                    )
+                ).label("unknown_role_error_attempts"),
+                func.sum(case((is_unknown, ranked.c.attempt_retries), else_=0)).label("unknown_role_retries"),
+            )
+            .group_by(ranked.c.scenario_result_id, ranked.c.unit_group_id)
+            .order_by(ranked.c.scenario_result_id, ranked.c.unit_group_id)
+        )
+
+    def _get_scenario_execution_attempt_condition(self, *, attempts: Any) -> Any:
+        """
+        Return the SQL form of ``select_execution_attempts``'s envelope test, negated.
+
+        An orchestration role marks an envelope. An unrecognized role marks one only with
+        child links, as for envelopes persisted before roles were recorded.
+
+        Args:
+            attempts (Any): A subquery with ``result_role`` and ``has_child_links`` columns.
+
+        Returns:
+            Any: A condition that is true for attempts that are not orchestration envelopes.
+        """
+        is_envelope = case(
+            (
+                self._get_scenario_role_match_condition(
+                    role_expression=attempts.c.result_role, role=AttackResultRole.ORCHESTRATION
+                ),
+                1,
+            ),
+            (
+                self._get_scenario_role_match_condition(
+                    role_expression=attempts.c.result_role, role=AttackResultRole.TARGET_FACING
+                ),
+                0,
+            ),
+            else_=attempts.c.has_child_links,
+        )
+        return is_envelope == 0
+
     def _build_scenario_history_unit_statement(self, *, attempts: Any, plan_entry_ids: Sequence[uuid.UUID]) -> Any:
         """
         Resolve every persisted attempt to the logical work unit whose counters it feeds.
@@ -6902,8 +7802,10 @@ class MemoryInterface(abc.ABC):
                 attempts.c.outcome,
                 attempts.c.timestamp,
                 attempts.c.total_retries,
+                attempts.c.has_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
+                attempts.c.has_child_links,
                 attempts.c.duplicates_child_error,
                 unplanned_group_id.label("unit_group_id"),
                 attempts.c.seed_group_id.label("unit_seed_id"),
@@ -6984,8 +7886,10 @@ class MemoryInterface(abc.ABC):
                 attempts.c.outcome,
                 attempts.c.timestamp,
                 attempts.c.total_retries,
+                attempts.c.has_retries,
                 attempts.c.result_role,
                 attempts.c.attempt_index,
+                attempts.c.has_child_links,
                 attempts.c.duplicates_child_error,
                 attempts.c.atomic_attack_name,
                 unplanned_group_id.label("unplanned_group_id"),
@@ -7012,8 +7916,10 @@ class MemoryInterface(abc.ABC):
             matched.c.outcome,
             matched.c.timestamp,
             matched.c.total_retries,
+            matched.c.has_retries,
             matched.c.result_role,
             matched.c.attempt_index,
+            matched.c.has_child_links,
             matched.c.duplicates_child_error,
             func.coalesce(matched.c.atomic_group_id, matched.c.unplanned_group_id).label("unit_group_id"),
             func.coalesce(matched.c.planned_seed_group_id, matched.c.seed_group_id).label("unit_seed_id"),
@@ -7054,6 +7960,172 @@ class MemoryInterface(abc.ABC):
                 if isinstance(value, str):
                     label_values.setdefault(key, set()).add(value)
         return {key: sorted(values) for key, values in sorted(label_values.items())}
+
+    @staticmethod
+    def _row_to_scenario_attack_result_delta(row: Mapping[str, Any]) -> ScenarioAttackResultDelta:
+        retry_events = [
+            RetryEvent.model_validate(event)
+            for event in (json.loads(row["retry_events_json"]) if row["retry_events_json"] else [])
+        ]
+        atomic_identifier = (
+            AtomicAttackIdentifier.model_validate(row["atomic_attack_identifier"])
+            if row["atomic_attack_identifier"]
+            else None
+        )
+        score = None
+        if row["score_id"] is not None:
+            scorer_identifier = (
+                ComponentIdentifier.model_validate(row["scorer_class_identifier"])
+                if row["scorer_class_identifier"]
+                else None
+            )
+            score = ScenarioProgressScore(
+                scorer_name=scorer_identifier.class_name if scorer_identifier else "Unknown",
+                score_type=row["score_type"],
+                status=ScoreStatus(row["score_status"]),
+                score_value=row["score_value"],
+                score_rationale=row["score_rationale"],
+            )
+        related_cids: list[str] = []
+        for col in (
+            row["pruned_conversation_ids"],
+            row["adversarial_chat_conversation_ids"],
+            row["preparation_conversation_ids"],
+        ):
+            if isinstance(col, list):
+                related_cids.extend(str(c) for c in col if c)
+        return ScenarioAttackResultDelta(
+            attack_result_id=str(row["id"]),
+            conversation_id=row["conversation_id"],
+            objective=row["objective"],
+            objective_sha256=row["objective_sha256"],
+            atomic_attack_identifier=atomic_identifier,
+            outcome=AttackOutcome(row["outcome"]),
+            execution_time_ms=row["execution_time_ms"],
+            executed_turns=row["executed_turns"],
+            outcome_reason=row["outcome_reason"],
+            timestamp=row["timestamp"],
+            retry_events=retry_events,
+            total_retries=row["total_retries"] or 0,
+            error_type=row["error_type"],
+            error_message=row["error_message"],
+            attribution_data=row["attribution_data"] or {},
+            attack_metadata=row["attack_metadata"] or {},
+            related_conversation_ids=related_cids,
+            score=score,
+        )
+
+    @staticmethod
+    def _scenario_attack_result_delta_statement() -> Select:
+        """Return the shared lightweight result/score projection, without filters or pagination."""
+        return select(
+            AttackResultEntry.id,
+            AttackResultEntry.conversation_id,
+            AttackResultEntry.objective,
+            AttackResultEntry.objective_sha256,
+            AttackResultEntry.atomic_attack_identifier,
+            AttackResultEntry.outcome,
+            AttackResultEntry.execution_time_ms,
+            AttackResultEntry.executed_turns,
+            AttackResultEntry.outcome_reason,
+            AttackResultEntry.timestamp,
+            AttackResultEntry.retry_events_json,
+            AttackResultEntry.total_retries,
+            AttackResultEntry.error_type,
+            AttackResultEntry.error_message,
+            AttackResultEntry.attribution_data,
+            AttackResultEntry.attack_metadata,
+            AttackResultEntry.pruned_conversation_ids,
+            AttackResultEntry.adversarial_chat_conversation_ids,
+            AttackResultEntry.preparation_conversation_ids,
+            ScoreEntry.id.label("score_id"),
+            ScoreEntry.score_value,
+            ScoreEntry.score_type,
+            ScoreEntry.status.label("score_status"),
+            ScoreEntry.score_rationale,
+            ScoreEntry.scorer_class_identifier,
+        ).outerjoin(
+            ScoreEntry,
+            func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id) == ScoreEntry.id,
+        )
+
+    def _build_scenario_root_deltas_statement(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> Select:
+        """
+        Page saved roots directly instead of hydrating a chronological prefix and searching for its ancestors.
+
+        Keep reference expansion uncorrelated so SQLite reads the saved edges once, not once per candidate.
+
+        Returns:
+            Select: A run-scoped, ascending keyset query with one sentinel row.
+
+        Raises:
+            ValueError: If the run, cursor, or page limit is invalid.
+        """
+        if not 1 <= limit <= 500:
+            raise ValueError("Hierarchy root limit must be between 1 and 500.")
+        scenario_uuid = uuid.UUID(scenario_result_id)
+        parents = AttackResultEntry.__table__.alias("hierarchy_parents")
+        references = JsonArrayItems(
+            JsonArrayValue(parents.c.attack_metadata, literal("$.child_attack_result_ids"))
+        ).table_valued("value", "type")
+        candidate_id = UuidHex(sql_cast(AttackResultEntry.id, String(36)))
+        referenced_id = UuidHex(references.c.value)
+        incoming_ids = (
+            select(referenced_id)
+            .select_from(JsonArrayJoin(parents, references, literal(True)))
+            .where(
+                parents.c.attribution_parent_id == scenario_uuid,
+                sql_cast(references.c.type, String(8)).in_(("text", "1")),
+                referenced_id.is_not(None),
+            )
+        )
+        conditions = [
+            AttackResultEntry.attribution_parent_id == scenario_uuid,
+            candidate_id.not_in(incoming_ids),
+        ]
+        attempt_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=AttackResultEntry.id)
+        if cursor is not None:
+            cursor_id_order = self._get_scenario_attempt_id_order_expression(
+                attempt_id=literal(uuid.UUID(cursor.attack_result_id), type_=AttackResultEntry.id.type)
+            )
+            conditions.append(
+                or_(
+                    AttackResultEntry.timestamp > cursor.timestamp,
+                    and_(AttackResultEntry.timestamp == cursor.timestamp, attempt_id_order > cursor_id_order),
+                )
+            )
+        return (
+            self._scenario_attack_result_delta_statement()
+            .where(*conditions)
+            .order_by(AttackResultEntry.timestamp.asc(), attempt_id_order.asc())
+            .limit(limit + 1)
+        )
+
+    def _execute_get_scenario_root_deltas(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        """
+        Read one bounded page of true saved roots without loading their children or messages.
+
+        Returns:
+            tuple[list[ScenarioAttackResultDelta], bool]: Root deltas and whether another root page exists.
+        """
+        statement = self._build_scenario_root_deltas_statement(
+            scenario_result_id=scenario_result_id, cursor=cursor, limit=limit
+        )
+        with closing(self._get_session()) as session:
+            rows = session.execute(statement).mappings().all()
+        return [self._row_to_scenario_attack_result_delta(row) for row in rows[:limit]], len(rows) > limit
 
     def _execute_get_scenario_attack_result_deltas(
         self,
@@ -7097,31 +8169,119 @@ class MemoryInterface(abc.ABC):
             )
 
         statement = (
+            self._scenario_attack_result_delta_statement()
+            .where(and_(*conditions))
+            .order_by(AttackResultEntry.timestamp.asc(), attempt_id_order.asc())
+            .limit(limit + 1)
+        )
+        with closing(self._get_session()) as session:
+            rows = session.execute(statement).mappings().all()
+
+        has_more = len(rows) > limit
+        deltas: list[ScenarioAttackResultDelta] = [
+            self._row_to_scenario_attack_result_delta(row) for row in rows[:limit]
+        ]
+        return deltas, has_more
+
+    @staticmethod
+    def _row_to_scenario_attempt_seed_summary(row: Mapping[str, Any]) -> ScenarioAttemptSeedSummary:
+        atomic_identifier = (
+            AtomicAttackIdentifier.model_validate(row["atomic_attack_identifier"])
+            if row["atomic_attack_identifier"]
+            else None
+        )
+        metadata = row.get("attack_metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except Exception:
+                metadata = {}
+        metadata = metadata or {}
+        attr_data = dict(row.get("attribution_data") or {})
+        for k in ("result_role", "attempt_index"):
+            if k not in attr_data and k in metadata:
+                attr_data[k] = metadata[k]
+        raw_child_ids = metadata.get("child_attack_result_ids") or attr_data.get("child_attack_result_ids")
+        if isinstance(raw_child_ids, (list, tuple)):
+            child_ids = tuple(str(cid) for cid in raw_child_ids if isinstance(cid, str) and cid)
+        else:
+            child_ids = ()
+
+        return ScenarioAttemptSeedSummary(
+            attack_result_id=str(row["id"]),
+            objective=row["objective"],
+            objective_sha256=row["objective_sha256"],
+            atomic_attack_identifier=atomic_identifier,
+            outcome=AttackOutcome(row["outcome"]),
+            timestamp=row["timestamp"],
+            total_retries=row["total_retries"] or 0,
+            attribution_data=attr_data,
+            has_retries=bool(row.get("has_retries", False)),
+            child_attack_result_ids=child_ids,
+        )
+
+    def _execute_get_scenario_recount_summaries(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 500,
+    ) -> tuple[list[ScenarioAttemptSeedSummary], bool]:
+        """
+        Return bounded scenario attempt seed summaries in ascending keyset order for recount.
+
+        This projection selects only minimal scalar fields required for execution unit
+        resolution and recount metrics without loading score entries, prompt rows, or
+        retry events.
+
+        Returns:
+            tuple[list[ScenarioAttemptSeedSummary], bool]: The page and whether more rows exist.
+
+        Raises:
+            ValueError: If the limit or cursor identifiers are invalid.
+        """
+        if limit < 1 or limit > 500:
+            raise ValueError("Scenario recount limit must be between 1 and 500.")
+
+        scenario_uuid = uuid.UUID(scenario_result_id)
+        conditions: list[Any] = [AttackResultEntry.attribution_parent_id == scenario_uuid]
+        attempt_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=AttackResultEntry.id)
+        if cursor is not None:
+            cursor_uuid = uuid.UUID(cursor.attack_result_id)
+            cursor_id_order = self._get_scenario_attempt_id_order_expression(
+                attempt_id=literal(cursor_uuid, type_=AttackResultEntry.id.type)
+            )
+            conditions.append(
+                or_(
+                    AttackResultEntry.timestamp > cursor.timestamp,
+                    and_(
+                        AttackResultEntry.timestamp == cursor.timestamp,
+                        attempt_id_order > cursor_id_order,
+                    ),
+                )
+            )
+
+        statement = (
             select(
                 AttackResultEntry.id,
-                AttackResultEntry.conversation_id,
                 AttackResultEntry.objective,
                 AttackResultEntry.objective_sha256,
                 AttackResultEntry.atomic_attack_identifier,
                 AttackResultEntry.outcome,
-                AttackResultEntry.execution_time_ms,
                 AttackResultEntry.timestamp,
-                AttackResultEntry.retry_events_json,
                 AttackResultEntry.total_retries,
-                AttackResultEntry.error_type,
-                AttackResultEntry.error_message,
                 AttackResultEntry.attribution_data,
                 AttackResultEntry.attack_metadata,
-                ScoreEntry.id.label("score_id"),
-                ScoreEntry.score_value,
-                ScoreEntry.score_type,
-                ScoreEntry.status.label("score_status"),
-                ScoreEntry.score_rationale,
-                ScoreEntry.scorer_class_identifier,
-            )
-            .outerjoin(
-                ScoreEntry,
-                func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id) == ScoreEntry.id,
+                case(
+                    (
+                        or_(
+                            func.coalesce(AttackResultEntry.total_retries, 0) > 0,
+                            AttackResultEntry.retry_events_json.is_not(None),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                ).label("has_retries"),
             )
             .where(and_(*conditions))
             .order_by(AttackResultEntry.timestamp.asc(), attempt_id_order.asc())
@@ -7131,51 +8291,239 @@ class MemoryInterface(abc.ABC):
             rows = session.execute(statement).mappings().all()
 
         has_more = len(rows) > limit
+        summaries: list[ScenarioAttemptSeedSummary] = [
+            self._row_to_scenario_attempt_seed_summary(row) for row in rows[:limit]
+        ]
+        return summaries, has_more
+
+    def _build_scenario_attack_result_deltas_by_ids_statement(
+        self,
+        *,
+        scenario_result_id: str,
+        attack_result_ids: Sequence[str],
+    ) -> Select:
+        """
+        Build the batched SELECT statement for scenario result deltas by ID.
+
+        Ensures cross-run references are rejected by constraining
+        attribution_parent_id to the scenario UUID.
+        Bounds parameters to avoid exceeding SQL Server's parameter limit.
+
+        Returns:
+            Select: The constructed select statement.
+        """
+        try:
+            scenario_uuid = uuid.UUID(scenario_result_id)
+        except (ValueError, TypeError):
+            scenario_uuid = uuid.UUID(int=0)
+        valid_uuids: list[uuid.UUID] = []
+        seen: set[uuid.UUID] = set()
+        for aid in attack_result_ids:
+            try:
+                u = uuid.UUID(str(aid))
+                if u not in seen:
+                    seen.add(u)
+                    valid_uuids.append(u)
+            except (ValueError, TypeError):
+                continue
+
+        # Strictly reserve parameter slots for fixed query parameters like attribution_parent_id
+        max_batch_size = max(1, self._MAX_BIND_VARS - 10)
+        chunk_uuids = valid_uuids[:max_batch_size]
+
+        return self._scenario_attack_result_delta_statement().where(
+            AttackResultEntry.attribution_parent_id == scenario_uuid,
+            AttackResultEntry.id.in_(chunk_uuids),
+        )
+
+    def _execute_get_scenario_attack_result_deltas_by_ids(
+        self,
+        *,
+        scenario_result_id: str,
+        attack_result_ids: Sequence[str],
+    ) -> list[ScenarioAttackResultDelta]:
+        """
+        Return lightweight scenario-linked result deltas for specific attack results in chunked queries.
+
+        Deduplicates IDs and chunks queries to respect SQL parameter limits.
+
+        Returns:
+            list[ScenarioAttackResultDelta]: The matched deltas.
+        """
+        try:
+            uuid.UUID(scenario_result_id)
+        except (ValueError, TypeError):
+            return []
+
+        valid_uuids: list[uuid.UUID] = []
+        seen: set[uuid.UUID] = set()
+        for aid in attack_result_ids:
+            try:
+                u = uuid.UUID(str(aid))
+                if u not in seen:
+                    seen.add(u)
+                    valid_uuids.append(u)
+            except (ValueError, TypeError):
+                continue
+
+        if not valid_uuids:
+            return []
+
+        max_batch_size = max(1, self._MAX_BIND_VARS - 10)
         deltas: list[ScenarioAttackResultDelta] = []
-        for row in rows[:limit]:
-            retry_events = [
-                RetryEvent.model_validate(event)
-                for event in (json.loads(row["retry_events_json"]) if row["retry_events_json"] else [])
-            ]
-            atomic_identifier = (
-                AtomicAttackIdentifier.model_validate(row["atomic_attack_identifier"])
-                if row["atomic_attack_identifier"]
-                else None
+        with closing(self._get_session()) as session:
+            for start in range(0, len(valid_uuids), max_batch_size):
+                chunk = valid_uuids[start : start + max_batch_size]
+                statement = self._build_scenario_attack_result_deltas_by_ids_statement(
+                    scenario_result_id=scenario_result_id,
+                    attack_result_ids=[str(u) for u in chunk],
+                )
+                rows = session.execute(statement).mappings().all()
+                deltas.extend(self._row_to_scenario_attack_result_delta(row) for row in rows)
+        return deltas
+
+    def _build_conversation_message_page_statement(
+        self,
+        *,
+        conversation_id: str,
+        cursor: MessagePieceKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> Select:
+        """
+        Build a canonical message-piece page, including continuation within a multimodal turn.
+
+        Returns:
+            Select: An ascending sequence/timestamp/UUID query with one sentinel.
+
+        Raises:
+            ValueError: If the page limit or cursor UUID is invalid.
+        """
+        if not 1 <= limit <= 500:
+            raise ValueError("Conversation message-piece limit must be between 1 and 500.")
+        id_order = self._get_scenario_attempt_id_order_expression(attempt_id=PromptMemoryEntry.id)
+        conditions = [PromptMemoryEntry.conversation_id == conversation_id]
+        if cursor is not None:
+            cursor_id = self._get_scenario_attempt_id_order_expression(
+                attempt_id=literal(uuid.UUID(cursor.message_piece_id), type_=PromptMemoryEntry.id.type)
             )
-            score = None
-            if row["score_id"] is not None:
-                scorer_identifier = (
-                    ComponentIdentifier.model_validate(row["scorer_class_identifier"])
-                    if row["scorer_class_identifier"]
-                    else None
-                )
-                score = ScenarioProgressScore(
-                    scorer_name=scorer_identifier.class_name if scorer_identifier else "Unknown",
-                    score_type=row["score_type"],
-                    status=ScoreStatus(row["score_status"]),
-                    score_value=row["score_value"],
-                    score_rationale=row["score_rationale"],
-                )
-            deltas.append(
-                ScenarioAttackResultDelta(
-                    attack_result_id=str(row["id"]),
-                    conversation_id=row["conversation_id"],
-                    objective=row["objective"],
-                    objective_sha256=row["objective_sha256"],
-                    atomic_attack_identifier=atomic_identifier,
-                    outcome=AttackOutcome(row["outcome"]),
-                    execution_time_ms=row["execution_time_ms"],
-                    timestamp=row["timestamp"],
-                    retry_events=retry_events,
-                    total_retries=row["total_retries"] or 0,
-                    error_type=row["error_type"],
-                    error_message=row["error_message"],
-                    attribution_data=row["attribution_data"] or {},
-                    attack_metadata=row["attack_metadata"] or {},
-                    score=score,
+            conditions.append(
+                or_(
+                    PromptMemoryEntry.sequence > cursor.sequence,
+                    and_(PromptMemoryEntry.sequence == cursor.sequence, PromptMemoryEntry.timestamp > cursor.timestamp),
+                    and_(
+                        PromptMemoryEntry.sequence == cursor.sequence,
+                        PromptMemoryEntry.timestamp == cursor.timestamp,
+                        id_order > cursor_id,
+                    ),
                 )
             )
-        return deltas, has_more
+        return (
+            select(PromptMemoryEntry)
+            .where(*conditions)
+            .order_by(PromptMemoryEntry.sequence.asc(), PromptMemoryEntry.timestamp.asc(), id_order.asc())
+            .limit(limit + 1)
+        )
+
+    def _execute_get_conversation_message_page(
+        self,
+        *,
+        conversation_id: str,
+        cursor: MessagePieceKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> ConversationMessagePage:
+        """
+        Read only the selected page of canonical message pieces.
+
+        Returns:
+            ConversationMessagePage: Messages, continuation, and turns split by the page boundary.
+        """
+        statement = self._build_conversation_message_page_statement(
+            conversation_id=conversation_id, cursor=cursor, limit=limit
+        )
+        with closing(self._get_session()) as session:
+            rows = list(session.scalars(statement))
+            pieces = [row.get_message_piece() for row in rows[:limit]]
+        if not pieces:
+            return ConversationMessagePage(messages=(), next_cursor=None)
+        partial_sequences: set[int] = set()
+        if cursor is not None and pieces[0].sequence == cursor.sequence:
+            partial_sequences.add(cursor.sequence)
+        next_cursor = None
+        if len(rows) > limit:
+            last_piece = pieces[-1]
+            next_cursor = MessagePieceKeysetCursor(
+                sequence=last_piece.sequence,
+                timestamp=last_piece.timestamp,
+                message_piece_id=str(last_piece.id),
+            )
+            if rows[limit].sequence == last_piece.sequence:
+                partial_sequences.add(last_piece.sequence)
+        return ConversationMessagePage(
+            messages=tuple(group_conversation_message_pieces_by_sequence(message_pieces=pieces)),
+            next_cursor=next_cursor,
+            partial_message_sequences=tuple(sorted(partial_sequences)),
+        )
+
+    def _execute_get_attack_conversation_page(
+        self, *, attack_result_id: str, offset: int = 0, limit: int = 50, conversation_id: str | None = None
+    ) -> AttackConversationPage | None:
+        """
+        Read main and pruned references without loading attack relationships or message bodies.
+
+        Returns:
+            AttackConversationPage | None: One bounded reference page, or None for an absent attack.
+
+        Raises:
+            ValueError: If the ID, offset, or page limit is invalid.
+        """
+        if offset < 0 or not 1 <= limit <= 200:
+            raise ValueError("Conversation offset must be nonnegative and limit must be between 1 and 200.")
+        statement = select(
+            AttackResultEntry.conversation_id,
+            AttackResultEntry.pruned_conversation_ids,
+            AttackResultEntry.timestamp,
+            func.coalesce(AttackResultEntry.human_score_id, AttackResultEntry.automated_score_id).label(
+                "objective_score_id"
+            ),
+        ).where(AttackResultEntry.id == uuid.UUID(attack_result_id))
+        with closing(self._get_session()) as session:
+            row = session.execute(statement).mappings().one_or_none()
+        if row is None:
+            return None
+        references: dict[str, AttackConversationRecord] = {}
+        main_id = row["conversation_id"] or ""
+        if main_id:
+            references[main_id] = AttackConversationRecord(conversation_id=main_id)
+        values = row["pruned_conversation_ids"]
+        if isinstance(values, list):
+            for identifier in values:
+                if isinstance(identifier, str) and identifier:
+                    references.setdefault(
+                        identifier,
+                        AttackConversationRecord(conversation_id=identifier, conversation_type=ConversationType.PRUNED),
+                    )
+        ordered = tuple(references.values())
+        revision = hashlib.sha256(
+            json.dumps(
+                [
+                    (
+                        reference.conversation_id,
+                        reference.conversation_type.value if reference.conversation_type is not None else None,
+                    )
+                    for reference in ordered
+                ]
+            ).encode("utf-8")
+        ).hexdigest()
+        if conversation_id is not None:
+            ordered = tuple(reference for reference in ordered if reference.conversation_id == conversation_id)
+        return AttackConversationPage(
+            main_conversation_id=main_id,
+            conversations=ordered[offset : offset + limit],
+            total_count=len(ordered),
+            timestamp=row["timestamp"],
+            reference_revision=revision,
+            objective_score_id=str(row["objective_score_id"]) if row["objective_score_id"] is not None else None,
+        )
 
     def _execute_get_scenario_results(
         self,
@@ -8255,8 +9603,8 @@ class MemoryInterface(abc.ABC):
 
         Computes per-conversation message count (distinct sequence numbers),
         a truncated last-message preview, the first non-empty labels dict,
-        and the earliest message timestamp using efficient SQL aggregation
-        instead of loading full pieces.
+        and the earliest message timestamp (timezone-aware UTC) using efficient
+        SQL aggregation instead of loading full pieces.
 
         Args:
             conversation_ids: The conversation IDs to query.
@@ -8430,7 +9778,7 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): The category of the score to filter by.
+            score_category (str | None): Return only scores whose category list contains this category.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -8523,7 +9871,9 @@ class MemoryInterface(abc.ABC):
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            labels (dict[str, str] | None, optional): Deprecated. Labels live on attack results, so
+                query ``get_attack_results_async(labels=...)`` and fetch their conversations instead.
+                Defaults to None.
             prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
             sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
@@ -8539,6 +9889,8 @@ class MemoryInterface(abc.ABC):
         Returns:
             Sequence[Score]: A list of scores extracted from the message pieces.
         """
+        if labels is not None:
+            _deprecate_message_labels(method="get_prompt_scores_async")
         return await self._run_database_operation_async(
             self._execute_get_prompt_scores,
             role=role,
@@ -8612,6 +9964,10 @@ class MemoryInterface(abc.ABC):
     async def get_request_from_response_async(self, *, response: Message) -> Message:
         """
         Retrieve the request that produced the given response.
+
+        Returns the latest preceding outbound request of any role, skipping target-generated
+        tool messages. For unmarked history, returns the last user message or, if absent,
+        the immediately preceding message.
 
         Args:
             response (Message): The response message object to match.
@@ -8699,7 +10055,9 @@ class MemoryInterface(abc.ABC):
             conversation_id (str | uuid.UUID | None, optional): The ID of the conversation. Defaults to None.
             prompt_ids (Sequence[str] | Sequence[uuid.UUID] | None, optional): A list of prompt IDs.
                 Defaults to None.
-            labels (dict[str, str] | None, optional): A dictionary of labels. Defaults to None.
+            labels (dict[str, str] | None, optional): Deprecated. Labels live on attack results, so
+                query ``get_attack_results_async(labels=...)`` and fetch their conversations instead.
+                Defaults to None.
             prompt_metadata (dict[str, str | int] | None, optional): The metadata associated with the prompt.
                 Defaults to None.
             sent_after (datetime | None, optional): Filter for prompts sent after this datetime. Defaults to None.
@@ -8723,6 +10081,8 @@ class MemoryInterface(abc.ABC):
             Exception: If there is an error retrieving the prompts,
                 an exception is logged and an empty list is returned.
         """
+        if labels is not None:
+            _deprecate_message_labels(method="get_message_pieces_async")
         return await self._run_database_operation_async(
             self._execute_get_message_pieces,
             role=role,
@@ -9678,6 +11038,7 @@ class MemoryInterface(abc.ABC):
         expected_fields: Mapping[str, Any] | None = None,
         update_fields: Mapping[str, Any] | None = None,
         request_fingerprint: str | None = None,
+        replace_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
     ) -> bool:
         """
         Use ``add_conversation_branches_to_attack_async``.
@@ -9701,6 +11062,7 @@ class MemoryInterface(abc.ABC):
             expected_fields=expected_fields,
             update_fields=update_fields,
             request_fingerprint=request_fingerprint,
+            replace_conversation_pieces=replace_conversation_pieces,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.add_conversation_branches_to_attack)
@@ -9715,6 +11077,7 @@ class MemoryInterface(abc.ABC):
         expected_fields: Mapping[str, Any] | None = None,
         update_fields: Mapping[str, Any] | None = None,
         request_fingerprint: str | None = None,
+        replace_conversation_pieces: Mapping[str, Sequence[MessagePiece]] | None = None,
     ) -> bool:
         """
         Atomically store initial or related conversations, pieces, and attack references.
@@ -9743,6 +11106,7 @@ class MemoryInterface(abc.ABC):
             expected_fields=expected_fields,
             update_fields=update_fields,
             request_fingerprint=request_fingerprint,
+            replace_conversation_pieces=replace_conversation_pieces,
         )
 
     async def update_attack_result_conditionally_async(
@@ -10424,6 +11788,51 @@ class MemoryInterface(abc.ABC):
             self._execute_update_scenario_metadata_fields, scenario_result_id=scenario_result_id, fields=fields
         )
 
+    def increment_scenario_number_tries(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Use ``increment_scenario_number_tries_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.increment_scenario_number_tries",
+            new_item="MemoryInterface.increment_scenario_number_tries_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_increment_scenario_number_tries(
+            scenario_result_id=scenario_result_id,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.increment_scenario_number_tries)
+    async def increment_scenario_number_tries_async(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Atomically increment and return the number_tries counter for a scenario result.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        return await self._run_database_operation_async(
+            self._execute_increment_scenario_number_tries,
+            scenario_result_id=scenario_result_id,
+        )
+
     def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """
         Use ``get_scenario_result_header_async``.
@@ -10489,8 +11898,10 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
         Use ``get_scenario_run_history_page_async``.
@@ -10510,8 +11921,10 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
+            sort_by=sort_by,
         )
 
     @legacy_sync_override(lambda: MemoryInterface.get_scenario_run_history_page)
@@ -10522,8 +11935,10 @@ class MemoryInterface(abc.ABC):
         statuses: Sequence[str] | None = None,
         labels: Mapping[str, str | Sequence[str]] | None = None,
         operation_ids: Sequence[uuid.UUID] | None = None,
+        reference_id: uuid.UUID | None = None,
         cursor: ScenarioHistoryKeysetCursor | None = None,
         limit: int = 100,
+        sort_by: Literal["created_at", "activity"] = "created_at",
     ) -> tuple[list[ScenarioHistoryRunRecord], dict[str, ScenarioHistoryAggregate], bool]:
         """
         Return one descending scenario-history page and its database-side attempt metrics.
@@ -10539,7 +11954,7 @@ class MemoryInterface(abc.ABC):
                 another page exists.
 
         Raises:
-            ValueError: If the limit, cursor ID, or label keys are invalid.
+            ValueError: If the limit, cursor ID, sort mode, or label keys are invalid.
         """
         return await self._run_database_operation_async(
             self._execute_get_scenario_run_history_page,
@@ -10547,8 +11962,10 @@ class MemoryInterface(abc.ABC):
             statuses=statuses,
             labels=labels,
             operation_ids=operation_ids,
+            reference_id=reference_id,
             cursor=cursor,
             limit=limit,
+            sort_by=sort_by,
         )
 
     def get_scenario_history_aggregates(
@@ -10662,6 +12079,119 @@ class MemoryInterface(abc.ABC):
         return await self._run_database_operation_async(
             self._execute_get_scenario_attack_result_deltas,
             scenario_result_id=scenario_result_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    async def get_scenario_root_deltas_async(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> tuple[list[ScenarioAttackResultDelta], bool]:
+        """
+        Page true run-scoped roots without hydrating progress or discovering ancestors in Python.
+
+        Returns:
+            tuple[list[ScenarioAttackResultDelta], bool]: Root deltas and whether another page exists.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_root_deltas,
+            scenario_result_id=scenario_result_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    async def get_scenario_recount_summaries_async(
+        self,
+        *,
+        scenario_result_id: str,
+        cursor: AttackResultKeysetCursor | None = None,
+        limit: int = 500,
+    ) -> tuple[list[ScenarioAttemptSeedSummary], bool]:
+        """
+        Return bounded scenario attempt seed summaries in ascending keyset order for recount.
+
+        This projection selects only the minimal scalar fields needed for execution-unit
+        matching and recount metrics. Never loads scores, prompt entries, retry events, or
+        large conversation payloads.
+
+        Returns:
+            tuple[list[ScenarioAttemptSeedSummary], bool]: The page and whether more rows exist.
+
+        Raises:
+            ValueError: If the limit is invalid.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_recount_summaries,
+            scenario_result_id=scenario_result_id,
+            cursor=cursor,
+            limit=limit,
+        )
+
+    async def get_scenario_attack_result_deltas_by_ids_async(
+        self,
+        *,
+        scenario_result_id: str,
+        attack_result_ids: Sequence[str],
+    ) -> list[ScenarioAttackResultDelta]:
+        """
+        Return lightweight scenario-linked result deltas for specific attack results in a single query.
+
+        Ensures child results belonging to other scenarios or non-existent IDs are isolated safely.
+
+        Args:
+            scenario_result_id: The ID of the scenario run.
+            attack_result_ids: Sequence of attack result IDs to retrieve.
+
+        Returns:
+            list[ScenarioAttackResultDelta]: The matched deltas.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_scenario_attack_result_deltas_by_ids,
+            scenario_result_id=scenario_result_id,
+            attack_result_ids=attack_result_ids,
+        )
+
+    async def get_attack_conversation_page_async(
+        self,
+        *,
+        attack_result_id: str,
+        offset: int = 0,
+        limit: int = 50,
+        conversation_id: str | None = None,
+    ) -> AttackConversationPage | None:
+        """
+        Read one bounded page of stored main and pruned conversation references.
+
+        Returns:
+            AttackConversationPage | None: Saved references and ordering revision, or an absent attack.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_attack_conversation_page,
+            attack_result_id=attack_result_id,
+            offset=offset,
+            limit=limit,
+            conversation_id=conversation_id,
+        )
+
+    async def get_conversation_message_page_async(
+        self,
+        *,
+        conversation_id: str,
+        cursor: MessagePieceKeysetCursor | None = None,
+        limit: int = 100,
+    ) -> ConversationMessagePage:
+        """
+        Read canonical saved messages with continuation through every message piece.
+
+        Returns:
+            ConversationMessagePage: One bounded piece page grouped into canonical messages.
+        """
+        return await self._run_database_operation_async(
+            self._execute_get_conversation_message_page,
+            conversation_id=conversation_id,
             cursor=cursor,
             limit=limit,
         )

@@ -201,8 +201,8 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         """
         Build metadata for an initializer class.
 
-        Instantiates the initializer with no arguments and reads its
-        ``required_env_vars`` / ``supported_parameters`` off the instance.
+        Reads class-level parameter declarations and instantiates the initializer
+        with no arguments for its ``required_env_vars``.
 
         Args:
             name: The registry name of the initializer.
@@ -221,7 +221,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
                 class_description=description,
                 registry_name=name,
                 required_env_vars=tuple(instance.required_env_vars),
-                supported_parameters=tuple(instance.supported_parameters),
+                supported_parameters=tuple(cls.supported_parameters()),
             )
         except Exception as e:
             logger.warning(f"Failed to get metadata for {name}: {e}")
@@ -248,7 +248,7 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             initializer_params (dict[str, Any] | None): Declared parameters to set
                 before initialization. Coerced to ``self.params`` via
                 ``set_params_from_args`` and validated against
-                ``supported_parameters``. Defaults to no parameters.
+                ``supported_parameters()``. Omitted inputs use declared defaults.
 
         Returns:
             PyRITInitializer: The configured initializer, ready for ``initialize_async``.
@@ -257,9 +257,8 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
             KeyError: If the name is not registered.
             ValueError: If the configured parameters are invalid.
         """
-        instance = self._create_and_configure(name, params=initializer_params or None)
-        if initializer_params:
-            instance.validate_params()
+        instance = self._create_and_configure(name, params=initializer_params or {})
+        instance.validate_params()
         return instance
 
     @staticmethod
@@ -286,7 +285,10 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
 
     @staticmethod
     def _module_defined_initializers(
-        *, module: ModuleType, base_class: type[PyRITInitializer]
+        *,
+        module: ModuleType,
+        base_class: type[PyRITInitializer],
+        strict: bool = False,
     ) -> list[type[PyRITInitializer]]:
         """
         Find concrete ``PyRITInitializer`` subclasses defined in *module*.
@@ -297,21 +299,39 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
         Args:
             module: The imported module to scan.
             base_class: The ``PyRITInitializer`` base class.
+            strict: Raise if an explicitly declared export cannot be loaded.
 
         Returns:
             list[type]: Concrete initializer classes defined in the module.
         """
-        return [
-            attr
-            for attr_name in dir(module)
+        static_members = dict(inspect.getmembers_static(module))
+        member_names = set(static_members)
+        declared_exports = vars(module).get("__all__", ())
+        if isinstance(declared_exports, (list, tuple)):
+            member_names.update(name for name in declared_exports if isinstance(name, str))
+
+        initializers: list[type[PyRITInitializer]] = []
+        for attr_name in sorted(member_names):
+            if attr_name in static_members:
+                attr = static_members[attr_name]
+            else:
+                try:
+                    attr = getattr(module, attr_name)
+                except Exception as error:
+                    if strict:
+                        raise
+                    logger.warning(f"Failed to load declared export '{attr_name}' from {module.__name__}: {error}")
+                    continue
             if (
-                inspect.isclass(attr := getattr(module, attr_name))
+                inspect.isclass(attr)
                 and issubclass(attr, base_class)
                 and attr is not base_class
                 and not inspect.isabstract(attr)
                 and attr.__module__ == module.__name__
-            )
-        ]
+            ):
+                initializers.append(attr)
+
+        return initializers
 
     def create_from_script_paths(
         self, *, script_paths: Sequence[str | Path], strict: bool = False
@@ -354,7 +374,11 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
                     file_path=script_path, module_name=f"init_script_{script_path.stem}"
                 )
                 file_instances: list[PyRITInitializer] = []
-                for init_cls in self._module_defined_initializers(module=module, base_class=PyRITInitializer):
+                for init_cls in self._module_defined_initializers(
+                    module=module,
+                    base_class=PyRITInitializer,
+                    strict=strict,
+                ):
                     try:
                         file_instances.append(init_cls())
                         logger.debug(f"Found and instantiated {init_cls.__name__} in {script_path.name}")
@@ -501,7 +525,11 @@ class InitializerRegistry(ParamBagRegistry["PyRITInitializer", InitializerMetada
                 raise ValueError(f"Failed to write initializer script: {error}") from error
             try:
                 module = self._load_module_from_path(file_path=script_path, module_name=f"custom_initializer.{name}")
-                discovered_classes = self._module_defined_initializers(module=module, base_class=PyRITInitializer)
+                discovered_classes = self._module_defined_initializers(
+                    module=module,
+                    base_class=PyRITInitializer,
+                    strict=True,
+                )
             except Exception as error:
                 raise ValueError(f"Failed to load initializer script '{name}': {error}") from error
 

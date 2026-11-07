@@ -364,9 +364,24 @@ def test_azure_storage_io_parse_blob_url_without_netloc(azure_blob_storage_io):
         azure_blob_storage_io.parse_blob_url("https:///container/dir1/blob_name.txt")
 
 
+def test_azure_storage_io_parse_blob_url_without_container_path(azure_blob_storage_io):
+    with pytest.raises(ValueError, match="Invalid blob URL"):
+        azure_blob_storage_io.parse_blob_url("https://example.blob.core.windows.net")
+
+
+def test_azure_storage_io_parse_blob_url_with_empty_container_name(azure_blob_storage_io):
+    with pytest.raises(ValueError, match="Invalid blob URL"):
+        azure_blob_storage_io.parse_blob_url("https://example.blob.core.windows.net/")
+
+
 def test_resolve_blob_name_with_full_url(azure_blob_storage_io):
     result = azure_blob_storage_io._resolve_blob_name("https://account.blob.core.windows.net/container/dir1/file.txt")
     assert result == "dir1/file.txt"
+
+
+def test_resolve_blob_name_without_container_falls_back_to_path(azure_blob_storage_io):
+    file_path = "https://account.blob.core.windows.net"
+    assert azure_blob_storage_io._resolve_blob_name(file_path) == file_path
 
 
 def test_resolve_blob_name_with_relative_path(azure_blob_storage_io):

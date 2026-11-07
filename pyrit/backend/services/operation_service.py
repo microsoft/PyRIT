@@ -14,11 +14,23 @@ from pyrit.backend.models.operations import (
     FindingEvidenceListResponse,
     FindingListItem,
     FindingListResponse,
+    OperationDetail,
     OperationListItem,
     OperationUpdateRequest,
 )
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackResult, Finding, FindingCreate, FindingEvidence, Operation, OperationCreate
+from pyrit.models import (
+    AttackResult,
+    AttackResultSelection,
+    Finding,
+    FindingCreate,
+    FindingEvidence,
+    Operation,
+    OperationCreate,
+)
+
+# Keeps every ID list a batch reads within SQL Server's 2100-parameter limit.
+_EVIDENCE_BATCH_SIZE = 500
 
 
 class OperationNotFoundError(LookupError):
@@ -96,20 +108,48 @@ class OperationService:
         except LookupError as exc:
             raise OperationNotFoundError(f"Operation '{operation_id}' not found.") from exc
 
+    async def get_detail_async(self, operation_id: UUID) -> OperationDetail:
+        """
+        Read one operation with what refers to it by ID.
+
+        Returns:
+            OperationDetail: The operation and its usage.
+        """
+        operation = await self.get_async(operation_id)
+        usage = await CentralMemory.get_memory_instance().get_operation_usage_async(operation_id=operation_id)
+        return OperationDetail(**operation.model_dump(), usage=usage)
+
     async def update_async(self, *, operation_id: UUID, request: OperationUpdateRequest) -> Operation:
         """
-        Replace an operation's description.
+        Rename an operation or replace its description.
 
         Returns:
             Operation: The updated operation.
 
         Raises:
             OperationNotFoundError: If no operation has this ID.
+            DuplicateOperationError: If another operation already has the normalized name.
         """
         try:
-            return await CentralMemory.get_memory_instance().update_operation_async(
-                operation_id=operation_id, description=request.description
+            saved = await CentralMemory.get_memory_instance().update_operation_async(
+                operation_id=operation_id, name=request.name, description=request.description
             )
+        except LookupError as exc:
+            raise OperationNotFoundError(f"Operation '{operation_id}' not found.") from exc
+        if saved.id != operation_id:
+            raise DuplicateOperationError(saved)
+        return saved
+
+    async def delete_async(self, operation_id: UUID) -> None:
+        """
+        Permanently remove an operation that no findings, attacks, or scenario runs refer to by ID.
+
+        Raises:
+            OperationNotFoundError: If no operation has this ID.
+            OperationInUseError: If findings, attacks, or scenario runs refer to the operation by ID.
+        """
+        try:
+            await CentralMemory.get_memory_instance().delete_operation_async(operation_id=operation_id)
         except LookupError as exc:
             raise OperationNotFoundError(f"Operation '{operation_id}' not found.") from exc
 
@@ -131,7 +171,10 @@ class OperationService:
         )
         evidence = await self._new_evidence_async(finding_id=finding.id, request=request)
         memory = CentralMemory.get_memory_instance()
-        saved = await memory.add_finding_async(finding=finding, evidence=evidence)
+        try:
+            saved = await memory.add_finding_async(finding=finding, evidence=evidence)
+        except LookupError as exc:
+            raise OperationNotFoundError(f"Operation '{operation_id}' not found.") from exc
         if saved.model_dump(exclude={"created_at"}) != finding.model_dump(exclude={"created_at"}) or (
             evidence is not None
             and await memory.get_finding_evidence_by_source_async(
@@ -200,14 +243,64 @@ class OperationService:
         """
         await self.get_async(operation_id)
         await self._require_finding_async(operation_id=operation_id, finding_id=finding_id)
-        memory = CentralMemory.get_memory_instance()
-        evidence = await memory.get_finding_evidence_async(finding_id=finding_id, limit=limit + 1, offset=offset)
+        evidence = await CentralMemory.get_memory_instance().get_finding_evidence_async(
+            finding_id=finding_id, limit=limit + 1, offset=offset
+        )
         has_more = len(evidence) > limit
-        page = evidence[:limit]
-        attacks = (
-            await memory.get_attack_results_async(attack_result_ids=list({str(item.attack_result_id) for item in page}))
-            if page
-            else []
+        return FindingEvidenceListResponse(
+            items=await self._resolve_evidence_async(evidence=evidence[:limit]),
+            has_more=has_more,
+            next_offset=offset + limit if has_more else None,
+        )
+
+    async def get_findings_with_evidence_async(
+        self, *, operation_id: UUID, finding_ids: Sequence[UUID]
+    ) -> list[tuple[Finding, list[FindingEvidenceItem]]]:
+        """
+        Read selected findings of an operation, each with all its evidence as the evidence page shows it.
+
+        Returns:
+            list[tuple[Finding, list[FindingEvidenceItem]]]: Each finding with its evidence, newest evidence first,
+                ordered as ``list_findings_async`` orders findings.
+
+        Raises:
+            OperationNotFoundError: If no operation has this ID.
+            FindingNotFoundError: If a requested finding is not in the operation.
+        """
+        await self.get_async(operation_id)
+        memory = CentralMemory.get_memory_instance()
+        findings = await memory.get_findings_by_ids_async(operation_id=operation_id, finding_ids=finding_ids)
+        found = {finding.id for finding in findings}
+        missing = next((finding_id for finding_id in finding_ids if finding_id not in found), None)
+        if missing is not None:
+            raise FindingNotFoundError(f"Finding '{missing}' not found in operation '{operation_id}'.")
+        evidence = await memory.get_finding_evidence_for_findings_async(
+            finding_ids=[finding.id for finding in findings]
+        )
+        resolved = await self._resolve_evidence_async(
+            evidence=[item for finding in findings for item in evidence.get(finding.id, [])]
+        )
+        by_id = {item.item.id: item for item in resolved}
+        return [(finding, [by_id[item.id] for item in evidence.get(finding.id, [])]) for finding in findings]
+
+    async def _resolve_evidence_async(self, *, evidence: Sequence[FindingEvidence]) -> list[FindingEvidenceItem]:
+        """
+        Show each evidence link with its attack's current outcome, score, and conversation.
+
+        Returns:
+            list[FindingEvidenceItem]: The evidence in input order.
+        """
+        items: list[FindingEvidenceItem] = []
+        for start in range(0, len(evidence), _EVIDENCE_BATCH_SIZE):
+            batch = evidence[start : start + _EVIDENCE_BATCH_SIZE]
+            items.extend(await self._resolve_evidence_batch_async(evidence=batch))
+        return items
+
+    async def _resolve_evidence_batch_async(self, *, evidence: Sequence[FindingEvidence]) -> list[FindingEvidenceItem]:
+        memory = CentralMemory.get_memory_instance()
+        attacks = await memory.get_attack_results_async(
+            attack_result_ids=list({str(item.attack_result_id) for item in evidence}),
+            result_selection=AttackResultSelection.ALL_RESULTS,
         )
         owners = {attack.attack_result_id: attack for attack in attacks}
         linked_ids = {attack.operation_id for attack in attacks if attack.operation_id is not None}
@@ -219,7 +312,7 @@ class OperationService:
         conversations = await self._score_conversations_async(attacks=attacks)
         stats = await memory.get_conversation_stats_async(conversation_ids=list(set(conversations.values())))
         items = []
-        for item in page:
+        for item in evidence:
             owner = owners.get(str(item.attack_result_id))
             if owner is None:
                 items.append(
@@ -247,9 +340,7 @@ class OperationService:
                     conversation_id=conversation_id,
                 )
             )
-        return FindingEvidenceListResponse(
-            items=items, has_more=has_more, next_offset=offset + limit if has_more else None
-        )
+        return items
 
     @staticmethod
     async def _score_conversations_async(*, attacks: Sequence[AttackResult]) -> dict[str, str]:

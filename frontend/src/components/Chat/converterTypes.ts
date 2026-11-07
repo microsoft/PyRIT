@@ -26,6 +26,14 @@ export function withDraftIdentity(attachment: MessageAttachment): MessageAttachm
   return { ...attachment, draftId: attachment.draftId ?? generateClientId() }
 }
 
+export function attachmentsFromFiles(files: File[]): MessageAttachment[] {
+  return files.map((file: File): MessageAttachment => withDraftIdentity({
+    type: file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio'
+      : file.type.startsWith('video/') ? 'video' : 'file',
+    name: file.name, url: URL.createObjectURL(file), mimeType: file.type, size: file.size, file,
+  }))
+}
+
 export function buildConverterInputs(text: string, attachments: MessageAttachment[]): ConverterInputPiece[] {
   return [
     { id: 'text', pieceType: 'text', name: 'Text', dataType: 'text', value: text },
@@ -69,6 +77,7 @@ export function applyConvertedValues(
       converted_value: conversion.convertedValue,
       converted_value_data_type: conversion.convertedDataType,
       applied_converter_ids: conversion.converterInstanceIds,
+      ...(conversion.converterProvenance ? { applied_converter_provenance: conversion.converterProvenance } : {}),
     } : piece
   })
 }
@@ -85,6 +94,9 @@ export function buildRequestConverterConfigurations(
     const input = inputs.find((candidate: ConverterInputPiece) => candidate.id === pieceId)
     if (!input) throw new Error('Message piece has no matching converter input.')
     const stages = pipelines[input.pieceType] ?? []
+    if (stages.some((stage: ConverterPipelineStage) => stage.temporary)) {
+      throw new Error('Apply temporary converter settings with Add converted value before repeating a message.')
+    }
     return stages.length ? [{
       converter_ids: stages.map((stage: ConverterPipelineStage) => stage.converterId),
       indexes_to_apply: [index],

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import random
+import re
 
 import pytest
 
@@ -15,6 +16,7 @@ from pyrit.converter.text_selection_strategy import (
     ProportionSelectionStrategy,
     RangeSelectionStrategy,
     RegexSelectionStrategy,
+    TextSelectionStrategy,
     WordIndexSelectionStrategy,
     WordKeywordSelectionStrategy,
     WordPositionSelectionStrategy,
@@ -49,9 +51,13 @@ class TestIndexSelectionStrategy:
         result = strategy.select_range(text="Hello World")
         assert result == (0, 5)
 
-    def test_identifier_params_default_to_empty(self):
+    def test_identifier_params_include_indices(self):
         strategy = IndexSelectionStrategy(start=0, end=5)
-        assert strategy.get_identifier_params() == {}
+        assert strategy.get_identifier_params() == {"start": 0, "end": 5}
+
+    def test_identifier_params_omit_open_end(self):
+        strategy = IndexSelectionStrategy(start=2)
+        assert strategy.get_identifier_params() == {"start": 2}
 
     def test_select_range_start_after_end(self):
         strategy = IndexSelectionStrategy(start=10, end=5)
@@ -112,6 +118,20 @@ class TestKeywordSelectionStrategy:
         result = strategy.select_range(text="The secret is here")
         assert result == (4, 10)
 
+    def test_select_range_case_insensitive_matching_keeps_original_indices(self):
+        """A character whose lowercase form expands (dotted capital I) must not
+        shift the selected range: the index has to come from the original text."""
+        strategy = KeywordSelectionStrategy(keyword="secret", case_sensitive=False)
+        text = "İsecret"
+        start, end = strategy.select_range(text=text)
+        assert text[start:end] == "secret"
+
+        strategy_ctx = KeywordSelectionStrategy(
+            keyword="secret", case_sensitive=False, context_before=2, context_after=1
+        )
+        start, end = strategy_ctx.select_range(text=text)
+        assert text[start:end] == "İsecret"
+
     def test_select_range_case_sensitive_no_match(self):
         strategy = KeywordSelectionStrategy(keyword="SECRET", case_sensitive=True)
         result = strategy.select_range(text="The secret is here")
@@ -126,6 +146,21 @@ class TestKeywordSelectionStrategy:
         strategy = KeywordSelectionStrategy(keyword="secret", context_before=100, context_after=100)
         result = strategy.select_range(text="The secret is here")
         assert result == (0, 18)
+
+    @pytest.mark.parametrize("name", ["context_before", "context_after"])
+    @pytest.mark.parametrize("value", [-1, -10, 1.5, True, "3", None])
+    def test_init_rejects_invalid_context(self, name, value):
+        with pytest.raises(ValueError, match=f"{name} must be a non-negative integer"):
+            KeywordSelectionStrategy(keyword="secret", **{name: value})
+
+    @pytest.mark.parametrize("keyword", ["", None, 5])
+    def test_init_rejects_invalid_keyword(self, keyword):
+        with pytest.raises(ValueError, match="keyword must be a non-empty string"):
+            KeywordSelectionStrategy(keyword=keyword)
+
+    def test_init_accepts_zero_context(self):
+        strategy = KeywordSelectionStrategy(keyword="secret", context_before=0, context_after=0)
+        assert strategy.select_range(text="The secret is here") == (4, 10)
 
 
 class TestPositionSelectionStrategy:
@@ -648,3 +683,37 @@ class TestAllWordsSelectionStrategy:
         strategy = AllWordsSelectionStrategy()
         result = strategy.select_words(words=[])
         assert result == []
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (IndexSelectionStrategy(start=0, end=5), IndexSelectionStrategy(start=6, end=11)),
+        (RegexSelectionStrategy(pattern="Hello"), RegexSelectionStrategy(pattern="World")),
+        (KeywordSelectionStrategy(keyword="Hello"), KeywordSelectionStrategy(keyword="Hello", context_after=6)),
+        (
+            PositionSelectionStrategy(start_proportion=0.0, end_proportion=0.5),
+            PositionSelectionStrategy(start_proportion=0.5, end_proportion=1.0),
+        ),
+        (ProportionSelectionStrategy(proportion=0.5), ProportionSelectionStrategy(proportion=0.5, anchor="end")),
+        (
+            ProportionSelectionStrategy(proportion=0.5, anchor="random", seed=1),
+            ProportionSelectionStrategy(proportion=0.5, anchor="random", seed=4),
+        ),
+        (
+            RangeSelectionStrategy(start_proportion=0.0, end_proportion=0.5),
+            RangeSelectionStrategy(start_proportion=0.5, end_proportion=1.0),
+        ),
+        (RegexSelectionStrategy(pattern="world"), RegexSelectionStrategy(pattern=re.compile("world", re.IGNORECASE))),
+        (
+            KeywordSelectionStrategy(keyword="world"),
+            KeywordSelectionStrategy(keyword="world", case_sensitive=False),
+        ),
+    ],
+    ids=["index", "regex", "keyword", "position", "proportion", "seed", "range", "regex-flags", "case-sensitivity"],
+)
+def test_char_level_identifier_params_follow_selected_range(
+    first: TextSelectionStrategy, second: TextSelectionStrategy
+) -> None:
+    assert first.select_range(text="Hello World") != second.select_range(text="Hello World")
+    assert first.get_identifier_params() != second.get_identifier_params()

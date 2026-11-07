@@ -20,7 +20,7 @@ import shlex
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, assert_never
 
 from pyrit.cli import _banner as banner
 from pyrit.cli._auth import AUTH_MODES, AuthMode
@@ -454,7 +454,7 @@ class PyRITShell(cmd.Cmd):
             --datasets <name[:N|:all]> ...  Select sources and optional caps
             --max-per-dataset <N|all>       Default per-source cap
             --max-total <N|all>             Combined attack-group cap
-            --dataset-fetch <policy>       never or if_missing
+            --dataset-fetch <policy>       never, if_missing, or always (replace stored data)
             --dataset-names <name> ...      Deprecated source selection
             --max-dataset-size <N>          Deprecated total cap
             --<scenario-flag> <value>       Scenario-declared parameters (see list-scenarios)
@@ -789,7 +789,7 @@ class PyRITShell(cmd.Cmd):
                         limit=limit,
                     )
                 )
-            else:
+            elif view is ScenarioResultView.CONVERSATIONS:
                 self._run_async(
                     print_conversations_async(
                         result=result,
@@ -801,6 +801,8 @@ class PyRITShell(cmd.Cmd):
                         limit=limit,
                     )
                 )
+            else:
+                assert_never(view)
         except Exception as exc:
             _print_shell_exception(exc=exc)
             return

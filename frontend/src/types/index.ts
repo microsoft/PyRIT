@@ -63,17 +63,24 @@ export interface ConverterInputPiece {
 }
 
 export interface PieceConversion {
+  manuallyEdited?: boolean
   pieceId: string
   pieceType: string
   converterInstanceIds: string[]
+  converterProvenance?: Array<string | null>
   convertedValue: string
   originalValue: string
   convertedDataType: string
 }
 
+/** Only touched pieces are present; null explicitly clears a stale conversion. */
+export type PieceConversionUpdates = Record<string, PieceConversion | null>
+
 export interface ConverterPipelineStage {
   readonly id: string
   readonly converterId: string
+  readonly temporary?: SourceInstanceSpec
+  readonly identifier?: ConverterIdentifier
 }
 
 export interface ConverterStageResult {
@@ -82,7 +89,121 @@ export interface ConverterStageResult {
   value: string
 }
 
+export interface ChatConverterSnapshot {
+  generation: string
+  workingInputs: Record<string, string>
+  pipelines: Record<string, ConverterPipelineStage[]>
+  stageResults: Record<string, ConverterStageResult[]>
+  errors: Record<string, string>
+  applied: Record<string, PieceConversion>
+}
+
+export interface PendingComposerDraft {
+  text: string
+  attachments?: MessageAttachment[]
+  textMetadata?: Record<string, unknown>
+}
+
+export interface ConversationEditState {
+  messages: ConversationDraftMessage[]
+  objective?: string
+  initialObjective?: string
+  sourceConversationId?: string | null
+  sourceAttackId?: string | null
+  sourcePieceIds?: string[]
+  temperature?: string
+  target?: TargetReference | null
+  pendingPromptId?: string
+  unsavedImport?: boolean
+}
+
+export interface ChatDraftContent {
+  text: string
+  attachments: MessageAttachment[]
+  systemPrompt?: string
+  objective?: string
+  temperature?: string
+  chatScorer?: RegisteredComponentReference | null
+  target?: TargetReference | null
+  converters?: ChatConverterSnapshot
+  textMetadata?: Record<string, unknown>
+  conversation?: ConversationEditState
+}
+
+export interface ChatDraftContextState {
+  originatingAttackId: string | null
+  originatingConversationId: string | null
+  originatingPath: string
+  originatingState?: unknown
+  draft: ChatDraftContent
+  savedAt: number
+  sequence: number
+}
+
+export type ImportDestinationType = 'new_attack' | 'current_conversation' | 'new_conversation' | 'any'
+
+export interface PendingImportConversation {
+  messages: ConversationDraftMessage[]
+  objective?: string
+  systemPrompt?: string
+  composerDraft?: PendingComposerDraft
+}
+
+export interface PendingImportPayload {
+  id: string
+  sequence: number
+  destinationType: ImportDestinationType
+  targetAttackId?: string | null
+  targetConversationId?: string | null
+  content: {
+    text: string
+    attachments?: MessageAttachment[]
+    textMetadata?: Record<string, unknown>
+  }
+  conversation?: PendingImportConversation
+  objective?: string
+  setup?: ChatDraftContent
+  replaceDirty?: boolean
+  focus?: boolean
+  stagedAt: number
+}
+
+export interface ChatDraftHandoffContextValue {
+  preservedDraft: ChatDraftContextState | null
+  pendingImport: PendingImportPayload | null
+  activeSequence: number
+  preserveDraft: (
+    state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>,
+    expectedSequence?: number,
+  ) => void
+  clearPreservedDraft: (expectedSequence?: number) => void
+  /** Pass the sequence captured before preparing an import to reject stale async results. */
+  stagePendingImport: (
+    payload: Omit<PendingImportPayload, 'id' | 'sequence' | 'stagedAt'>,
+    expectedSequence?: number,
+  ) => PendingImportPayload | null
+  consumePendingImport: (
+    id?: string,
+    currentAttackId?: string | null,
+    currentConversationId?: string | null,
+  ) => PendingImportPayload | null
+  dismissPendingImport: (id?: string) => void
+  consumePreservedDraft: (
+    currentAttackId: string | null,
+    currentConversationId?: string | null,
+    expectedSequence?: number,
+  ) => ChatDraftContent | null
+  isDraftDirty: (draft?: Partial<ChatDraftContent> | null) => boolean
+}
+
+export interface UndoLastSendAction {
+  readonly disabledReason?: string
+  readonly isUndoing: boolean
+  readonly onUndo: () => void
+}
+
 export interface ChatConverterController {
+  readonly repeatDisabledReason?: string
   readonly editRevision: number
   inputs: ConverterInputPiece[]
   workingInputs: Record<string, string>
@@ -94,11 +215,15 @@ export interface ChatConverterController {
   isConverting: boolean
   addConverter: (pieceType: string, converterId: string) => void
   setPipeline: (pieceType: string, update: (stages: ConverterPipelineStage[]) => ConverterPipelineStage[]) => void
+  replaceTemporaryConverter: (
+    pieceType: string, stageId: string, source: SourceInstanceSpec, converter: ConverterInstance,
+  ) => void
   retainConverters: (availableIds: Set<string>) => void
-  convert: (pieceType: string) => Promise<void>
-  convertRemaining: (pieceId: string, stageId: string) => Promise<void>
-  editInput: (pieceId: string, value: string) => void
-  editStageOutput: (pieceId: string, stageId: string, value: string) => void
+  discardTemporarySettings?: () => void
+  convert: (pieceType: string) => Promise<PieceConversionUpdates | void>
+  convertRemaining: (pieceId: string, stageId: string) => Promise<PieceConversionUpdates | void>
+  editInput: (pieceId: string, value: string) => PieceConversionUpdates | void
+  editStageOutput: (pieceId: string, stageId: string, value: string) => PieceConversionUpdates | void
   apply: () => void
   clear: (pieceId: string) => void
   clearAll: () => void
@@ -107,6 +232,8 @@ export interface ChatConverterController {
     text: string, attachments: MessageAttachment[], conversions: Record<string, PieceConversion>,
     pipelines?: Record<string, ConverterPipelineStage[]>,
   ) => void
+  snapshot: () => ChatConverterSnapshot
+  restoreSnapshot: (snapshot: ChatConverterSnapshot, text: string, attachments: MessageAttachment[]) => void
 }
 
 export interface MessageTextDisplayPiece {
@@ -134,6 +261,9 @@ export interface MessageMediaDisplayPiece {
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
 export interface Message {
+  /** Saved sequence used to keep a split turn stable across piece pages. */
+  sequence?: number
+  isPartial?: boolean
   role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system' | 'developer'
   content: string
   timestamp: string
@@ -185,6 +315,11 @@ export interface PaginationInfo {
   has_more: boolean
   next_cursor?: string | null
   prev_cursor?: string | null
+}
+
+export interface ConversationPageParams {
+  limit?: number
+  cursor?: string
 }
 
 export interface ConfigurationFileContent {
@@ -239,13 +374,50 @@ export interface TargetPreferences {
 export type OperationSelection = { readonly id: string } | { readonly name: string }
 
 export interface UserPreferences {
-  readonly targets: TargetPreferences
+  readonly targets: Pick<TargetPreferences, 'adversarial'>
+  readonly lastUsedTargets?: TargetPreferences
+  readonly lastUsedChatScorer?: RegisteredComponentReference | null
   readonly hiddenTargetRegistryNames: string[]
   readonly labels: Record<string, string | null>
   /** Omitted to use the server default; null when the user cleared the selection. */
   readonly operation?: OperationSelection | null
   readonly theme: ThemeMode
   readonly chatMarkdown: boolean
+  readonly chatScorer?: RegisteredComponentReference | null
+  readonly sidebarExpanded?: boolean
+}
+
+export interface RegisteredComponentReference {
+  readonly registry_name: string
+  readonly identifier_hash: string
+}
+
+export interface ScorerInstance {
+  scorer_registry_name: string
+  identifier: ComponentIdentifier & { scorer_type?: string | null }
+  description?: string | null
+  display_type?: string | null
+  scorable_types?: string[]
+  condition_types?: string[]
+  evaluation_identifier?: ComponentIdentifier | null
+  metrics?: ScorerEvaluationMetrics | null
+  chat_scoring_disabled_reason?: string | null
+}
+
+export type ScorerEvaluationMetrics = Record<string, number | string | null | undefined>
+
+export interface ScoringFailure {
+  scorer: RegisteredComponentReference
+  objective: string
+  response_id: string
+  conversation_id: string
+  error: string
+}
+
+export interface ManualContinuation {
+  source_attack_result_id: string
+  source_conversation_id: string
+  source_response_id?: string | null
 }
 
 export interface TargetCapabilities {
@@ -278,9 +450,15 @@ export interface TargetIdentifier {
 
 export interface TargetInstance {
   target_registry_name: string
+  reconstructable?: boolean
+  reconstruction_error?: string | null
+  supports_temperature_override?: boolean
+  binding?: TargetBinding
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
+  /** Effective replay support, including configured adapters and provider restoration. */
+  supports_history_replay?: boolean
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
   target_specific_params?: Record<string, unknown> | null
   /** Inner targets for composite targets like RoundRobinTarget. */
@@ -295,7 +473,7 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
-  auth_mode?: 'api_key' | 'identity'
+  auth_mode?: TargetAuthMode
 }
 
 // --- Initializers ---
@@ -355,7 +533,10 @@ export interface ConverterIdentifier {
 }
 
 export interface ConverterInstance {
+  parameters?: Parameter[]
   converter_id: string
+  reconstructable?: boolean
+  reconstruction_error?: string | null
   identifier: ConverterIdentifier
   is_llm_based?: boolean
   description?: string | null
@@ -365,10 +546,41 @@ export interface ConverterListResponse {
   items: ConverterInstance[]
 }
 
-export interface CreateConverterRequest {
+export type CreateConverterRequest = {
   name: string
   type: string
+} & ({
   params?: Record<string, unknown>
+  source?: never
+} | {
+  source: SourceInstanceSpec
+  params?: never
+})
+
+export interface SourceInstanceSpec {
+  source_name: string
+  source_hash: string
+  params: Record<string, unknown>
+  effective_hash?: string
+}
+
+export type ConverterSelection = string | SourceInstanceSpec
+
+export interface TargetBinding {
+  version: 1
+  source_name: string
+  source_hash: string
+  temperature: number
+  effective_hash: string
+}
+
+export interface UnregisteredTarget {
+  identifier: TargetIdentifier
+  capabilities: TargetCapabilities
+}
+
+export interface UnregisteredConverter {
+  identifier: ConverterIdentifier
 }
 
 export interface TechniqueInstance {
@@ -378,6 +590,7 @@ export interface TechniqueInstance {
   tags: string[]
   uses_adversarial: boolean
   uses_default_adversarial_target: boolean
+  identifier: ComponentIdentifier
   /** Supplied factory creation inputs, with live component credentials omitted. */
   creation_statement: string
 }
@@ -411,6 +624,61 @@ export interface CreateTechniqueRequest {
   adversarial_system_prompt?: string
   adversarial_seed_prompt?: string
   adversarial_prompt_template?: string
+}
+
+export interface SimulationSettings {
+  num_turns?: number | null
+  adversarial_chat_system_prompt?: string | null
+  simulated_target_system_prompt?: string | null
+  next_message_system_prompt?: string | null
+  final_user_message?: string | null
+}
+
+export type SimulationChanges = Partial<SimulationSettings>
+
+interface TechniqueSettingFields {
+  description?: string | null
+  params?: Record<string, unknown>
+  request_converters?: ConverterSelection[] | null
+  response_converters?: ConverterSelection[] | null
+  adversarial_chat?: string | null
+  adversarial_system_prompt?: string | null
+  adversarial_seed_prompt?: string | null
+  adversarial_prompt_template?: string | null
+}
+
+export interface TechniqueSettings extends TechniqueSettingFields {
+  simulation?: SimulationSettings | null
+}
+
+export interface TechniqueChanges extends TechniqueSettingFields {
+  simulation?: SimulationChanges | null
+}
+
+export interface TechniqueOverride {
+  source_name: string
+  source_identity: string
+  changes: TechniqueChanges
+  dependencies: Record<string, string>
+  effective_identity?: string | null
+}
+
+export interface TechniqueConfiguration {
+  source_name: string
+  source_identity: string
+  attack_type: string
+  settings: TechniqueSettings
+  parameters: Parameter[]
+  editable_fields: string[]
+  supplied_parameters: string[]
+  read_only: Record<string, string>
+  supports_prepended_conversation: boolean
+  supports_prompt?: boolean
+}
+
+export interface TechniqueEditResponse {
+  configuration: TechniqueConfiguration
+  override: TechniqueOverride
 }
 
 export interface RegistryReferenceOption {
@@ -454,6 +722,7 @@ export interface ConverterTypeListResponse {
 export interface ConverterPreviewRequest {
   original_value: string
   converter_ids: string[]
+  converter_specs?: Array<SourceInstanceSpec | null>
   original_value_data_type?: string
   start_token?: string
   end_token?: string
@@ -466,6 +735,9 @@ export interface ConverterPreviewStep {  converter_id: string
   input_data_type: string
   output_value: string
   output_data_type: string
+  source?: SourceInstanceSpec | null
+  identifier?: ConverterIdentifier | null
+  provenance?: string | null
 }
 
 export interface ConverterPreviewResponse {
@@ -476,10 +748,12 @@ export interface ConverterPreviewResponse {
   steps: ConverterPreviewStep[]
 }
 
+export type TargetAuthMode = 'api_key' | 'identity' | 'none'
+
 export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
-  supported_auth_modes: ('api_key' | 'identity')[]
+  supported_auth_modes: TargetAuthMode[]
   description?: string | null
 }
 
@@ -492,9 +766,11 @@ export interface TargetTypeListResponse {
 export interface TargetInfo {
   target_type: string
   target_registry_name?: string | null
+  identifier?: TargetIdentifier | null
   endpoint?: string | null
   model_name?: string | null
   identifier_hash: string
+  binding?: TargetBinding | null
 }
 
 export type AttackTargetResolutionStatus =
@@ -542,9 +818,13 @@ export type AttackAnalyticsDimension =
       readonly converter_direction?: 'request'
     }
 
-/** Absence keys cannot collide with literal values such as "Unknown" or "No converters". */
+/**
+ * Absence keys cannot collide with literal values such as "Unknown" or "No converters".
+ * Operation `value` keys are saved Operation IDs; `legacy_operation_name` keys are
+ * names stored without an Operation ID and apply only to the Operation dimension.
+ */
 export type AttackAnalyticsValue =
-  | { readonly kind: 'value'; readonly value: string }
+  | { readonly kind: 'value' | 'legacy_operation_name'; readonly value: string }
   | { readonly kind: 'missing' | 'no_converters'; readonly value: null }
 
 export interface AttackAnalyticsFilter {
@@ -628,6 +908,8 @@ export interface AttackAnalyticsResultRow {
   readonly outcome: AttackOutcome
   readonly updated_at: string
   readonly operation: string | null
+  /** Lowercase saved Operation ID. Null with a non-null `operation` marks legacy activity saved with only a name. */
+  readonly operation_id: string | null
   readonly operator: string | null
   readonly attack_type: string | null
   readonly target_model: string | null
@@ -702,6 +984,10 @@ export interface AttackSummary {
   outcome?: AttackOutcome | null
   automated_score?: BackendScore | null
   human_score?: BackendScore | null
+  chat_scorer?: RegisteredComponentReference | null
+  chat_scorer_inherited?: boolean
+  execution_read_only?: boolean
+  manual_continuation?: ManualContinuation | null
   last_score?: BackendScore | null
   last_response?: BackendMessagePiece | null
   last_message_preview?: string | null
@@ -722,9 +1008,28 @@ export interface AttackSummary {
   updated_at: string
 }
 
+/** Initial Chat metadata; reference membership does not depend on loading a sidebar page. */
+export interface AttackMetadata extends Pick<AttackSummary,
+  | 'attack_result_id' | 'conversation_id' | 'objective' | 'labels' | 'operator'
+  | 'target' | 'target_unbound' | 'outcome' | 'automated_score' | 'human_score'
+  | 'chat_scorer' | 'chat_scorer_inherited' | 'manual_continuation'
+> {
+  readonly execution_read_only: boolean
+  readonly last_response_message_piece_id: string | null
+  /** Number of pruned references; excludes the main conversation. */
+  readonly related_conversation_count: number
+  readonly selected_conversation_id: string
+  readonly selected_conversation_valid: boolean
+}
+
 export interface CreateAttackRequest {
   target_registry_name?: string
+  target_binding?: TargetBinding
+  /** The attack goal, independent of the ManualAttack strategy type. */
+  objective?: string | null
+  /** @deprecated Use objective. Non-null name and objective must match if both are supplied. */
   name?: string
+  chat_scorer?: RegisteredComponentReference | null
   operator?: string
   operation_id?: string
   labels?: Record<string, string>
@@ -738,6 +1043,8 @@ export interface UpdateAttackRequest {
   outcome?: 'undetermined' | 'success' | 'failure' | 'error'
   objective?: string
   expected_objective?: string
+  chat_scorer?: RegisteredComponentReference | null
+  default_chat_scorer?: RegisteredComponentReference | null
 }
 
 export type ConversationDraftRole = 'system' | 'user' | 'simulated_assistant' | 'simulated_tool' | 'developer'
@@ -750,6 +1057,7 @@ export interface ConversationDraftPiece extends MessagePieceRequest {
 }
 
 export interface ConversationSaveInput {
+  sourcePieceIds?: string[]
   messages: ConversationDraftMessage[]
   objective: string
   initialObjective: string
@@ -757,6 +1065,10 @@ export interface ConversationSaveInput {
   sourceAttackId: string | null
   sourceConversationId: string | null
   labels?: Record<string, string>
+  baselineMessages?: ConversationDraftMessage[]
+  temperature?: string
+  unsavedImport?: boolean
+  pendingPromptId?: string
 }
 
 export interface NewAttackContext {
@@ -764,6 +1076,8 @@ export interface NewAttackContext {
   ready: boolean
   labels?: Record<string, string>
   operationId?: string | null
+  chatScorer?: RegisteredComponentReference | null
+  chatScorerExplicit?: boolean
 }
 
 export interface ConvertedFileChip {
@@ -780,6 +1094,8 @@ export interface ConversationDraftMessage extends MessageRequest {
 
 export interface SaveConversationRequest {
   save_id: string
+  chat_scorer?: RegisteredComponentReference | null
+  default_chat_scorer?: RegisteredComponentReference | null
   destination: 'same_attack' | 'new_attack'
   attack_result_id?: string
   source_attack_result_id?: string
@@ -787,10 +1103,13 @@ export interface SaveConversationRequest {
   expected_objective?: string
   objective?: string
   target_registry_name?: string
+  target_binding?: TargetBinding
   operator?: string
   operation_id?: string
   labels?: Record<string, string>
   messages: MessageRequest[]
+  reuse_unsent_conversation?: boolean
+  expected_source_piece_ids?: string[]
 }
 
 export interface CreateAttackResponse {
@@ -814,6 +1133,25 @@ export interface BackendScore {
   score_category?: string[] | null
   score_rationale?: string | null
   timestamp: string
+}
+
+export interface ApplyChatScorerRequest {
+  conversation_id: string
+  response_id: string
+  scorer: RegisteredComponentReference
+  objective: string
+}
+
+export interface ApplyChatScorerResponse {
+  conversation_id: string
+  score: BackendScore
+  reused: boolean
+}
+
+/** Result of the latest Apply scorer request, shown in the scorer pane. */
+export interface ApplyScorerStatus {
+  intent: 'info' | 'error'
+  message: string
 }
 
 export type PromptResponseError = 'blocked' | 'none' | 'processing' | 'empty' | 'unknown'
@@ -849,6 +1187,9 @@ export interface DisplayScore extends BackendScore {
 
 export interface BackendMessagePiece {
   id: string
+  sequence?: number
+  role?: string
+  timestamp?: string
   original_value_data_type: string
   converted_value_data_type: string
   original_value?: string | null
@@ -880,9 +1221,16 @@ export interface TargetResponseStatus {
 }
 
 export interface ConversationMessagesResponse {
+  automated_score?: BackendScore | null
+  scoring_failure?: ScoringFailure | null
+  /** Outcome for the latest response; a human score overrides the attack. */
+  outcome?: AttackOutcome | null
+  latest_response_id?: string | null
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null
+  pagination?: PaginationInfo | null
+  partial_message_sequences?: number[]
 }
 
 export interface MessagePieceRequest {
@@ -891,6 +1239,7 @@ export interface MessagePieceRequest {
   converted_value?: string
   converted_value_data_type?: string
   applied_converter_ids?: string[]
+  applied_converter_provenance?: Array<string | null>
   mime_type?: string
   original_prompt_id?: string
   source_piece_id?: string
@@ -918,6 +1267,7 @@ export interface ConverterConfigurationRequest {
 export interface AddMessageRequest extends MessageRequest {
   send: boolean
   target_registry_name?: string
+  target_binding?: TargetBinding
   converter_ids?: string[]
   request_converter_configurations?: ConverterConfigurationRequest[]
   response_converter_configurations?: ConverterConfigurationRequest[]
@@ -956,9 +1306,12 @@ export interface MultiSendOptions {
 export interface MessageSendConversation {
   conversation_id: string
   request_turn_number: number | null
+  target_invoked?: boolean
   state: 'queued' | 'preparing' | 'sending' | 'finalizing' | 'completed' | 'failed' | 'interrupted'
   error: string | null
   failure_stage: 'preparation' | 'sending' | 'finalization' | 'interrupted' | null
+  scoring_error?: string | null
+  is_scoring?: boolean
 }
 
 export interface MessageSendStatus extends MessageSendConversation {
@@ -966,6 +1319,11 @@ export interface MessageSendStatus extends MessageSendConversation {
   attack_result_id: string
   count?: number
   conversations?: MessageSendConversation[]
+}
+
+export interface MessageSendObservation {
+  readProgress: (refresh?: boolean) => Promise<MessageSendStatus>
+  readAttack: (refresh?: boolean) => Promise<AttackSummary>
 }
 
 export interface AttackListResponse {
@@ -977,6 +1335,7 @@ export interface AttackListResponse {
 
 export interface ConversationSummary {
   conversation_id: string
+  conversation_type?: 'main' | 'pruned'
   message_count: number
   last_message_preview?: string | null
   created_at?: string | null
@@ -986,6 +1345,8 @@ export interface AttackConversationsResponse {
   attack_result_id: string
   main_conversation_id: string
   conversations: ConversationSummary[]
+  pagination?: PaginationInfo | null
+  total_count?: number | null
 }
 
 
@@ -1137,7 +1498,7 @@ export interface SeedExampleListParams {
 // --- Scenarios ---
 
 export type ScenarioDatasetLimit = number | 'all' | 'default'
-export type DatasetFetchPolicy = 'never' | 'if_missing'
+export type DatasetFetchPolicy = 'never' | 'if_missing' | 'always'
 
 export interface ScenarioDatasetSourceInput {
   name: string
@@ -1185,6 +1546,7 @@ export interface ScenarioDatasetLoadResponse {
 }
 
 export interface RegisteredScenario {
+  supports_objective_scorer?: boolean
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */
   max_concrete_techniques?: number | null
   scenario_name: string
@@ -1214,6 +1576,7 @@ export interface ScenarioTechniqueSummary {
   name: string
   description: string | null
   tags: string[]
+  identifier?: ComponentIdentifier | null
 }
 
 export interface ListRegisteredScenariosResponse {
@@ -1221,12 +1584,190 @@ export interface ListRegisteredScenariosResponse {
   pagination: PaginationInfo
 }
 
+/**
+ * A saved, portable scenario configuration.
+ *
+ * Every optional field is tri-state: absent means "use the scenario's own default",
+ * so a preset only pins what the author deliberately chose. It carries no target,
+ * Operation attribution, concurrency, retries or labels — those are decided when the
+ * preset is launched.
+ */
+export interface ScenarioPreset {
+  name: string
+  scenario_name: string
+  description?: string | null
+  /** Who created the preset. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  /**
+   * Whether the Scanner lists this preset as an entry of its own. Absent means listed.
+   * A hidden preset still runs through the suites that reference it.
+   */
+  show_in_scanner?: boolean
+  techniques?: string[] | null
+  /** Dataset sources, limits, fetch policy, and filters. Omit to use the scenario defaults. */
+  datasets?: ScenarioDatasetRequest | null
+  include_baseline?: boolean | null
+  scenario_params?: Record<string, unknown> | null
+}
+
+/** One advisory problem found checking a preset against this deployment's registry. */
+export interface PresetIssue {
+  field: string
+  message: string
+}
+
+export interface ScenarioPresetResponse {
+  preset: ScenarioPreset
+  /**
+   * Whether a stored document or registering code contributed this preset. A
+   * registered preset cannot be updated or deleted through the API.
+   */
+  origin: 'stored' | 'registered'
+  /** Opaque document version; required to update the preset. Null when registered in code. */
+  version: string | null
+  /** Empty when the preset is runnable here. Never blocks a save. */
+  issues: PresetIssue[]
+  /**
+   * How much this preset runs with its own techniques, datasets, and limits.
+   * List responses fill this in only when estimates are explicitly requested
+   * (off by default); it stays null for a preset this deployment cannot resolve.
+   */
+  run_size?: ScenarioRunSizeEstimateResponse | null
+}
+
+export interface ScenarioPresetListResponse {
+  source: string
+  items: ScenarioPresetResponse[]
+}
+
+export interface UpdateScenarioPresetRequest {
+  preset: ScenarioPreset
+  expected_version: string
+}
+
+export interface ScenarioSuiteEntry {
+  entry_id: string
+  preset_name: string
+}
+
+/** A user-authored, ordered collection of scenario preset references. */
+export interface ScenarioSuite {
+  name: string
+  schema_version: number
+  description?: string | null
+  /** Who created the suite. Descriptive only; never used to authorize a read or a write. */
+  author?: string | null
+  entries: ScenarioSuiteEntry[]
+}
+
+/** Current deployment-specific status for one suite entry. */
+export interface ScenarioSuiteEntryStatus {
+  entry_id: string
+  preset_name: string
+  origin: 'stored' | 'registered' | null
+  preset_version: string | null
+  /** Advisory only. Missing or invalid preset references do not prevent saving the suite. */
+  issues: PresetIssue[]
+}
+
+export interface ScenarioSuiteResponse {
+  suite: ScenarioSuite
+  /**
+   * Whether a stored document or registering code contributed this suite. A
+   * registered suite cannot be updated or deleted through the API.
+   */
+  origin: 'stored' | 'registered'
+  /** Opaque document version required to update a stored suite. Null when registered in code. */
+  version: string | null
+  /** Ordered exactly like `suite.entries`. */
+  entry_statuses: ScenarioSuiteEntryStatus[]
+}
+
+export interface ScenarioSuiteListResponse {
+  source: string
+  items: ScenarioSuiteResponse[]
+}
+
+export interface UpdateScenarioSuiteRequest {
+  suite: ScenarioSuite
+  expected_version: string
+}
+
+/** The preset state the operator reviewed for one suite entry. */
+export interface ScenarioSuiteLaunchEntrySnapshot {
+  entry_id: string
+  preset_name: string
+  origin: 'stored' | 'registered' | null
+  preset_version: string | null
+}
+
+/** Launch-owned fields and optimistic preconditions for one suite execution. */
+export interface LaunchScenarioSuiteRequest {
+  expected_version: string | null
+  entries: ScenarioSuiteLaunchEntrySnapshot[]
+  target_name: string
+  adversarial_target_name?: string | null
+  initializers?: string[] | null
+  initializer_args?: Record<string, Record<string, unknown>> | null
+  max_concurrency?: number | null
+  max_retries?: number | null
+  operation_id?: string | null
+  labels?: Record<string, string> | null
+}
+
+export type ScenarioSuiteExecutionStatus =
+  | 'QUEUING'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+
+export type ScenarioSuiteExecutionEntryState =
+  | 'PENDING'
+  | 'SUBMITTING'
+  | 'SUBMISSION_FAILED'
+  | 'CREATED'
+  | 'QUEUED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+
+/** Current process-local state for one ordered suite entry. */
+export interface ScenarioSuiteExecutionEntrySummary {
+  entry_id: string
+  entry_position: number
+  preset_name: string
+  preset_origin: 'stored' | 'registered'
+  preset_version: string | null
+  state: ScenarioSuiteExecutionEntryState
+  run: ScenarioRunSummary | null
+  /** User-safe failure text. The UI still maps it to state-owned copy before display. */
+  error: string | null
+  /** Internal exception class for diagnostics; never display it to operators. */
+  error_type: string | null
+}
+
+/** Transient progress and grouped child runs for one suite launch. */
+export interface ScenarioSuiteExecutionSummary {
+  suite_execution_id: string
+  suite_name: string
+  suite_origin: 'stored' | 'registered'
+  suite_version: string | null
+  status: ScenarioSuiteExecutionStatus
+  created_at: string
+  updated_at: string
+  entries: ScenarioSuiteExecutionEntrySummary[]
+}
+
 export interface RunScenarioRequest {
+  objective_scorer?: RegisteredComponentReference | null
   scenario_name: string
   target_name?: string | null
   adversarial_target_name?: string | null
   initializers?: string[] | null
   techniques?: string[] | null
+  technique_override?: TechniqueOverride | null
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
@@ -1290,9 +1831,11 @@ export interface ScenarioRunSizeEstimateResponse {
 }
 
 export interface ScenarioRunSizeEstimateRequest {
+  objective_scorer?: RegisteredComponentReference | null
   target_name?: string | null
   adversarial_target_name?: string | null
   techniques?: string[] | null
+  technique_override?: TechniqueOverride | null
   dataset_names?: string[] | null
   max_dataset_size?: number | 'all' | 'default' | '' | null
   dataset_filters?: Record<string, string[]> | null
@@ -1500,6 +2043,10 @@ export interface ScenarioProgressHeader {
   scenario_name: string
   scenario_registry_name?: string | null
   scenario_version: number
+  description?: string | null
+  operation_id?: string | null
+  operation_name?: string | null
+  scenario_identity?: ScenarioComponentIdentity | null
   status: ScenarioRunState
   created_at: string
   started_at?: string | null
@@ -1574,6 +2121,8 @@ export interface ScenarioProgressResult {
   error_type?: string | null
   error_message?: string | null
   score?: ScenarioProgressScore | null
+  seed_identifiers?: ScenarioComponentIdentity[]
+  related_conversation_ids?: string[]
 }
 
 export interface ScenarioRunPlanSeedGroup {
@@ -1592,6 +2141,7 @@ export interface ScenarioRunPlanSeedPrompt {
 }
 
 export interface ScenarioRunPlanAtomicGroup {
+  kind?: 'baseline' | 'attack' | 'adaptive' | 'unknown' | null
   id: string
   atomic_attack_name: string
   display_group: string
@@ -1609,13 +2159,27 @@ export interface ScenarioRunPlan {
   seed_groups: ScenarioRunPlanSeedGroup[]
 }
 
+export interface ScenarioProducerCategoryCounts {
+  attempts: number
+  errors: number
+  retries: number
+}
+
+export interface ScenarioProducerCounts {
+  target_facing: ScenarioProducerCategoryCounts
+  orchestration: ScenarioProducerCategoryCounts
+  unknown: ScenarioProducerCategoryCounts
+}
+
 export interface ScenarioProgressCounts {
+  outcomes?: OutcomeStatistics | null
   completed: number
   planned: number | null
   succeeded: number
   success_percentage: number | null
   errors: number
   retries: number
+  producer_counts?: ScenarioProducerCounts | null
 }
 
 export interface ScenarioTechniqueProgress extends ScenarioProgressCounts {
@@ -1647,6 +2211,106 @@ export interface ScenarioAtomicGroupProgress extends ScenarioProgressCounts {
   technique_details?: ScenarioAttackTechniqueDetails | null
 }
 
+/** What a saved attack result represents; not proof that the objective target was called. */
+export type AttackResultRole = 'target_facing' | 'orchestration' | 'unknown'
+
+export interface ScenarioOrchestrationParentSummary {
+  attack_result_id: string
+  result_role: AttackResultRole
+  outcome: AttackOutcome
+  outcome_reason?: string | null
+  attempt_index?: number | null
+  execution_time_ms: number
+  executed_turns: number
+  completion_policy?: string | null
+  child_attack_result_ids: string[]
+  child_references_truncated: boolean
+  error_type?: string | null
+  error_message?: string | null
+  timestamp: string
+  total_retries: number
+  retries: RetryEvent[]
+  retries_truncated: boolean
+}
+
+export interface ScenarioHierarchyNode {
+  attack_result_id: string
+  conversation_id: string
+  parent_attack_result_id?: string | null
+  /** Absolute position under the immediate parent. */
+  child_index?: number | null
+  result_role: AttackResultRole
+  attempt_index?: number | null
+  atomic_attack_name: string
+  atomic_group_id: string
+  seed_group_id: string
+  objective: string
+  outcome: AttackOutcome
+  outcome_reason?: string | null
+  execution_time_ms: number
+  executed_turns: number
+  timestamp: string
+  score?: ScenarioProgressScore | null
+  error_type?: string | null
+  error_message?: string | null
+  total_retries: number
+  retries: RetryEvent[]
+  retries_truncated: boolean
+  child_attack_result_ids: string[]
+  child_references_truncated: boolean
+  children: ScenarioHierarchyNode[]
+  children_truncated: boolean
+  /** Full saved child-reference count; null when not known. */
+  children_count?: number | null
+  /** Position of the first child-reference on this page. */
+  child_offset: number
+  /** Continuation for this node's children only; never for roots. */
+  next_children_cursor?: string | null
+  unresolved_child_attack_result_ids: string[]
+  unresolved_child_references_truncated: boolean
+  conversations: ConversationSummary[]
+  conversations_count?: number | null
+  conversations_truncated: boolean
+  orchestration?: ScenarioOrchestrationParentSummary | null
+}
+
+export interface ScenarioHierarchyGroup {
+  atomic_group_id: string
+  atomic_attack_name: string
+  display_group: string
+  technique?: ScenarioAttackTechniqueDetails | null
+  roots: ScenarioHierarchyNode[]
+  counts: ScenarioProgressCounts
+}
+
+export interface ScenarioHierarchyDiagnostics {
+  failed_attacks: AttackErrorSummary[]
+  failed_attacks_count: number
+  failed_attacks_truncated: boolean
+  attack_retries: AttackRetrySummary[]
+  attack_retries_count: number
+  attack_retries_truncated: boolean
+  total_retries: number
+  rootless_result_ids: string[]
+  rootless_results_count: number
+  rootless_results_truncated: boolean
+}
+
+export interface ScenarioHierarchyProjection {
+  scenario_result_id: string
+  scenario_name: string
+  scenario_version: number
+  status: ScenarioRunState
+  groups: ScenarioHierarchyGroup[]
+  /** Exact run totals; independent of which roots or children are loaded. */
+  overall_counts: ScenarioProgressCounts
+  diagnostics: ScenarioHierarchyDiagnostics
+  /** Root continuation only. */
+  has_more: boolean
+  next_cursor?: string | null
+  truncated: boolean
+}
+
 export interface ScenarioObjectiveScorerMetrics {
   accuracy: number
   accuracy_standard_error?: number | null
@@ -1672,6 +2336,17 @@ export interface ScenarioProgressSummary {
   unattributed_attempts?: number
 }
 
+export interface ScenarioActiveConversation {
+  attack_result_id: string
+  conversation_id: string
+  atomic_attack_name: string
+  seed_group_id?: string | null
+  objective: string
+  started_at: string
+  technique_details?: ScenarioAttackTechniqueDetails | null
+  seed_identifiers: ScenarioComponentIdentity[]
+}
+
 export interface ScenarioRunProgress {
   run: ScenarioProgressHeader
   plan: ScenarioRunPlan | null
@@ -1680,6 +2355,8 @@ export interface ScenarioRunProgress {
   next_cursor?: string | null
   has_more: boolean
   plan_complete: boolean
+  active_conversations?: ScenarioActiveConversation[]
+  recorded_conversations?: ScenarioActiveConversation[]
 }
 export interface RuntimeReadiness {
   ready: boolean
@@ -1703,14 +2380,26 @@ export interface OperationCreate {
   description?: string
 }
 
-/** The editable fields of a saved Operation; renaming is not supported yet. */
+/** The editable fields of a saved Operation. Omitted fields are unchanged. */
 export interface OperationUpdate {
-  description: string
+  name?: string
+  description?: string
 }
 
 export interface Operation extends OperationCreate {
   id: string
   created_at: string
+}
+
+/** What refers to an Operation by ID. Only an Operation with no usage can be deleted. */
+export interface OperationUsage {
+  findings: number
+  attacks: number
+  scenario_runs: number
+}
+
+export interface OperationDetail extends Operation {
+  usage: OperationUsage
 }
 
 export interface OperationListItem extends Operation {
@@ -1792,4 +2481,14 @@ export interface FindingEvidenceListResponse {
   items: FindingEvidenceItem[]
   has_more: boolean
   next_offset: number | null
+}
+
+export type FindingExportFormat = 'docx' | 'markdown'
+
+/** Selected findings of one Operation to download as a single document. */
+export interface FindingExportRequest {
+  finding_ids: string[]
+  format: FindingExportFormat
+  /** The dashboard origin that evidence links open. */
+  dashboard_origin: string
 }

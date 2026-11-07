@@ -7,19 +7,43 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyrit.registry import ScenarioRegistry, TargetRegistry
+from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 from pyrit.scenario.core.technique_tokens import resolve_technique_tokens
+from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
+    from pyrit.models.component_spec import RegisteredComponentReference
     from pyrit.models.scenario_dataset import ScenarioDatasetRequest
+    from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario import Scenario
 
 
 class ScenarioConfigurationResolver:
     """Resolve registry-backed scenario inputs for launch and estimation."""
+
+    @staticmethod
+    def resolve_constructor_kwargs(
+        *, scenario_class: type[Scenario], objective_scorer: RegisteredComponentReference | None
+    ) -> dict[str, Any]:
+        """
+        Resolve a source-pinned scorer for a scenario constructor.
+
+        Returns:
+            dict[str, Any]: Constructor arguments, or an empty mapping for scenario defaults.
+        """
+        if objective_scorer is None:
+            return {}
+        if not ScenarioRegistry.supports_objective_scorer(scenario_class):
+            raise ValueError("This scenario does not support a custom objective scorer")
+        scorer = ScorerRegistry.get_registry_singleton().resolve_source(
+            name=objective_scorer.registry_name, identifier_hash=objective_scorer.identifier_hash
+        )
+        if not isinstance(scorer, TrueFalseScorer):
+            raise ValueError("The objective scorer must be a true/false scorer")
+        return {"objective_scorer": scorer}
 
     @classmethod
     def resolve_adversarial_target(cls, *, target_name: str | None) -> PromptTarget | None:
@@ -89,6 +113,7 @@ class ScenarioConfigurationResolver:
         scenario_class: type[Scenario],
         objective_target: Any | None = None,
         techniques: list[str] | None = None,
+        technique_override: TechniqueOverride | None = None,
         datasets: ScenarioDatasetRequest | None = None,
         include_baseline: bool | None = None,
         max_concurrency: int | None = None,
@@ -120,7 +145,7 @@ class ScenarioConfigurationResolver:
 
         if datasets is not None:
             resolved["dataset_overrides"] = datasets
-        if not techniques:
+        if not techniques and technique_override is None:
             return resolved
 
         try:
@@ -140,6 +165,20 @@ class ScenarioConfigurationResolver:
             resolved["scenario_techniques"] = technique_enums
             if technique_converters:
                 resolved["technique_converters"] = technique_converters
+
+        if technique_override is not None:
+            from pyrit.backend.services.technique_edit_service import TechniqueEditService
+
+            if scenario_class.MAX_CONCRETE_TECHNIQUES != 1 or "local_technique_factory" not in {
+                parameter.name for parameter in scenario_class.supported_parameters()
+            }:
+                raise ValueError("This scenario does not support run-local technique editing")
+            selected = introspection_instance._technique_class.resolve(
+                resolved.get("scenario_techniques"), default=introspection_instance._technique_class.default()
+            )
+            if len(selected) != 1 or selected[0].value != technique_override.source_name:
+                raise ValueError("A technique edit requires exactly its one selected concrete source technique")
+            resolved["local_technique_factory"] = TechniqueEditService.resolve(technique_override)
 
         return resolved
 

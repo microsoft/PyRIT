@@ -3,12 +3,18 @@
 
 """Tests for canonical scenario catalog models."""
 
+from typing import assert_type
+
 import pytest
 from pydantic import ValidationError
 
 from pyrit.models import (
     BoundedDatasetSize,
+    DatasetLimitInput,
+    DatasetLimitState,
+    IndeterminateDatasetSize,
     ScenarioDatasetSizeCap,
+    ScenarioDatasetSizeEstimate,
     ScenarioDatasetSummary,
     ScenarioDefaultRunSizeEstimate,
     ScenarioRunSizeComponent,
@@ -340,6 +346,38 @@ def test_unavailable_run_size_estimate_has_no_count() -> None:
     assert estimate.minimum_attack_count is None
     assert estimate.maximum_attack_count is None
     assert estimate.note == "Default-run size estimate is unavailable."
+
+
+class _CustomRunSizeEstimate(ScenarioRunSizeEstimate):
+    """A subclass used to check classmethod factory return types."""
+
+
+def test_unavailable_factory_returns_calling_subclass() -> None:
+    """The unavailable factory builds the calling class, not a fixed base type."""
+    estimate = _CustomRunSizeEstimate.unavailable()
+
+    assert_type(estimate, _CustomRunSizeEstimate)
+    assert type(estimate) is _CustomRunSizeEstimate
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    assert estimate.note == "Default-run size estimate is unavailable."
+
+
+def test_unavailable_factory_preserves_dataset_inputs() -> None:
+    """The unavailable factory keeps the dataset size and limit it is given."""
+    size: ScenarioDatasetSizeEstimate = BoundedDatasetSize(value=1)
+    limit: DatasetLimitInput = DatasetLimitInput(state=DatasetLimitState.Value, value=3)
+
+    estimate = ScenarioRunSizeEstimate.unavailable(dataset_size=size, dataset_limit=limit)
+
+    assert_type(estimate, ScenarioRunSizeEstimate)
+    assert estimate.status is ScenarioRunSizeEstimateStatus.Unavailable
+    assert estimate.dataset_size == size
+    assert estimate.dataset_limit == limit
+
+    defaults = ScenarioRunSizeEstimate.unavailable()
+
+    assert defaults.dataset_size == IndeterminateDatasetSize()
+    assert defaults.dataset_limit == DatasetLimitInput()
 
 
 @pytest.mark.parametrize(

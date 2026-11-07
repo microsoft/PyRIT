@@ -233,9 +233,10 @@ class AnalyticsBenchmark:
 
         from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
         from pyrit.memory.memory_models import AttackResultEntry
-        from pyrit.models import AttackResultMetadata, AttackResultRole
+        from pyrit.models import AttackResultMetadata, AttackResultRole, Operation
 
         memory = self.memory
+        self.operation_id = (await memory.add_operation_async(Operation(name="operation-000"))).id
         identifiers = self._identifiers()
         async with await self.memory.get_session_async() as session:
             for identifier in identifiers:
@@ -269,6 +270,7 @@ class AnalyticsBenchmark:
                 categories = [f"category-{(category + value) % 40:02}" for value in range(3)]
                 if index % 11 == 0:
                     categories.append(categories[0])
+                saved_operation = index < self.count * 0.6
                 rows.append(
                     {
                         "id": uuid.UUID(int=index + 1),
@@ -276,7 +278,8 @@ class AnalyticsBenchmark:
                         "objective": f"Synthetic objective {index}. " + "Safe evaluation metadata. " * 6,
                         "outcome": outcome,
                         "timestamp": start + timedelta(seconds=index),
-                        "operation": "operation-000" if index < self.count * 0.6 else f"operation-{index % 100:03}",
+                        "operation": None if saved_operation else f"operation-{index % 100:03}",
+                        "operation_id": self.operation_id if saved_operation else None,
                         "operator": f"operator-{index % 50:03}",
                         "labels": {"team": f"team-{index % 10}", "case": f"case-{index:06}"},
                         "targeted_harm_categories": categories,
@@ -428,7 +431,7 @@ class AnalyticsBenchmark:
                 "search": "case-0",
                 "limit": 50,
                 "filters": {
-                    "dimensions": [{"dimension": {"name": "operation"}, "values": [{"value": "operation-000"}]}]
+                    "dimensions": [{"dimension": {"name": "operation"}, "values": [{"value": str(self.operation_id)}]}]
                 },
             }
         body: dict[str, Any] = {"limit": self.PAGE_SIZE}
@@ -621,8 +624,8 @@ class AnalyticsBenchmark:
             "representative_workload": self.count >= 100_000 and analysts >= 5 and iterations >= 6,
             "data_shape": {
                 "random_seed": self.RANDOM_SEED,
-                "operations": 100,
-                "largest_operation_share": "60% plus its share of the remaining 40%",
+                "operations": 101,
+                "largest_operation_share": "exactly 60% (one saved Operation ID; the rest use 100 legacy names)",
                 "operators": 50,
                 "harm_categories": 40,
                 "categories_per_result": "3 overlapping, with duplicate members every 11th result",

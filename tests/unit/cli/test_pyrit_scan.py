@@ -5,9 +5,11 @@
 Unit tests for the pyrit_scan CLI module (thin REST client).
 """
 
+import asyncio
 import logging
 from argparse import Namespace
 from datetime import UTC
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -86,6 +88,20 @@ def test_compatibility_failure_exits_without_replay(stage, capsys):
         client.start_scenario_run_async.assert_awaited_once()
         client.get_scenario_run_async.assert_awaited_once()
         assert "server run may still be active" in output
+
+
+def test_run_scenario_cancellation_requests_server_cancellation(capsys):
+    client = _mock_api_client()
+    with (
+        patch("pyrit.cli.api_client.PyRITApiClient", return_value=client),
+        patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new=AsyncMock(return_value=True)),
+        patch.object(pyrit_scan, "_poll_until_terminal_async", new=AsyncMock(side_effect=asyncio.CancelledError)),
+    ):
+        exit_code = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+
+    assert exit_code == 1
+    client.cancel_scenario_run_async.assert_awaited_once_with(scenario_result_id="test-id-123")
+    assert "Cancellation request sent to server." in capsys.readouterr().out
 
 
 def test_dataset_filter_help_covers_every_request_model_key():
@@ -264,6 +280,16 @@ class TestParseArgs:
     def test_list_with_request_timeout(self):
         args = pyrit_scan.parse_args(["list-scenarios", "--request-timeout", "30"])
         assert args.request_timeout == 30
+
+    def test_list_with_fractional_request_timeout(self):
+        args = pyrit_scan.parse_args(["list-targets", "--request-timeout", "0.5"])
+        assert args.request_timeout == 0.5
+
+    @pytest.mark.parametrize("value", ["0", "-1", "inf", "nan", "slow"])
+    def test_list_rejects_invalid_request_timeout(self, value):
+        with pytest.raises(SystemExit) as exc_info:
+            pyrit_scan.parse_args(["list-targets", "--request-timeout", value])
+        assert exc_info.value.code == 2
 
     def test_start_server_with_startup_timeout(self):
         args = pyrit_scan.parse_args(["start-server", "--startup-timeout", "45.5"])
@@ -639,6 +665,19 @@ class TestMain:
 
         assert result == 1
         assert "not valid YAML" in capsys.readouterr().err
+
+    def test_main_missing_config_is_hard_error(self, tmp_path, capsys):
+        """A nonexistent --config-file should fail loudly, not silently use defaults."""
+        missing = tmp_path / "missing.yaml"
+        with patch.object(
+            pyrit_scan_config_reader,
+            "_DEFAULT_CONFIG_FILE",
+            tmp_path / "missing_default.yaml",
+        ):
+            result = pyrit_scan.main(["list-scenarios", "--config-file", str(missing)])
+
+        assert result == 1
+        assert "does not exist" in capsys.readouterr().err
 
     @patch(
         "pyrit.cli._server_launcher.ServerLauncher.probe_health_async",
@@ -1691,6 +1730,20 @@ class TestScenarioResults:
         out = capsys.readouterr().out
         assert "give me data" in out
         assert "Conversations" in out
+
+    def test_handle_results_rejects_unknown_view_without_falling_back_to_conversations(self, capsys):
+        import asyncio
+
+        client = AsyncMock()
+        client.get_scenario_run_results_async.return_value = _make_scenario_result()
+        parsed = pyrit_scan.parse_args(["scenario-results", "SID"])
+        unknown_view: Any = "future_view"
+        parsed.view = unknown_view
+        with patch("pyrit.cli._output.print_conversations_async", new_callable=AsyncMock) as mock_conversations:
+            rc = asyncio.run(pyrit_scan._handle_results_async(client=client, parsed_args=parsed))
+        assert rc == 1
+        assert "future_view" in capsys.readouterr().out
+        mock_conversations.assert_not_awaited()
 
     def test_handle_results_full_prints_overview_then_transcripts(self, capsys):
         import asyncio

@@ -259,6 +259,33 @@ def test_init_rejects_out_of_range_temperature(patch_central_database, litellm_s
         LiteLLMChatTarget(model_name="openai/gpt-4o", temperature=5)
 
 
+@pytest.mark.usefixtures("patch_central_database", "litellm_stub")
+@pytest.mark.parametrize("presence_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_init_rejects_out_of_range_presence_penalty(presence_penalty: float) -> None:
+    with pytest.raises(PyritException, match="presence_penalty must be between -2 and 2"):
+        LiteLLMChatTarget(model_name="openai/gpt-4o", presence_penalty=presence_penalty)
+
+
+@pytest.mark.usefixtures("patch_central_database", "litellm_stub")
+@pytest.mark.parametrize("frequency_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_init_rejects_out_of_range_frequency_penalty(frequency_penalty: float) -> None:
+    with pytest.raises(PyritException, match="frequency_penalty must be between -2 and 2"):
+        LiteLLMChatTarget(model_name="openai/gpt-4o", frequency_penalty=frequency_penalty)
+
+
+@pytest.mark.usefixtures("patch_central_database", "litellm_stub")
+@pytest.mark.parametrize("parameter", ["presence_penalty", "frequency_penalty"])
+@pytest.mark.parametrize("value", [None, -2.0, 0.0, 2.0])
+def test_valid_generation_penalties_preserve_identifier(*, parameter: str, value: float | None) -> None:
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o",
+        presence_penalty=value if parameter == "presence_penalty" else None,
+        frequency_penalty=value if parameter == "frequency_penalty" else None,
+    )
+
+    assert target.get_identifier().params.get(parameter) == value
+
+
 # ---------------------------------------------------------------------------
 # Capability derivation
 # ---------------------------------------------------------------------------

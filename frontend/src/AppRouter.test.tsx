@@ -4,6 +4,9 @@ const mockCreateBrowserRouter = jest.fn().mockReturnValue({})
 
 jest.mock('react-router', () => ({
   createBrowserRouter: mockCreateBrowserRouter,
+}))
+
+jest.mock('react-router/dom', () => ({
   RouterProvider: () => <div data-testid="router-provider" />,
 }))
 

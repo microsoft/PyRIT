@@ -37,6 +37,41 @@ def test_seed_prompt_init_with_all_fields():
     assert sp.prompt_group_id == gid
 
 
+@pytest.mark.parametrize("sequence", [None, 0, 8])
+def test_with_value_validates_sequence_and_preserves_source_metadata(sequence: int | None) -> None:
+    source = SeedPrompt(
+        value="Original {{ objective }}",
+        value_sha256="source-checksum",
+        data_type="text",
+        role="user",
+        sequence=4,
+        parameters=["objective"],
+        metadata={"nested": {"preserve": True}},
+        is_jinja_template=True,
+        response_json_schema_name="true_false_with_rationale",
+    )
+    before = source.model_dump()
+    text = "Edited {{ objective }} {% if objective %}literal{% endif %}"
+    copied = source.with_value(text, sequence=sequence)
+    assert copied.value == text
+    assert copied.sequence == (4 if sequence is None else sequence)
+    assert copied.id != source.id
+    assert copied.value_sha256 is None
+    assert copied.is_jinja_template
+    assert copied.parameters == source.parameters
+    assert copied.response_json_schema == source.response_json_schema
+    copied.metadata["nested"]["preserve"] = False
+    assert source.model_dump() == before
+
+
+def test_with_value_rejects_invalid_sequence_without_changing_source() -> None:
+    source = SeedPrompt(value="original", data_type="text", sequence=4)
+    before = source.model_dump()
+    with pytest.raises(ValueError, match="sequence"):
+        source.with_value("edited", sequence="invalid")  # type: ignore[arg-type]
+    assert source.model_dump() == before
+
+
 def test_seed_prompt_infers_text_data_type():
     sp = SeedPrompt(value="just text")
     assert sp.data_type == "text"

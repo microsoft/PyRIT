@@ -4,14 +4,20 @@
 """Tests for the scenario progress read model."""
 
 import asyncio
+import json
+import os
+import threading
+import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import pyrit.backend.services.scenario_progress_read_model as progress_module
 from pyrit.analytics.scenario_statistics import compute_scenario_statistics
 from pyrit.backend.models.attacks import UpdateAttackRequest
 from pyrit.backend.services.attack_service import AttackService
@@ -33,6 +39,7 @@ from pyrit.memory import AttackResultKeysetCursor
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackResultRole,
@@ -40,12 +47,14 @@ from pyrit.models import (
     ComponentIdentifier,
     Message,
     ScenarioAttackResultDelta,
+    ScenarioObjectiveScorerMetrics,
     ScenarioProgressResult,
     ScenarioRunPlan,
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanGroupKind,
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
+    ScorerEvaluationIdentifier,
     SeedObjective,
 )
 from pyrit.prompt_target import PromptTarget
@@ -58,7 +67,7 @@ from pyrit.scenario.scenarios.adaptive.dispatcher import (
     AdaptiveTechniqueDispatcher,
     TechniqueBundle,
 )
-from pyrit.score import Scorer, SubStringScorer
+from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
 from unit.async_utils import get_defined_tasks
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, make_scenario_result
 
@@ -77,6 +86,41 @@ def _make_delta(*, run_id: str, index: int = 0) -> ScenarioAttackResultDelta:
     )
 
 
+@pytest.mark.usefixtures("patch_central_database")
+async def test_progress_preserves_real_dataset_seed_identifiers_async() -> None:
+    seed_group = AttackSeedGroup(seeds=[SeedObjective(value="Review this response.", dataset_name="saved_dataset")])
+    identifier = AtomicAttackIdentifier.build(
+        attack_identifier=ComponentIdentifier(class_name="PromptSendingAttack", class_module="tests"),
+        seed_group=seed_group,
+    )
+    delta = _make_delta(run_id=str(uuid.uuid4())).model_copy(update={"atomic_attack_identifier": identifier})
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([delta], False))
+    snapshot = await _get_snapshot_async(read_model=ScenarioProgressReadModel(memory=memory), run_id="dataset-run")
+    assert snapshot.results[0].seed_identifiers[0].parameters["dataset_name"] == "saved_dataset"
+    assert snapshot.results[0].seed_identifiers[0].parameters["value"] == "Review this response."
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_scorer_projection_keeps_nested_composite_boundaries() -> None:
+    scorer = TrueFalseCompositeScorer(
+        aggregator=TrueFalseScoreAggregator.AND,
+        scorers=[
+            SubStringScorer(substring="first"),
+            TrueFalseCompositeScorer(
+                aggregator=TrueFalseScoreAggregator.OR,
+                scorers=[SubStringScorer(substring="second"), SubStringScorer(substring="third")],
+            ),
+        ],
+    )
+    identity = ScenarioProgressReadModel._build_scorer_identity(scorer_identifier=scorer.get_identifier())
+    assert identity.component_name == "TrueFalseCompositeScorer"
+    assert len(identity.children["sub_scorers"]) == 2
+    nested = identity.children["sub_scorers"][1]
+    assert nested.component_name == "TrueFalseCompositeScorer"
+    assert len(nested.children["sub_scorers"]) == 2
+
+
 async def _get_snapshot_async(*, read_model: ScenarioProgressReadModel, run_id: str) -> ScenarioProgressSnapshot:
     """Read one incomplete synthetic run through the public typed boundary."""
     return await read_model.get_snapshot_async(
@@ -87,6 +131,289 @@ async def _get_snapshot_async(*, read_model: ScenarioProgressReadModel, run_id: 
         terminal=False,
         objective_scorer_identifier=None,
     )
+
+
+def _write_objective_metrics(
+    *, file_path: Path, scorer_identifier: ComponentIdentifier, accuracy: float, age_seconds: int | None = None
+) -> None:
+    """Write one metrics entry, optionally backdating the file so the read model may cache it."""
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text(
+        json.dumps(
+            {
+                "eval_hash": ScorerEvaluationIdentifier(scorer_identifier).eval_hash,
+                "metrics": {
+                    "num_responses": 100,
+                    "num_human_raters": 3,
+                    "accuracy": accuracy,
+                    "accuracy_standard_error": 0.01,
+                    "f1_score": accuracy,
+                    "precision": accuracy,
+                    "recall": accuracy,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    if age_seconds is not None:
+        mtime_ns = time.time_ns() - age_seconds * 1_000_000_000
+        os.utime(file_path, ns=(mtime_ns, mtime_ns))
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+async def test_progress_reuses_metrics_until_file_changes_even_for_finished_runs(
+    *, tmp_path: Path, terminal: bool
+) -> None:
+    file_path = tmp_path / "objective" / "objective_achieved_metrics.jsonl"
+    scorer_identifier = ComponentIdentifier(class_name="TestScorer", class_module="tests")
+    initial_accuracy = 0.75
+    updated_accuracy = 0.9
+    await asyncio.to_thread(
+        _write_objective_metrics,
+        file_path=file_path,
+        scorer_identifier=scorer_identifier,
+        accuracy=initial_accuracy,
+        age_seconds=30,
+    )
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([], False))
+    read_model = ScenarioProgressReadModel(memory=memory)
+
+    async def read_progress_async(run_id: str = "run") -> ScenarioProgressSnapshot:
+        return await read_model.get_snapshot_async(
+            scenario_result_id=run_id,
+            plan=None,
+            plan_complete=False,
+            active_group_ids=(),
+            terminal=terminal,
+            objective_scorer_identifier=scorer_identifier,
+        )
+
+    with (
+        patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path),
+        patch.object(
+            progress_module,
+            "find_objective_metrics_by_eval_hash",
+            wraps=progress_module.find_objective_metrics_by_eval_hash,
+        ) as load_metrics,
+    ):
+        first = await read_progress_async()
+        unchanged = await read_progress_async()
+        other_run = await read_progress_async("other-run")
+        assert unchanged.summary is first.summary
+        assert other_run.summary.objective_scorer == first.summary.objective_scorer
+        load_metrics.assert_called_once()
+
+        await asyncio.to_thread(
+            _write_objective_metrics,
+            file_path=file_path,
+            scorer_identifier=scorer_identifier,
+            accuracy=updated_accuracy,
+            age_seconds=20,
+        )
+        updated = await read_progress_async()
+        assert updated.summary.objective_scorer.metrics.accuracy == updated_accuracy
+        assert first.summary.objective_scorer.metrics.accuracy == initial_accuracy
+        assert load_metrics.call_count == 2
+
+        await asyncio.to_thread(file_path.unlink)
+        missing = await read_progress_async()
+        missing_again = await read_progress_async()
+        assert missing.summary.objective_scorer.metrics is None
+        assert missing_again.summary is missing.summary
+        assert load_metrics.call_count == 3
+
+        await asyncio.to_thread(
+            _write_objective_metrics,
+            file_path=file_path,
+            scorer_identifier=scorer_identifier,
+            accuracy=initial_accuracy,
+            age_seconds=10,
+        )
+        restored = await read_progress_async()
+        assert restored.summary.objective_scorer.metrics.accuracy == initial_accuracy
+        assert load_metrics.call_count == 4
+
+
+def test_load_objective_metrics_rereads_recent_file_with_unchanged_metadata(tmp_path: Path) -> None:
+    file_path = tmp_path / "objective" / "objective_achieved_metrics.jsonl"
+    scorer_identifier = ComponentIdentifier(class_name="RecentScorer", class_module="tests")
+    eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+    _write_objective_metrics(file_path=file_path, scorer_identifier=scorer_identifier, accuracy=0.75)
+    # A same-length rewrite within one timestamp tick leaves every field the cache key reads unchanged.
+    tick_stat = file_path.stat()
+    real_stat = Path.stat
+
+    def stat_within_tick(path: Path, **kwargs: bool) -> os.stat_result:
+        return tick_stat if path == file_path else real_stat(path, **kwargs)
+
+    with (
+        patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path),
+        patch.object(Path, "stat", autospec=True, side_effect=stat_within_tick),
+        patch.object(
+            progress_module.time, "time_ns", return_value=tick_stat.st_mtime_ns + 1_000_000_000
+        ) as current_time,
+        patch.object(
+            progress_module,
+            "find_objective_metrics_by_eval_hash",
+            wraps=progress_module.find_objective_metrics_by_eval_hash,
+        ) as load_metrics,
+    ):
+        first = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+        _write_objective_metrics(file_path=file_path, scorer_identifier=scorer_identifier, accuracy=0.85)
+        rewritten = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+        current_time.return_value = tick_stat.st_mtime_ns + 2_000_000_000
+        settled = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+        unchanged = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+
+    assert first is not None
+    assert rewritten is not None
+    assert settled is not None
+    assert first.accuracy == 0.75
+    assert rewritten.accuracy == 0.85
+    assert settled.accuracy == 0.85
+    assert unchanged is settled
+    assert load_metrics.call_count == 3
+
+
+@pytest.mark.parametrize(
+    ("age_ns", "expected_reads"),
+    [
+        pytest.param(-2_000_000_000, 2, id="future-timestamp"),
+        pytest.param(0, 2, id="just-modified"),
+        pytest.param(1_999_999_999, 2, id="before-boundary"),
+        pytest.param(2_000_000_000, 1, id="at-boundary"),
+        pytest.param(2_000_000_001, 1, id="after-boundary"),
+        pytest.param(10_000_000_000, 1, id="settled"),
+    ],
+)
+def test_load_objective_metrics_cache_policy_at_file_age_boundaries(
+    *, tmp_path: Path, age_ns: int, expected_reads: int
+) -> None:
+    file_path = tmp_path / "objective" / "objective_achieved_metrics.jsonl"
+    scorer_identifier = ComponentIdentifier(class_name="BoundaryScorer", class_module="tests")
+    eval_hash = ScorerEvaluationIdentifier(scorer_identifier).eval_hash
+    _write_objective_metrics(file_path=file_path, scorer_identifier=scorer_identifier, accuracy=0.75)
+    mtime_ns = file_path.stat().st_mtime_ns
+
+    with (
+        patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path),
+        patch.object(progress_module.time, "time_ns", return_value=mtime_ns + age_ns),
+        patch.object(
+            progress_module,
+            "find_objective_metrics_by_eval_hash",
+            wraps=progress_module.find_objective_metrics_by_eval_hash,
+        ) as load_metrics,
+    ):
+        first = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+        second = ScenarioProgressReadModel._load_objective_metrics(eval_hash=eval_hash)
+
+    assert first is not None
+    assert second is not None
+    assert first.accuracy == second.accuracy == 0.75
+    assert (first is second) == (expected_reads == 1)
+    assert load_metrics.call_count == expected_reads
+
+
+async def test_progress_updates_scorer_identity_without_new_results(tmp_path: Path) -> None:
+    file_path = tmp_path / "objective" / "objective_achieved_metrics.jsonl"
+    first_scorer = ComponentIdentifier(class_name="FirstScorer", class_module="tests")
+    second_scorer = ComponentIdentifier(class_name="SecondScorer", class_module="tests")
+    await asyncio.to_thread(
+        _write_objective_metrics, file_path=file_path, scorer_identifier=first_scorer, accuracy=0.75
+    )
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([], False))
+    read_model = ScenarioProgressReadModel(memory=memory)
+
+    with patch.object(progress_module, "SCORER_EVALS_PATH", tmp_path):
+        snapshots = [
+            await read_model.get_snapshot_async(
+                scenario_result_id="run",
+                plan=None,
+                plan_complete=False,
+                active_group_ids=(),
+                terminal=True,
+                objective_scorer_identifier=scorer,
+            )
+            for scorer in (first_scorer, second_scorer, None)
+        ]
+
+    first, second, removed = snapshots
+    assert first.summary.objective_scorer.component_name == "FirstScorer"
+    assert first.summary.objective_scorer.metrics.accuracy == 0.75
+    assert second.summary.objective_scorer.component_name == "SecondScorer"
+    assert second.summary.objective_scorer.metrics is None
+    assert removed.summary.objective_scorer is None
+
+
+@pytest.mark.parametrize("cancel_request", [False, True])
+async def test_slow_metrics_read_does_not_block_other_progress_requests(cancel_request: bool) -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([], False))
+    read_model = ScenarioProgressReadModel(memory=memory)
+    loop = asyncio.get_running_loop()
+    loop_thread_id = threading.get_ident()
+    started = asyncio.Event()
+    finished = asyncio.Event()
+    release = threading.Event()
+
+    def load_metrics(*, eval_hash: str) -> ScenarioObjectiveScorerMetrics | None:
+        assert threading.get_ident() != loop_thread_id
+        loop.call_soon_threadsafe(started.set)
+        try:
+            if not release.wait(timeout=5):
+                raise TimeoutError("Test did not release the metrics read.")
+            return None
+        finally:
+            loop.call_soon_threadsafe(finished.set)
+
+    with patch.object(read_model, "_load_objective_metrics", side_effect=load_metrics):
+        task = asyncio.create_task(
+            read_model.get_snapshot_async(
+                scenario_result_id="slow-run",
+                plan=None,
+                plan_complete=False,
+                active_group_ids=(),
+                terminal=False,
+                objective_scorer_identifier=ComponentIdentifier(class_name="TestScorer", class_module="tests"),
+            )
+        )
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            other = await asyncio.wait_for(_get_snapshot_async(read_model=read_model, run_id="other-run"), timeout=5)
+            assert other.summary.overall.completed == 0
+            assert not task.done()
+            if cancel_request:
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert "slow-run" not in read_model._refresh_states
+            release.set()
+            if not cancel_request:
+                await asyncio.wait_for(task, timeout=5)
+        finally:
+            release.set()
+            await asyncio.wait_for(finished.wait(), timeout=5)
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_progress_reports_metrics_file_permission_errors() -> None:
+    memory = MagicMock(spec=MemoryInterface)
+    memory.get_scenario_attack_result_deltas_async = AsyncMock(return_value=([], False))
+    read_model = ScenarioProgressReadModel(memory=memory)
+    with patch.object(Path, "stat", side_effect=PermissionError("Cannot read scorer metrics")):
+        with pytest.raises(PermissionError, match="Cannot read scorer metrics"):
+            await read_model.get_snapshot_async(
+                scenario_result_id="run",
+                plan=None,
+                plan_complete=False,
+                active_group_ids=(),
+                terminal=False,
+                objective_scorer_identifier=ComponentIdentifier(class_name="TestScorer", class_module="tests"),
+            )
+    assert not read_model._refresh_states
 
 
 async def test_get_snapshot_evicts_least_recently_used_run() -> None:
@@ -653,6 +980,121 @@ async def test_get_snapshot_invalidates_cache_when_plan_changes_while_waiting() 
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+@pytest.mark.parametrize("plan_complete", [False, True])
+@pytest.mark.parametrize("terminal", [False, True])
+def test_seed_progress_keeps_counts_correct_without_rescanning_all_results(
+    *, plan_complete: bool, terminal: bool
+) -> None:
+    plan = ScenarioRunPlan(
+        atomic_groups=[
+            ScenarioRunPlanAtomicGroup(
+                id=group_id,
+                atomic_attack_name=group_id,
+                display_group=group_id,
+                technique_eval_hash="",
+                seed_group_ids=seed_ids,
+            )
+            for group_id, seed_ids in [
+                ("group-a", ["shared", "seed-a"]),
+                ("group-b", ["shared", "seed-b"]),
+            ]
+        ],
+        seed_groups=[
+            ScenarioRunPlanSeedGroup(id=seed_id, objective_sha256=seed_id, objective=seed_id)
+            for seed_id in ("shared", "seed-a", "seed-b", "unused")
+        ],
+    )
+
+    def make_result(
+        *, index: int, group_id: str, seed_id: str, outcome: AttackOutcome, total_retries: int = 0
+    ) -> ScenarioProgressResult:
+        return ScenarioProgressResult(
+            attack_result_id=str(index),
+            conversation_id=str(index),
+            atomic_group_id=group_id,
+            atomic_attack_name=group_id,
+            seed_group_id=seed_id,
+            outcome=outcome,
+            execution_time_ms=10,
+            timestamp=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(seconds=index),
+            total_retries=total_retries,
+            result_role=AttackResultRole.TARGET_FACING,
+        )
+
+    first_attempt_retries = 2
+    later_attempt_retries = 1
+    excluded_result_retries = 10
+    results = [
+        make_result(
+            index=0,
+            group_id="group-a",
+            seed_id="shared",
+            outcome=AttackOutcome.ERROR,
+            total_retries=first_attempt_retries,
+        ),
+        make_result(index=1, group_id="group-a", seed_id="seed-a", outcome=AttackOutcome.SUCCESS),
+        make_result(index=2, group_id="group-b", seed_id="shared", outcome=AttackOutcome.FAILURE),
+        make_result(
+            index=3,
+            group_id="group-a",
+            seed_id="shared",
+            outcome=AttackOutcome.SUCCESS,
+            total_retries=later_attempt_retries,
+        ),
+        # Seed-a is not assigned to group-b; its retries must not affect seed-a's counts.
+        make_result(
+            index=4,
+            group_id="group-b",
+            seed_id="seed-a",
+            outcome=AttackOutcome.SUCCESS,
+            total_retries=excluded_result_retries,
+        ),
+        # This group is not in the plan; its retries must not affect the shared seed's counts.
+        make_result(
+            index=5,
+            group_id="unknown",
+            seed_id="shared",
+            outcome=AttackOutcome.SUCCESS,
+            total_retries=excluded_result_retries,
+        ),
+    ]
+
+    tracked_results = MagicMock(spec=list)
+    tracked_results.__iter__.side_effect = lambda: iter(results)
+    summary = ScenarioProgressReadModel._build_progress_summary(
+        plan=plan,
+        plan_complete=plan_complete,
+        results=tracked_results,
+        active_group_ids=(),
+        terminal=terminal,
+        objective_scorer_identifier=None,
+        technique_details_by_group={},
+    )
+
+    # One pass each for grouping attempts, counting overall producers, and grouping results by attack.
+    assert tracked_results.__iter__.call_count <= 3
+    seeds = {seed.id: seed for seed in summary.seed_groups}
+    shared = seeds["shared"]
+    assert shared.planned == (2 if plan_complete else None)
+    assert shared.completed == 2
+    assert shared.succeeded == 1
+    assert shared.errors == 1
+    # Repeating group-a's shared seed adds one retry beyond the retries recorded within each attempt.
+    assert shared.retries == first_attempt_retries + later_attempt_retries + 1
+    assert shared.producer_counts.target_facing.attempts == 3
+    assert shared.producer_counts.target_facing.errors == 1
+    assert shared.producer_counts.target_facing.retries == first_attempt_retries + later_attempt_retries
+    assert seeds["seed-a"].completed == seeds["seed-a"].succeeded == 1
+    assert seeds["seed-a"].retries == 0
+    assert seeds["seed-a"].producer_counts.target_facing.attempts == 1
+    assert seeds["seed-b"].planned == (1 if plan_complete else None)
+    assert seeds["unused"].planned == (0 if plan_complete else None)
+    for seed_id in ("seed-b", "unused"):
+        assert seeds[seed_id].completed == 0
+        assert seeds[seed_id].producer_counts.target_facing.attempts == 0
+    assert [seed.id for seed in summary.seed_groups] == ["seed-a", "seed-b", "shared", "unused"]
+
+
 @pytest.mark.parametrize(
     ("active_group_ids", "terminal", "plan_complete", "expected_status", "expected_planned"),
     [
@@ -1097,7 +1539,13 @@ class TestScenarioResultRoles:
         ),
         ({"parent_collection": "attack", "attempt_index": True}, {}, "unknown", [], None),
         ({"parent_collection": "attack", "attempt_index": "2"}, {"child_attack_result_ids": "c1"}, "unknown", [], None),
-        ({"parent_collection": "attack"}, {"child_attack_result_ids": ["c1", 7]}, "unknown", [], None),
+        (
+            {"parent_collection": "attack"},
+            {"child_attack_result_ids": ["c1", 7]},
+            "unknown",
+            ["c1", "<invalid child reference at position 1>"],
+            None,
+        ),
     ],
 )
 def test_map_progress_delta_reads_legacy_and_malformed_rows_conservatively(

@@ -204,8 +204,11 @@ def parse_dataset_fetch(value: str) -> str:
     Raises:
         ValueError: If the policy is unsupported.
     """
-    if value not in {"never", "if_missing"}:
-        raise ValueError("Dataset fetch must be 'never' or 'if_missing'.")
+    from pyrit.models.scenario_dataset import DatasetFetchPolicy
+
+    if value not in {policy.value for policy in DatasetFetchPolicy}:
+        choices = ", ".join(f"'{policy.value}'" for policy in DatasetFetchPolicy)
+        raise ValueError(f"Dataset fetch must be one of: {choices}.")
     return value
 
 
@@ -507,7 +510,7 @@ ARG_HELP = {
     "scenario_techniques": "List of technique names to run (e.g., base64 rot13). Append one or more "
     "registered converters to a technique with ':converter.<name>' (repeatable), e.g. "
     "role_play_movie_script:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
-    "the technique's built-in converters. Use --list-converters to see registered converter names",
+    "the technique's built-in converters. Use the list-converters command to see registered converter names",
     "max_concurrency": "Maximum number of concurrent attack executions (must be >= 1)",
     "max_retries": "Maximum number of automatic retries on exception (must be >= 0)",
     "memory_labels": 'Additional labels as JSON string (e.g., \'{"experiment": "test1"}\')',
@@ -526,7 +529,7 @@ ARG_HELP = {
     + ".",
     "target": "Name of a registered target from the TargetRegistry to use as the objective target. "
     "Targets are registered by initializers (e.g., 'target' initializer). "
-    "Use --list-targets to see available target names after initializers have run",
+    "Use the list-targets command to see available target names after initializers have run",
 }
 
 

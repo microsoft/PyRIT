@@ -20,6 +20,7 @@ from pyrit.executor.attack import (
     RedTeamingAttack,
 )
 from pyrit.models import AttackTechniqueSeedGroup, SeedPrompt, StructuredParameterValue
+from pyrit.models.technique_edit import TechniqueChanges
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, Registry, TargetRegistry
 from pyrit.scenario.core import AttackTechniqueFactory
 from unit.mocks import MockPromptTarget
@@ -77,12 +78,16 @@ def test_converter_references_preserve_order_duplicates_and_zero(registry: Attac
     assert factory.technique_tags == []
 
 
-def test_custom_variant_uses_existing_resolver_and_creates_fresh_attacks(registry: AttackTechniqueRegistry) -> None:
+@pytest.mark.parametrize("strict_json", [False, True])
+def test_custom_variant_uses_existing_resolver_and_creates_fresh_attacks(
+    registry: AttackTechniqueRegistry, strict_json: bool
+) -> None:
     AttackRegistry.get_registry_singleton().register_class(CustomAttack, name="custom")
     factory = registry.create_factory(
         name="custom_settings",
         attack_type="custom",
         params={"settings": {"type": "basic", "parameters": {"enabled": False, "limit": 0, "labels": []}}},
+        strict_json=strict_json,
     )
     target = TargetRegistry.get_registry_singleton().instances.get("local")
     assert isinstance(target, MockPromptTarget)
@@ -95,6 +100,12 @@ def test_custom_variant_uses_existing_resolver_and_creates_fresh_attacks(registr
         enabled=False, limit=0, labels=[]
     )
     assert target.prompt_sent == []
+    assert "settings" not in {parameter.name for parameter in registry.get_editable_parameters(factory)}
+    with pytest.raises(ValueError, match="read-only"):
+        registry.edit_factory(
+            source=factory,
+            changes=TechniqueChanges(params={"settings": {"type": "basic", "parameters": {"limit": 1}}}),
+        )
 
 
 def test_custom_attack_validation_is_reused_for_deferred_construction(registry: AttackTechniqueRegistry) -> None:
@@ -121,6 +132,17 @@ def test_custom_attack_validation_is_reused_for_deferred_construction(registry: 
     assert isinstance(technique.attack, BoundedAttack)
     assert technique.attack.limit == 2
     assert target.prompt_sent == []
+
+
+def test_strict_json_variants_reject_live_values_without_changing_python_inputs(
+    registry: AttackTechniqueRegistry,
+) -> None:
+    AttackRegistry.get_registry_singleton().register_class(CustomAttack, name="custom")
+    settings = CustomSettings()
+    factory = registry.create_factory(name="python", attack_type="custom", params={"settings": settings})
+    assert factory.get_effective_settings().attack_kwargs["settings"] is settings
+    with pytest.raises(ValueError):
+        registry.create_factory(name="rest", attack_type="custom", params={"settings": settings}, strict_json=True)
 
 
 def test_omission_null_and_empty_converter_list_remain_distinct(registry: AttackTechniqueRegistry) -> None:

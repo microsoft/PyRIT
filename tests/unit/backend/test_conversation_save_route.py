@@ -15,6 +15,7 @@ from pyrit.backend.middleware.auth import AuthenticatedUser
 from pyrit.backend.models.attacks import AddMessageResponse, AttackSummary, ConversationMessagesResponse
 from pyrit.backend.routes.attacks import router
 from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.memory.memory_interface import AttackStateConflictError
 
 
@@ -79,6 +80,8 @@ def test_save_conversation_success_and_operator(
     [
         (PermissionError("Only the owner can save to this attack"), 403),
         (AttackStateConflictError("History changed"), 409),
+        (ManualSendConflictError("A send owns this conversation"), 409),
+        (ManualSendQueueFullError("The manual-send queue is full"), 429),
         (ValueError("The target does not support audio_path"), 422),
     ],
 )

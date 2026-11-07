@@ -325,12 +325,53 @@ _HISTORIES = {
             ),
         ],
     ),
+    # Rows saved before roles were recorded: child links identify the envelope.
+    "compound_legacy_failure": _History(
+        plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
+        attempts=[
+            *[_Attempt("attack", "A", AttackOutcome.FAILURE, seed_group_id="a") for _ in range(3)],
+            _Attempt("attack", "A", AttackOutcome.FAILURE, seed_group_id="a", child_indices=(0, 1, 2)),
+        ],
+    ),
+    "compound_legacy_late_error": _History(
+        plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
+        attempts=[
+            _Attempt("attack", "A", AttackOutcome.FAILURE, seed_group_id="a"),
+            _Attempt("attack", "A", AttackOutcome.ERROR, seed_group_id="a"),
+            _Attempt("attack", "A", AttackOutcome.ERROR, seed_group_id="a", child_indices=(0, 1)),
+        ],
+    ),
+    # A recorded role wins over child links, so this parent still counts as an attempt.
+    "target_facing_parent_with_child_links": _History(
+        plan=_plan(_group(name="attack", eval_hash="eval", seed_ids=["a"]), seeds=[_seed("a", "A")]),
+        attempts=[
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.FAILURE,
+                seed_group_id="a",
+                result_role=AttackResultRole.TARGET_FACING,
+                attempt_index=1,
+            ),
+            _Attempt(
+                "attack",
+                "A",
+                AttackOutcome.SUCCESS,
+                seed_group_id="a",
+                result_role=AttackResultRole.TARGET_FACING,
+                child_indices=(0,),
+            ),
+        ],
+    ),
 }
 
 # Effective-unit success percentages each history must report everywhere (None: no completed unit).
 _EXPECTED_OVERALL = {
     "compound_failure": 0,
     "compound_late_error": 0,
+    "compound_legacy_failure": 0,
+    "compound_legacy_late_error": 0,
+    "target_facing_parent_with_child_links": 100,
     "retry_and_resume_recovered": 100,
     "unrecovered_errors": 50,
     "legacy_identities_without_plan": 66,
@@ -350,6 +391,15 @@ _EXPECTED_OVERALL = {
     "empty_history": None,
     "ratio_that_floating_point_truncates_low": 29,
     "role_aware_accounting": 100,
+}
+
+# Execution attempts, retries, and errors for histories with linked envelopes or children.
+_EXPECTED_ACCOUNTING = {
+    "compound_failure": (3, 2, 0),
+    "compound_late_error": (2, 1, 1),
+    "compound_legacy_failure": (3, 2, 0),
+    "compound_legacy_late_error": (2, 1, 1),
+    "target_facing_parent_with_child_links": (2, 1, 0),
 }
 
 
@@ -425,14 +475,8 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     [scenario_result] = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
     sdk = compute_scenario_statistics(scenario_result)
     assert sdk.overall.success_percentage == expected
-    if history_name == "compound_failure":
-        assert sdk.attempts == 3
-        assert sdk.overall.retries == 2
-        assert sdk.overall.errors == 0
-    if history_name == "compound_late_error":
-        assert sdk.attempts == 2
-        assert sdk.overall.retries == 1
-        assert sdk.overall.errors == 1
+    if history_name in _EXPECTED_ACCOUNTING:
+        assert (sdk.attempts, sdk.overall.retries, sdk.overall.errors) == _EXPECTED_ACCOUNTING[history_name]
 
     # API: run detail, history list (SQL aggregate), and live progress
     service = ScenarioRunService()
@@ -452,7 +496,7 @@ async def test_sdk_api_and_reports_report_identical_statistics(history_name: str
     assert list_item.total_retries == detail.total_retries == sdk.overall.retries
     assert progress.summary.overall.succeeded == sdk.overall.succeeded
     assert progress.summary.overall.errors == sdk.overall.errors
-    if history_name.startswith("compound_"):
+    if history_name in _EXPECTED_ACCOUNTING:
         assert detail.error_attacks == list_item.error_attacks == sdk.overall.errors
     assert progress.summary.overall.outcomes == sdk.overall.outcomes
     assert progress.summary.overall.producer_counts == sdk.overall.producer_counts

@@ -49,6 +49,21 @@ describe('saved operation workflow', () => {
     expect(DEFAULT_GLOBAL_LABELS).not.toHaveProperty('operation')
   })
 
+  it('warns when no operation is selected, removes the warning on selection, and restores it on clear', async () => {
+    const user = userEvent.setup()
+    renderBar()
+    await user.click(screen.getByRole('button', { name: 'Show warnings' }))
+    expect(screen.getByText('Set operation in the bar. No operation is selected.')).toBeInTheDocument()
+    expect(screen.queryByText(/Set operator in the bar/)).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('combobox', { name: 'Operation' }))
+    await user.click(await screen.findByRole('option', { name: SAVED.name }))
+    expect(screen.queryByRole('button', { name: 'Show warnings' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Clear operation' }))
+    await user.click(screen.getByRole('button', { name: 'Show warnings' }))
+    expect(screen.getByText('Set operation in the bar. No operation is selected.')).toBeInTheDocument()
+  })
+
   it('shows persistent named controls and pins creation above filtered choices', async () => {
     const user = userEvent.setup()
     renderBar()
@@ -146,7 +161,10 @@ describe('saved operation workflow', () => {
   ] as OperationSelectionState[])('chooses an existing operation or clears from %j', async (initial: OperationSelectionState) => {
     const user = userEvent.setup()
     renderBar(initial)
-    if (initial.status === 'missing') expect(screen.getByText('Saved operation not found')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Show warnings' }))
+    expect(screen.getByText(initial.status === 'missing'
+      ? /The saved operation was not found/ : /Choose a saved Operation/)).toBeInTheDocument()
+    await user.keyboard('{Escape}')
     await user.click(screen.getByRole('combobox', { name: 'Operation' }))
     await user.click(await screen.findByRole('option', { name: SAVED.name }))
     expect(onSelect).toHaveBeenLastCalledWith(SAVED)
@@ -156,13 +174,30 @@ describe('saved operation workflow', () => {
     expect(screen.getByRole('combobox', { name: 'Operation' })).toHaveValue('')
   })
 
-  it('keeps the selection and offers retry when the selected operation cannot be loaded', async () => {
+  it('announces a lookup failure, describes the picker, and offers recovery without opening warnings', async () => {
     const user = userEvent.setup()
-    renderBar({ status: 'error', error: 'Storage unavailable' })
-    expect(screen.getByText(/Could not load the selected operation: Storage unavailable/)).toBeInTheDocument()
+    const renderSelection = (operation: OperationSelectionState) => (
+      <TestWrapper>
+        <LabelsBar labels={{ operator: 'alice' }} onLabelsChange={onChange}
+          operation={operation} onOperationChange={onSelect} onRetryOperation={onRetry} />
+      </TestWrapper>
+    )
+    const { rerender } = render(renderSelection({ status: 'loading' }))
+    const alert = screen.getByRole('alert')
+    expect(alert).toBeEmptyDOMElement()
+    rerender(renderSelection({ status: 'error', error: 'Storage unavailable' }))
+    expect(alert).toHaveTextContent(/Could not load the selected operation: Storage unavailable/)
+    expect(screen.getByRole('combobox', { name: 'Operation' }))
+      .toHaveAccessibleDescription(alert.textContent ?? '')
+    expect(screen.queryByRole('heading', { name: 'Warnings' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledTimes(1)
     expect(onSelect).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Clear', exact: true }))
+    expect(onSelect).toHaveBeenCalledWith(null)
+    rerender(renderSelection({ status: 'resolved', operation: SAVED }))
+    expect(alert).toBeEmptyDOMElement()
+    expect(screen.getByRole('combobox', { name: 'Operation' })).not.toHaveAttribute('aria-describedby')
   })
 
   it('creates inline, immediately selects the saved response, and restores focus', async () => {

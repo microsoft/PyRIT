@@ -656,6 +656,22 @@ async def test_prompt_normalizer_send_prompt_batch_async_applies_labels(mock_mem
     assert len(results) == 1
 
 
+async def test_prompt_normalizer_send_prompt_batch_async_rejects_negative_batch_size(mock_memory_instance, seed_group):
+    prompt_target = MockPromptTarget()
+    message = Message.from_prompt(prompt=seed_group.prompts[0].value, role="user")
+    normalizer_request = NormalizerRequest(message=message)
+    normalizer = PromptNormalizer()
+
+    with pytest.raises(ValueError, match="batch_size must be an integer of at least 1"):
+        await normalizer.send_prompt_batch_to_target_async(
+            requests=[normalizer_request],
+            target=prompt_target,
+            batch_size=-1,
+        )
+
+    assert prompt_target.prompt_sent == []
+
+
 async def test_prompt_normalizer_send_prompt_batch_async_preserves_empty_response_alignment(
     mock_memory_instance,
 ):

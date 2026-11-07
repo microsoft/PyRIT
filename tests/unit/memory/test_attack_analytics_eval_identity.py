@@ -43,7 +43,7 @@ from pyrit.models import (
     ObjectiveTargetEvaluationIdentifier,
     TargetIdentifier,
 )
-from pyrit.prompt_target import GandalfLevel, GandalfTarget, HTTPTarget
+from pyrit.prompt_target import HackAPromptChallenge, HackAPromptTarget, HTTPTarget
 from unit.mocks import add_legacy_attack_results_async
 
 if TYPE_CHECKING:
@@ -132,8 +132,13 @@ def _model_less(*, class_name: str, endpoint: str, model_name: str = "") -> Targ
 def test_targets_without_a_model_name_fall_back_to_their_content_hash() -> None:
     bank = HTTPTarget(http_request="POST /chat HTTP/1.1\nHost: bank.example\n\n{PROMPT}").get_identifier()
     hr = HTTPTarget(http_request="POST /ask HTTP/1.1\nHost: hr.example\n\n{PROMPT}").get_identifier()
-    level_one = GandalfTarget(level=GandalfLevel.LEVEL_1).get_identifier()
-    level_seven = GandalfTarget(level=GandalfLevel.LEVEL_7).get_identifier()
+    # Same class and endpoint; only the challenge parameter differs.
+    bacterial = HackAPromptTarget(
+        challenge=HackAPromptChallenge.BACTERIAL_BASICS, session_id="session", cookie="cookie"
+    ).get_identifier()
+    atomics = HackAPromptTarget(
+        challenge=HackAPromptChallenge.AUTONOMOUS_ATOMICS, session_id="session", cookie="cookie"
+    ).get_identifier()
     blank = _model_less(class_name="MockTarget", endpoint="https://blank.example", model_name="   ")
     wrapped = TargetIdentifier(class_name="RoundRobinTarget", class_module="tests", targets=[bank])
 
@@ -142,15 +147,15 @@ def test_targets_without_a_model_name_fall_back_to_their_content_hash() -> None:
         for name, identifier in {
             "bank": bank,
             "hr": hr,
-            "level_one": level_one,
-            "level_seven": level_seven,
+            "bacterial": bacterial,
+            "atomics": atomics,
             "blank": blank,
         }.items()
     }
 
     assert len(set(keys.values())) == 5
     assert keys["bank"] == TargetIdentifier.from_component_identifier(bank).hash
-    assert keys["level_one"] == TargetIdentifier.from_component_identifier(level_one).hash
+    assert keys["bacterial"] == TargetIdentifier.from_component_identifier(bacterial).hash
     assert keys["blank"] == blank.hash
     assert ObjectiveTargetAnalyticsIdentityV1.hash(identifier=wrapped) == keys["bank"]
     # Targets with a model name keep the behavioral key, so deployments still merge.

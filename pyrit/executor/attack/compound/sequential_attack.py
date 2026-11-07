@@ -47,6 +47,7 @@ from pyrit.models import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.models import AtomicAttackIdentifier, ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
@@ -211,6 +212,7 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
     """
 
     DELEGATES_SCORING: ClassVar[bool] = True
+    FIXED_PARAMS_TYPE = AttackParameters.excluding("next_message", "prepended_conversation")
 
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.ORCHESTRATION
 
@@ -251,13 +253,17 @@ class SequentialAttack(AttackStrategy[AttackContext[AttackParameters], Sequentia
             # Inner child attacks expand their own next_message / prepended_conversation
             # via their own params_type; the compound takes no per-call message
             # overrides.
-            params_type=AttackParameters.excluding("next_message", "prepended_conversation"),
             logger=logger,
         )
         self._child_attacks: list[SequentialChildAttack] = list(child_attacks)
         self._completion_policy = completion_policy
         self._executor = AttackExecutor(max_concurrency=1)
         self._memory = CentralMemory.get_memory_instance()
+
+    @property
+    def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
+        """Expose active child attempts through the executor that owns them."""
+        return self._executor.active_executions
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

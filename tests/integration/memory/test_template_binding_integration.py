@@ -22,7 +22,7 @@ async def test_bound_path_operation_roundtrips_sqlite_async(
 ) -> None:
     dataset_name = f"template_binding_{uuid4().hex}"
     seed = seed_class(
-        value="Exists: {{ datasets_path.exists() }}. {% if context %}{{ context }}{% endif %}",
+        value="Folder: {{ datasets_path.name }}. {% if context %}{{ context }}{% endif %}",
         data_type="text",
         is_jinja_template=True,
         dataset_name=dataset_name,
@@ -31,7 +31,7 @@ async def test_bound_path_operation_roundtrips_sqlite_async(
     [stored] = await sqlite_instance.get_seeds_async(dataset_name=dataset_name)
 
     assert stored.value == seed.value
-    assert stored.render_template_value(context=context) == f"Exists: True. {context or ''}"
+    assert stored.render_template_value(context=context) == f"Folder: {DATASETS_PATH.name}. {context or ''}"
 
 
 @pytest.mark.parametrize(

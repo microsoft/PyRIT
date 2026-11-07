@@ -6,13 +6,99 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.4
+#       jupytext_version: 1.19.5
 # ---
 
 # %% [markdown]
 # # Prompt Generators
 #
-# Prompt generators don't drive a conversation with a system under test — they *produce* attack prompts that you can feed into other attacks or scenarios. They're heterogeneous in how they use a target: `AnecdoctorGenerator` uses the model you pass simply to *generate* misinformation-style content (optionally augmented with a knowledge graph), while `GPTFuzzer` actually probes a target with candidate jailbreak templates and scores the responses to evolve variants that evade defenses.
+# Prompt generators produce inputs for other attacks or scenarios.
+# `AssertGenerator` creates a policy taxonomy and native seed groups from an English
+# requirement. `AnecdoctorGenerator` creates misinformation-style content.
+# `GPTFuzzer` also probes a target and scores responses to improve jailbreak templates.
+
+# %% [markdown]
+# ## ASSERT Generator
+#
+# `AssertGenerator` follows ASSERT v0.3.0, revision
+# `04b713fe73879208369750b3bd5ad53544f3eecc` (2026-09-04)
+# [@assert2026; @agarwal2026systematization]. It turns a behavior requirement into
+# a taxonomy, coverage assignments, and native `AttackSeedGroup` objects:
+#
+# - `SeedObjective`: the goal.
+# - Optional `SeedPrompt`: the literal first message to the application.
+# - Optional `adversarial_prompts`: named `SeedPrompt` inputs for the model that
+#   writes later user turns. These are not application messages.
+#
+# Configure target credentials before running. Search is off by default;
+# `web_search=True` requires a search-enabled `OpenAIResponseTarget` as `research_target`.
+
+# %%
+import getpass
+
+from pyrit.datasets import AssertProvider
+from pyrit.executor.promptgen import AssertGenerator
+from pyrit.memory import CentralMemory
+from pyrit.models import (
+    AssertDimension,
+    AssertGenerationConfig,
+)
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
+
+await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore
+assert_memory = CentralMemory.get_memory_instance()
+assert_dataset_name = "assert_support"
+assert_config = AssertGenerationConfig(
+    behavior_name="customer_support",
+    behavior_description="Explain published return policies. Do not disclose another customer's private order details.",
+    context="A retail support assistant serves customers in private chat and a public forum.",
+    group_count=2,
+    include_user_prompt=True,
+    include_adversarial_prompt=True,
+    behavior_category_count=4,
+    dimensions=(AssertDimension(name="channel", description="Where the customer asks for help."),),
+    dimension_level_count=2,
+    target_owns_instructions=True,
+)
+
+# %%
+assert_generator = AssertGenerator(target=OpenAIChatTarget())
+assert_result = await assert_generator.execute_async(config=assert_config)  # type: ignore
+coverage = assert_result.coverage
+print(
+    f"{coverage.sample_size} seed groups, "
+    f"{coverage.covered_pairs}/{coverage.total_pairs} pairs, "
+    f"pairwise complete: {coverage.pairwise_complete}"
+)
+
+for index, group in enumerate(assert_result.seed_groups, start=1):
+    print(f"Group {index} objective: {group.objective.value}")
+    print(f"  First user message: {group.prompts[0].value}")
+    print(f"  Adversarial user instructions: {group.adversarial_prompts.system_prompt.description}")
+
+assert_provider = AssertProvider(dataset_name=assert_dataset_name, result=assert_result)
+assert_dataset = await assert_provider.fetch_dataset_async()  # type: ignore
+await assert_memory.add_seed_datasets_to_memory_async(  # type: ignore
+    datasets=[assert_dataset], added_by=getpass.getuser()
+)
+print(f"Stored {len(assert_result.seed_groups)} seed groups.")
+
+# %% [markdown]
+# Review generated content before use: validation checks structure and counts,
+# not semantic quality. Pairwise, stratified, full-factorial, and random sampling
+# plan coverage assignments. `assert_result.coverage` reports actual coverage; small
+# budgets can leave gaps.
+#
+# `AssertProvider(result=...)` packages a complete `SeedDataset` for memory.
+# This example uses fresh in-memory storage; use persistent memory to retain seeds
+# across sessions.
+#
+# For execution, `AttackTechniqueFactory.create(seed_group=group, ...)` binds the
+# named prompts through `AttackAdversarialConfig` to a fresh attack instance.
+# Existing attacks handle feedback and stopping using the standard `adversarial_chat`
+# JSON schema; only `next_message` goes to the application. Generation does not run
+# or score attacks.
 
 # %% [markdown]
 # ## Anecdoctor Generator

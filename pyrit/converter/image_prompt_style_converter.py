@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any, ClassVar
@@ -103,6 +105,17 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
         self._style_instructions: str = filter_data["style_instructions"]
         self._variations: dict[str, str] = filter_data["variations"]
 
+        # A custom filter is named after its file stem, which another custom file or a built-in
+        # filter can share, so identify it by its content. Built-in filters keep their name only.
+        self._filter_hash: str | None = None
+        if filter_path is not None:
+            # Variation order affects seeded selection and case-insensitive duplicate resolution.
+            filter_content = json.dumps(
+                {"style_instructions": self._style_instructions, "variations": list(self._variations.items())},
+                sort_keys=True,
+            )
+            self._filter_hash = hashlib.sha256(filter_content.encode("utf-8")).hexdigest()[:16]
+
         # Build a lookup map with lowercased keys for case-insensitive matching
         self._variation_map: dict[str, str] = {}
         for name in self._variations:
@@ -140,6 +153,7 @@ class ImagePromptStyleConverter(LLMGenericTextConverter):
         return self._create_identifier(
             params={
                 "filter_name": self._filter_name,
+                "filter_hash": self._filter_hash,
                 "variation": self._variation,
             },
             converter_target=self._converter_target.get_identifier(),

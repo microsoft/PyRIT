@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   test,
   expect,
+  selectChatTarget,
   type APIRequestContext,
   type Locator,
   type Page,
@@ -199,35 +200,35 @@ async function createConversation(
   return body.conversation_id;
 }
 
-/** Save an objective default and open a new chat with that target. */
+/** Select a target in a new chat. */
 async function activateTarget(
   page: Page,
   targetRegistryName: string,
 ): Promise<void> {
-  await page.getByTitle("Registry").click();
-  await expect(page.getByText("Target Registry")).toBeVisible({ timeout: 10_000 });
-  const row = page.getByTestId(`target-row-${targetRegistryName}`);
-  await expect(row).toBeVisible({ timeout: 10_000 });
-  await page.getByRole("combobox", { name: "Default objective target", exact: true })
-    .selectOption(targetRegistryName);
-  await page.getByTitle("Technique.execute").click();
-  await expect(page.getByTestId("new-attack-btn")).toBeVisible({ timeout: 5_000 });
+  await selectChatTarget(page, targetRegistryName);
 }
 
-/** Navigate to an attack by opening the History view and clicking its row. */
+const historyClockPages = new WeakSet<Page>();
+
+/** Navigate to an attack through its objective control in History. */
 async function openAttackInHistory(
   page: Page,
   attackResultId: string,
 ): Promise<void> {
-  await page.getByTitle("History").click();
+  if (!historyClockPages.has(page)) {
+    await page.clock.install();
+    historyClockPages.add(page);
+  }
+  await page.getByRole("button", { name: "Attacks", exact: true }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   await expect(page.getByTestId("attacks-table")).toBeVisible({
     timeout: 10_000,
   });
-  await page.getByTestId("refresh-btn").click();
+  await page.clock.fastForward(60_000);
   const row = page.getByTestId(`attack-row-${attackResultId}`);
   await expect(row).toBeVisible({ timeout: 10_000 });
-  await row.click();
-  await expect(page).toHaveURL(new RegExp(`/attacks/${attackResultId}$`));
+  await row.getByRole("button", { name: /^Open attack:/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/${attackResultId}$`));
   await expect(page.getByTestId("toggle-panel-btn")).toBeEnabled({
     timeout: 10_000,
   });
@@ -844,12 +845,19 @@ for (const variant of TARGET_VARIANTS) {
         await page.getByTestId("copy-to-input-btn-1").click();
         await page.getByRole("menuitem", { name: "Branch conversation", exact: true }).click();
       } else {
-        // Single-turn targets disable branch buttons in the UI.
-        // Branch via the API instead to test the backend operation.
-        await createConversation(request, attackResultId, {
-          sourceConversationId: conversationId,
-          cutoffIndex: 1,
+        await openAttackInHistory(page, attackResultId);
+        await page.getByTestId("copy-to-input-btn-1").click();
+        await expect(page.getByRole("menuitem", { name: "Branch conversation", exact: true })).toBeDisabled();
+        const rejected = await request.post(`/api/attacks/${encodeURIComponent(attackResultId)}/conversations`, {
+          headers: compatibilityHeaders(),
+          data: { source_conversation_id: conversationId, cutoff_index: 1 },
         });
+        expect(rejected.status()).toBe(400);
+        const listing = await request.get(`/api/attacks/${encodeURIComponent(attackResultId)}/conversations`, {
+          headers: compatibilityHeaders(),
+        });
+        expect((await listing.json()).conversations).toHaveLength(1);
+        return;
       }
 
       await expect
@@ -949,11 +957,11 @@ for (const variant of TARGET_VARIANTS) {
         await page.waitForTimeout(3_000);
       }
 
-      // Branch via API (UI branch button is disabled for single-turn targets)
+      // Targets without replay support can create an empty conversation, not a history copy.
       const branchConversationId = await createConversation(
         request,
         attackResultId,
-        { sourceConversationId: conversationId, cutoffIndex: 1 },
+        variant.multiTurn ? { sourceConversationId: conversationId, cutoffIndex: 1 } : undefined,
       );
 
       await openConversationPanel(page);

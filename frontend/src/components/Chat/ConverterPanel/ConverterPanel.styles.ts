@@ -89,74 +89,6 @@ export const useConverterPanelStyles = makeStyles({
       borderBottom: `${tokens.strokeWidthThin} solid ${tokens.colorNeutralStroke2}`,
     },
   },
-  converterPicker: {
-    width: '100%',
-  },
-  converterPickerListbox: {
-    maxHeight: 'min(40rem, 75vh)',
-    overflowY: 'auto',
-  },
-  createOption: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    width: '100%',
-    gap: tokens.spacingHorizontalS,
-    whiteSpace: 'normal',
-  },
-  registeredOption: {
-    display: 'flex',
-    flexDirection: 'column',
-    width: '100%',
-    minWidth: 0,
-    gap: tokens.spacingVerticalXXS,
-    whiteSpace: 'normal',
-  },
-  optionText: {
-    display: 'flex',
-    flexDirection: 'column',
-    minWidth: 0,
-    gap: tokens.spacingVerticalXXS,
-  },
-  optionHeader: {
-    display: 'flex',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    minWidth: 0,
-    gap: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
-  },
-  optionType: {
-    color: tokens.colorNeutralForeground3,
-    fontFamily: tokens.fontFamilyMonospace,
-  },
-  converterCard: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: tokens.spacingVerticalXXS,
-    padding: tokens.spacingVerticalS,
-    borderRadius: tokens.borderRadiusMedium,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
-    backgroundColor: tokens.colorNeutralBackground1,
-  },
-  converterCardHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: tokens.spacingHorizontalS,
-    cursor: 'grab',
-    userSelect: 'none',
-    ':active': {
-      cursor: 'grabbing',
-    },
-  },
-  dragHandle: {
-    ...mobileTouchTarget,
-    cursor: 'grab',
-    flexShrink: 0,
-    ':active': {
-      cursor: 'grabbing',
-    },
-  },
   previewButton: {
     ...mobileTouchTarget,
     alignSelf: 'flex-start',
@@ -227,33 +159,6 @@ export const useConverterPanelStyles = makeStyles({
   selectionButton: {
     ...mobileTouchTarget,
     alignSelf: 'flex-start',
-  },
-  addConvertedButton: {
-    alignSelf: 'stretch',
-    marginTop: 'auto',
-  },
-  converterName: {
-    minWidth: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  llmBadge: {
-    display: 'inline-block',
-    marginLeft: tokens.spacingHorizontalXS,
-    padding: `0 ${tokens.spacingHorizontalXXS}`,
-    borderRadius: tokens.borderRadiusSmall,
-    backgroundColor: tokens.colorPalettePurpleBackground2,
-    color: tokens.colorPalettePurpleForeground2,
-    fontSize: tokens.fontSizeBase100,
-    fontWeight: tokens.fontWeightSemibold as unknown as string,
-    verticalAlign: 'middle',
-  },
-  optionBadges: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '2px',
-    flexShrink: 0,
   },
   touchTarget: {
     ...mobileTouchTarget,

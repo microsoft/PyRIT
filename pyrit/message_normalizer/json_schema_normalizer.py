@@ -2,9 +2,18 @@
 # Licensed under the MIT license.
 
 import json
+from typing import Any
 
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, JsonSchemaDefinition, Message, MessagePiece
+from pyrit.models import (
+    JSON_SCHEMA_METADATA_KEY,
+    ComponentIdentifier,
+    Identifiable,
+    JsonResponseConfig,
+    JsonSchemaDefinition,
+    Message,
+    MessagePiece,
+)
 
 # Default text appended to a message piece when the target cannot natively
 # enforce a JSON schema. The exact phrasing mirrors the legacy in-prompt
@@ -26,7 +35,7 @@ DEFAULT_SCHEMA_INSTRUCTIONS_TEMPLATE = (
 )
 
 
-class JsonSchemaNormalizer(MessageListNormalizer[Message]):
+class JsonSchemaNormalizer(MessageListNormalizer[Message], Identifiable):
     """
     Adapts JSON-schema metadata for targets that cannot enforce it natively.
 
@@ -35,9 +44,10 @@ class JsonSchemaNormalizer(MessageListNormalizer[Message]):
     For every message piece carrying a schema in
     ``JSON_SCHEMA_METADATA_KEY``:
 
-    * If the piece is text, the schema is rendered into prompt text appended
-      to the existing value so the model is still instructed to produce a
-      conforming JSON object via prompt engineering.
+    * If the piece is text, the schema (a dict or a JSON string) is rendered
+      into prompt text appended to the existing value so the model is still
+      instructed to produce a conforming JSON object via prompt engineering.
+      An empty string means no schema, so nothing is appended.
     * Otherwise (non-text pieces — image, audio, video, etc.) the schema
       metadata is simply removed; non-text modalities have no natural place
       to embed a textual schema instruction.
@@ -78,6 +88,26 @@ class JsonSchemaNormalizer(MessageListNormalizer[Message]):
         if "{schema_json}" not in schema_instructions_template:
             raise ValueError("schema_instructions_template must contain a '{schema_json}' placeholder.")
         self._schema_instructions_template = schema_instructions_template
+
+    def as_identifier_params(self) -> dict[str, Any]:
+        """
+        Return the configuration parameters that affect JSON schema normalization.
+
+        Returns:
+            dict[str, Any]: Parameters including schema_instructions_template.
+        """
+        return {
+            "schema_instructions_template": self._schema_instructions_template,
+        }
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the behavioral identity for this normalizer.
+
+        Returns:
+            ComponentIdentifier: The frozen identity snapshot.
+        """
+        return ComponentIdentifier.of(self, params=self.as_identifier_params())
 
     async def normalize_async(self, messages: list[Message]) -> list[Message]:
         """
@@ -132,7 +162,7 @@ class JsonSchemaNormalizer(MessageListNormalizer[Message]):
         """
         Return a new piece with the schema metadata key removed.
 
-        For text pieces, the schema is additionally rendered into the piece's
+        For text pieces, a non-empty schema is additionally rendered into the piece's
         ``converted_value`` so the model is still instructed (via prompt text)
         to produce JSON conforming to the schema. For non-text pieces the
         schema is simply dropped from metadata.
@@ -145,12 +175,13 @@ class JsonSchemaNormalizer(MessageListNormalizer[Message]):
             schema rendered into the text value when ``converted_value_data_type``
             is ``"text"``.
         """
-        schema = piece.prompt_metadata[JSON_SCHEMA_METADATA_KEY]
         new_metadata = {key: value for key, value in piece.prompt_metadata.items() if key != JSON_SCHEMA_METADATA_KEY}
 
         updates: dict[str, object] = {"prompt_metadata": new_metadata}
         if piece.converted_value_data_type == "text":
-            updates["converted_value"] = self._append_schema_instructions(text=piece.converted_value, schema=schema)
+            schema = JsonResponseConfig.parse_schema(piece.prompt_metadata[JSON_SCHEMA_METADATA_KEY])
+            if schema is not None:
+                updates["converted_value"] = self._append_schema_instructions(text=piece.converted_value, schema=schema)
 
         return piece.model_copy(update=updates)
 

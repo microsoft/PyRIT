@@ -8,6 +8,7 @@ from colorama import Fore, Style
 from pyrit.models import ComponentIdentifier, ScorerIdentifier, project_behavioral_identity
 from pyrit.output._formatting import _PrettyPrinterMixin
 from pyrit.output.scorer.base import ScorerPrinterBase
+from pyrit.output.scorer.json import format_scorer_type
 from pyrit.output.sink import Sink
 
 # The evaluator zeroes differences below this as floating-point noise, so a scorer whose MAE
@@ -101,7 +102,7 @@ class PrettyScorerPrinter(_PrettyPrinterMixin, ScorerPrinterBase):
         lines: list[str] = []
         indent = self._indent * indent_level
 
-        lines.append(self._format_colored(f"{indent}• {label}: {scorer_identifier.class_name}", Fore.CYAN))
+        lines.append(self._format_colored(f"{indent}• {label}: {format_scorer_type(scorer_identifier)}", Fore.CYAN))
         if scorer_identifier.params:
             summary = self._summarize_params(
                 params=scorer_identifier.params,

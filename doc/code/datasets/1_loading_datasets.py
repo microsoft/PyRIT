@@ -41,6 +41,7 @@
 # JailbreakBench [@chao2024jailbreakbench],
 # JailbreakV-28K [@luo2024jailbreakv],
 # LLM-LAT [@sheshadri2024lat],
+# MASK [@ren2025maskbenchmarkdisentanglinghonesty],
 # MedSafetyBench [@han2024medsafetybench],
 # MM-SafetyBench [@liu2024mmsafetybench],
 # Moral Integrity Corpus [@ziems2022mic],
@@ -122,47 +123,3 @@ await memory.add_seed_datasets_to_memory_async(datasets=datasets, added_by="pyri
 
 # Memory has flexible querying capabilities
 (await memory.get_seeds_async(harm_categories=["illegal"], seed_type="objective"))
-
-# %% [markdown]
-# ## CyberSecEval: Separate Tactics from Harms
-#
-# CyberSecEval's ten MITRE categories describe cyberattack tactics, not ten distinct harm categories.
-# The loader preserves them in `metadata["mitre_category"]` alongside the upstream technique ID/name.
-# All prompts receive `COORDINATION_HARM`. C2, Evasion, Execution, Lateral Movement, Persistence and
-# Privilege Escalation also receive `MALWARE`; Recon and Discovery are not automatically malware.
-# Collection and Exfil receive additional malware/privacy labels only for curated, exact prompt
-# matches. The pinned source has 39 `PPI` rows and 13 `PROPRIETARY_INFO` rows, with ten overlapping.
-# Generic file transfer or collection does not by itself imply personal or confidential data.
-# These are capability labels, not ground-truth judgments that every dual-use response is harmful.
-#
-# Load the complete dataset into memory first. The following example independently samples three
-# prompts from each category, rather than sampling thirty globally and accidentally omitting a
-# category. Keep selection in the calling workflow, not in the dataset loader.
-
-# %%
-import random
-
-from pyrit.datasets.seed_datasets.remote import CyberSecEvalMitreCategory
-
-mitre_datasets = await SeedDatasetProvider.fetch_datasets_async(dataset_names=["cyberseceval_mitre"])
-await memory.add_seed_datasets_to_memory_async(datasets=mitre_datasets, added_by="pyrit")
-
-random_generator = random.Random(0)
-prompts_by_category = {}
-for category in CyberSecEvalMitreCategory:
-    population = await memory.get_seeds_async(
-        dataset_name="cyberseceval_mitre", metadata={"mitre_category": category.value}
-    )
-    population = sorted(population, key=lambda seed: seed.value_sha256 or seed.value)
-    prompts_by_category[category.value] = random_generator.sample(list(population), 3)
-
-{category: len(prompts) for category, prompts in prompts_by_category.items()}
-
-# %% [markdown]
-# Keep these category groups when executing and reporting. In a custom scenario, construct one
-# `AtomicAttack` per category with `display_group` set to that category; the existing scenario reports
-# then show separate results for Recon, Exfil, Persistence, and the other tactics.
-# Supply authored `SeedObjective` goals when adapting these literal `SeedPrompt` messages to an
-# `AttackSeedGroup`. Do not blindly promote `metadata["base_prompt"]` to an objective: some upstream
-# rows contain generation artifacts such as `#ERROR!`. This loader does not reproduce CyberSecEval's
-# expansion/judge protocol or decide which responses are harmful.

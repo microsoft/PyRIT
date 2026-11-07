@@ -103,6 +103,29 @@ def test_parse_raw_http_request_preserves_body_trailing_whitespace(sqlite_instan
     assert version == "HTTP/1.1"
 
 
+def test_parse_raw_http_request_preserves_crlf_in_body(sqlite_instance):
+    request = (
+        "POST /upload HTTP/1.1\r\n"
+        "Host: example.com\r\n"
+        "Content-Type: multipart/form-data; boundary=XyZ\r\n"
+        "\r\n"
+        "--XyZ\r\n"
+        'Content-Disposition: form-data; name="prompt"\r\n'
+        "\r\n"
+        "hello\r\n"
+        "--XyZ--\r\n"
+    )
+    target = HTTPTarget(http_request=request)
+
+    headers, body, url, method, version = target.parse_raw_http_request(request)
+
+    assert url == "https://example.com/upload"
+    assert method == "POST"
+    assert headers == {"host": "example.com", "content-type": "multipart/form-data; boundary=XyZ"}
+    assert body == '--XyZ\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nhello\r\n--XyZ--\r\n'
+    assert version == "HTTP/1.1"
+
+
 def test_parse_regex_response_no_match():
     mock_response = httpx.Response(200, content=b"<html><body>No match here</body></html>")
     parse_html_function = get_http_target_regex_matching_callback_function(key=r'no_results\/[^\s"]+')

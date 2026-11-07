@@ -38,7 +38,7 @@ from pyrit.executor.promptgen.gcg.experiments.log import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
@@ -445,6 +445,9 @@ class AttackPrompt:
         return slice(indices[0], indices[-1] + 1)
 
     def _update_ids(self) -> None:
+        # Gemma and byte-level BPE tokenizers decode the control with the separator space in front;
+        # rendering that again would add a second space and an extra token before the control.
+        self.control = self.control.removeprefix(" ")
         if not self.control.strip() or not self.target.strip():
             raise ValueError("GCG control and target must contain non-whitespace text.")
         if not self.tokenizer.is_fast:
@@ -2309,6 +2312,7 @@ class ModelWorker:
         move_to_device = cast("Callable[[torch.device], PreTrainedModel]", model.to)
         self.model = move_to_device(torch.device(device)).eval()
         self.tokenizer = tokenizer
+        self._vocabulary_identities: dict[int, str] = {}
         self.tasks: mp.JoinableQueue[ModelWorkerTask | None] = mp.JoinableQueue()
         self.results: mp.JoinableQueue[Any] = mp.JoinableQueue()
         self.process: mp.Process | None = None
@@ -2390,15 +2394,162 @@ class ModelWorker:
         return task.operation(*task.args, **task.kwargs)
 
 
+def _check_gcg_capabilities(
+    *,
+    model: Any,
+    tokenizer: Any,
+    model_path: str,
+    prompts: Iterable[AttackPrompt] = (),
+    shared_control: str | None = None,
+) -> None:
+    """
+    Check that GCG can optimize against a model and tokenizer before any worker starts.
+
+    Args:
+        model (Any): The loaded causal language model.
+        tokenizer (Any): The tokenizer paired with the model.
+        model_path (str): The model path, used in error messages.
+        prompts (Iterable[AttackPrompt]): Actual initial prompts to check in addition
+            to the tokenizer's base vocabulary, special tokens, and template probe.
+        shared_control (str | None): The first training prompt's decoded control,
+            reused across workers for evaluation and checkpoint restoration.
+
+    Raises:
+        ValueError: If the tokenizer is not fast, the model exposes no floating point
+            input embedding matrix, GCG would use token ids outside that matrix, or an
+            initial control does not survive the decode/encode round trip GCG applies every step.
+    """
+    if not tokenizer.is_fast:
+        raise ValueError(
+            f"The tokenizer for {model_path!r} ({type(tokenizer).__name__}) is not backed by the Hugging Face "
+            "tokenizers library, so it cannot return the character-to-token offsets GCG uses to locate the goal, "
+            "control and target. Load it with the default tokenizers backend."
+        )
+    try:
+        weight = get_embedding_matrix(model)
+    except (AttributeError, NotImplementedError):
+        weight = None
+    if not isinstance(weight, torch.Tensor):
+        raise ValueError(
+            f"Model {model_path!r} does not expose an input embedding matrix through get_input_embeddings(). "
+            "GCG computes token gradients through that matrix."
+        )
+    if not weight.is_floating_point():
+        raise ValueError(
+            f"The input embeddings of {model_path!r} are {weight.dtype}, so GCG cannot compute token gradients "
+            "through them. Load the model without quantizing the embedding layer."
+        )
+    prompts = list(prompts)
+    # Added tokens the chat template never emits (e.g. Gemma 3's image token) may sit past the
+    # embedding rows, so check only the ids GCG uses: the base vocabulary sampled by
+    # get_nonascii_toks, the special token ids, and a conversation rendered as in _update_ids.
+    messages = [{"role": "user", "content": "Say it ! !"}, {"role": "assistant", "content": "Sure"}]
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False)
+    special_ids = (tokenizer.bos_token_id, tokenizer.eos_token_id, tokenizer.pad_token_id, tokenizer.unk_token_id)
+    max_id = max(
+        tokenizer.vocab_size - 1,
+        *tokenizer(prompt, add_special_tokens=False).input_ids,
+        *(i for i in special_ids if i is not None),
+    )
+    for attack_prompt in prompts:
+        max_id = max(max_id, int(attack_prompt.input_ids.max()))
+    if max_id >= weight.shape[0]:
+        raise ValueError(
+            f"The tokenizer for {model_path!r} produces token id {max_id} but the model's input embeddings "
+            f"have only {weight.shape[0]} rows. Check that the tokenizer matches the model."
+        )
+    for attack_prompt in prompts:
+        # GCG decodes each accepted candidate as get_filtered_cands does and renders it again through
+        # control_str, so the initial control must come back as the same tokens.
+        _check_control_round_trip(prompt=attack_prompt, model_path=model_path, shared_control=shared_control)
+
+
+def _check_control_round_trip(*, prompt: AttackPrompt, model_path: str, shared_control: str | None) -> None:
+    """
+    Validate candidate and shared control rendering without modifying the original prompt.
+
+    Args:
+        prompt (AttackPrompt): The original model-specific prompt.
+        model_path (str): The model path used in validation errors.
+        shared_control (str | None): The control string reused across workers.
+
+    Raises:
+        ValueError: If a decoded or shared control cannot reproduce the original control tokens.
+    """
+    control, control_toks = prompt.control, prompt.control_toks
+    decoded_control = prompt.tokenizer.decode(
+        control_toks, skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
+    controls = [(decoded_control, "decoded control")]
+    if shared_control is not None:
+        controls.append((shared_control, "shared control"))
+    for candidate_control, source in controls:
+        trial = copy(prompt)
+        try:
+            trial.control_str = candidate_control
+        except ValueError as exc:
+            raise ValueError(
+                f"The initial control {control!r} has {source} {candidate_control!r} with the tokenizer "
+                f"for {model_path!r}, which cannot be rendered as a GCG control. "
+                "Use a control_init that encodes back to the same tokens."
+            ) from exc
+        if not torch.equal(trial.control_toks, control_toks):
+            raise ValueError(
+                f"The initial control {control!r} does not survive a decode/encode round trip with the tokenizer "
+                f"for {model_path!r}: the {source} comes back as {trial.control!r}, so GCG would not optimize the "
+                "tokens it started from. Use a control_init that encodes back to the same tokens."
+            )
+
+
+def start_workers(*, params: Any, workers: list[ModelWorker]) -> None:
+    """
+    Validate every model's actual training and held-out prompts before starting any worker.
+
+    Args:
+        params (Any): Attack parameters containing model paths, training and held-out
+            goal/target lists, and the resolved ``control_init``.
+        workers (list[ModelWorker]): Loaded workers in model-path order.
+
+    Raises:
+        ValueError: If any model, tokenizer, or rendered initial prompt is incompatible with GCG.
+    """
+    goal_target_pairs = [
+        *zip(params.goals, params.targets, strict=True),
+        *zip(params.test_goals, params.test_targets, strict=True),
+    ]
+    shared_control = None
+    for model_path, worker in zip(params.model_paths, workers, strict=True):
+        prompts = [
+            AttackPrompt(goal=goal, target=target, tokenizer=worker.tokenizer, control_init=params.control_init)
+            for goal, target in goal_target_pairs
+        ]
+        if shared_control is None and prompts:
+            shared_control = prompts[0].control_str
+        _check_gcg_capabilities(
+            model=worker.model,
+            tokenizer=worker.tokenizer,
+            model_path=model_path,
+            prompts=prompts,
+            shared_control=shared_control,
+        )
+    for worker in workers:
+        worker.start()
+
+
 def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker], list[ModelWorker]]:
     """
     Load and optionally start training and held-out model workers.
+
+    When ``evaluation`` is True, only model/tokenizer capabilities are checked.
+    Call ``start_workers`` with the final goals, targets, and resolved initial suffix
+    after preparing the run's inputs.
 
     Returns:
         tuple[list[ModelWorker], list[ModelWorker]]: Training and held-out workers.
 
     Raises:
-        ValueError: If a tokenizer does not define a chat template.
+        ValueError: If a tokenizer does not define a chat template, or a model and
+            tokenizer pair fails the GCG capability check.
     """
     tokenizers = []
     for i in range(len(params.tokenizer_paths)):
@@ -2447,9 +2598,11 @@ def get_workers(params: Any, evaluation: bool = False) -> tuple[list[ModelWorker
         )
         for i in range(len(params.model_paths))
     ]
-    if not evaluation:
-        for worker in workers:
-            worker.start()
+    if evaluation:
+        for model_path, worker in zip(params.model_paths, workers, strict=True):
+            _check_gcg_capabilities(model=worker.model, tokenizer=worker.tokenizer, model_path=model_path)
+    else:
+        start_workers(params=params, workers=workers)
 
     num_train_models = getattr(params, "num_train_models", len(workers))
     logger.info(f"Loaded {num_train_models} train models")

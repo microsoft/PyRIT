@@ -4,17 +4,20 @@ import {
   Button, Field, MessageBar, MessageBarBody, Select, Skeleton, SkeletonItem, Text,
 } from '@fluentui/react-components'
 import type { SelectOnChangeData } from '@fluentui/react-components'
-import { ArrowSyncRegular } from '@fluentui/react-icons'
 import { useLocation, useNavigate } from 'react-router'
 
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useAttackAnalytics } from '@/hooks/useAttackAnalytics'
 import { useRuntime } from '@/hooks/useRuntime'
-import type { AttackAnalyticsDimension, AttackAnalyticsFilter, AttackAnalyticsFilters, AttackAnalyticsViewState, AttackOutcome } from '@/types'
+import type {
+  AttackAnalyticsDimension, AttackAnalyticsFilter, AttackAnalyticsFilters, AttackAnalyticsOption,
+  AttackAnalyticsReport, AttackAnalyticsViewState, AttackOutcome,
+} from '@/types'
 import {
   ANALYTICS_ASR_NOTE, DEFAULT_ANALYTICS_VIEW, analyticsAsrDefinition,
-  analyticsDimensionKey, analyticsQuery, analyticsQueryKey, analyticsViewError, analyticsViewFromLocation,
-  analyticsViewToHash, appendAnalyticsDrilldown, formatAnalyticsTime, hasAnalyticsFilters,
+  analyticsDimensionKey, analyticsLabelEpoch, analyticsOptionLabelKey, analyticsQuery, analyticsQueryKey, analyticsViewError,
+  analyticsViewFromLocation, analyticsViewToHash, appendAnalyticsDrilldown, hasAnalyticsFilters,
+  withoutAnalyticsOperationIdLabels,
 } from '@/utils/attackAnalytics'
 
 import AnalyticsDimensionPicker from './AnalyticsDimensionPicker'
@@ -32,6 +35,28 @@ interface AnalyticsPageProps {
 interface GroupPageState {
   readonly query: { readonly key: string }
   readonly offset: number
+}
+
+/** The report's server labels for the clicked keys, so new drill-down chips need no lookup. */
+function drilldownOptionLabels(report: AttackAnalyticsReport, predicates: AttackAnalyticsFilter[]): Record<string, string> {
+  const axes: Array<[AttackAnalyticsDimension | null, AttackAnalyticsOption[]]> = [
+    [report.group_by, [...report.groups, ...report.rows]],
+    [report.compare_by, report.columns],
+  ]
+  const reportLabels = new Map<string, string>()
+  for (const [dimension, options] of axes) {
+    if (!dimension) continue
+    for (const option of options) reportLabels.set(analyticsOptionLabelKey(dimension, option.key), option.label)
+  }
+  const labels: Record<string, string> = {}
+  for (const predicate of predicates) {
+    for (const value of predicate.values) {
+      const key = analyticsOptionLabelKey(predicate.dimension, value)
+      const label = reportLabels.get(key)
+      if (label !== undefined) labels[key] = label
+    }
+  }
+  return labels
 }
 
 /**
@@ -53,12 +78,20 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
   const groupQuery = useMemo(() => ({ key: groupQueryKey }), [groupQueryKey])
   const [groupPage, setGroupPage] = useState<GroupPageState | null>(null)
   const [rejectedEdit, setRejectedEdit] = useState<{ locationKey: string; message: string } | null>(null)
+  const [drilldownLabels, setDrilldownLabels] = useState<Record<string, string>>({})
   const interactionError = rejectedEdit?.locationKey === location.key ? rejectedEdit.message : null
   const offset = groupPage?.query === groupQuery ? groupPage.offset : 0
   const query = parsed.error ? null : analyticsQuery(view, offset)
   const analytics = useAttackAnalytics(query)
   const report = analytics.report
   const filtersActive = hasAnalyticsFilters(view.filters)
+  const labelEpoch = analyticsLabelEpoch(analytics.refreshVersion, runtime.generation)
+  const [drilldownLabelsEpoch, setDrilldownLabelsEpoch] = useState(labelEpoch)
+  // A rename changes only Operation names under a fixed key; other labels are immutable and nothing would refetch them.
+  if (drilldownLabelsEpoch !== labelEpoch) {
+    setDrilldownLabelsEpoch(labelEpoch)
+    setDrilldownLabels((previous: Record<string, string>) => withoutAnalyticsOperationIdLabels(previous))
+  }
 
   useEffect(() => {
     if (!parsed.error && new URLSearchParams(location.search).has('analytics') && !location.hash) {
@@ -83,12 +116,9 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
   }
 
   function drilldown(predicates: AttackAnalyticsFilter[], outcome?: AttackOutcome): void {
-    changeFilters(appendAnalyticsDrilldown(view.filters, predicates, outcome))
-  }
-
-  function reload(): void {
-    setGroupPage({ query: groupQuery, offset: 0 })
-    analytics.reload()
+    if (!changeFilters(appendAnalyticsDrilldown(view.filters, predicates, outcome)) || !report) return
+    const labels = drilldownOptionLabels(report, predicates)
+    setDrilldownLabels((previous: Record<string, string>) => ({ ...previous, ...labels }))
   }
 
   function changeGroupPage(nextOffset: number): void {
@@ -106,19 +136,9 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
   }
 
   return (
-    <div className={styles.root} data-testid="analytics-page">
+    <div className={styles.root} data-testid="analytics-page" aria-busy={analytics.loading}>
       <header className={styles.header}>
         <Text as="h1" className={styles.title} size={600} weight="semibold">Analytics</Text>
-        <div className={styles.row}>
-          <Text size={200}>
-            Last refreshed: {report
-              ? <time dateTime={report.computed_at}>{formatAnalyticsTime(report.computed_at)}</time>
-              : 'Not loaded'}
-          </Text>
-          <Button className={styles.button} appearance="subtle" icon={<ArrowSyncRegular />}
-            disabled={analytics.loading || parsed.error !== null || !runtime.ready}
-            onClick={reload}>Reload</Button>
-        </div>
       </header>
       <div className={styles.body}>
         {parsed.error ? (
@@ -132,7 +152,8 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
               Every saved AttackResult ID, across operations, targets, and result roles.
               Scenario filters retain this population, including retries. Filters apply to the entire dashboard.
             </Text>
-            <AnalyticsFilters filters={view.filters} refreshVersion={analytics.refreshVersion} onChange={changeFilters} />
+            <AnalyticsFilters filters={view.filters} refreshVersion={analytics.refreshVersion} onChange={changeFilters}
+              drilldownLabels={drilldownLabels} />
             {interactionError && <MessageBar intent="error"><MessageBarBody>{interactionError}</MessageBarBody></MessageBar>}
             <div className={styles.toolbar} aria-label="Chart controls">
               <Field label="Chart view" className={styles.control}>
@@ -186,14 +207,12 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
             </Text>}
             {analytics.error && (
               <MessageBar intent="error"><MessageBarBody>
-                {report ? 'Reload failed. Showing the last successful report; data may be stale.' : 'Could not load analytics for these filters.'}
-                {' '}{analytics.error}{' '}
-                <Button className={styles.button} onClick={reload}>Retry</Button>
+                {analytics.error}
               </MessageBarBody></MessageBar>
             )}
-            {analytics.loading && (
-              <div role="status" aria-label={report ? 'Reloading saved results' : 'Loading analytics for current filters'}>
-                <Text>{report ? 'Reloading saved results...' : 'Loading analytics for current filters...'}</Text>
+            {analytics.loading && !report && (
+              <div role="status" aria-label="Loading analytics for current filters">
+                <Text>Loading analytics for current filters...</Text>
                 {!report && <Skeleton className={styles.skeleton} aria-label="Loading report">
                   <SkeletonItem size={48} /><SkeletonItem size={128} /><SkeletonItem size={96} />
                 </Skeleton>}
@@ -218,7 +237,7 @@ export default function AnalyticsPage({ onOpenAttack }: AnalyticsPageProps) {
                     </Text>
                     <Text>{filtersActive
                       ? 'Remove a filter or widen the last updated range to explore other saved results.'
-                      : 'Analytics reads persisted results only. Save attack results, then use Reload to see them here.'}</Text>
+                      : 'Analytics reads persisted results only. Save attack results to see them here.'}</Text>
                     {filtersActive && <Button className={styles.button}
                       onClick={() => { changeFilters({ dimensions: [], outcomes: [] }) }}>Clear filters</Button>}
                   </section>

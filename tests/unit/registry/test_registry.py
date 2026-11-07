@@ -15,11 +15,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Event
 from types import ModuleType
-from unittest.mock import MagicMock
+from typing import Any, assert_type
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.registry.registry import Registry, _get_metadata_value, _matches_filters
+from pyrit.registry.registry import ParamBagRegistry, Registry, SupportsParamBag, _get_metadata_value, _matches_filters
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 
@@ -66,6 +67,38 @@ class WidgetRegistry(Registry[object, RegistryMetadata]):
 
     def _metadata_class(self) -> type[RegistryMetadata]:
         return RegistryMetadata
+
+
+class BagRegistry(ParamBagRegistry[SupportsParamBag, RegistryMetadata]):
+    def _metadata_class(self) -> type[RegistryMetadata]:
+        return RegistryMetadata
+
+
+@pytest.mark.parametrize("params", [None, {}, {"mode": "slow"}])
+def test_configure_prefix_distinguishes_absent_and_empty_params(params: dict[str, Any] | None) -> None:
+    registry = BagRegistry()
+    instance = MagicMock(spec=SupportsParamBag)
+    with patch.object(registry, "create_instance", return_value=instance) as create:
+        assert registry._create_and_configure("item", params=params, constructor_kwargs={"size": 2}) is instance
+    create.assert_called_once_with("item", size=2)
+    if params is None:
+        instance.set_params_from_args.assert_not_called()
+    else:
+        instance.set_params_from_args.assert_called_once_with(args=params)
+
+
+@pytest.mark.parametrize("during_configuration", [False, True])
+def test_configure_prefix_propagates_errors(during_configuration: bool) -> None:
+    registry = BagRegistry()
+    instance = MagicMock(spec=SupportsParamBag)
+    error = ValueError("invalid configuration")
+    if during_configuration:
+        instance.set_params_from_args.side_effect = error
+    with patch.object(
+        registry, "create_instance", return_value=instance, side_effect=None if during_configuration else error
+    ):
+        with pytest.raises(ValueError, match="invalid configuration"):
+            registry._create_and_configure("item", params={})
 
 
 class CoordinatedWidgetRegistry(WidgetRegistry):
@@ -302,7 +335,11 @@ def test_get_registry_singleton_converges_for_same_class() -> None:
             second = executor.submit(SlowConstructingRegistry.get_registry_singleton)
             SlowConstructingRegistry.construction_release.set()
 
-            assert first.result(timeout=5) is second.result(timeout=5)
+            first_registry = first.result(timeout=5)
+            second_registry = second.result(timeout=5)
+            assert_type(first_registry, SlowConstructingRegistry)
+            assert_type(second_registry, SlowConstructingRegistry)
+            assert first_registry is second_registry
     finally:
         SlowConstructingRegistry.reset_registry_singleton()
 
@@ -322,10 +359,14 @@ def test_get_registry_singleton_does_not_block_unrelated_registry_class() -> Non
             # Must complete promptly: different registry classes must not share a
             # construction lock.
             other = executor.submit(OtherSlowConstructingRegistry.get_registry_singleton)
-            assert isinstance(other.result(timeout=1), OtherSlowConstructingRegistry)
+            other_registry = other.result(timeout=1)
+            assert_type(other_registry, OtherSlowConstructingRegistry)
+            assert isinstance(other_registry, OtherSlowConstructingRegistry)
 
             SlowConstructingRegistry.construction_release.set()
-            assert isinstance(slow.result(timeout=5), SlowConstructingRegistry)
+            slow_registry = slow.result(timeout=5)
+            assert_type(slow_registry, SlowConstructingRegistry)
+            assert isinstance(slow_registry, SlowConstructingRegistry)
     finally:
         SlowConstructingRegistry.reset_registry_singleton()
         OtherSlowConstructingRegistry.reset_registry_singleton()

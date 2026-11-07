@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import copy
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -10,11 +11,12 @@ if TYPE_CHECKING:
 from pyrit.models import (
     ComponentIdentifier,
     Scorable,
+    ScorableUnion,
     Score,
     ScoringExpectation,
 )
 from pyrit.score.score_utils import ORIGINAL_FLOAT_VALUE_KEY
-from pyrit.score.scorer import Scorer
+from pyrit.score.scorer import Scorer, SnapshotParticipation, _set_snapshot_participation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -85,6 +87,29 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         """Return the scorer whose verdict is inverted."""
         return (self._scorer,)
 
+    async def _filter_matching_scores_by_snapshot_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
+    ) -> list[Score]:
+        """
+        Validate the wrapped scorer's snapshot without changing the inverted result.
+
+        Returns:
+            list[Score]: The candidates linked to the wrapped scorer's current snapshot.
+        """
+        return await self._filter_matching_scores_by_children_async(
+            scores=scores,
+            scorable=scorable,
+            expectation=expectation,
+            used_observation_ids=used_observation_ids,
+            participation_by_score=participation_by_score,
+        )
+
     async def _score_scorable_async(
         self,
         *,
@@ -107,7 +132,12 @@ class TrueFalseInverterScorer(TrueFalseScorer):
         )
         if not scores:
             return []
-        return self._invert(scores)
+        inverted = self._invert(scores)
+        for result, child_score in zip(inverted, scores, strict=True):
+            result.scorable = cast("ScorableUnion", scorable)
+            result.message_piece_id = self._piece_id_from_scorable(scorable)
+            _set_snapshot_participation(score=result, child_scores={0: child_score})
+        return inverted
 
     def _invert(self, scores: list[Score]) -> list[Score]:
         """
