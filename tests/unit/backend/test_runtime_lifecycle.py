@@ -96,6 +96,7 @@ async def apply_async(runtime: RuntimeLifecycle) -> None:
 )
 def runtime_deletion_route(runtime: RuntimeLifecycle, request: pytest.FixtureRequest) -> tuple[FastAPI, str]:
     root_path, mount_path, prefix = request.param
+    assert isinstance(root_path, str) and isinstance(mount_path, str) and isinstance(prefix, str)
     runtime.app.root_path = root_path
     app = runtime.app
     if mount_path:
