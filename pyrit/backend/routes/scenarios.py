@@ -13,12 +13,21 @@ Route structure:
 """
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.analytics import PairedOutcomeStatistics, compute_paired_outcome_statistics
-from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
+from pyrit.backend.models.attacks import ConversationMessagesResponse
+from pyrit.backend.models.common import (
+    MAX_IDENTIFIER_LENGTH,
+    MAX_ITEMS,
+    CursorStr,
+    IdentifierStr,
+    LabelFilterStr,
+    ProblemDetail,
+)
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.models.scenarios import (
     ListRegisteredScenariosResponse,
@@ -48,6 +57,44 @@ from pyrit.models.catalog import (
 )
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
+
+
+@router.get("/runs/{scenario_result_id}/launch-configuration", response_model=RunScenarioRequest)
+async def get_launch_configuration_async(scenario_result_id: IdentifierStr) -> RunScenarioRequest:
+    """
+    Read the saved configuration for a new launch without starting a run.
+
+    Returns:
+        RunScenarioRequest: Saved settings without an original result ID.
+    """
+    try:
+        request = await get_scenario_run_service().get_launch_configuration_async(scenario_result_id)
+    except (ScenarioRunConflictError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if request is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    return request
+
+
+@router.get(
+    "/runs/{scenario_result_id}/conversations/{conversation_id}",
+    response_model=ConversationMessagesResponse,
+)
+async def get_scan_conversation_async(
+    *, scenario_result_id: IdentifierStr, conversation_id: IdentifierStr
+) -> ConversationMessagesResponse:
+    """
+    Read a saved conversation owned by this scan, including an in-flight attempt.
+
+    Returns:
+        ConversationMessagesResponse: Saved messages and the existing conversation score projection.
+    """
+    response = await get_scenario_run_service().get_conversation_async(
+        scenario_result_id=scenario_result_id, conversation_id=conversation_id
+    )
+    if response is None:
+        raise HTTPException(status_code=404, detail="Conversation does not belong to this scan")
+    return response
 
 
 # ============================================================================
@@ -281,11 +328,14 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
     reference_id: uuid.UUID | None = Query(
         None, description="Exact conversation, attack, finding, or scenario result ID"
     ),
+    sort_by: Literal["created_at", "activity"] = Query(
+        "created_at", description="Sort by creation time or scenario activity time."
+    ),
     limit: int = Query(100, ge=1, le=100, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Opaque descending history cursor"),
 ) -> ScenarioRunListResponse:
     """
-    List tracked scenario runs (most recent first).
+    List tracked scenario runs in descending creation or activity order.
 
     Args:
         scenario_names: Registered or persisted scenario names to match.
@@ -293,11 +343,12 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         label: Repeated key:value label filters.
         operation_id: Saved Operation IDs to match.
         reference_id: Exact conversation, attack, finding, or scenario result ID.
+        sort_by: ``created_at`` (default) or scenario ``activity`` timestamp.
         limit: Maximum number of runs to return.
         cursor: Opaque cursor from the previous page.
 
     Returns:
-        ScenarioRunListResponse: Runs, most recent first.
+        ScenarioRunListResponse: Runs in descending order by the selected timestamp.
     """
     service = get_scenario_run_service()
     return await service.list_runs_async(
@@ -306,6 +357,7 @@ async def list_scenario_runs(  # pyrit-async-suffix-exempt
         labels=parse_label_query_params(label),
         operation_ids=operation_id,
         reference_id=reference_id,
+        sort_by=sort_by,
         limit=limit,
         cursor=cursor,
     )
@@ -540,8 +592,8 @@ async def get_scenario_run_results(scenario_result_id: IdentifierStr) -> Scenari
 async def get_paired_outcomes_async(
     *,
     scenario_result_id: IdentifierStr,
-    baseline_group_id: IdentifierStr = Query(..., description="Saved baseline atomic group ID"),
-    attack_group_id: IdentifierStr = Query(..., description="Saved attack atomic group ID"),
+    baseline_group_id: str = Query(..., max_length=MAX_IDENTIFIER_LENGTH, description="Saved baseline atomic group ID"),
+    attack_group_id: str = Query(..., max_length=MAX_IDENTIFIER_LENGTH, description="Saved attack atomic group ID"),
 ) -> PairedOutcomeStatistics:
     """
     Compare explicitly selected groups using the SDK's effective outcome semantics.

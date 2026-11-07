@@ -6,10 +6,13 @@ import userEvent from '@testing-library/user-event'
 
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { labelsApi, operationsApi, scenariosApi } from '@/services/api'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
 import type { ScenarioRunListItem, ScenarioRunListResponse, ScenarioRunState, ScenarioRunSummary } from '@/types'
 
 import ScenarioHistory from './ScenarioHistory'
-import { DEFAULT_SCENARIO_HISTORY_FILTERS } from './scenarioHistoryFilters'
+import { DEFAULT_SCENARIO_HISTORY_FILTERS, scenarioHistoryFiltersFromSearchParams } from './scenarioHistoryFilters'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   scenariosApi: {
@@ -273,7 +276,7 @@ describe('ScenarioHistory', () => {
       const message = error || 'The resumed run failed. Finished results remain available.'
       expect(await screen.findByText(message)).toBeInTheDocument()
       expect(await screen.findByRole('row', { name: /foundry.red_team.*Failed/ })).toHaveTextContent('1/2 attacks complete')
-      expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+      await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
       expect(mockQueueRetry).toHaveBeenCalledTimes(1)
       expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
       expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
@@ -314,7 +317,7 @@ describe('ScenarioHistory', () => {
     await user.click(await screen.findByRole('button', { name: /Resume foundry/ }))
 
     expect(await screen.findByText(detail)).toBeInTheDocument()
-    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
 
     await act(async () => {
@@ -362,7 +365,7 @@ describe('ScenarioHistory', () => {
     expect(mockedScenariosApi.resumeRun).toHaveBeenCalledWith('run-1')
     expect(mockedScenariosApi.resumeRun).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2))
     expect(mockQueueRetry).toHaveBeenCalledTimes(1)
     expect(defaultProps.onOpenRun).not.toHaveBeenCalled()
   })
@@ -711,11 +714,10 @@ describe('ScenarioHistory', () => {
     renderHistory()
 
     expect(await screen.findByTestId('scenario-history-table')).toBeInTheDocument()
-    expect(screen.getByText(/filter options could not be loaded: scenario names/i)).toBeInTheDocument()
+    expect(screen.getByText('catalog unavailable')).toBeInTheDocument()
   })
 
-  it('shows request errors and retries without swallowing the failure', async () => {
-    const user = userEvent.setup()
+  it('shows request errors and recovers automatically without a Retry control', async () => {
     mockedScenariosApi.listRuns
       .mockRejectedValueOnce(new Error('history unavailable'))
       .mockResolvedValueOnce({
@@ -724,8 +726,9 @@ describe('ScenarioHistory', () => {
       })
     renderHistory()
 
-    expect(await screen.findByTestId('scenario-history-error')).toHaveTextContent('history unavailable')
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('history unavailable')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
     expect(await screen.findByTestId('scenario-history-table')).toBeInTheDocument()
     expect(mockedScenariosApi.listRuns).toHaveBeenCalledTimes(2)
   })
@@ -766,6 +769,21 @@ describe('ScenarioHistory', () => {
     )
 
     expect(screen.getByRole('button', { name: 'Reset all filters' })).not.toHaveAttribute('aria-disabled')
+  })
+
+  it('requests QUEUED runs from a QUEUED-only URL filter', async () => {
+    mockedScenariosApi.listRuns.mockResolvedValue({
+      items: [],
+      pagination: { limit: 25, has_more: false },
+    })
+    renderHistory({
+      ...defaultProps,
+      filters: scenarioHistoryFiltersFromSearchParams(new URLSearchParams('status=QUEUED')),
+    })
+
+    await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ run_statuses: ['QUEUED'] }),
+    ))
   })
 
   it('serializes filters, paginates by cursor, and refreshes from the first page', async () => {
@@ -826,7 +844,7 @@ describe('ScenarioHistory', () => {
     ))
     expect(await screen.findByText('Page 1')).toBeInTheDocument()
 
-    await user.click(screen.getByTestId('scenario-history-refresh'))
+    await advanceAutoRefresh()
     await waitFor(() => expect(mockedScenariosApi.listRuns).toHaveBeenNthCalledWith(
       4,
       expect.objectContaining({ cursor: undefined }),

@@ -98,6 +98,25 @@ export interface ChatConverterSnapshot {
   applied: Record<string, PieceConversion>
 }
 
+export interface PendingComposerDraft {
+  text: string
+  attachments?: MessageAttachment[]
+  textMetadata?: Record<string, unknown>
+}
+
+export interface ConversationEditState {
+  messages: ConversationDraftMessage[]
+  objective?: string
+  initialObjective?: string
+  sourceConversationId?: string | null
+  sourceAttackId?: string | null
+  sourcePieceIds?: string[]
+  temperature?: string
+  target?: TargetReference | null
+  pendingPromptId?: string
+  unsavedImport?: boolean
+}
+
 export interface ChatDraftContent {
   text: string
   attachments: MessageAttachment[]
@@ -108,6 +127,7 @@ export interface ChatDraftContent {
   target?: TargetReference | null
   converters?: ChatConverterSnapshot
   textMetadata?: Record<string, unknown>
+  conversation?: ConversationEditState
 }
 
 export interface ChatDraftContextState {
@@ -122,6 +142,13 @@ export interface ChatDraftContextState {
 
 export type ImportDestinationType = 'new_attack' | 'current_conversation' | 'new_conversation' | 'any'
 
+export interface PendingImportConversation {
+  messages: ConversationDraftMessage[]
+  objective?: string
+  systemPrompt?: string
+  composerDraft?: PendingComposerDraft
+}
+
 export interface PendingImportPayload {
   id: string
   sequence: number
@@ -133,6 +160,9 @@ export interface PendingImportPayload {
     attachments?: MessageAttachment[]
     textMetadata?: Record<string, unknown>
   }
+  conversation?: PendingImportConversation
+  objective?: string
+  setup?: ChatDraftContent
   replaceDirty?: boolean
   focus?: boolean
   stagedAt: number
@@ -231,6 +261,9 @@ export interface MessageMediaDisplayPiece {
 export type MessageDisplayPiece = MessageTextDisplayPiece | MessageMediaDisplayPiece
 
 export interface Message {
+  /** Saved sequence used to keep a split turn stable across piece pages. */
+  sequence?: number
+  isPartial?: boolean
   role: 'user' | 'assistant' | 'simulated_assistant' | 'tool' | 'simulated_tool' | 'system' | 'developer'
   content: string
   timestamp: string
@@ -282,6 +315,11 @@ export interface PaginationInfo {
   has_more: boolean
   next_cursor?: string | null
   prev_cursor?: string | null
+}
+
+export interface ConversationPageParams {
+  limit?: number
+  cursor?: string
 }
 
 export interface ConfigurationFileContent {
@@ -435,7 +473,7 @@ export interface TargetListResponse {
 export interface CreateTargetRequest {
   type: string
   params: Record<string, unknown>
-  auth_mode?: 'api_key' | 'identity'
+  auth_mode?: TargetAuthMode
 }
 
 // --- Initializers ---
@@ -710,10 +748,12 @@ export interface ConverterPreviewResponse {
   steps: ConverterPreviewStep[]
 }
 
+export type TargetAuthMode = 'api_key' | 'identity' | 'none'
+
 export interface TargetTypeEntry {
   target_type: string
   parameters: Parameter[]
-  supported_auth_modes: ('api_key' | 'identity')[]
+  supported_auth_modes: TargetAuthMode[]
   description?: string | null
 }
 
@@ -726,6 +766,7 @@ export interface TargetTypeListResponse {
 export interface TargetInfo {
   target_type: string
   target_registry_name?: string | null
+  identifier?: TargetIdentifier | null
   endpoint?: string | null
   model_name?: string | null
   identifier_hash: string
@@ -967,9 +1008,26 @@ export interface AttackSummary {
   updated_at: string
 }
 
+/** Initial Chat metadata; reference membership does not depend on loading a sidebar page. */
+export interface AttackMetadata extends Pick<AttackSummary,
+  | 'attack_result_id' | 'conversation_id' | 'objective' | 'labels' | 'operator'
+  | 'target' | 'target_unbound' | 'outcome' | 'automated_score' | 'human_score'
+  | 'chat_scorer' | 'chat_scorer_inherited' | 'manual_continuation'
+> {
+  readonly execution_read_only: boolean
+  readonly last_response_message_piece_id: string | null
+  /** Number of pruned references; excludes the main conversation. */
+  readonly related_conversation_count: number
+  readonly selected_conversation_id: string
+  readonly selected_conversation_valid: boolean
+}
+
 export interface CreateAttackRequest {
   target_registry_name?: string
   target_binding?: TargetBinding
+  /** The attack goal, independent of the ManualAttack strategy type. */
+  objective?: string | null
+  /** @deprecated Use objective. Non-null name and objective must match if both are supplied. */
   name?: string
   chat_scorer?: RegisteredComponentReference | null
   operator?: string
@@ -1007,6 +1065,10 @@ export interface ConversationSaveInput {
   sourceAttackId: string | null
   sourceConversationId: string | null
   labels?: Record<string, string>
+  baselineMessages?: ConversationDraftMessage[]
+  temperature?: string
+  unsavedImport?: boolean
+  pendingPromptId?: string
 }
 
 export interface NewAttackContext {
@@ -1073,6 +1135,25 @@ export interface BackendScore {
   timestamp: string
 }
 
+export interface ApplyChatScorerRequest {
+  conversation_id: string
+  response_id: string
+  scorer: RegisteredComponentReference
+  objective: string
+}
+
+export interface ApplyChatScorerResponse {
+  conversation_id: string
+  score: BackendScore
+  reused: boolean
+}
+
+/** Result of the latest Apply scorer request, shown in the scorer pane. */
+export interface ApplyScorerStatus {
+  intent: 'info' | 'error'
+  message: string
+}
+
 export type PromptResponseError = 'blocked' | 'none' | 'processing' | 'empty' | 'unknown'
 
 export interface ComponentIdentifier {
@@ -1106,6 +1187,9 @@ export interface DisplayScore extends BackendScore {
 
 export interface BackendMessagePiece {
   id: string
+  sequence?: number
+  role?: string
+  timestamp?: string
   original_value_data_type: string
   converted_value_data_type: string
   original_value?: string | null
@@ -1137,10 +1221,16 @@ export interface TargetResponseStatus {
 }
 
 export interface ConversationMessagesResponse {
+  automated_score?: BackendScore | null
   scoring_failure?: ScoringFailure | null
+  /** Outcome for the latest response; a human score overrides the attack. */
+  outcome?: AttackOutcome | null
+  latest_response_id?: string | null
   conversation_id: string
   messages: BackendMessage[]
   target_response_status: TargetResponseStatus | null
+  pagination?: PaginationInfo | null
+  partial_message_sequences?: number[]
 }
 
 export interface MessagePieceRequest {
@@ -1245,6 +1335,7 @@ export interface AttackListResponse {
 
 export interface ConversationSummary {
   conversation_id: string
+  conversation_type?: 'main' | 'pruned'
   message_count: number
   last_message_preview?: string | null
   created_at?: string | null
@@ -1254,6 +1345,8 @@ export interface AttackConversationsResponse {
   attack_result_id: string
   main_conversation_id: string
   conversations: ConversationSummary[]
+  pagination?: PaginationInfo | null
+  total_count?: number | null
 }
 
 
@@ -1483,6 +1576,7 @@ export interface ScenarioTechniqueSummary {
   name: string
   description: string | null
   tags: string[]
+  identifier?: ComponentIdentifier | null
 }
 
 export interface ListRegisteredScenariosResponse {
@@ -1949,6 +2043,10 @@ export interface ScenarioProgressHeader {
   scenario_name: string
   scenario_registry_name?: string | null
   scenario_version: number
+  description?: string | null
+  operation_id?: string | null
+  operation_name?: string | null
+  scenario_identity?: ScenarioComponentIdentity | null
   status: ScenarioRunState
   created_at: string
   started_at?: string | null
@@ -2023,6 +2121,8 @@ export interface ScenarioProgressResult {
   error_type?: string | null
   error_message?: string | null
   score?: ScenarioProgressScore | null
+  seed_identifiers?: ScenarioComponentIdentity[]
+  related_conversation_ids?: string[]
 }
 
 export interface ScenarioRunPlanSeedGroup {
@@ -2038,31 +2138,6 @@ export interface ScenarioRunPlanSeedPrompt {
   role?: string | null
   sequence: number
   parameters: string[]
-}
-
-export interface PairedOutcomeStatistics {
-  baseline_group_id: string
-  attack_group_id: string
-  planned_pairs: number
-  decided_pairs: number
-  excluded_pairs: number
-  failure_to_success: number
-  success_to_failure: number
-  failure_to_failure: number
-  success_to_success: number
-  baseline_success_rate: number | null
-  attack_success_rate: number | null
-  paired_difference: number | null
-  missing_baseline: number
-  missing_attack: number
-  missing_both: number
-  baseline_errors: number
-  attack_errors: number
-  baseline_undetermined: number
-  attack_undetermined: number
-  unmatched_baseline_seeds: number
-  unmatched_attack_seeds: number
-  unattributed_attempts: number
 }
 
 export interface ScenarioRunPlanAtomicGroup {
@@ -2097,6 +2172,7 @@ export interface ScenarioProducerCounts {
 }
 
 export interface ScenarioProgressCounts {
+  outcomes?: OutcomeStatistics | null
   completed: number
   planned: number | null
   succeeded: number
@@ -2260,6 +2336,17 @@ export interface ScenarioProgressSummary {
   unattributed_attempts?: number
 }
 
+export interface ScenarioActiveConversation {
+  attack_result_id: string
+  conversation_id: string
+  atomic_attack_name: string
+  seed_group_id?: string | null
+  objective: string
+  started_at: string
+  technique_details?: ScenarioAttackTechniqueDetails | null
+  seed_identifiers: ScenarioComponentIdentity[]
+}
+
 export interface ScenarioRunProgress {
   run: ScenarioProgressHeader
   plan: ScenarioRunPlan | null
@@ -2268,6 +2355,8 @@ export interface ScenarioRunProgress {
   next_cursor?: string | null
   has_more: boolean
   plan_complete: boolean
+  active_conversations?: ScenarioActiveConversation[]
+  recorded_conversations?: ScenarioActiveConversation[]
 }
 export interface RuntimeReadiness {
   ready: boolean

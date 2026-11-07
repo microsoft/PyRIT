@@ -1,5 +1,5 @@
 import { test, expect } from './_fixtures'
-import { makeAddMessageResponse } from './_attacks'
+import { makeAddMessageResponse, makeAttackMetadata } from './_attacks'
 import { READY_RUNTIME } from './_runtime'
 import { makeTarget } from './_targets'
 import type { AttackSummary, BackendMessage, RegisteredComponentReference, MessageSendRequest, ScoringFailure } from '@/types'
@@ -16,7 +16,8 @@ test('selects a chat scorer, displays its result, and retains scoring errors aft
     target_registry_name: target.target_registry_name,
   } }
   await page.route('**/api/**', async (route) => {
-    const path = new URL(route.request().url()).pathname
+    const url = new URL(route.request().url())
+    const path = url.pathname
     if (path === '/api/runtime') { await route.fulfill({ json: READY_RUNTIME }); return }
     if (path === '/api/targets') {
       await route.fulfill({ json: { items: [target], pagination: { has_more: false } } }); return
@@ -29,6 +30,9 @@ test('selects a chat scorer, displays its result, and retains scoring errors aft
         scorer_registry_name: 'judge', identifier: { class_name: 'SubStringScorer', hash: 'judge-hash', scorer_type: 'true_false' },
       }], pagination: { has_more: false } } }); return
     }
+    if (path === '/api/attacks/scoring-attack/metadata') {
+      await route.fulfill({ json: makeAttackMetadata(attack, url.searchParams.get('conversation_id') ?? undefined) }); return
+    }
     if (path === '/api/attacks/scoring-attack') {
       if (route.request().method() === 'PATCH') {
         const update = route.request().postDataJSON()
@@ -37,8 +41,15 @@ test('selects a chat scorer, displays its result, and retains scoring errors aft
       await route.fulfill({ json: attack }); return
     }
     if (path === '/api/attacks/scoring-attack/messages') {
-      await route.fulfill({ json: { conversation_id: 'scoring-conversation', messages,
-        target_response_status: null, scoring_failure: scoringFailure } }); return
+      await route.fulfill({ json: {
+        conversation_id: 'scoring-conversation',
+        messages,
+        automated_score: attack.automated_score ?? null,
+        latest_response_id: attack.last_response?.id ?? null,
+        outcome: attack.outcome ?? 'undetermined',
+        target_response_status: null,
+        scoring_failure: scoringFailure,
+      } }); return
     }
     if (path === '/api/attacks/scoring-attack/conversations') {
       await route.fulfill({ json: { attack_result_id: attack.attack_result_id, main_conversation_id: attack.conversation_id,
@@ -77,7 +88,7 @@ test('selects a chat scorer, displays its result, and retains scoring errors aft
     await route.fallback()
   })
   await page.goto('/attack/chat/scoring-attack/conversations/scoring-conversation')
-  await page.getByRole('button', { name: /objective achieved outcome/i }).click()
+  await page.getByRole('button', { name: /^objective achieved outcome:/i }).click()
   await page.getByRole('button', { name: /^automated scorer:/i }).click()
   await page.getByRole('combobox', { name: 'Chat scorer' }).selectOption('registered:judge')
   await expect.poll(() => attack.chat_scorer).toEqual(reference)
@@ -96,7 +107,7 @@ test('selects a chat scorer, displays its result, and retains scoring errors aft
   await expect(notice).toHaveCount(0)
   await expect(page.getByText('Delivered response 2', { exact: true })).toBeVisible()
   await page.reload()
-  await page.getByRole('button', { name: /objective achieved outcome/i }).click()
+  await page.getByRole('button', { name: /^objective achieved outcome:/i }).click()
   await page.getByRole('button', { name: /scoring error.*view details/i }).click()
   await expect(page.getByText('Scorer judge: The judge was unavailable.')).toBeVisible()
   expect(submissions).toBe(2)

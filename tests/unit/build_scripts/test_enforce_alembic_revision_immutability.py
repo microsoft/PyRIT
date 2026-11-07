@@ -3,6 +3,7 @@
 
 import os
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -14,6 +15,110 @@ from build_scripts.enforce_alembic_revision_immutability import (
 )
 
 MODIFIED_REVISION = "M\tpyrit/memory/alembic/versions/b2f4c6a8d1e3_add_conversations_table.py"
+REVISION_PATH = "pyrit/memory/alembic/versions/b2f4c6a8d1e3_add_conversations_table.py"
+
+
+def _repository_git(repository: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(repository), *args], capture_output=True, text=True, check=True)
+
+
+def _commit_revision(repository: Path, content: str) -> None:
+    (repository / REVISION_PATH).write_text(content, encoding="utf-8")
+    _repository_git(repository, "add", ".")
+    _repository_git(
+        repository,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--quiet",
+        "-m",
+        "Update revision",
+    )
+
+
+@pytest.fixture
+def migration_repository(tmp_path: Path) -> Path:
+    _repository_git(tmp_path, "init", "--quiet")
+    (tmp_path / REVISION_PATH).parent.mkdir(parents=True)
+    _commit_revision(tmp_path, "original\n")
+    _repository_git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
+    return tmp_path
+
+
+def _check_repository(repository: Path, *, ci: bool = False) -> bool:
+    def run_git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", "-C", str(repository), *args], capture_output=True, text=True)
+
+    environment = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT", "TEMP", "TMP") if key in os.environ}
+    if ci:
+        environment["CI"] = "true"
+    with patch.dict(os.environ, environment, clear=True):
+        with patch("build_scripts.enforce_alembic_revision_immutability._git", side_effect=run_git):
+            return has_revision_violations()
+
+
+def test_restoring_exact_ancestral_main_revision_passes(migration_repository: Path) -> None:
+    _commit_revision(migration_repository, "accidental change\n")
+    _commit_revision(migration_repository, "original\n")
+    assert _check_repository(migration_repository) is False
+
+
+def test_published_main_modification_still_fails(migration_repository: Path) -> None:
+    _commit_revision(migration_repository, "modified\n")
+    _repository_git(migration_repository, "update-ref", "refs/remotes/origin/main", "HEAD")
+    assert _check_repository(migration_repository) is True
+
+
+@pytest.mark.parametrize("operation", ["modify", "delete", "rename", "staged"])
+def test_existing_revision_changes_still_fail(migration_repository: Path, operation: str) -> None:
+    revision = migration_repository / REVISION_PATH
+    if operation in {"modify", "staged"}:
+        revision.write_text("modified\n", encoding="utf-8")
+    elif operation == "delete":
+        revision.unlink()
+    else:
+        revision.rename(revision.with_name("renamed.py"))
+    _repository_git(migration_repository, "add", ".")
+    if operation != "staged":
+        _repository_git(
+            migration_repository,
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "Disallowed revision change",
+        )
+    assert _check_repository(migration_repository) is True
+
+
+def test_modifying_new_branch_revision_still_fails(migration_repository: Path) -> None:
+    revision = migration_repository / REVISION_PATH
+    revision.with_name("new_revision.py").write_text("new\n", encoding="utf-8")
+    _commit_revision(migration_repository, "original\n")
+    revision.with_name("new_revision.py").write_text("modified new\n", encoding="utf-8")
+    _commit_revision(migration_repository, "original\n")
+    assert _check_repository(migration_repository) is True
+
+
+def test_matching_nonancestor_base_does_not_allow_restoration(migration_repository: Path) -> None:
+    original = _repository_git(migration_repository, "rev-parse", "HEAD").stdout.strip()
+    (migration_repository / "unrelated.txt").write_text("base update\n", encoding="utf-8")
+    _commit_revision(migration_repository, "original\n")
+    _repository_git(migration_repository, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _repository_git(migration_repository, "switch", "--quiet", "--detach", original)
+    _commit_revision(migration_repository, "accidental change\n")
+    _commit_revision(migration_repository, "original\n")
+    assert _check_repository(migration_repository) is True
+
+
+def test_missing_protected_base_fails_closed_in_ci(migration_repository: Path) -> None:
+    _repository_git(migration_repository, "update-ref", "-d", "refs/remotes/origin/main")
+    assert _check_repository(migration_repository, ci=True) is True
 
 
 def _completed(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
