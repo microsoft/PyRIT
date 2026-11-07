@@ -45,6 +45,14 @@ For example, a seed group might include:
 
 **Note**: In most attacks, if no `SeedPrompt` is specified, the `SeedObjective` serves as the default prompt.
 
+### Logical group identity
+
+`AttackSeedGroup.logical_id` hashes ordered seed content hashes, excluding PyRIT
+version and evaluation metadata. Before 1.2.0, version changes also changed group
+IDs. This correction changes existing logical IDs; resume pre-fix runs with their
+original build. Legacy-ID compatibility is deferred to follow-up work. Stored
+UUIDs, seed/component hashes, and database deduplication are unchanged.
+
 ## Seed Datasets
 
 A `SeedDataset` is a collection of related `SeedGroups` that you want to test together as a cohesive set. Datasets provide organizational structure for large-scale testing campaigns and benchmarking.
