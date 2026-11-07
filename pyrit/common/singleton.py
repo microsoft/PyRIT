@@ -13,9 +13,7 @@ class Singleton(abc.ABCMeta):
 
     _instances: dict[type, object] = {}
 
-    def __new__(
-        mcs, name: str, bases: tuple[type, ...], namespace: dict[str, object], **kwargs: object
-    ) -> type:
+    def __new__(mcs, name: str, bases: tuple[type, ...], namespace: dict[str, object], **kwargs: object) -> type:
         """
         Create the class and give it a reentrant lock for synchronizing construction.
 
@@ -32,6 +30,7 @@ class Singleton(abc.ABCMeta):
             name (str): The name of the class being created.
             bases (tuple[type, ...]): The base classes of the class being created.
             namespace (dict[str, object]): The namespace of the class being created.
+            kwargs (object): Additional keyword arguments passed to ``super().__new__``.
 
         Returns:
             type: The newly created class.
