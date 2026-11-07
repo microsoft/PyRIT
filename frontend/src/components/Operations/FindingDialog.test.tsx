@@ -52,6 +52,22 @@ describe('FindingDialog', () => {
     window.removeEventListener('beforeunload', listener)
   })
 
+  it('does not arm the unsaved changes guard for an untouched edit dialog', async () => {
+    const events: Event[] = []
+    const listener = (event: Event): void => { events.push(event) }
+    window.addEventListener('beforeunload', listener)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog editing
+      initialValues={{ title: 'Existing', severity: 'low', description: 'Details' }}
+      onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+
+    // The dialog opens prefilled with stored values; touching nothing means
+    // there is nothing to lose, so the guard must stay disarmed.
+    fireEvent(window, new Event('beforeunload', { cancelable: true }))
+    expect(events[0].defaultPrevented).toBe(false)
+
+    window.removeEventListener('beforeunload', listener)
+  })
+
   it('retains an edited draft on error and permits a corrected retry', async () => {
     const user = userEvent.setup()
     const onSave = jest.fn().mockRejectedValueOnce(new Error('Storage offline')).mockResolvedValue(undefined)
