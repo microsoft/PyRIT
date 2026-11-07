@@ -1354,7 +1354,10 @@ class TestVerifyTargetAsync:
         # because multi-turn issues 2 sends).
         assert target._send_prompt_to_target_async.await_count <= 3
 
-    async def test_discover_target_capabilities_async_preserves_declared_when_capabilities_narrowed(self) -> None:
+    @pytest.mark.parametrize("apply", [False, True])
+    async def test_discover_target_capabilities_async_preserves_declared_when_capabilities_narrowed(
+        self, apply: bool
+    ) -> None:
         """
         When ``capabilities`` narrows the probe set, capabilities NOT in the
         narrowed set must fall back to the target's declared values rather
@@ -1365,6 +1368,7 @@ class TestVerifyTargetAsync:
             supports_system_prompt=True,
             supports_json_schema=True,
             supports_editable_history=True,
+            supports_prefill=True,
         )
         target = MockPromptTarget()
         target._configuration = TargetConfiguration(capabilities=declared)
@@ -1374,6 +1378,7 @@ class TestVerifyTargetAsync:
             target=target,
             capabilities={CapabilityName.JSON_OUTPUT},
             per_probe_timeout_s=2.0,
+            apply=apply,
         )
 
         # The probed capability reflects the queried result.
@@ -1383,6 +1388,8 @@ class TestVerifyTargetAsync:
         assert result.supports_system_prompt is True
         assert result.supports_json_schema is True
         assert result.supports_editable_history is True
+        assert result.supports_prefill is True
+        assert target.capabilities.supports_prefill is True
 
     async def test_discover_target_capabilities_async_drops_editable_history_when_multi_turn_probe_fails(self) -> None:
         """Editable history must not remain true when probing disproves multi-turn support."""

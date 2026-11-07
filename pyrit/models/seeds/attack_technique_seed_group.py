@@ -41,6 +41,10 @@ class AttackTechniqueSeedGroup(SeedGroup):
     # ``None`` (default) appends at the end; an integer inserts before that position.
     insertion_index: int | None = None
 
+    # Explicitly opt into sending a technique-owned assistant prefix as the
+    # outgoing message, with the current objective as converted user history.
+    continue_final_assistant_message: bool = False
+
     prompt_placement: Literal["preserve", "prepend"] = Field(
         default="preserve",
         description=(
@@ -131,6 +135,17 @@ class AttackTechniqueSeedGroup(SeedGroup):
         super()._check_invariants()
         self._enforce_all_general_strategy()
         self._enforce_no_objectives()
+        if self.continue_final_assistant_message and (
+            len(self.seeds) != 1
+            or len(self.prompts) != 1
+            or self.prompts[0].role != "assistant"
+            or self.prompts[0].data_type != "text"
+            or not self.prompts[0].value.strip()
+            or self.prompt_placement != "preserve"
+        ):
+            raise ValueError(
+                "Assistant continuation requires one non-empty text assistant prefix with prompt_placement='preserve'."
+            )
 
     @property
     def fixed_final_user_prompt(self) -> SeedPrompt | None:

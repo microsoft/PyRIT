@@ -29,6 +29,7 @@ class TestCapabilityHandlingPolicy:
         assert CapabilityName.JSON_OUTPUT.value == "supports_json_output"
         assert CapabilityName.EDITABLE_HISTORY.value == "supports_editable_history"
         assert CapabilityName.SYSTEM_PROMPT.value == "supports_system_prompt"
+        assert CapabilityName.PREFILL.value == "supports_prefill"
 
     def test_unsupported_capability_behavior_values(self):
         assert UnsupportedCapabilityBehavior.ADAPT.value == "adapt"
@@ -111,6 +112,18 @@ class TestCapabilityHandlingPolicy:
         assert capabilities.includes(capability=CapabilityName.JSON_OUTPUT) is True
         assert capabilities.includes(capability=CapabilityName.EDITABLE_HISTORY) is False
 
+    def test_supports_prefill_defaults_false_and_round_trips(self):
+        default_caps = TargetCapabilities()
+        assert default_caps.supports_prefill is False
+        assert default_caps.includes(capability=CapabilityName.PREFILL) is False
+
+        caps = TargetCapabilities(supports_prefill=True)
+        assert caps.includes(capability=CapabilityName.PREFILL) is True
+
+        dumped = caps.model_dump()
+        assert dumped["supports_prefill"] is True
+        assert TargetCapabilities.model_validate(dumped) == caps
+
 
 # Env vars that may leak from .env files loaded by other tests in parallel workers.
 # Clear them so that targets use _DEFAULT_CONFIGURATION instead of _KNOWN_CAPABILITIES.
@@ -179,6 +192,53 @@ class TestDefaultConfigurationDefined:
                 f"{cls.__name__}._DEFAULT_CONFIGURATION must be a TargetConfiguration instance, "
                 f"got {type(cls._DEFAULT_CONFIGURATION)}"
             )
+
+
+class TestSupportsPrefillDefaults:
+    """Prefill describes the adapter's request shape, independently of model behavior."""
+
+    @pytest.mark.parametrize("underlying_model", [None, "gpt-4o", "unknown-model"])
+    @pytest.mark.parametrize(
+        "target_name",
+        ["HuggingFaceChatTarget", "OpenAIChatTarget", "OpenAIResponseTarget", "LiteLLMChatTarget", "AzureMLChatTarget"],
+    )
+    def test_chat_defaults_preserve_prefill_with_model_profiles(self, target_name, underlying_model):
+        from pyrit import prompt_target
+
+        target_class = getattr(prompt_target, target_name)
+        assert target_class.get_default_configuration(underlying_model).capabilities.supports_prefill is True
+
+    @pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+    @pytest.mark.parametrize(
+        "target_name",
+        ["HTTPTarget", "HTTPXAPITarget", "PlaywrightTarget", "PlaywrightCopilotTarget", "OpenAICompletionTarget"],
+    )
+    def test_integration_and_completion_targets_default_off(self, target_name, underlying_model):
+        from pyrit import prompt_target
+
+        target_class = getattr(prompt_target, target_name)
+        assert target_class.get_default_configuration(underlying_model).capabilities.supports_prefill is False
+
+    @pytest.mark.usefixtures("patch_central_database")
+    @pytest.mark.parametrize("target_name", ["OpenAIChatTarget", "OpenAIResponseTarget", "AzureMLChatTarget"])
+    @pytest.mark.parametrize("underlying_model", [None, "gpt-4o"])
+    def test_explicit_custom_opt_out_wins(self, target_name, underlying_model):
+        from pyrit import prompt_target
+
+        target_class = getattr(prompt_target, target_name)
+        default = target_class.get_default_configuration(underlying_model)
+        opted_out = TargetConfiguration(
+            capabilities=default.capabilities.model_copy(update={"supports_prefill": False})
+        )
+        target = target_class(
+            model_name="test-deployment",
+            endpoint="https://mock.example.com/",
+            api_key="test-key",
+            custom_configuration=opted_out,
+            **({"underlying_model": underlying_model} if target_name != "AzureMLChatTarget" else {}),
+        )
+        assert target.configuration is opted_out
+        assert target.capabilities.supports_prefill is False
 
 
 @pytest.mark.usefixtures("patch_central_database")
