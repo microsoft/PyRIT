@@ -36,6 +36,7 @@ from pyrit.analytics.scenario_statistics import (
 from pyrit.backend.models.attacks import ConversationMessagesResponse
 from pyrit.backend.models.common import PaginationInfo, filter_sensitive_fields
 from pyrit.backend.models.scenarios import ScenarioRunListResponse
+from pyrit.backend.services.live_attack_reader import LiveAttack
 from pyrit.backend.services.pagination import (
     decode_keyset_cursor,
     encode_keyset_cursor,
@@ -2562,6 +2563,21 @@ class ScenarioRunService:
             active_scenario_result_id=active_scenario_result_id,
         )
 
+    def find_live_attack(self, *, attack_result_id: str) -> LiveAttack | None:
+        """
+        Find an attack that an active scan is still running.
+
+        Returns:
+            LiveAttack | None: The running attack and its scan, or None when no active scan is running it
+                or it has not started an objective conversation yet.
+        """
+        for scenario_result_id in list(self._active_tasks):
+            snapshot = self.snapshot_active_run(scenario_result_id=scenario_result_id)
+            for execution in snapshot.executions:
+                if execution.attack_result_id == attack_result_id:
+                    return LiveAttack.from_execution(scenario_result_id=scenario_result_id, execution=execution)
+        return None
+
     def _load_run_plan(self, *, scenario_result: ScenarioResult) -> ScenarioRunPlan | None:
         """
         Load a validated plan from scenario metadata.
@@ -2701,6 +2717,7 @@ class ScenarioRunService:
                 ScenarioActiveConversation(
                     attack_result_id=execution.attack_result_id,
                     conversation_id=conversation_id,
+                    conversation_ids=list(execution.conversation_ids),
                     atomic_attack_name=attribution.parent_collection,
                     seed_group_id=attribution.seed_group_id,
                     objective=execution.objective,
@@ -3256,6 +3273,19 @@ _service_instance: ScenarioRunService | None = None
 def peek_scenario_run_service() -> ScenarioRunService | None:
     """Return the existing service without constructing one for lifecycle inspection."""
     return _service_instance
+
+
+def find_live_attack(attack_result_id: str) -> LiveAttack | None:
+    """
+    Find a running scan attack in the current service, without constructing one.
+
+    Resolves the service on every call, so the lookup stays valid across service resets.
+
+    Returns:
+        LiveAttack | None: The running attack, or None when no active scan is running it.
+    """
+    service = peek_scenario_run_service()
+    return service.find_live_attack(attack_result_id=attack_result_id) if service is not None else None
 
 
 async def reset_scenario_run_service_async() -> None:

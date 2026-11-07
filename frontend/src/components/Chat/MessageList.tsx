@@ -31,9 +31,11 @@ import MarkdownContent from '@/components/Markdown/MarkdownContent'
 import MediaPreview from '@/components/Media/MediaPreview'
 
 import type { DisplayScore, Message, MessageAttachment } from '@/types'
+import { scoreSummaryFromBackendScore, scoreSummaryValue } from '@/utils/scoreSummary'
 
 import { useMessageListStyles } from './MessageList.styles'
 import { formatStructuredMessage, getRenderMessagePieces } from './messageViewModel'
+import ScoreDetails from './ScoreDetails'
 
 interface MessageListProps {
   onEditConversation?: () => void
@@ -60,49 +62,11 @@ interface MessageListProps {
 }
 
 function scoreDisplayValue(score: DisplayScore): string {
-  // An undetermined score has no value, so name its status instead.
-  return score.score_value ?? score.status ?? ''
+  return scoreSummaryValue(scoreSummaryFromBackendScore(score))
 }
 
 function scoreDisplayLabel(score: DisplayScore): string {
   return `${score.is_objective_score ? 'Final score' : 'Score'}: ${scoreDisplayValue(score)}`
-}
-
-function ScoreDetails({ score, testId }: { score: DisplayScore; testId: string }) {
-  const styles = useMessageListStyles()
-  const categories = score.score_category?.filter(Boolean) ?? []
-
-  return (
-    <div className={styles.scoreSurface} data-testid={testId}>
-      <Text weight="semibold">Score details</Text>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Score</Text>
-        <Badge appearance="tint" color="brand" size="small" className={styles.scoreValue}>{scoreDisplayValue(score)}</Badge>
-      </div>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Scorer</Text>
-        <Text size={200} className={styles.scoreValue}>{score.scorer_type}</Text>
-      </div>
-      <div className={styles.scoreRow}>
-        <Text size={200} weight="semibold" className={styles.scoreLabel}>Result role</Text>
-        <Text size={200} className={styles.scoreValue}>
-          {score.is_objective_score ? 'Final score' : 'Supporting score'}
-        </Text>
-      </div>
-      {categories.length > 0 && (
-        <div className={styles.scoreRow}>
-          <Text size={200} weight="semibold" className={styles.scoreLabel}>Category</Text>
-          <Text size={200} className={styles.scoreValue}>{categories.join(', ')}</Text>
-        </div>
-      )}
-      {score.score_rationale && (
-        <div className={styles.scoreRationale}>
-          <Text size={200} weight="semibold">Rationale</Text>
-          <Text size={200} className={styles.scoreRationaleText}>{score.score_rationale}</Text>
-        </div>
-      )}
-    </div>
-  )
 }
 
 function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; groupId: string | number; scoreIndex: number }) {
@@ -128,7 +92,7 @@ function MessageScore({ score, groupId, scoreIndex }: { score: DisplayScore; gro
         </PopoverTrigger>
       </Tooltip>
       <PopoverSurface>
-        <ScoreDetails score={score} testId={`message-score-details-${groupId}-${scoreIndex}`} />
+        <ScoreDetails score={scoreSummaryFromBackendScore(score)} testId={`message-score-details-${groupId}-${scoreIndex}`} />
       </PopoverSurface>
     </Popover>
   )
@@ -427,7 +391,7 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
             id={`message-score-panel-${groupId}`}
             aria-labelledby={`message-score-tab-${groupId}-${selectedIndex}`}
           >
-            <ScoreDetails score={selectedScore} testId={`message-score-details-${groupId}-${selectedIndex}`} />
+            <ScoreDetails score={scoreSummaryFromBackendScore(selectedScore)} testId={`message-score-details-${groupId}-${selectedIndex}`} />
           </div>
         </PopoverSurface>
       </Popover>
