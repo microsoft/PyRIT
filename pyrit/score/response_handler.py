@@ -284,6 +284,9 @@ class JsonSchemaResponseHandler(ResponseHandler):
     category, and metadata from configurable keys. It also owns the response contract: the
     optional JSON schema handed to the target, and (when ``numeric_value`` is set) validating
     that the parsed score value is finite and numeric.
+
+    Replay version 2 excludes judge-supplied ``original_float_value`` metadata. Observations
+    acquired under version 1 must be rescored rather than replayed under changed semantics.
     """
 
     def __init__(
@@ -340,7 +343,7 @@ class JsonSchemaResponseHandler(ResponseHandler):
         """Return all configuration that changes JSON parsing."""
         return {
             "handler": f"{type(self).__module__}.{type(self).__qualname__}",
-            "version": 1,
+            "version": 2,
             "score_value_output_key": self._score_value_output_key,
             "rationale_output_key": self._rationale_output_key,
             "description_output_key": self._description_output_key,
@@ -704,7 +707,7 @@ class CallableResponseHandler(ResponseHandler):
             return None
         return {
             "handler": f"{type(self).__module__}.{type(self).__qualname__}",
-            "version": 1,
+            "version": 2,
             "parser_fingerprint": self._parser_fingerprint,
             "parser": parser,
             "score_value_output_key": self._score_value_output_key,
