@@ -35,6 +35,8 @@ from pyrit.memory import SQLiteMemory
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.memory.memory_models import PromptMemoryEntry
 from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
     AttackResult,
     Conversation,
     ConversationReference,
@@ -1115,9 +1117,11 @@ class TestConversationEditor:
                 await sqlite_instance.get_conversation_metadata_async(conversation_id=conversation_id)
             ).target_identifier is None
 
-    async def test_targetless_save_and_retry_async(self, sqlite_instance: SQLiteMemory) -> None:
+    @pytest.mark.parametrize("objective", ["", "Original objective", "Manual attack via GUI"])
+    async def test_targetless_save_and_retry_async(self, *, sqlite_instance: SQLiteMemory, objective: str) -> None:
         service = AttackService()
         request = draft()
+        request.objective = objective
         with patch.object(service, "_get_save_target_async", new_callable=AsyncMock, return_value=None):
             first = await service.save_conversation_async(request=request)
             second = await service.save_conversation_async(request=request)
@@ -1125,6 +1129,9 @@ class TestConversationEditor:
         assert first.attack.target is None
         assert first.attack.outcome.value == "undetermined"
         assert first.attack.attack_result_id == second.attack.attack_result_id
+        assert first.attack.objective == second.attack.objective == objective
+        assert first.attack.attack_type == second.attack.attack_type == "ManualAttack"
+        assert first.attack.get_attack_strategy_identifier() == second.attack.get_attack_strategy_identifier()
         assert first.messages.conversation_id == str(request.save_id)
         assert len(await sqlite_instance.get_message_pieces_async(conversation_id=str(request.save_id))) == 1
         assert first.messages.messages[0].message_pieces[0].id == second.messages.messages[0].message_pieces[0].id
@@ -1155,6 +1162,8 @@ class TestConversationEditor:
         saved = await service.save_conversation_async(request=request)
         assert saved.attack.conversation_id == first.attack.conversation_id
         assert saved.attack.objective == "Changed objective"
+        assert saved.attack.attack_type == "ManualAttack"
+        assert saved.attack.get_attack_strategy_identifier() == first.attack.get_attack_strategy_identifier()
         assert saved.attack.outcome.value == "undetermined"
         assert saved.messages.messages[0].role == "simulated_assistant"
         pieces = await sqlite_instance.get_message_pieces_async(conversation_id=str(request.save_id))
@@ -1603,7 +1612,49 @@ class TestConversationEditor:
         current = await service.get_attack_async(attack_result_id=saved.attack.attack_result_id)
         assert current.target.identifier_hash == get_mock_target_identifier("First").hash
 
-    @pytest.mark.parametrize("objective", ["New objective", ""])
+    @pytest.mark.parametrize("placeholder_flag", [None, True])
+    @pytest.mark.parametrize("in_conversation_save", [False, True])
+    async def test_legacy_attack_objective_edit_preserves_literal_placeholder_async(
+        self, *, sqlite_instance: SQLiteMemory, placeholder_flag: bool | None, in_conversation_save: bool
+    ) -> None:
+        attack = AttackResult(
+            conversation_id=str(uuid.uuid4()),
+            objective="Original objective",
+            atomic_attack_identifier=AtomicAttackIdentifier.build(
+                attack_identifier=AttackIdentifier(class_name="ManualAttack", class_module="pyrit.backend")
+            ),
+            metadata={"objective_is_placeholder": placeholder_flag} if placeholder_flag is not None else {},
+        )
+        await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+        service = AttackService()
+        objective = "Manual attack via GUI"
+        if in_conversation_save:
+            updated = (
+                await service.save_conversation_async(
+                    request=SaveConversationRequest(
+                        save_id=uuid.uuid4(),
+                        destination="same_attack",
+                        attack_result_id=attack.attack_result_id,
+                        objective=objective,
+                        expected_objective=attack.objective,
+                    )
+                )
+            ).attack
+        else:
+            updated = await service.update_attack_async(
+                attack_result_id=attack.attack_result_id,
+                request=UpdateAttackRequest(objective=objective, expected_objective=attack.objective),
+            )
+        assert updated.objective == objective
+        assert updated.metadata["objective_is_placeholder"] is False
+        assert updated.get_attack_strategy_identifier() == attack.get_attack_strategy_identifier()
+        edited_again = await service.update_attack_async(
+            attack_result_id=attack.attack_result_id,
+            request=UpdateAttackRequest(objective="Next objective", expected_objective=updated.objective),
+        )
+        assert edited_again.objective == "Next objective"
+
+    @pytest.mark.parametrize("objective", ["New objective", "", "Manual attack via GUI"])
     @pytest.mark.parametrize("in_conversation_save", [False, True])
     async def test_objective_change_keeps_score_evidence_async(
         self, *, sqlite_instance: SQLiteMemory, objective: str, in_conversation_save: bool
@@ -1714,3 +1765,17 @@ class TestConversationEditor:
                 await settle_tasks_async(task)
         assert not list(Path(sqlite_instance.results_path).rglob("*.txt"))
         assert (await sqlite_instance.get_attack_results_async()) == []
+
+    async def test_save_missing_destination_attack_raises_lookup_error_async(
+        self, sqlite_instance: SQLiteMemory
+    ) -> None:
+        service = AttackService()
+        request = SaveConversationRequest(
+            save_id=uuid.uuid4(),
+            destination="same_attack",
+            attack_result_id=str(uuid.uuid4()),
+            operator="owner",
+            messages=[ConversationMessageRequest(role="user", pieces=[ConversationPieceRequest(original_value="Hi")])],
+        )
+        with pytest.raises(LookupError, match="The destination attack does not exist"):
+            await service.save_conversation_async(request=request)
