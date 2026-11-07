@@ -18,9 +18,24 @@ async def test_character_space_removes_punctuation():
     converter = CharacterSpaceConverter()
     result = await converter.convert_async(prompt="hello!", input_type="text")
     assert isinstance(result, ConverterResult)
-    # "hello!" -> " ".join -> "h e l l o !" -> remove "!" -> "h e l l o "
-    assert "h e l l o" in result.output_text
+    assert result.output_text == "h e l l o"
     assert "!" not in result.output_text
+    assert result.output_type == "text"
+
+
+async def test_character_space_multiple_punctuation():
+    converter = CharacterSpaceConverter()
+    result = await converter.convert_async(prompt="attack... now", input_type="text")
+    assert isinstance(result, ConverterResult)
+    assert result.output_text == "a t t a c k   n o w"
+    assert result.output_type == "text"
+
+
+async def test_character_space_pure_punctuation():
+    converter = CharacterSpaceConverter()
+    result = await converter.convert_async(prompt="!!!", input_type="text")
+    assert isinstance(result, ConverterResult)
+    assert result.output_text == ""
     assert result.output_type == "text"
 
 

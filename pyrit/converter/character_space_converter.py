@@ -2,9 +2,12 @@
 # Licensed under the MIT license.
 
 import re
+import string
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import PromptDataType
+
+_PUNCTUATION_PATTERN = re.compile(f"[{re.escape(string.punctuation)}]")
 
 
 class CharacterSpaceConverter(Converter):
@@ -33,5 +36,6 @@ class CharacterSpaceConverter(Converter):
         """
         if not self.input_supported(input_type):
             raise ValueError("Input type not supported")
-        converted_text = re.sub("[!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~]", "", " ".join(prompt))
+        clean_text = _PUNCTUATION_PATTERN.sub("", prompt)
+        converted_text = " ".join(clean_text)
         return ConverterResult(output_text=converted_text, output_type="text")
