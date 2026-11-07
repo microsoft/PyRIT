@@ -24,10 +24,10 @@
 # %% [markdown]
 # ## Adding Seeds to the Database
 #
-# PyRIT uses content hashing to avoid re-importing stored seeds. Standalone seeds follow these rules:
+# PyRIT uses content hashing to avoid re-importing stored seeds. Standalone seeds and single-seed groups follow these rules:
 #
-# 1. **Same dataset, duplicate content and conditions**: Seed is skipped
-# 2. **Same dataset, modified content**: Seed is accepted (different hash indicates changes)
+# 1. **Same dataset, duplicate content and execution identity** (seed type, data type, role, response schema, and behavioral inputs such as conditions): Seed is skipped, even if descriptive metadata such as harm categories differs
+# 2. **Same dataset, modified content or execution identity**: Seed is accepted as a new row; the stored original is unchanged
 # 3. **Different dataset, duplicate content**: Seed is accepted (allows the same content across datasets)
 #
 # Multi-seed groups are compared as complete groups, including roles, sequence, metadata, and conditions. Distinct groups retain all their members, even when they share a system prompt or objective with another group. Re-importing an equivalent complete group does not add duplicates, even if its IDs have changed.

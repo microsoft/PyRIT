@@ -38,6 +38,36 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+### Manual attack creation
+
+`POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
+for example `{"target_registry_name": "my-target", "objective": "Evaluate the response"}`.
+An omitted, null, or empty objective creates a chat without a goal. The objective
+never sets the strategy type, and there is no separate attack display-name field.
+Objective edits use `PATCH /api/attacks/{attack_result_id}` without changing the
+strategy identifier. New attacks copied from conversations or saved through
+`POST /api/attacks/save-conversation` also use `ManualAttack`; their automated
+source results keep their original strategy types.
+New and edited manual objectives are marked as non-placeholder, so even the literal
+`"Manual attack via GUI"` is preserved in summaries. Unmarked historical manual
+placeholders retain their legacy empty-summary behavior.
+
+Until PyRIT 1.4, `name` remains a deprecated input alias for `objective`, with
+the same text validation. When `objective` is omitted or null, `name` supplies
+the goal. If both are non-null they must match exactly, including empty strings;
+conflicts return 422 rather than silently discarding either value.
+
+This fixes new results, not existing malformed identifiers. Older manual results
+may have their initial objective stored as the strategy class name. History,
+attack-type filters/options, and analytics still use those persisted class names.
+Manual editing and scoring remain available because they recognize the
+`pyrit.backend` strategy module, not the malformed class name. Objective edits
+do not repair identifiers. Any historical repair requires a separate, audited
+migration scoped to verified backend-created manual results, creating corrected
+content-addressed identifiers and relinking affected results rather than mutating
+shared identifiers. Do not infer manual status from objective text or GUI labels,
+or reclassify automated results.
+
 ### Saved conversations
 
 `GET /api/attacks/conversations/{conversation_id}` returns the saved chat history
@@ -302,10 +332,10 @@ Stop these test-owned servers after the run.
 ### Request Limits
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
-API requests with URLs over 8 KiB receive **414**. Identifiers, names, labels, filters,
-cursors, configuration files, and initializer scripts also have length or item limits,
-listed in the OpenAPI schema; values over a limit receive **422**. Prompt content (message
-pieces, system prompts, and converter preview input) and free-form values (prompt
+API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,
+labels, filters, cursors, configuration files, and initializer scripts also have length or
+item limits, listed in the OpenAPI schema; values over a limit receive **422**. Prompt content
+(message pieces, system prompts, and converter preview input) and free-form values (prompt
 metadata, scenario and initializer arguments, and target and converter parameter values)
 are limited only by the body size, so long prompts and base64 media keep working.
 
