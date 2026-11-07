@@ -63,6 +63,25 @@ that come back after a restart; targets from configuration keep their own sign-i
 the name of the user who saved it (null when it was saved with sign-in off), and `saved_by_me` says whether that's the
 signed-in user asking. The user's object ID isn't returned.
 
+### Converters and scorers
+
+- `POST /api/converters` - Create a converter
+- `DELETE /api/converters/{converter_id}` - Remove a converter
+- `POST /api/scorers` - Create a scorer
+
+A created converter or scorer is Temporary unless the request sets `"persist": true`, which works as it does for
+targets: it needs `register` left on and a name of lowercase letters, digits, and underscores (otherwise **422**), the
+entry is saved under `registry_recipes_source` with the signed-in user recorded, and it's restored at every start. A
+request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without `persist`, if the entry
+would save a key, use one of this server's keys or its Azure identity (the Azure Speech converters, the Azure Content
+Safety scorer, and the audio scorers), or a model from this server (the local refusal classifier scorer), use a
+Temporary target, converter, or scorer, or, for a converter, need or keep an uploaded file. A target left out of the
+request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
+converter copy made with `source` can't be saved yet (**422**). A taken name receives **409**, and storage that can't
+be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
+`temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
+`registry_recipes_source` and restart the backend.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,

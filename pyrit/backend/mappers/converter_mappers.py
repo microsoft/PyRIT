@@ -13,6 +13,7 @@ wire for the converter's class, supported data types, and constructor params.
 from pyrit.backend.models import ConverterInstance
 from pyrit.converter import Converter
 from pyrit.models import ConverterIdentifier
+from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin
 
 
 def converter_object_to_instance(
@@ -21,6 +22,7 @@ def converter_object_to_instance(
     converter_obj: Converter,
     is_llm_based: bool,
     description: str | None,
+    origin: RegistryEntryOrigin | None = None,
 ) -> ConverterInstance:
     """
     Build a ConverterInstance DTO from a registry converter object.
@@ -34,6 +36,8 @@ def converter_object_to_instance(
         converter_obj (Converter): The domain Converter object from the registry.
         is_llm_based (bool): Whether the converter class requires an LLM target.
         description (str | None): The converter class description.
+        origin (RegistryEntryOrigin | None): Where the registered converter comes from, or None when it isn't
+            registered.
 
     Returns:
         ConverterInstance DTO wrapping the converter's identifier.
@@ -43,4 +47,5 @@ def converter_object_to_instance(
         identifier=ConverterIdentifier.from_component_identifier(converter_obj.get_identifier()),
         is_llm_based=is_llm_based,
         description=description,
+        origin=origin,
     )

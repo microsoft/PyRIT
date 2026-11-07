@@ -27,17 +27,20 @@ from pyrit.backend.services.configuration_file_service import ConfigurationFileS
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import ScenarioRunService, _PreparedRun
+from pyrit.converter import Base64Converter
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
-from pyrit.models.catalog.registry_recipe import ComponentRecipe
+from pyrit.models.catalog.registry_recipe import ComponentRecipe, RegistryEntryOrigin
 from pyrit.models.catalog.scenario import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget, TextTarget
 from pyrit.registry.components.converter_registry import ConverterRegistry
+from pyrit.registry.components.scorer_registry import ScorerRegistry
 from pyrit.registry.components.target_registry import TargetRegistry
-from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY
+from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.scenario import Scenario
+from pyrit.score import SubStringScorer
 from pyrit.setup.configuration_loader import ConfigurationLoader
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, make_scenario_result
@@ -1074,6 +1077,51 @@ async def test_startup_marks_the_targets_its_scripts_register_but_not_saved_ones
     assert startup_entry is not None and saved_entry is not None
     assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
     assert CONFIGURATION_ENTRY_METADATA_KEY not in saved_entry.metadata
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_startup_marks_the_converters_and_scorers_its_scripts_register_but_not_saved_ones_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    ScorerRegistry.reset_registry_singleton()
+    recipes = tmp_path / "recipes"
+    base64 = {"class_module": Base64Converter.__module__, "class_name": "Base64Converter", "params": {}}
+    leak = {"class_module": SubStringScorer.__module__, "class_name": "SubStringScorer", "params": {"substring": "x"}}
+    _save_recipe(recipes, kind="converters", name="saved_base64", document=base64)
+    _save_recipe(recipes, kind="scorers", name="saved_leak", document=leak)
+    converters = ConverterRegistry.get_registry_singleton().instances
+    scorers = ScorerRegistry.get_registry_singleton().instances
+
+    def register_startup_entries(**_: object) -> None:
+        converters.register(Base64Converter(), name="startup_base64")
+        scorers.register(SubStringScorer(substring="y"), name="startup_leak")
+
+    try:
+        await _start_with_recipes_async(runtime, recipes=recipes, initialize=register_startup_entries)
+
+        assert (runtime.state, runtime.outcome) == ("ready", "success")
+        entries = {
+            name: instances.get_entry(name)
+            for instances, name in (
+                (converters, "startup_base64"),
+                (converters, "saved_base64"),
+                (scorers, "startup_leak"),
+                (scorers, "saved_leak"),
+            )
+        }
+        assert {name: registry_entry_origin(entry.metadata) for name, entry in entries.items() if entry} == {
+            "startup_base64": RegistryEntryOrigin.CONFIGURATION,
+            "saved_base64": RegistryEntryOrigin.SAVED,
+            "startup_leak": RegistryEntryOrigin.CONFIGURATION,
+            "saved_leak": RegistryEntryOrigin.SAVED,
+        }
+        assert all(
+            CONFIGURATION_ENTRY_METADATA_KEY not in entry.metadata
+            for name, entry in entries.items()
+            if entry and name.startswith("saved_")
+        )
+    finally:
+        ScorerRegistry.reset_registry_singleton()
 
 
 class _LoopBoundTarget(MockPromptTarget):

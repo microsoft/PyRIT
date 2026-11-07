@@ -8,7 +8,8 @@ Provides endpoints for managing converter instances and previewing conversions.
 Converter types are set at app startup - you cannot add new types at runtime.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 
 from pyrit.backend.models.common import IdentifierStr, ProblemDetail
 from pyrit.backend.models.converters import (
@@ -20,7 +21,18 @@ from pyrit.backend.models.converters import (
     CreateConverterRequest,
     UnregisteredConverter,
 )
+from pyrit.backend.routes.common import (
+    NOT_SAVEABLE_PROBLEM_TYPE,
+    not_saveable_response,
+    saved_entry_owner_from_request,
+)
 from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.services.saved_entries import (
+    NotSaveableError,
+    SavedEntryConflictError,
+    SavedEntryRemovalError,
+    SavedEntryStorageError,
+)
 
 router = APIRouter(prefix="/converters", tags=["converters"])
 
@@ -62,12 +74,25 @@ async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix
     response_model=ConverterInstance | UnregisteredConverter,
     status_code=status.HTTP_201_CREATED,
     responses={
-        400: {"model": ProblemDetail, "description": "Invalid converter type or parameters"},
+        400: {
+            "model": ProblemDetail,
+            "description": (
+                f"Invalid converter type or parameters, or (type {NOT_SAVEABLE_PROBLEM_TYPE}) a converter that "
+                "can't be saved as asked but can be created without saving it"
+            ),
+        },
+        409: {
+            "model": ProblemDetail,
+            "description": "A converter to save has the name of a registered or saved converter",
+        },
+        503: {"model": ProblemDetail, "description": "Saved converters can't be written right now"},
     },
 )
 async def create_converter(
-    request: CreateConverterRequest,
-) -> ConverterInstance | UnregisteredConverter:  # pyrit-async-suffix-exempt
+    *,
+    body: CreateConverterRequest,
+    request: Request,
+) -> ConverterInstance | UnregisteredConverter | JSONResponse:  # pyrit-async-suffix-exempt
     """
     Create a new converter instance.
 
@@ -75,12 +100,23 @@ async def create_converter(
     Supports nested converters via converter_id references in params.
 
     Returns:
-        ConverterInstance | UnregisteredConverter: A named instance or an unregistered descriptor.
+        ConverterInstance | UnregisteredConverter | JSONResponse: A named instance or an unregistered descriptor,
+            or the problem response for a converter that can't be saved as asked.
     """
     service = get_converter_service()
 
     try:
-        return await service.create_converter_async(request=request)
+        return await service.create_converter_async(
+            request=body,
+            owner=saved_entry_owner_from_request(request),
+            recipes_source=getattr(request.app.state, "registry_recipes_source", None),
+        )
+    except NotSaveableError as e:
+        return not_saveable_response(detail=str(e), request=request)
+    except SavedEntryConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except SavedEntryStorageError as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -124,12 +160,17 @@ async def get_converter(converter_id: IdentifierStr) -> ConverterInstance:  # py
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         404: {"model": ProblemDetail, "description": "Converter not found"},
+        409: {"model": ProblemDetail, "description": "The converter is saved, so it can't be removed yet"},
     },
 )
 async def delete_converter(converter_id: IdentifierStr) -> None:  # pyrit-async-suffix-exempt
     """Delete a converter instance by registry name."""
     service = get_converter_service()
-    if not await service.delete_converter_async(converter_id=converter_id):
+    try:
+        removed = await service.delete_converter_async(converter_id=converter_id)
+    except SavedEntryRemovalError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    if not removed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Converter '{converter_id}' not found",

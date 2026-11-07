@@ -3,16 +3,20 @@
 
 """Tests for scorer API routes."""
 
+import json
+from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.common import MAX_CURSOR_LENGTH, MAX_IDENTIFIER_LENGTH, MAX_ITEMS
+from pyrit.backend.services.saved_entries import SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models import ComponentIdentifier, Scorable, Score, ScoringExpectation, TargetIdentifier
+from pyrit.models.catalog.registry_recipe import SavedEntryOwner
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score.scorer import Scorer
@@ -304,3 +308,103 @@ def test_scorer_types_list_azure_content_filter_api_key_as_sensitive(compatibili
     entry = next(item for item in response.json()["items"] if item["scorer_type"] == "AzureContentFilterScorer")
     api_key = next(parameter for parameter in entry["parameters"] if parameter["name"] == "api_key")
     assert api_key["sensitive"] is True
+
+
+def test_create_scorer_with_persist_saves_it_and_lists_it_as_saved(
+    compatibility_headers: dict[str, str], patch_central_database: None, tmp_path: Path
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    body = {"name": "leak_substring", "type": "SubStringScorer", "params": {"substring": "secret"}, "persist": True}
+
+    with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
+        created = client.post("/api/scorers", json=body)
+        fetched = client.get("/api/scorers/leak_substring")
+        listed = client.get("/api/scorers")
+
+    assert created.status_code == 201
+    assert (created.json()["origin"], fetched.json()["origin"]) == ("saved", "saved")
+    assert [item["origin"] for item in listed.json()["items"]] == ["saved"]
+    assert json.loads((tmp_path / "scorers" / "leak_substring.json").read_text())["params"] == {"substring": "secret"}
+
+
+def test_create_scorer_marks_a_save_refusal_so_it_can_be_created_without_saving(
+    compatibility_headers: dict[str, str], patch_central_database: None, tmp_path: Path
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    body = {
+        "name": "content_safety",
+        "type": "AzureContentFilterScorer",
+        "params": {"endpoint": "https://contoso.cognitiveservices.azure.com/"},
+        "persist": True,
+    }
+
+    with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
+        response = client.post("/api/scorers", json=body)
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "type": "/errors/not-saveable",
+        "title": "Can't be saved",
+        "status": 400,
+        "detail": (
+            "'api_key' is empty, so 'AzureContentFilterScorer' can use this server's credential instead. "
+            "It can still be created without saving it."
+        ),
+        "instance": "/api/scorers",
+    }
+    assert not (tmp_path / "scorers").exists()
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({}, "name is required when register=true"),
+        ({"name": "Leak-Substring"}, "Invalid registry name"),
+        ({"name": "leak", "register": False}, "persist requires register=true"),
+    ],
+)
+def test_create_scorer_checks_what_persist_needs(
+    compatibility_headers: dict[str, str], fields: dict[str, Any], message: str
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+
+    response = client.post(
+        "/api/scorers", json={"type": "SubStringScorer", "params": {"substring": "x"}, "persist": True, **fields}
+    )
+
+    assert response.status_code == 422
+    assert message in json.dumps(response.json())
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code"),
+    [
+        (SavedEntryConflictError("A saved scorer named 'leak' already exists."), 409),
+        (SavedEntryStorageError("Saved scorers can't be written right now."), 503),
+    ],
+)
+def test_create_scorer_maps_save_errors(
+    compatibility_headers: dict[str, str], error: Exception, status_code: int
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    owner = SavedEntryOwner(oid="user-oid", name="Ada")
+    with (
+        patch("pyrit.backend.routes.scorers.get_scorer_service") as get_service,
+        patch("pyrit.backend.routes.scorers.saved_entry_owner_from_request", return_value=owner),
+        patch.object(client.app.state, "registry_recipes_source", "/srv/registry-recipes", create=True),
+    ):
+        get_service.return_value.create_scorer_async = AsyncMock(side_effect=error)
+
+        response = client.post(
+            "/api/scorers",
+            json={"name": "leak", "type": "SubStringScorer", "params": {"substring": "x"}, "persist": True},
+        )
+
+    assert response.status_code == status_code
+    assert response.json()["detail"] == str(error)
+    kwargs = get_service.return_value.create_scorer_async.call_args.kwargs
+    assert (kwargs["owner"], kwargs["recipes_source"], kwargs["request"].persist) == (
+        owner,
+        "/srv/registry-recipes",
+        True,
+    )

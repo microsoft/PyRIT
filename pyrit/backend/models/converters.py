@@ -18,7 +18,9 @@ from pyrit.backend.models.common import (
     IdentifierStr,
 )
 from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
+from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin
 from pyrit.models.component_spec import SourceInstanceSpec
+from pyrit.models.identifiers.class_name_utils import validate_registry_name
 
 __all__ = [
     "ConverterInstance",
@@ -82,6 +84,13 @@ class ConverterInstance(BaseModel):
     parameters: list[Parameter] = Field(
         default_factory=list, description="Editable inputs with source-specific defaults"
     )
+    origin: RegistryEntryOrigin | None = Field(
+        None,
+        description=(
+            "Where the converter comes from: 'saved' (restored at every start), 'configuration' (the server's "
+            "startup scripts), or 'temporary' (gone after a restart or reinitialization)"
+        ),
+    )
 
 
 class ConverterInstanceListResponse(BaseModel):
@@ -100,6 +109,14 @@ class CreateConverterRequest(BaseModel):
         description="Unique registry name for the converter instance",
     )
     register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    persist: bool = Field(
+        False,
+        description=(
+            "Save the converter so it comes back after the backend restarts or is reinitialized (true), or keep it "
+            "only until then (false). A saved converter needs a name of lowercase letters, digits, and underscores, "
+            "can't hold or use a key or an uploaded file, and can't be a copy made with source."
+        ),
+    )
     source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Converter type (e.g., 'Base64Converter')")
     params: dict[IdentifierStr, Any] = Field(
@@ -114,6 +131,19 @@ class CreateConverterRequest(BaseModel):
             raise ValueError("name is required when register=true")
         if self.source is not None and self.params:
             raise ValueError("Use source.params for reconstruction overrides")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_persist(self) -> "CreateConverterRequest":
+        if not self.persist:
+            return self
+        if not self.register:
+            raise ValueError("persist requires register=true")
+        if self.name is None:
+            raise ValueError("persist requires a name")
+        validate_registry_name(self.name)
+        if self.source is not None:
+            raise ValueError("persist can't be used with source: a copy of a converter can't be saved yet")
         return self
 
 

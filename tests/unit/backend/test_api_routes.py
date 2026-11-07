@@ -58,7 +58,12 @@ from pyrit.backend.routes.scores import _get_user_identifier
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError, AttackService
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
-from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.backend.services.saved_entries import (
+    NotSaveableError,
+    SavedEntryConflictError,
+    SavedEntryRemovalError,
+    SavedEntryStorageError,
+)
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
@@ -1827,6 +1832,106 @@ class TestConverterRoutes:
             response = client.delete("/api/converters/missing")
 
             assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_delete_converter_refuses_a_saved_converter(self, client: TestClient) -> None:
+        refusal = SavedEntryRemovalError(
+            "Saved converter 'base64_converter' can't be removed yet, since it comes back from its saved file at "
+            "every start."
+        )
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.delete_converter_async = AsyncMock(side_effect=refusal)
+
+            response = client.delete("/api/converters/base64_converter")
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json()["detail"] == str(refusal)
+
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (SavedEntryConflictError("A saved converter named 'shift' already exists."), status.HTTP_409_CONFLICT),
+            (
+                SavedEntryStorageError("Saved converters can't be written right now."),
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            ),
+        ],
+    )
+    def test_create_converter_maps_save_errors(self, client: TestClient, error: Exception, status_code: int) -> None:
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=error)
+
+            response = client.post(
+                "/api/converters", json={"name": "shift", "type": "CaesarConverter", "params": {}, "persist": True}
+            )
+
+        assert response.status_code == status_code
+        assert response.json()["detail"] == str(error)
+
+    def test_create_converter_marks_a_save_refusal_so_it_can_be_created_without_saving(
+        self, client: TestClient
+    ) -> None:
+        refusal = NotSaveableError(
+            "Saved converters can't keep uploaded files yet, so leave out 'font_name'. "
+            "It can still be created without saving it."
+        )
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=refusal)
+
+            response = client.post(
+                "/api/converters",
+                json={"name": "banner", "type": "AddTextImageConverter", "params": {}, "persist": True},
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json() == {
+            "type": "/errors/not-saveable",
+            "title": "Can't be saved",
+            "status": 400,
+            "detail": str(refusal),
+            "instance": "/api/converters",
+        }
+
+    def test_create_converter_passes_the_signed_in_user_and_the_saved_entries_source(self, client: TestClient) -> None:
+        owner = SavedEntryOwner(oid="user-oid", name="Ada")
+        with (
+            patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service,
+            patch("pyrit.backend.routes.converters.saved_entry_owner_from_request", return_value=owner),
+            patch.object(client.app.state, "registry_recipes_source", "/srv/registry-recipes", create=True),
+        ):
+            mock_get_service.return_value.create_converter_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post(
+                "/api/converters", json={"name": "shift", "type": "CaesarConverter", "params": {}, "persist": True}
+            )
+
+        kwargs = mock_get_service.return_value.create_converter_async.call_args.kwargs
+        assert (kwargs["owner"], kwargs["recipes_source"], kwargs["request"].persist) == (
+            owner,
+            "/srv/registry-recipes",
+            True,
+        )
+
+    @pytest.mark.parametrize(
+        ("fields", "message"),
+        [
+            ({}, "name is required when register=true"),
+            ({"name": "Shift-Two"}, "Invalid registry name"),
+            ({"name": "shift", "register": False}, "persist requires register=true"),
+            (
+                {"name": "shift", "source": {"source_name": "caesar", "source_hash": "a" * 64, "params": {}}},
+                "persist can't be used with source",
+            ),
+        ],
+    )
+    def test_create_converter_checks_what_persist_needs(
+        self, client: TestClient, fields: dict[str, object], message: str
+    ) -> None:
+        body: dict[str, object] = {"type": "CaesarConverter", "persist": True, **fields}
+
+        response = client.post("/api/converters", json=body)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert message in json.dumps(response.json())
 
     def test_preview_conversion_success(self, client: TestClient) -> None:
         """Test previewing a conversion."""
