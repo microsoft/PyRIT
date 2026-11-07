@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import abc
+import threading
 
 
 class Singleton(abc.ABCMeta):
@@ -11,6 +12,7 @@ class Singleton(abc.ABCMeta):
     """
 
     _instances: dict[type, object] = {}
+    _lock: threading.RLock = threading.RLock()
 
     def __call__(cls, *args: object, **kwargs: object) -> object:
         """
@@ -20,5 +22,9 @@ class Singleton(abc.ABCMeta):
             The singleton instance if it exists, otherwise creates a new one and returns it.
         """
         if cls not in cls._instances:
-            cls._instances[cls] = super().__call__(*args, **kwargs)
+            # Double-checked locking: concurrent first calls could otherwise
+            # each pass the check above and construct their own instance.
+            with cls._lock:
+                if cls not in cls._instances:
+                    cls._instances[cls] = super().__call__(*args, **kwargs)
         return cls._instances[cls]
