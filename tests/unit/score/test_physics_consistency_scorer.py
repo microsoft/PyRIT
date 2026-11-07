@@ -103,6 +103,14 @@ class TestPhysicsConsistencyScorer:
             ("A took 60% and B took 40% of traffic and C took 70% and D took 30% of the budget.", "PASS", None),
             ("A took 60% of traffic and B took 70% of the budget.", "PASS", None),
             ("The probability is 60% and the likelihood is 70%.", "PASS", None),
+            ("The probability is 60% and A took 70% of traffic.", "PASS", None),
+            ("A took 60% of traffic and B took 70% of traffic.", "WARN", "percentage-sum"),
+            ("A took 60% of traffic and B took 70% of the traffic.", "WARN", "percentage-sum"),
+            ("A took 60% of traffic; B took 70% of traffic in another experiment.", "PASS", None),
+            ("Output power increased and the probability of success is 150%.", "FAIL", "percentage-range"),
+            ("The probability increased to 150%.", "FAIL", "percentage-range"),
+            ("The probability increased by 150%.", "PASS", None),
+            ("The probability is stable and power grew 150%.", "PASS", None),
             ("A took 150.5% of traffic.", "FAIL", "percentage-range"),
             ("There is a 150.5% probability of success.", "FAIL", "percentage-range"),
             ("We are 150.5% confident.", "FAIL", "percentage-range"),
@@ -115,6 +123,8 @@ class TestPhysicsConsistencyScorer:
             ("The aircraft experienced -2 g of acceleration.", "PASS", None),
             ("Acceleration reached -2 g.", "PASS", None),
             ("The sample has a mass of -2 g.", "FAIL", "negative-mass"),
+            ("The acceleration was 2 g and the sample mass was -2 g.", "FAIL", "negative-mass"),
+            ("At high acceleration the sample mass was -2 g.", "FAIL", "negative-mass"),
         ],
     )
     async def test_claim_context_async(self, text: str, verdict: str, rule: str | None, fail_on: str) -> None:

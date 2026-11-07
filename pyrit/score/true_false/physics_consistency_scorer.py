@@ -68,13 +68,14 @@ _SHARE_CONTEXT_RE = re.compile(
     r"\bof (?:the )?(?:total|whole|population|sample|cases|market|traffic|budget|capacity|energy|production)\b",
     re.IGNORECASE,
 )
-_PROBABILITY_PREFIX_RE = re.compile(r"\b(?:probability|likelihood|odds|confidence)\b[^%]*$", re.IGNORECASE)
+_PROBABILITY_PREFIX_RE = re.compile(r"\b(?:probability|likelihood|odds|confidence)\b", re.IGNORECASE)
 _PROBABILITY_SUFFIX_RE = re.compile(r"^\s*(?:confident|confidence|probability|likelihood)\b", re.IGNORECASE)
 _PERCENTAGE_CHANGE_RE = re.compile(
     r"\b(?:increas\w*|decreas\w*|chang\w*|grew|growth|gain\w*|loss\w*|reduc\w*)\b", re.IGNORECASE
 )
 _GRAVITY_PREFIX_RE = re.compile(r"\b(?:acceleration|deceleration|gravity|g-force)\b[^%]*$", re.IGNORECASE)
 _GRAVITY_SUFFIX_RE = re.compile(r"^\s*(?:of\s+)?(?:acceleration|deceleration|gravity|g-force)\b", re.IGNORECASE)
+_MASS_CONTEXT_RE = re.compile(r"\b(?:mass|grams?)\b", re.IGNORECASE)
 
 _WARN_SPEED_FRACTION = 0.5  # >0.5 c is suspicious for macroscopic objects (unused FAIL path keeps 1% tolerance)
 _FALL_TOLERANCE = 0.85  # claimed time below 85% of the 1 g value is suspicious
@@ -171,22 +172,31 @@ def _bounded_percentages(
             before = text[previous : q["span"][0]]
             after = text[q["span"][1] : end]
             previous = q["span"][1]
-            if _PERCENTAGE_CHANGE_RE.search(before) or _PERCENTAGE_CHANGE_RE.match(after.lstrip()):
-                continue
-            eligible.append(q)
-            if _PROBABILITY_PREFIX_RE.search(before) or _PROBABILITY_SUFFIX_RE.match(after):
+            probabilities = list(_PROBABILITY_PREFIX_RE.finditer(before))
+            changes = list(_PERCENTAGE_CHANGE_RE.finditer(before))
+            probability = probabilities[-1] if probabilities else None
+            change = changes[-1] if changes else None
+            absolute_probability = probability is not None and (
+                change is None or probability.start() > change.start() or re.search(r"\bto\s*$", before)
+            )
+            if absolute_probability or _PROBABILITY_SUFFIX_RE.match(after):
                 bounded.add(q["span"][0])
+            elif change is None and not _PERCENTAGE_CHANGE_RE.match(after.lstrip()):
+                eligible.append(q)
 
         previous = start
         contexts = list(_SHARE_CONTEXT_RE.finditer(text, start, end))
+        by_total: dict[str, list[float]] = {}
         for index, context in enumerate(contexts):
             shares = [q for q in eligible if previous <= q["span"][0] < context.start()]
             if not shares:
                 following = contexts[index + 1].start() if index + 1 < len(contexts) else end
                 shares = [q for q in eligible if context.end() <= q["span"][0] < following]
             bounded.update(q["span"][0] for q in shares)
-            distributions.append([q["value"] for q in shares])
+            total = context.group().lower().replace("of the ", "of ")
+            by_total.setdefault(total, []).extend(q["value"] for q in shares)
             previous = max([context.end(), *(q["span"][1] for q in shares)])
+        distributions.extend(by_total.values())
     return bounded, distributions
 
 
@@ -213,7 +223,7 @@ def check_text(text: str) -> dict[str, Any]:
     spans = _claim_spans(normalized)
     bounded_percentages, distributions = _bounded_percentages(normalized, quantities=quantities, spans=spans)
 
-    for q in quantities:
+    for index, q in enumerate(quantities):
         value, unit, raw = q["value"], q["unit"], q["raw"]
 
         # Rule 1: universal speed limit (magnitude; 1% tolerance absorbs the
@@ -251,9 +261,15 @@ def check_text(text: str) -> dict[str, Any]:
         # (hydrogen ground state -13.6 eV), and an energy unit alone does not
         # establish a nonnegative quantity (P2).
         start, end = next((span for span in spans if span[0] <= q["span"][0] < span[1]), (0, len(normalized)))
-        before = normalized[start : q["span"][0]]
-        after = normalized[q["span"][1] : end]
-        gravity = unit == "g" and (_GRAVITY_PREFIX_RE.search(before) or _GRAVITY_SUFFIX_RE.match(after))
+        previous = max(start, quantities[index - 1]["span"][1]) if index else start
+        following = min(end, quantities[index + 1]["span"][0]) if index + 1 < len(quantities) else end
+        before = normalized[previous : q["span"][0]]
+        after = normalized[q["span"][1] : following]
+        gravity = (
+            unit == "g"
+            and not _MASS_CONTEXT_RE.search(before)
+            and (_GRAVITY_PREFIX_RE.search(before) or _GRAVITY_SUFFIX_RE.match(after))
+        )
         if unit in _MASS_UNITS and value < 0 and not gravity:
             violations.append(
                 {"rule": "negative-mass", "severity": "FAIL", "detail": f"negative {unit} quantity: {raw}"}
