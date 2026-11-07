@@ -32,6 +32,7 @@ export function useTargetRegistry() {
       if (cancelled || pendingUpdates.current !== updates) return
       pendingUpdates.current = null
       setError(toApiError(cause).detail)
+      setLoadedGeneration(generation)
       setLoading(false)
     })
     return () => { cancelled = true }

@@ -41,6 +41,7 @@ describe('useTargetRegistry', () => {
     })
     const { result } = renderHook(useTargetRegistry)
     await waitFor(() => expect(result.current.error).not.toBeNull())
+    expect(result.current.loading).toBe(false)
     expect(result.current.targets).toEqual([])
     expect(result.current.isEmpty).toBe(false)
     listTargets.mockResolvedValue({
@@ -68,6 +69,40 @@ describe('useTargetRegistry', () => {
     act(() => { rerender() })
 
     expect(result.current.loading).toBe(true)
+  })
+
+  it.each([false, true])('settles failed loads and allows retry (previous generation loaded: %s)', async (
+    previousGenerationLoaded: boolean,
+  ) => {
+    if (previousGenerationLoaded) {
+      listTargets.mockResolvedValueOnce({ items: [first], pagination: { limit: 200, has_more: false } })
+    }
+    let fail: ((cause: Error) => void) | undefined
+    listTargets.mockReturnValueOnce(new Promise((_, reject) => { fail = reject }))
+    const { result, rerender } = renderHook(useTargetRegistry)
+    if (previousGenerationLoaded) {
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      runtime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+      rerender()
+    }
+    expect(result.current.loading).toBe(true)
+    await act(async () => {
+      if (!fail) throw new Error('Registry request did not start')
+      fail(new Error('Registry unavailable'))
+    })
+    expect(result.current.loading).toBe(false)
+    expect(result.current.error).toBe('Registry unavailable')
+    expect(result.current.targets).toEqual(previousGenerationLoaded ? [first] : [])
+    expect(result.current.isEmpty).toBe(false)
+
+    listTargets.mockResolvedValueOnce({ items: [second], pagination: { limit: 200, has_more: false } })
+    act(() => result.current.refresh())
+    expect(result.current.loading).toBe(true)
+    expect(result.current.error).toBeNull()
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.targets).toEqual([second])
+    expect(result.current.error).toBeNull()
+    expect(result.current.isEmpty).toBe(false)
   })
 
   it('keeps newer selections when an earlier registry load completes', async () => {
