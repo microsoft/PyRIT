@@ -5,7 +5,8 @@ import json
 import logging
 import re
 from abc import abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from types import MappingProxyType
 from typing import Any, ClassVar
 from urllib.parse import urlparse
 
@@ -63,6 +64,11 @@ class OpenAITarget(PromptTarget):
     # endpoint (see ``is_azure_openai_endpoint``), and OpenAI-compatible servers
     # such as Ollama or vLLM may need no key at all.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity", "none")
+    # Empty headers read ``OPENAI_ADDITIONAL_REQUEST_HEADERS`` unless the mode is "none"; "{}" sends none.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType(
+        {"api_key": None, "headers": "{}"}
+    )
+    destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
 
     model_name_environment_variable: str
     endpoint_environment_variable: str

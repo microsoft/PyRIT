@@ -15,6 +15,7 @@ from pyrit.common.auth_mode import AuthMode
 from pyrit.models import JSONValue, Parameter, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
+from pyrit.models.identifiers.class_name_utils import validate_registry_name
 from pyrit.models.target.target_capabilities import TargetCapabilities
 
 __all__ = [
@@ -69,6 +70,14 @@ class CreateTargetRequest(BaseModel):
         description="Unique registry name; omitted only for legacy UI compatibility",
     )
     register: bool = Field(True, description="Register the object; false returns only its descriptor")
+    persist: bool = Field(
+        False,
+        description=(
+            "Save the target so it comes back after the backend restarts or is reinitialized (true), or keep it "
+            "only until then (false). A saved target needs a name of lowercase letters, digits, and underscores, "
+            "and can't hold or use a key: it authenticates with Microsoft Entra ID ('identity') or needs no key."
+        ),
+    )
     source: SourceInstanceSpec | None = None
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[IdentifierStr, JSONValue] = Field(
@@ -90,6 +99,17 @@ class CreateTargetRequest(BaseModel):
     def _validate_source(self) -> "CreateTargetRequest":
         if self.source is not None and (self.register or self.params or "auth_mode" in self.model_fields_set):
             raise ValueError("source requires register=false and overrides, including auth_mode, in source.params")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_persist(self) -> "CreateTargetRequest":
+        if not self.persist:
+            return self
+        if not self.register:
+            raise ValueError("persist requires register=true")
+        if self.name is None:
+            raise ValueError("persist requires a name")
+        validate_registry_name(self.name)
         return self
 
 
