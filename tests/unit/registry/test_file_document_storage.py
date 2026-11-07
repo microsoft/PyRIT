@@ -18,6 +18,7 @@ from pyrit.registry.file_document_storage import (
     FileDocumentStorage,
     UnreadableDocument,
     _read_regular_file,
+    describe_storage_error,
 )
 
 _SAS_SOURCE = "https://account.blob.core.windows.net/documents/saved?sp=rl&sig=secret-signature"
@@ -396,7 +397,7 @@ class TestListDocuments:
         assert "secret-signature" not in message
 
 
-class TestDescribeReadError:
+class TestDescribeStorageError:
     @pytest.mark.parametrize(
         ("error", "expected"),
         [
@@ -406,7 +407,7 @@ class TestDescribeReadError:
         ],
     )
     def test_describes_errors_without_their_details(self, error: Exception, expected: str) -> None:
-        assert FileDocumentStorage._describe_read_error(error) == expected
+        assert describe_storage_error(error) == expected
 
     @pytest.mark.parametrize(
         ("error_code", "expected"),
@@ -420,4 +421,4 @@ class TestDescribeReadError:
         error.status_code = 403
         error.error_code = error_code
 
-        assert FileDocumentStorage._describe_read_error(error) == expected
+        assert describe_storage_error(error) == expected

@@ -20,6 +20,7 @@ from pyrit.models.catalog.registry_recipe import (
     TechniqueRecipe,
 )
 from pyrit.models.parameter import ComponentType
+from pyrit.registry.file_document_storage import describe_storage_error
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage
 
 if TYPE_CHECKING:
@@ -95,7 +96,7 @@ class RegistryRecipeRestorer:
             try:
                 listings.append(storage.list_recipes())
             except Exception as error:  # Any listing error, not only storage ones, must become a failure.
-                message = f"The saved {kind.value} couldn't be listed: {storage._describe_read_error(error)}"
+                message = f"The saved {kind.value} couldn't be listed: {describe_storage_error(error)}"
                 failures.append(
                     RestoreFailure(kind=kind, reason=RestoreFailureReason.UNREADABLE_STORAGE, message=message)
                 )
