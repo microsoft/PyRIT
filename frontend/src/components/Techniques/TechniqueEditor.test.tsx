@@ -4,6 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TechniqueConfiguration, TechniqueOverride } from '@/types'
 
 import TechniqueEditor from './TechniqueEditor'
@@ -53,6 +54,27 @@ describe('TechniqueEditor', () => {
       { converter_id: 'base64', identifier: { class_name: 'Base64Converter', hash: 'b64' } },
       { converter_id: 'rot13', identifier: { class_name: 'ROT13Converter', hash: 'rot' } },
     ] })
+  })
+
+  it('should exclude SDK-only targets from technique references', async () => {
+    const original = configuration()
+    original.parameters = [{
+      name: 'helper_target', type_name: 'PromptTarget', reference_type: 'target', required: false,
+    }]
+    jest.mocked(targetsApi.listTargets)
+      .mockResolvedValueOnce({
+        items: [makeTarget({ target_registry_name: 'sdk-demo', target_type: 'TextTarget' })],
+        pagination: { limit: 200, has_more: true, next_cursor: 'next' },
+      })
+      .mockResolvedValueOnce({
+        items: [makeTarget({ target_registry_name: 'endpoint' })],
+        pagination: { limit: 200, has_more: false },
+      })
+    render(tree(original))
+    const picker = await screen.findByRole('combobox', { name: 'helper_target' })
+    expect(within(picker).queryByRole('option', { name: /sdk-demo/ })).not.toBeInTheDocument()
+    expect(within(picker).getByRole('option', { name: /endpoint/ })).toBeInTheDocument()
+    expect(targetsApi.listTargets).toHaveBeenCalledWith(200, 'next')
   })
 
   it('should prefill the named factory without creation controls or an attack selector', async () => {

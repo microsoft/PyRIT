@@ -22,6 +22,16 @@ available to assistive technology while the help is closed. Required markers,
 validation errors, input-format guidance, and unavailable-estimate reasons
 stay visible.
 
+## GUI targets
+
+`TextTarget` is an SDK demonstration and manual-workflow target that writes to
+the Python host's text stream without returning a response. It remains available
+in the SDK and REST API, but is excluded from GUI creation, registries, and target
+choices, including converter, technique, and round-robin references. Registered
+round-robin targets containing a `TextTarget` are excluded as well.
+Saved history remains readable, but chats bound to a `TextTarget` cannot send
+further prompts from the GUI.
+
 ## Conversation selection
 
 Opening a saved attack with related conversations automatically opens the
