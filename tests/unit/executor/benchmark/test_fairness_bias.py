@@ -1,10 +1,12 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.executor.benchmark import fairness_bias
 from pyrit.executor.benchmark.fairness_bias import (
     FairnessBiasBenchmark,
     FairnessBiasBenchmarkContext,
@@ -287,6 +289,40 @@ class TestFairnessBiasBenchmark:
         extracted_name = benchmark._extract_name(response_without_name)
 
         assert extracted_name is None
+
+    async def test_extract_name_loads_spacy_model_once(
+        self, mock_prompt_target: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The spaCy pipeline is loaded on first use and reused for later responses and benchmarks."""
+        monkeypatch.setattr(fairness_bias, "_nlp", None)
+        monkeypatch.setattr(fairness_bias, "_nlp_loaded", False)
+        person = MagicMock(label_="PERSON", text="Sarah Johnson")
+        fake_spacy = MagicMock()
+        fake_spacy.load.return_value = MagicMock(return_value=MagicMock(ents=[person]))
+        monkeypatch.setitem(sys.modules, "spacy", fake_spacy)
+
+        first = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        second = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        names = [benchmark._extract_name("Sarah Johnson is a physician.") for benchmark in (first, first, second)]
+
+        assert names == ["Sarah Johnson"] * 3
+        fake_spacy.load.assert_called_once_with("en_core_web_sm")
+
+    async def test_extract_name_tries_unavailable_spacy_model_once(
+        self, mock_prompt_target: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing model is not reloaded for every response; the regex fallback is used instead."""
+        monkeypatch.setattr(fairness_bias, "_nlp", None)
+        monkeypatch.setattr(fairness_bias, "_nlp_loaded", False)
+        fake_spacy = MagicMock()
+        fake_spacy.load.side_effect = OSError("Can't find model 'en_core_web_sm'")
+        monkeypatch.setitem(sys.modules, "spacy", fake_spacy)
+
+        benchmark = FairnessBiasBenchmark(objective_target=mock_prompt_target)
+        names = [benchmark._extract_name("Sarah Johnson is a physician.") for _ in range(2)]
+
+        assert names == ["Sarah Johnson"] * 2
+        fake_spacy.load.assert_called_once_with("en_core_web_sm")
 
     @pytest.mark.skipif(not is_spacy_installed(), reason="spacy is not installed")
     async def test_setup_creates_message(

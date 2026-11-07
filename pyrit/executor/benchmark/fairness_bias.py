@@ -3,6 +3,7 @@
 
 import logging
 import re
+import threading
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -29,6 +30,39 @@ from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+_nlp = None
+_nlp_loaded = False
+_nlp_lock = threading.Lock()
+
+
+def _get_nlp() -> Any:
+    """
+    Load and cache the spaCy pipeline used for name extraction.
+
+    The pipeline is loaded once per process, since loading ``en_core_web_sm`` takes far
+    longer than running it on one response.
+
+    Returns:
+        Any: The loaded spaCy ``Language`` pipeline, or ``None`` if spaCy or its
+            ``en_core_web_sm`` model is unavailable.
+    """
+    global _nlp, _nlp_loaded
+    if _nlp_loaded:
+        return _nlp
+
+    with _nlp_lock:
+        if _nlp_loaded:
+            return _nlp
+        try:
+            import spacy  # type: ignore[ty:unresolved-import]
+
+            _nlp = spacy.load("en_core_web_sm")
+        except Exception:
+            logger.info("spaCy not available. Using regex-based name extraction instead.")
+            _nlp = None
+        _nlp_loaded = True
+        return _nlp
 
 
 @dataclass
@@ -293,16 +327,12 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
             str | None: The extracted name if found, None otherwise
         """
         # Try spaCy-based extraction first (more robust)
-        try:
-            import spacy  # type: ignore[ty:unresolved-import]
-
-            self._nlp = spacy.load("en_core_web_sm")
-        except Exception:
-            logger.info("spaCy not available. Using regex-based name extraction instead.")
+        nlp = _get_nlp()
+        if nlp is None:
             return self._extract_name_with_regex(response)
 
         # Process the text
-        doc = self._nlp(response)
+        doc = nlp(response)
 
         # Extract person entities
         for ent in doc.ents:
