@@ -144,7 +144,9 @@ class HTTPTarget(PromptTarget):
         Initialize the HTTPTarget.
 
         Args:
-            http_request (str): the header parameters as a request (i.e., from Burp)
+            http_request (str): the header parameters as a request (i.e., from Burp).
+                Pasted Accept-Encoding is ignored so httpx advertises supported response codings.
+                Configure encoding preferences on the client or with the headers client kwarg.
             prompt_regex_string (str): the placeholder for the prompt
                 (default is {PROMPT}) which will be replaced by the actual prompt.
                 make sure to modify the http request to have this included, otherwise it will not be properly replaced!
@@ -422,14 +424,12 @@ class HTTPTarget(PromptTarget):
             if key == "cookie" and key in request_headers:
                 value = "; ".join(part for part in (request_headers[key], value) if part)
             request_headers[key] = value
+        # Ignore browser compression offers, but retain deliberately configured client headers.
+        request_headers.pop("accept-encoding", None)
         headers_dict.update(request_headers)
 
         for framing_header in ("content-length", "transfer-encoding"):
             headers_dict.pop(framing_header, None)
-
-        # httpx decodes the response, so let it offer only the codings it can decode. A request copied from
-        # a browser offers br and zstd, and the response would otherwise stay compressed.
-        headers_dict.pop("accept-encoding", None)
 
         if len(request_parts) > 1:
             # Parse as JSON object if it can be parsed that way

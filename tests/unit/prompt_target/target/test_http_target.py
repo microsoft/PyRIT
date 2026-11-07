@@ -973,17 +973,58 @@ async def test_send_prompt_async_stores_decoded_response_for_browser_accept_enco
     assert response[0].get_value() == "ok"
 
 
-async def test_send_prompt_async_keeps_accept_encoding_set_on_the_client(patch_central_database):
+@pytest.mark.parametrize("injected_client", [True, False])
+async def test_send_prompt_async_keeps_accept_encoding_set_on_the_client(
+    patch_central_database, injected_client: bool
+) -> None:
     captured_requests: list[httpx.Request] = []
 
     def handle_request(request: httpx.Request) -> httpx.Response:
         captured_requests.append(request)
         return httpx.Response(200, text="ok")
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request), headers={"Accept-Encoding": "identity"})
     raw_request = "POST / HTTP/1.1\nHost: example.com\nAccept-Encoding: gzip, deflate, br\n\n{PROMPT}"
-    target = HTTPTarget(http_request=raw_request, client=client)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handle_request), headers={"Accept-Encoding": "identity"}
+    ) as client:
+        if injected_client:
+            target = HTTPTarget(http_request=raw_request, client=client)
+        else:
+            target = HTTPTarget(
+                http_request=raw_request,
+                transport=httpx.MockTransport(handle_request),
+                headers={"Accept-Encoding": "identity"},
+            )
 
-    await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
+        await target.send_prompt_async(message=Message.from_prompt(prompt="hello", role="user"))
 
     assert captured_requests[0].headers["accept-encoding"] == "identity"
+
+
+@pytest.mark.parametrize("raw_encoding", ["", "Accept-Encoding: gzip, deflate, br, zstd\n"])
+async def test_parse_raw_http_request_preserves_client_encoding_async(
+    patch_central_database, raw_encoding: str
+) -> None:
+    request = f"GET / HTTP/1.1\nHost: example.com\n{raw_encoding}\n"
+    async with httpx.AsyncClient(headers={"Accept-Encoding": "identity"}) as client:
+        target = HTTPTarget(http_request=request, client=client)
+
+        headers, _, _, _, _ = target.parse_raw_http_request(request)
+
+    assert headers["accept-encoding"] == "identity"
+
+
+@pytest.mark.parametrize("raw_encoding", ["", "Accept-Encoding: gzip, deflate, br, zstd\n"])
+async def test_identifier_tracks_configured_client_encoding_async(patch_central_database, raw_encoding: str) -> None:
+    request = f"GET / HTTP/1.1\nHost: example.com\n{raw_encoding}\n"
+    async with (
+        httpx.AsyncClient(headers={"Accept-Encoding": "identity"}) as identity_client,
+        httpx.AsyncClient(headers={"Accept-Encoding": "gzip"}) as gzip_client,
+    ):
+        identity = HTTPTarget(http_request=request, client=identity_client)
+        gzip = HTTPTarget(http_request=request, client=gzip_client)
+        identity_kwargs = HTTPTarget(http_request=request, headers={"Accept-Encoding": "identity"})
+
+        assert identity.get_identifier().hash != gzip.get_identifier().hash
+        assert _target_eval_hash(identity) != _target_eval_hash(gzip)
+        assert identity.get_identifier().hash == identity_kwargs.get_identifier().hash
