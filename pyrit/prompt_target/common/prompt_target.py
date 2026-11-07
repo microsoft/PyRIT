@@ -110,6 +110,11 @@ class PromptTarget(Identifiable):
     # unaffected.
     server_credential_parameter: ClassVar[str | None] = None
 
+    # Constructor parameters that choose where requests go or how they authenticate. A private
+    # copy built from API input keeps its source's values for these, so a credential stays
+    # with the endpoint it was configured for.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.

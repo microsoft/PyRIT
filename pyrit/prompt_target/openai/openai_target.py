@@ -64,6 +64,10 @@ class OpenAITarget(PromptTarget):
     # such as Ollama or vLLM may need no key at all.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity", "none")
 
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"endpoint", "auth_mode", "api_key", "headers", "httpx_client_kwargs"}
+    )
+
     model_name_environment_variable: str
     endpoint_environment_variable: str
     api_key_environment_variable: str

@@ -131,7 +131,12 @@ reconstruction:
 
 Use `source.params` for overrides; do not also supply `params`. The backend
 keeps the source's other constructor inputs, including authentication, on the
-server. It does not change the source. Missing, changed, or ambiguous sources
+server. It does not change the source. A copy also keeps the settings that
+choose where requests go and how they sign in, such as `endpoint`, `auth_mode`,
+`api_key` and `headers` for OpenAI targets, and the region, key and resource ID
+for the Azure Speech converters; overriding one of these is an error. Such
+parameters report `copy_locked: true`, and components declare them in
+`COPY_LOCKED_PARAMETER_NAMES`. Missing, changed, or ambiguous sources
 produce an error. If a source was renamed, a unique matching hash can resolve it.
 An optional `effective_hash` checks the reconstructed object's identity.
 Registered descriptors report `reconstructable` and, for targets,
