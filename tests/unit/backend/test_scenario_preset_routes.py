@@ -3,6 +3,7 @@
 
 """Tests for the scenario preset routes."""
 
+import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -25,6 +26,7 @@ from pyrit.registry import (
     ScenarioPresetNameRegisteredError,
     resolve_scenario_preset_run_request,
 )
+from pyrit.registry.file_document_storage import describe_storage_error
 
 PRESET_NAME = "quick_scan"
 SCENARIO_NAME = "foundry.red_team_agent"
@@ -152,14 +154,17 @@ class TestListPresets:
         [AzureError("container 'x' key=secret"), PermissionError(13, "Permission denied", "/srv/secret/presets")],
     )
     def test_storage_failure_is_reported_without_sdk_detail(
-        self, client: TestClient, service: MagicMock, error: Exception
+        self, client: TestClient, service: MagicMock, error: Exception, caplog: pytest.LogCaptureFixture
     ) -> None:
         service.list_presets_async = AsyncMock(side_effect=error)
 
-        response = client.get("/api/scenario-presets")
+        with caplog.at_level(logging.WARNING, logger="pyrit.backend.routes.scenario_presets"):
+            response = client.get("/api/scenario-presets")
 
         assert response.status_code == 503
         assert "secret" not in response.text
+        assert f"Scenario preset storage is unavailable: {describe_storage_error(error)}" in caplog.messages
+        assert "secret" not in caplog.text
 
     def test_each_preset_carries_its_own_run_size(self, client: TestClient, service: MagicMock) -> None:
         estimate = _estimate(42)

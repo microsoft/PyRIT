@@ -135,6 +135,27 @@ def _read_regular_file(path: str) -> bytes | None:
         os.close(descriptor)
 
 
+def describe_storage_error(error: Exception) -> str:
+    """
+    Describe a storage error in a few words, leaving out any path or URL it carries.
+
+    Args:
+        error (Exception): The error a local folder or Azure Blob Storage raised.
+
+    Returns:
+        str: For example ``Permission denied`` or ``HttpResponseError (403, AuthorizationPermissionMismatch)``.
+    """
+    if isinstance(error, OSError) and error.strerror:
+        return error.strerror
+    error_code = getattr(error, "error_code", None)
+    details = [
+        str(detail)
+        for detail in (getattr(error, "status_code", None), getattr(error_code, "value", error_code))
+        if detail is not None
+    ]
+    return f"{type(error).__name__} ({', '.join(details)})" if details else type(error).__name__
+
+
 class DocumentConflictError(ValueError):
     """A stored document changed after the caller read it."""
 
@@ -328,7 +349,7 @@ class FileDocumentStorage:
         except FileNotFoundError:
             content = None
         except OSError as error:
-            return UnreadableDocument(name=name, message=self._describe_read_error(error))
+            return UnreadableDocument(name=name, message=describe_storage_error(error))
         if content is not None:
             return content
         return self._describe_non_file(path=entry.path, name=name)
@@ -346,7 +367,7 @@ class FileDocumentStorage:
         except FileNotFoundError:
             return None
         except OSError as error:
-            return UnreadableDocument(name=name, message=cls._describe_read_error(error))
+            return UnreadableDocument(name=name, message=describe_storage_error(error))
         # A broken link, a folder, or a pipe, which would block if read.
         return UnreadableDocument(name=name, message="Not a regular file")
 
@@ -382,26 +403,8 @@ class FileDocumentStorage:
                     if getattr(error, "error_code", None) == StorageErrorCode.BLOB_NOT_FOUND:
                         # Deleted after the container was listed, so it is no longer part of the listing.
                         continue
-                    unreadable.append(UnreadableDocument(name=name, message=self._describe_read_error(error)))
+                    unreadable.append(UnreadableDocument(name=name, message=describe_storage_error(error)))
         return DocumentListing(documents=documents, unreadable=tuple(unreadable), ignored=tuple(ignored))
-
-    @staticmethod
-    def _describe_read_error(error: Exception) -> str:
-        """
-        Describe a storage error in a few words, leaving out any path or URL it carries.
-
-        Returns:
-            str: For example ``Permission denied`` or ``HttpResponseError (403, AuthorizationPermissionMismatch)``.
-        """
-        if isinstance(error, OSError) and error.strerror:
-            return error.strerror
-        error_code = getattr(error, "error_code", None)
-        details = [
-            str(detail)
-            for detail in (getattr(error, "status_code", None), getattr(error_code, "value", error_code))
-            if detail is not None
-        ]
-        return f"{type(error).__name__} ({', '.join(details)})" if details else type(error).__name__
 
     @staticmethod
     def _name_problem(name: str) -> str | None:
