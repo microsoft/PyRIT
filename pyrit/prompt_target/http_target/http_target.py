@@ -211,7 +211,7 @@ class HTTPTarget(PromptTarget):
         """
         Hash what every send asks the endpoint, without its deployment address or credentials.
 
-        The method, path, query, body and effective headers change how the endpoint responds, so
+        The method, encoded path, query, body and effective headers change how the endpoint responds, so
         they belong to the target's identity and to its evaluation identity. Query parameters and
         headers set on an injected client or passed as ``params`` and ``headers`` in the client
         kwargs are merged with the template the same way a send combines them. The scheme, host and
@@ -244,7 +244,7 @@ class HTTPTarget(PromptTarget):
         canonical = json.dumps(
             {
                 "method": method,
-                "path": sent_url.path,
+                "path": sent_url.raw_path.partition(b"?")[0].decode("ascii"),
                 "query": kept_query,
                 "headers": kept_headers,
                 "body": body if isinstance(body, str) else json.dumps(body, sort_keys=True),

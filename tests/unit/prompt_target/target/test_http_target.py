@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from pyrit.analytics.result_analysis import get_cached_results_for_technique_async
+from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
@@ -22,6 +23,7 @@ from pyrit.models import (
     ObjectiveTargetEvaluationIdentifier,
     ScorerEvaluationIdentifier,
     ScoringExpectation,
+    TargetIdentifier,
 )
 from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 from pyrit.prompt_target.http_target.http_target import HTTPTarget
@@ -248,13 +250,15 @@ _QUERY_REQUEST = "POST {path} HTTP/1.1\nHost: example.com\nContent-Type: text/pl
     [
         ({"path": "/judge?policy=A"}, {"path": "/judge?policy=B"}),
         ({"path": "/judge/strict"}, {"path": "/judge/lenient"}),
+        ({"path": "/judge/strict%2Flenient"}, {"path": "/judge/strict/lenient"}),
+        ({"path": "/judge/strict%2flenient"}, {"path": "/judge/strict/lenient"}),
         ({"path": "/judge", "params": {"policy": "A"}}, {"path": "/judge", "params": {"policy": "B"}}),
         (
             {"path": "/judge", "client": httpx.AsyncClient(params={"policy": "A"})},
             {"path": "/judge", "client": httpx.AsyncClient(params={"policy": "B"})},
         ),
     ],
-    ids=["template-query", "path", "params-kwarg", "client-params"],
+    ids=["template-query", "path", "encoded-slash", "lowercase-encoded-slash", "params-kwarg", "client-params"],
 )
 def test_identity_changes_with_the_request_path_and_query(first: dict[str, Any], second: dict[str, Any]):
     def build(options: dict[str, Any]) -> HTTPTarget:
@@ -283,7 +287,17 @@ def test_identity_ignores_credential_query_parameters():
     assert "secret" not in str(client_key_1.get_identifier().params)
 
 
-async def test_cached_attack_results_are_not_shared_across_query_policies_async(sqlite_instance):
+@pytest.mark.parametrize(
+    "path_a, path_b",
+    [
+        ("/judge?policy=A", "/judge?policy=B"),
+        ("/judge/strict%2Flenient", "/judge/strict/lenient"),
+    ],
+    ids=["query-policy", "encoded-slash"],
+)
+async def test_cached_attack_results_are_not_shared_across_request_routes_async(
+    sqlite_instance: SQLiteMemory, path_a: str, path_b: str
+) -> None:
     def attack_result_for(target: HTTPTarget) -> AttackResult:
         attack = ComponentIdentifier(
             class_name="PromptSendingAttack",
@@ -297,21 +311,54 @@ async def test_cached_attack_results_are_not_shared_across_query_policies_async(
             outcome=AttackOutcome.SUCCESS,
         )
 
-    policy_a = _judge_with_request(request=_QUERY_REQUEST.format(path="/judge?policy=A"))
-    policy_b = _judge_with_request(request=_QUERY_REQUEST.format(path="/judge?policy=B"))
+    policy_a = _judge_with_request(request=_QUERY_REQUEST.format(path=path_a))
+    policy_b = _judge_with_request(request=_QUERY_REQUEST.format(path=path_b))
     saved = attack_result_for(policy_a)
     await sqlite_instance.add_attack_results_to_memory_async(attack_results=[saved])
     technique_eval_hash = AtomicAttackEvaluationIdentifier(saved.atomic_attack_identifier).eval_hash
 
-    async def cached_for(target: HTTPTarget) -> list[AttackResult]:
+    async def cached_for_async(target: HTTPTarget) -> list[AttackResult]:
         return await get_cached_results_for_technique_async(
             sqlite_instance,
             technique_eval_hash=technique_eval_hash,
             objective_target_eval_hash=_target_eval_hash(target),
         )
 
-    assert [result.conversation_id for result in await cached_for(policy_a)] == [saved.conversation_id]
-    assert await cached_for(policy_b) == []
+    assert [result.conversation_id for result in await cached_for_async(policy_a)] == [saved.conversation_id]
+    assert await cached_for_async(policy_b) == []
+
+
+async def test_encoded_path_identity_matches_distinct_sent_routes_async(sqlite_instance: SQLiteMemory) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text=_JUDGMENT)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond), trust_env=False) as client:
+        encoded = _judge_with_request(request=_QUERY_REQUEST.format(path="/judge/strict%2Flenient"), client=client)
+        literal = _judge_with_request(request=_QUERY_REQUEST.format(path="/judge/strict/lenient"), client=client)
+        encoded_judge = SelfAskTrueFalseScorer(chat_target=encoded)
+        literal_judge = SelfAskTrueFalseScorer(chat_target=literal)
+        [score] = await encoded_judge.score_text_async("candidate response")
+        [observation] = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
+
+        with pytest.raises(NonReplayableObservationError, match="scorer configuration"):
+            await literal_judge.score_observation_async(observation=observation)
+        assert len(requests) == 1
+        await literal_judge.score_text_async("candidate response")
+
+    assert [request.url.raw_path for request in requests] == [
+        b"/judge/strict%2Flenient",
+        b"/judge/strict/lenient",
+    ]
+    assert requests[0].url.path == requests[1].url.path
+    encoded_id = encoded.get_identifier()
+    restored = TargetIdentifier.model_validate_json(encoded_id.model_dump_json())
+    assert restored.hash == encoded_id.hash
+    assert ObjectiveTargetEvaluationIdentifier(restored).eval_hash == _target_eval_hash(encoded)
+    assert _target_eval_hash(encoded) != _target_eval_hash(literal)
+    assert _scorer_eval_hash(encoded) != _scorer_eval_hash(literal)
 
 
 @patch("httpx.AsyncClient.request")
