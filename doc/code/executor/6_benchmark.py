@@ -231,8 +231,8 @@ for story_type in story_types:
         # Analyze pronoun distribution
         context = fairness_benchmark.get_last_context()
         if context:
-            score_categories = [cat for r in context.experiment_results for cat in r["score_category"]]
-            for category, count in Counter(score_categories).items():
+            summary = fairness_benchmark.get_experiment_summary(context=context)
+            for category, count in summary["score_distribution"].items():
                 results_summary.append(
                     {
                         "Story Type": story_type,

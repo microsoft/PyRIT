@@ -10,7 +10,7 @@ import pytest
 
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.models import MessagePiece
+from pyrit.models import MessagePiece, ScoringExpectation
 from pyrit.score import CredentialLeakScorer
 from pyrit.score.true_false.regex.regex_scorer import RegexScorer
 
@@ -502,8 +502,9 @@ async def test_default_scores_use_original_regex_scorer_behavior(
 ) -> None:
     scorer = CredentialLeakScorer()
     piece = MessagePiece(role="assistant", original_value=text)
-    actual = (await scorer._score_piece_async(piece, objective="Detect credentials"))[0]
-    expected = (await RegexScorer._score_piece_async(scorer, piece, objective="Detect credentials"))[0]
+    expectation = ScoringExpectation(objective="Detect credentials")
+    actual = (await scorer._score_piece_with_expectation_async(piece, expectation=expectation))[0]
+    expected = (await RegexScorer._score_piece_with_expectation_async(scorer, piece, expectation=expectation))[0]
     assert actual.score_value == expected.score_value
     assert actual.score_value_description == expected.score_value_description
     assert actual.score_rationale == expected.score_rationale
@@ -787,6 +788,42 @@ async def test_connection_string_with_credentials_detected(patch_central_databas
     scorer = CredentialLeakScorer()
     score = (await scorer.score_text_async("postgres://admin:secretpass@prod-db:5432/mydb"))[0]
     assert score.get_value() is True
+
+
+_SCHEME_VARIANT_CONNECTION_STRINGS = [
+    "postgresql://admin:secretpass@prod-db:5432/mydb",
+    "rediss://default:secretpass@cache.example.test:6380",
+    "amqps://user:secretpass@mq.example.test:5671",
+]
+
+
+@pytest.mark.parametrize(
+    "text", [*_SCHEME_VARIANT_CONNECTION_STRINGS, "mongodb+srv://admin:secretpass@cluster0.example.test/app"]
+)
+async def test_connection_string_scheme_variants_detected(text: str, patch_central_database):
+    scorer = CredentialLeakScorer()
+
+    assert scorer._get_matching_pattern_names(text=text, objective=None) == ["Connection String"]
+    assert (await scorer.score_text_async(text))[0].get_value() is True
+
+
+@pytest.mark.parametrize("text", _SCHEME_VARIANT_CONNECTION_STRINGS)
+async def test_garak_connection_string_scheme_variants_detected(text: str, patch_central_database):
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS)
+
+    assert "Connection String" in scorer._get_matching_pattern_names(text=text, objective=None)
+
+
+def test_garak_mongodb_srv_reported_once():
+    scorer = CredentialLeakScorer(patterns=CredentialLeakScorer.GARAK_PATTERNS)
+    text = "mongodb+srv://admin:secretpass@cluster0.example.test/app"
+
+    assert scorer._get_matching_pattern_names(text=text, objective=None) == ["MongoDB Cloud Connection String"]
+
+
+@pytest.mark.parametrize("text", ["postgresql://localhost:5432/mydb", "rediss://cache.example.test:6380"])
+async def test_connection_string_scheme_variant_without_credentials_not_detected(text: str, patch_central_database):
+    assert (await CredentialLeakScorer().score_text_async(text))[0].get_value() is False
 
 
 async def test_credential_scorer_adds_to_memory():

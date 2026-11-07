@@ -36,7 +36,7 @@ const JOYRIDE_LOCALE = {
 
 /**
  * Whether a step's anchor is currently in the DOM. A view can render several
- * routes (`/scanner` vs `/scanner/:scenarioName`), so matching `viewRequired`
+ * routes (`/scanner/launch` vs `/scanner/launch/:scenarioName`), so matching `viewRequired`
  * alone does not guarantee the anchor exists.
  */
 function isStepTargetPresent(step: TourStep): boolean {
