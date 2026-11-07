@@ -1,14 +1,20 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
+import threading
 import uuid
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import get_mock_prompt_normalizer
 
+from pyrit.executor.workflow import xpia as xpia_module
 from pyrit.executor.workflow.xpia import (
     XPIAContext,
+    XPIAManualProcessingWorkflow,
     XPIAResult,
     XPIAStatus,
     XPIAWorkflow,
@@ -698,3 +704,149 @@ class TestXPIAGuards:
         assert context.processing_callback is not None
         with pytest.raises(RuntimeError, match="context.processing_prompt is not initialized"):
             await context.processing_callback()
+
+
+@pytest.fixture
+def manual_workflow(mock_attack_setup_target: MagicMock, mock_scorer: MagicMock) -> XPIAManualProcessingWorkflow:
+    """Create a manual processing XPIA workflow for testing."""
+    return XPIAManualProcessingWorkflow(attack_setup_target=mock_attack_setup_target, scorer=mock_scorer)
+
+
+@pytest.fixture
+def fresh_console_reader() -> Iterator[None]:
+    """Give each test its own console reader so a read left pending cannot leak between tests."""
+    with patch.object(xpia_module, "_CONSOLE_READER", xpia_module._ConsoleLineReader()):
+        yield
+
+
+@pytest.mark.usefixtures("patch_central_database", "fresh_console_reader")
+class TestXPIAManualProcessingWorkflow:
+    """Tests for the manual processing callback created during setup."""
+
+    async def test_setup_async_sets_callback_that_returns_operator_input(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+
+        with patch("builtins.input", return_value="processed output") as mock_input:
+            response = await context.processing_callback()
+
+        assert response == "processed output"
+        mock_input.assert_called_once_with(
+            "Please trigger the processing target's execution and paste the output here:"
+        )
+
+    async def test_manual_input_does_not_block_the_event_loop(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+        event_loop_released_input = threading.Event()
+
+        def wait_for_event_loop(prompt: str) -> str:
+            # Only a task on the event loop sets this, so the read can finish only if the loop keeps running.
+            assert event_loop_released_input.wait(timeout=TEST_WATCHDOG_SECONDS)
+            return "processed output"
+
+        async def release_input_async() -> None:
+            event_loop_released_input.set()
+
+        with patch("builtins.input", side_effect=wait_for_event_loop):
+            response, _ = await asyncio.gather(context.processing_callback(), release_input_async())
+
+        assert response == "processed output"
+
+    async def test_cancelled_read_hands_its_line_to_the_next_read(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+        input_started = threading.Event()
+        release_input = threading.Event()
+
+        def operator_input(prompt: str) -> str:
+            input_started.set()
+            assert release_input.wait(timeout=TEST_WATCHDOG_SECONDS)
+            return "processed output"
+
+        with patch("builtins.input", side_effect=operator_input) as mock_input:
+            first_read = asyncio.create_task(context.processing_callback())
+            assert await asyncio.to_thread(input_started.wait, TEST_WATCHDOG_SECONDS)
+            first_read.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first_read
+
+            second_read = asyncio.create_task(context.processing_callback())
+            release_input.set()
+            response = await asyncio.wait_for(second_read, timeout=TEST_WATCHDOG_SECONDS)
+
+        assert response == "processed output"
+        mock_input.assert_called_once()
+
+    async def test_cancelled_queued_read_keeps_later_reads_waiting_their_turn(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+        first_input_started = threading.Event()
+        release_first_input = threading.Event()
+        lines = iter(["first output", "second output"])
+
+        def operator_input(prompt: str) -> str:
+            line = next(lines)
+            if line == "first output":
+                first_input_started.set()
+                assert release_first_input.wait(timeout=TEST_WATCHDOG_SECONDS)
+            return line
+
+        with patch("builtins.input", side_effect=operator_input) as mock_input:
+            reading = asyncio.create_task(context.processing_callback())
+            assert await asyncio.to_thread(first_input_started.wait, TEST_WATCHDOG_SECONDS)
+            cancelled_while_queued = asyncio.create_task(context.processing_callback())
+            queued = asyncio.create_task(context.processing_callback())
+            await asyncio.sleep(0)
+            cancelled_while_queued.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled_while_queued
+            # Give a read that wrongly skipped the queue the chance to claim the pending line.
+            for _ in range(10):
+                await asyncio.sleep(0)
+
+            release_first_input.set()
+            responses = await asyncio.wait_for(asyncio.gather(reading, queued), timeout=TEST_WATCHDOG_SECONDS)
+
+        assert responses == ["first output", "second output"]
+        assert mock_input.call_count == 2
+
+    async def test_concurrent_reads_receive_separate_lines_in_order(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+        lines = iter(["first output", "second output"])
+
+        with patch("builtins.input", side_effect=lambda prompt: next(lines)):
+            responses = await asyncio.gather(context.processing_callback(), context.processing_callback())
+
+        assert responses == ["first output", "second output"]
+
+    async def test_failed_read_is_raised_and_not_reused(
+        self, manual_workflow: XPIAManualProcessingWorkflow, valid_message: Message
+    ) -> None:
+        context = XPIAContext(attack_content=valid_message)
+        await manual_workflow._setup_async(context=context)
+        assert context.processing_callback is not None
+
+        with patch("builtins.input", side_effect=[EOFError(), "processed output"]) as mock_input:
+            with pytest.raises(EOFError):
+                await context.processing_callback()
+            response = await context.processing_callback()
+
+        assert response == "processed output"
+        assert mock_input.call_count == 2
