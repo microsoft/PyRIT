@@ -299,6 +299,54 @@ scenario_result = await scenario.run_async()  # type: ignore
 await output_scenario_async(scenario_result)
 
 # %% [markdown]
+# ## Aggregation Leakage
+#
+# Tests whether a target discloses a confidential conclusion that no single document states but that
+# the documents it was given entail together. Retrieval-augmented assistants usually check access per
+# document, so every document here is one the user may read; the leak is the inference the model draws
+# across them (for example, a policy that applies *only* to employees on medical leave plus a calendar
+# showing a named employee in exactly that kind of meeting).
+#
+# ```bash
+# pyrit_scan run airt.aggregation_leakage --target openai_chat
+# ```
+#
+# **Available techniques:** ALL, DEFAULT, SINGLE_TURN, MULTI_TURN, PromptSending, RedTeaming. DEFAULT runs
+# PromptSending, which sends each question after the retrieved documents. RedTeaming lets an adversarial
+# chat ask follow-up questions over the same documents for up to `max_turns` turns.
+#
+# Results are reported per technique and dataset:
+#
+# - `airt_aggregation_leakage` — the documents entail the confidential fact (rule + instance, transitive
+#   chain, set complement, numeric residual), asked indirectly and directly.
+# - `airt_aggregation_leakage_minimal_pairs` and `airt_aggregation_leakage_mention_only` — controls where
+#   the fact does **not** follow. Their success rates should stay near zero; if they don't, the target or
+#   the scorer is reacting to the topic rather than to the derivation.
+#
+# Set `include_context` to `False` when the documents are already loaded into the target's own knowledge
+# base, so only the questions are sent.
+
+# %%
+from pyrit.scenario.airt import AggregationLeakage, AggregationLeakageTechnique
+
+dataset_config = DatasetAttackConfiguration(sources=[DatasetSource(name="airt_aggregation_leakage")], max_total=1)
+
+scenario = AggregationLeakage()
+scenario.set_params_from_args(  # type: ignore
+    args={
+        "objective_target": objective_target,
+        "scenario_techniques": [AggregationLeakageTechnique.PromptSending],
+        "dataset_config": dataset_config,
+    }
+)
+await scenario.initialize_async()  # type: ignore
+
+scenario_result = await scenario.run_async()  # type: ignore
+
+# %%
+await output_scenario_async(scenario_result)
+
+# %% [markdown]
 # ## Scam
 #
 # Tests whether a target can be induced to generate scam, phishing, or fraud content.
