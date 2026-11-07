@@ -31,6 +31,7 @@ from pyrit.models import (
     MessageScorable,
     Observation,
     PromptResponseError,
+    RequestTraceContext,
     Scorable,
     ScorableUnion,
     Score,
@@ -99,23 +100,12 @@ def extract_objective_from_previous_turn(*, message: Message, memory: MemoryInte
     if scored_piece.api_role != "assistant":
         return ""
 
-    # The request is the turn before the response being scored, not before whatever the
-    # conversation has grown to since. Scoring an earlier response must not read the latest turn.
-    previous_sequence = scored_piece.sequence - 1
-    if previous_sequence < 0:
+    if scored_piece.sequence < 1:
         return ""
 
     conversation = memory.get_message_pieces(conversation_id=scored_piece.conversation_id)
 
-    return "\n".join(
-        [
-            piece.original_value
-            for piece in conversation
-            if piece.sequence == previous_sequence
-            and piece.original_value_data_type == "text"
-            and piece.api_role == "user"
-        ]
-    )
+    return _objective_from_request_turn(conversation=conversation, response_sequence=scored_piece.sequence)
 
 
 async def extract_objective_from_previous_turn_async(*, message: Message, memory: MemoryInterface) -> str:
@@ -144,22 +134,43 @@ async def extract_objective_from_previous_turn_async(*, message: Message, memory
     if scored_piece.api_role != "assistant":
         return ""
 
-    # The request is the turn before the response being scored, not before whatever the
-    # conversation has grown to since. Scoring an earlier response must not read the latest turn.
-    previous_sequence = scored_piece.sequence - 1
-    if previous_sequence < 0:
+    if scored_piece.sequence < 1:
         return ""
 
     conversation = await memory.get_message_pieces_async(conversation_id=scored_piece.conversation_id)
 
+    return _objective_from_request_turn(conversation=conversation, response_sequence=scored_piece.sequence)
+
+
+def _objective_from_request_turn(*, conversation: Sequence[MessagePiece], response_sequence: int) -> str:
+    """
+    Join the user text of the request that produced a response.
+
+    The request is the latest earlier turn that is user-authored or marked as an outbound
+    request, matching ``MemoryInterface.get_request_from_response_async``. Tool calls and
+    outputs a target stored between the request and its answer are skipped, and turns after
+    the response are never read.
+
+    Args:
+        conversation (Sequence[MessagePiece]): The stored pieces of the response's conversation.
+        response_sequence (int): Sequence of the response being scored.
+
+    Returns:
+        str: The request's user text, or an empty string when there is none.
+    """
+    earlier = [piece for piece in conversation if 0 <= piece.sequence < response_sequence]
+    request_sequence = max(
+        (
+            piece.sequence
+            for piece in earlier
+            if piece.api_role == "user" or piece.prompt_metadata.get(RequestTraceContext.REQUEST_METADATA_KEY) == 1
+        ),
+        default=response_sequence - 1,
+    )
     return "\n".join(
-        [
-            piece.original_value
-            for piece in conversation
-            if piece.sequence == previous_sequence
-            and piece.original_value_data_type == "text"
-            and piece.api_role == "user"
-        ]
+        piece.original_value
+        for piece in earlier
+        if piece.sequence == request_sequence and piece.original_value_data_type == "text" and piece.api_role == "user"
     )
 
 
