@@ -161,3 +161,39 @@ Reference: Tan, Hu, and Lee, "Structured Visual Narratives Undermine Safety
 Alignment in Multimodal Large Language Models", arXiv:2603.21697.
 
 ---------------------------------------------------------
+
+StrongREJECT rubric prompts - MIT
+https://github.com/dsbowen/strong_reject
+
+Copyright (c) 2024, Dillon Bowen
+
+PyRIT includes the StrongREJECT rubric judge prompt and its system prompt
+(``strongreject_rubric`` and ``strongreject_rubric_system``) from
+strong_reject/eval_files/judge_templates.json at revision
+25959bf30e91b7b32ae9cf08c99621dae7cbfd20, in
+pyrit/datasets/score/strongreject/. The two placeholders use Jinja syntax; the
+text is otherwise unchanged.
+
+Reference: Souly et al., "A StrongREJECT for Empty Jailbreaks", arXiv:2402.10260.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---------------------------------------------------------

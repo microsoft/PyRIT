@@ -40,6 +40,8 @@ if TYPE_CHECKING:
         render_likert_system_prompt,
     )
     from pyrit.score.float_scale.self_ask_scale_scorer import SelfAskScaleScorer, render_scale_system_prompt
+    from pyrit.score.float_scale.strongreject_parser import parse_strongreject_response
+    from pyrit.score.float_scale.strongreject_scorer import StrongRejectScorer, render_strongreject_prompt
     from pyrit.score.float_scale.system_prompt_extraction_scorer import SystemPromptExtractionScorer
     from pyrit.score.float_scale.video_float_scale_scorer import VideoFloatScaleScorer
     from pyrit.score.message_scorable_resolver import MessageScorableResolver
@@ -269,6 +271,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "PackageHallucinationScorer": "pyrit.score.true_false.regex.package_hallucination_scorer",
     "parse_llamaguard_response": "pyrit.score.true_false.llamaguard_parser",
     "parse_shieldgemma_response": "pyrit.score.true_false.shieldgemma_parser",
+    "parse_strongreject_response": "pyrit.score.float_scale.strongreject_parser",
     "parse_wildguard_response": "pyrit.score.true_false.wildguard_parser",
     "PathTraversalOutputScorer": "pyrit.score.true_false.regex.path_traversal_output_scorer",
     "PlagiarismMetric": "pyrit.score.float_scale.plagiarism_scorer",
@@ -283,6 +286,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "render_likert_system_prompt": "pyrit.score.float_scale.self_ask_likert_scorer",
     "render_scale_system_prompt": "pyrit.score.float_scale.self_ask_scale_scorer",
     "render_shieldgemma_prompt": "pyrit.score.true_false.shieldgemma_scorer",
+    "render_strongreject_prompt": "pyrit.score.float_scale.strongreject_scorer",
     "render_true_false_system_prompt": "pyrit.score.true_false.self_ask_true_false_scorer",
     "render_wildguard_prompt": "pyrit.score.true_false.wildguard_scorer",
     "ResponseHandler": "pyrit.score.response_handler",
@@ -321,6 +325,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "SSRFOutputScorer": "pyrit.score.true_false.regex.ssrf_output_scorer",
     "SSTIOutputScorer": "pyrit.score.true_false.regex.ssti_output_scorer",
     "StaticPromptInjectionScorer": "pyrit.score.true_false.regex.static_prompt_injection_scorer",
+    "StrongRejectScorer": "pyrit.score.float_scale.strongreject_scorer",
     "SubStringScorer": "pyrit.score.true_false.substring_scorer",
     "SystemPromptExtractionScorer": "pyrit.score.float_scale.system_prompt_extraction_scorer",
     "TrueFalseCompositeScorer": "pyrit.score.true_false.true_false_composite_scorer",
