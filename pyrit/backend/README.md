@@ -64,6 +64,8 @@ key remains authoritative after request-body passthrough merging.
 Passthrough options in this mode are restricted to generation parameters and non-authentication
 headers. Global LiteLLM fallbacks, aliases for the selected model, and static authentication
 headers are rejected rather than allowed to change how the caller authenticates.
+`LiteLLMDecisionTarget` uses a separate decision API and does not support personal-target opt-in;
+its existing shared-target and direct Python callable-key behavior is unchanged.
 
 ```http
 POST /api/targets

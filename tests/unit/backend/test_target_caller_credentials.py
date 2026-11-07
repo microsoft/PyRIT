@@ -301,6 +301,35 @@ async def test_delete_target_releases_owned_resources_async(service: TargetServi
     cleanup.assert_awaited_once()
 
 
+async def test_decision_target_rejects_unsupported_personal_opt_in_async(service: TargetService) -> None:
+    with pytest.raises(ValueError, match="does not support requires_caller_credential"):
+        await service.create_target_async(
+            request=CreateTargetRequest(
+                name="decision",
+                type="LiteLLMDecisionTarget",
+                requires_caller_credential=True,
+                params={"model_name": "openrouter/microsoft/microsoft-decision-1", "api_key": _ALICE_KEY},
+            ),
+            caller=_ALICE,
+        )
+    assert service.get_target_object(target_registry_name="decision") is None
+    assert len(get_caller_credential_store()) == 0
+
+
+async def test_decision_target_keeps_shared_api_key_behavior_async(service: TargetService) -> None:
+    created = await service.create_target_async(
+        request=CreateTargetRequest(
+            name="decision",
+            type="LiteLLMDecisionTarget",
+            params={"model_name": "openrouter/microsoft/microsoft-decision-1", "api_key": _ALICE_KEY},
+        ),
+        caller=_ALICE,
+    )
+    assert isinstance(created, TargetInstance)
+    assert not created.requires_caller_credential
+    assert service.get_target_object(target_registry_name="decision")._api_key == _ALICE_KEY
+
+
 async def test_delete_target_retains_ownership_when_cleanup_fails_async(service: TargetService) -> None:
     await _create_async(service, caller=_ALICE, name="shared")
     target = service.get_target_object(target_registry_name="shared")
