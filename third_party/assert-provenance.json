@@ -9,6 +9,28 @@
   "notice_file": "THIRD_PARTY_NOTICES.txt",
   "redistributed_files": [
     {
+      "path": "pyrit/score/true_false/assert_policy_scorer.py",
+      "adaptation_date": "2026-10-25",
+      "sources": [
+        "assert_ai/core/judge.py",
+        "assert_ai/core/judge_normalization.py",
+        "assert_ai/internal_pipeline_prompts/judge_system.md"
+      ],
+      "adaptations": "Native true/false conversation scoring; optional category validation and policy flag correction; no XML citation processing or multi-judge aggregation."
+    },
+    {
+      "path": "pyrit/datasets/score/true_false_question/assert_policy_system_prompt.yaml",
+      "adaptation_date": "2026-10-25",
+      "sources": ["assert_ai/internal_pipeline_prompts/judge_system.md"],
+      "adaptations": "Policy semantics adapted to a direct single-dimension native PyRIT verdict, not a verbatim upstream prompt."
+    },
+    {
+      "path": "pyrit/datasets/score/true_false_question/assert_category_policy_system_prompt.yaml",
+      "adaptation_date": "2026-10-25",
+      "sources": ["assert_ai/internal_pipeline_prompts/judge_system.md"],
+      "adaptations": "Relevant category judgments and selected-dimension verdicts; native conversation evidence instead of the XML citation protocol."
+    },
+    {
       "path": "pyrit/executor/promptgen/assert_generator.py",
       "sources": [
         "assert_ai/stages/systematization.py",

@@ -242,7 +242,9 @@ def _build_client_parent() -> ArgumentParser:
     """
     parser = ArgumentParser(add_help=False)
     group = parser.add_argument_group("server options")
-    group.add_argument("--request-timeout", type=float, default=None, help=_REQUEST_TIMEOUT_HELP)
+    group.add_argument(
+        "--request-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_REQUEST_TIMEOUT_HELP
+    )
     group.add_argument("--start-server", action="store_true", help=_START_SERVER_HELP)
     group.add_argument(
         "--startup-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_STARTUP_TIMEOUT_HELP
@@ -1112,11 +1114,12 @@ async def _run_scenario_async(
             client=client,
             scenario_result_id=scenario_result_id,
         )
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n\nCancelling scenario run...")
+        cancellation_task = asyncio.create_task(client.cancel_scenario_run_async(scenario_result_id=scenario_result_id))
         try:
-            await client.cancel_scenario_run_async(scenario_result_id=scenario_result_id)
-            print("Scenario run cancelled.")
+            await asyncio.shield(cancellation_task)
+            print("Cancellation request sent to server.")
         except Exception:
             print("Warning: could not cancel scenario run on server.")
         return 1

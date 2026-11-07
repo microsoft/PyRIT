@@ -122,7 +122,7 @@ function ScenarioSuiteExecutionPageContent({
     return (
       <main className={styles.root} data-testid="scenario-suite-execution-page">
         <div className={styles.content}>
-          <Link to="/scanner" className={styles.backLink}>
+          <Link to="/scanner/launch" className={styles.backLink}>
             <ArrowLeftRegular /> Back to scanners
           </Link>
           <div className={styles.centeredState} aria-label="Loading suite execution">
@@ -137,12 +137,12 @@ function ScenarioSuiteExecutionPageContent({
     return (
       <main className={styles.root} data-testid="scenario-suite-execution-page">
         <div className={styles.content}>
-          <Link to="/scanner" className={styles.backLink}>
+          <Link to="/scanner/launch" className={styles.backLink}>
             <ArrowLeftRegular /> Back to scanners
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
-            <Text as="h1" size={600} weight="semibold">Suite execution not found</Text>
+            <Text as="h2" size={600} weight="semibold">Suite execution not found</Text>
             <Text>{state.error}</Text>
             <Text size={200}>
               Suite progress is process-local, but successfully created scenario runs remain in scanner history.
@@ -165,12 +165,12 @@ function ScenarioSuiteExecutionPageContent({
     return (
       <main className={styles.root} data-testid="scenario-suite-execution-page">
         <div className={styles.content}>
-          <Link to="/scanner" className={styles.backLink}>
+          <Link to="/scanner/launch" className={styles.backLink}>
             <ArrowLeftRegular /> Back to scanners
           </Link>
           <div className={styles.centeredState}>
             <ErrorCircleRegular fontSize={32} />
-            <Text as="h1" size={600} weight="semibold">Unable to load suite execution</Text>
+            <Text as="h2" size={600} weight="semibold">Unable to load suite execution</Text>
             <Text>{state.error}</Text>
             <Button
               appearance="primary"
@@ -202,14 +202,14 @@ function ScenarioSuiteExecutionPageContent({
   return (
     <main className={styles.root} data-testid="scenario-suite-execution-page">
       <div className={styles.content}>
-        <Link to="/scanner" className={styles.backLink}>
+        <Link to="/scanner/launch" className={styles.backLink}>
           <ArrowLeftRegular /> Back to scanners
         </Link>
 
         <header className={styles.header}>
           <div className={styles.headerIdentity}>
             <div className={styles.titleRow}>
-              <Text as="h1" size={700} weight="semibold">
+              <Text as="h2" size={700} weight="semibold">
                 {execution.suite_name}
               </Text>
               <Badge
