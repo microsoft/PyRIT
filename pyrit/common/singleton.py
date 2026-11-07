@@ -21,7 +21,11 @@ class Singleton(abc.ABCMeta):
 
         The lock is created at class definition time so there is no race in lazily
         creating it, and each class gets its own lock so unrelated singletons do
-        not serialize each other.
+        not serialize each other. The per-class state is placed in the namespace
+        BEFORE the class is created: ``super().__new__`` runs the base classes'
+        ``__init_subclass__`` hooks, and a hook may construct the singleton
+        (e.g. to auto-register the instance), which needs the lock and flag
+        to already exist on the class.
 
         Args:
             mcs (type): The metaclass.
@@ -32,10 +36,9 @@ class Singleton(abc.ABCMeta):
         Returns:
             type: The newly created class.
         """
-        cls = super().__new__(mcs, name, bases, namespace, **kwargs)
-        cls._singleton_lock = threading.RLock()
-        cls._singleton_constructing = False
-        return cls
+        namespace.setdefault("_singleton_lock", threading.RLock())
+        namespace.setdefault("_singleton_constructing", False)
+        return super().__new__(mcs, name, bases, namespace, **kwargs)
 
     def __call__(cls, *args: object, **kwargs: object) -> object:
         """
