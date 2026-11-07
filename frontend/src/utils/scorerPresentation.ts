@@ -57,7 +57,7 @@ export function formatScorerMetric(name: string, value: unknown, fallback = 'n/a
     // Older evaluation records default an unmeasured duration to zero.
     return value > 0 ? `${value.toFixed(2)}s` : fallback
   }
-  if (name === 'accuracy') return `${(value * 100).toFixed(2)}%`
+  if (RATIO_METRICS.has(name)) return `${(value * 100).toFixed(2)}%`
   if (name.startsWith('num_')) return String(value)
   return value.toFixed(4)
 }
