@@ -2,9 +2,11 @@
 # Licensed under the MIT license.
 
 from dataclasses import asdict
+from decimal import ROUND_CEILING, FloatOperation, Inexact, Rounded, Subnormal, localcontext
 from itertools import product
 
 import pytest
+from scipy.stats import binomtest
 
 from pyrit.analytics import combine_outcome_statistics, compute_outcome_statistics
 from pyrit.analytics.outcome_statistics import success_percentage
@@ -31,6 +33,20 @@ def test_both_denominators_use_the_same_selected_outcome_counts(
     assert statistics.success_rate_all == (successes / total if total else None)
     assert statistics.decided_share == (decided / total if total else None)
     assert statistics.outcome_shares == {outcome: count / total if total else 0.0 for outcome, count in counts.items()}
+    if decided == 0:
+        assert statistics.success_rate_ci_lower is None
+        assert statistics.success_rate_ci_upper is None
+    else:
+        expected_ci = binomtest(successes, decided).proportion_ci(confidence_level=0.95, method="wilson")
+        assert statistics.success_rate_ci_lower == pytest.approx(expected_ci.low, rel=1e-12, abs=1e-12)
+        assert statistics.success_rate_ci_upper == pytest.approx(expected_ci.high, rel=1e-12, abs=1e-12)
+        assert (
+            0.0
+            <= statistics.success_rate_ci_lower
+            <= statistics.success_rate
+            <= statistics.success_rate_ci_upper
+            <= 1.0
+        )
     assert isinstance(statistics, OutcomeStatistics)
     assert isinstance(statistics, AttackStats)
 
@@ -57,6 +73,8 @@ def test_empty_population_rates_are_unavailable_not_zero() -> None:
     statistics = compute_outcome_statistics({})
     assert statistics.success_rate is None
     assert statistics.success_rate_all is None
+    assert statistics.success_rate_ci_lower is None
+    assert statistics.success_rate_ci_upper is None
     assert statistics.decided_share is None
     assert statistics.total_results == 0
     assert set(statistics.outcome_shares.values()) == {0.0}
@@ -69,6 +87,66 @@ def test_large_integer_counts_validate_without_float_overflow() -> None:
     assert statistics.total_results == 4 * count
     assert statistics.success_rate_decided == 0.5
     assert statistics.success_rate_all == 0.25
+    assert statistics.success_rate_ci_lower == 0.5
+    assert statistics.success_rate_ci_upper == 0.5
+
+
+def test_skewed_large_integer_counts_do_not_underflow_wilson_interval() -> None:
+    total = 10**200
+    statistics = compute_outcome_statistics({"success": 1, "failure": total - 1})
+    assert statistics.success_rate_ci_lower is not None
+    assert statistics.success_rate_ci_upper is not None
+    assert 0.0 < statistics.success_rate_ci_lower < statistics.success_rate < statistics.success_rate_ci_upper
+    assert statistics.success_rate_ci_lower == pytest.approx(1.765245549351526e-201, rel=1e-12, abs=0.0)
+    assert statistics.success_rate_ci_upper == pytest.approx(5.664934265758973e-200, rel=1e-12, abs=0.0)
+
+    subnormal_total = 10**324
+    subnormal_stats = compute_outcome_statistics({"success": 100, "failure": subnormal_total - 100})
+    assert subnormal_stats.success_rate_ci_lower is not None
+    assert subnormal_stats.success_rate_ci_upper is not None
+    assert (
+        0.0
+        < subnormal_stats.success_rate_ci_lower
+        < subnormal_stats.success_rate
+        < subnormal_stats.success_rate_ci_upper
+    )
+    assert subnormal_stats.success_rate_ci_lower == 8.4e-323
+    assert subnormal_stats.success_rate_ci_upper == 1.235e-322
+
+
+def test_wilson_interval_ignores_caller_decimal_traps_and_rounding() -> None:
+    expected = compute_outcome_statistics({"success": 1, "failure": 1})
+    with localcontext() as ctx:
+        ctx.rounding = ROUND_CEILING
+        ctx.traps[Inexact] = True
+        ctx.traps[Rounded] = True
+        ctx.traps[Subnormal] = True
+        ctx.traps[FloatOperation] = True
+        statistics = compute_outcome_statistics({"success": 1, "failure": 1})
+    assert statistics == expected
+
+
+@pytest.mark.parametrize(
+    ("successes", "failures", "expected_lower", "expected_upper"),
+    [
+        (0, 50, 0.0, 0.07134759913335872),
+        (25, 25, 0.3664451431682858, 0.6335548568317142),
+        (50, 0, 0.9286524008666414, 1.0),
+    ],
+)
+def test_wilson_confidence_interval_boundaries_and_interior(
+    successes: int, failures: int, expected_lower: float, expected_upper: float
+) -> None:
+    statistics = compute_outcome_statistics({"success": successes, "failure": failures, "undetermined": 5, "error": 3})
+    scipy_ci = binomtest(successes, successes + failures).proportion_ci(confidence_level=0.95, method="wilson")
+    assert statistics.success_rate_ci_lower == pytest.approx(expected_lower, rel=1e-12, abs=1e-12)
+    assert statistics.success_rate_ci_upper == pytest.approx(expected_upper, rel=1e-12, abs=1e-12)
+    assert statistics.success_rate_ci_lower == pytest.approx(scipy_ci.low, rel=1e-12, abs=1e-12)
+    assert statistics.success_rate_ci_upper == pytest.approx(scipy_ci.high, rel=1e-12, abs=1e-12)
+    if successes == 0:
+        assert statistics.success_rate_ci_lower == 0.0
+    if failures == 0:
+        assert statistics.success_rate_ci_upper == 1.0
 
 
 @pytest.mark.parametrize("counts", [{"unexpected": 1}, {"success": -1}, {"success": True}, {"error": 1.5}])
