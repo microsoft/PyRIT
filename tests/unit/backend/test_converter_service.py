@@ -281,6 +281,21 @@ async def test_converter_input_errors_return_400_async(
     assert next(iter(params)) in exc.value.detail
 
 
+@pytest.mark.parametrize("converter_type", ["AzureSpeechTextToAudioConverter", "AzureSpeechAudioToTextConverter"])
+async def test_speech_converter_region_must_be_a_region_name_async(
+    upload_service: ConverterService, converter_type: str
+) -> None:
+    with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
+        with pytest.raises(HTTPException) as exc:
+            await converter_routes.create_converter(
+                CreateConverterRequest(
+                    name="speech", type=converter_type, params={"azure_speech_region": "example.com#"}
+                )
+            )
+    assert exc.value.status_code == 400
+    assert "azure_speech_region must be an Azure region name" in exc.value.detail
+
+
 async def test_binary_creation_from_metadata_and_selection_async(upload_service: ConverterService) -> None:
     types = await upload_service.list_converter_types_async()
     binary = next(item for item in types.items if item.converter_type == "BinaryConverter")
