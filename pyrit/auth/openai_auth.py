@@ -9,6 +9,10 @@ from pyrit.common import default_values
 from pyrit.common.auth_mode import AuthMode
 from pyrit.common.deprecation import print_deprecation_message
 
+# The OpenAI SDK requires a key, so a no-key target passes this fixed, non-secret value.
+# Servers that need no key ignore the resulting Authorization header.
+_NO_KEY_PLACEHOLDER = "not-needed"
+
 
 def resolve_openai_auth(
     *,
@@ -26,7 +30,9 @@ def resolve_openai_auth(
         api_key_environment_variable (str): Environment variable to use when ``api_key`` is not provided.
         auth_mode (AuthMode): ``"identity"`` authenticates with a Microsoft Entra ID token minted for
             the endpoint; it ignores the API key environment variable and rejects an explicit
-            ``api_key``. ``"api_key"`` (the default) resolves a token-provider callable, then an
+            ``api_key``. ``"none"`` is for endpoints that need no key: it reads no key, rejects an
+            explicit ``api_key`` and returns a fixed, non-secret placeholder because the OpenAI SDK
+            requires one. ``"api_key"`` (the default) resolves a token-provider callable, then an
             explicit key, then the environment variable, and finally falls back to Entra ID on a
             recognized Azure OpenAI endpoint. That last fallback is deprecated and is removed in
             1.4.0, after which identity auth must be requested explicitly.
@@ -35,11 +41,19 @@ def resolve_openai_auth(
         str | Callable[[], Awaitable[str]]: API key string or async-compatible token provider.
 
     Raises:
-        ValueError: If identity auth is requested alongside an explicit ``api_key``, if identity auth
-            is requested for an endpoint that is not a recognized Azure OpenAI endpoint, or if
-            ``"api_key"`` auth is requested and no key is available for an endpoint that is not a
-            recognized Azure OpenAI endpoint.
+        ValueError: If identity or no-key auth is requested alongside an explicit ``api_key``, if
+            identity auth is requested for an endpoint that is not a recognized Azure OpenAI
+            endpoint, or if ``"api_key"`` auth is requested and no key is available for an endpoint
+            that is not a recognized Azure OpenAI endpoint.
     """
+    if auth_mode == "none":
+        if api_key is not None:
+            raise ValueError(
+                'auth_mode="none" cannot be combined with an explicit api_key. Omit api_key for an endpoint '
+                'that needs no key, or pass auth_mode="api_key" to send the key you supplied.'
+            )
+        return _NO_KEY_PLACEHOLDER
+
     # Identity is an explicit caller choice, so it must never be silently downgraded to a key
     # that merely happens to be present in the environment.
     if auth_mode == "identity":
