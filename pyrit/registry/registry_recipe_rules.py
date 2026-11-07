@@ -149,8 +149,9 @@ def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any]) -> None:
     auth_mode = params.get("auth_mode")
     if auth_mode is None:
         auth_mode = "api_key"
-    supported_auth_modes = getattr(cls, "supported_auth_modes", None)
-    if supported_auth_modes is not None and auth_mode not in supported_auth_modes:
+    # A class that declares no auth modes takes none, as check_saveable_class assumes.
+    supported_auth_modes = getattr(cls, "supported_auth_modes", None) or ("api_key",)
+    if auth_mode not in supported_auth_modes:
         modes = ", ".join(f"'{mode}'" for mode in supported_auth_modes)
         raise SavedEntryRefusedError(
             reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL,

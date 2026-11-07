@@ -4,8 +4,9 @@
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable, Mapping
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk
@@ -43,6 +44,9 @@ class AzureSpeechAudioToTextConverter(Converter):
     AZURE_SPEECH_KEY_ENVIRONMENT_VARIABLE: str = "AZURE_SPEECH_KEY"
     #: The resource ID for accessing the service when using Entra ID auth.
     AZURE_SPEECH_RESOURCE_ID_ENVIRONMENT_VARIABLE: str = "AZURE_SPEECH_RESOURCE_ID"
+
+    # An empty key reads AZURE_SPEECH_KEY, or else signs in with this server's Azure identity.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({"azure_speech_key": None})
 
     def __init__(
         self,

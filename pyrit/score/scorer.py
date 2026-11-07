@@ -9,6 +9,7 @@ import uuid
 from abc import abstractmethod
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, TypeVar, final, overload
 
 from pyrit.common.deprecation import print_deprecation_message
@@ -48,7 +49,7 @@ from pyrit.score.observation.execution import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
 
     from pyrit.exceptions import ComponentRole
     from pyrit.models import ChatMessageRole
@@ -288,6 +289,15 @@ class Scorer(Identifiable, abc.ABC):
     #: Wrappers expose their children instead of declaring their own criterion.
     CONDITION_TYPE: ClassVar[type[Condition] | None] = None
     SUPPORTED_SCORABLE_TYPES: ClassVar[tuple[type[Scorable], ...]] = ()
+
+    # Credential parameters that, left empty, let the scorer fall back to a credential from this
+    # server (an environment variable, or the server's Azure identity), each mapped to the value that
+    # turns that off, or None when no value does. A saved scorer never falls back to this server's
+    # credentials, so a saved entry that would is refused.
+    server_fallback_parameters: ClassVar[Mapping[str, str | None]] = MappingProxyType({})
+
+    # Why this scorer type can't be saved even without a credential, or None when it can.
+    not_saveable_reason: ClassVar[str | None] = None
 
     _identifier: ComponentIdentifier | None = None
 
