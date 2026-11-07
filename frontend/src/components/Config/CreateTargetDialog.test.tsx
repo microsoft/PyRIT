@@ -1004,7 +1004,7 @@ describe("CreateTargetDialog", () => {
       expect(requestField).toHaveFocus();
     });
 
-    const maxRequestsPerMinute = screen.getByLabelText(/Max Requests Per Minute/i);
+    const maxRequestsPerMinute = screen.getByRole('spinbutton', { name: 'Max Requests Per Minute' });
     fireEvent.change(maxRequestsPerMinute, { target: { value: "1.5" } });
     await user.click(createButton);
 
