@@ -201,6 +201,41 @@ def test_classmethod_shims_delegate_to_loader(tmp_path):
     assert via_classmethod.is_jinja_template == via_function.is_jinja_template is True
 
 
+@pytest.mark.parametrize(
+    "seed_class, document, key, line",
+    [
+        (SeedPrompt, "value: first\nvalue: replacement\n", "value", 2),
+        (SeedDataset, "seeds: [{value: first}]\nseeds: [{value: replacement}]\n", "seeds", 2),
+        (SeedDataset, "seeds:\n  - value: first\n    value: replacement\n", "value", 3),
+        (SeedPrompt, "value: first\nmetadata:\n  source: first\n  source: second\n", "source", 4),
+    ],
+)
+def test_public_seed_yaml_import_rejects_duplicate_keys(tmp_path, seed_class, document, key, line):
+    path = _write(tmp_path, "duplicate.yaml", document)
+    with pytest.raises(ValueError, match=f"duplicate key '{key}'") as error:
+        seed_class.from_yaml_file(path)
+    assert str(path) in str(error.value)
+    assert f"line {line}" in str(error.value)
+
+
+def test_public_seed_yaml_import_preserves_merge_overrides(tmp_path):
+    path = _write(
+        tmp_path,
+        "merged.yaml",
+        "seeds:\n  - &base\n    value: first\n    authors: [Original]\n  - <<: *base\n    value: second\n",
+    )
+    dataset = SeedDataset.from_yaml_file(path)
+    assert [seed.value for seed in dataset.seeds] == ["first", "second"]
+    assert all(seed.authors == ["Original"] for seed in dataset.seeds)
+
+
+def test_public_single_seed_yaml_import_preserves_merge_override(tmp_path):
+    path = _write(tmp_path, "merged.yaml", "<<: {value: base, authors: [Original]}\nvalue: explicit\n")
+    seed = SeedPrompt.from_yaml_file(path)
+    assert seed.value == "explicit"
+    assert seed.authors == ["Original"]
+
+
 # ----- Scalar-to-list canonicalization (loader-side YAML accommodation) -----
 
 

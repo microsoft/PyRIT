@@ -89,3 +89,106 @@ def test_safe_load_yaml_falls_back_to_pure_python_loader_without_libyaml() -> No
         assert reloaded.safe_load_yaml("key: value\n") == {"key": "value"}
     finally:
         importlib.reload(yaml_helper)
+
+
+@pytest.fixture(params=["default", "python"])
+def yaml_loader(request):
+    real_import = builtins.__import__
+
+    def _import_without_csafeloader(name: str, *args: Any, **kwargs: Any) -> Any:
+        fromlist = args[2] if len(args) > 2 else kwargs.get("fromlist")
+        if name == "yaml" and fromlist and "CSafeLoader" in fromlist:
+            raise ImportError("libyaml is not available")
+        return real_import(name, *args, **kwargs)
+
+    try:
+        if request.param == "python":
+            with patch.object(builtins, "__import__", _import_without_csafeloader):
+                importlib.reload(yaml_helper)
+            assert yaml_helper.SafeLoader is yaml.SafeLoader
+        yield yaml_helper.safe_load_yaml
+    finally:
+        importlib.reload(yaml_helper)
+
+
+@pytest.mark.parametrize(
+    "document, key, first_line, duplicate_line",
+    [
+        ("value: first\nvalue: second\n", "value", 1, 2),
+        ("seeds: []\nseeds: []\n", "seeds", 1, 2),
+        ("seeds:\n  - value: first\n    value: second\n", "value", 2, 3),
+        ("metadata: {name: first, name: second}\n", "name", 1, 1),
+        ("base: &base\n  value: first\n  value: second\ncopy: {<<: *base}\n", "value", 2, 3),
+        ("derived:\n  <<: {value: base}\n  value: first\n  value: second\n", "value", 3, 4),
+        ("derived:\n  <<: {value: first}\n  <<: {value: second}\n", "<<", 2, 3),
+        ("1: first\n01: second\n", 1, 1, 2),
+        ("null: first\n~: second\n", None, 1, 2),
+        ("key: first\n'key': second\n", "key", 1, 2),
+        ("true: first\n1: second\n", 1, 1, 2),
+        ("1: first\ntrue: second\n", True, 1, 2),
+        ("false: first\n0: second\n", 0, 1, 2),
+        ("0: first\nfalse: second\n", False, 1, 2),
+        (".nan: first\n.nan: second\n", float("nan"), 1, 2),
+        (".NaN: first\n.NAN: second\n", float("nan"), 1, 2),
+        # Alias nodes retain the anchor's source mark rather than the alias's line.
+        ("&key value: first\n*key: second\n", "value", 1, 1),
+        ("anchor: &key value\nvalue: first\n*key: second\n", "value", 2, 1),
+    ],
+)
+def test_safe_load_yaml_rejects_explicit_duplicates(yaml_loader, document, key, first_line, duplicate_line):
+    with pytest.raises(yaml.constructor.ConstructorError, match="duplicate key") as error:
+        yaml_loader(document)
+
+    assert repr(key) in str(error.value)
+    assert error.value.context_mark.line == first_line - 1
+    assert error.value.problem_mark.line == duplicate_line - 1
+    assert f"line {duplicate_line}" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "base: &base {value: base, extra: kept}\nderived: {<<: *base, value: explicit}\n",
+        "base: &base {value: base}\nderived: {value: explicit, <<: *base}\n",
+        (
+            "first: &first {value: first}\nsecond: &second {value: second, extra: kept}\n"
+            "derived: {<<: [*first, *second]}\n"
+        ),
+        (
+            "base: &base {value: base}\nmid: &mid {<<: *base, value: middle}\n"
+            "derived: {<<: *mid, value: explicit}\ncopy: {<<: *mid}\n"
+        ),
+        "derived: {<<: {value: base}, '<<': literal}\n",
+        "one: {value: first}\ntwo: {value: second}\n",
+        "=: value\n",
+        "self: &self {reference: *self}\n",
+        ".nan: first\nother: second\n",
+        "first: {&key value: one}\nsecond: {*key: two}\n",
+    ],
+)
+def test_safe_load_yaml_preserves_valid_mappings_and_merge_precedence(yaml_loader, document):
+    assert repr(yaml_loader(document)) == repr(yaml.safe_load(document))
+
+
+def test_safe_load_yaml_duplicate_stream_reports_filename(yaml_loader, tmp_path):
+    path = tmp_path / "duplicate.yaml"
+    path.write_text("value: first\nvalue: second\n", encoding="utf-8")
+    with path.open(encoding="utf-8") as stream:
+        with pytest.raises(yaml.YAMLError, match="duplicate key") as error:
+            yaml_loader(stream)
+    assert str(path) in str(error.value)
+
+
+@pytest.mark.parametrize("document", ["key: [unterminated\n", "!!python/object/apply:os.system ['echo unsafe']\n"])
+def test_safe_load_yaml_keeps_syntax_and_safe_tag_errors(yaml_loader, document):
+    with pytest.raises(yaml.YAMLError):
+        yaml_loader(document)
+
+
+def test_safe_load_yaml_does_not_modify_pyyaml_loaders(yaml_loader):
+    document = "value: first\nvalue: second\n"
+    with pytest.raises(yaml.YAMLError, match="duplicate key"):
+        yaml_loader(document)
+    assert yaml.safe_load(document) == {"value": "second"}
+    if hasattr(yaml, "CSafeLoader"):
+        assert yaml.load(document, Loader=yaml.CSafeLoader) == {"value": "second"}
