@@ -1,0 +1,21 @@
+Ugly Gerry (Gerry.otf, version 1.004)
+
+Created by Ben Doessel and James Lee at Leo Burnett for RepresentUs, 2019.
+Project website: https://uglygerry.com/
+
+The original project website states:
+
+No Rights Reserved
+
+Source of the statement (archived original website, footer):
+https://web.archive.org/web/20191231023813/https://www.uglygerry.com/
+
+The unmodified font is distributed by FontsArena, which identifies it as
+free for personal and commercial use:
+https://fontsarena.com/ugly-gerry/
+https://fontsarena.com/wp-content/uploads/2019/08/Gerry.otf
+
+SHA-256 of the bundled, unmodified Gerry.otf:
+38332905de7a8bcbda48038edd7cc5dfd26924b3991eebfc9f8ca84b0b35f1e4
+
+This statement applies to the font, not to PyRIT's converter implementation.
