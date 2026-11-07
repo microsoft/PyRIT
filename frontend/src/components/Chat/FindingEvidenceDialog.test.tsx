@@ -162,6 +162,20 @@ it('searches literally, resets pagination, and ignores superseded results', asyn
   expect(operationsApi.listFindings).toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: '%_' })
 })
 
+it('caps the title search at the API limit', async () => {
+  const user = userEvent.setup()
+  renderDialog()
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Link to finding' })).toBeEnabled() })
+  await user.click(screen.getByRole('button', { name: 'Link to finding' }))
+  await screen.findByRole('radio', { name: /Proof/ })
+  const search = screen.getByRole('textbox', { name: 'Search findings by title' })
+  await user.click(search)
+  await user.paste('x'.repeat(1001))
+  expect(search).toHaveValue('x'.repeat(1000))
+  await waitFor(() => expect(operationsApi.listFindings)
+    .toHaveBeenLastCalledWith('saved', { limit: 20, offset: 0, title: 'x'.repeat(1000) }))
+})
+
 it('preserves search and selection on failure, reports already attached, and restores focus on cancel', async () => {
   const user = userEvent.setup()
   ;(operationsApi.attachFindingEvidence as jest.Mock).mockRejectedValueOnce(new Error('failed'))
