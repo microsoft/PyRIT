@@ -530,11 +530,10 @@ test.describe("Shared per-piece converter pipelines @seeded", () => {
       expect(readiness.ok()).toBeTruthy();
       return (await readiness.json()).ready;
     }, { timeout: 60_000 }).toBe(true);
-    const targetResponse = await request.post("/api/targets", {
+    const targetResponse = await request.get("/api/targets/browser_offline", {
       headers: compatibilityHeaders(),
-      data: { type: "TextTarget", name: `e2e-converters-${randomUUID()}`, params: {} },
     });
-    expect(targetResponse.status()).toBe(201);
+    expect(targetResponse.status()).toBe(200);
     const target: TargetInstance = await targetResponse.json();
     targetRegistryName = target.target_registry_name;
 

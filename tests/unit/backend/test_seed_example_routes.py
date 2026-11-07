@@ -15,10 +15,9 @@ from httpx import ASGITransport, AsyncClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.common import MAX_CURSOR_LENGTH, MAX_LABEL_VALUE_LENGTH
-from pyrit.backend.services.dataset_service import get_dataset_service
+from pyrit.backend.services import get_dataset_service
 from pyrit.common.utils import to_sha256
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import (
     AnswerMatches,
     MatchesObjective,
@@ -79,6 +78,33 @@ async def test_list_seed_examples_pages_with_a_filter_bound_cursor(client: Async
     assert (first["pagination"]["has_more"], second["pagination"]["has_more"]) == (True, False)
     assert second["pagination"]["prev_cursor"] == cursor
     assert mismatched.status_code == 400
+
+
+async def test_seed_example_pattern_cursor_is_bound_to_mode_and_pattern(
+    *, client: AsyncClient, sqlite_instance: MemoryInterface
+) -> None:
+    await _store(sqlite_instance, *(_prompt(f"100{index}") for index in range(3)), _prompt("100%"))
+    params = {"selection_key": NAMED, "limit": 2, "value_pattern": "100%"}
+    first_response = await client.get(URL, params=params)
+    assert first_response.status_code == 200
+    first = first_response.json()
+    cursor = first["pagination"]["next_cursor"]
+    second = (await client.get(URL, params={**params, "cursor": cursor})).json()
+    assert first["total"] == second["total"] == 4
+    assert len({item["example_id"] for item in first["items"] + second["items"]}) == 4
+    for changed in [{"search": "100"}, {"value_pattern": "%100%"}, {"value_pattern": ""}]:
+        response = await client.get(URL, params={"selection_key": NAMED, "cursor": cursor, **changed})
+        assert response.status_code == 400
+    literal = (await client.get(URL, params={"selection_key": NAMED, "search": "100%"})).json()
+    assert literal["total"] == 1
+
+
+@pytest.mark.parametrize(
+    "filters", [{"value_pattern": "/"}, {"value_pattern": "%", "search": ""}, {"value_pattern": "%", "search": "x"}]
+)
+async def test_seed_example_routes_reject_invalid_patterns(*, client: AsyncClient, filters: dict[str, str]) -> None:
+    response = await client.get(URL, params={"selection_key": NAMED, **filters})
+    assert response.status_code == 400
 
 
 @pytest.mark.parametrize(

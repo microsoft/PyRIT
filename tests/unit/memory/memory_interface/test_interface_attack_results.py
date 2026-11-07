@@ -14,10 +14,10 @@ from sqlalchemy.dialects import mssql
 from unit.mocks import add_legacy_attack_results_async, get_mock_target_identifier, make_scenario_result
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import AttackResultKeysetCursor, MemoryInterface, SQLiteMemory
+from pyrit.memory import AttackResultEntry, AttackResultKeysetCursor, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.memory_interface import _AttackResultQuery
-from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, AttackResultEntry, TargetIdentifierEntry
+from pyrit.memory.memory_models import AtomicAttackIdentifierEntry, TargetIdentifierEntry
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
@@ -961,7 +961,7 @@ async def test_update_attack_result_stale_entry_does_not_overwrite(sqlite_instan
     Simulates the race condition where entry is loaded, then another update modifies
     the DB, and finally the stale entry is used for an unrelated update.
     """
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     attack_result = AttackResult(
         conversation_id="conv_1",
@@ -1863,7 +1863,7 @@ async def test_get_attack_results_attack_classes_empty_returns_all(sqlite_instan
 
 
 def _eval_hash_for(class_name: str) -> str:
-    from pyrit.models.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
+    from pyrit.models import AtomicAttackEvaluationIdentifier
 
     return AtomicAttackEvaluationIdentifier(
         AtomicAttackIdentifier.build(

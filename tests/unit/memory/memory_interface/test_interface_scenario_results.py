@@ -903,7 +903,8 @@ async def test_delete_scenario_sets_attack_result_foreign_key_to_null(
     """
     from sqlalchemy import text as _sql_text
 
-    from pyrit.memory.memory_models import AttackResultEntry, ScenarioResultEntry
+    from pyrit.memory import AttackResultEntry
+    from pyrit.memory.memory_models import ScenarioResultEntry
 
     scenario_result = create_scenario_result(name="To Be Deleted")
     (await sqlite_instance.add_scenario_results_to_memory_async(scenario_results=[scenario_result]))

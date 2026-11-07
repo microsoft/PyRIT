@@ -22,28 +22,33 @@ from pyrit.models import (
     AttackResult,
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
+    ComponentIdentifier,
+    ScenarioEvaluationIdentifier,
     ScenarioRunPlanGroupKind,
     SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.identifiers import ComponentIdentifier, ScenarioEvaluationIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario import IncompatibleTechniqueError, IncompatibleTechniquePolicy, TechniqueRequirements
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import (
+    AttackTechnique,
+    AttackTechniqueFactory,
+    BaselineAttackPolicy,
+    DatasetAttackConfiguration,
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
+    TechniqueRequirements,
+)
+from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_target_defaults import override_default_adversarial_target
-from pyrit.scenario.scenarios.adaptive.dispatcher import AdaptiveTechniqueDispatcher
-from pyrit.scenario.scenarios.adaptive.selectors import (
+from pyrit.scenario.scenarios.adaptive import (
+    AdaptiveTechniqueDispatcher,
     EpsilonGreedyTechniqueSelector,
     SelectorScope,
     TechniqueSelector,
+    TextAdaptive,
 )
-from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques.core import get_technique_factories
 from tests.unit.mocks import MockPromptTarget

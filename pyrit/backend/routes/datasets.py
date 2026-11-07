@@ -14,19 +14,21 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import Field
 
+from pyrit.backend.models import (
+    DatasetListResponse,
+    ProblemDetail,
+)
 from pyrit.backend.models.common import (
     MAX_CURSOR_LENGTH,
     MAX_ITEMS,
     MAX_LABEL_VALUE_LENGTH,
     CursorStr,
-    ProblemDetail,
 )
 from pyrit.backend.models.datasets import (
-    DatasetListResponse,
     SeedExampleDetailResponse,
     SeedExampleListResponse,
 )
-from pyrit.backend.services.dataset_service import get_dataset_service
+from pyrit.backend.services import get_dataset_service
 from pyrit.models import PromptDataType, SeedType
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -75,6 +77,11 @@ async def list_seed_examples(  # pyrit-async-suffix-exempt
         max_length=1000,
         description="Case-insensitive literal text to find in text prompt and objective values",
     ),
+    value_pattern: str | None = Query(
+        None,
+        max_length=1000,
+        description="Full case-insensitive LIKE pattern instead of search: % and _ wildcards, / escaping",
+    ),
     modality: list[PromptDataType] | None = Query(None, max_length=MAX_ITEMS, description="Data types, OR-matched"),
     harm_category: list[Annotated[str, Field(max_length=MAX_LABEL_VALUE_LENGTH)]] | None = Query(
         None, max_length=MAX_ITEMS, description="Whole harm categories, case-insensitive, OR-matched"
@@ -95,6 +102,7 @@ async def list_seed_examples(  # pyrit-async-suffix-exempt
         limit=limit,
         cursor=cursor,
         search=search,
+        value_pattern=value_pattern,
         data_types=modality,
         harm_categories=harm_category,
         seed_types=seed_type,
