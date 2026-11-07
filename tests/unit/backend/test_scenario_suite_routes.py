@@ -47,6 +47,7 @@ from pyrit.registry import (
 SUITE_NAME = "weekly"
 ENTRY_ID = UUID("11111111-1111-4111-8111-111111111111")
 EXECUTION_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+OVER_LIMIT_NAME = "x" * 257
 
 
 def _suite(*, name: str = SUITE_NAME, author: str | None = None) -> ScenarioSuite:
@@ -273,6 +274,36 @@ def test_launch_maps_preflight_failures(
         assert response.json()["detail"] == "wait for an active suite"
 
 
+def test_launch_limits_the_expected_version(anonymous_client: TestClient, execution_service: MagicMock) -> None:
+    """Test the reviewed suite version has the identifier limit."""
+    execution_service.launch_async = AsyncMock(return_value=_execution_summary())
+    path = f"/api/scenario-suites/{SUITE_NAME}/launch"
+
+    at_limit = anonymous_client.post(path, json={**_launch_body(), "expected_version": "v" * 256})
+    over_limit = anonymous_client.post(path, json={**_launch_body(), "expected_version": "v" * 257})
+
+    assert at_limit.status_code == 202
+    assert over_limit.status_code == 422
+    execution_service.launch_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize("field", ["preset_name", "preset_version"])
+def test_launch_limits_the_entry_preset_name_and_version(
+    *, anonymous_client: TestClient, execution_service: MagicMock, field: str
+) -> None:
+    """Test each reviewed entry's preset name and version have the identifier limit."""
+    execution_service.launch_async = AsyncMock(return_value=_execution_summary())
+    path = f"/api/scenario-suites/{SUITE_NAME}/launch"
+    entry = {"entry_id": str(ENTRY_ID), "preset_name": "nightly", "origin": "stored", "preset_version": "preset-v1"}
+
+    at_limit = anonymous_client.post(path, json={**_launch_body(), "entries": [{**entry, field: "x" * 256}]})
+    over_limit = anonymous_client.post(path, json={**_launch_body(), "entries": [{**entry, field: "x" * 257}]})
+
+    assert at_limit.status_code == 202
+    assert over_limit.status_code == 422
+    execution_service.launch_async.assert_awaited_once()
+
+
 def test_get_and_cancel_transient_execution(
     anonymous_client: TestClient,
     execution_service: MagicMock,
@@ -443,6 +474,54 @@ def test_create_over_registered_name_is_actionable_conflict(client: TestClient, 
     assert response.json()["detail"] == f"Scenario suite '{SUITE_NAME}' is registered in code and cannot be stored"
 
 
+@pytest.mark.parametrize(("field", "limit"), [("description", 100_000), ("author", 256)])
+def test_create_limits_the_description_and_author(
+    *, client: TestClient, service: MagicMock, field: str, limit: int
+) -> None:
+    """Test the suite description and author limits."""
+    service.save_suite_async = AsyncMock(return_value=_response())
+    payload = _suite().model_dump(mode="json")
+
+    at_limit = client.post("/api/scenario-suites", json={**payload, field: "x" * limit})
+    over_limit = client.post("/api/scenario-suites", json={**payload, field: "x" * (limit + 1)})
+
+    assert at_limit.status_code == 201
+    assert over_limit.status_code == 422
+    service.save_suite_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"name": OVER_LIMIT_NAME}, {"entries": [{"entry_id": str(ENTRY_ID), "preset_name": OVER_LIMIT_NAME}]}],
+    ids=["suite_name", "preset_name"],
+)
+def test_create_limits_the_names_without_echoing_them(
+    *, client: TestClient, service: MagicMock, changes: dict[str, object]
+) -> None:
+    """Test over-limit suite and preset names are rejected without being echoed."""
+    service.save_suite_async = AsyncMock(return_value=_response())
+
+    response = client.post("/api/scenario-suites", json={**_suite().model_dump(mode="json"), **changes})
+
+    assert response.status_code == 422
+    assert OVER_LIMIT_NAME not in response.text
+    service.save_suite_async.assert_not_called()
+
+
+def test_update_limits_the_expected_version(client: TestClient, service: MagicMock) -> None:
+    """Test the version sent with an update has the identifier limit."""
+    service.save_suite_async = AsyncMock(return_value=_response(version="suite-v2"))
+    path = f"/api/scenario-suites/{SUITE_NAME}"
+    suite = _suite().model_dump(mode="json")
+
+    at_limit = client.put(path, json={"suite": suite, "expected_version": "v" * 256})
+    over_limit = client.put(path, json={"suite": suite, "expected_version": "v" * 257})
+
+    assert at_limit.status_code == 200
+    assert over_limit.status_code == 422
+    service.save_suite_async.assert_awaited_once()
+
+
 def test_update_passes_expected_version(client: TestClient, service: MagicMock) -> None:
     """Test optimistic concurrency on update."""
     service.save_suite_async = AsyncMock(return_value=_response(version="suite-v2"))
@@ -568,3 +647,22 @@ def test_delete_requires_admin(anonymous_client: TestClient, service: MagicMock)
 
     assert response.status_code == 403
     service.delete_suite_async.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "body"),
+    [
+        ("GET", "", None),
+        ("PUT", "", {"suite": _suite().model_dump(mode="json"), "expected_version": "v1"}),
+        ("DELETE", "", None),
+        ("POST", "/launch", _launch_body()),
+    ],
+    ids=["get", "update", "delete", "launch"],
+)
+@pytest.mark.usefixtures("service", "execution_service")
+def test_path_name_is_limited(*, client: TestClient, method: str, suffix: str, body: dict[str, object] | None) -> None:
+    """Test an over-limit suite name in the URL is rejected before the route runs."""
+    response = client.request(method, f"/api/scenario-suites/{OVER_LIMIT_NAME}{suffix}", json=body)
+
+    assert response.status_code == 422
+    assert [error["field"] for error in response.json()["errors"]] == ["path.name"]
