@@ -32,6 +32,7 @@ from pyrit.models import (
 from pyrit.scenario.core.technique_requirements import PreparedSeedGroup, prepare_seed_group
 
 if TYPE_CHECKING:
+    from pyrit.models import ComponentIdentifier
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.attack_technique import AttackTechnique
     from pyrit.score import TrueFalseScorer
@@ -228,10 +229,28 @@ class AtomicAttack:
         ``atomic_attack_name``.
         """
         composite = AtomicAttackIdentifier.build(
-            technique_identifier=self._attack_technique.get_identifier(),
+            technique_identifier=self._get_technique_identifier_for_identity(),
             seed_group=None,
         )
         return AtomicAttackEvaluationIdentifier(composite).eval_hash
+
+    def _get_technique_identifier_for_identity(self) -> ComponentIdentifier:
+        """Return the technique identity augmented with this atomic attack's chat target."""
+        technique_identifier = self._attack_technique.get_identifier()
+        attack_identifier = technique_identifier.get_child("attack")
+        if attack_identifier is None or self._adversarial_chat is None:
+            return technique_identifier
+        attack_identifier = attack_identifier.model_copy(
+            update={
+                "children": {
+                    **attack_identifier.children,
+                    "adversarial_chat": self._adversarial_chat.get_identifier(),
+                }
+            }
+        )
+        return technique_identifier.model_copy(
+            update={"children": {**technique_identifier.children, "attack": attack_identifier}}
+        )
 
     @property
     def logical_group_id(self) -> str:
@@ -393,7 +412,7 @@ class AtomicAttack:
 
         try:
             technique = self._attack_technique
-            technique_identifier = technique.get_identifier()
+            technique_identifier = self._get_technique_identifier_for_identity()
             technique_eval_hash = self.technique_eval_hash
             execution_seed_groups = [
                 self._prepared_seed_groups[group.logical_id].seed_group.model_copy(deep=True)
