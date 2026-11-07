@@ -98,6 +98,32 @@ async def test_batch_task_async_mismatched_args_raises():
         )
 
 
+@pytest.mark.parametrize("batch_size", [-1, 0, 1.5, True, "2"])
+async def test_batch_task_async_rejects_invalid_batch_size(batch_size):
+    mock_func = AsyncMock(return_value="result")
+    with pytest.raises(ValueError, match="batch_size must be an integer of at least 1"):
+        await batch_task_async(
+            batch_size=batch_size,
+            items_to_batch=[[1, 2, 3]],
+            task_func=mock_func,
+            task_arguments=["item"],
+        )
+    mock_func.assert_not_called()
+
+
+async def test_batch_task_async_invalid_batch_size_checked_before_rate_limit():
+    target = MagicMock()
+    target._max_requests_per_minute = 10
+    with pytest.raises(ValueError, match="batch_size must be an integer of at least 1"):
+        await batch_task_async(
+            prompt_target=target,
+            batch_size=-1,
+            items_to_batch=[[1, 2]],
+            task_func=AsyncMock(),
+            task_arguments=["item"],
+        )
+
+
 async def test_batch_task_async_calls_func():
     mock_func = AsyncMock(return_value="result")
     results = await batch_task_async(

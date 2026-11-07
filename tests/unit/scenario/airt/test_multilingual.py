@@ -3,6 +3,8 @@
 
 """Tests for the Multilingual scenario."""
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -22,15 +24,17 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration
+from pyrit.scenario.scenarios.airt import (
+    Multilingual,
+)
 from pyrit.scenario.scenarios.airt.multilingual import (
     _DEFAULT_NUM_LANGUAGES,
     _LANGUAGES_METADATA_KEY,
     _PROMPT_SENDING,
     _RANDOM_TRANSLATION,
     _TRANSLATION,
-    Multilingual,
     _build_multilingual_technique,
 )
 from pyrit.score import SubStringScorer, TrueFalseScorer
@@ -105,13 +109,18 @@ def mock_objective_scorer() -> MagicMock:
     return mock
 
 
-def _patch_seed_groups(mock_memory_seed_groups):
-    return patch.object(
-        Multilingual,
-        "_resolve_seed_groups_by_dataset_async",
-        new_callable=AsyncMock,
-        return_value={"harmbench": mock_memory_seed_groups},
-    )
+@contextmanager
+def _patch_seed_groups(mock_memory_seed_groups: list[AttackSeedGroup]) -> Generator[None, None, None]:
+    with (
+        patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock),
+        patch.object(
+            Multilingual,
+            "_resolve_seed_groups_by_dataset_async",
+            new_callable=AsyncMock,
+            return_value={"harmbench": mock_memory_seed_groups},
+        ),
+    ):
+        yield
 
 
 def _request_converters(atomic_attack):

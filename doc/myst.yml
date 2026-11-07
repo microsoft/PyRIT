@@ -42,6 +42,24 @@ project:
         - "http://api.openai.com/**"
         - "https://cognitiveservices.azure.com/**"
         - "https://www.youtube.com/watch?v=jq9DcEL3cHE"
+    # Wikimedia's robot policy returns 403 to automated link checks. Keep the
+    # canonical attribution URL and limit the exception to this source image.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://commons.wikimedia.org/wiki/File:Gorch_Fock_unter_Segeln_Kieler_Foerde_2006.jpg"
+    # The live crates.io homepage rejects automated requests with 403/404.
+    # Do not exclude package pages or other registry URLs.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://crates.io"
+    # OpenAI's Sora retirement notice returns 403 to CI link checks.
+    # Keep the canonical source and exempt only this article.
+    - rule: link-resolves
+      severity: ignore
+      keys:
+        - "https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation"
   toc:
     - file: index.md
     - file: security.md
@@ -125,7 +143,6 @@ project:
             - file: code/targets/1_openai_chat_target.ipynb
             - file: code/targets/2_openai_responses_target.ipynb
             - file: code/targets/3_openai_image_target.ipynb
-            - file: code/targets/4_openai_video_target.ipynb
             - file: code/targets/5_openai_tts_target.ipynb
             - file: code/targets/6_custom_targets.ipynb
             - file: code/targets/6_1_target_capabilities.ipynb
@@ -162,6 +179,7 @@ project:
             - file: code/scoring/4_scorer_metrics.ipynb
             - file: code/scoring/5_tool_call_scorer.ipynb
             - file: code/scoring/6_file_write_scorer.ipynb
+            - file: code/scoring/7_program_execution_scorer.ipynb
         - file: code/memory/0_memory.md
           children:
             - file: code/memory/1_sqlite_memory.ipynb

@@ -21,11 +21,11 @@ import asyncio
 import logging
 from enum import Enum
 
-from pyrit.models.parameter import Parameter
-from pyrit.registry.components.attack_technique_registry import (
+from pyrit.models import Parameter
+from pyrit.registry import (
     AttackTechniqueRegistry,
 )
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import AttackTechniqueFactory
 from pyrit.setup.initializers.techniques import core, extra
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
@@ -91,9 +91,14 @@ class TechniqueInitializer(PyRITInitializer):
     overwritten.
     """
 
-    @property
-    def supported_parameters(self) -> list[Parameter]:
-        """The list of parameters this initializer accepts."""
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        """
+        Declare the initializer parameters.
+
+        Returns:
+            list[Parameter]: Supported inputs and defaults.
+        """
         return [
             Parameter(
                 name="tags",

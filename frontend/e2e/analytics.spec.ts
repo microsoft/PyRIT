@@ -15,7 +15,7 @@ import {
 import { compatibilityHeaders, getCompatibilityId } from './_compatibility'
 
 const BASELINE: AttackAnalyticsFilter = {
-  dimension: { name: 'operation' }, values: [{ kind: 'value', value: 'Synthetic baseline' }], match_mode: 'any',
+  dimension: { name: 'operation' }, values: [{ kind: 'value', value: '00000000-0000-0000-0000-00000000a001' }], match_mode: 'any',
 }
 const OVERVIEW: AttackAnalyticsFilter = {
   dimension: { name: 'label', label_key: 'cohort' }, values: [{ kind: 'value', value: 'overview' }], match_mode: 'any',
@@ -58,7 +58,7 @@ async function capture(page: Page, name: string): Promise<void> {
   const directory = process.env.PYRIT_ANALYTICS_SCREENSHOT_DIR
   if (!directory) return
   await expect(page.getByRole('region', { name: 'Outcome summary' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeEnabled()
+  await expect(page.getByTestId('analytics-page')).toHaveAttribute('aria-busy', 'false')
   await mkdir(directory, { recursive: true })
   await page.screenshot({ path: path.join(directory, name), fullPage: true })
 }
@@ -92,8 +92,9 @@ test.afterEach(async ({ page }: { page: Page }) => {
   expect(errors.get(page)).toEqual([])
 })
 
-test('counts every saved ID and keeps result paging, presentation, and freshness independent', async ({ page }: { page: Page }) => {
+test('counts every saved ID and preserves result paging and presentation during minute updates', async ({ page }: { page: Page }) => {
   const requests = observe(page)
+  await page.clock.install()
   const report = await openReport(page)
   expect(report.summary).toMatchObject({ total_results: 204, successes: 83, failures: 41, errors: 20, undetermined: 60 })
   const summary = page.getByRole('region', { name: 'Outcome summary' })
@@ -102,7 +103,7 @@ test('counts every saved ID and keeps result paging, presentation, and freshness
   expect(requests.reports).toHaveLength(1)
   expect(requests.facets).toHaveLength(0)
   expect(requests.reports[0].headers()['pyrit-compatibility-id']).toBe(getCompatibilityId())
-  const refreshed = await page.getByText(/Last refreshed:/).locator('time').getAttribute('datetime')
+  await expect(page.getByText(/Last refreshed:|Page read:/)).toHaveCount(0)
   const results = page.getByRole('region', { name: 'Matching AttackResults' })
   await results.getByRole('button', { name: 'Next', exact: true }).click()
   await expect(results.getByText('Page 2', { exact: true })).toBeVisible()
@@ -112,17 +113,17 @@ test('counts every saved ID and keeps result paging, presentation, and freshness
   await expect(summary.getByText(formatAnalyticsPercent(report.summary.success_rate_all), { exact: true })).toBeVisible()
   await expect(summary.getByText('83 success / 204 all results')).toBeVisible()
   await expect(results.getByText('Page 2', { exact: true })).toBeVisible()
-  await page.clock.install()
-  await page.clock.fastForward(300_000)
+  await page.clock.fastForward(30_000)
   expect(requests.reports).toHaveLength(1)
   expect(requests.results).toHaveLength(1)
-  expect(await page.getByText(/Last refreshed:/).locator('time').getAttribute('datetime')).toBe(refreshed)
   const reloaded = page.waitForResponse(reportResponse)
-  await page.getByRole('button', { name: 'Reload', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Reload', exact: true })).toHaveCount(0)
+  await page.clock.fastForward(60_000)
   await page.clock.fastForward(250)
   await readReport(await reloaded)
-  await expect(results.getByText('Page 1', { exact: true })).toBeVisible()
+  await expect(results.getByText('Page 2', { exact: true })).toBeVisible()
   expect(requests.reports).toHaveLength(2)
+  await expect.poll(() => requests.results.length).toBe(2)
 })
 
 test('drills into a real heatmap cell and opens its saved result through the normal route', async ({ page }: { page: Page }) => {
@@ -157,14 +158,14 @@ test('drills into a real heatmap cell and opens its saved result through the nor
   const sharedUrl = page.url()
   await row.focus()
   await page.keyboard.press('Enter')
-  await expect(page).toHaveURL(new RegExp(`/attacks/${id}$`))
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/${id}$`))
   await expect(page.getByText('This is a safe, locally stored example response for analytics browser checks.')).toBeVisible()
   await page.getByRole('button', { name: 'Analytics', exact: true }).click()
   await expect(page).toHaveURL(sharedUrl)
   await expect(page.getByRole('row', { name: `Open result ${id}` })).toBeVisible()
   await page.getByRole('row', { name: `Open result ${id}` }).focus()
   await page.keyboard.press('Space')
-  await expect(page).toHaveURL(new RegExp(`/attacks/${id}$`))
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/${id}$`))
   await page.goBack()
   await expect(page).toHaveURL(sharedUrl)
   await expect(page.getByRole('row', { name: `Open result ${id}` })).toBeVisible()
@@ -202,16 +203,17 @@ test('loads paginated facets on demand and preserves selections across pages and
   expect(requests.facets).toHaveLength(0)
   await page.getByRole('button', { name: 'Operation', exact: true }).click()
   await page.getByRole('checkbox', { name: 'Synthetic baseline', exact: true }).check()
+  await expect(page.getByRole('checkbox', { name: 'Synthetic follow-up (legacy name)', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Next values', exact: true }).click()
-  await page.getByRole('checkbox', { name: 'Synthetic pilot', exact: true }).check()
+  await page.getByRole('checkbox', { name: 'Synthetic follow-up (legacy name)', exact: true }).check()
   await page.getByLabel('Search values', { exact: true }).fill('nothing-matches')
   await expect(page.getByText(/No values match this search/)).toBeVisible()
   await expect(page.getByRole('checkbox', { name: 'Synthetic baseline', exact: true })).toBeChecked()
-  await expect(page.getByRole('checkbox', { name: 'Synthetic pilot', exact: true })).toBeChecked()
+  await expect(page.getByRole('checkbox', { name: 'Synthetic follow-up (legacy name)', exact: true })).toBeChecked()
   const pending = page.waitForResponse(reportResponse)
   await page.getByRole('button', { name: 'Apply filter', exact: true }).click()
   const report = await readReport(await pending)
-  expect(report.summary.total_results).toBe(120)
+  expect(report.summary.total_results).toBe(104)
   expect(requests.facets).toHaveLength(3)
   expect(requests.reports).toHaveLength(2)
   await page.getByRole('button', { name: 'Add filter', exact: true }).click()
@@ -225,6 +227,24 @@ test('loads paginated facets on demand and preserves selections across pages and
   expect(filtered.filters.dimensions[1].match_mode).toBe('all')
   expect(filtered.results.items.every((row: AttackAnalyticsResultRow) => row.request_converters.includes('Base64Converter') &&
     row.request_converters.includes('ROT13Converter'))).toBe(true)
+})
+
+test('identifies Operations by ID and marks legacy names', async ({ page }: { page: Page }) => {
+  const baseline = await openReport(page, {
+    ...DEFAULT_ANALYTICS_VIEW, filters: { ...DEFAULT_ANALYTICS_VIEW.filters, dimensions: [BASELINE] },
+  })
+  expect(baseline.summary.total_results).toBe(80)
+  await expect(page.getByRole('button', { name: 'Operation (ANY): Synthetic baseline', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Outcome summary' }).getByText('80', { exact: true })).toBeVisible()
+  const report = await openReport(page)
+  expect(report.groups).toEqual(expect.arrayContaining([
+    expect.objectContaining({ key: BASELINE.values[0], label: 'Synthetic baseline' }),
+    expect.objectContaining({
+      key: { kind: 'legacy_operation_name', value: 'Synthetic follow-up' }, label: 'Synthetic follow-up (legacy name)',
+    }),
+  ]))
+  await expect(page.getByRole('button', { name: 'Filter to Synthetic baseline', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Filter to Synthetic follow-up (legacy name)', exact: true })).toBeVisible()
 })
 
 test('large shared filters survive direct navigation, refresh, and Back within the server URL limit', async ({ page }: { page: Page }) => {
@@ -264,7 +284,7 @@ test('recovers invalid links explicitly and migrates valid legacy query links wi
   await page.goto('/analytics#analytics=invalid-json')
   await expect(page.getByText(/Cannot restore this analytics link/)).toBeVisible()
   expect(requests.reports).toHaveLength(0)
-  await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Reload', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Reset analytics view' }).click()
   await expect(page.getByRole('region', { name: 'Outcome summary' })).toBeVisible()
   expect(requests.reports).toHaveLength(1)
@@ -334,7 +354,8 @@ test.describe('narrow touch layout', () => {
     await page.getByRole('button', { name: 'More filters', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Add filter', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Fewer filters', exact: true }).click()
-    for (const name of ['Reload', 'Operation', 'Operator', 'Objective target']) {
+    await expect(page.getByRole('button', { name: 'Reload', exact: true })).toHaveCount(0)
+    for (const name of ['Operation', 'Operator', 'Objective target']) {
       const box = await page.getByRole('button', { name, exact: true }).boundingBox()
       expect(box?.height).toBeGreaterThanOrEqual(44)
     }

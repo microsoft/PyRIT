@@ -5,7 +5,7 @@ import json
 import logging
 import pathlib
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.exceptions import (
@@ -77,7 +77,9 @@ class VariationConverter(LLMGenericTextConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        base_identifier = super()._build_identifier()
         return self._create_identifier(
+            params={**base_identifier.params},
             converter_target=self.converter_target.get_identifier(),
         )
 

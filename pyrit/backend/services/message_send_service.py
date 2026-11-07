@@ -10,15 +10,15 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import AsyncGenerator, Callable, Coroutine
-from contextlib import ExitStack, asynccontextmanager
+from collections.abc import AsyncGenerator
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import lru_cache, partial
 from typing import Any
 
-from pyrit.backend.mappers import request_piece_to_pyrit_message_piece, request_to_pyrit_message
-from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
+from pyrit.backend.mappers import request_to_pyrit_message
+from pyrit.backend.models import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
 from pyrit.backend.models.message_sends import (
     MessageSendConversation,
     MessageSendFailureStage,
@@ -27,21 +27,30 @@ from pyrit.backend.models.message_sends import (
     MessageSendStatus,
     RequestConverterMode,
 )
+from pyrit.backend.services.chat_scoring_service import (
+    ChatEvaluation,
+    ChatScoringSelection,
+    get_chat_scoring_service,
+)
+from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.services.history_replay import validate_history_replay
 from pyrit.backend.services.manual_send_scheduler import (
     ManualSendConflictError,
     ManualSendQueueFullError,
     ManualSendScheduler,
+    complete_owned_write_async,
     get_manual_send_scheduler,
 )
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.target_service import get_target_service
+from pyrit.common import print_deprecation_message
 from pyrit.common.attack_result_scope import attack_result_id_scope
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
+    AttackResult,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     Conversation,
@@ -49,9 +58,11 @@ from pyrit.models import (
     Message,
     MessagePiece,
 )
+from pyrit.models.component_spec import TargetBinding
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
+from pyrit.score import Scorer
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +77,12 @@ class _ValidatedMessage:
     request_configurations: list[ConverterConfiguration]
     response_configurations: list[ConverterConfiguration]
     applied_identifiers: dict[int, list[ConverterIdentifier]]
+    owns_target: bool = False
+    target_binding: TargetBinding | None = None
+    replay_target: PromptTarget | None = None
+    scoring: ChatScoringSelection | None = None
+    scorer: Scorer | None = None
+    scoring_error: str | None = None
 
 
 @dataclass(kw_only=True)
@@ -96,6 +113,7 @@ class _MessageSendContext(TargetSendContext):
 
     def mark_target_invoked(self) -> None:
         self._target_invocation_count += 1
+        self._progress.target_invoked = True
         self._progress.state = MessageSendState.SENDING
 
     def finish_send(self, *, succeeded: bool) -> None:
@@ -111,16 +129,32 @@ def resolve_applied_converter_identifiers(
     Returns:
         Registry-validated converter identifiers by message piece index, preserving order and duplicates.
     """
-    return {
-        index: [
-            ConverterIdentifier.from_component_identifier(converter.get_identifier())
-            for converter in get_converter_service().get_converter_objects_for_ids(
-                converter_ids=piece.applied_converter_ids
+    result: dict[int, list[ConverterIdentifier]] = {}
+    service = get_converter_service()
+    for index, piece in enumerate(pieces):
+        if not piece.applied_converter_ids:
+            continue
+        tokens = piece.applied_converter_provenance or [None] * len(piece.applied_converter_ids)
+        if all(token is None for token in tokens):
+            result[index] = [
+                ConverterIdentifier.from_component_identifier(converter.get_identifier())
+                for converter in service.get_converter_objects_for_ids(converter_ids=piece.applied_converter_ids)
+            ]
+            continue
+        registered = iter(
+            service.get_converter_objects_for_ids(
+                converter_ids=[
+                    name for name, token in zip(piece.applied_converter_ids, tokens, strict=True) if token is None
+                ]
             )
+        )
+        result[index] = [
+            service.read_provenance(token)
+            if token is not None
+            else ConverterIdentifier.from_component_identifier(next(registered).get_identifier())
+            for token in tokens
         ]
-        for index, piece in enumerate(pieces)
-        if piece.applied_converter_ids
-    }
+    return result
 
 
 class MessageSendService:
@@ -154,6 +188,15 @@ class MessageSendService:
         self._closing = False
         self._shutdown_task: asyncio.Task[None] | None = None
 
+    def reserve_conversation(self, conversation_id: str) -> AbstractContextManager[None]:
+        """
+        Reserve a conversation so a caller can replace unsent history without overlapping a send.
+
+        Returns:
+            The conversation's exclusive manual-operation reservation.
+        """
+        return self._scheduler.reserve(conversation_id=conversation_id)
+
     async def submit_async(self, *, attack_result_id: str, request: MessageSendRequest) -> MessageSendStatus:
         """
         Validate and admit one background send, deduplicating only retained worker-local submissions.
@@ -186,8 +229,6 @@ class MessageSendService:
                     conversations[conversation_id] = owner
                 owned_request = request.model_copy(deep=True)
                 validated = await self._validate_message_async(attack_result_id=attack_result_id, request=owned_request)
-                if owned_request.count > 1:
-                    await self._validate_repeat_history_async(request=owned_request, target=validated.target)
                 if self._closing:
                     raise ManualSendQueueFullError("Manual message operations are shutting down")
                 operation = _Send(
@@ -282,13 +323,19 @@ class MessageSendService:
             raise ValueError(f"Attack '{attack_result_id}' not found")
 
         ar = results[0]
+        binding = TargetBinding.from_metadata(ar.metadata)
+        if request.target_binding is not None and request.target_binding != binding:
+            raise ValueError("This attack's temperature is read-only. Create a new attack to change it.")
+        policy = get_chat_scoring_service()
+        policy.require_manual(ar)
         target_registry_name = request.target_registry_name
         target = (
             get_target_service().get_target_object(target_registry_name=target_registry_name)
-            if request.send and target_registry_name
+            if binding is None and request.send and target_registry_name
             else None
         )
-        self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+        if binding is None:
+            self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
 
         msg_conversation_id = request.target_conversation_id
 
@@ -303,36 +350,56 @@ class MessageSendService:
         response_converter_configs = self._resolve_converter_configs(
             configurations=request.response_converter_configurations
         )
-        if request.send and target is None:
+        applied_identifiers = resolve_applied_converter_identifiers(request.pieces)
+        if binding is not None and request.send:
+            target = await get_target_service().resolve_binding_async(binding)
+            try:
+                self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=target)
+                if isinstance(request, MessageSendRequest) and request.count > 1:
+                    history = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
+                    validate_history_replay(target=target, messages=history)
+            finally:
+                await release_component_async(target)
+            target = None
+        if request.send and target is None and binding is None:
             raise ValueError(f"Target object for '{target_registry_name}' not found")
+        replay_target = None
+        original_registry_name = ar.metadata.get("target_registry_name")
+        if (
+            binding is None
+            and isinstance(request, MessageSendRequest)
+            and request.count > 1
+            and isinstance(original_registry_name, str)
+        ):
+            replay_target = get_target_service().get_target_object(target_registry_name=original_registry_name)
+            if replay_target is None:
+                raise ValueError("The original attack target is unavailable. Choose a new attack.")
+            self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=replay_target)
+        if isinstance(request, MessageSendRequest) and request.count > 1 and target is not None:
+            history = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
+            if replay_target is not None and replay_target is not target:
+                validate_history_replay(target=replay_target, messages=history)
+            validate_history_replay(target=target, messages=history)
 
+        selection = policy.selection(ar)
+        scorer = None
+        scoring_error = None
+        if request.send and selection is not None:
+            try:
+                scorer = policy.resolve_selection(selection)
+            except ValueError as exc:
+                scoring_error = str(exc)
         return _ValidatedMessage(
             target=target,
             request_configurations=request_converter_configs,
             response_configurations=response_converter_configs,
-            applied_identifiers=resolve_applied_converter_identifiers(request.pieces),
+            applied_identifiers=applied_identifiers,
+            target_binding=binding if request.send else None,
+            replay_target=replay_target,
+            scoring=selection,
+            scorer=scorer,
+            scoring_error=scoring_error,
         )
-
-    async def _validate_repeat_history_async(self, *, request: MessageSendRequest, target: PromptTarget | None) -> None:
-        """
-        Check that the target can initialize the repeated conversations from stored history.
-
-        Raises:
-            ValueError: If non-system history cannot be replayed through native support,
-                a configured adapter, or a provider-specific restoration path.
-        """
-        if target is None:
-            return
-        history = await self._memory.get_conversation_messages_async(conversation_id=request.target_conversation_id)
-        if not any(message.api_role != "system" for message in history):
-            return
-        try:
-            target.validate_history_replay()
-        except ValueError as exc:
-            raise ValueError(
-                f"{type(target).__name__} cannot initialize copies of this conversation from stored history. "
-                "Repeat the send from a new conversation or configure a supported history adapter or restoration path."
-            ) from exc
 
     async def _execute_validated_message_async(
         self,
@@ -343,30 +410,41 @@ class MessageSendService:
         progress: MessageSendConversation | None = None,
         prepared_message: Message | None = None,
     ) -> None:
-        async with self._scheduler.operation_async():
-            if progress is not None:
-                progress.state = MessageSendState.PREPARING
-            with attack_result_id_scope(attack_result_id=attack_result_id):
-                await self._complete_memory_write_async(
-                    partial(
-                        self._memory.add_conversation_to_memory_async,
-                        conversation=Conversation(
-                            conversation_id=request.target_conversation_id,
-                            target_identifier=validated.target.get_identifier() if validated.target else None,
-                            attack_result_id=attack_result_id,
-                        ),
+        try:
+            async with self._scheduler.operation_async():
+                if validated.target_binding is not None:
+                    validated.target = await get_target_service().resolve_binding_async(validated.target_binding)
+                    validated.owns_target = True
+                if progress is not None:
+                    progress.state = MessageSendState.PREPARING
+                with attack_result_id_scope(attack_result_id=attack_result_id):
+                    target_identifier = validated.target.get_identifier() if validated.target else None
+                    if not request.send:
+                        existing_metadata = await self._memory.get_conversation_metadata_async(
+                            conversation_id=request.target_conversation_id
+                        )
+                        target_identifier = existing_metadata.target_identifier if existing_metadata else None
+                    await complete_owned_write_async(
+                        partial(
+                            self._memory.add_conversation_to_memory_async,
+                            conversation=Conversation(
+                                conversation_id=request.target_conversation_id,
+                                target_identifier=target_identifier,
+                                attack_result_id=attack_result_id,
+                            ),
+                        )
                     )
-                )
-                await self._execute_message_async(
-                    attack_result_id=attack_result_id,
-                    request=request,
-                    target=validated.target,
-                    request_converter_configurations=validated.request_configurations,
-                    response_converter_configurations=validated.response_configurations,
-                    applied_converter_identifiers=validated.applied_identifiers,
-                    progress=progress,
-                    prepared_message=prepared_message,
-                )
+                    await self._execute_message_async(
+                        attack_result_id=attack_result_id,
+                        request=request,
+                        validated=validated,
+                        progress=progress,
+                        prepared_message=prepared_message,
+                    )
+        finally:
+            if validated.owns_target and validated.target:
+                await release_component_async(validated.target)
+                validated.owns_target = False
 
     async def _run_send_async(
         self, *, operation: _Send, request: MessageSendRequest, validated: _ValidatedMessage
@@ -391,9 +469,19 @@ class MessageSendService:
         async with self._scheduler.operation_async():
             operation.status.state = MessageSendState.PREPARING
             with attack_result_id_scope(attack_result_id=operation.status.attack_result_id):
-                messages = await self._prepare_repeated_send_async(
-                    operation=operation, request=request, validated=validated
-                )
+                preparation = replace(validated)
+                try:
+                    if preparation.target_binding is not None:
+                        preparation.target = await get_target_service().resolve_binding_async(
+                            preparation.target_binding
+                        )
+                        preparation.owns_target = True
+                    messages = await self._prepare_repeated_send_async(
+                        operation=operation, request=request, validated=preparation
+                    )
+                finally:
+                    if preparation.owns_target and preparation.target:
+                        await release_component_async(preparation.target)
         if request.request_converter_mode == RequestConverterMode.SHARED:
             validated = replace(
                 validated,
@@ -421,6 +509,9 @@ class MessageSendService:
                     )
                 )
         failed = next((progress for progress in operation.status.conversations if progress.failure_stage), None)
+        operation.status.scoring_error = next(
+            (progress.scoring_error for progress in operation.status.conversations if progress.scoring_error), None
+        )
         if failed:
             operation.status.error = failed.error
             operation.status.failure_stage = failed.failure_stage
@@ -441,6 +532,10 @@ class MessageSendService:
         if source.target_identifier is None:
             source.target_identifier = validated.target.get_identifier()
         history = list(await self._memory.get_conversation_messages_async(conversation_id=source.conversation_id))
+        # Recheck after queueing: the source history may have changed since admission.
+        if validated.replay_target is not None and validated.replay_target is not validated.target:
+            validate_history_replay(target=validated.replay_target, messages=history)
+        validate_history_replay(target=validated.target, messages=history)
         sequence = max((message.sequence for message in history), default=-1) + 1
         operation.status.request_turn_number = sequence
         message = await self._prepare_message_async(
@@ -466,7 +561,7 @@ class MessageSendService:
         conversations, pieces, messages = await asyncio.to_thread(
             self._prepare_copies, operation=operation, source=source, history=history, message=message
         )
-        await self._complete_memory_write_async(
+        await complete_owned_write_async(
             partial(
                 self._register_copies_async,
                 operation=operation,
@@ -529,7 +624,7 @@ class MessageSendService:
             await self._execute_validated_message_async(
                 attack_result_id=operation.status.attack_result_id,
                 request=request,
-                validated=validated,
+                validated=replace(validated),
                 progress=progress,
                 prepared_message=message,
             )
@@ -609,18 +704,20 @@ class MessageSendService:
         *,
         attack_result_id: str,
         request: AddMessageRequest,
-        target: PromptTarget | None,
-        request_converter_configurations: list[ConverterConfiguration],
-        response_converter_configurations: list[ConverterConfiguration],
-        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
+        validated: _ValidatedMessage,
         progress: MessageSendConversation | None = None,
         prepared_message: Message | None = None,
     ) -> None:
         msg_conversation_id = request.target_conversation_id
+        target = validated.target
+        request_converter_configurations = validated.request_configurations
+        response_converter_configurations = validated.response_configurations
+        applied_converter_identifiers = validated.applied_identifiers
         preconverted_indexes = {
             index for index, piece in enumerate(request.pieces) if piece.converted_value is not None
         }
-        last_response_id: str | None = None
+        last_response: MessagePiece | None = None
+        evaluation: ChatEvaluation | None = None
 
         existing = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
         sequence = max((p.sequence for p in existing), default=-1) + 1
@@ -630,8 +727,9 @@ class MessageSendService:
         if request.send:
             assert target is not None  # validated before acquiring the execution slot
             prior_ids = {p.id for p in existing}
+            delivered_response: Message | None = None
             try:
-                await self._send_and_store_message_async(
+                delivered_response = await self._send_and_store_message_async(
                     conversation_id=msg_conversation_id,
                     target=target,
                     request=request,
@@ -663,37 +761,87 @@ class MessageSendService:
                 )
             if progress is not None:
                 progress.state = MessageSendState.FINALIZING
-            current_pieces = await self._memory.get_message_pieces_async(conversation_id=msg_conversation_id)
-            last_response = next(
-                (piece for piece in current_pieces if piece.id not in prior_ids and piece.role == "assistant"),
-                None,
+            response = await self._stored_response_async(
+                conversation_id=msg_conversation_id, delivered=delivered_response, prior_ids=prior_ids
             )
-            last_response_id = str(last_response.id) if last_response else None
+            last_response = response.message_pieces[0] if response is not None else None
+            if response is not None and validated.scoring is not None:
+                evaluation = await self._score_chat_response_async(
+                    response=response,
+                    validated=validated,
+                    progress=progress,
+                )
         else:
-            existing_metadata = await self._memory.get_conversation_metadata_async(conversation_id=msg_conversation_id)
             await self._store_message_only_async(
                 conversation_id=msg_conversation_id,
                 request=request,
                 sequence=sequence,
-                target_identifier=existing_metadata.target_identifier if existing_metadata else None,
                 applied_converter_identifiers=applied_converter_identifiers,
             )
 
         async with self._scheduler.metadata_update_async(attack_result_id=attack_result_id):
-            await self._complete_memory_write_async(
+            await complete_owned_write_async(
                 partial(
                     self._update_attack_after_message_async,
                     attack_result_id=attack_result_id,
-                    last_response_id=last_response_id,
-                    request_converter_configurations=self._exclude_preconverted_piece_indexes(
-                        configurations=request_converter_configurations,
-                        preconverted_indexes=preconverted_indexes,
-                        piece_count=len(request.pieces),
+                    last_response=last_response,
+                    validated=replace(
+                        validated,
+                        request_configurations=self._exclude_preconverted_piece_indexes(
+                            configurations=request_converter_configurations,
+                            preconverted_indexes=preconverted_indexes,
+                            piece_count=len(request.pieces),
+                        ),
                     ),
-                    response_converter_configurations=response_converter_configurations,
-                    applied_converter_identifiers=applied_converter_identifiers,
+                    evaluation=evaluation,
                 )
             )
+
+    async def _stored_response_async(
+        self, *, conversation_id: str, delivered: Message | None, prior_ids: set[uuid.UUID]
+    ) -> Message | None:
+        """
+        Find the assistant response that this send stored, including a stored error response.
+
+        Returns:
+            The response, or None when the send stored no assistant response.
+        """
+        if isinstance(delivered, Message) and delivered.api_role == "assistant":
+            return delivered
+        messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
+        return get_chat_scoring_service().latest_response(
+            [message for message in messages if message.message_pieces[0].id not in prior_ids]
+        )
+
+    async def _score_chat_response_async(
+        self,
+        *,
+        response: Message,
+        validated: _ValidatedMessage,
+        progress: MessageSendConversation | None,
+    ) -> ChatEvaluation:
+        """
+        Evaluate the delivered response with the scoring selection captured at admission.
+
+        Returns:
+            The evaluation, including recorded diagnostics when the scorer failed.
+        """
+        assert validated.scoring is not None
+        if progress is not None:
+            progress.is_scoring = True
+        try:
+            evaluation = await get_chat_scoring_service().evaluate_async(
+                selection=validated.scoring,
+                response=response,
+                scorer=validated.scorer,
+                error=validated.scoring_error,
+            )
+        finally:
+            if progress is not None:
+                progress.is_scoring = False
+        if progress is not None and evaluation.failure is not None:
+            progress.scoring_error = evaluation.failure.error
+        return evaluation
 
     def _validate_target_match(
         self, *, attack_identifier: ComponentIdentifier | None, target: PromptTarget | None
@@ -723,43 +871,72 @@ class MessageSendService:
         self,
         *,
         attack_result_id: str,
-        last_response_id: str | None,
-        request_converter_configurations: list[ConverterConfiguration],
-        response_converter_configurations: list[ConverterConfiguration],
-        applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
+        last_response: MessagePiece | None,
+        validated: _ValidatedMessage,
+        evaluation: ChatEvaluation | None = None,
     ) -> None:
         """
-        Update attack recency and converter tracking after a message is added.
+        Update attack recency, converter tracking, and any chat score after a message is added.
 
         Bumps the attack's ``timestamp`` column (the single indexed recency key) so the edited
-        conversation re-floats to the top of the History view.
+        conversation re-floats to the top of the History view. A chat evaluation is recorded
+        through the shared chat-scoring publication in the same guarded write.
 
         Args:
             attack_result_id: The attack result to update.
-            last_response_id: The latest target response piece ID, if one was stored.
-            request_converter_configurations: Resolved request converter configurations used for this message.
-            response_converter_configurations: Resolved response converter configurations used for this message.
-            applied_converter_identifiers: Registered converters already applied to each preconverted piece.
+            last_response: The latest delivered response piece, if one was stored.
+            validated: Captured converters and scoring inputs for the admitted send.
+            evaluation: The chat evaluation of the delivered response, if one ran.
 
         Raises:
             ValueError: If the attack disappeared before its metadata could be updated.
         """
+        if evaluation is not None:
+            try:
+                await get_chat_scoring_service().publish_async(
+                    attack_result_id=attack_result_id,
+                    evaluation=evaluation,
+                    message_fields=lambda attack: self._message_fields(
+                        attack=attack, last_response=last_response, validated=validated
+                    ),
+                )
+            except LookupError as exc:
+                raise ValueError(f"Attack '{attack_result_id}' not found after message send") from exc
+            return
         results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             raise ValueError(f"Attack '{attack_result_id}' not found after message send")
-        ar = results[0]
-        update_fields: dict[str, Any] = {"timestamp": datetime.now(UTC)}
-        if last_response_id:
-            update_fields["last_response_id"] = last_response_id
+        await self._memory.update_attack_result_by_id_async(
+            attack_result_id=attack_result_id,
+            update_fields={
+                "timestamp": datetime.now(UTC),
+                **self._message_fields(attack=results[0], last_response=last_response, validated=validated),
+            },
+        )
+
+    def _message_fields(
+        self, *, attack: AttackResult, last_response: MessagePiece | None, validated: _ValidatedMessage
+    ) -> dict[str, Any]:
+        """
+        Prepare the attack's recency and converter-tracking updates for an added message.
+
+        Returns:
+            The delivered response when it is the newest, and the merged converter identifiers.
+        """
+        fields: dict[str, Any] = {}
+        if last_response is not None and get_chat_scoring_service().is_latest_response(
+            attack=attack, piece=last_response
+        ):
+            fields["last_response_id"] = str(last_response.id)
 
         request_converter_ids = [
-            identifier for identifiers in applied_converter_identifiers.values() for identifier in identifiers
+            identifier for identifiers in validated.applied_identifiers.values() for identifier in identifiers
         ]
-        request_converter_ids.extend(self._get_converter_identifiers(configurations=request_converter_configurations))
-        response_converter_ids = self._get_converter_identifiers(configurations=response_converter_configurations)
+        request_converter_ids.extend(self._get_converter_identifiers(configurations=validated.request_configurations))
+        response_converter_ids = self._get_converter_identifiers(configurations=validated.response_configurations)
         if request_converter_ids or response_converter_ids:
-            attack_strategy_identifier = ar.get_attack_strategy_identifier()
-            if attack_strategy_identifier and ar.atomic_attack_identifier:
+            attack_strategy_identifier = attack.get_attack_strategy_identifier()
+            if attack_strategy_identifier and attack.atomic_attack_identifier:
                 attack_id = AttackIdentifier.from_component_identifier(attack_strategy_identifier)
                 merged_request_converters = self._merge_attack_result_converter_identifiers(
                     existing=attack_id.request_converters,
@@ -779,15 +956,11 @@ class MessageSendService:
                         response_converters=merged_response_converters,
                     )
                     new_atomic = self._replace_attack_in_atomic(
-                        AtomicAttackIdentifier.from_component_identifier(ar.atomic_attack_identifier),
+                        AtomicAttackIdentifier.from_component_identifier(attack.atomic_attack_identifier),
                         attack=new_attack_id,
                     )
-                    update_fields["atomic_attack_identifier"] = new_atomic.model_dump()
-
-        await self._memory.update_attack_result_by_id_async(
-            attack_result_id=attack_result_id,
-            update_fields=update_fields,
-        )
+                    fields["atomic_attack_identifier"] = new_atomic.model_dump()
+        return fields
 
     @staticmethod
     def _replace_converter_pipelines(
@@ -907,8 +1080,13 @@ class MessageSendService:
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
         send_context: TargetSendContext | None = None,
         prepared_message: Message | None = None,
-    ) -> None:
-        """Send message to target via normalizer and store response."""
+    ) -> Message:
+        """
+        Send through the normalizer and retain its complete persisted response.
+
+        Returns:
+            The final target response with its original evidence identities.
+        """
         pyrit_message = (
             prepared_message
             if prepared_message is not None
@@ -930,7 +1108,7 @@ class MessageSendService:
             end_token=request.end_token,
             converter_guard=self._scheduler.conversion_async,
         )
-        await normalizer.send_prompt_async(
+        return await normalizer.send_prompt_async(
             message=pyrit_message,
             target=target,
             conversation_id=conversation_id,
@@ -938,7 +1116,6 @@ class MessageSendService:
             response_converter_configurations=response_converter_configurations,
             send_context=send_context,
         )
-        # PromptNormalizer stores both request and response in memory automatically
 
     async def _prepare_message_async(
         self,
@@ -962,17 +1139,15 @@ class MessageSendService:
         request: AddMessageRequest,
         sequence: int,
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
-        target_identifier: ComponentIdentifier | None = None,
     ) -> None:
         """Store message without sending (send=False)."""
         await self._persist_base64_pieces_async(request)
-        await self._complete_memory_write_async(
+        await complete_owned_write_async(
             partial(
                 self._persist_message_only_async,
                 conversation_id=conversation_id,
                 request=request,
                 sequence=sequence,
-                target_identifier=target_identifier,
                 applied_converter_identifiers=applied_converter_identifiers,
             )
         )
@@ -983,40 +1158,14 @@ class MessageSendService:
         conversation_id: str,
         request: AddMessageRequest,
         sequence: int,
-        target_identifier: ComponentIdentifier | None,
         applied_converter_identifiers: dict[int, list[ConverterIdentifier]],
     ) -> None:
-        await self._memory.add_conversation_to_memory_async(
-            conversation=Conversation(conversation_id=conversation_id, target_identifier=target_identifier)
-        )
-        for index, p in enumerate(request.pieces):
-            piece = request_piece_to_pyrit_message_piece(
-                piece=p,
-                role=request.role,
-                conversation_id=conversation_id,
-                sequence=sequence,
-            )
-            piece.set_simulated_role()
-            piece.converter_identifiers.extend(applied_converter_identifiers.get(index, []))
-            await self._memory.add_message_pieces_to_memory_async(message_pieces=[piece])
-
-    @staticmethod
-    async def _complete_memory_write_async(write: Callable[[], Coroutine[Any, Any, None]]) -> None:
-        """Keep ownership until a write finishes, even when the caller cancels."""
-        worker = asyncio.create_task(write())
-        cancelled = False
-        while not worker.done():
-            try:
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                cancelled = True
-            except Exception:
-                if not cancelled:
-                    raise
-                break
-        if cancelled:
-            raise asyncio.CancelledError from (None if worker.cancelled() else worker.exception())
-        worker.result()
+        """Persist all pieces atomically."""
+        message = request_to_pyrit_message(request=request, conversation_id=conversation_id, sequence=sequence)
+        message.set_simulated_role()
+        for index, identifiers in applied_converter_identifiers.items():
+            message.message_pieces[index].converter_identifiers.extend(identifiers)
+        await self._memory.add_message_pieces_to_memory_async(message_pieces=message.message_pieces)
 
     async def _resolve_video_remix_metadata_async(self, request: AddMessageRequest) -> None:
         """

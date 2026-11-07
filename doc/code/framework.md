@@ -115,19 +115,14 @@ The orchestration layers **nest from broadest to narrowest** — each owns less 
 - **Attack Technique** configures one executor with its converters, seeds, scorers, and strategy.
 - **Executor / Attack** runs the algorithm: sends to targets, applies converters, and branches on scorers.
 
+:::{div}
+:class: col-page-right
 
-```mermaid
-flowchart TB
-    subgraph SCEN["Scenario — owns parallelism &amp; resiliency"]
-        subgraph TECH["Attack Technique — executor + converters + seeds + scorers + strategy"]
-            subgraph ATK["Executor / Attack — drives the conversation"]
-                LEAF["sends to targets · applies converters · branches on scorers"]
-            end
-        end
-    end
-```
+![Scenarios package the complete run. Attack techniques configure attacks, converters, scorers, attack prompts, and helper targets. Dataset objectives and the objective target are run inputs. The registry instantiates components.](../assets/pyrit-components.svg)
 
+:::
 
+The boxes show configuration packaging, not runtime ownership. Dashed splits separate run inputs from technique configuration; arrows show component use, not a required execution order.
 
 # Core Components
 
@@ -148,6 +143,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   own model interaction and validation; memory stores the seeds, and scenarios select them.
 - `SeedObjective.conditions` holds typed criteria beside its objective text. Seed storage and
   identity retain those criteria; `SeedGroup.scoring_expectation` exposes them for execution.
+- `AttackSeedGroup.adversarial_prompts` associates named adversarial-chat `SeedPrompt`
+  inputs with the objective. They are not application messages. Attack techniques bind
+  them when constructing attacks; memory preserves the association.
 - **Does not own**: a dataset defines and holds seeds; it doesn't package them for an attack. Specifically not:
   - selecting or combining which seeds an attack uses (that's a scenario / attack technique)
   - rendering or parameterizing prompts at send time (converters / normalizers)
@@ -189,6 +187,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Generated technique enums follow their factory pool's lifecycle. Registry-derived enums and their lazy exports are discarded on setup registry reset so new scenarios see the replacement catalog. Enums built exclusively from fixed scenario-owned factories, such as `DoctorTechnique` and `JailbreakTechnique`, retain their identity across registry resets, so previously imported members remain valid for new scenario instances.
 - Factories opt into additive request-converter composition with `supports_additional_request_converters=True`. This is a semantic capability, not just constructor-signature detection; the factory validates that opted-in attacks accept `attack_converter_config`.
 - A technique declares target and dataset requirements and permitted adaptation; targets own capabilities and adapters.
+- Named adversarial prompts use the attack's declared slot, parameter, and response-schema
+  contracts. Dataset groups and inline groups use the same checks before construction.
+- Atomic attacks reject named group prompts that the technique has not bound. Baselines
+  deliberately omit adversarial inputs; compound techniques retain their child bindings.
 - **Does not own**: the conversation algorithm itself. Branching, turn management, and scoring decisions live in the executor it wraps — a technique only selects and configures existing components, and shouldn't implement new sending, scoring, or branching logic.
 
 **Framework Plans**:
@@ -295,6 +297,13 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
 - Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
   root directory. `FileWriteScorer` evaluates its `ContentWritten` condition against that
   evidence. The caller owns workspace isolation; a snapshot does not identify its writer.
+- Program-execution sources run a program for a `ProgramExecutionScorable` through an injected
+  client from the experimental `pyrit._code_execution` module, and turn its results into scoring evidence.
+  `ProgramExecutionScorer` splits its `ProgramBehaves` condition so the source receives only the
+  runtime profile and invocations, never the expected results. A program that fails is observed
+  evidence; a sandbox that cannot run it is an acquisition error, so the verdict is undetermined
+  rather than false.
+  Each scoring call runs afresh; an observation identifies the run and supports explicit replay.
 - Observation lifecycle is optional. A scorer that implements `AttemptObserver`, whether it is a
   root scorer or wrapped inside one, is asked by the attack to start observing after setup, once
   its attempt ID is allocated and before anything is sent, and to stop when the attempt ends. A
@@ -327,6 +336,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   conditions before scoring. Wrappers expose their children; `get_condition_types()` derives their
   combined coverage. Use separate leaves and a composite for independent checks.
 - `score_observation_async` coordinates replay of stored evidence without calling the target. Scorer target response replay owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
+- `find_matching_scores` selects the stored results that the same scorer configuration produced for the same evidence and the input `score_async` prepares. The scorer owns this match rule; callers decide whether a match replaces a new evaluation and how it is recorded.
+- Same-input wrappers check the current evidence snapshots of every child that contributed to a stored result. Branch participation is private `Score` state, persisted in the nullable `ScoreEntries.snapshot_participation` column, never in caller-owned `score_metadata`. Unknown or invalid provenance checks branches conservatively; snapshot-free legacy matching remains valid. Conversation participants each require a distinct linked complete observation matching the current ordered conversation, while unused fallback and non-applicable branches do not invalidate a result with known provenance.
+- Same-input inverter, threshold, and fallback roots retain the original input anchor even when a child acquires conversation evidence. Child observations and private participation still determine freshness; copying a child judgment must not change which input the wrapper result can match.
 - Tool-event observations can be matched against new tool-name expectations
   without querying the trace client again. This does not relax scorer target response replay rules.
 - **Does not own**: acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job, and aggregating scores across runs is analytics'. It may call a target to evaluate, but it doesn't send the attack's objective prompt or manage the conversation.
@@ -367,6 +379,20 @@ The below talks about responsibilities of most modules in the PyRIT library
 **Responsibility**: Provide authentication helpers for the external services PyRIT talks to, behind a common `Authenticator` abstraction.
 
 - Components that need credentials should go through these helpers rather than handling tokens themselves.
+
+## Code Execution (Experimental)
+
+**Responsibility**: Connect to caller-configured execution backends and return typed invocation results.
+
+- The client API is private and experimental in `pyrit._code_execution`; it may change without a deprecation cycle.
+- Targets, converters, dataset generators, and scorers can inject the same `SandboxClient` contract
+  from `pyrit._code_execution`. Execution inputs and results are private types in `pyrit.models.code_execution`.
+- `runtime_profile_name` selects a client-owned configuration by name, not by supplying an image or command.
+  Clients advertise the available names through `get_runtime_profile_names()`.
+- PyRIT does not own environments. The one-image Docker example is the only exception:
+  `DockerSandboxClient` manages disposable containers; callers supply the daemon and pinned image.
+- **Does not own**: interpreting results, scoring criteria, message or seed creation, memory
+  persistence, or infrastructure setup. Those remain with the consumer or caller.
 
 ## [Exceptions](../contributing/9_exception)
 
@@ -416,7 +442,7 @@ See [message normalizers](./targets/11_message_normalizer) for capability behavi
 
 **Responsibility**: The Output module is responsible for writing different components in different formats to different places.
 
-- It renders the core result types — attack results, scenario results, conversations, and scores — without those components needing to know how they are displayed.
+- It renders the core result types — attack results, scenario results, conversations, scores, and finding reports — without those components needing to know how they are displayed.
 - Format and destination are decoupled: a **format** (e.g. pretty ANSI, Markdown, JSON) is separate from a **sink** (stdout, file, Jupyter), so any result can be rendered any way to anywhere.
 - **Does not own**: deciding *what* to render or *when*. Components hand results to output; format classes only turn data into strings and never fetch data, touch `CentralMemory`, or call `print()` directly (that's isolated to leaf printer classes).
 
@@ -428,6 +454,8 @@ See [message normalizers](./targets/11_message_normalizer) for capability behavi
 
 - If you are creating a component with user input (e.g. via config, REST, or automatically) it should always use the registry
 - If you are storing an instance of a component, it should always use the registry
+- Construction does not require registration. The caller owns temporary instances
+  and their cleanup; the registry does not retain them.
 - The registry accepts only explicitly supported external inputs, permits opaque Python objects only for in-process callers, and leaves component validation to constructors.
 
 ## [Setup](./setup/0_setup)
@@ -452,6 +480,7 @@ The below describes the user-facing surfaces built on top of the framework.
 - Wherever possible it should reuse other components rather than reimplementing them (e.g. the registry to build components, `pyrit.models` for its model layer), while adding presentation-specific information on top as needed.
 - Organized into `routes/`, `services/`, `models/`, `mappers/`, and `middleware/`, and launched through the `pyrit_backend` command (configurable via `PYRIT_API_HOST` / `PYRIT_API_PORT` / `PYRIT_API_RELOAD`).
 - Saved-result analytics routes consume the cached SDK directly and serialize shared models. The shared runtime owns admission, busy checks, SDK draining and cache invalidation before memory replacement/disposal, including work still cleaning up after an HTTP timeout. It does not calculate statistics or add an SDK authorization scope.
+- `ChatScoringService` owns manual chat scoring policy: the scorer and input for the next evaluation, reuse of a complete matching result, publication to the attack, and the latest-response result and outcome that the frontend shows.
 
 ## [CLI](../scanner/0_scanner)
 

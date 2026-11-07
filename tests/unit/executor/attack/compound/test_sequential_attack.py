@@ -10,19 +10,22 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import wait_for_completion_async
 from unit.mocks import MockPromptTarget
 
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.compound import (
+from pyrit.executor.attack import (
+    AttackContext,
+    AttackExecutor,
+    AttackExecutorResult,
+    AttackParameters,
+    AttackStrategy,
+    PromptSendingAttack,
     SequenceCompletionPolicy,
     SequentialAttack,
     SequentialAttackResult,
     SequentialChildAttack,
 )
-from pyrit.executor.attack.core.attack_executor import AttackExecutor, AttackExecutorResult
-from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
-from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
@@ -989,16 +992,20 @@ class TestChildFailurePreservesLinks:
                 sqlite_instance, "add_attack_results_to_memory_async", side_effect=persist_children_together_async
             ),
         ):
-            failures = await asyncio.wait_for(
-                asyncio.gather(
-                    *[
-                        sequence.execute_async(objective="obj", memory_labels={"execution": str(index)})
-                        for index, sequence in enumerate(sequences)
-                    ],
-                    return_exceptions=True,
-                ),
-                timeout=10,
+            running = asyncio.gather(
+                *[
+                    sequence.execute_async(objective="obj", memory_labels={"execution": str(index)})
+                    for index, sequence in enumerate(sequences)
+                ],
+                return_exceptions=True,
             )
+            try:
+                failures = await wait_for_completion_async(future=running)
+            finally:
+                both_children_persisted.set()
+                if not running.done():
+                    running.cancel()
+                await wait_for_completion_async(future=asyncio.gather(running, return_exceptions=True))
 
         assert all(isinstance(error, RuntimeError) for error in failures)
         for index in range(2):

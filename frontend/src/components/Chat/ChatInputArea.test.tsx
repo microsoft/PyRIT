@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FluentProvider, webLightTheme } from "@fluentui/react-components";
 import ChatInputArea from "./ChatInputArea";
@@ -27,7 +27,7 @@ const buildCapabilities = (
 });
 
 // Helper to get the send button specifically
-const getSendButton = () => screen.getByRole("button", { name: /send/i });
+const getSendButton = () => screen.getByRole("button", { name: "Send message", exact: true });
 
 describe("ChatInputArea", () => {
   const sentOutcome = { status: "sent", clearDraft: true } as const;
@@ -38,7 +38,6 @@ describe("ChatInputArea", () => {
   const defaultProps = {
     onSend: jest.fn().mockResolvedValue(sentOutcome),
     disabled: false,
-    onNewConversation: jest.fn(),
     onUseAsTemplate: jest.fn(),
     onConfigureTarget: jest.fn(),
     onToggleConverterPanel: jest.fn(),
@@ -53,6 +52,40 @@ describe("ChatInputArea", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("should pass dropped files through the existing attachment pipeline in order without changing the text draft", () => {
+    const files = [
+      new File(["image"], "photo.png", { type: "image/png" }),
+      new File(["audio"], "clip.wav", { type: "audio/wav" }),
+    ];
+    render(<TestWrapper><ChatInputArea {...defaultProps} initialText="Keep this draft" /></TestWrapper>);
+    fireEvent.drop(screen.getByTestId("prompt-editor"), { dataTransfer: { types: ["Files"], files } });
+    expect(defaultProps.onAttachmentsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ file: files[0], name: "photo.png", type: "image", mimeType: "image/png", size: 5 }),
+      expect.objectContaining({ file: files[1], name: "clip.wav", type: "audio", mimeType: "audio/wav", size: 5 }),
+    ]);
+    expect(screen.getByRole("textbox")).toHaveValue("Keep this draft");
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
+  });
+
+  it.each(["picker", "drop"])("should preserve broad %s ingestion and the existing target checks without enforcing chooser hints", async (method: string) => {
+    // Model a chooser's All files override, not a new application allowlist.
+    const user = userEvent.setup({ applyAccept: false });
+    const file = new File(["value"], "sample.csv", { type: "text/csv" });
+    render(<TestWrapper><ChatInputArea {...defaultProps} activeTarget={makeTarget({
+      capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
+    })} /></TestWrapper>);
+    const picker = screen.getByTestId("file-input");
+    expect(picker).toHaveAttribute("accept", "image/*,audio/*,video/*,.pdf,.doc,.docx,.txt");
+    if (method === "picker") await user.upload(picker, file);
+    else fireEvent.drop(screen.getByTestId("prompt-editor"), { dataTransfer: { types: ["Files"], files: [file] } });
+    expect(defaultProps.onAttachmentsChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({ file, name: "sample.csv", type: "file", mimeType: "text/csv", size: 5 }),
+    ]);
+    expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent("This target does not support file attachments. Remove them to send.");
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
   });
 
   it("should render input area and send button", () => {
@@ -88,6 +121,46 @@ describe("ChatInputArea", () => {
     expect(onToggleConverterPanel).toHaveBeenCalledTimes(1);
   });
 
+  it("should place Undo directly after the converter button inside the prompt box without opening the panel", async () => {
+    const user = userEvent.setup();
+    const onUndo = jest.fn();
+    render(<TestWrapper><ChatInputArea {...defaultProps}
+      undoLastSend={{ isUndoing: false, onUndo }} /></TestWrapper>);
+    const prompt = screen.getByTestId("prompt-editor");
+    const converter = within(prompt).getByRole("button", { name: "Toggle converter panel" });
+    const undo = within(prompt).getByRole("button", { name: "Undo last send" });
+    expect(converter.compareDocumentPosition(undo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(undo);
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(defaultProps.onToggleConverterPanel).not.toHaveBeenCalled();
+  });
+
+  it("should keep Undo reachable for an eligible first-turn undo when a single-turn prompt is disabled", async () => {
+    const user = userEvent.setup();
+    const onUndo = jest.fn();
+    render(<TestWrapper><ChatInputArea {...defaultProps} disabled
+      disabledReasons={["This target only supports single-turn conversations."]}
+      undoLastSend={{ isUndoing: false, onUndo }} /></TestWrapper>);
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Toggle converter panel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Undo last send" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Undo last send" }));
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("single-turn-banner")).not.toBeInTheDocument();
+  });
+
+  it("should retain the disabled Undo explanation in the prompt box", async () => {
+    const user = userEvent.setup();
+    const onUndo = jest.fn();
+    const reason = "The converter state is no longer available.";
+    render(<TestWrapper><ChatInputArea {...defaultProps}
+      undoLastSend={{ isUndoing: false, disabledReason: reason, onUndo }} /></TestWrapper>);
+    expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
+    await user.hover(screen.getByLabelText(reason));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    expect(onUndo).not.toHaveBeenCalled();
+  });
+
   it("should allow drafting without a target and keep Send disabled without a warning box", async () => {
     const user = userEvent.setup();
     render(
@@ -97,7 +170,7 @@ describe("ChatInputArea", () => {
     );
 
     expect(screen.getByRole("textbox")).toBeEnabled();
-    expect(getSendButton()).toBeDisabled();
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
     await user.type(screen.getByRole("textbox"), "Unsent draft");
     expect(screen.queryByText(/No target is selected/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Why the prompt box is disabled")).not.toBeVisible();
@@ -106,18 +179,67 @@ describe("ChatInputArea", () => {
   });
 
   it("should show all disabled reasons on hover and keyboard activation", async () => {
-    const user = userEvent.setup();
-    render(<TestWrapper><ChatInputArea {...defaultProps} disabled
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const rendered = render(<TestWrapper><ChatInputArea {...defaultProps} disabled
       disabledReasons={["This conversation contains a target error.", "The attack is loading."]} /></TestWrapper>);
-    const composer = screen.getByLabelText("Why the prompt box is disabled");
-    await user.hover(composer);
-    expect(await screen.findByText("Prompt input is disabled")).toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(2);
-    expect(screen.getByText("This conversation contains a target error.")).toBeInTheDocument();
-    await user.keyboard("{Escape}");
-    composer.focus();
-    await user.keyboard("{Enter}");
-    expect(await screen.findByText("Prompt input is disabled")).toBeInTheDocument();
+    try {
+      const composer = screen.getByLabelText("Why the prompt box is disabled");
+      await user.hover(composer);
+      act(() => { jest.advanceTimersByTime(700); });
+      const explanation = within(screen.getByRole("group", { name: "Prompt input is disabled" }));
+      expect(explanation.getAllByRole("listitem")).toHaveLength(2);
+      expect(explanation.getByText("This conversation contains a target error.")).toBeVisible();
+      expect(explanation.getByText("The attack is loading.")).toBeVisible();
+      composer.focus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("group", { name: "Prompt input is disabled" })).not.toBeInTheDocument();
+      composer.focus();
+      await user.keyboard("{Enter}");
+      expect(screen.getByRole("group", { name: "Prompt input is disabled" })).toBeVisible();
+    } finally {
+      rendered.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("should wait 700 ms before opening the disabled-input explanation on hover", async () => {
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const rendered = render(<TestWrapper><ChatInputArea {...defaultProps} disabled /></TestWrapper>);
+    try {
+      await user.hover(screen.getByLabelText("Why the prompt box is disabled"));
+      act(() => { jest.advanceTimersByTime(699); });
+      expect(screen.queryByText("Prompt input is disabled")).not.toBeInTheDocument();
+      act(() => { jest.advanceTimersByTime(1); });
+      expect(screen.getByText("Prompt input is disabled")).toBeInTheDocument();
+    } finally {
+      rendered.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("should cancel a brief hover and still open immediately on click or Enter", async () => {
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const rendered = render(<TestWrapper><ChatInputArea {...defaultProps} disabled /></TestWrapper>);
+    try {
+      const overlay = screen.getByLabelText("Why the prompt box is disabled");
+      await user.hover(overlay);
+      act(() => { jest.advanceTimersByTime(300); });
+      await user.unhover(overlay);
+      act(() => { jest.advanceTimersByTime(700); });
+      expect(screen.queryByText("Prompt input is disabled")).not.toBeInTheDocument();
+      await user.click(overlay);
+      expect(screen.getByText("Prompt input is disabled")).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      overlay.focus();
+      await user.keyboard("{Enter}");
+      expect(screen.getByText("Prompt input is disabled")).toBeInTheDocument();
+    } finally {
+      rendered.unmount();
+      jest.useRealTimers();
+    }
   });
 
   it("should explain a temporary disabled state even when no reason was supplied", async () => {
@@ -125,6 +247,66 @@ describe("ChatInputArea", () => {
     render(<TestWrapper><ChatInputArea {...defaultProps} activeTarget={makeTarget({})} disabled /></TestWrapper>);
     await user.click(screen.getByLabelText("Why the prompt box is disabled"));
     expect(screen.getByRole("listitem")).toHaveTextContent("Wait for the current operation to finish.");
+  });
+
+  it("should explain an empty draft in the Send tooltip and restore the label when ready", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} /></TestWrapper>);
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Send message: Enter a prompt or attach a file.");
+    await user.unhover(getSendButton());
+    await user.type(screen.getByRole("textbox"), "Ready to send");
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/^Send message$/);
+    expect(getSendButton()).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("should explain all Send blockers without disabling drafting", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} sendDisabled sendDisabledReasons={[
+      "Select a target to send a message.",
+      "Choose a saved Operation, register, or clear this one to start new attacks and scans.",
+    ]} /></TestWrapper>);
+    await user.type(screen.getByRole("textbox"), "Keep this draft");
+    await user.hover(getSendButton());
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Send message: Select a target to send a message.");
+    expect(tooltip).toHaveTextContent("Choose a saved Operation, register, or clear this one");
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
+    await user.click(getSendButton());
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
+  });
+
+  it("should explain disabled input in the Send tooltip on keyboard focus", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} disabled
+      disabledReasons={["A message is being sent. Wait for the response."]} /></TestWrapper>);
+    await user.tab();
+    expect(getSendButton()).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Send message: A message is being sent.");
+    await user.keyboard("{Enter} ");
+    await user.click(getSendButton());
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
+  });
+
+  it("should explain a temporary Send blocker when no reason was supplied", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} sendDisabled /></TestWrapper>);
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Send message: Sending is temporarily unavailable.");
+  });
+
+  it("should explain unsupported converter output in the Send tooltip", async () => {
+    const user = userEvent.setup();
+    render(<TestWrapper><ChatInputArea {...defaultProps} converterOutputDataTypes={["audio_path"]}
+      activeTarget={makeTarget({ capabilities: buildCapabilities({ supported_input_modalities: ["text"] }) })} /></TestWrapper>);
+    await user.type(screen.getByRole("textbox"), "Convert this");
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Send message: The selected converter produces audio output, which this target does not support."
+    );
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should show a retry action when target verification fails", async () => {
@@ -211,15 +393,33 @@ describe("ChatInputArea", () => {
     const increase = screen.getByRole("button", { name: "Increase repetitions" });
     expect(decrease).toBeDisabled();
     expect(screen.getByRole("radio", { name: "Convert once, reuse for all" })).toBeChecked();
-    const converterHelp = screen.getByText(/single sends and shared repeats use only applied conversions/i);
-    expect(converterHelp).toHaveTextContent("Use Add converted value before sending.");
+    const converterHelp = screen.getByText(/completed conversions are added to the prompt automatically/i);
+    expect(converterHelp).toHaveTextContent("Shared repeats use that prompt.");
     expect(converterHelp).toHaveTextContent("Independent repeats run unapplied pipelines on original inputs.");
-    expect(converterHelp).toHaveTextContent("Applied previews stay unchanged in either mode.");
+    expect(converterHelp).toHaveTextContent("Repeated sends are unavailable for edited or partially converted prompts.");
     for (let count = 1; count < 10; count++) await user.click(increase);
     expect(increase).toBeDisabled();
     expect(screen.getByRole("button", { name: "Repetitions: 10" })).toHaveTextContent("n=10");
     for (let count = 10; count > 1; count--) await user.click(decrease);
     expect(decrease).toBeDisabled();
+  });
+
+  it("should disable repeated sends with a hover explanation and submit edited text only once", async () => {
+    const user = userEvent.setup();
+    const onSend = jest.fn().mockResolvedValue(sentOutcome);
+    const reason = "Repeated sends are unavailable for edited or partially converted prompts.";
+    const { rerender } = render(<TestWrapper><ChatInputArea {...defaultProps} onSend={onSend} /></TestWrapper>);
+    await user.type(screen.getByRole("textbox"), "Source prompt");
+    await user.click(screen.getByRole("button", { name: "Repetitions: 1" }));
+    await user.click(screen.getByRole("button", { name: "Increase repetitions" }));
+    await user.keyboard("{Escape}");
+    rerender(<TestWrapper><ChatInputArea {...defaultProps} onSend={onSend}
+      convertedValue="Edited output" repeatDisabledReason={reason} /></TestWrapper>);
+    expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeDisabled();
+    await user.hover(screen.getByLabelText(reason));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    await user.click(getSendButton());
+    expect(onSend).toHaveBeenCalledWith("Source prompt", "Edited output", []);
   });
 
   it.each(["Enter", "Send"])("should submit the same repeat options with %s and reset before completion", async (action: string) => {
@@ -276,7 +476,7 @@ describe("ChatInputArea", () => {
     );
 
     const sendButton = getSendButton();
-    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should enable send button when input has text", async () => {
@@ -292,7 +492,7 @@ describe("ChatInputArea", () => {
     await user.type(input, "Some text");
 
     const sendButton = getSendButton();
-    expect(sendButton).toBeEnabled();
+    expect(sendButton).not.toHaveAttribute("aria-disabled");
   });
 
   it("should allow draft edits while sending is disabled", async () => {
@@ -306,7 +506,7 @@ describe("ChatInputArea", () => {
     const input = screen.getByRole("textbox");
     await user.type(input, "Draft while history loads");
     expect(input).toBeEnabled();
-    expect(getSendButton()).toBeDisabled();
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
     await user.keyboard("{Enter}");
     await user.click(getSendButton());
     expect(onSend).not.toHaveBeenCalled();
@@ -575,7 +775,7 @@ describe("ChatInputArea", () => {
     );
 
     const sendButton = getSendButton();
-    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should have file input for attachments", () => {
@@ -704,7 +904,7 @@ describe("ChatInputArea", () => {
 
     // Should be able to send with just attachment
     const sendButton = getSendButton();
-    expect(sendButton).toBeEnabled();
+    expect(sendButton).not.toHaveAttribute("aria-disabled");
     await user.click(sendButton);
 
     expect(onSend).toHaveBeenCalled();
@@ -768,7 +968,7 @@ describe("ChatInputArea", () => {
 
     expect(
       screen.getByText(
-        /does not track conversation history/
+        /only supports single-turn conversations/
       )
     ).toBeInTheDocument();
   });
@@ -856,7 +1056,7 @@ describe("ChatInputArea", () => {
     });
 
     // Send button should be enabled since there's an attachment
-    expect(screen.getByRole("button", { name: /send message/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /send message/i })).not.toHaveAttribute("aria-disabled");
   });
 
   it("should synchronously report each recovered and uploaded attachment with a distinct draft identity", () => {
@@ -1034,62 +1234,30 @@ describe("ChatInputArea", () => {
     expect(screen.queryByText(/\(\s*\d+(?:\.\d+)?\s*[KM]?B\s*\)/)).toBeNull();
   });
 
-  it("should show single-turn banner when singleTurnLimitReached is true", () => {
-    render(
-      <TestWrapper>
-        <ChatInputArea
-          {...defaultProps}
-          singleTurnLimitReached={true}
-          onNewConversation={jest.fn()}
-        />
-      </TestWrapper>
-    );
-
-    expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
-    expect(screen.getByText(/only supports single-turn/)).toBeInTheDocument();
-    expect(screen.getByTestId("new-conversation-btn")).toBeInTheDocument();
-    // Input area should not be rendered
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-  });
-
-  it("should call onNewConversation when New Conversation button clicked", async () => {
+  it.each([false, true])("keeps the disabled single-turn composer visible with Undo present=%s", async (withUndo: boolean) => {
     const user = userEvent.setup();
-    const onNewConversation = jest.fn();
-
-    render(
-      <TestWrapper>
-        <ChatInputArea
-          {...defaultProps}
-          singleTurnLimitReached={true}
-          onNewConversation={onNewConversation}
-        />
-      </TestWrapper>
-    );
-
-    await user.click(screen.getByTestId("new-conversation-btn"));
-    expect(onNewConversation).toHaveBeenCalledTimes(1);
+    render(<TestWrapper><ChatInputArea {...defaultProps} disabled
+      disabledReasons={["This target only supports single-turn conversations."]}
+      undoLastSend={withUndo ? { onUndo: jest.fn(), isUndoing: false, disabledReason: "No saved converter state." } : undefined}
+    /></TestWrapper>);
+    expect(screen.getByRole("textbox")).toBeDisabled();
+    expect(screen.queryByTestId("single-turn-banner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("new-conversation-btn")).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText("Why the prompt box is disabled"));
+    expect(screen.getByRole("listitem")).toHaveTextContent("This target only supports single-turn conversations.");
+    expect(screen.queryByText(/Wait for the current operation/)).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("This target only supports single-turn conversations.");
+    await user.click(getSendButton());
+    expect(defaultProps.onSend).not.toHaveBeenCalled();
   });
 
-  it("should show New Conversation button when singleTurnLimitReached", () => {
+  it("should show normal input before a single-turn send", () => {
     render(
       <TestWrapper>
         <ChatInputArea
           {...defaultProps}
-          singleTurnLimitReached={true}
-        />
-      </TestWrapper>
-    );
-
-    expect(screen.getByTestId("single-turn-banner")).toBeInTheDocument();
-    expect(screen.getByTestId("new-conversation-btn")).toBeInTheDocument();
-  });
-
-  it("should show normal input when singleTurnLimitReached is false", () => {
-    render(
-      <TestWrapper>
-        <ChatInputArea
-          {...defaultProps}
-          singleTurnLimitReached={false}
         />
       </TestWrapper>
     );
@@ -1403,6 +1571,33 @@ describe("ChatInputArea", () => {
   // Unsupported modality warnings
   // ---------------------------------------------------------------------------
 
+  it("validates converted attachment types while retaining their unsupported originals", async () => {
+    const user = userEvent.setup();
+    const ref = { current: null as ChatInputAreaHandle | null };
+    const props = {
+      ...defaultProps,
+      activeTarget: makeTarget({
+        target_registry_name: "text", capabilities: buildCapabilities({ supported_input_modalities: ["text"] }),
+      }),
+    };
+    const rendered = render(<TestWrapper><ChatInputArea ref={ref} {...props}
+      mediaConversions={[{ pieceId: "image", convertedValue: "Image transcript", convertedDataType: "text" }]} />
+    </TestWrapper>);
+    act(() => { ref.current?.restoreDraft("", [{
+      draftId: "image", type: "image", name: "original.png", url: "/original.png", mimeType: "image/png",
+    }]); });
+    expect(screen.queryByTestId("unsupported-modality-warning")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).not.toHaveAttribute("aria-disabled");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(defaultProps.onSend).toHaveBeenCalled();
+    rendered.rerender(<TestWrapper><ChatInputArea ref={ref} {...props} mediaConversions={[]} /></TestWrapper>);
+    act(() => { ref.current?.restoreDraft("", [{
+      draftId: "image", type: "image", name: "original.png", url: "/original.png", mimeType: "image/png",
+    }]); });
+    expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute("aria-disabled", "true");
+  });
+
   it("should show warning when attaching image to text-only target", async () => {
     const user = userEvent.setup();
 
@@ -1424,9 +1619,12 @@ describe("ChatInputArea", () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support image attachments/)).toBeInTheDocument();
+      expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support image attachments/);
     });
+    await user.hover(getSendButton());
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Send message: This target does not support image attachments. Remove them to send."
+    );
   });
 
   it("should not show warning when attaching image to image-capable target", async () => {
@@ -1495,8 +1693,7 @@ describe("ChatInputArea", () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support audio attachments/)).toBeInTheDocument();
+      expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support audio attachments/);
     });
   });
 
@@ -1524,8 +1721,7 @@ describe("ChatInputArea", () => {
     await user.upload(fileInput, files);
 
     await waitFor(() => {
-      expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support image, audio attachments/)).toBeInTheDocument();
+      expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support image, audio attachments/);
     });
   });
 
@@ -1556,7 +1752,7 @@ describe("ChatInputArea", () => {
     });
 
     // Send should be disabled (warning is blocking)
-    expect(getSendButton()).toBeDisabled();
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should show warning for file attachment to text-only target", async () => {
@@ -1580,8 +1776,7 @@ describe("ChatInputArea", () => {
     await user.upload(fileInput, file);
 
     await waitFor(() => {
-      expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-      expect(screen.getByText(/does not support file attachments/)).toBeInTheDocument();
+      expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support file attachments/);
     });
   });
 
@@ -1605,9 +1800,10 @@ describe("ChatInputArea", () => {
     const input = screen.getByRole("textbox");
     await user.type(input, "convert this to image");
 
-    expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
-    expect(screen.getByText(/selected converter produces image output, which this target does not support/)).toBeInTheDocument();
-    expect(getSendButton()).toBeDisabled();
+    expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(
+      /selected converter produces image output, which this target does not support/
+    );
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("should not block when converter output type is supported by target", () => {
@@ -1653,11 +1849,125 @@ describe("ChatInputArea", () => {
       expect(screen.getByTestId("unsupported-modality-warning")).toBeInTheDocument();
     });
     // Attachment message — uses UI piece type
-    expect(screen.getByText(/does not support image attachments\. Remove them to send\./)).toBeInTheDocument();
+    expect(screen.getByTestId("unsupported-modality-warning")).toHaveTextContent(/does not support image attachments\. Remove them to send\./);
     // Converter message — uses formatted modality label (audio, not audio_path)
     expect(
-      screen.getByText(/selected converter produces audio output, which this target does not support/)
-    ).toBeInTheDocument();
-    expect(getSendButton()).toBeDisabled();
+      screen.getByTestId("unsupported-modality-warning")
+    ).toHaveTextContent(/selected converter produces audio output, which this target does not support/);
+    expect(getSendButton()).toHaveAttribute("aria-disabled", "true");
+  });
+
+  describe("attachment blob URL lifecycle and metadata", () => {
+    let revokeSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      revokeSpy = jest.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      revokeSpy.mockRestore();
+    });
+
+    it("preserves initialAttachments blob URLs without calling URL.revokeObjectURL on mount", () => {
+      const attachment: MessageAttachment = {
+        name: "photo.png",
+        type: "image/png",
+        url: "blob:http://localhost/active-photo",
+        size: 2048,
+        draftId: "draft-photo-1",
+      };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            {...defaultProps}
+            initialAttachments={[attachment]}
+            initialText="restored prompt text"
+          />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText(/photo\.png/)).toBeInTheDocument();
+      expect(revokeSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not revoke blob URL when restoreDraft updates attachments with identical URLs", () => {
+      const handleRef = React.createRef<ChatInputAreaHandle>();
+      const initialAttachment: MessageAttachment = {
+        name: "photo.png",
+        type: "image/png",
+        url: "blob:http://localhost/active-photo",
+        size: 2048,
+        draftId: "draft-photo-1",
+      };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            ref={handleRef}
+            {...defaultProps}
+            initialAttachments={[initialAttachment]}
+            initialText="prompt text"
+          />
+        </TestWrapper>
+      );
+
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      // Calling restoreDraft with the same attachment or cloned copy should NOT revoke its URL
+      act(() => {
+        handleRef.current?.restoreDraft("updated prompt", [{ ...initialAttachment }]);
+      });
+
+      expect(revokeSpy).not.toHaveBeenCalled();
+    });
+
+    it("revokes blob URL when attachment is explicitly removed", async () => {
+      const user = userEvent.setup();
+      const attachment: MessageAttachment = {
+        name: "photo.png",
+        type: "image/png",
+        url: "blob:http://localhost/remove-me",
+        size: 2048,
+        draftId: "draft-photo-2",
+      };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            {...defaultProps}
+            initialAttachments={[attachment]}
+            initialText="prompt text"
+          />
+        </TestWrapper>
+      );
+
+      expect(screen.getByText(/photo\.png/)).toBeInTheDocument();
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      const removeBtn = screen.getByRole("button", { name: "Remove photo.png" });
+      await user.click(removeBtn);
+
+      expect(revokeSpy).toHaveBeenCalledTimes(1);
+      expect(revokeSpy).toHaveBeenCalledWith("blob:http://localhost/remove-me");
+    });
+
+    it("retains initialTextMetadata and exposes via getTextMetadata", () => {
+      const handleRef = React.createRef<ChatInputAreaHandle>();
+      const metadata = { datasetId: "ds-123", seedIndex: 42 };
+
+      render(
+        <TestWrapper>
+          <ChatInputArea
+            ref={handleRef}
+            {...defaultProps}
+            initialText="seed prompt"
+            initialTextMetadata={metadata}
+          />
+        </TestWrapper>
+      );
+
+      expect(handleRef.current?.getTextMetadata()).toEqual(metadata);
+    });
   });
 });

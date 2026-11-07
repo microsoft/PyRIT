@@ -306,9 +306,10 @@ class AzureBlobStorageIO(StorageIO):
         """
         parsed_url = urlparse(file_path)
         if parsed_url.scheme and parsed_url.netloc:
-            container_name = parsed_url.path.split("/")[1]
-            blob_name = "/".join(parsed_url.path.split("/")[2:])
-            return container_name, blob_name
+            path_parts = parsed_url.path.split("/")
+            # A valid blob URL has a non-empty container segment in its path.
+            if len(path_parts) > 1 and path_parts[1]:
+                return path_parts[1], "/".join(path_parts[2:])
         raise ValueError("Invalid blob URL")
 
     def _resolve_blob_name(self, path: Path | str) -> str:

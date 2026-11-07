@@ -5,14 +5,20 @@
 
 import unicodedata
 
+import regex
+
+_COMBINING_MARK_PATTERN = regex.compile(r"\p{M}")
+
 
 def _is_combining_mark(char: str) -> bool:
-    return unicodedata.category(char).startswith("M")
+    return _COMBINING_MARK_PATTERN.fullmatch(char) is not None
 
 
 def _letter_units(word: str) -> list[str]:
     """
     Split a canonically composed word into letters with their combining marks attached.
+
+    Mark classification uses the same Unicode properties as the word scanner.
 
     Args:
         word (str): The word or puzzle sequence to split.

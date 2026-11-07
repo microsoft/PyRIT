@@ -25,8 +25,14 @@ class LeetspeakConverter(WordLevelConverter):
             deterministic (bool): If True, use the first substitution for each character.
                 If False, randomly choose a substitution for each character.
             custom_substitutions (dict | None): A dictionary of custom substitutions to override the defaults.
+                Each key is a single character, matched case-insensitively, and maps to a non-empty
+                list of replacement strings.
             word_selection_strategy (WordSelectionStrategy | None): Strategy for selecting which words to convert.
                 If None, all words will be converted.
+
+        Raises:
+            ValueError: If ``custom_substitutions`` has a key that is not a single character, two keys
+                that differ only in case, or a value that is not a non-empty list of strings.
         """
         super().__init__(word_selection_strategy=word_selection_strategy)
 
@@ -44,10 +50,49 @@ class LeetspeakConverter(WordLevelConverter):
             "z": ["2"],
         }
 
+        if custom_substitutions is not None:
+            custom_substitutions = self._validate_custom_substitutions(custom_substitutions)
+
         # Use custom substitutions if provided, otherwise default to the standard ones
         self._leet_substitutions = custom_substitutions if custom_substitutions else default_substitutions
         self._deterministic = deterministic
         self._has_custom_substitutions = custom_substitutions is not None
+
+    @staticmethod
+    def _validate_custom_substitutions(custom_substitutions: dict[str, list[str]]) -> dict[str, list[str]]:
+        """
+        Validate custom substitutions and key them by lowercase character.
+
+        ``convert_word_async`` looks characters up in lowercase, so an uppercase or multi-character
+        key would never match, and an empty replacement list would fail on the first matching character.
+
+        Args:
+            custom_substitutions (dict[str, list[str]]): The substitutions passed to the converter.
+
+        Returns:
+            dict[str, list[str]]: The substitutions keyed by lowercase character.
+
+        Raises:
+            ValueError: If a key is not a single character, two keys differ only in case, or a value
+                is not a non-empty list of strings.
+        """
+        normalized: dict[str, list[str]] = {}
+        for char, replacements in custom_substitutions.items():
+            if not isinstance(char, str) or len(char) != 1:
+                raise ValueError(f"custom_substitutions keys must be single characters, got {char!r}.")
+            if (
+                not isinstance(replacements, list)
+                or not replacements
+                or not all(isinstance(replacement, str) for replacement in replacements)
+            ):
+                raise ValueError(
+                    f"custom_substitutions[{char!r}] must be a non-empty list of strings, got {replacements!r}."
+                )
+            lower_char = char.lower()
+            if lower_char in normalized:
+                raise ValueError(f"custom_substitutions has more than one key for {lower_char!r}.")
+            normalized[lower_char] = list(replacements)
+        return normalized
 
     def _build_identifier(self) -> ComponentIdentifier:
         """

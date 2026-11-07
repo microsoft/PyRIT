@@ -85,7 +85,7 @@ class TestScorerInitializerInitialize:
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
 
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
@@ -280,7 +280,7 @@ class TestScorerInitializerInitialize:
         os.environ.update(self.CONTENT_SAFETY_ENV_VARS)
 
         init = ScorerInitializer()
-        init.params = {"tags": ["default"]}
+        init.set_params_from_args(args={"tags": ["default"]})
         await init.initialize_async()
 
         registry = ScorerRegistry.get_registry_singleton()
@@ -316,7 +316,7 @@ class TestScorerInitializerBestObjective:
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
 
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
@@ -448,7 +448,7 @@ class TestScorerInitializerCategoryTags:
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
 
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
@@ -600,7 +600,7 @@ class TestScorerInitializerRoundRobin:
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
 
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
@@ -625,7 +625,7 @@ class TestScorerInitializerRoundRobin:
 
     def _register_mock_rr_target(self, *, name: str) -> MagicMock:
         """Register a mock RoundRobinTarget under the given name."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
         from pyrit.prompt_target import RoundRobinTarget
 
         rr_mock = MagicMock(spec=RoundRobinTarget)

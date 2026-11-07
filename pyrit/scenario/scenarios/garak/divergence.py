@@ -15,9 +15,10 @@ from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, DivergesFromRepetition, ScoringExpectation, Seed, SeedObjective, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.scenario.core import DatasetConstraintError
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError, DatasetSource
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.score import DivergenceScorer, TrueFalseScorer
@@ -138,7 +139,7 @@ class Divergence(Scenario):
             list[AtomicAttack]: Word populations sharing one scorer and attack technique.
         """
         scorer = cast("TrueFalseScorer", self._objective_scorer)
-        converters = self._technique_converters.get("repeat", [])
+        converters = context.technique_converters.get("repeat", [])
         technique = self._REPEAT_FACTORY.create(
             objective_target=context.objective_target,
             attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),

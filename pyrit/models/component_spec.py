@@ -1,0 +1,67 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""References for constructing private variants of registered components."""
+
+from typing import Annotated, Literal, Self
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from pyrit.models.identifiers.component_identifier import JSONValue
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
+
+
+class RegisteredComponentReference(BaseModel):
+    """An existing registry entry pinned to its complete configuration identity."""
+
+    registry_name: str = Field(min_length=1, max_length=128)
+    identifier_hash: str = Field(min_length=1, max_length=128)
+
+
+class SourceInstanceSpec(BaseModel):
+    """A source identity and constructor overrides, never a live object handle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_name: str = Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    source_hash: str = Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    params: dict[Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)], JSONValue] = Field(
+        default_factory=dict, max_length=MAX_ITEMS
+    )
+    effective_hash: str | None = Field(None, max_length=MAX_IDENTIFIER_LENGTH)
+
+
+class TargetBinding(BaseModel):
+    """Non-secret reconstruction information saved with a manual attack."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    source_name: str = Field(min_length=1)
+    source_hash: str = Field(min_length=1)
+    temperature: float = Field(ge=0, le=2, allow_inf_nan=False)
+    effective_hash: str = Field(min_length=1)
+
+    def to_spec(self) -> SourceInstanceSpec:
+        """Return the constructor specification."""
+        return SourceInstanceSpec(
+            source_name=self.source_name,
+            source_hash=self.source_hash,
+            params={"temperature": self.temperature},
+            effective_hash=self.effective_hash,
+        )
+
+    def to_metadata(self) -> dict[str, JSONValue]:
+        """Return the metadata entry owned by this value."""
+        return {"target_binding": self.model_dump(mode="json")}
+
+    @classmethod
+    def from_metadata(cls, metadata: dict[str, object]) -> Self | None:
+        """
+        Read a binding without treating invalid saved data as a default.
+
+        Returns:
+            Self | None: The validated binding, or None when no binding is stored.
+        """
+        value = metadata.get("target_binding")
+        return cls.model_validate(value) if value is not None else None

@@ -34,6 +34,7 @@ async def _seed_async(memory: SQLiteMemory) -> None:
         Conversation,
         ConverterIdentifier,
         MessagePiece,
+        Operation,
         ScenarioIdentifier,
         ScenarioResult,
         ScenarioRunState,
@@ -57,6 +58,8 @@ async def _seed_async(memory: SQLiteMemory) -> None:
     ]
     harms = ["Privacy", "Misinformation", "Cybersecurity"]
     attack_names = ["PromptSendingAttack", "RedTeamingAttack", "CrescendoAttack"]
+    baseline = await memory.add_operation_async(Operation(id=uuid.UUID(int=0xA001), name="Synthetic baseline"))
+    pilot = await memory.add_operation_async(Operation(id=uuid.UUID(int=0xA002), name="Synthetic pilot"))
     results: list[AttackResult] = []
     for index in range(204):
         configuration = (index // 2) % 3
@@ -112,14 +115,9 @@ async def _seed_async(memory: SQLiteMemory) -> None:
                     ),
                 ]
             )
-        operation = (
-            "Synthetic baseline"
-            if index < 80
-            else "Synthetic pilot"
-            if index < 120
-            else "Synthetic follow-up"
-            if index < 144
-            else f"Synthetic batch {index - 144:02}"
+        operation = baseline if index < 80 else pilot if index < 120 else None
+        legacy_operation = (
+            None if operation else "Synthetic follow-up" if index < 144 else f"Synthetic batch {index - 144:02}"
         )
         role = (AttackResultRole.TARGET_FACING, AttackResultRole.ORCHESTRATION, AttackResultRole.UNKNOWN)[index % 3]
         results.append(
@@ -130,7 +128,8 @@ async def _seed_async(memory: SQLiteMemory) -> None:
                 outcome=AttackOutcome(outcomes[index % len(outcomes)]),
                 atomic_attack_identifier=None if index % 19 == 18 else identifier,
                 operator=("Alex (synthetic)", "Sam (synthetic)", "Jordan (synthetic)")[configuration],
-                operation=operation,
+                operation=legacy_operation,
+                operation_id=operation.id if operation else None,
                 timestamp=start + timedelta(minutes=index),
                 targeted_harm_categories=[harms[configuration]]
                 + ([harms[(configuration + 1) % 3]] if index % 5 == 0 else []),

@@ -2,9 +2,10 @@
 # Licensed under the MIT license.
 
 import asyncio
+import hashlib
 
 from pyrit.converter.converter import Converter, ConverterResult
-from pyrit.models import PromptDataType
+from pyrit.models import ComponentIdentifier, PromptDataType
 
 
 class NegationTrapConverter(Converter):
@@ -57,6 +58,20 @@ class NegationTrapConverter(Converter):
             raise ValueError("trap_template must contain '{wrong_value}' placeholder")
         if "{prompt}" not in self.trap_template:
             raise ValueError("trap_template must contain '{prompt}' placeholder")
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build identifier with negation trap parameters.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "wrong_value": self.wrong_value,
+                "trap_template_hash": hashlib.sha256(self.trap_template.encode("utf-8")).hexdigest()[:16],
+            }
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """

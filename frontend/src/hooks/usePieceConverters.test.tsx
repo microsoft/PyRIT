@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 
 import { convertersApi } from '@/services/api'
-import type { ConverterInputPiece, ConverterPreviewResponse } from '@/types'
+import type { ConverterInputPiece, ConverterPreviewResponse, PieceConversionUpdates } from '@/types'
 import { buildAppliedConversions } from '@/utils/conversionResults'
 
 import { usePieceConverters } from './useChatConverters'
@@ -27,6 +27,26 @@ const second: ConverterInputPiece[] = [{ id: 'two', pieceType: 'text', name: 'Se
 describe('usePieceConverters', () => {
   beforeEach(() => jest.resetAllMocks())
 
+  it('keeps stage edits when editor selection changes and converts only selected pieces', async () => {
+    jest.mocked(convertersApi.previewConversion).mockResolvedValue(response('converted'))
+    const inputs = [...first, ...second]
+    const { result, rerender } = renderHook(({ selected }: { selected: string }) => usePieceConverters(
+      inputs, undefined, { selectedIds: new Set([selected]) },
+    ), { initialProps: { selected: 'one' } })
+    act(() => result.current.addConverter('text', 'converter'))
+    await act(async () => { await result.current.convert('text') })
+    const stageId = result.current.stageResults.one[0].stageId
+    act(() => { result.current.editStageOutput('one', stageId, 'Edited first') })
+    rerender({ selected: 'two' })
+    expect(result.current.inputs.map((input) => input.id)).toEqual(['two'])
+    expect(result.current.results).toEqual({})
+    await act(async () => { await result.current.convert('text') })
+    rerender({ selected: 'one' })
+    expect(result.current.results.one.converted_value).toBe('Edited first')
+    expect(result.current.snapshot().stageResults.two[0].value).toBe('converted')
+    expect(convertersApi.previewConversion).toHaveBeenCalledTimes(2)
+  })
+
   it('starts the new selection immediately and ignores a late result from the old selection', async () => {
     let resolveOld: (value: ConverterPreviewResponse) => void = () => {}
     jest.mocked(convertersApi.previewConversion)
@@ -37,7 +57,7 @@ describe('usePieceConverters', () => {
       { initialProps: { inputs: first, scope: 'first-message' } },
     )
     act(() => result.current.addConverter('text', 'converter'))
-    let pending: Promise<void>
+    let pending: Promise<PieceConversionUpdates | void>
     act(() => { pending = result.current.convert('text') })
     await waitFor(() => expect(convertersApi.previewConversion).toHaveBeenCalledTimes(1))
     rerender({ inputs: second, scope: 'second-message' })
@@ -95,7 +115,9 @@ describe('usePieceConverters', () => {
     })
     await act(async () => { await result.current.convert('text') })
     const stageId = result.current.stageResults.one[0].stageId
-    act(() => { result.current.editStageOutput('one', stageId, 'manual middle') })
+    let updates: PieceConversionUpdates | void = undefined
+    act(() => { updates = result.current.editStageOutput('one', stageId, 'manual middle') })
+    expect(updates).toEqual({ one: null })
     expect(result.current.stageResults.one).toHaveLength(1)
     expect(result.current.results.one).toBeUndefined()
     await act(async () => { await result.current.convertRemaining('one', stageId) })

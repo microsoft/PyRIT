@@ -7,16 +7,20 @@ import asyncio
 from functools import lru_cache
 from typing import Any
 
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scorers import (
+from pyrit.backend.models import (
     CreateScorerRequest,
+    PaginationInfo,
     ScorerListResponse,
     ScorerTypeEntry,
     ScorerTypeResponse,
 )
-from pyrit.models.catalog.scorer import ScorerInstance
-from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
+from pyrit.backend.models.scorers import UnregisteredScorer
+from pyrit.models import ScorerEvaluationIdentifier, ScorerIdentifier, project_behavioral_identity
+from pyrit.models.catalog import ScorerInstance
+from pyrit.models.component_spec import RegisteredComponentReference
+from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
 from pyrit.registry import ScorerRegistry
+from pyrit.score import Scorer
 
 
 class ScorerService:
@@ -27,11 +31,58 @@ class ScorerService:
         self._registry = ScorerRegistry.get_registry_singleton()
 
     def _build_instance(self, *, name: str, scorer: Any) -> ScorerInstance:
+        from pyrit.backend.services.chat_scoring_service import ChatScoringService
+
         metadata = self._registry.get_registered_class_metadata(scorer.__class__.__name__)
+        identifier = ScorerIdentifier.from_component_identifier(scorer.get_identifier())
+        evaluation_identifier = project_behavioral_identity(identifier, identifier_type=ScorerIdentifier)
         return ScorerInstance(
             scorer_registry_name=name,
-            identifier=ScorerIdentifier.from_component_identifier(scorer.get_identifier()),
+            identifier=identifier,
+            display_type=format_scorer_type(identifier),
+            scorable_types=sorted(
+                kind.model_fields["scorable_type"].default for kind in scorer.get_supported_scorable_types()
+            ),
+            condition_types=sorted(kind.__name__ for kind in scorer.get_condition_types()),
+            evaluation_identifier=evaluation_identifier.with_eval_hash(
+                ScorerEvaluationIdentifier(identifier).eval_hash
+            ),
+            metrics=scorer_metrics_to_dict(scorer.get_scorer_metrics()),
             description=metadata.class_description or None if metadata else None,
+            chat_scoring_disabled_reason=ChatScoringService.disabled_reason(scorer),
+        )
+
+    def resolve_registered_scorer(self, reference: RegisteredComponentReference) -> Scorer:
+        """
+        Resolve the exact configured instance without silently replacing its identity.
+
+        Returns:
+            The configured response scorer.
+
+        Raises:
+            ValueError: The selected scorer is missing, changed, or incompatible.
+        """
+        scorer = self._registry.instances.get(reference.registry_name)
+        if scorer is None:
+            raise ValueError("The selected chat scorer is no longer registered.")
+        if scorer.get_identifier().hash != reference.identifier_hash:
+            raise ValueError("The selected chat scorer configuration changed. Select it again.")
+        return scorer
+
+    def find_registered_scorer(self, identifier_hash: str) -> Scorer | None:
+        """
+        Find the exact recorded scorer even when its registry alias differs.
+
+        Returns:
+            An existing configured scorer, or None when no exact match is registered.
+        """
+        return next(
+            (
+                entry.instance
+                for entry in self._registry.instances.get_all_instances()
+                if entry.instance.get_identifier().hash == identifier_hash
+            ),
+            None,
         )
 
     async def list_scorer_types_async(self) -> ScorerTypeResponse:
@@ -40,7 +91,9 @@ class ScorerService:
 
         Each entry lists only the parameters external callers may supply, each
         described in the form callers send it; types that need a Python object for a
-        required parameter are left out.
+        required parameter are left out. Parameters that name a file on the server,
+        and types that require one, are left out too, so callers cannot choose a
+        server file for a scorer to read.
 
         Returns:
             ScorerTypeResponse: Scorer type metadata for external callers.
@@ -53,13 +106,13 @@ class ScorerService:
                     parameters=[
                         parameter.for_external_catalog()
                         for parameter in metadata.parameters
-                        if parameter.is_external_input
+                        if parameter.is_allowed_external_input()
                     ],
                     is_llm_based=metadata.is_llm_based,
                     description=metadata.class_description or None,
                 )
                 for metadata in self._registry.get_all_registered_class_metadata()
-                if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+                if all(parameter.is_allowed_external_input() for parameter in metadata.parameters if parameter.required)
             ]
             return ScorerTypeResponse(items=items)
 
@@ -71,11 +124,19 @@ class ScorerService:
 
         Returns:
             ScorerListResponse: A page and its pagination metadata.
+
+        Raises:
+            ValueError: If the cursor does not name a registered scorer instance.
         """
 
         def list_instances() -> ScorerListResponse:
             entries = self._registry.instances.get_all_instances()
-            start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), 0)
+            start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), None)
+            if cursor and start is None:
+                # A cursor naming an entry that no longer exists must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the scorer registry")
+            start = start or 0
             page = entries[start : start + limit]
             has_more = len(entries) > start + limit
             return ScorerListResponse(
@@ -104,17 +165,32 @@ class ScorerService:
 
         return await asyncio.to_thread(get_instance)
 
-    async def create_scorer_async(self, *, request: CreateScorerRequest) -> ScorerInstance:
+    async def create_scorer_async(self, *, request: CreateScorerRequest) -> ScorerInstance | UnregisteredScorer:
         """
-        Build and register a scorer through the shared registry resolver.
+        Build a scorer through the shared registry resolver, with optional registration.
+
+        A parameter that names a file on the server is rejected before the scorer is
+        built, so the server never reads a file a caller chose.
 
         Returns:
-            ScorerInstance: The registered scorer and its identifier.
+            ScorerInstance | UnregisteredScorer: A named instance, or an unregistered
+                descriptor when ``register`` is false.
+
+        Raises:
+            ValueError: If the scorer type is unknown, a parameter names a file on the
+                server, or the registry or scorer rejects the parameters.
         """
 
-        def create() -> ScorerInstance:
+        def create() -> ScorerInstance | UnregisteredScorer:
             if request.type not in self._registry:
                 raise ValueError(f"Scorer type '{request.type}' not found")
+            if not request.register:
+                scorer = self._registry.create_instance_from_external_input(request.type, params=request.params)
+                return UnregisteredScorer(
+                    identifier=ScorerIdentifier.from_component_identifier(scorer.get_identifier())
+                )
+            if request.name is None:
+                raise ValueError("name is required when register=true")
             scorer = self._registry.create_named_instance(
                 name=request.name,
                 type_name=request.type,

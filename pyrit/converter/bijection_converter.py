@@ -190,10 +190,23 @@ class LetterBijectionConverter(BijectionConverter):
         Initialize the converter.
 
         Args:
-            fixed_size (int): Number of leading letters to keep unchanged (identity mapping).
+            fixed_size (int): Number of leading letters to keep unchanged (identity mapping), from 0 to 26.
             mapping (dict[str, str], Optional): Explicit mapping dict. If provided, used directly.
             seed (int, Optional): Random seed for reproducibility.
+
+        Raises:
+            ValueError: If fixed_size is not an integer from 0 to 26.
         """
+        # fixed_size is a slice bound: a negative value would keep all but the last letters fixed
+        # (-1 is the identity mapping), and bool is an int subclass that would be accepted as 0 or 1.
+        if (
+            isinstance(fixed_size, bool)
+            or not isinstance(fixed_size, int)
+            or not 0 <= fixed_size <= len(string.ascii_lowercase)
+        ):
+            raise ValueError(
+                f"fixed_size must be an integer from 0 to {len(string.ascii_lowercase)}, got {fixed_size!r}."
+            )
         self._fixed_size = fixed_size
         super().__init__(mapping=mapping, seed=seed)
 

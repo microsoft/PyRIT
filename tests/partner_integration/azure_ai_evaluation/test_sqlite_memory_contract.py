@@ -128,7 +128,9 @@ class TestMemoryQueryMethodContract:
 
         This is the current equivalent of the SDK's get_prompt_request_pieces(labels=...) call.
         """
-        result = await sqlite_instance.get_message_pieces_async(labels={"nonexistent": "label"})
+        # The labels parameter is deprecated but still returns a list until it's removed.
+        with pytest.warns(DeprecationWarning, match=r"get_message_pieces_async\(labels=\.\.\.\)"):
+            result = await sqlite_instance.get_message_pieces_async(labels={"nonexistent": "label"})
         assert isinstance(result, (list, tuple))
 
     async def test_get_message_pieces_returns_list_async(self, sqlite_instance):

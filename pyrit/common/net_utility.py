@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from typing import Any, Literal, cast, overload
-from urllib.parse import parse_qs, urlparse, urlunparse
+from urllib.parse import parse_qs, parse_qsl, urlparse, urlunparse
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -108,13 +108,12 @@ async def make_request_and_raise_if_error_async(
     headers = headers or {}
     request_body = request_body or {}
 
-    # Extract any existing query parameters from the URL
-    url_params = extract_url_parameters(endpoint_uri)
-
-    # Merge URL parameters with provided extra_url_parameters (extra_url_parameters takes precedence)
-    merged_params = url_params.copy()
-    if extra_url_parameters:
-        merged_params.update(extra_url_parameters)
+    # Keep every query parameter from the URL as a (key, value) pair, so repeated keys such as
+    # ``?tag=a&tag=b`` are all sent. A key in extra_url_parameters replaces all of its URL values.
+    extra_url_parameters = extra_url_parameters or {}
+    url_params = parse_qsl(urlparse(endpoint_uri).query, keep_blank_values=True)
+    merged_params = tuple((key, value) for key, value in url_params if key not in extra_url_parameters)
+    merged_params += tuple(extra_url_parameters.items())
 
     # Get clean URL without query string (we'll pass params separately to httpx)
     clean_url = remove_url_parameters(endpoint_uri)

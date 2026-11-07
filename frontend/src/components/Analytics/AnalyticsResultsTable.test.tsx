@@ -75,4 +75,27 @@ describe('AnalyticsResultsTable', () => {
     expect(onRetry).toHaveBeenCalledTimes(1)
     expect(onOpenAttack).not.toHaveBeenCalled()
   })
+
+  it('should mark legacy Operation names in the result table', () => {
+    const orphanId = '5f0c8a8e-3a52-4c3e-9f0a-2f8b1c7d6e54'
+    renderTable({
+      results: makeAnalyticsResults({
+        items: [
+          makeAnalyticsRow({ attack_result_id: 'legacy', operation_id: null, operation: 'Nightly' }),
+          makeAnalyticsRow({ attack_result_id: 'blank', operation_id: null, operation: '' }),
+          makeAnalyticsRow({ attack_result_id: 'saved' }),
+          makeAnalyticsRow({ attack_result_id: 'orphan', operation_id: orphanId, operation: orphanId }),
+          makeAnalyticsRow({ attack_result_id: 'unassigned', operation_id: null, operation: null }),
+        ],
+      }),
+    })
+    const cell = (id: string, name: string): HTMLElement =>
+      within(screen.getByRole('row', { name: `Open result ${id}` })).getByRole('cell', { name })
+    expect(cell('legacy', 'Nightly (legacy name)')).toBeInTheDocument()
+    expect(cell('blank', '(Blank) (legacy name)')).toBeInTheDocument()
+    expect(cell('saved', 'Nightly')).toBeInTheDocument()
+    expect(cell('orphan', orphanId)).toBeInTheDocument()
+    expect(within(screen.getByRole('row', { name: 'Open result orphan' })).queryByText(/legacy name/)).not.toBeInTheDocument()
+    expect(cell('unassigned', '(Missing operation)')).toBeInTheDocument()
+  })
 })

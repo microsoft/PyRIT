@@ -17,6 +17,8 @@ from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, Pr
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetSelectionMode,
+    ScenarioDatasetOptions,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
@@ -25,13 +27,14 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
     ResolvedDataset,
 )
@@ -320,7 +323,7 @@ class ApiKey(Scenario):
         for technique_name, seed_groups in context.seed_groups_by_dataset.items():
             if not seed_groups:
                 continue
-            converters = self._technique_converters.get(technique_name, [])
+            converters = context.technique_converters.get(technique_name, [])
             converter_config = (
                 AttackConverterConfig(
                     request_converters=ConverterConfiguration.from_converters(converters=list(converters))

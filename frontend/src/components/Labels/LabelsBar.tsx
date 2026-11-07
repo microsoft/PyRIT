@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Text,
   Button,
@@ -18,8 +18,10 @@ import {
 import type { OperationSelectionState } from '@/hooks/useOperationSelection'
 import { labelsApi } from '@/services/api'
 import type { Operation } from '@/types'
+import { getOperationWarning } from '@/utils/operationWarnings'
 import OperationPicker from './OperationPicker'
 import { useLabelsBarStyles } from './LabelsBar.styles'
+import { DEFAULT_GLOBAL_LABELS } from './labelDefaults'
 
 
 const validateValue = (value: string): string | null => {
@@ -28,10 +30,6 @@ const validateValue = (value: string): string | null => {
   if (value !== value.toLowerCase()) return 'Values must be lowercase'
   if (!/^[a-z0-9_]+$/.test(value)) return 'Only lowercase letters, numbers, underscores'
   return null
-}
-
-const DUMMY_VALUES: Record<string, string> = {
-  operator: 'roakey',
 }
 
 const METADATA_KEYS = new Set(['operator', 'operation'])
@@ -107,16 +105,19 @@ export default function LabelsBar({
       .catch(() => setError('Could not load label suggestions.'))
   }, [])
 
-  const isDummyValue = useCallback((key: string, value: string): boolean => {
-    return DUMMY_VALUES[key] === value
-  }, [])
-
-  const placeholderKeys = Object.entries(labels)
-    .filter(([key, value]) => isDummyValue(key, value))
-    .map(([key]) => key)
-  const hasDummyValues = placeholderKeys.length > 0
+  const operatorMissing = !labels.operator?.trim()
+  const operatorPlaceholder = labels.operator === DEFAULT_GLOBAL_LABELS.operator
+  const operatorWarning = operatorReadOnly ? null
+    : operatorMissing ? 'Set operator in the bar. No operator is set.'
+    : operatorPlaceholder ? 'Set operator in the bar. The current value is a placeholder.' : null
+  const operationWarning = getOperationWarning(operation)
+  const warnings = [
+    ...(operatorWarning ? [operatorWarning] : []),
+    ...(operationWarning ? [operationWarning] : []),
+  ]
   const operatorTip = operatorReadOnly ? 'Derived from your signed-in account'
-    : isDummyValue('operator', labels.operator ?? '') ? 'Placeholder value — type to change' : null
+    : operatorMissing ? 'No operator is set. Type your operator name.'
+    : operatorPlaceholder ? 'Placeholder value — type to change' : null
 
   const validateKey = (key: string): string | null => {
     if (!key) return 'Key is required'
@@ -497,7 +498,7 @@ export default function LabelsBar({
 
   return (
     <div className={styles.root} data-testid="labels-bar" ref={rootRef}>
-      {hasDummyValues && (
+      {warnings.length > 0 && (
         <Popover>
           <PopoverTrigger disableButtonEnhancement>
             <Button
@@ -512,13 +513,7 @@ export default function LabelsBar({
           <PopoverSurface className={styles.popover} aria-label="Warnings">
             <div className={styles.popoverSurface}>
               <Text as="h2" weight="semibold" size={300}>Warnings</Text>
-              <Text size={200}>
-                {`Set ${placeholderKeys.join(' and ')} in the bar. ${
-                  placeholderKeys.length === 1
-                    ? 'The current value is a placeholder.'
-                    : 'The current values are placeholders.'
-                }`}
-              </Text>
+              {warnings.map((warning: string) => <Text key={warning} size={200}>{warning}</Text>)}
             </div>
           </PopoverSurface>
         </Popover>
@@ -593,7 +588,7 @@ export default function LabelsBar({
               <Tooltip content={operatorTip ?? ''} relationship="description"
                 {...(operatorTip ? {} : { visible: false })}>
                 <Input size="small" className={mergeClasses(styles.operatorInput,
-                  isDummyValue('operator', labels.operator ?? '') ? styles.metadataPlaceholder : undefined)}
+                  operatorWarning ? styles.metadataWarning : undefined)}
                   value={editingLabel === 'operator' ? editValue : labels.operator ?? ''}
                   readOnly={operatorReadOnly} aria-label={operatorReadOnly ? 'Signed-in operator' : 'Operator'}
                   data-testid="edit-label-operator"
@@ -646,7 +641,8 @@ export default function LabelsBar({
             }
           }}>
             <Text size={200} weight="semibold">Operation:</Text>
-            <OperationPicker selection={operation} onSelect={onOperationChange} onRetry={onRetryOperation} />
+            <OperationPicker selection={operation} warning={operationWarning}
+              onSelect={onOperationChange} onRetry={onRetryOperation} />
           </div>
         </div>
         {headerEntries

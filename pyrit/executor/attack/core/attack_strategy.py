@@ -10,14 +10,15 @@ import time
 import traceback
 import uuid
 from abc import ABC
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, assert_never, overload
 
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
-from pyrit.exceptions.retry_collector import (
+from pyrit.exceptions import (
     get_retry_collector,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
@@ -29,7 +30,7 @@ from pyrit.executor.core import (
     StrategyEventData,
     StrategyEventHandler,
 )
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -40,6 +41,7 @@ from pyrit.models import (
     AttackResultSelection,
     ComponentIdentifier,
     ConversationReference,
+    ConversationType,
     ConverterIdentifier,
     Identifiable,
     Message,
@@ -50,11 +52,11 @@ from pyrit.models import (
     TargetIdentifier,
     UndeterminedScoreError,
 )
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score.observation.lifecycle import AttemptObserver
+from pyrit.prompt_target import TargetRequirements
+from pyrit.score import AttemptObserver
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import AsyncGenerator, Callable, Collection, Generator
     from types import TracebackType
 
     from pyrit.executor.attack.component.prepended_conversation_config import (
@@ -64,17 +66,44 @@ if TYPE_CHECKING:
         PrependedHistorySendContext,
     )
     from pyrit.executor.attack.core.attack_config import (
+        AdversarialPromptRequirements,
         AttackAdversarialConfig,
         AttackScoringConfig,
     )
+    from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.message_normalizer import MessageListNormalizer
-    from pyrit.prompt_target import PromptTarget
-    from pyrit.prompt_target.common.target_capabilities import CapabilityName
+    from pyrit.prompt_target import CapabilityName, PromptTarget
     from pyrit.score import Scorer
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
 AttackStrategyResultT = TypeVar("AttackStrategyResultT", bound="AttackResult")
+
+#: Operations that an enclosing execution or batch already admitted.
+_admitted_operation_ids: ContextVar[frozenset[uuid.UUID]] = ContextVar(
+    "pyrit_admitted_operation_ids", default=frozenset()
+)
+
+
+@contextmanager
+def _operation_admission_scope(operation_ids: Collection[uuid.UUID]) -> Generator[None, None, None]:
+    """
+    Treat these Operations as admitted for executions started within this scope.
+
+    Executions given an admitted Operation skip the existence check, so deleting it mid-run lets them finish
+    and save their results without it. Executions given any other Operation are still checked.
+
+    Args:
+        operation_ids (Collection[uuid.UUID]): The Operations to admit.
+
+    Yields:
+        None: Control returns to the caller with the Operations admitted.
+    """
+    token = _admitted_operation_ids.set(_admitted_operation_ids.get() | frozenset(operation_ids))
+    try:
+        yield
+    finally:
+        _admitted_operation_ids.reset(token)
 
 
 def attack_outcome_from_score(score: Score) -> AttackOutcome:
@@ -195,6 +224,8 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
     )
     _persisted_attack_result_id: str | None = field(default=None, init=False, repr=False, compare=False)
     _persist_attack_result: bool = field(default=True, init=False, repr=False, compare=False)
+    _objective_conversation_ids: dict[str, None] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _current_objective_conversation_id: str | None = field(default=None, init=False, repr=False, compare=False)
     _objective_target_conversation_lifecycle: _ObjectiveTargetConversationLifecycle | None = field(
         default=None,
         init=False,
@@ -329,6 +360,24 @@ class AttackContext(StrategyContext, ABC, Generic[AttackParamsT]):
         if lifecycle is None:
             return
         lifecycle.record_invocation(conversation_id=conversation_id)
+        self._objective_conversation_ids.setdefault(conversation_id, None)
+        self._current_objective_conversation_id = conversation_id
+
+    @property
+    def objective_conversation_ids(self) -> tuple[str, ...]:
+        """Objective conversations in first-invocation order."""
+        return tuple(self._objective_conversation_ids)
+
+    @property
+    def current_objective_conversation_id(self) -> str | None:
+        """The most recently invoked objective conversation, unless it has been pruned."""
+        current = self._current_objective_conversation_id
+        pruned = {
+            reference.conversation_id
+            for reference in self.related_conversations
+            if reference.conversation_type == ConversationType.PRUNED
+        }
+        return current if current not in pruned else None
 
 
 class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyContextT, AttackStrategyResultT]):
@@ -451,7 +500,31 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         Args:
             result (AttackStrategyResultT): The completed result to persist.
         """
-        (await self._memory.add_attack_results_to_memory_async(attack_results=[result]))
+        await self._save_result_async(result=result)
+
+    async def _save_result_async(self, *, result: AttackResult) -> None:
+        """
+        Save an attack result, without its Operation if that Operation was deleted while the attack ran.
+
+        Args:
+            result (AttackResult): The result to save. Its Operation ID is cleared when the Operation is gone.
+
+        Raises:
+            LookupError: If the save fails for another missing reference.
+        """
+        try:
+            await self._memory.add_attack_results_to_memory_async(attack_results=[result])
+        except LookupError:
+            operation_id = result.operation_id
+            if operation_id is None or await self._memory.get_operations_async(operation_ids=[operation_id]):
+                raise
+            self._logger.warning(
+                "Operation %s was deleted while attack result %s ran; saving the result without an Operation.",
+                operation_id,
+                result.attack_result_id,
+            )
+            result.operation_id = None
+            await self._memory.add_attack_results_to_memory_async(attack_results=[result])
 
     async def _confirm_result_persistence_async(
         self, *, context: AttackStrategyContextT, attack_result_id: str
@@ -548,12 +621,14 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
 
         if result.outcome == AttackOutcome.SUCCESS:
             message = f"{attack_name} achieved the objective. {reason}"
+        elif result.outcome == AttackOutcome.FAILURE:
+            message = f"{attack_name} did not achieve the objective. {reason}"
         elif result.outcome == AttackOutcome.UNDETERMINED:
             message = f"{attack_name} outcome is undetermined. {reason}"
         elif result.outcome == AttackOutcome.ERROR:
             message = f"{attack_name} failed with an error. {reason}"
         else:
-            message = f"{attack_name} did not achieve the objective. {reason}"
+            assert_never(result.outcome)
 
         self._logger.info(message)
 
@@ -634,7 +709,7 @@ class _DefaultAttackStrategyEventHandler(StrategyEventHandler[AttackStrategyCont
         self._apply_targeted_harm_categories(context=context, result=error_result)
 
         try:
-            (await self._memory.add_attack_results_to_memory_async(attack_results=[error_result]))
+            await self._save_result_async(result=error_result)
         except Exception as persistence_error:
             context._error_result_persistence_error = persistence_error
             await self._confirm_result_persistence_async(
@@ -660,6 +735,11 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: Capability requirements placed on ``objective_target``. Subclasses
     #: override to declare what the attack needs. Validated in ``__init__``.
     TARGET_REQUIREMENTS: ClassVar[TargetRequirements] = TargetRequirements()
+    #: A fixed execution-input contract for attacks that do not expose ``params_type``.
+    FIXED_PARAMS_TYPE: ClassVar[type[AttackParameters] | None] = None
+
+    #: Named prompt slots, template parameters, and defaults consumed by the attack.
+    ADVERSARIAL_PROMPT_REQUIREMENTS: ClassVar[AdversarialPromptRequirements | None] = None
 
     #: Compound attacks set this when children own outcome scoring and expectation validation.
     #: No scoring configuration alone does not imply delegation.
@@ -668,6 +748,22 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
     #: What this strategy's persisted results represent. Compound attacks that only coordinate
     #: child attacks, and never call the objective target themselves, set ``ORCHESTRATION``.
     RESULT_ROLE: ClassVar[AttackResultRole] = AttackResultRole.TARGET_FACING
+
+    @classmethod
+    def get_adversarial_prompt_requirements(cls) -> AdversarialPromptRequirements:
+        """
+        Get the prompt contract declared by an adversarial attack.
+
+        Returns:
+            AdversarialPromptRequirements: The attack's shared construction and preflight contract.
+
+        Raises:
+            ValueError: If the attack does not declare named prompt support.
+        """
+        requirements = cls.ADVERSARIAL_PROMPT_REQUIREMENTS
+        if requirements is None:
+            raise ValueError(f"{cls.__name__} does not declare named adversarial prompt support.")
+        return requirements
 
     @classmethod
     def validate_constructor_parameters(cls, params: dict[str, Any]) -> None:
@@ -686,7 +782,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="AttackStrategy")
 
@@ -729,7 +825,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
 
         type(self).TARGET_REQUIREMENTS.validate(target=objective_target)
         self._objective_target = objective_target
-        self._params_type = params_type
+        self._params_type = self.FIXED_PARAMS_TYPE or params_type
         self._prepended_conversation_config = prepended_conversation_config or PrependedConversationConfig()
         # Guard so subclasses that set converters before calling super() aren't clobbered
         if not hasattr(self, "_request_converters"):
@@ -904,6 +1000,11 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         return self._objective_target
 
+    @property
+    def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
+        """Child execution observations, supplied by compound strategies."""
+        return ()
+
     def get_attack_scoring_config(self) -> AttackScoringConfig | None:
         """
         Get the attack scoring configuration used by this strategy.
@@ -957,6 +1058,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         context._error_result_persistence_error = None
         context._error_result_metadata.clear()
         context._persisted_attack_result_id = None
+        context._objective_conversation_ids.clear()
+        context._current_objective_conversation_id = None
         await self._resolve_operation_async(context=context)
         self._validate_scoring_expectation(context=context)
         context._error_result_identifier_builder = lambda: AtomicAttackIdentifier.build(
@@ -969,10 +1072,14 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
             logger=self._logger,
         )
         context._objective_target_conversation_lifecycle = lifecycle
+        admitted = {context.params.operation_id} if context.params.operation_id is not None else set()
         try:
             async with lifecycle:
                 try:
-                    with attack_result_id_scope(attack_result_id=context._attack_result_id):
+                    with (
+                        attack_result_id_scope(attack_result_id=context._attack_result_id),
+                        _operation_admission_scope(admitted),
+                    ):
                         result = await super().execute_with_context_async(context=context)
                 except Exception as attack_error:
                     persistence_error = context._error_result_persistence_error
@@ -1004,7 +1111,8 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         An explicit ID wins, and a ``memory_labels["operation"]`` name is then removed. Otherwise the name,
         or one from ``GLOBAL_MEMORY_LABELS``, stays in the labels so prompts and the result keep it, and
         links the execution to the saved Operation with that name when one exists. Executions attributed
-        by a parent, such as a scenario, keep the labels and ID the parent resolved.
+        by a parent, such as a scenario, keep the labels and ID the parent resolved. An ID that an enclosing
+        execution or batch already admitted is not checked again, so a mid-run deletion doesn't stop the run.
 
         Raises:
             ValueError: If the ID is malformed.
@@ -1023,11 +1131,40 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         elif operation_name is None and self._global_operation_name is not None:
             operation_name = self._global_operation_name
             context.memory_labels = {**labels, "operation": operation_name}
+        if operation_id is not None and operation_id in _admitted_operation_ids.get():
+            return
         resolved = await CentralMemory.get_memory_instance().resolve_operation_id_async(
             operation_id=operation_id, operation_name=operation_name
         )
         if resolved != operation_id:
             context.params = dataclasses.replace(context.params, operation_id=resolved)
+
+    @asynccontextmanager
+    async def _admit_saved_operations_async(
+        self, *, operation_ids: Collection[uuid.UUID]
+    ) -> AsyncGenerator[None, None]:
+        """
+        Admit the given Operations that exist now for every execution started within this scope.
+
+        A batch admitted this way runs to completion if one of its Operations is deleted midway, and saves the
+        remaining results without it. Operations that don't exist when the scope opens are not admitted, so
+        executions given them are still rejected.
+
+        Args:
+            operation_ids (Collection[uuid.UUID]): The Operations the batch's executions refer to.
+
+        Yields:
+            None: Control returns to the caller with the saved Operations admitted.
+        """
+        pending = set(operation_ids) - _admitted_operation_ids.get()
+        memory = CentralMemory.get_memory_instance()
+        saved = (
+            {operation.id for operation in await memory.get_operations_async(operation_ids=list(pending))}
+            if pending
+            else set()
+        )
+        with _operation_admission_scope(saved):
+            yield
 
     @asynccontextmanager
     async def _execution_context_async(self, context: AttackStrategyContextT) -> AsyncGenerator[None, None]:

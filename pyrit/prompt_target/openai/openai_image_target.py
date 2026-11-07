@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 import base64
 import logging
+from pathlib import Path
 from typing import Any, Literal
 
 from pyrit.common import forward_init_parameters, get_mime_type
@@ -136,6 +137,7 @@ class OpenAIImageTarget(OpenAITarget):
         return self._create_identifier(
             params={
                 "image_size": self.image_size,
+                "output_format": self.output_format,
                 "quality": self.quality,
                 "background": self.background,
             },
@@ -231,7 +233,9 @@ class OpenAIImageTarget(OpenAITarget):
                 category="prompt-memory-entries", value=image_path, data_type="image_path"
             )
 
-            image_name = str(await img_serializer.get_data_filename_async())
+            # Upload the image under its own file name. get_data_filename_async() would generate a new
+            # local storage path (always .png), not the name of the image being edited.
+            image_name = Path(image_path).name
             image_bytes = await img_serializer.read_data_async()
             image_type = get_mime_type(image_path)
 

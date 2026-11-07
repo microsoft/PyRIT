@@ -1,11 +1,11 @@
 import {
   Checkbox,
-  Field,
   Input,
   Select,
   Textarea,
 } from '@fluentui/react-components'
 
+import HelpField from '@/components/HelpField'
 import type { Parameter } from '@/types'
 
 import { useParameterFieldStyles } from './ParameterField.styles'
@@ -60,9 +60,7 @@ export default function ParameterField({
 }: ParameterFieldProps) {
   const styles = useParameterFieldStyles()
   const kind = getParameterControlKind(parameter)
-  const label = parameter.required
-    ? `${labelOverride ?? parameter.name} *`
-    : labelOverride ?? parameter.name
+  const label = labelOverride ?? parameter.name
   const testId = `${testIdPrefix}-${parameter.name}`
   const defaultText = Array.isArray(parameter.default)
     ? parameter.default.join(', ')
@@ -71,7 +69,8 @@ export default function ParameterField({
   const defaultHint = showDefaultHint && hasDisplayDefault
     ? `Defaults to ${defaultText}.`
     : null
-  const descriptiveHint = [parameter.description, defaultHint, extraHint]
+  const help = parameter.description?.trim()
+  const descriptiveHint = [defaultHint, extraHint]
     .filter((part): part is string => Boolean(part))
     .join(' ')
 
@@ -79,8 +78,10 @@ export default function ParameterField({
     const current = isStructuredParameterFormValue(value) ? value : { type: '', values: {} }
     return (
       <>
-        <Field
+        <HelpField
           label={label}
+          help={help}
+          required={parameter.required}
           hint={descriptiveHint || undefined}
           validationMessage={showRequiredError && !current.type ? 'Required' : undefined}
         >
@@ -99,7 +100,7 @@ export default function ParameterField({
               <option key={type} value={type}>{type}</option>
             ))}
           </Select>
-        </Field>
+        </HelpField>
         {(parameter.variants?.[current.type] ?? []).map((nested) => (
           <ParameterField
             key={nested.name}
@@ -128,8 +129,10 @@ export default function ParameterField({
       .filter((part): part is string => Boolean(part))
       .join(' ')
     return (
-      <Field
+      <HelpField
         label={label}
+        help={help}
+        required={parameter.required}
         hint={jsonHint}
         validationMessage={validationMessage}
         validationState={validationMessage ? 'error' : 'none'}
@@ -145,14 +148,14 @@ export default function ParameterField({
           onChange={(_, data) => onChange(parameter.name, data.value)}
           data-testid={testId}
         />
-      </Field>
+      </HelpField>
     )
   }
 
   if (kind === 'boolean') {
     const current = value === 'true' || value === 'false' ? value : ''
     return (
-      <Field label={label} hint={descriptiveHint || undefined}>
+      <HelpField label={label} help={help} required={parameter.required} hint={descriptiveHint || undefined}>
         <Select
           className={styles.control}
           value={current}
@@ -166,14 +169,14 @@ export default function ParameterField({
           <option value="true">True</option>
           <option value="false">False</option>
         </Select>
-      </Field>
+      </HelpField>
     )
   }
 
   if (kind === 'multiselect') {
     const selected = Array.isArray(value) ? value : []
     return (
-      <Field label={label} hint={descriptiveHint || undefined}>
+      <HelpField label={label} help={help} required={parameter.required} hint={descriptiveHint || undefined}>
         <div className={styles.checkboxGroup} role="group" aria-labelledby={`${testId}-group-label`}>
           <span id={`${testId}-group-label`} className={styles.srOnly}>
             {label}
@@ -201,7 +204,7 @@ export default function ParameterField({
             )
           })}
         </div>
-      </Field>
+      </HelpField>
     )
   }
 
@@ -210,7 +213,7 @@ export default function ParameterField({
 
   if (kind === 'select') {
     return (
-      <Field label={label} hint={descriptiveHint || undefined}>
+      <HelpField label={label} help={help} required={parameter.required} hint={descriptiveHint || undefined}>
         <Select
           className={styles.control}
           value={stringValue}
@@ -227,19 +230,19 @@ export default function ParameterField({
             </option>
           ))}
         </Select>
-      </Field>
+      </HelpField>
     )
   }
 
   const placeholder = hasDisplayDefault
     ? showDefaultHint ? `Defaults to ${defaultText}` : defaultText
     : undefined
-  const fallbackHint = kind === 'list' ? 'Comma-separated list of values.' : parameter.type_name
-  const hint = descriptiveHint || fallbackHint
+  const hint = [descriptiveHint, kind === 'list' ? 'Comma-separated list of values.' : undefined]
+    .filter((part): part is string => Boolean(part)).join(' ') || undefined
 
   if (kind === 'multiline') {
     return (
-      <Field label={label} hint={hint}>
+      <HelpField label={label} help={help} required={parameter.required} hint={hint}>
         <Textarea
           className={styles.control}
           value={stringValue}
@@ -249,13 +252,13 @@ export default function ParameterField({
           onChange={(_, data) => onChange(parameter.name, data.value)}
           data-testid={testId}
         />
-      </Field>
+      </HelpField>
     )
   }
 
   return (
     <>
-      <Field label={label} hint={hint}>
+      <HelpField label={label} help={help} required={parameter.required} hint={hint}>
         <Input
           className={styles.control}
           value={stringValue}
@@ -265,7 +268,7 @@ export default function ParameterField({
           onChange={(_, data) => onChange(parameter.name, data.value)}
           data-testid={testId}
         />
-      </Field>
+      </HelpField>
       {kind === 'list' && allowEmptyList && (
         <Checkbox
           label={`Use empty list for ${parameter.name}`}

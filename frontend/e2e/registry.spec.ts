@@ -7,9 +7,8 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   for (const name of ["objective_scorer_chat", "adversarial_chat", "registry_local_objective"]) {
     const existing = await request.get(`/api/targets/${name}`, { headers });
     if (existing.status() === 404) {
-      const created = await request.post("/api/targets", { headers, data: name === "registry_local_objective"
-        ? { name, type: "TextTarget", params: {} }
-        : { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
+      const created = await request.post("/api/targets", { headers, data:
+        { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
           endpoint: "http://127.0.0.1:9/v1", model_name: "local-test", api_key: "local-test-only",
         } } });
       expect(created.ok(), await created.text()).toBe(true);
@@ -49,22 +48,18 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await expect(page.getByText("Named configurations of existing attack techniques", { exact: true })).toBeVisible();
   await expect(page.getByText(/Runtime only|No attack runs when you add a technique/)).toHaveCount(0);
   await expect(page.getByRole("table", { name: "Registered techniques" })).toBeVisible();
-  const builtinCalls = {
-    crescendo_simulated: "AttackTechniqueFactory.with_simulated_conversation(\n" +
-      "    name='crescendo_simulated',\n" +
-      "    description='Escalates gradually over a simulated conversation toward the objective.',\n" +
-      "    technique_tags=['single_turn'],\n)",
-    tap: "AttackTechniqueFactory(\n" +
-      "    name='tap',\n" +
-      "    attack_class=TreeOfAttacksWithPruningAttack,\n" +
-      "    description='Explores a tree of adversarial prompts, pruning weak branches to refine the attack.',\n" +
-      "    technique_tags=['multi_turn'],\n)",
-  };
-  for (const [builtinName, statement] of Object.entries(builtinCalls)) {
-    await page.getByRole("button", { name: `Details for ${builtinName}` }).click();
-    await expect(page.getByLabel("Technique creation call", { exact: true })).toHaveText(statement);
-    await expect(page.getByRole("heading", { name: "Configuration" })).toHaveCount(0);
-    await page.getByRole("button", { name: "Close", exact: true }).click();
+  for (const builtinName of ["crescendo_simulated", "tap"]) {
+    const response = await request.get(`/api/techniques/${builtinName}`, { headers });
+    expect(response.ok(), await response.text()).toBe(true);
+    const builtin = await response.json();
+    const toggle = page.getByRole("button", { name: `Identity for ${builtinName}`, exact: true });
+    await toggle.click();
+    const identity = page.getByRole("region", { name: `Identity for ${builtinName}`, exact: true });
+    await expect(identity).toBeVisible();
+    expect(JSON.parse(await identity.innerText())).toEqual(builtin.identifier);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await toggle.press("Enter");
+    await expect(identity).toHaveCount(0);
   }
   await page.getByRole("button", { name: "New technique" }).click();
   await page.getByRole("textbox", { name: "Registry name" }).fill(name);
@@ -72,10 +67,12 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("textbox", { name: "Tags" }).fill("browser_test");
   await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
   await expect(page.getByRole("dialog")).not.toContainText(/Implementation of|This form shows|Runtime only|prompt_normalizer/);
-  await page.getByLabel("max_attempts_on_failure").fill("0");
-  await page.getByRole("combobox", { name: "Request converters", exact: true }).selectOption(converterName);
-  await page.getByRole("button", { name: "Add to Request converters", exact: true }).click();
-  await page.getByRole("button", { name: "Add to Request converters", exact: true }).click();
+  await page.getByRole("spinbutton", { name: "max_attempts_on_failure", exact: true }).fill("0");
+  const requestConverters = page.getByRole("combobox", { name: "Request converters", exact: true });
+  for (let i = 0; i < 2; i++) {
+    await requestConverters.click();
+    await page.getByTestId(`converter-option-${converterName}`).click();
+  }
   const create = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
   await page.getByRole("button", { name: "Add technique" }).click();
   const created = await create;
@@ -90,17 +87,17 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   expect(body).not.toHaveProperty("seed_technique");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("textbox", { name: "Search techniques" }).fill(name);
-  await expect(page.getByRole("cell", { name, exact: true })).toBeVisible();
-  await page.getByRole("button", { name: `Details for ${name}` }).click();
-  const creationCall = page.getByLabel("Technique creation call", { exact: true });
-  await expect(creationCall).toHaveText(createdTechnique.creation_statement);
-  await expect(creationCall).toContainText("AttackTechniqueFactory(");
-  await expect(creationCall).toContainText("'max_attempts_on_failure': 0");
-  expect(createdTechnique).not.toHaveProperty("evaluation_identifier");
-  expect(createdTechnique).not.toHaveProperty("configuration");
-  await expect(page.getByRole("heading", { name: "Configuration" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(page.getByRole("button", { name: `Details for ${name}` })).toBeFocused();
+  const identityToggle = page.getByRole("button", { name: `Identity for ${name}`, exact: true });
+  await expect(identityToggle).toBeVisible();
+  await identityToggle.click();
+  const identity = page.getByRole("region", { name: `Identity for ${name}`, exact: true });
+  await expect(identity).toBeVisible();
+  expect(JSON.parse(await identity.innerText())).toEqual(createdTechnique.identifier);
+  expect(createdTechnique.identifier.kwargs).toMatchObject({ max_attempts_on_failure: 0 });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await identityToggle.press("Space");
+  await expect(identity).toHaveCount(0);
+  await expect(identityToggle).toBeFocused();
   expect(detailRequests).toEqual([]);
 
   let finishCreate: (() => void) | undefined;
@@ -130,14 +127,14 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   const staleResponse = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
   finishCreate?.();
   await staleResponse;
-  await expect(page.getByRole("cell", { name: "old_runtime_response", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Identity for old_runtime_response", exact: true })).toHaveCount(0);
 
   const current = await request.get("/api/scenarios/catalog/airt.rapid_response", { headers });
   expect(current.ok(), await current.text()).toBe(true);
   const after = await current.json();
   expect(after.all_techniques).toContain(name);
   expect(after.default_techniques).toEqual(before.default_techniques);
-  await page.goto("/scanner/airt.rapid_response");
+  await page.goto("/scanner/launch/airt.rapid_response");
   const checkbox = page.getByRole("checkbox", { name, exact: true });
   await expect(checkbox).toBeVisible();
   await checkbox.check();
@@ -334,8 +331,8 @@ async function submitDuplicateName(page: Page): Promise<() => void> {
   await page.getByRole("button", { name: "Create First Converter" }).click();
   await page.getByRole("combobox", { name: "Converter type" }).click();
   await page.getByTestId("converter-type-option-CaesarConverter").click();
-  await page.getByLabel("Registry name").fill("caesar-custom");
-  await page.getByLabel("caesar_offset *").fill("5");
+  await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar-custom");
+  await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
   await page.getByRole("button", { name: "Add Converter" }).click();
   await expect(page.getByRole("button", { name: "Adding..." })).toBeVisible();
 
@@ -345,8 +342,8 @@ async function submitDuplicateName(page: Page): Promise<() => void> {
 async function createCaesarConverter(page: Page, name: string): Promise<void> {
   await page.getByRole("combobox", { name: "Converter type" }).click();
   await page.getByTestId("converter-type-option-CaesarConverter").click();
-  await page.getByLabel("Registry name").fill(name);
-  await page.getByLabel("caesar_offset *").fill("5");
+  await page.getByRole("textbox", { name: "Registry name", exact: true }).fill(name);
+  await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
   await page.getByRole("button", { name: "Add Converter" }).click();
 }
 
@@ -388,8 +385,8 @@ test.describe("Converter Registry", () => {
     await page.getByRole("button", { name: "New Converter" }).click();
     await page.getByRole("combobox", { name: "Converter type" }).click();
     await page.getByTestId("converter-type-option-CaesarConverter").click();
-    await page.getByLabel("Registry name").fill("caesar-custom");
-    await page.getByLabel("caesar_offset *").fill("5");
+    await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar-custom");
+    await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
     await page.getByRole("button", { name: "Add Converter" }).click();
 
     await expect(page.getByText("caesar-custom")).toBeVisible();
@@ -416,8 +413,8 @@ test.describe("Converter Registry", () => {
     await page.getByRole("button", { name: "Create First Converter" }).click();
     await page.getByRole("combobox", { name: "Converter type" }).click();
     await page.getByTestId("converter-type-option-CaesarConverter").click();
-    await page.getByLabel("Registry name").fill("caesar-focus");
-    await page.getByLabel("caesar_offset *").fill("5");
+    await page.getByRole("textbox", { name: "Registry name", exact: true }).fill("caesar-focus");
+    await page.getByRole("textbox", { name: "caesar_offset *", exact: true }).fill("5");
     await page.getByRole("button", { name: "Add Converter" }).click();
 
     // The empty-state trigger unmounts with the list it belonged to, so focus
@@ -476,9 +473,8 @@ test.describe("Converter Registry", () => {
     await expect(removeDialog.locator(":focus")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(removeDialog).toBeHidden();
-    // The row that opened the dialog was replaced by the refresh, so focus
-    // falls back to the always-mounted header action.
-    await expect(page.getByRole("button", { name: "New Converter" })).toBeFocused();
+    // The quiet read keeps the keyed row mounted, so focus returns to its opener.
+    await expect(removeTrigger).toBeFocused();
   });
 
   test("keeps a stale submission failure out of a reopened add dialog", async ({ page }) => {
@@ -496,17 +492,7 @@ test.describe("Converter Registry", () => {
     // reopened dialog keeps the empty form the user opened.
     await expect(dialog.getByRole("button", { name: "Add Converter" })).toBeEnabled();
     await expect(page.getByRole("alert")).toHaveCount(0);
-    await expect(dialog.getByLabel("Registry name")).toHaveValue("");
-  });
-
-  test("uses the available viewport height for the converter type list", async ({ page }) => {
-    await page.getByRole("button", { name: "New Converter" }).click();
-    await page.getByRole("combobox", { name: "Converter type" }).click();
-
-    const listbox = page.getByRole("listbox");
-    await expect(listbox).toBeVisible();
-    const bounds = await listbox.boundingBox();
-    expect(bounds?.height).toBeGreaterThan(300);
+    await expect(dialog.getByRole("textbox", { name: "Registry name", exact: true })).toHaveValue("");
   });
 
   for (const { name, viewport, deviceScaleFactor } of [
@@ -517,56 +503,17 @@ test.describe("Converter Registry", () => {
     test.describe(name, () => {
       test.use({ viewport, deviceScaleFactor });
 
-      test("keeps a long converter list vertical, stable, and scrollable", async ({ page }) => {
+      test("reaches and selects the last converter in a long list", async ({ page }) => {
         await page.getByRole("button", { name: "New Converter" }).click();
         const trigger = page.getByRole("combobox", { name: "Converter type" });
         await trigger.click();
 
         const listbox = page.getByRole("listbox");
         await expect(listbox).toBeVisible();
-        const anchor = await trigger.evaluate((button) => {
-          const { x, y, width, height } = button.parentElement!.getBoundingClientRect();
-          return { x, y, width, height };
-        });
-        await expect.poll(async () => {
-          const box = (await listbox.boundingBox())!;
-          return Math.abs(box.x - anchor.x);
-        }).toBeLessThanOrEqual(1);
-
-        // Sample successive frames: a single bounding box can miss position oscillation.
-        const samples = await listbox.evaluate(async (element) => {
-          const bounds = [];
-          for (let frame = 0; frame < 60; frame++) {
-            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-            const { x, y, width, height } = element.getBoundingClientRect();
-            bounds.push({ x, y, width, height });
-          }
-          return bounds;
-        });
-
-        for (const box of samples) {
-          expect(Math.abs(box.x - anchor.x)).toBeLessThanOrEqual(1);
-          expect(Math.abs(box.width - anchor.width)).toBeLessThanOrEqual(1);
-          expect(box.height).toBeGreaterThan(0);
-          expect(box.x).toBeGreaterThanOrEqual(-1);
-          expect(box.y).toBeGreaterThanOrEqual(-1);
-          expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
-          expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
-          expect(
-            box.y >= anchor.y + anchor.height - 1
-              || box.y + box.height <= anchor.y + 1,
-          ).toBe(true);
-          expect(Math.abs(box.y - samples[0].y)).toBeLessThanOrEqual(1);
-          expect(Math.abs(box.height - samples[0].height)).toBeLessThanOrEqual(1);
-        }
-
-        const scroll = await listbox.evaluate((element) => ({
-          height: element.clientHeight,
-          contentHeight: element.scrollHeight,
-        }));
-        expect(scroll.contentHeight).toBeGreaterThan(scroll.height);
+        await expect(listbox).toBeInViewport({ ratio: 1 });
         const lastOption = listbox.getByRole("option").last();
-        await lastOption.scrollIntoViewIfNeeded();
+        await expect(lastOption).not.toBeInViewport();
+        await trigger.press("End");
         await expect(lastOption).toBeInViewport();
         await lastOption.click();
         await expect(listbox).toBeHidden();

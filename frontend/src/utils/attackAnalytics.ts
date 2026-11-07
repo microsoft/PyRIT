@@ -11,6 +11,8 @@ import type {
   AttackOutcome,
 } from '@/types'
 
+import { UUID_PATTERN } from './routeParams'
+
 export const ANALYTICS_PAGE_SIZE = 25
 export const ANALYTICS_GROUP_LIMIT = 15
 export const ANALYTICS_AXIS_LIMIT = 20
@@ -68,6 +70,27 @@ export function analyticsValueKey(value: AttackAnalyticsValue): string {
   return JSON.stringify([value.kind, value.value])
 }
 
+/** Friendly labels are cached per typed dimension/value, never used to identify or merge predicates. */
+export function analyticsOptionLabelKey(dimension: AttackAnalyticsDimension, value: AttackAnalyticsValue): string {
+  return JSON.stringify([analyticsDimensionKey(dimension), analyticsValueKey(value)])
+}
+
+/** Reload and a runtime change each start a new label epoch, in which cached Operation names are looked up again. */
+export function analyticsLabelEpoch(refreshVersion: number, runtimeGeneration: string): string {
+  return JSON.stringify([refreshVersion, runtimeGeneration])
+}
+
+function isAnalyticsOperationIdLabelKey(key: string): boolean {
+  const [, valueKey]: unknown[] = JSON.parse(key)
+  const [, value]: unknown[] = typeof valueKey === 'string' ? JSON.parse(valueKey) : []
+  return typeof value === 'string' && key === analyticsOptionLabelKey({ name: 'operation' }, { kind: 'value', value })
+}
+
+/** Copies a label cache keyed by `analyticsOptionLabelKey` without its Operation ID names. */
+export function withoutAnalyticsOperationIdLabels(labels: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(labels).filter(([key]: [string, string]) => !isAnalyticsOperationIdLabelKey(key)))
+}
+
 export function analyticsDimensionLabel(dimension: AttackAnalyticsDimension): string {
   if (dimension.name === 'label') return `Label: ${dimension.label_key}`
   return ANALYTICS_DIMENSIONS.find(
@@ -76,14 +99,26 @@ export function analyticsDimensionLabel(dimension: AttackAnalyticsDimension): st
   )?.label ?? dimension.name
 }
 
+/**
+ * Marks a raw Operation name saved without an Operation ID, for restored selections and result rows.
+ * Server labels for legacy keys already carry this suffix. Blank names read "(Blank)", like the SDK's option label.
+ */
+export function analyticsLegacyOperationLabel(name: string): string {
+  return `${name.trim() ? name : '(Blank)'} (legacy name)`
+}
+
 /** Fallback for restored URL selections whose friendly server labels have not been fetched. */
 export function analyticsValueLabel(value: AttackAnalyticsValue): string {
   if (value.kind === 'missing') return '(Missing metadata)'
   if (value.kind === 'no_converters') return '(No converters)'
+  if (value.kind === 'legacy_operation_name') return analyticsLegacyOperationLabel(value.value)
   return value.value || '(Empty value)'
 }
 
-/** Keep the server's friendly label, but distinguish typed absences from literal "Unknown"/"No converters" values. */
+/**
+ * Keep the server's friendly label, but distinguish typed absences from literal "Unknown"/"No converters" values.
+ * Legacy Operation labels are shown as sent, because the SDK already appends " (legacy name)".
+ */
 export function analyticsOptionLabel(option: AttackAnalyticsOption): string {
   if (option.key.kind === 'missing') return `${option.label} (missing metadata)`
   if (option.key.kind === 'no_converters') return `${option.label} (empty pipeline)`
@@ -230,13 +265,27 @@ function parseDimension(value: unknown): AttackAnalyticsDimension {
 function parseValue(value: unknown): AttackAnalyticsValue {
   if (!isRecord(value)) throw new Error('Invalid filter value.')
   requireKeys(value, ['kind', 'value'])
-  if (value.kind === 'value' && typeof value.value === 'string' && [...value.value].length <= 4096) {
-    return { kind: 'value', value: value.value }
+  if ((value.kind === 'value' || value.kind === 'legacy_operation_name') &&
+    typeof value.value === 'string' && [...value.value].length <= 4096) {
+    return { kind: value.kind, value: value.value }
   }
   if ((value.kind === 'missing' || value.kind === 'no_converters') && value.value === null) {
     return { kind: value.kind, value: null }
   }
   throw new Error('Filter values must use a typed value, missing metadata, or no-converters key.')
+}
+
+/** Operation values must be saved Operation IDs, never names; only Operation has legacy name keys. */
+function parseDimensionValue(dimension: AttackAnalyticsDimension, value: AttackAnalyticsValue): AttackAnalyticsValue {
+  if (dimension.name !== 'operation') {
+    if (value.kind === 'legacy_operation_name') throw new Error('The legacy_operation_name bucket applies only to operation')
+    return value
+  }
+  if (value.kind !== 'value') return value
+  if (!UUID_PATTERN.test(value.value)) {
+    throw new Error('Operation values must be saved Operation IDs; use legacy_operation_name for legacy activity')
+  }
+  return { kind: 'value', value: value.value.toLowerCase() }
 }
 
 /** Reject malformed predicates rather than dropping them and accidentally broadening a shared cohort. */
@@ -247,7 +296,7 @@ function parseFilter(value: unknown): AttackAnalyticsFilter {
   }
   requireKeys(value, ['dimension', 'values', 'match_mode'])
   const dimension = parseDimension(value.dimension)
-  const values = value.values.map(parseValue)
+  const values = value.values.map((item: unknown) => parseDimensionValue(dimension, parseValue(item)))
   const matchMode = value.match_mode === undefined ? 'any' : value.match_mode
   if (matchMode !== 'any' && matchMode !== 'all') throw new Error('Unknown filter match mode.')
   if (dimension.name !== 'converter_type' &&

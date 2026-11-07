@@ -73,6 +73,31 @@ def log_exception(retry_state: RetryCallState) -> None:
         collector.record(retry_state=retry_state)
 
 
+def summarize_exception(error: BaseException) -> str:
+    """
+    Describe an exception, including the child failures of exception groups.
+
+    ``str()`` of an exception group only gives its message and child count.
+
+    Args:
+        error: The exception to describe.
+
+    Returns:
+        str: ``str(error)``, followed by each child's type, summary, and direct explicit
+            cause if ``error`` is a group. Non-group errors are unchanged.
+    """
+    if not isinstance(error, BaseExceptionGroup):
+        return str(error)
+    children = []
+    for child in error.exceptions:
+        child_summary = summarize_exception(child)
+        if child.__cause__ is not None:
+            child_summary = f"{child_summary} Caused by {type(child.__cause__).__name__}: {child.__cause__}"
+        child_type = type(child).__name__
+        children.append(f"{child_type}: {child_summary}" if child_summary else child_type)
+    return f"{error}: [{'; '.join(children)}]"
+
+
 def remove_start_md_json(response_msg: str) -> str:
     """
     Check the message for supported start markers and remove them if present.
@@ -115,6 +140,16 @@ def extract_json_from_string(response_msg: str) -> str:
     """
     Extract JSON (object or array) from within a larger string.
 
+    Returns the ONLY top-level JSON literal in the string. When the string
+    contains multiple distinct top-level JSON literals, the reply is ambiguous
+    (e.g. a judge quoting an embedded JSON object before its own verdict) and
+    no single literal can be trusted as the response, so the original string is
+    returned unchanged (making the caller fail as invalid JSON and retry).
+
+    Equivalent repeated literals (a model stutter) are accepted, ignoring
+    whitespace and object key order but preserving JSON value types.
+    Decoder-limit failures leave the original string unchanged.
+
     Args:
         response_msg (str): The response message to check.
 
@@ -122,18 +157,44 @@ def extract_json_from_string(response_msg: str) -> str:
         str: The extracted JSON string if found, otherwise the original string.
 
     """
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(response_msg):
-        if char not in "[{":
-            continue
-
-        try:
-            _, end_index = decoder.raw_decode(response_msg, idx=index)
-            return response_msg[index:end_index]
-        except json.JSONDecodeError:
-            continue
-
+    try:
+        candidates = _top_level_json_candidates(response_msg)
+        if not candidates:
+            return response_msg
+        if len(candidates) == 1:
+            return candidates[0]
+        normalized = [json.dumps(json.loads(candidate), sort_keys=True) for candidate in candidates]
+    except (ValueError, RecursionError):
+        return response_msg
+    if all(candidate == normalized[0] for candidate in normalized[1:]):
+        return candidates[0]
     return response_msg
+
+
+def _top_level_json_candidates(response_msg: str) -> list[str]:
+    """
+    Scan left-to-right for non-overlapping top-level JSON literals.
+
+    Args:
+        response_msg (str): The response message to scan.
+
+    Returns:
+        list[str]: The top-level JSON literal substrings, outermost-first at each position.
+    """
+    decoder = json.JSONDecoder()
+    found: list[str] = []
+    index, length = 0, len(response_msg)
+    while index < length:
+        if response_msg[index] in "[{":
+            try:
+                _, end_index = decoder.raw_decode(response_msg, idx=index)
+                found.append(response_msg[index:end_index])
+                index = end_index
+                continue
+            except json.JSONDecodeError:
+                pass
+        index += 1
+    return found
 
 
 def remove_markdown_json(response_msg: str) -> str:
@@ -155,10 +216,10 @@ def remove_markdown_json(response_msg: str) -> str:
     try:
         json.loads(response_msg)
         return response_msg
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         response_msg = extract_json_from_string(response_msg)
         try:
             json.loads(response_msg)
             return response_msg
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             return f"Invalid JSON response: {response_msg}"

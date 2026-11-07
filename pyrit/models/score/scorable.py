@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
+from pyrit.models.code_execution import (  # noqa: TC001 (runtime-required by Pydantic)
+    _ProgramInvocation,
+    _RuntimeProfileName,
+)
 from pyrit.models.literals import PromptDataType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.score._trace_validation import TraceId  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.score.surface import SurfaceMatch  # noqa: TC001 (runtime-required by Pydantic)
@@ -31,6 +35,18 @@ class Scorable(BaseModel, ABC):  # noqa: B024  root type; each scorer family dec
 
     # Pydantic Baseclass overrride: we want frozen models and to forbid extras.
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    def names_same_evidence(self, other: Scorable | None) -> bool:
+        """
+        Check whether ``other`` names the same evidence.
+
+        Args:
+            other (Scorable | None): The scorable to compare.
+
+        Returns:
+            bool: True when both scorables identify the same evidence.
+        """
+        return self == other
 
 
 class MessageScorable(Scorable):
@@ -61,6 +77,18 @@ class MessageScorable(Scorable):
         if len(set(seen)) != len(seen):
             raise ValueError(f"A MessageScorable must name each message piece once, got {seen}.")
         return self
+
+    def names_same_evidence(self, other: Scorable | None) -> bool:
+        """
+        Check whether ``other`` names the same message pieces, in any order.
+
+        Args:
+            other (Scorable | None): The scorable to compare.
+
+        Returns:
+            bool: True when both scorables name the same set of pieces.
+        """
+        return isinstance(other, MessageScorable) and set(self.message_piece_ids) == set(other.message_piece_ids)
 
     @classmethod
     def from_message(
@@ -171,11 +199,53 @@ class SurfaceScorable(Scorable):
     match: SurfaceMatch = SurfaceMatch.EXACT
 
 
+class ProgramExecutionScorable(Scorable):
+    """
+    A program, its runtime, and the invocations to execute.
+
+    This is an acquisition request, not a result: it holds no expected output, so the source
+    that runs it cannot see which output passes. ``program`` names the code to run: a stored
+    message with one text piece, loose text, or stored loose text. It is used verbatim; code is never
+    extracted from surrounding prose.
+
+    Each acquisition runs afresh. The resulting observation's ID identifies that run;
+    replay uses the stored observation, not this input description.
+    """
+
+    scorable_type: Literal["program_execution"] = "program_execution"
+    program: Annotated[MessageScorable | ContentScorable | ContentEntryScorable, Field(discriminator="scorable_type")]
+    runtime_profile_name: _RuntimeProfileName
+    invocations: tuple[_ProgramInvocation, ...]
+
+    @model_validator(mode="after")
+    def _validate_execution(self) -> ProgramExecutionScorable:
+        """
+        Require text code and at least one invocation.
+
+        Returns:
+            ProgramExecutionScorable: The validated scorable.
+
+        Raises:
+            ValueError: If the program is not text, or there is nothing to run.
+        """
+        if isinstance(self.program, (ContentScorable, ContentEntryScorable)) and self.program.data_type != "text":
+            raise ValueError("A program must be text content.")
+        if not self.invocations:
+            raise ValueError("A ProgramExecutionScorable requires at least one invocation.")
+        return self
+
+
 # Polymorphic union of scorables that can be stored on a Score. Every member declares a
 # ``scorable_type`` tag and Pydantic dispatches on it, so a new member is never mistaken for
 # an existing one and storage never depends on field shape.
 ScorableUnion = Annotated[
-    MessageScorable | ContentScorable | ContentEntryScorable | ConversationScorable | TraceScorable | SurfaceScorable,
+    MessageScorable
+    | ContentScorable
+    | ContentEntryScorable
+    | ConversationScorable
+    | TraceScorable
+    | SurfaceScorable
+    | ProgramExecutionScorable,
     Field(discriminator="scorable_type"),
 ]
 

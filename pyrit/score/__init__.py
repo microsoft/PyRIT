@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from pyrit.score.observation.observation_source import ObservationSource
     from pyrit.score.observation.otel_span_exporter import InMemoryTraceExporter
     from pyrit.score.observation.otel_trace_source import OtelTraceSource
+    from pyrit.score.observation.program_execution_source import ProgramExecutionSource
     from pyrit.score.observation.trace_client import InMemoryTraceClient, TraceAcquisitionError, TraceClient
     from pyrit.score.response_handler import (
         CallableResponseHandler,
@@ -57,7 +58,7 @@ if TYPE_CHECKING:
         ResponseHandler,
     )
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
-    from pyrit.score.scorer import Scorer
+    from pyrit.score.scorer import LegacyScorerHookError, Scorer
     from pyrit.score.scorer_evaluation.human_labeled_dataset import (
         HarmHumanLabeledEntry,
         HumanLabeledDataset,
@@ -84,11 +85,16 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+    from pyrit.score.true_false.assert_policy_scorer import (
+        AssertJudgmentMode,
+        AssertScoringDimension,
+        build_assert_policy_scorer,
+        get_assert_failure_criterion,
+    )
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.file_write_scorer import FileWriteScorer
     from pyrit.score.true_false.float_scale_threshold_scorer import FloatScaleThresholdScorer
-    from pyrit.score.true_false.gandalf_scorer import GandalfScorer
     from pyrit.score.true_false.garak_exploitation_scorer import GarakExploitationDetector, GarakExploitationScorer
     from pyrit.score.true_false.llamaguard_parser import LLAMAGUARD_3_CATEGORY_CODES, parse_llamaguard_response
     from pyrit.score.true_false.llamaguard_policy import LlamaGuardCategory, LlamaGuardPolicy
@@ -102,6 +108,7 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.message_tool_call_scorer import MessageToolCallScorer
     from pyrit.score.true_false.otel_tool_call_scorer import OtelToolCallScorer
     from pyrit.score.true_false.output_matches_scorer import OutputMatchesScorer
+    from pyrit.score.true_false.program_execution_scorer import ProgramExecutionScorer
     from pyrit.score.true_false.prompt_shield_scorer import PromptShieldScorer
     from pyrit.score.true_false.question_answer_scorer import QuestionAnswerScorer
     from pyrit.score.true_false.regex.agent_threat_rules_scorer import AgentThreatRulesScorer
@@ -162,6 +169,12 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AssertJudgmentMode": "pyrit.score.true_false.assert_policy_scorer",
+    "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
+    "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",
+    "get_assert_failure_criterion": "pyrit.score.true_false.assert_policy_scorer",
+    "ProgramExecutionScorer": "pyrit.score.true_false.program_execution_scorer",
+    "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
     "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
     "AnsiEscapeOutputScorer": "pyrit.score.true_false.regex.ansi_escape_output_scorer",
     "AnthraxKeywordScorer": "pyrit.score.true_false.regex.anthrax_keyword_scorer",
@@ -192,7 +205,6 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "MessageFloatScaleScorer": "pyrit.score.float_scale.float_scale_scorer",
     "MessageTrueFalseScorer": "pyrit.score.true_false.true_false_scorer",
     "FloatScaleThresholdScorer": "pyrit.score.true_false.float_scale_threshold_scorer",
-    "GandalfScorer": "pyrit.score.true_false.gandalf_scorer",
     "GarakExploitationDetector": "pyrit.score.true_false.garak_exploitation_scorer",
     "GarakExploitationScorer": "pyrit.score.true_false.garak_exploitation_scorer",
     "HarmHumanLabeledEntry": "pyrit.score.scorer_evaluation.human_labeled_dataset",
@@ -222,6 +234,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LikertScalePaths": "pyrit.score.float_scale.self_ask_likert_scorer",
     "LLAMAGUARD_3_CATEGORY_CODES": "pyrit.score.true_false.llamaguard_parser",
     "LlamaGuardCategory": "pyrit.score.true_false.llamaguard_policy",
+    "LegacyScorerHookError": "pyrit.score.scorer",
     "LlamaGuardMessageRole": "pyrit.score.true_false.llamaguard_scorer",
     "LlamaGuardPolicy": "pyrit.score.true_false.llamaguard_policy",
     "LlamaGuardScorer": "pyrit.score.true_false.llamaguard_scorer",

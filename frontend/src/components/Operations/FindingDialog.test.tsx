@@ -33,6 +33,25 @@ describe('FindingDialog', () => {
     }, ATTEMPT) })
   })
 
+  it('arms the unsaved changes guard for a severity only edit', async () => {
+    const user = userEvent.setup()
+    const events: Event[] = []
+    const listener = (event: Event): void => { events.push(event) }
+    window.addEventListener('beforeunload', listener)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+
+    // No field the guard watches has a value yet, so nothing is armed. The
+    // prevented flag is read after the dispatch, when every listener has run.
+    fireEvent(window, new Event('beforeunload', { cancelable: true }))
+    expect(events[0].defaultPrevented).toBe(false)
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Severity' }), 'critical')
+    fireEvent(window, new Event('beforeunload', { cancelable: true }))
+    expect(events[1].defaultPrevented).toBe(true)
+
+    window.removeEventListener('beforeunload', listener)
+  })
+
   it('retains an edited draft on error and permits a corrected retry', async () => {
     const user = userEvent.setup()
     const onSave = jest.fn().mockRejectedValueOnce(new Error('Storage offline')).mockResolvedValue(undefined)

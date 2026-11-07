@@ -64,6 +64,28 @@ class TestTransparencyAttackConverter:
         assert converter.convergence_threshold == 1e-5
         assert converter.convergence_patience == 5
 
+    @pytest.mark.parametrize(
+        "first_kwargs, second_kwargs",
+        [
+            ({"convergence_threshold": 1e-6}, {"convergence_threshold": 0.1}),
+            ({"convergence_patience": 10}, {"convergence_patience": 1}),
+        ],
+    )
+    def test_identifier_includes_convergence_settings(self, sample_benign_image, first_kwargs, second_kwargs):
+        first = TransparencyAttackConverter(benign_image_path=sample_benign_image, **first_kwargs)
+        second = TransparencyAttackConverter(benign_image_path=sample_benign_image, **second_kwargs)
+
+        assert first.get_identifier().hash != second.get_identifier().hash
+
+    def test_identifier_params_include_convergence_settings(self, sample_benign_image):
+        converter = TransparencyAttackConverter(
+            benign_image_path=sample_benign_image, convergence_threshold=1e-3, convergence_patience=3
+        )
+
+        params = converter.get_identifier().params
+        assert params["convergence_threshold"] == 1e-3
+        assert params["convergence_patience"] == 3
+
     def test_initialization_invalid_params(self, sample_benign_image):
         for path in [None, "", "invalid_path.txt", "image.png", "image.gif"]:
             with pytest.raises(ValueError):

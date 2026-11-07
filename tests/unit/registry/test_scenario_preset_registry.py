@@ -11,15 +11,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models import Parameter
-from pyrit.models.catalog.scenario_preset import ScenarioPreset
-from pyrit.registry.components.converter_registry import ConverterRegistry
-from pyrit.registry.components.scenario_preset_registry import (
+from pyrit.models import DatasetSourceInput, Parameter, ScenarioDatasetRequest, ScenarioPreset
+from pyrit.registry import (
+    ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioPresetConflictError,
     ScenarioPresetNameRegisteredError,
     ScenarioPresetRegistry,
+    ScenarioPresetStorage,
+    ScenarioRegistry,
 )
-from pyrit.registry.components.scenario_registry import ScenarioMetadata, ScenarioRegistry
-from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
 from unit.mocks import make_technique_class
 
 SCENARIO_NAME = "foundry.red_team_agent"
@@ -107,9 +108,11 @@ class TestPresetCrud:
             description="Nightly smoke",
             author="tester",
             techniques=["crescendo"],
-            dataset_names=["harmbench"],
-            max_dataset_size=25,
-            dataset_filters={"harm_categories": ["violence"]},
+            datasets=ScenarioDatasetRequest(
+                sources=[DatasetSourceInput(name="harmbench")],
+                max_total=25,
+                filters={"harm_categories": ["violence"]},
+            ),
             include_baseline=True,
             scenario_params={"max_turns": 3},
         )

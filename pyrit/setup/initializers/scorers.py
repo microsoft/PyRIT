@@ -24,8 +24,7 @@ from typing import TYPE_CHECKING, ClassVar, TypeVar, cast
 from azure.ai.contentsafety.models import TextCategory
 
 from pyrit.common.async_compatibility import run_legacy_sync_async
-from pyrit.models import SeedPrompt
-from pyrit.models.parameter import Parameter
+from pyrit.models import Parameter, SeedPrompt
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import (
     AzureContentFilterScorer,
@@ -158,9 +157,14 @@ class ScorerInitializer(PyRITInitializer):
         ),
     }
 
-    @property
-    def supported_parameters(self) -> list[Parameter]:
-        """The list of parameters this initializer accepts."""
+    @classmethod
+    def supported_parameters(cls) -> list[Parameter]:
+        """
+        Declare the initializer parameters.
+
+        Returns:
+            list[Parameter]: Supported inputs and defaults.
+        """
         return [
             Parameter(
                 name="tags",

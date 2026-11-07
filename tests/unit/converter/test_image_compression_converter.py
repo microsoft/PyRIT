@@ -9,6 +9,7 @@ import pytest
 from PIL import Image, ImageCms
 
 from pyrit.converter import ImageCompressionConverter
+from pyrit.registry import ConverterRegistry
 
 
 @pytest.fixture
@@ -430,3 +431,96 @@ def test_image_compression_converter_preserves_rgb_icc_profile(mode: str) -> Non
         with compressed_io, Image.open(compressed_io) as output:
             assert output.mode == mode
             assert output.info["icc_profile"] == icc_profile
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+@pytest.mark.parametrize(
+    ("pixel_value", "expected_value"),
+    [(-1, 0), (0, 0), (1024, 1024), (65535, 65535), (65536, 65535)],
+)
+async def test_image_compression_converter_integer_tiff_to_png(
+    *, tmp_path: Path, pixel_value: int, expected_value: int
+) -> None:
+    converter = ImageCompressionConverter(output_format="PNG", min_compression_threshold=0, fallback_to_original=False)
+    input_path = tmp_path / "integer.tiff"
+    with Image.new("I", (32, 32), pixel_value) as image:
+        image.save(input_path, "TIFF")
+
+    result = await converter.convert_async(prompt=str(input_path), input_type="image_path")
+
+    assert result.output_type == "image_path"
+    assert Path(result.output_text).suffix == ".png"
+    with Image.open(result.output_text) as output:
+        assert output.format == "PNG"
+        assert output.mode == "I;16"
+        assert output.size == (32, 32)
+        assert output.getextrema() == (expected_value, expected_value)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"background_color": (255, 0, 0)},
+        {"min_compression_threshold": 0},
+        {"fallback_to_original": False},
+    ],
+)
+def test_image_compression_identifier_distinguishes_output_settings(settings) -> None:
+    default = ImageCompressionConverter()
+    other = ImageCompressionConverter(**settings)
+    assert default.get_identifier().hash != other.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(default)
+    instances.register(other)
+    assert instances.get(default.get_identifier().unique_name) is default
+    assert instances.get(other.get_identifier().unique_name) is other
+
+
+def test_image_compression_identifier_includes_output_settings() -> None:
+    params = (
+        ImageCompressionConverter(
+            background_color=(255, 0, 0),
+            min_compression_threshold=2048,
+            fallback_to_original=False,
+        )
+        .get_identifier()
+        .params
+    )
+    assert params["background_color"] == [255, 0, 0]
+    assert params["min_compression_threshold"] == 2048
+    assert params["fallback_to_original"] is False
+
+
+def test_image_compression_identifier_keeps_default_hash() -> None:
+    converter = ImageCompressionConverter()
+    identifier = converter.get_identifier()
+    assert identifier.hash == "c41c060bb7d4f117cb7f98135413108d24656ad812e4916049bda7f7c4e9827d"
+
+    instances = ConverterRegistry().instances
+    instances.register(converter)
+    assert instances.get("ImageCompressionConverter::c41c060b") is converter
+
+
+def test_image_compression_identifier_is_stable_for_equal_settings() -> None:
+    assert (
+        ImageCompressionConverter().get_identifier().hash
+        == ImageCompressionConverter(
+            background_color=(0, 0, 0), min_compression_threshold=1024, fallback_to_original=True
+        )
+        .get_identifier()
+        .hash
+    )
+    assert (
+        ImageCompressionConverter(
+            background_color=(255, 255, 255), min_compression_threshold=0, fallback_to_original=False
+        )
+        .get_identifier()
+        .hash
+        == ImageCompressionConverter(
+            background_color=(255, 255, 255), min_compression_threshold=0, fallback_to_original=False
+        )
+        .get_identifier()
+        .hash
+    )

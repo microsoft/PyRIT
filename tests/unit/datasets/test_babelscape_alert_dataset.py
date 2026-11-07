@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.babelscape_alert_dataset import _BabelscapeAlertDataset
+from pyrit.datasets.seed_datasets.remote import _BabelscapeAlertDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 
@@ -80,7 +80,7 @@ class TestBabelscapeAlertDataset:
         expected_mappings = {
             "crime_cyber": ["MALWARE", "COORDINATION_HARM"],
             "crime_injury": ["VIOLENT_CONTENT"],
-            "crime_kidnapp": ["VIOLENT_THREATS", "COORDINATION_HARM"],
+            "crime_kidnap": ["VIOLENT_THREATS", "COORDINATION_HARM"],
             "crime_other": ["COORDINATION_HARM"],
             "crime_privacy": ["PPI"],
             "crime_propaganda": ["INFO_INTEGRITY"],

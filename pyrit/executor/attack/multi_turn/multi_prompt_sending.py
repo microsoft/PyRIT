@@ -7,8 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
-from pyrit.common.utils import get_kwarg_param
+from pyrit.common import REQUIRED_VALUE, apply_defaults, get_kwarg_param
 from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import (
@@ -33,8 +32,7 @@ from pyrit.models import (
     ScoringExpectation,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import CapabilityName, PromptTarget
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
 
 if TYPE_CHECKING:
     from pyrit.score import TrueFalseScorer
@@ -139,6 +137,8 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
         native_required=frozenset({CapabilityName.MULTI_TURN}),
     )
 
+    FIXED_PARAMS_TYPE = MultiPromptSendingAttackParameters
+
     @apply_defaults
     def __init__(
         self,
@@ -168,7 +168,6 @@ class MultiPromptSendingAttack(MultiTurnAttackStrategy[MultiTurnAttackContext[An
             objective_target=objective_target,
             logger=logger,
             context_type=MultiTurnAttackContext,
-            params_type=MultiPromptSendingAttackParameters,
             prepended_conversation_config=prepended_conversation_config,
         )
 

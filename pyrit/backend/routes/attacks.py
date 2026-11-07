@@ -15,7 +15,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import Field
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     AddMessageResponse,
     AttackConversationsResponse,
@@ -28,29 +28,53 @@ from pyrit.backend.models.attacks import (
     CreateAttackResponse,
     CreateConversationRequest,
     CreateConversationResponse,
-    SaveConversationRequest,
+    ProblemDetail,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
 )
-from pyrit.backend.models.common import (
-    MAX_IDENTIFIER_LENGTH,
-    MAX_ITEMS,
-    CursorStr,
-    IdentifierStr,
-    LabelFilterStr,
-    ProblemDetail,
-)
+from pyrit.backend.models.attacks import AttackMetadata, SaveConversationRequest
+from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr
+from pyrit.backend.models.scores import ApplyChatScorerRequest, ApplyChatScorerResponse
 from pyrit.backend.routes.common import parse_label_query_params
-from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
+from pyrit.backend.services import get_attack_service
+from pyrit.backend.services.attack_service import AttackObjectiveConflictError
+from pyrit.backend.services.chat_scoring_service import ChatScoringError, get_chat_scoring_service
+from pyrit.backend.services.history_replay import HistoryReplayError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.media_persistence import MediaAccessDeniedError
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.memory.memory_interface import AttackStateConflictError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/attacks", tags=["attacks"])
+
+
+@router.post("/{attack_result_id}/apply-scorer", response_model=ApplyChatScorerResponse)
+async def apply_chat_scorer_async(
+    *, attack_result_id: IdentifierStr, request: ApplyChatScorerRequest
+) -> ApplyChatScorerResponse:
+    """
+    Apply the selected scorer only to the latest saved response in the requested conversation.
+
+    Returns:
+        The persisted result and whether an existing complete score was reused.
+    """
+    try:
+        return await get_chat_scoring_service().apply_async(attack_result_id=attack_result_id, request=request)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (AttackStateConflictError, ManualSendConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ManualSendQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ChatScoringError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/save-conversation", response_model=AddMessageResponse)
@@ -68,8 +92,10 @@ async def save_conversation_async(*, body: SaveConversationRequest, request: Req
         return await get_attack_service().save_conversation_async(request=body)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except AttackStateConflictError as exc:
+    except (AttackStateConflictError, ManualSendConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ManualSendQueueFullError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except LookupError as exc:
         raise FileNotFoundError(str(exc)) from exc
     except ValueError as exc:
@@ -277,6 +303,8 @@ async def create_attack(request: CreateAttackRequest) -> CreateAttackResponse:  
         raise FileNotFoundError(str(e)) from e
     except MediaAccessDeniedError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HistoryReplayError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -310,6 +338,40 @@ async def get_attack(attack_result_id: IdentifierStr) -> AttackSummary:  # pyrit
         )
 
     return attack
+
+
+@router.get(
+    "/{attack_result_id}/metadata",
+    response_model=AttackMetadata,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid metadata request"},
+        404: {"model": ProblemDetail, "description": "Attack not found"},
+    },
+)
+async def get_attack_metadata_async(
+    *,
+    attack_result_id: IdentifierStr,
+    conversation_id: IdentifierStr | None = Query(None, description="Selected main or pruned conversation to validate"),
+) -> AttackMetadata:
+    """
+    Get Chat metadata without downloading either complete conversation-reference array.
+
+    Membership is checked independently of reference paging. An invalid selection is
+    reported in the metadata rather than replacing it with the main conversation.
+    GET /attacks/{id} retains its full legacy summary.
+
+    Returns:
+        AttackMetadata: Metadata, pruned-reference count, and selected membership.
+    """
+    try:
+        metadata = await get_attack_service().get_attack_metadata_async(
+            attack_result_id=attack_result_id, conversation_id=conversation_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if metadata is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Attack '{attack_result_id}' not found")
+    return metadata
 
 
 @router.patch(
@@ -360,7 +422,10 @@ async def remove_human_score(attack_result_id: IdentifierStr) -> AttackSummary: 
         AttackSummary: Updated attack details.
     """
     service = get_attack_service()
-    attack = await service.remove_human_score_async(attack_result_id=attack_result_id)
+    try:
+        attack = await service.remove_human_score_async(attack_result_id=attack_result_id)
+    except AttackObjectiveConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not attack:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -382,11 +447,14 @@ async def get_conversation_messages(  # pyrit-async-suffix-exempt
     conversation_id: str = Query(
         ..., max_length=MAX_IDENTIFIER_LENGTH, description="The conversation_id whose messages to return"
     ),
+    limit: int | None = Query(None, ge=1, le=500, description="Optional saved message-piece page size"),
+    cursor: CursorStr | None = Query(None, description="Opaque message-piece continuation cursor"),
 ) -> ConversationMessagesResponse:
     """
-    Get all messages for a conversation belonging to an attack.
+    Get saved messages for a main or pruned conversation belonging to an attack.
 
-    Returns prepended conversation and all messages in order.
+    Omitting limit preserves the existing full-conversation response. Paged reads can
+    split a multimodal turn; append pieces by their IDs and turn number across pages.
 
     Returns:
         ConversationMessagesResponse: All messages for the conversation.
@@ -397,6 +465,8 @@ async def get_conversation_messages(  # pyrit-async-suffix-exempt
         messages = await service.get_conversation_messages_async(
             attack_result_id=attack_result_id,
             conversation_id=conversation_id,
+            limit=limit,
+            cursor=cursor,
         )
     except ValueError as e:
         raise HTTPException(
@@ -417,24 +487,31 @@ async def get_conversation_messages(  # pyrit-async-suffix-exempt
     "/{attack_result_id}/conversations",
     response_model=AttackConversationsResponse,
     responses={
+        400: {"model": ProblemDetail, "description": "Invalid conversation cursor"},
         404: {"model": ProblemDetail, "description": "Attack not found"},
     },
 )
-async def get_conversations(
+async def get_conversations(  # pyrit-async-suffix-exempt
     attack_result_id: IdentifierStr,
-) -> AttackConversationsResponse:  # pyrit-async-suffix-exempt
+    limit: int | None = Query(None, ge=1, le=200, description="Optional saved conversation-reference page size"),
+    cursor: CursorStr | None = Query(None, description="Opaque conversation-reference continuation cursor"),
+) -> AttackConversationsResponse:
     """
-    Get all conversations belonging to an attack.
+    Get main and pruned conversations belonging to an attack.
 
-    Returns the main conversation and all related conversations with
-    message counts and preview text.
+    Without a limit, preserve the existing active-conversation list and timestamp
+    ordering. Paged reads use stored-reference order, with message counts and
+    preview text. Both paths exclude adversarial and preparation contexts.
 
     Returns:
         AttackConversationsResponse: All conversations for the attack.
     """
     service = get_attack_service()
 
-    result = await service.get_conversations_async(attack_result_id=attack_result_id)
+    try:
+        result = await service.get_conversations_async(attack_result_id=attack_result_id, limit=limit, cursor=cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -537,6 +614,7 @@ async def update_main_conversation(  # pyrit-async-suffix-exempt
     responses={
         404: {"model": ProblemDetail, "description": "Attack not found"},
         400: {"model": ProblemDetail, "description": "Message send failed"},
+        403: {"model": ProblemDetail, "description": "Automated results require a manual continuation"},
         409: {"model": ProblemDetail, "description": "Conversation has an active manual operation"},
         429: {"model": ProblemDetail, "description": "Manual-message admission limit reached"},
     },
@@ -564,6 +642,8 @@ async def add_message(  # pyrit-async-suffix-exempt
 
     try:
         return await service.add_message_async(attack_result_id=attack_result_id, request=request)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except ManualSendConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
     except ManualSendQueueFullError as e:

@@ -22,11 +22,9 @@ from pyrit.executor.attack import (
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, TargetIdentifier
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
+from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
+from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration
+from pyrit.scenario.scenarios.airt import RapidResponse
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import (
     build_technique_factories,
@@ -154,7 +152,7 @@ ALL_HARM_CATEGORIES = ["hate", "fairness", "violence", "sexual", "harassment", "
 ALL_HARM_SEED_GROUPS = {cat: _make_seed_groups(cat) for cat in ALL_HARM_CATEGORIES}
 
 
-FIXTURES = ["patch_central_database", "mock_runtime_env"]
+FIXTURES = ["patch_central_database", "mock_runtime_env", "mock_dataset_preparation"]
 
 
 @pytest.mark.usefixtures(*FIXTURES)

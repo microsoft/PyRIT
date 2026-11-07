@@ -296,7 +296,8 @@
     {
       "path": "pyrit/score/true_false/regex/package_hallucination_scorer.py",
       "sources": [
-        "garak/detectors/packagehallucination.py"
+        "garak/detectors/packagehallucination.py",
+        "garak/data/packagehallucination/rust_std_entries-1_84_0"
       ]
     }
   ]

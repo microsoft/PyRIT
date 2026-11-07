@@ -4,12 +4,12 @@
 import asyncio
 import logging
 import uuid
-from contextlib import suppress
 from dataclasses import replace
 from textwrap import dedent
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message_async
 
 import pyrit.score.scorer as scorer_module
@@ -30,16 +30,16 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.prompt_target.common import target_requirements as target_requirements_module
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
     JsonSchemaResponseHandler,
+    LegacyScorerHookError,
     MessageFloatScaleScorer,
     MessageScorable,
+    MessageScorableResolver,
     MessageScorer,
     MessageTrueFalseScorer,
     Scorer,
@@ -51,7 +51,6 @@ from pyrit.score import (
     TrueFalseScorer,
 )
 from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
 from pyrit.score.observation.target_judge import JudgmentRequest
 
@@ -669,15 +668,16 @@ async def test_fresh_llm_scoring_preserves_caller_cancellation_async(
         )
         try:
             cancellation_point = send_started if cancel_during == "send" else reset_started
-            await asyncio.wait_for(cancellation_point.wait(), timeout=5)
+            await wait_for_event_async(event=cancellation_point, tasks=[scoring_task])
             scoring_task.cancel(caller_cancellation_message)
             with pytest.raises(asyncio.CancelledError) as exc_info:
-                await asyncio.wait_for(scoring_task, timeout=5)
+                await wait_for_completion_async(future=scoring_task)
         finally:
+            send_gate.set()
+            reset_gate.set()
             if not scoring_task.done():
                 scoring_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await asyncio.wait_for(scoring_task, timeout=5)
+            await wait_for_completion_async(future=asyncio.gather(scoring_task, return_exceptions=True))
 
     assert scoring_task.done()
     assert scoring_task.cancelled()
@@ -2307,7 +2307,7 @@ class TestLegacyDirectScorerSubclass:
         with (
             patch.object(legacy_class, "CONDITION_TYPE", AnswerMatches),
             pytest.warns(DeprecationWarning, match="_score_async"),
-            pytest.raises(RuntimeError, match="matched typed conditions"),
+            pytest.raises(LegacyScorerHookError, match="matched typed conditions"),
         ):
             await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
         assert scorer.scored_messages == []
@@ -2739,7 +2739,7 @@ class TestFloatScaleScorerEmptyResults:
     @pytest.fixture
     def float_scale_scorer_returns_empty(self, no_valid_pieces_validator):
         """Create a FloatScaleScorer whose _score_piece_async returns an empty list."""
-        from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+        from pyrit.score import MessageFloatScaleScorer
 
         class _TestFloatScaleScorer(MessageFloatScaleScorer):
             def __init__(self, *, validator):

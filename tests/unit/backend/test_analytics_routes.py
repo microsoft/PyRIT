@@ -43,6 +43,7 @@ from pyrit.models import (
     AttackAnalyticsResultsQuery,
     AttackOutcome,
 )
+from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.memory.test_attack_analytics import make_result
 
 
@@ -123,7 +124,12 @@ async def test_concurrent_first_requests_construct_one_sdk_on_the_runtime_loop_a
 
     assert get_analytics_service.cache_info().currsize == 0
     user = AuthenticatedUser(oid="test", name="Test", email="test@example.invalid", groups=["test-group"])
-    budgets = partial(AnalyticsExecution, report_timeout=30.0, quick_timeout=30.0, queue_timeout=30.0)
+    budgets = partial(
+        AnalyticsExecution,
+        report_timeout=TEST_WATCHDOG_SECONDS,
+        quick_timeout=TEST_WATCHDOG_SECONDS,
+        queue_timeout=TEST_WATCHDOG_SECONDS,
+    )
     with (
         patch("pyrit.backend.services.analytics_service.AttackResultAnalytics", side_effect=create),
         patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", side_effect=budgets),
@@ -141,6 +147,9 @@ async def test_concurrent_first_requests_construct_one_sdk_on_the_runtime_loop_a
             assert all(response.status_code == 200 for response in responses)
             assert len(owners) == 1
             assert get_analytics_service() is owners[0]
+            execution = owners[0]._execution()
+            assert execution._queue_timeout == TEST_WATCHDOG_SECONDS
+            assert all(lane.timeout == TEST_WATCHDOG_SECONDS for lane in execution._lanes.values())
         finally:
             await close_analytics_service_async()
 
@@ -152,7 +161,17 @@ async def test_concurrent_first_requests_construct_one_sdk_on_the_runtime_loop_a
         {},
         {"filters": {"outcomes": ["error"]}},
         {"group_by": {"name": "targeted_harm_category"}, "compare_by": {"name": "converter_type"}},
-        {"filters": {"dimensions": [{"dimension": {"name": "operation"}, "values": [{"value": "operation-a"}]}] * 16}},
+        {
+            "filters": {
+                "dimensions": [
+                    {
+                        "dimension": {"name": "operation"},
+                        "values": [{"kind": "legacy_operation_name", "value": "operation-a"}],
+                    }
+                ]
+                * 16
+            }
+        },
     ],
 )
 async def test_report_matches_shared_sdk_serialization_async(
@@ -244,6 +263,22 @@ async def test_invalid_queries_are_problem_responses_async(
     assert response.status_code == response.json()["status"] == 422
     assert response.json()["errors"]
     assert "summary" not in response.json()
+
+
+async def test_operation_name_in_value_returns_422(*, analytics_client: httpx.AsyncClient) -> None:
+    body = {"filters": {"dimensions": [{"dimension": {"name": "operation"}, "values": [{"value": "Nightly"}]}]}}
+    response = await analytics_client.post("/api/analytics/attacks/query", json=body)
+    assert response.status_code == response.json()["status"] == 422
+    assert any(
+        "Operation values must be saved Operation IDs; use legacy_operation_name for legacy activity"
+        in error["message"]
+        for error in response.json()["errors"]
+    )
+
+
+def test_openapi_lists_legacy_operation_name(analytics_app: CompatibilityAPI) -> None:
+    schema = analytics_app.openapi()["components"]["schemas"]["AttackAnalyticsValueKind"]
+    assert "legacy_operation_name" in schema["enum"]
 
 
 @pytest.mark.usefixtures("analytics_results")
@@ -412,18 +447,18 @@ async def test_full_quick_lane_returns_retry_after_without_coalescing_async(
             asyncio.create_task(analytics_client.post("/api/analytics/attacks/results", json={})) for _ in range(12)
         ]
         try:
-            await asyncio.wait_for(admitted.wait(), 10)
+            await wait_for_event_async(event=admitted, tasks=requests)
             rejected = await analytics_client.post("/api/analytics/attacks/results", json={})
             assert rejected.status_code == 503
             assert rejected.headers["Retry-After"] == "1"
             assert analytics_service.has_active_work
             release.set()
-            responses = await asyncio.wait_for(asyncio.gather(*requests), 30)
+            responses = await wait_for_completion_async(future=asyncio.gather(*requests))
             assert all(response.status_code == 200 for response in responses)
             assert read.await_count == 12
         finally:
             release.set()
-            await asyncio.gather(*requests, return_exceptions=True)
+            await settle_tasks_async(*requests)
 
 
 @pytest.mark.parametrize(
@@ -453,28 +488,39 @@ async def test_production_deadlines_return_504_and_keep_capacity_through_cleanup
 
     async def expire_async(tasks: set[Any], *, timeout: float) -> tuple[set[Any], set[Any]]:
         observed.append(timeout)
-        await expire.wait()
-        return set(), tasks
+        expiry = asyncio.create_task(expire.wait())
+        try:
+            done, pending = await asyncio.wait(tasks | {expiry}, return_when=asyncio.FIRST_COMPLETED)
+            return done & tasks, pending & tasks
+        finally:
+            expiry.cancel()
+            await asyncio.gather(expiry, return_exceptions=True)
 
     with (
         patch("pyrit.analytics.attack_result_analytics.AnalyticsExecution", new=AnalyticsExecution),
         patch("pyrit.analytics._execution.monotonic", return_value=100.0),
         patch("pyrit.memory.query_control.time") as clock,
-        patch("pyrit.analytics._execution.asyncio.wait", side_effect=expire_async),
+        patch(
+            "pyrit.analytics._execution.asyncio",
+            wraps=asyncio,
+            wait=AsyncMock(side_effect=expire_async),
+            CancelledError=asyncio.CancelledError,
+        ),
         patch.object(analytics_service._reader, method, side_effect=blocked_async),
     ):
         clock.monotonic.return_value = 100.0
         request = asyncio.create_task(analytics_client.post(f"/api/analytics/attacks/{endpoint}", json=body))
         try:
-            await asyncio.wait_for(entered.wait(), 10)
+            await wait_for_event_async(event=entered, tasks=[request])
+            assert not request.done()
             assert observed == [deadline]
             expire.set()
-            response = await asyncio.wait_for(request, 10)
+            response = await wait_for_completion_async(future=request)
             assert response.status_code == response.json()["status"] == 504
             assert "Retry-After" not in response.headers
             assert analytics_service.has_active_work
         finally:
             expire.set()
             release.set()
-            await request
-            await analytics_service.close_async()
+            await wait_for_completion_async(future=request)
+            await wait_for_completion_async(future=asyncio.create_task(analytics_service.close_async()))

@@ -7,29 +7,33 @@ import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
+import av
+import numpy as np
 import pytest
-from unit.mocks import MockPromptTarget, get_mock_scorer_identifier
+from unit.mocks import get_mock_scorer_identifier
 
 from pyrit.models import AnswerMatches, ComponentIdentifier, MessagePiece, Score, ScoringExpectation
-from pyrit.prompt_target import GandalfLevel
 from pyrit.score import (
+    AudioFloatScaleScorer,
+    AudioTrueFalseScorer,
     DecodingScorer,
-    GandalfScorer,
+    MessageFloatScaleScorer,
     MessageScorer,
+    MessageTrueFalseScorer,
     QuestionAnswerScorer,
+    ScorerPromptValidator,
     SystemPromptExtractionScorer,
     create_conversation_scorer,
 )
-from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper
-from pyrit.score.float_scale.audio_float_scale_scorer import AudioFloatScaleScorer
-from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
-from pyrit.score.observation.execution import _scoring_expectation_context
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
-from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
+from pyrit.score.audio_transcript_scorer import AudioTranscriptHelper, _audio_to_wav
 
 if TYPE_CHECKING:
-    from pyrit.score.scorer import Scorer
+    from pyrit.score import Scorer
+
+try:
+    import cv2
+except ModuleNotFoundError:  # OpenCV is an optional extra.
+    cv2 = None
 
 
 class MockTextTrueFalseScorer(MessageTrueFalseScorer):
@@ -122,7 +126,7 @@ class TestAudioTrueFalseScorer:
 
         assert audio_scorer._audio_helper.text_scorer is text_scorer
 
-    @pytest.mark.parametrize("history_scorer", ["decoding", "conversation", "system_prompt", "gandalf"])
+    @pytest.mark.parametrize("history_scorer", ["decoding", "conversation", "system_prompt"])
     @pytest.mark.parametrize("nested", [False, True])
     def test_rejects_history_dependent_transcript_scorers(self, *, history_scorer: str, nested: bool) -> None:
         scorer: Scorer
@@ -130,10 +134,8 @@ class TestAudioTrueFalseScorer:
             scorer = DecodingScorer()
         elif history_scorer == "conversation":
             scorer = create_conversation_scorer(scorer=MockTextTrueFalseScorer())
-        elif history_scorer == "system_prompt":
-            scorer = SystemPromptExtractionScorer()
         else:
-            scorer = GandalfScorer(level=GandalfLevel.LEVEL_1, chat_target=MockPromptTarget())
+            scorer = SystemPromptExtractionScorer()
 
         assert isinstance(scorer, MessageScorer)
         wrapper = MockTextTrueFalseScorer()
@@ -155,7 +157,6 @@ class TestAudioTrueFalseScorer:
     async def test_typed_transcript_criteria_are_explicit_async(self, audio_message_piece: MessagePiece) -> None:
         scorer = AudioTrueFalseScorer(text_capable_scorer=QuestionAnswerScorer())
         expectation = ScoringExpectation(conditions=(AnswerMatches(correct_answer="Paris"),))
-        unrelated = ScoringExpectation(conditions=(AnswerMatches(correct_answer="London"),))
         with (
             patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
             patch.object(
@@ -163,7 +164,6 @@ class TestAudioTrueFalseScorer:
                 "_score_nested_message_async",
                 wraps=scorer._audio_helper.text_scorer._score_nested_message_async,
             ) as child,
-            _scoring_expectation_context(unrelated),
         ):
             [score] = await scorer._score_async(audio_message_piece.to_message(), expectation=expectation)
         assert score.get_value() is True
@@ -185,7 +185,9 @@ class TestAudioTrueFalseScorer:
             assert len(scores) == 1
             assert scores[0].score_type == "true_false"
             assert scores[0].score_value == "true"
-            assert "Audio transcript scored:" in scores[0].score_rationale
+            assert scores[0].score_rationale == (
+                "Audio transcript scored: Test rationale for transcript: Hello, this is a test transcript."
+            )
 
     async def test_score_piece_empty_transcript(self, audio_message_piece):
         """Test scoring audio with empty transcript returns empty list"""
@@ -257,7 +259,9 @@ class TestAudioFloatScaleScorer:
             assert len(scores) == 1
             assert scores[0].score_type == "float_scale"
             assert float(scores[0].score_value) == 0.75
-            assert "Audio transcript scored:" in scores[0].score_rationale
+            assert scores[0].score_rationale == (
+                "Audio transcript scored: Test rationale for transcript: Hello, this is a test transcript."
+            )
 
     async def test_score_piece_empty_transcript(self, audio_message_piece):
         """Test scoring audio with empty transcript returns empty list"""
@@ -284,7 +288,6 @@ class TestAudioFloatScaleScorer:
             patch.object(text_scorer, "CONDITION_TYPE", AnswerMatches),
             patch.object(scorer._audio_helper, "_transcribe_audio_async", return_value="Paris"),
             patch.object(text_scorer, "_score_nested_message_async", return_value=child_scores) as child,
-            _scoring_expectation_context(ScoringExpectation(objective="unrelated")),
         ):
             [score] = await scorer._score_async(audio_message_piece.to_message(), expectation=expectation)
         assert score.get_value() == 0.8
@@ -443,3 +446,32 @@ class TestPyAVAudioConversion:
         finally:
             if result != non_compliant_wav_file and os.path.exists(result):
                 os.remove(result)
+
+    def test_audio_to_wav_removes_temp_file_when_conversion_fails(self, tmp_path):
+        """A failed conversion must not leave its temporary WAV behind."""
+        not_audio = tmp_path / "not_audio.mp4"
+        not_audio.write_bytes(b"this is not an audio or video container")
+        temp_dir = tmp_path / "temp"
+        temp_dir.mkdir()
+
+        with patch.object(tempfile, "tempdir", str(temp_dir)):
+            with pytest.raises(av.error.InvalidDataError):
+                _audio_to_wav(str(not_audio), sample_rate=16000, channels=1)
+
+        assert list(temp_dir.iterdir()) == []
+
+    @pytest.mark.skipif(cv2 is None, reason="opencv is not installed")
+    def test_extract_audio_from_video_without_audio_leaves_no_temp_file(self, tmp_path):
+        """A video with no audio track returns None and leaves no temporary WAV behind."""
+        video_path = tmp_path / "silent.mp4"
+        writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*"mp4v"), 20, (64, 64))
+        for _ in range(20):
+            writer.write(np.zeros((64, 64, 3), dtype=np.uint8))
+        writer.release()
+        temp_dir = tmp_path / "temp"
+        temp_dir.mkdir()
+
+        with patch.object(tempfile, "tempdir", str(temp_dir)):
+            assert AudioTranscriptHelper.extract_audio_from_video(str(video_path)) is None
+
+        assert list(temp_dir.iterdir()) == []

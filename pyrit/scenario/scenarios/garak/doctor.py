@@ -12,7 +12,7 @@ from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import LeetspeakConverter, PolicyPuppetryConverter, PolicyPuppetryTemplate
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
@@ -177,5 +177,5 @@ class Doctor(Scenario):
             technique_factories=technique_factories,
             dataset_groups=context.seed_groups_by_dataset,
             include_baseline=context.include_baseline,
-            technique_converters=self._technique_converters,
+            technique_converters=context.technique_converters,
         )

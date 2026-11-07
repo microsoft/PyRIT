@@ -10,16 +10,20 @@ Converter types are set at app startup - you cannot add new types at runtime.
 
 from fastapi import APIRouter, HTTPException, status
 
-from pyrit.backend.models.common import IdentifierStr, ProblemDetail
-from pyrit.backend.models.converters import (
+from pyrit.backend.models import (
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
     ConverterPreviewResponse,
     ConverterTypeResponse,
     CreateConverterRequest,
+    ProblemDetail,
 )
-from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.backend.models.converters import (
+    UnregisteredConverter,
+)
+from pyrit.backend.services import get_converter_service
 
 router = APIRouter(prefix="/converters", tags=["converters"])
 
@@ -58,21 +62,23 @@ async def list_converter_types() -> ConverterTypeResponse:  # pyrit-async-suffix
 
 @router.post(
     "",
-    response_model=ConverterInstance,
+    response_model=ConverterInstance | UnregisteredConverter,
     status_code=status.HTTP_201_CREATED,
     responses={
         400: {"model": ProblemDetail, "description": "Invalid converter type or parameters"},
     },
 )
-async def create_converter(request: CreateConverterRequest) -> ConverterInstance:  # pyrit-async-suffix-exempt
+async def create_converter(
+    request: CreateConverterRequest,
+) -> ConverterInstance | UnregisteredConverter:  # pyrit-async-suffix-exempt
     """
     Create a new converter instance.
 
-    Instantiates a converter with the given type and parameters.
+    Instantiates a converter with the given type and parameters, with optional registration.
     Supports nested converters via converter_id references in params.
 
     Returns:
-        ConverterInstance: The created converter instance details.
+        ConverterInstance | UnregisteredConverter: A named instance or an unregistered descriptor.
     """
     service = get_converter_service()
 

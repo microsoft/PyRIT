@@ -5,7 +5,7 @@ import logging
 import pathlib
 from typing import ClassVar, Literal, get_args
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.models import ComponentIdentifier, SeedPrompt
@@ -98,8 +98,10 @@ class ScientificTranslationConverter(LLMGenericTextConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter including the mode.
         """
+        base_identifier = super()._build_identifier()
         return self._create_identifier(
             params={
+                **base_identifier.params,
                 "mode": self._mode,
             },
             converter_target=self._converter_target.get_identifier(),

@@ -4,11 +4,25 @@
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
 from pyrit.backend.models.attacks import ScoreView
-from pyrit.models import AttackOutcome, Finding, FindingCreate, FindingEvidence, FindingSeverity, Operation
+from pyrit.backend.models.common import TextStr
+from pyrit.models import (
+    AttackOutcome,
+    Finding,
+    FindingCreate,
+    FindingEvidence,
+    FindingSeverity,
+    Operation,
+    OperationCreate,
+    OperationUsage,
+)
 from pyrit.models.harm_category import HarmCategory
+from pyrit.models.operation import OperationName
+
+# Ten pages of the export dialog; the dashboard keeps its selection within this.
+MAX_EXPORT_FINDINGS = 1_000
 
 
 class FindingOptionsResponse(BaseModel):
@@ -29,12 +43,25 @@ class OperationListResponse(BaseModel):
     items: list[OperationListItem]
 
 
+class OperationDetail(Operation):
+    """An operation with what refers to it by ID. Only an operation with no usage can be deleted."""
+
+    usage: OperationUsage
+
+
+class OperationCreateRequest(OperationCreate):
+    """An operation to create."""
+
+    description: TextStr = ""
+
+
 class OperationUpdateRequest(BaseModel):
-    """The editable fields of an operation. The name cannot be changed here."""
+    """The editable fields of an operation. Omitted fields are unchanged."""
 
     model_config = ConfigDict(extra="forbid")
 
-    description: str
+    name: OperationName | None = None
+    description: TextStr | None = None
 
 
 class FindingListItem(Finding):
@@ -51,7 +78,16 @@ class FindingListResponse(BaseModel):
     next_offset: int | None
 
 
-class FindingCreateRequest(FindingCreate):
+class FindingUpdateRequest(FindingCreate):
+    """A finding's editable fields."""
+
+    title: TextStr
+    description: TextStr = ""
+    severity_other: TextStr | None = None
+    harm_type_other: TextStr | None = None
+
+
+class FindingCreateRequest(FindingUpdateRequest):
     """
     A finding to record, optionally with one saved attack result as evidence.
 
@@ -118,3 +154,60 @@ class FindingEvidenceListResponse(BaseModel):
     items: list[FindingEvidenceItem]
     has_more: bool
     next_offset: int | None
+
+
+class FindingExportFormat(str, Enum):
+    """A file format for exported findings."""
+
+    DOCX = "docx"
+    MARKDOWN = "markdown"
+
+
+class FindingExportRequest(BaseModel):
+    """The findings to download, the file format, and the dashboard origin their evidence links open."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    finding_ids: list[UUID] = Field(
+        min_length=1, max_length=MAX_EXPORT_FINDINGS, description="Distinct findings of the operation to include"
+    )
+    format: FindingExportFormat = FindingExportFormat.DOCX
+    dashboard_origin: AnyHttpUrl = Field(description="The dashboard's origin, which evidence links open")
+
+    @field_validator("finding_ids")
+    @classmethod
+    def _reject_duplicates(cls, finding_ids: list[UUID]) -> list[UUID]:
+        """
+        Require each finding to be selected once.
+
+        Returns:
+            list[UUID]: The selected finding IDs.
+
+        Raises:
+            ValueError: If a finding is selected more than once.
+        """
+        if len(set(finding_ids)) != len(finding_ids):
+            raise ValueError("Each finding can be selected only once.")
+        return finding_ids
+
+    @field_validator("dashboard_origin")
+    @classmethod
+    def _require_origin(cls, url: AnyHttpUrl) -> AnyHttpUrl:
+        """
+        Accept only a scheme, host, and optional port.
+
+        Returns:
+            AnyHttpUrl: The dashboard origin.
+
+        Raises:
+            ValueError: If the address has credentials, a path, a query, or a fragment.
+        """
+        if (
+            url.username
+            or url.password
+            or url.path not in (None, "/")
+            or url.query is not None
+            or url.fragment is not None
+        ):
+            raise ValueError("Must be an origin, without credentials, a path, a query, or a fragment.")
+        return url

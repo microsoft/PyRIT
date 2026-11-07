@@ -265,7 +265,7 @@ async def test_a2a_http_input_required_continuation(
     request = _make_msg(text="ask confirmation", conversation_id=cid)
     first = await target.send_prompt_async(message=request)
     assert first[0].get_value() == "Are you sure?"
-    _persist_turn(memory=sqlite_instance, target=target, request=request, response=first[0])
+    await _persist_turn_async(memory=sqlite_instance, target=target, request=request, response=first[0])
     second = await target.send_prompt_async(message=_make_msg(text="yes", conversation_id=cid))
     assert second[0].get_value() == "Confirmed."
     assert executor.requests[1].task_id == executor.requests[0].task_id

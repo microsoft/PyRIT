@@ -6,7 +6,7 @@ from typing import assert_type
 
 import pytest
 
-from pyrit.common.yaml_loadable import YamlLoadable
+from pyrit.common import YamlLoadable
 
 
 class _SimpleYaml(YamlLoadable):

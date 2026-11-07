@@ -14,9 +14,19 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    TypeAdapter,
+    ValidationError,
+    computed_field,
+    field_serializer,
+    model_validator,
+)
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE
+from pyrit.common import REQUIRED_VALUE
 
 _SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool, Path)
 _SCALAR_NAME_TO_TYPE: dict[str, type | types.UnionType] = {
@@ -97,8 +107,9 @@ class Parameter(BaseModel):
     while ``type_name`` and ``is_list`` expose whether clients supply one name or a
     list of names.
 
-    ``coerce_value`` and ``validate`` are the only public behaviors; all coercion
-    branching lives behind them so callers never touch a free function.
+    Coercion, strict supplied-value checks, and scalar JSON projection live here.
+    ``validate`` checks declarations; ``validate_value`` checks an existing value,
+    while ``validate_json_value`` applies the opt-in strict external-input contract.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -235,6 +246,27 @@ class Parameter(BaseModel):
         """Whether this parameter accepts paths or strings without URL normalization."""
         return self.reference is None and _is_path_or_str(self.param_type)
 
+    @property
+    def mentions_path(self) -> bool:
+        """Whether a value of this parameter can name a file or folder on the server."""
+        return self.reference is None and _mentions_path(self.param_type)
+
+    def is_allowed_external_input(self, *, allowed_path_params: frozenset[str] = frozenset()) -> bool:
+        """
+        Return whether an external caller may set this parameter.
+
+        A parameter that can name a file or folder on the server is allowed only when
+        it is in ``allowed_path_params``.
+
+        Args:
+            allowed_path_params (frozenset[str]): Path parameters the caller has made safe.
+                Defaults to none.
+
+        Returns:
+            bool: True for an external input that names no server path, or whose path is allowed.
+        """
+        return self.is_external_input and (not self.mentions_path or self.name in allowed_path_params)
+
     @computed_field
     @property
     def reference_type(self) -> str | None:
@@ -262,6 +294,16 @@ class Parameter(BaseModel):
         return _render_default_value(value)
 
     @property
+    def is_seed_prompt(self) -> bool:
+        """Whether the declared value is a SeedPrompt, optionally nullable."""
+        annotation = _unwrap_optional(self.param_type)
+        if not isinstance(annotation, type) or annotation.__name__ != "SeedPrompt":
+            return False
+        from pyrit.models.seeds.seed_prompt import SeedPrompt
+
+        return annotation is SeedPrompt
+
+    @property
     def is_string_coercible(self) -> bool:
         """
         Whether a single string token can be coerced to this parameter's value.
@@ -276,7 +318,7 @@ class Parameter(BaseModel):
         """
         if self.reference is not None or self.opaque:
             return False
-        return _is_scalar_param_type(_unwrap_optional(self.param_type))
+        return _is_scalar_param_type(_unwrap_optional(self.param_type)) or self.is_seed_prompt
 
     @property
     def is_external_input(self) -> bool:
@@ -290,6 +332,7 @@ class Parameter(BaseModel):
         alternative, as for ``api_key: str | Callable[...]`` or
         ``font_size: int | tuple[int, int]``; the other alternatives are for in-process
         callers. Other parameters take Python objects from in-process callers only.
+        ``SeedPrompt`` parameters accept prompt text at this boundary.
 
         Returns:
             bool: True when external callers may supply this parameter.
@@ -298,6 +341,8 @@ class Parameter(BaseModel):
             return True
         if self.opaque:
             return False
+        if self.is_seed_prompt:
+            return True
         param_type = _unwrap_optional(self.param_type)
         if _is_scalar_param_type(param_type):
             return True
@@ -319,12 +364,21 @@ class Parameter(BaseModel):
         catalog description changes, and registry metadata keeps the full annotation. A default the
         described form cannot hold is left out, so callers omit the value and the constructor
         default applies.
+        ``SeedPrompt`` values are described as multiline text, including loaded defaults.
 
         Returns:
             Parameter: This parameter, or a copy whose ``param_type`` is the external form.
         """
         if self.reference is not None or self.variants is not None or self.opaque:
             return self
+        if self.is_seed_prompt:
+            return self.model_copy(
+                update={
+                    "param_type": str | None if type(None) in get_args(self.param_type) else str,
+                    "multiline": True,
+                    "default": self.default.value if hasattr(self.default, "value") else self.default,
+                }
+            )
         external_type = _external_input_type(self.param_type)
         if external_type == self.param_type:
             return self
@@ -353,6 +407,76 @@ class Parameter(BaseModel):
             bool: True when this parameter is a reference to ``component_type``.
         """
         return self.reference is not None and self.reference.component_type is component_type
+
+    @property
+    def is_json_input(self) -> bool:
+        """Whether strict JSON callers can supply this declared scalar, list, reference, or variant."""
+        if self.opaque:
+            return False
+        if self.reference is not None or self.variants is not None:
+            return True
+        if self.is_seed_prompt:
+            return True
+        annotation = _unwrap_optional(self.param_type)
+        if get_origin(annotation) is list:
+            annotation = get_args(annotation)[0] if get_args(annotation) else None
+        return annotation in (str, int, float, bool) or bool(self.choices)
+
+    def validate_json_value(self, value: Any) -> Any:
+        """
+        Validate a supplied JSON value without enabling CLI-style scalar coercion.
+
+        Enum names and values retain their declared coercion. Structured values are
+        validated recursively by registry resolution, not by this lightweight model.
+
+        Returns:
+            Any: The validated value, with constrained scalars converted to their declared members.
+
+        Raises:
+            ValueError: If this parameter requires a Python object or the JSON type is invalid.
+        """
+        if not self.is_json_input:
+            raise ValueError(f"Parameter '{self.name}' requires a Python value; it is not supported through REST")
+        if self.is_seed_prompt:
+            annotation = str | None if type(None) in get_args(self.param_type) else str
+            return TypeAdapter(annotation).validate_python(value, strict=True)
+        TypeAdapter(JsonValue).validate_python(value, strict=True)
+        if self.variants is not None:
+            return value
+        if self.reference is not None:
+            annotation = list[str] if self.is_list else str
+            if type(None) in get_args(self.reference.annotation):
+                annotation = annotation | None
+            return TypeAdapter(annotation).validate_python(value, strict=True)
+        if self.choices:
+            value = self.coerce_value(value)
+        return TypeAdapter(self.param_type).validate_python(value, strict=True)
+
+    def project_json_value(self, value: Any) -> JsonValue:
+        """
+        Project a scalar source value without reconstructing opaque or structured state.
+
+        Returns:
+            JsonValue: A lossless JSON-native value for a supported scalar or list.
+
+        Raises:
+            ValueError: If the source requires a structured or Python-only representation.
+        """
+        if self.reference is not None or self.variants is not None or not self.is_json_input:
+            raise ValueError(f"Parameter '{self.name}' has no lossless scalar JSON projection")
+        if self.is_seed_prompt:
+            from pyrit.models.seeds.seed_prompt import SeedPrompt
+
+            if value is None:
+                return None
+            if not isinstance(value, SeedPrompt):
+                raise ValueError(f"Parameter '{self.name}' expects a SeedPrompt")
+            return value.value
+        if isinstance(value, Enum):
+            value = value.value
+        if isinstance(value, list):
+            value = [item.value if isinstance(item, Enum) else item for item in value]
+        return TypeAdapter(JsonValue).validate_python(value, strict=True)
 
     def coerce_value(self, raw_value: Any) -> Any:
         """
@@ -389,7 +513,35 @@ class Parameter(BaseModel):
             return _coerce_list(param_name=self.name, param_type=param_type, raw_value=raw_value)
         if _is_scalar_param_type(param_type):
             return _coerce_simple_value(param_name=self.name, annotation=param_type, raw_value=raw_value)
+        if self.is_seed_prompt:
+            from pyrit.models.seeds.seed_prompt import SeedPrompt
+
+            if isinstance(raw_value, SeedPrompt):
+                return raw_value
+            if not isinstance(raw_value, str):
+                raise ValueError(f"Parameter '{self.name}' expects prompt text or a SeedPrompt")
+            prompt = SeedPrompt(value=raw_value, data_type="text", is_jinja_template=True)
+            prompt.parameters = prompt.get_template_parameter_names()
+            return prompt
         return raw_value
+
+    def validate_value(self, value: Any) -> None:
+        """
+        Check a resolved scalar or list without coercing or replacing it.
+
+        Args:
+            value (Any): The resolved parameter value.
+
+        Raises:
+            ValueError: If the value does not match its declared type or choices.
+        """
+        if self.reference is not None or self.opaque:
+            return
+        if self.is_string_coercible or self.is_list:
+            try:
+                TypeAdapter(self.param_type).validate_python(value, strict=True)
+            except ValidationError as exc:
+                raise ValueError(f"Parameter '{self.name}' expects {self.type_name}: {exc}") from exc
 
     def validate(self) -> None:  # type: ignore[ty:invalid-method-override]
         """
@@ -407,7 +559,7 @@ class Parameter(BaseModel):
         if self.reference is not None or self.opaque or self.variants is not None:
             return
         param_type = _unwrap_optional(self.param_type)
-        if param_type is None or _is_scalar_param_type(param_type):
+        if param_type is None or _is_scalar_param_type(param_type) or self.is_seed_prompt:
             return
         if get_origin(param_type) is list:
             type_args = get_args(param_type)
@@ -599,24 +751,27 @@ def _coerce_enum(*, param_name: str, enum_type: type[Enum], raw_value: Any) -> A
 
 def _coerce_scalar(*, param_name: str, scalar_type: type, raw_value: Any) -> Any:
     """
-    Coerce ``raw_value`` to ``int`` or ``float`` while rejecting native ``bool`` inputs.
+    Coerce numbers, rejecting booleans and integer conversions that lose a fractional part.
 
     Returns:
         Any: The value coerced to ``scalar_type``.
 
     Raises:
-        ValueError: If ``raw_value`` is a native ``bool`` or cannot be coerced to ``scalar_type``.
+        ValueError: If conversion fails or an integer conversion would lose a fractional part.
     """
     if isinstance(raw_value, bool):
         raise ValueError(
             f"Parameter '{param_name}' expects {scalar_type.__name__} but received a bool ({raw_value!r})."
         )
     try:
-        return scalar_type(raw_value)
-    except (TypeError, ValueError) as exc:
+        result = scalar_type(raw_value)
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(
             f"Parameter '{param_name}' could not be coerced to {scalar_type.__name__}: {raw_value!r} ({exc})."
         ) from exc
+    if scalar_type is int and not isinstance(raw_value, (str, bytes, bytearray)) and result != raw_value:
+        raise ValueError(f"Parameter '{param_name}' expects an integer without a fractional part, got {raw_value!r}.")
+    return result
 
 
 def _coerce_bool(*, param_name: str, raw_value: Any) -> bool:

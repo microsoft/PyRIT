@@ -10,14 +10,15 @@ from typing import TYPE_CHECKING, ClassVar, cast
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.models import AttackSeedGroup, PromptDataType
-from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
+from pyrit.models import AttackSeedGroup, DatasetSelectionMode, PromptDataType, ScenarioDatasetOptions
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, TargetRequirements
+from pyrit.scenario.core import (
+    INLINE_DATASET_NAME,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
-    INLINE_DATASET_NAME,
     DatasetAttackConfiguration,
     DatasetConfiguration,
     DatasetSource,
@@ -208,7 +209,7 @@ class FigStep(Scenario):
             )
 
         user_converters = ConverterConfiguration.from_converters(
-            converters=self._technique_converters.get(FigStepTechnique.VisualJailbreak.value, [])
+            converters=context.technique_converters.get(FigStepTechnique.VisualJailbreak.value, [])
         )
         attack_technique = _VISUAL_JAILBREAK_FACTORY.create(
             objective_target=context.objective_target,

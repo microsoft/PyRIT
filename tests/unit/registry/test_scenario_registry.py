@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.models import DatasetSelectionMode, ScenarioDatasetOptions, ScenarioDatasetSettings
-from pyrit.registry.components.scenario_registry import ScenarioRegistry
+from pyrit.models import ComponentIdentifier, DatasetSelectionMode, ScenarioDatasetOptions, ScenarioDatasetSettings
+from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
     BaselineAttackPolicy,
@@ -68,6 +68,7 @@ class _MetadataScenario:
         self._technique_class = _MetadataTechnique
         self._default_technique = _MetadataTechnique.DEFAULT
         self._default_dataset_config = MagicMock(dataset_names=["sample"])
+        self._objective_scorer_identifier = ComponentIdentifier(class_name="MetadataScorer", class_module=__name__)
 
     def _resolve_scenario_techniques(self, *, scenario_techniques):
         """Resolve the concrete defaults."""
@@ -95,12 +96,14 @@ class _MarkdownMetadataScenario(_MetadataScenario):
 
 
 @pytest.mark.parametrize("cancelled", [False, True])
+@pytest.mark.parametrize("estimate", [False, True])
 async def test_construction_offload_retains_context_and_ownership_async(
-    *, patch_central_database: object, cancelled: bool
+    *, patch_central_database: object, cancelled: bool, estimate: bool
 ) -> None:
     registry = ScenarioRegistry()
     scenario = MagicMock(spec=Scenario)
     scenario.initialize_async = AsyncMock()
+    scenario.get_run_size_estimate_async = AsyncMock()
     selected = MockPromptTarget()
     loop = asyncio.get_running_loop()
     backend_thread = threading.get_ident()
@@ -108,7 +111,7 @@ async def test_construction_offload_retains_context_and_ownership_async(
     release = threading.Event()
     configured: list[object] = []
 
-    def construct(name: str, *, params: dict, constructor_kwargs: dict) -> MagicMock:
+    def construct(name: str, *, params: dict, constructor_kwargs: dict | None = None) -> MagicMock:
         assert threading.get_ident() != backend_thread
         assert get_default_adversarial_target() is selected
         configured.append(params["objective_target"])
@@ -117,14 +120,21 @@ async def test_construction_offload_retains_context_and_ownership_async(
             raise TimeoutError("Construction was not released.")
         return scenario
 
-    async def initialize_async() -> None:
+    async def finish_async(**kwargs: object) -> MagicMock:
         assert asyncio.get_running_loop() is loop
         assert get_default_adversarial_target() is selected
+        return scenario
 
-    scenario.initialize_async.side_effect = initialize_async
+    finish = scenario.get_run_size_estimate_async if estimate else scenario.initialize_async
+    finish.side_effect = finish_async
     with patch.object(registry, "_create_and_configure", side_effect=construct):
         with override_default_adversarial_target(selected):
-            task = asyncio.create_task(registry.create_and_initialize_async("test", objective_target=selected))
+            operation = (
+                registry.create_and_estimate_async(name="test", objective_target=selected)
+                if estimate
+                else registry.create_and_initialize_async("test", objective_target=selected)
+            )
+            task = asyncio.create_task(operation)
         try:
             await asyncio.wait_for(entered.wait(), 5)
             if cancelled:
@@ -136,12 +146,16 @@ async def test_construction_offload_retains_context_and_ownership_async(
                 release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(task, 5)
-                scenario.initialize_async.assert_not_awaited()
+                finish.assert_not_awaited()
             else:
                 assert not task.done()
                 release.set()
                 assert await asyncio.wait_for(task, 5) is scenario
-                scenario.initialize_async.assert_awaited_once()
+                finish.assert_awaited_once()
+            if estimate:
+                scenario.initialize_async.assert_not_awaited()
+            else:
+                scenario.get_run_size_estimate_async.assert_not_awaited()
             assert configured == [selected]
         finally:
             release.set()
@@ -168,11 +182,13 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
         "name": "one",
         "description": "Runs the first attack.",
         "tags": ["default"],
+        "identifier": None,
     }
     assert metadata.technique_summaries[1].model_dump() == {
         "name": "two",
         "description": None,
         "tags": ["default"],
+        "identifier": None,
     }
     assert dict(metadata.aggregate_technique_expansions) == {
         "all": ("one", "two"),
@@ -180,6 +196,7 @@ def test_build_metadata_expands_ordered_default_techniques() -> None:
     }
     assert metadata.dataset_options.mode is DatasetSelectionMode.FIXED
     assert metadata.dataset_defaults.max_total == 4
+    assert metadata.default_objective_scorer_identifier == _MetadataScenario()._objective_scorer_identifier
 
 
 def test_build_metadata_reports_scenario_owned_adversarial_usage() -> None:

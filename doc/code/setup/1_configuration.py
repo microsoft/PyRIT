@@ -26,7 +26,7 @@
 # If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../getting_started/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
 # %%
 # You can specify your own path for the config file using config_path
-from pyrit.setup.configuration_loader import initialize_from_config_async
+from pyrit.setup import initialize_from_config_async
 
 await initialize_from_config_async()  # type: ignore
 
@@ -138,6 +138,12 @@ target3 = OpenAIChatTarget(
 #
 # For a tour of the built-in initializers and how to write your own, see the [initializers](./pyrit_initializer.ipynb) notebook. Here we focus on how that shared state is consumed.
 #
+# Initializer arguments follow their declared types. For example,
+# `target:tags=default,scorer;auto_group=false` on the CLI configures a tag list
+# and a boolean. YAML may supply the same values as a list and `false`.
+# Omitted or null arguments use declared defaults. Configuration validates the
+# parameters but does not execute the initializer; setup runs them in order.
+#
 # ### Using Built-In Initializers
 #
 # Registering a component is only half the loop — the payoff is that any consumer can later ask a singleton registry for an instance by **name** or **tag** and use it. Importantly, nothing is auto-injected into a hand-built attack: you pull the registered instances back out yourself and wire them in. (Scenarios do this pull for you, which is why a scenario "just works" after these initializers run.)
@@ -154,7 +160,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.output import output_attack_async
-from pyrit.prompt_normalizer.converter_configuration import (
+from pyrit.prompt_normalizer import (
     ConverterConfiguration,
 )
 from pyrit.registry import ScorerRegistry, TargetRegistry

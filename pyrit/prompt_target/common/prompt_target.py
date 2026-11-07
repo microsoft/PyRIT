@@ -6,10 +6,9 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, final
 
+from pyrit.common import AuthMode, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.attack_result_scope import get_current_attack_result_id
-from pyrit.common.auth_mode import AuthMode
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import (
@@ -21,6 +20,8 @@ from pyrit.models import (
     MessagePiece,
     RequestTraceContext,
     TargetIdentifier,
+    WebSearchConfig,
+    WebSearchMode,
 )
 from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target.common.target_capabilities import (
@@ -79,7 +80,8 @@ class PromptTarget(Identifiable):
     # ``supported_auth_modes`` lists the auth modes the create-target API accepts
     # for this type. Base default is api-key only; targets that can authenticate
     # via an ambient Azure identity (e.g. OpenAI, Azure ML, Azure Blob Storage,
-    # Prompt Shield) override this to add ``"identity"``.
+    # Prompt Shield) override this to add ``"identity"``, and OpenAI targets also
+    # add ``"none"`` for OpenAI-compatible servers that need no key.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
 
     # Targets that upload files from the machine running PyRIT name the constructor parameter that
@@ -87,11 +89,25 @@ class PromptTarget(Identifiable):
     # configured and does not let callers choose it.
     upload_directory_parameter: ClassVar[str | None] = None
 
+    # Path parameters callers may set through the API, when creating a target or overriding a saved
+    # one, such as a folder the target's own session works in. The upload folder above is not one,
+    # since the server sets it. The API rejects every other parameter that can name a file or folder
+    # on the server; direct Python use is unaffected.
+    caller_path_parameters: ClassVar[frozenset[str]] = frozenset()
+
     # Targets whose construction can run model repository code name the boolean constructor
     # parameter that enables it (e.g. ``"trust_remote_code"``). The create-target API builds
     # them only for an administrator when that parameter resolves true; direct Python use is
     # unaffected.
     code_execution_parameter: ClassVar[str | None] = None
+
+    # Targets that can authenticate with this server's own stored credentials (e.g. an ambient
+    # managed identity) name the constructor parameter a caller supplies to use their own
+    # credential instead (e.g. ``"sas_token"``). When a caller does not supply it, the
+    # create-target API builds the target only for an administrator, so a non-administrator
+    # cannot point the server's credentials at a caller-chosen resource; direct Python use is
+    # unaffected.
+    server_credential_parameter: ClassVar[str | None] = None
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
@@ -106,7 +122,7 @@ class PromptTarget(Identifiable):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="PromptTarget")
 
@@ -126,6 +142,23 @@ class PromptTarget(Identifiable):
             dict[str, object]: Additional constructor parameters.
         """
         return {}
+
+    @classmethod
+    def _validate_auth_mode(cls, auth_mode: AuthMode | None) -> None:
+        """
+        Reject an authentication mode this target type does not support.
+
+        Args:
+            auth_mode (AuthMode | None): Authentication mode selected by the caller, or None for the default.
+
+        Raises:
+            ValueError: If ``auth_mode`` is set and is not one of ``supported_auth_modes``.
+        """
+        if auth_mode is not None and auth_mode not in cls.supported_auth_modes:
+            raise ValueError(
+                f"{cls.__name__} does not support auth_mode={auth_mode!r}. "
+                f"Use one of: {', '.join(cls.supported_auth_modes)}."
+            )
 
     def __init__(
         self,
@@ -225,6 +258,25 @@ class PromptTarget(Identifiable):
         """
         validate_tool_conversation(messages)
 
+    def validate_web_search_config(self, config: WebSearchConfig) -> None:
+        """
+        Check whether this adapter can enforce a request's search policy.
+
+        Args:
+            config (WebSearchConfig): Requested target-hosted search policy.
+
+        Raises:
+            ValueError: If search is required, or a search-enabled adapter cannot disable it.
+        """
+        if config.mode == WebSearchMode.DEFAULT:
+            return
+        if config.mode == WebSearchMode.DISABLED and not self.capabilities.supports_web_search:
+            return
+        raise ValueError(
+            f"{type(self).__name__} cannot enforce web search mode {config.mode.value!r}. "
+            "Use an adapter that implements this policy and declares supports_web_search."
+        )
+
     def validate_history_replay(self) -> None:
         """
         Check configuration support for initializing a new conversation from stored history.
@@ -279,6 +331,8 @@ class PromptTarget(Identifiable):
             piece.prompt_metadata.pop(RequestTraceContext.METADATA_KEY, None)
             piece.prompt_metadata[RequestTraceContext.REQUEST_METADATA_KEY] = 1
         message.validate()
+        web_search_config = self._get_web_search_config(message)
+        self.validate_web_search_config(web_search_config)
         conversation_id = message.get_piece().conversation_id or ""
         if send_context and send_context.conversation_id != conversation_id:
             raise ValueError("Target send context conversation_id does not match the current request conversation_id.")
@@ -294,6 +348,8 @@ class PromptTarget(Identifiable):
             )
             if not normalized_conversation:
                 raise ValueError("Normalization pipeline returned an empty conversation. Cannot send an empty request.")
+            if self._get_web_search_config(normalized_conversation[-1]) != web_search_config:
+                raise ValueError("Normalization changed the request's web search policy.")
             self._validate_request(normalized_conversation=normalized_conversation)
             with target_trace_context(
                 config=self._trace_config, request=message, normalized_request=normalized_conversation[-1]
@@ -381,6 +437,17 @@ class PromptTarget(Identifiable):
 
         if not self.configuration.includes(capability=CapabilityName.MULTI_TURN) and len(normalized_conversation) > 1:
             raise ValueError(f"This target only supports a single turn conversation. {custom_configuration_message}")
+
+    @staticmethod
+    def _get_web_search_config(message: Message) -> WebSearchConfig:
+        configs = {
+            WebSearchConfig.from_metadata(metadata=piece.prompt_metadata)
+            for piece in message.message_pieces
+            if WebSearchConfig.METADATA_KEY in piece.prompt_metadata
+        }
+        if len(configs) > 1:
+            raise ValueError("Message pieces have conflicting web search policies.")
+        return next(iter(configs), WebSearchConfig())
 
     async def _get_normalized_conversation_async(
         self,

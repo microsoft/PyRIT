@@ -43,6 +43,7 @@ from unit.mocks import MockPromptTarget, store_message_async
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.common.utils import to_sha256
+from pyrit.exceptions import ScenarioRunInProgressException
 from pyrit.executor.attack import (
     AttackScoringConfig,
     AttackStrategy,
@@ -51,7 +52,7 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
     attack_outcome_from_score,
 )
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
@@ -79,8 +80,8 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
+from pyrit.scenario import AttackTechniqueFactory, Scenario
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
@@ -91,10 +92,10 @@ from pyrit.scenario.core import (
     IncompatibleTechniqueError,
     TechniqueRequirements,
 )
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.scenarios.benchmark.adversarial import (
+from pyrit.scenario.scenarios.benchmark import (
     AdversarialBenchmark,
+)
+from pyrit.scenario.scenarios.benchmark.adversarial import (
     _build_benchmark_technique,
     _get_benchmark_adversarial_guidance,
 )
@@ -993,7 +994,11 @@ class TestGetAtomicAttacksCrossProduct:
         ) as build:
             await _build_atomic_attacks(bench)
 
-        assert build.call_args.kwargs["technique_converters"] is converters
+        forwarded = build.call_args.kwargs["technique_converters"]
+        assert forwarded == converters
+        assert forwarded is not converters
+        assert forwarded["red_teaming"] is not converters["red_teaming"]
+        assert forwarded["red_teaming"][0] is converters["red_teaming"][0]
 
     async def test_atomic_attack_name_format_is_technique__target_dataset(self):
         """Name format: ``{technique}__{target}_{dataset}`` (preserves VERSION=2 cache key shape)."""
@@ -2005,7 +2010,6 @@ class TestRunAsyncCachePersistence:
 
         result_x = MagicMock(spec=AttackResult)
         result_y = MagicMock(spec=AttackResult)
-        result_z = MagicMock(spec=AttackResult)
 
         # Simulate what _build_atomic_attacks_async populated for two cached attacks.
         bench._precomputed_cached_results = {
@@ -2013,55 +2017,48 @@ class TestRunAsyncCachePersistence:
             "technique_b__adv_target_harmbench": [result_y],
         }
 
-        base_scenario_result = MagicMock()
-        base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
-        base_scenario_result.display_group_map = {}
-
-        with (
-            patch.object(bench, "_persist_precomputed_cached_results_async") as persist_cached,
-            patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)),
-        ):
-            result = await bench.run_async()
+        with patch.object(bench, "_persist_precomputed_cached_results_async") as persist_cached:
+            await bench._prepare_run_async()
 
         persist_cached.assert_called_once_with()
-        assert result is base_scenario_result
 
-    async def test_base_result_is_returned_after_cache_persistence(self):
+    async def test_prepare_run_async_marks_failed_on_persistence_error(self):
         bench = AdversarialBenchmark(
             objective_scorer=MagicMock(spec=TrueFalseScorer),
             use_cached=True,
         )
-
-        bench._precomputed_cached_results = {"technique_a__adv_target_harmbench": [MagicMock(spec=AttackResult)]}
-
-        base_scenario_result = MagicMock()
-        base_scenario_result.attack_results = {}
-        base_scenario_result.display_group_map = {}
+        bench._scenario_result_id = str(uuid.uuid4())
 
         with (
-            patch.object(bench, "_persist_precomputed_cached_results_async"),
-            patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)),
+            patch.object(bench, "_persist_precomputed_cached_results_async", side_effect=RuntimeError("disk error")),
+            patch.object(bench, "_mark_scenario_failed_async", new=AsyncMock()) as mark_failed,
         ):
-            result = await bench.run_async()
+            with pytest.raises(RuntimeError, match="disk error"):
+                await bench._prepare_run_async()
 
-        assert result is base_scenario_result
+        mark_failed.assert_called_once()
 
-    async def test_no_injection_when_no_cached_attacks(self):
-        """When all attacks were executed freshly, attack_results is returned unchanged."""
+    async def test_concurrent_run_async_rejects_before_prepare_run_async(self):
+        """A concurrent run on the same run ID is rejected before _prepare_run_async can duplicate cached rows."""
         bench = AdversarialBenchmark(
             objective_scorer=MagicMock(spec=TrueFalseScorer),
-            use_cached=False,
+            use_cached=True,
         )
+        bench._scenario_result_id = str(uuid.uuid4())
+        bench._atomic_attacks = [MagicMock()]
 
-        result_z = MagicMock(spec=AttackResult)
-        base_scenario_result = MagicMock()
-        base_scenario_result.attack_results = {"technique_c__adv_target_harmbench": [result_z]}
-        base_scenario_result.display_group_map = {}
+        with Scenario._active_runs_lock:
+            Scenario._active_runs.add(bench._scenario_result_id)
 
-        with patch.object(Scenario, "run_async", new=AsyncMock(return_value=base_scenario_result)):
-            result = await bench.run_async()
-
-        assert set(result.attack_results.keys()) == {"technique_c__adv_target_harmbench"}
+        try:
+            with patch.object(bench, "_prepare_run_async") as prepare_mock:
+                with pytest.raises(ScenarioRunInProgressException) as exc_info:
+                    await bench.run_async()
+                assert exc_info.value.status_code == 409
+                prepare_mock.assert_not_called()
+        finally:
+            with Scenario._active_runs_lock:
+                Scenario._active_runs.discard(bench._scenario_result_id)
 
 
 def _make_scorer_identifier(*, question: str) -> ComponentIdentifier:

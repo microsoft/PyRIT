@@ -5,8 +5,8 @@ import json
 from unittest.mock import MagicMock, patch
 
 from pyrit.models import ComponentIdentifier
-from pyrit.output.scorer.json import JsonScorerMemoryPrinter
-from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
+from pyrit.output.scorer.json import JsonScorerMemoryPrinter, format_scorer_type, scorer_metrics_to_dict
+from pyrit.score import ObjectiveScorerMetrics
 
 
 def _scorer_identifier(
@@ -42,7 +42,7 @@ def _build(identifier: ComponentIdentifier, *, metrics=None) -> dict:
     printer = JsonScorerMemoryPrinter()
     with (
         patch("pyrit.models.ScorerEvaluationIdentifier") as mock_eval_id_cls,
-        patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash") as mock_find,
+        patch("pyrit.score.find_objective_metrics_by_eval_hash") as mock_find,
     ):
         mock_eval_id_cls.return_value = MagicMock(eval_hash="hash")
         mock_find.return_value = metrics
@@ -52,6 +52,27 @@ def _build(identifier: ComponentIdentifier, *, metrics=None) -> dict:
 def test_build_reports_class_name():
     payload = _build(_scorer_identifier(class_name="MyScorer"))
     assert payload["class_name"] == "MyScorer"
+
+
+def test_compact_scorer_type_preserves_nested_wrappers_and_duplicate_children() -> None:
+    leaf = _scorer_identifier(class_name="Leaf")
+    wrapped = _scorer_identifier(class_name="Threshold", children={"sub_scorers": [leaf]})
+    composite = _scorer_identifier(
+        class_name="Composite",
+        children={"sub_scorers": [wrapped, leaf, leaf], "prompt_target": _scorer_identifier(class_name="NotAScorer")},
+    )
+    assert format_scorer_type(composite) == "Composite(Threshold(Leaf), Leaf, Leaf)"
+
+
+def test_metrics_summary_omits_raw_trials_without_copying_them() -> None:
+    class UncopyableTrials:
+        def __deepcopy__(self, memo: dict[int, object]) -> object:
+            raise AssertionError("Do not copy raw evaluation trials for a summary")
+
+    metrics = _objective_metrics(trial_scores=UncopyableTrials(), average_score_time_seconds=0.0)
+    summary = scorer_metrics_to_dict(metrics)
+    assert summary["average_score_time_seconds"] == 0.0
+    assert "trial_scores" not in summary
 
 
 def test_build_includes_params_untruncated():
@@ -110,7 +131,7 @@ async def test_render_async_emits_valid_json_for_nan_metrics():
     printer = JsonScorerMemoryPrinter()
     with (
         patch("pyrit.models.ScorerEvaluationIdentifier") as mock_eval_id_cls,
-        patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash") as mock_find,
+        patch("pyrit.score.find_objective_metrics_by_eval_hash") as mock_find,
     ):
         mock_eval_id_cls.return_value = MagicMock(eval_hash="hash")
         mock_find.return_value = _objective_metrics(accuracy=float("nan"))
@@ -126,7 +147,7 @@ async def test_render_async_returns_valid_json():
     printer = JsonScorerMemoryPrinter()
     with (
         patch("pyrit.models.ScorerEvaluationIdentifier") as mock_eval_id_cls,
-        patch("pyrit.score.scorer_evaluation.scorer_metrics_io.find_objective_metrics_by_eval_hash") as mock_find,
+        patch("pyrit.score.find_objective_metrics_by_eval_hash") as mock_find,
     ):
         mock_eval_id_cls.return_value = MagicMock(eval_hash="hash")
         mock_find.return_value = _objective_metrics()

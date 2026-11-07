@@ -3,8 +3,11 @@
 
 """Candidate proposal logic for Greedy Coordinate Gradient (GCG) attacks."""
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 
@@ -16,6 +19,21 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
 from pyrit.executor.promptgen.gcg.extension_protocols import CandidateFilter, SamplingStrategy
 
 
+def _hf_vocabulary_identity(*, tokenizer: Any, num_embeddings: int) -> str:
+    """
+    Fingerprint Hugging Face token/id mappings within the paired model's embedding rows.
+
+    Args:
+        tokenizer (Any): The worker's Hugging Face tokenizer.
+        num_embeddings (int): The number of rows in the paired model's embedding matrix.
+
+    Returns:
+        str: A stable SHA-256 digest of the sampleable token/id mappings.
+    """
+    vocab = sorted((i, token) for token, i in tokenizer.get_vocab().items() if i < num_embeddings)
+    return hashlib.sha256(json.dumps(vocab).encode()).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateProposalBatch:
     """
@@ -23,9 +41,9 @@ class CandidateProposalBatch:
 
     Attributes:
         control_candidates_by_group: List of filtered candidate string lists, one per
-            compatible gradient shape group.
+            compatible gradient group (same shape and vocabulary within the embedding rows).
         group_worker_indices: Index of the last worker in each contiguous compatible
-            gradient shape group, used for sampling and filtering that group.
+            gradient group, used for sampling and filtering that group.
     """
 
     control_candidates_by_group: list[list[str]]
@@ -101,7 +119,7 @@ class GCGCandidateProposer:
             current_control_str: The current decoded control string used as a fallback by length filters.
 
         Returns:
-            CandidateProposalBatch containing filtered candidate strings per gradient shape group
+            CandidateProposalBatch containing filtered candidate strings per gradient group
             and corresponding group worker indices.
 
         Raises:
@@ -114,17 +132,27 @@ class GCGCandidateProposer:
         control_cands: list[list[str]] = []
         group_worker_indices: list[int] = []
         grad: torch.Tensor | None = None
+        vocab: str | None = None
 
         # Collect and aggregate gradients across workers
         for j, worker in enumerate(self._workers):
             new_grad: torch.Tensor = worker.results.get().to(self._main_device)
             new_grad = new_grad / new_grad.norm(dim=-1, keepdim=True)
+            # Each embedding row is a sampleable token ID, including added tokens.
+            # Tokens outside the embedding matrix cannot be sampled and need not match.
+            # Workers outlive per-step proposers and progressive inner attacks.
+            identities = worker._vocabulary_identities
+            key = new_grad.shape[-1]
+            if key not in identities:
+                identities[key] = _hf_vocabulary_identity(tokenizer=worker.tokenizer, num_embeddings=new_grad.shape[-1])
+            new_vocab = identities[key]
 
             if grad is None:
                 grad = torch.zeros_like(new_grad)
+                vocab = new_vocab
 
-            if grad.shape != new_grad.shape:
-                # Shape mismatch: finalize the preceding group
+            if grad.shape != new_grad.shape or vocab != new_vocab:
+                # Shape or vocabulary mismatch: finalize the preceding group
                 with torch.no_grad():
                     sampled = self._sample_group(
                         worker_idx=j - 1,
@@ -143,6 +171,7 @@ class GCGCandidateProposer:
                     control_cands.append(filtered)
                     group_worker_indices.append(j - 1)
                 grad = new_grad
+                vocab = new_vocab
             else:
                 grad += new_grad
 
@@ -189,7 +218,7 @@ class GCGCandidateProposer:
 
         Args:
             worker_idx: Index of the representative worker.
-            gradient: Aggregated gradient tensor for this shape group.
+            gradient: Aggregated gradient tensor for this gradient group.
             batch_size: Number of candidates to sample.
             topk: Top gradient coordinates to sample from.
             temp: Sampling temperature.

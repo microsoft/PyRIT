@@ -22,7 +22,7 @@ from pyrit.models import (
     ScenarioRunSizeFactor,
     SeedDataset,
 )
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechniqueFactory,
@@ -391,11 +391,6 @@ class Multilingual(Scenario):
         Raises:
             ValueError: If the scenario is not properly initialized.
         """
-        if self._objective_target is None:
-            raise ValueError(
-                "Scenario not properly initialized. Call await scenario.initialize_async() before running."
-            )
-
         self._resolved_languages = await self._resolve_languages_async()
         return await run_legacy_sync_async(self._build_atomic_attacks, context=context)
 

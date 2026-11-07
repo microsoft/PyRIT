@@ -7,7 +7,7 @@ Tests for metadata components related to SeedDatasetProvider.
 
 import pytest
 
-from pyrit.datasets.seed_datasets.seed_metadata import (
+from pyrit.datasets import (
     SeedDatasetFilter,
     SeedDatasetLoadTime,
     SeedDatasetMetadata,
@@ -375,6 +375,27 @@ class TestFilterProperties:
     def test_harm_categories_values(self):
         f = SeedDatasetFilter(harm_categories={"violence", "cybercrime"})
         assert "violence" in f.criteria[0].harm_categories
+
+    def test_string_values_normalized_lower_strip(self):
+        f = SeedDatasetFilter(
+            harm_categories={" Violence "},
+            modalities={"TEXT"},
+            size={"Large"},
+            source_type={" Remote"},
+        )
+        assert f.criteria[0].harm_categories == {"violence"}
+        assert f.criteria[0].modalities == {"text"}
+        assert f.criteria[0].size == {"large"}
+        assert f.criteria[0].source_type == {"remote"}
+
+    def test_explicit_criteria_values_normalized(self):
+        f = SeedDatasetFilter(criteria=[SeedDatasetMetadata(tags={"Safety"}, harm_categories={"Cybercrime"})])
+        assert f.criteria[0].tags == {"safety"}
+        assert f.criteria[0].harm_categories == {"cybercrime"}
+
+    def test_load_time_enum_values_unchanged(self):
+        f = SeedDatasetFilter(load_time={SeedDatasetLoadTime.FAST})
+        assert f.criteria[0].load_time == {SeedDatasetLoadTime.FAST}
 
 
 @pytest.mark.parametrize("strict_match", [False, True])

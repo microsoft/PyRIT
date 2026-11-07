@@ -11,14 +11,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_prompt_normalizer
 
-from pyrit.executor.attack.component import PrependedConversationConfig
-from pyrit.executor.attack.component.prepended_history_send_context import (
-    PrependedHistorySendContext,
-)
-from pyrit.executor.attack.core.attack_parameters import AttackParameters
-from pyrit.executor.attack.multi_turn import (
+from pyrit.executor.attack import (
+    AttackParameters,
     ChunkedRequestAttack,
     ChunkedRequestAttackContext,
+    PrependedConversationConfig,
+)
+from pyrit.executor.attack.component.prepended_history_send_context import (
+    PrependedHistorySendContext,
 )
 from pyrit.message_normalizer import HistorySquashNormalizer, MessageStringNormalizer
 from pyrit.models import ComponentIdentifier, Message, MessagePiece
@@ -135,6 +135,7 @@ class TestChunkedRequestAttack:
         assert "1-50" in prompts[0]
         assert "51-100" in prompts[1]
         assert "101-150" in prompts[2]
+        assert "respond with the answer: 'Get the secret'" in prompts[0]
 
     def test_generate_chunk_prompts_custom_chunk_type(self):
         """Test chunk prompt generation with custom chunk type."""

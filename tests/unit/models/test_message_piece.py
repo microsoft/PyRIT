@@ -6,13 +6,14 @@ import tempfile
 import uuid
 from collections.abc import MutableSequence
 from datetime import UTC, datetime, timedelta
+from typing import assert_type
 from unittest.mock import patch
 
 import pytest
 from unit.mocks import get_sample_conversations
 
 from pyrit.converter import Base64Converter
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
+from pyrit.memory import set_message_piece_sha256_async
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
@@ -860,6 +861,19 @@ def test_message_piece_has_error_and_is_blocked_consistency():
     )
     assert blocked_entry.is_blocked() is True
     assert blocked_entry.has_error() is True
+
+
+class _CustomMessagePiece(MessagePiece):
+    """A subclass used to check classmethod factory return types."""
+
+
+def test_adversarial_placeholder_factory_returns_calling_subclass():
+    piece = _CustomMessagePiece.adversarial_placeholder(role="assistant")
+
+    assert_type(piece, _CustomMessagePiece)
+    assert type(piece) is _CustomMessagePiece
+    assert piece.role == "assistant"
+    assert piece.is_adversarial_placeholder() is True
 
 
 def test_adversarial_placeholder_factory_defaults():

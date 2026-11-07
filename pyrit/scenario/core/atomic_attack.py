@@ -98,6 +98,7 @@ class AtomicAttack:
                 execution method.
 
         Raises:
+            IncompatibleTechniqueError: If named group prompts were not bound to the technique.
             ValueError: If seed_groups list is empty.
             TypeError: If any entry of ``seed_groups`` is not a ``AttackSeedGroup``.
         """
@@ -119,6 +120,8 @@ class AtomicAttack:
         for sg in seed_groups:
             if not isinstance(sg, AttackSeedGroup):
                 raise TypeError(f"seed_groups must contain AttackSeedGroup instances; got {type(sg).__name__}.")
+            if group_kind is not ScenarioRunPlanGroupKind.BASELINE:
+                attack_technique.validate_group_adversarial_prompts(sg)
 
         self._seed_groups = seed_groups
         self._validate_unique_objective_hashes()

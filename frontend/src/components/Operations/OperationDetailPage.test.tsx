@@ -1,37 +1,42 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
 import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
-import type { Finding, FindingListItem, Operation } from '@/types'
+import { installRouterTestRequest } from '@/test-utils/routerRequest'
+import type { Finding, FindingListItem, Operation, OperationDetail } from '@/types'
 import OperationDetailPage from './OperationDetailPage'
 
 jest.mock('@/services/api', () => ({
   operationsApi: {
-    get: jest.fn(), update: jest.fn(), listFindings: jest.fn(), createFinding: jest.fn(),
+    get: jest.fn(), update: jest.fn(), delete: jest.fn(), listFindings: jest.fn(), createFinding: jest.fn(),
     updateFinding: jest.fn(), deleteFinding: jest.fn(),
     listFindingEvidence: jest.fn(), detachFindingEvidence: jest.fn(),
-    getFindingOptions: jest.fn(),
+    getFindingOptions: jest.fn(), exportFindings: jest.fn(),
   },
   attacksApi: { listAttacks: jest.fn() },
   scenariosApi: { listRuns: jest.fn() },
 }))
 
-const OPERATION: Operation = { id: 'op-1', name: 'Red team / α%', created_at: '2026-10-06T20:00:00Z' }
+const SAVED: Operation = { id: 'op-1', name: 'Red team / α%', created_at: '2026-10-06T20:00:00Z' }
+const OPERATION: OperationDetail = { ...SAVED, usage: { findings: 0, attacks: 0, scenario_runs: 0 } }
 const FINDING: FindingListItem = {
   id: 'finding-1', operation_id: 'op-1', title: 'Human assessment',
   description: '', severity: 'informational', created_at: '2026-10-06T20:00:00Z', evidence_count: 0,
 }
 const EMPTY = { items: [], has_more: false, next_offset: null }
 const NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'missing' } } }
+const conflict = (detail: object) => ({ isAxiosError: true, response: { status: 409, data: { detail } } })
 
-function renderPage(route = '/operations/op-1'): void {
+function renderPage(route = '/operations/op-1', onOperationChanged?: () => void): void {
   render(
     <FluentProvider theme={webLightTheme}>
       <MemoryRouter initialEntries={[route]}>
         <Routes>
-          <Route path="/operations/:operationId" element={<OperationDetailPage />} />
+          <Route path="/operations" element={<h1>Operations list</h1>} />
+          <Route path="/operations/:operationId"
+            element={<OperationDetailPage onOperationChanged={onOperationChanged} />} />
         </Routes>
       </MemoryRouter>
     </FluentProvider>,
@@ -52,25 +57,130 @@ beforeEach(() => {
   jest.mocked(scenariosApi.listRuns).mockResolvedValue({ items: [], pagination: { limit: 5, has_more: false } })
 })
 
-it('adds and edits the operation description, keeping the draft after a failed save', async () => {
+it('renames the operation and edits its description, keeping the draft after a failed or conflicting save', async () => {
   const user = userEvent.setup()
-  renderPage()
-  await user.click(await screen.findByRole('button', { name: 'Add description' }))
-  let dialog = screen.getByRole('dialog')
+  const onOperationChanged = jest.fn()
+  renderPage(undefined, onOperationChanged)
+  await user.click(await screen.findByRole('button', { name: 'Edit' }))
+  let dialog = screen.getByRole('dialog', { name: 'Edit operation' })
+  const name = within(dialog).getByRole('textbox', { name: 'Name' })
+  expect(name).toHaveValue(OPERATION.name)
   expect(within(dialog).getByRole('textbox', { name: 'Description' })).toHaveValue('')
+  await user.clear(name)
+  await user.type(name, 'Engagement')
   await user.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Web app only')
   jest.mocked(operationsApi.update).mockRejectedValueOnce(new Error('Storage unavailable'))
-  await user.click(within(dialog).getByRole('button', { name: 'Save description' }))
-  expect(await within(dialog).findByText(/Could not save description: Storage unavailable/)).toBeInTheDocument()
-  jest.mocked(operationsApi.update).mockResolvedValueOnce({ ...OPERATION, description: 'Web app only' })
-  await user.click(within(dialog).getByRole('button', { name: 'Save description' }))
-  expect(await screen.findByText('Web app only')).toBeInTheDocument()
-  expect(screen.getByText('Operation description saved.')).toBeInTheDocument()
-  expect(operationsApi.update).toHaveBeenLastCalledWith('op-1', { description: 'Web app only' })
+  await user.click(within(dialog).getByRole('button', { name: 'Save operation' }))
+  expect(await within(dialog).findByText(/Could not save operation: Storage unavailable/)).toBeInTheDocument()
+  jest.mocked(operationsApi.update).mockRejectedValueOnce(conflict({
+    message: 'taken', operation: { id: 'op-2', name: 'ENGAGEMENT', created_at: SAVED.created_at },
+  }))
+  await user.click(within(dialog).getByRole('button', { name: 'Save operation' }))
+  expect(await within(dialog).findByText(/Another operation is already named “ENGAGEMENT”/)).toBeInTheDocument()
+  expect(name).toHaveValue('Engagement')
+  await user.type(name, ' 2')
+  expect(within(dialog).queryByText(/already named/)).not.toBeInTheDocument()
+  jest.mocked(operationsApi.update).mockResolvedValueOnce({ ...SAVED, name: 'Engagement 2', description: 'Web app only' })
+  await user.click(within(dialog).getByRole('button', { name: 'Save operation' }))
+  expect(await screen.findByRole('heading', { level: 1, name: 'Engagement 2' })).toBeInTheDocument()
+  expect(screen.getByText('Web app only')).toBeInTheDocument()
+  expect(screen.getByText('Operation updated.')).toBeInTheDocument()
+  expect(operationsApi.update).toHaveBeenLastCalledWith('op-1', { name: 'Engagement 2', description: 'Web app only' })
+  expect(onOperationChanged).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('button', { name: 'Delete' })).not.toHaveAttribute('aria-disabled')
 
-  await user.click(await screen.findByRole('button', { name: 'Edit description' }))
-  dialog = screen.getByRole('dialog')
+  await user.click(screen.getByRole('button', { name: 'Edit' }))
+  dialog = screen.getByRole('dialog', { name: 'Edit operation' })
+  expect(within(dialog).getByRole('textbox', { name: 'Name' })).toHaveValue('Engagement 2')
   expect(within(dialog).getByRole('textbox', { name: 'Description' })).toHaveValue('Web app only')
+  await user.clear(within(dialog).getByRole('textbox', { name: 'Name' }))
+  expect(within(dialog).getByRole('button', { name: 'Save operation' })).toBeDisabled()
+})
+
+it('sends only the fields that were edited', async () => {
+  const user = userEvent.setup()
+  jest.mocked(operationsApi.update).mockResolvedValue({ ...SAVED, description: 'Web app only' })
+  renderPage()
+  await user.click(await screen.findByRole('button', { name: 'Edit' }))
+  const dialog = screen.getByRole('dialog', { name: 'Edit operation' })
+  await user.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Web app only')
+  await user.click(within(dialog).getByRole('button', { name: 'Save operation' }))
+  expect(await screen.findByText('Web app only')).toBeInTheDocument()
+  expect(operationsApi.update).toHaveBeenCalledWith('op-1', { description: 'Web app only' })
+})
+
+it('deletes an empty operation after confirmation and returns to the operations list', async () => {
+  const user = userEvent.setup()
+  const onOperationChanged = jest.fn()
+  jest.mocked(operationsApi.delete).mockResolvedValue(undefined)
+  renderPage(undefined, onOperationChanged)
+  const remove = await screen.findByRole('button', { name: 'Delete' })
+  expect(remove).toHaveAccessibleDescription('Delete this empty operation.')
+  await user.click(remove)
+  let dialog = screen.getByRole('dialog', { name: 'Delete operation?' })
+  const confirmation = within(dialog).getByText(/cannot be undone/i)
+  expect(confirmation).toHaveTextContent(OPERATION.name)
+  expect(confirmation).toHaveTextContent(/No saved findings, attacks, or scanner runs use it/)
+  expect(confirmation).toHaveTextContent(/SDK attacks still running under it will save their results without an operation/)
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(operationsApi.delete).not.toHaveBeenCalled()
+  await user.click(remove)
+  dialog = screen.getByRole('dialog', { name: 'Delete operation?' })
+  await user.click(within(dialog).getByRole('button', { name: 'Delete operation' }))
+  // JSDOM can leave Tabster's modal aria-hidden after navigation; the seeded browser test checks the accessible page.
+  expect(await screen.findByText('Operations list')).toBeInTheDocument()
+  expect(operationsApi.delete).toHaveBeenCalledWith('op-1')
+  expect(onOperationChanged).toHaveBeenCalledTimes(1)
+})
+
+it.each([
+  [{ findings: 3, attacks: 10, scenario_runs: 2 }, 'Has 3 findings and 12 linked attacks or runs.'],
+  [{ findings: 1, attacks: 0, scenario_runs: 0 }, 'Has 1 finding.'],
+  [{ findings: 0, attacks: 0, scenario_runs: 1 }, 'Has 1 linked attack or run.'],
+])('keeps an operation in use undeletable and explains why: %o', async (usage, reason) => {
+  const user = userEvent.setup()
+  jest.mocked(operationsApi.get).mockResolvedValue({ ...OPERATION, usage })
+  renderPage()
+  const remove = await screen.findByRole('button', { name: 'Delete' })
+  expect(remove).toHaveAttribute('aria-disabled', 'true')
+  expect(remove).toHaveAccessibleDescription(`${reason} Only empty operations can be deleted.`)
+  remove.focus()
+  expect(remove).toHaveFocus()
+  await user.keyboard('{Enter}')
+  await user.click(remove)
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(operationsApi.delete).not.toHaveBeenCalled()
+})
+
+it('refetches the counts and disables deletion when the operation came into use after loading', async () => {
+  const user = userEvent.setup()
+  jest.mocked(operationsApi.delete).mockRejectedValueOnce(conflict({ message: 'in use' }))
+  renderPage()
+  await user.click(await screen.findByRole('button', { name: 'Delete' }))
+  const dialog = screen.getByRole('dialog', { name: 'Delete operation?' })
+  jest.mocked(operationsApi.get).mockResolvedValue({ ...OPERATION, usage: { findings: 0, attacks: 2, scenario_runs: 0 } })
+  await user.click(within(dialog).getByRole('button', { name: 'Delete operation' }))
+  expect(await within(dialog).findByText(/no longer empty/)).toBeInTheDocument()
+  await waitFor(() => {
+    expect(within(dialog).getByRole('button', { name: 'Delete operation' })).toHaveAttribute('aria-disabled', 'true')
+  })
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  const remove = await screen.findByRole('button', { name: 'Delete' })
+  expect(remove).toHaveAttribute('aria-disabled', 'true')
+  expect(remove).toHaveAccessibleDescription('Has 2 linked attacks or runs. Only empty operations can be deleted.')
+  expect(screen.getByRole('heading', { level: 1, name: OPERATION.name })).toBeInTheDocument()
+})
+
+it('reports other deletion failures in the confirmation dialog', async () => {
+  const user = userEvent.setup()
+  jest.mocked(operationsApi.delete).mockRejectedValueOnce(new Error('Storage unavailable'))
+  renderPage()
+  await user.click(await screen.findByRole('button', { name: 'Delete' }))
+  const dialog = screen.getByRole('dialog', { name: 'Delete operation?' })
+  await user.click(within(dialog).getByRole('button', { name: 'Delete operation' }))
+  expect(await within(dialog).findByText('Storage unavailable')).toBeInTheDocument()
+  expect(within(dialog).getByRole('button', { name: 'Delete operation' })).not.toHaveAttribute('aria-disabled')
 })
 
 it('refreshes evidence counts without collapsing the expanded list after detachment', async () => {
@@ -95,15 +205,18 @@ it('refreshes evidence counts without collapsing the expanded list after detachm
   expect(await screen.findByText('No evidence attached.')).toBeInTheDocument()
 })
 
-it('puts all execution history after the findings without fetching or duplicating activity', async () => {
+it('links both feature histories after the findings without fetching or duplicating activity', async () => {
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
   renderPage()
   const finding = await screen.findByRole('heading', { name: FINDING.title })
-  const link = screen.getByRole('link', { name: 'All execution history' })
+  const link = screen.getByRole('link', { name: 'Attack history' })
   const url = new URL(link.getAttribute('href') ?? '', 'http://localhost')
-  expect(url.pathname).toBe('/history/attacks')
+  expect(url.pathname).toBe('/attack/history')
   expect(url.searchParams.getAll('operation_id')).toEqual([OPERATION.id])
   expect(url.searchParams.has('operation')).toBe(false)
+  const scannerUrl = new URL(screen.getByRole('link', { name: 'Scanner history' }).getAttribute('href') ?? '', 'http://localhost')
+  expect(scannerUrl.pathname).toBe('/scanner/history')
+  expect(scannerUrl.searchParams.getAll('operation_id')).toEqual([OPERATION.id])
   expect(finding.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(screen.queryByText('Human assessments, separate from attack outcomes and scores.')).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Recent attacks' })).not.toBeInTheDocument()
@@ -323,6 +436,30 @@ it('requires delete confirmation and refreshes the first page after deleting its
   await waitFor(() => expect(screen.getByRole('button', { name: 'New finding' })).toHaveFocus())
 })
 
+it('refreshes operation usage after findings change so an emptied operation can be deleted', async () => {
+  const user = userEvent.setup()
+  const usage = { findings: 1, attacks: 0, scenario_runs: 0 }
+  jest.mocked(operationsApi.get).mockResolvedValue({ ...OPERATION, usage })
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+  renderPage()
+  expect(await screen.findByRole('button', { name: 'Delete' })).toHaveAttribute('aria-disabled', 'true')
+  await user.click(screen.getByRole('button', { name: `Delete finding: ${FINDING.title}` }))
+  jest.mocked(operationsApi.get).mockResolvedValue(OPERATION)
+  jest.mocked(operationsApi.listFindings).mockResolvedValue(EMPTY)
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete finding' }))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Delete' })).not.toHaveAttribute('aria-disabled'))
+  expect(operationsApi.get).toHaveBeenCalledTimes(2)
+
+  jest.mocked(operationsApi.get).mockRejectedValue(new Error('Busy'))
+  await user.click(screen.getByRole('button', { name: 'New finding' }))
+  const dialog = screen.getByRole('dialog')
+  await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), FINDING.title)
+  await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+  await waitFor(() => expect(operationsApi.get).toHaveBeenCalledTimes(3))
+  expect(await screen.findByRole('heading', { level: 1, name: OPERATION.name })).toBeInTheDocument()
+  expect(screen.queryByText(/Could not load operation/)).not.toBeInTheDocument()
+})
+
 it('keeps deletion errors visible and prevents duplicate confirmations', async () => {
   const user = userEvent.setup()
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
@@ -344,6 +481,42 @@ it('keeps deletion errors visible and prevents duplicate confirmations', async (
   expect(operationsApi.deleteFinding).toHaveBeenCalledTimes(1)
 })
 
+it('opens findings export from the header without changing findings or the dashboard page', async () => {
+  const user = userEvent.setup()
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+  renderPage('/operations/op-1?offset=20')
+  await screen.findByRole('heading', { level: 2, name: FINDING.title })
+  const trigger = screen.getByRole('button', { name: 'Export findings' })
+  await user.click(trigger)
+  const dialog = screen.getByRole('dialog', { name: 'Export findings' })
+  expect(await within(dialog).findByRole('checkbox', { name: FINDING.title })).toBeChecked()
+  expect(operationsApi.listFindings).toHaveBeenCalledWith('op-1', { limit: 100, offset: 0 })
+
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(trigger).toHaveFocus())
+  expect(screen.getByText('Page 2')).toBeInTheDocument()
+  expect(jest.mocked(operationsApi.listFindings).mock.calls.filter(([, params]) => params.limit === 20))
+    .toEqual([['op-1', { limit: 20, offset: 20 }]])
+  expect(operationsApi.exportFindings).not.toHaveBeenCalled()
+  expect(operationsApi.createFinding).not.toHaveBeenCalled()
+  expect(operationsApi.updateFinding).not.toHaveBeenCalled()
+  expect(operationsApi.deleteFinding).not.toHaveBeenCalled()
+})
+
+it('shows decorative icons on the header actions but not on the finding actions', async () => {
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+  renderPage()
+  const heading = await screen.findByRole('heading', { level: 1, name: OPERATION.name })
+  await screen.findByRole('heading', { level: 2, name: FINDING.title })
+  const header = within(heading.closest('header') as HTMLElement)
+  const withoutIcon = ['Edit', 'Delete', 'Export findings', 'New finding']
+    .filter(name => header.getByRole('button', { name }).querySelector('svg[aria-hidden="true"]') === null)
+  expect(withoutIcon).toEqual([])
+  expect(screen.getByRole('button', { name: `Edit finding: ${FINDING.title}` }).querySelector('svg')).toBeNull()
+  expect(screen.getByRole('button', { name: `Delete finding: ${FINDING.title}` }).querySelector('svg')).toBeNull()
+})
+
 it('pages through findings', async () => {
   const user = userEvent.setup()
   jest.mocked(operationsApi.listFindings).mockResolvedValueOnce({ items: [FINDING], has_more: true, next_offset: 20 })
@@ -353,4 +526,35 @@ it('pages through findings', async () => {
   await screen.findByText(/no findings/i)
   expect(jest.mocked(operationsApi.listFindings).mock.calls.at(-1)).toEqual(['op-1', { limit: 20, offset: 20 }])
   expect(screen.getByText('Page 2')).toBeInTheDocument()
+})
+
+describe('history after changing a finding on the first page', () => {
+  let restoreRequest: () => void
+  beforeAll(() => { restoreRequest = installRouterTestRequest() })
+  afterAll(() => { restoreRequest() })
+
+  it.each(['saving', 'deleting'])('leaves the operation with one Back after %s a finding', async action => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+    const router = createMemoryRouter([
+      { path: '/operations', element: <h1>Operations list</h1> },
+      { path: '/operations/:operationId', element: <OperationDetailPage /> },
+    ], { initialEntries: ['/operations', '/operations/op-1'], initialIndex: 1 })
+    render(<FluentProvider theme={webLightTheme}><RouterProvider router={router} /></FluentProvider>)
+
+    if (action === 'saving') {
+      await user.click(await screen.findByRole('button', { name: 'New finding' }))
+      const dialog = screen.getByRole('dialog')
+      await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), FINDING.title)
+      await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+      expect(await screen.findByText(`Finding saved: ${FINDING.title}`)).toBeInTheDocument()
+    } else {
+      await user.click(await screen.findByRole('button', { name: `Delete finding: ${FINDING.title}` }))
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete finding' }))
+      expect(await screen.findByText(`Finding deleted: ${FINDING.title}`)).toBeInTheDocument()
+    }
+
+    await act(async () => { await router.navigate(-1) })
+    expect(await screen.findByRole('heading', { level: 1, name: 'Operations list' })).toBeInTheDocument()
+  })
 })

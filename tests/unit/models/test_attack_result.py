@@ -6,11 +6,17 @@ from datetime import UTC, datetime
 import pytest
 from unit.mocks import run_memory_session_async
 
-from pyrit.memory.memory_models import AttackResultEntry
-from pyrit.models import AttackOutcome, AttackResult, ComponentIdentifier, ConversationReference, ConversationType
-from pyrit.models.messages.message_piece import MessagePiece
-from pyrit.models.retry_event import RetryEvent
-from pyrit.models.score import Score
+from pyrit.memory import AttackResultEntry
+from pyrit.models import (
+    AttackOutcome,
+    AttackResult,
+    ComponentIdentifier,
+    ConversationReference,
+    ConversationType,
+    MessagePiece,
+    RetryEvent,
+    Score,
+)
 
 
 class TestAttackResultTimestamp:
@@ -356,6 +362,21 @@ def test_last_score_falls_back_to_automated_score() -> None:
         result.last_score = None
 
 
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        ({AttackResult.TECHNIQUE_NAME_METADATA_KEY: "crescendo"}, "crescendo"),
+        ({}, None),
+        ({AttackResult.TECHNIQUE_NAME_METADATA_KEY: ""}, None),
+        ({AttackResult.TECHNIQUE_NAME_METADATA_KEY: 42}, None),
+    ],
+)
+def test_technique_name_reads_a_non_empty_string_from_metadata(metadata: dict, expected: str | None) -> None:
+    result = AttackResult(conversation_id="conv-1", objective="test", metadata=metadata)
+
+    assert result.technique_name == expected
+
+
 class TestAttackResultValidation:
     """Tests for the Pydantic validation behaviour introduced by the BaseModel conversion."""
 
@@ -446,7 +467,7 @@ class TestAttackResultDuplicate:
 
     def test_duplicate_preserves_subclass_type(self) -> None:
         """duplicate() on a subclass returns the same subclass."""
-        from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttackResult
+        from pyrit.executor.attack import CrescendoAttackResult
 
         original = CrescendoAttackResult(conversation_id="c1", objective="test")
         original.backtrack_count = 3

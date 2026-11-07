@@ -67,6 +67,7 @@ RECOMMENDED_TAGS: frozenset[str] = frozenset(
         "agent_security",  # agentic-AI threat models (tool poisoning, context exfiltration, etc.)
         "prompt_injection",  # direct or indirect prompt-injection payloads
         "ethics",  # moral-judgment / values evaluation (e.g., moral foundations theory)
+        "honesty",  # honesty / deception evaluation (e.g., MASK — does the model state beliefs it doesn't hold)
         "toxicity",  # toxicity / hate-speech / profanity (e.g., RealToxicityPrompts, Perspective API)
         "country_grounded",  # prompts pinned to a specific country / region (e.g., per-country XL-SafetyBench splits)
         "cultural",  # culture-aware evaluation (cultural sensitivities, norms, taboos)
@@ -240,10 +241,11 @@ class SeedDatasetFilter:
         else:
             self.criteria = [SeedDatasetMetadata()]
 
-        # Normalize tags: strip whitespace and lowercase so "ALL", " All ", etc. work
+        # Normalize string values the way _coerce_metadata_values normalizes dataset metadata,
+        # so "ALL", " All ", "Violence" or "Text" match the lowercased values datasets declare
         def _normalize_criterion(c: SeedDatasetMetadata) -> SeedDatasetMetadata:
             normalized = {
-                f.name: ({t.strip().lower() for t in vals} if f.name == "tags" and vals is not None else vals)
+                f.name: ({v.strip().lower() if isinstance(v, str) else v for v in vals} if vals is not None else vals)
                 for f, vals in zip(fields(c), (getattr(c, f.name) for f in fields(c)), strict=True)
             }
             return SeedDatasetMetadata(**normalized)

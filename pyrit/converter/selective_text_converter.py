@@ -215,6 +215,7 @@ class SelectiveTextConverter(Converter):
                 "preserve_tokens": self._preserve_tokens,
                 "start_token": self._start_token,
                 "end_token": self._end_token,
+                "word_separator": self._word_separator if self._is_word_level else None,
             },
             sub_converter=self._sub_converter.get_identifier(),
         )
@@ -296,6 +297,9 @@ class SelectiveTextConverter(Converter):
 
         Returns:
             ConverterResult: The result containing the converted output and its type.
+
+        Raises:
+            ValueError: If the sub-converter does not return text output.
         """
         words = prompt.split(self._word_separator)
 
@@ -309,6 +313,10 @@ class SelectiveTextConverter(Converter):
         # Convert selected words
         for idx in selected_indices:
             conversion_result = await self._sub_converter.convert_async(prompt=words[idx], input_type="text")
+            if conversion_result.output_type != "text":
+                raise ValueError(
+                    f"SelectiveTextConverter requires text output, but received {conversion_result.output_type}."
+                )
             converted_word = conversion_result.output_text
 
             if self._preserve_tokens:
@@ -328,6 +336,9 @@ class SelectiveTextConverter(Converter):
 
         Returns:
             ConverterResult: The result containing the converted output and its type.
+
+        Raises:
+            ValueError: If the sub-converter does not return text output.
         """
         start_idx, end_idx = self._selection_strategy.select_range(text=prompt)
 
@@ -342,6 +353,10 @@ class SelectiveTextConverter(Converter):
 
         # Convert the selected region
         conversion_result = await self._sub_converter.convert_async(prompt=selected_text, input_type="text")
+        if conversion_result.output_type != "text":
+            raise ValueError(
+                f"SelectiveTextConverter requires text output, but received {conversion_result.output_type}."
+            )
         converted_text = conversion_result.output_text
 
         if self._preserve_tokens:

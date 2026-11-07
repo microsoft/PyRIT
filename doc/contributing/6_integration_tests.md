@@ -9,6 +9,18 @@ These are tested regularly by the PyRIT team but not necessarily run every pull 
 - Unit tests should test all scenarios and more is often better. Integration tests should be scoped and be careful to not run too long.
 - Integration tests can sometimes test end-to-end. But almost always, these should target one scenario.
 
+## Image output formats
+
+`test_connect_image` in `tests/integration/targets/test_targets_and_secrets.py`
+tests explicit `png`, `jpeg`, and `webp` output formats. These are supported by the
+[GPT Image API](https://developers.openai.com/api/docs/guides/image-generation#output-format).
+Azure OpenAI currently supports only `png` and `jpeg`, so Azure `webp` cases are
+skipped, consistent with its
+[output-format reference](https://learn.microsoft.com/en-us/azure/foundry/openai/reference-preview#imagesoutputformat).
+Each case checks the saved file's extension, verifies its encoded image format,
+and checks that the persisted target identifier retains `output_format`.
+Generation uses low quality to limit test cost.
+
 ## LiteLLM loopback integration tests
 
 `tests/integration/targets/test_litellm_trace_integration.py` checks the real

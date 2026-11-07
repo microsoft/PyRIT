@@ -34,7 +34,7 @@ def test_scanner_and_shell_reject_mixed_dataset_flags(flags: str) -> None:
         "--datasets name:0",
         "--datasets name:4:all",
         "--datasets name name",
-        "--dataset-fetch always",
+        "--dataset-fetch sometimes",
         "--max-total -1",
     ],
 )
@@ -52,3 +52,34 @@ def test_common_filters_work_with_either_form(source_flags: str) -> None:
         assert fields["datasets"].filters == {"data_types": ["text", "image_path"]}
     else:
         assert fields["dataset_filters"] == {"data_types": ["text", "image_path"]}
+
+
+@pytest.mark.parametrize("policy", ["never", "if_missing", "always"])
+def test_scanner_and_shell_accept_dataset_fetch_policy(policy: str) -> None:
+    flags = f"--datasets harmbench --dataset-fetch {policy}"
+    parsed = parse_args(["run", "test", "--target", "target", *flags.split()])
+    scanner = _build_run_request(parsed_args=parsed, scenario_name="test")
+    shell = build_dataset_request_fields(parse_run_arguments(args_string="test " + flags))
+    assert scanner.datasets == shell["datasets"]
+    assert scanner.datasets is not None
+    assert scanner.datasets.fetch == policy
+
+
+def test_scanner_lists_dataset_fetch_choices(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        parse_args(["run", "test", "--dataset-fetch", "sometimes"])
+    assert error.value.code == 2
+    message = capsys.readouterr().err
+    assert "invalid choice" in message
+    assert "sometimes" in message
+    for policy in ("never", "if_missing", "always"):
+        assert policy in message
+
+
+def test_scanner_fetch_help_preserves_scenario_default(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        parse_args(["run", "--help"])
+    assert error.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "--dataset-fetch {never,if_missing,always}" in help_text
+    assert "omission keeps scenario settings" in help_text

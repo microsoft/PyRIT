@@ -14,6 +14,9 @@ from pyrit.backend.services.manual_send_scheduler import get_manual_send_schedul
 from pyrit.backend.services.message_send_service import get_message_send_service
 from pyrit.backend.services.scenario_run_service import reset_scenario_run_service_async
 from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.backend.services.scenario_suite_execution_service import (
+    reset_scenario_suite_execution_service_async,
+)
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.backend.services.technique_service import get_technique_service
@@ -37,10 +40,14 @@ def has_active_analytics_work() -> bool:
 async def close_services_async() -> None:
     """Close existing resources, then invalidate cached registry and memory references."""
     errors: list[BaseException] = []
-    for close in (_close_cached_services_async, close_analytics_service_async):
+    for operation_name, close in (
+        ("cached backend services", _close_cached_services_async),
+        ("analytics service", close_analytics_service_async),
+    ):
         try:
             await close()
         except (Exception, asyncio.CancelledError) as error:
+            error.add_note(f"Failed to close {operation_name}.")
             errors.append(error)
     if len(errors) == 1:
         raise errors[0]
@@ -60,6 +67,7 @@ async def _close_cached_services_async() -> None:
                 await get_scenario_service().close_async()
             if get_converter_service.cache_info().currsize:
                 await get_converter_service().close_async()
+            await reset_scenario_suite_execution_service_async()
             await reset_scenario_run_service_async()
         finally:
             for factory in (

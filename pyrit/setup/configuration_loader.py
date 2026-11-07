@@ -19,11 +19,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 
+from pyrit.common import YamlLoadable, verify_and_resolve_path
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.text_helper import is_non_empty_string
-from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_helper import safe_load_yaml
-from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import class_name_to_snake_case
 from pyrit.setup.environment_loading import validate_env_akv_strict
 from pyrit.setup.initialization import AZURE_SQL, IN_MEMORY, SQLITE, initialize_pyrit_async, reinitialize_pyrit_async
@@ -114,6 +113,8 @@ class ConfigurationLoader(YamlLoadable):
             optionally followed by a blob prefix, used to persist custom initializer Python scripts.
         scenario_presets_source: Local directory or Azure Blob container URI, optionally
             followed by a blob prefix, used to persist scenario presets.
+        scenario_suites_source: Local directory or Azure Blob container URI, optionally
+            followed by a blob prefix, used to persist scenario suites.
         silent: Whether to suppress initialization messages.
         seed: Optional root seed for deterministic converter operations.
         operator: Name for the current operator, e.g. a team or username.
@@ -168,6 +169,7 @@ class ConfigurationLoader(YamlLoadable):
     allow_custom_initializers: bool = False
     custom_initializers_source: str | None = None
     scenario_presets_source: str | None = None
+    scenario_suites_source: str | None = None
     target_upload_directory: str | None = None
     server: dict[str, Any] | None = None
     extensions: dict[str, Any] = field(default_factory=dict)
@@ -196,6 +198,7 @@ class ConfigurationLoader(YamlLoadable):
         self._validate_env_akv_ref()
         self._validate_custom_initializers_source()
         self._validate_scenario_presets_source()
+        self._validate_scenario_suites_source()
         self._validate_target_upload_directory()
         self._normalize_server()
 
@@ -226,6 +229,15 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: If the source is not a non-empty string.
         """
         self._validate_document_source(name="scenario_presets_source", value=self.scenario_presets_source)
+
+    def _validate_scenario_suites_source(self) -> None:
+        """
+        Validate the optional scenario suite storage source.
+
+        Raises:
+            ValueError: If the source is not a non-empty string.
+        """
+        self._validate_document_source(name="scenario_suites_source", value=self.scenario_suites_source)
 
     @staticmethod
     def _validate_document_source(*, name: str, value: Any) -> None:
@@ -696,8 +708,7 @@ class ConfigurationLoader(YamlLoadable):
             ValueError: If an initializer is invalid or a required environment value is missing.
         """
         from pyrit.registry import InitializerRegistry
-        from pyrit.setup.initializers.targets import TargetInitializer
-        from pyrit.setup.initializers.techniques import TechniqueInitializer
+        from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
         registry = await asyncio.to_thread(InitializerRegistry)
         registry.configure_custom_scripts_source(self.custom_initializers_source)
@@ -745,8 +756,7 @@ class ConfigurationLoader(YamlLoadable):
         Returns:
             Initializers constructed under the replacement environment.
         """
-        from pyrit.setup.initializers.targets import TargetInitializer
-        from pyrit.setup.initializers.techniques import TechniqueInitializer
+        from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
         initializers = list(self.resolve_initializers(registry=prepared.initializer_registry))
         initializers.extend(initializer_type() for initializer_type in prepared.script_initializer_types)

@@ -10,6 +10,11 @@ from pyrit.common.lazy_imports import get_lazy_dir, resolve_lazy_export
 
 if TYPE_CHECKING:
     from pyrit.executor.promptgen.anecdoctor import AnecdoctorContext, AnecdoctorGenerator, AnecdoctorResult
+    from pyrit.executor.promptgen.assert_generator import (
+        AssertGenerator,
+        AssertGeneratorContext,
+        AssertGeneratorResult,
+    )
     from pyrit.executor.promptgen.core import (
         PromptGeneratorStrategy,
         PromptGeneratorStrategyContext,
@@ -18,6 +23,9 @@ if TYPE_CHECKING:
     from pyrit.executor.promptgen.target_objective_generator import TargetObjectiveGenerator
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AssertGenerator": "pyrit.executor.promptgen.assert_generator",
+    "AssertGeneratorContext": "pyrit.executor.promptgen.assert_generator",
+    "AssertGeneratorResult": "pyrit.executor.promptgen.assert_generator",
     "AnecdoctorContext": "pyrit.executor.promptgen.anecdoctor",
     "AnecdoctorGenerator": "pyrit.executor.promptgen.anecdoctor",
     "AnecdoctorResult": "pyrit.executor.promptgen.anecdoctor",

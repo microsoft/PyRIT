@@ -8,6 +8,7 @@ Unit tests for NegationTrapConverter.
 import pytest
 
 from pyrit.converter import NegationTrapConverter
+from pyrit.registry import ConverterRegistry
 
 
 async def test_negation_trap_converter_initialization_with_defaults() -> None:
@@ -255,3 +256,33 @@ async def test_negation_trap_converter_default_template_constant() -> None:
     assert hasattr(NegationTrapConverter, "DEFAULT_TEMPLATE")
     assert "{prompt}" in NegationTrapConverter.DEFAULT_TEMPLATE
     assert "{wrong_value}" in NegationTrapConverter.DEFAULT_TEMPLATE
+
+
+def test_negation_trap_identifier_includes_wrong_value() -> None:
+    params = NegationTrapConverter(wrong_value="1234").get_identifier().params
+    assert params["wrong_value"] == "1234"
+    assert len(params["trap_template_hash"]) == 16
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [{"wrong_value": "hunter2"}, {"trap_template": "Is {prompt} really '{wrong_value}'?"}],
+)
+def test_negation_trap_identifier_distinguishes_settings(settings: dict[str, str]) -> None:
+    default = NegationTrapConverter()
+    other = NegationTrapConverter(**settings)
+    assert default.get_identifier().hash != other.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(default)
+    instances.register(other)
+    assert instances.get(default.get_identifier().unique_name) is default
+    assert instances.get(other.get_identifier().unique_name) is other
+
+
+def test_negation_trap_identifier_is_stable_for_equal_settings() -> None:
+    assert (
+        NegationTrapConverter(wrong_value="x", trap_template="{prompt}: {wrong_value}").get_identifier().hash
+        == NegationTrapConverter(wrong_value="x", trap_template="{prompt}: {wrong_value}").get_identifier().hash
+    )

@@ -16,31 +16,42 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.backend.mappers import (
+    attack_result_to_summary_async,
+    converter_object_to_instance,
+    pyrit_messages_to_dto_async,
+    request_piece_to_pyrit_message_piece,
+    request_to_pyrit_message,
+    target_object_to_instance,
+)
 from pyrit.backend.mappers.attack_mappers import (
     _is_azure_blob_url,
     _resolve_media_url,
     _sign_blob_url_async,
-    attack_result_to_summary_async,
-    pyrit_messages_to_dto_async,
-    request_piece_to_pyrit_message_piece,
-    request_to_pyrit_message,
 )
-from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
+from pyrit.backend.models import AddMessageRequest, MessagePieceRequest, ScoreView
 from pyrit.backend.models._media import build_filename, infer_mime_type
-from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest, ScoreView
+from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    ConversationStats,
     Message,
     MessagePiece,
     PromptDataType,
     Score,
 )
-from pyrit.models.conversation_stats import ConversationStats
-from pyrit.prompt_target import PromptTarget, TargetCapabilities
+from pyrit.prompt_target import (
+    CapabilityName,
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+    TextTarget,
+    WebsocketTarget,
+)
+from unit.mocks import MockPromptTarget
 
 # ============================================================================
 # Helpers
@@ -203,6 +214,22 @@ class TestAttackResultToSummary:
         assert summary.target.target_type == "RoundRobinTarget"
         assert summary.target.model_name is None
         assert summary.target.identifier_hash == target_identifier.hash
+        assert summary.target.identifier is not None
+        assert summary.model_dump(mode="json")["target"]["identifier"] == target_identifier.model_dump(mode="json")
+
+    async def test_target_includes_saved_configuration_for_inspection(self) -> None:
+        target_identifier = ComponentIdentifier(
+            class_name="OpenAIChatTarget",
+            class_module="pyrit.prompt_target",
+            params={"endpoint": "https://example.test", "model_name": "deployment", "temperature": 0.25},
+        )
+        ar = _make_attack_result(target_identifier=target_identifier, target_registry_name="configured-target")
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.target is not None
+        assert summary.target.target_registry_name == "configured-target"
+        assert summary.model_dump(mode="json")["target"]["identifier"] == target_identifier.model_dump(mode="json")
 
     async def test_target_includes_persisted_registry_name(self) -> None:
         """The registry alias is exposed as a lookup hint without changing canonical identity."""
@@ -370,6 +397,16 @@ class TestAttackResultToSummary:
         summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
 
         assert summary.objective == ""
+
+    async def test_explicit_placeholder_text_is_preserved_async(self) -> None:
+        ar = _make_attack_result(name="ManualAttack")
+        ar.objective = "Manual attack via GUI"
+        ar.metadata["objective_is_placeholder"] = False
+
+        summary = await attack_result_to_summary_async(ar, stats=ConversationStats(message_count=0))
+
+        assert summary.objective == ar.objective
+        assert summary.metadata["objective_is_placeholder"] is False
 
     async def test_non_manual_attack_preserves_placeholder_text_as_explicit_objective(self) -> None:
         """A non-manual attack may legitimately use the legacy placeholder text."""
@@ -557,7 +594,7 @@ class TestAttackResultToSummary:
 
     async def test_retry_events_mapped_to_response(self) -> None:
         """Test that retry events on an AttackResult are inherited by the AttackSummary."""
-        from pyrit.models.retry_event import RetryEvent
+        from pyrit.models import RetryEvent
 
         now = datetime.now(UTC)
         ar = _make_attack_result()
@@ -1486,6 +1523,42 @@ class TestBuildFilename:
 # ============================================================================
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "mode", ["native", "unsupported", "editable_adapter", "multi_turn_adapter", "restore_callback"]
+)
+def test_target_instance_reports_effective_history_replay(mode: str) -> None:
+    if mode == "native":
+        target: PromptTarget = MockPromptTarget()
+    elif mode == "unsupported":
+        target = TextTarget()
+    elif mode == "restore_callback":
+        target = WebsocketTarget(
+            endpoint="ws://localhost:9999",
+            protocol_identifier="offline-replay",
+            initialization_strings=[],
+            response_parser=str,
+            message_builder=str,
+            conversation_restore_callback=AsyncMock(),
+        )
+    else:
+        capability = CapabilityName.EDITABLE_HISTORY if mode == "editable_adapter" else CapabilityName.MULTI_TURN
+        target = MockPromptTarget(
+            custom_configuration=TargetConfiguration(
+                capabilities=TargetCapabilities(supports_multi_turn=mode == "editable_adapter"),
+                normalizer_overrides={capability: HistorySquashNormalizer()},
+            )
+        )
+    with patch.object(target, "validate_history_replay", wraps=target.validate_history_replay) as validate:
+        result = target_object_to_instance("replay-target", target)
+    validate.assert_called_once()
+    assert result.supports_history_replay is (mode != "unsupported")
+    assert result.model_dump()["supports_history_replay"] is (mode != "unsupported")
+    assert result.capabilities == target.capabilities
+    if mode not in ("native", "unsupported"):
+        assert not result.capabilities.supports_editable_history
+
+
 class TestTargetObjectToInstance:
     """Tests for target_object_to_instance function."""
 
@@ -1885,7 +1958,7 @@ class TestTargetObjectToInstanceRoundRobin:
 
     def test_round_robin_populates_inner_targets(self) -> None:
         """Inner targets list is populated for RoundRobinTarget objects."""
-        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+        from pyrit.prompt_target import RoundRobinTarget
 
         # Build a mock RoundRobinTarget with two inner targets
         rr = MagicMock(spec=RoundRobinTarget)
@@ -1929,7 +2002,7 @@ class TestTargetObjectToInstanceRoundRobin:
         (``targetIdentity.hoistFromInner``); the mapper faithfully reflects that a
         RoundRobinTarget's own identifier has no model_name.
         """
-        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+        from pyrit.prompt_target import RoundRobinTarget
 
         rr = MagicMock(spec=RoundRobinTarget)
         rr.capabilities = TargetCapabilities()
@@ -1967,7 +2040,7 @@ class TestTargetObjectToInstanceRoundRobin:
 
     def test_round_robin_inner_targets_retain_distinct_models(self) -> None:
         """Inner targets keep their own deployment names; the mapper does not merge them."""
-        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+        from pyrit.prompt_target import RoundRobinTarget
 
         rr = MagicMock(spec=RoundRobinTarget)
         rr.capabilities = TargetCapabilities()

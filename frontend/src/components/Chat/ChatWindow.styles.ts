@@ -3,12 +3,55 @@ import { mobileTouchTarget, NARROW_VIEWPORT_QUERY } from '../../styles/touchTarg
 
 import { WORKSPACE_CANVAS_BACKGROUND } from '@/styles/workspaceBackground'
 
+export const CHAT_NOTICE_FADE_DURATION_MS = 200
+
 export const useChatWindowStyles = makeStyles({
+  infoNotice: {
+    opacity: 1,
+    transitionProperty: 'opacity',
+    transitionDuration: `${CHAT_NOTICE_FADE_DURATION_MS}ms`,
+    transitionTimingFunction: 'ease-out',
+    '@media (prefers-reduced-motion: reduce)': {
+      transitionDuration: '0ms',
+    },
+  },
+  fadingInfoNotice: {
+    opacity: 0,
+  },
+  savedTranscriptControls: {
+    display: 'flex',
+    flexDirection: 'column',
+    flexShrink: 0,
+    minWidth: 0,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalL}`,
+    gap: tokens.spacingVerticalXS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground3,
+    overflowAnchor: 'none',
+  },
+  savedChatArea: {
+    [NARROW_VIEWPORT_QUERY]: {
+      overflowY: 'auto',
+    },
+  },
+  savedTranscriptActions: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalM,
+    [NARROW_VIEWPORT_QUERY]: {
+      flexDirection: 'column',
+      alignItems: 'stretch',
+    },
+  },
   root: {
     display: 'flex',
     height: '100%',
     width: '100%',
     overflow: 'hidden',
+    [NARROW_VIEWPORT_QUERY]: {
+      flexShrink: 0,
+    },
   },
   pageHeading: {
     position: 'absolute',
@@ -90,14 +133,33 @@ export const useChatWindowStyles = makeStyles({
     flexGrow: 1,
     flexWrap: 'wrap',
     gap: tokens.spacingHorizontalM,
+    minWidth: 0,
+    maxWidth: '100%',
+  },
+  conversationControls: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: tokens.spacingHorizontalM,
+    marginRight: 'auto',
+    minWidth: 0,
     maxWidth: '100%',
   },
   editActions: {
     display: 'flex',
     flexWrap: 'wrap',
     alignItems: 'center',
-    marginRight: 'auto',
     gap: tokens.spacingHorizontalXS,
+  },
+  temperatureField: {
+    gridTemplateColumns: 'max-content 5rem',
+    columnGap: tokens.spacingHorizontalNone,
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  temperatureInput: {
+    width: '5rem',
+    minWidth: 0,
   },
   sharedTarget: {
     maxWidth: '240px',
@@ -123,6 +185,7 @@ export const useChatWindowStyles = makeStyles({
     flexWrap: 'wrap',
     justifyContent: 'flex-end',
     minWidth: 0,
+    marginLeft: 'auto',
   },
   ribbonAction: {
     ...mobileTouchTarget,
@@ -135,7 +198,7 @@ export const useChatWindowStyles = makeStyles({
     ...mobileTouchTarget,
   },
   newAttackLabel: {
-    '@media (max-width: 600px)': {
+    [NARROW_VIEWPORT_QUERY]: {
       display: 'none',
     },
   },

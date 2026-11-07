@@ -11,18 +11,17 @@ from pyrit.converter import (
     Base64Converter,
     Converter,
     ConverterResult,
-    LeetspeakConverter,
-    RandomCapitalLettersConverter,
-    ROT13Converter,
-    SelectiveTextConverter,
-)
-from pyrit.converter.text_selection_strategy import (
     IndexSelectionStrategy,
     KeywordSelectionStrategy,
+    LeetspeakConverter,
     PositionSelectionStrategy,
     ProportionSelectionStrategy,
+    RandomCapitalLettersConverter,
     RangeSelectionStrategy,
     RegexSelectionStrategy,
+    ROT13Converter,
+    SelectiveTextConverter,
+    TextSelectionStrategy,
     TokenSelectionStrategy,
     WordIndexSelectionStrategy,
     WordPositionSelectionStrategy,
@@ -31,6 +30,7 @@ from pyrit.converter.text_selection_strategy import (
 )
 from pyrit.models import Message, PromptDataType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
+from pyrit.registry import ConverterRegistry
 
 
 @pytest.mark.parametrize("token_entry", [False, True])
@@ -174,6 +174,29 @@ async def test_token_selection_rejects_nontext_output_async(*, preserve_tokens: 
         convert.return_value = ConverterResult(output_text="output.png", output_type="image_path")
         with pytest.raises(ValueError, match="text output"):
             await converter.convert_async(prompt="⟪test⟫")
+
+
+@pytest.mark.parametrize(
+    "selection_strategy",
+    [
+        RangeSelectionStrategy(start_proportion=0.0, end_proportion=1.0),
+        WordIndexSelectionStrategy(indices=[0]),
+    ],
+)
+@pytest.mark.parametrize("preserve_tokens", [False, True])
+async def test_range_and_word_selection_reject_nontext_output_async(
+    *, selection_strategy: TextSelectionStrategy, preserve_tokens: bool
+) -> None:
+    sub_converter = Base64Converter()
+    converter = SelectiveTextConverter(
+        sub_converter=sub_converter,
+        selection_strategy=selection_strategy,
+        preserve_tokens=preserve_tokens,
+    )
+    with patch.object(sub_converter, "convert_async", new_callable=AsyncMock) as convert:
+        convert.return_value = ConverterResult(output_text="output.png", output_type="image_path")
+        with pytest.raises(ValueError, match="text output"):
+            await converter.convert_async(prompt="hello world")
 
 
 @pytest.mark.parametrize("token_entry", [False, True])
@@ -765,11 +788,99 @@ class TestSelectiveTextConverter:
         assert right.get_identifier().params["selection_strategy_params"]["indices"] == [3]
         assert "indices" not in left.get_identifier().params
 
-    def test_identifier_uses_empty_strategy_params_for_char_level_strategies(self):
+    def test_identifier_includes_nested_char_strategy_params(self):
         converter = SelectiveTextConverter(
             sub_converter=Base64Converter(),
             selection_strategy=IndexSelectionStrategy(start=0, end=5),
         )
         params = converter.get_identifier().params
         assert params["selection_strategy"] == "IndexSelectionStrategy"
-        assert params["selection_strategy_params"] == {}
+        assert params["selection_strategy_params"] == {"start": 0, "end": 5}
+
+    async def test_identifier_distinguishes_char_level_selections_async(self):
+        first = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=IndexSelectionStrategy(start=0, end=5),
+        )
+        second = SelectiveTextConverter(
+            sub_converter=Base64Converter(),
+            selection_strategy=IndexSelectionStrategy(start=6, end=11),
+        )
+
+        first_result = await first.convert_async(prompt="Hello World")
+        second_result = await second.convert_async(prompt="Hello World")
+
+        assert first_result.output_text != second_result.output_text
+        assert first.get_identifier().hash != second.get_identifier().hash
+
+        instances = ConverterRegistry().instances
+        instances.register(first)
+        instances.register(second)
+        assert instances.get(first.get_identifier().unique_name) is first
+        assert instances.get(second.get_identifier().unique_name) is second
+
+
+def test_identifier_distinguishes_word_separator_for_word_level_strategies() -> None:
+    space = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=WordIndexSelectionStrategy(indices=[0]),
+    )
+    comma = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=WordIndexSelectionStrategy(indices=[0]),
+        word_separator=",",
+    )
+    assert space.get_identifier().params["word_separator"] == " "
+    assert comma.get_identifier().params["word_separator"] == ","
+    assert space.get_identifier().hash != comma.get_identifier().hash
+
+    # Both configurations get their own default registry name instead of colliding.
+    instances = ConverterRegistry().instances
+    instances.register(space)
+    instances.register(comma)
+    assert instances.get(space.get_identifier().unique_name) is space
+    assert instances.get(comma.get_identifier().unique_name) is comma
+
+
+def test_identifier_ignores_word_separator_for_char_level_strategies() -> None:
+    # Character-level strategies never split on the separator, so it does not change the output.
+    space = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=IndexSelectionStrategy(start=0, end=5),
+    )
+    comma = SelectiveTextConverter(
+        sub_converter=Base64Converter(),
+        selection_strategy=IndexSelectionStrategy(start=0, end=5),
+        word_separator=",",
+    )
+    assert "word_separator" not in space.get_identifier().params
+    assert space.get_identifier().hash == comma.get_identifier().hash
+
+
+async def test_token_selection_failed_region_cancels_in_flight_regions_async() -> None:
+    sub_converter = Base64Converter()
+    converter = SelectiveTextConverter(sub_converter=sub_converter, selection_strategy=TokenSelectionStrategy())
+    error = RuntimeError("rate limited")
+    sibling_started = asyncio.Event()
+    cancelled: list[str] = []
+
+    async def convert_region_async(*, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        if prompt == "bad":
+            await sibling_started.wait()
+            raise error
+        sibling_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(prompt)
+            raise
+        raise AssertionError("sibling region was not cancelled")
+
+    with (
+        patch.object(sub_converter, "convert_async", new_callable=AsyncMock, side_effect=convert_region_async),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        await converter.convert_tokens_async(prompt="⟪slow⟫ and ⟪bad⟫")
+
+    assert exc_info.value is error
+    assert cancelled == ["slow"]

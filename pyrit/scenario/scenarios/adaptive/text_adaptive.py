@@ -4,8 +4,8 @@
 """
 ``TextAdaptive`` — text adaptive scenario.
 
-Picks attack techniques per-objective using an epsilon-greedy selector
-informed by observed success rates. Runs up to ``max_attempts_per_objective``
+Selects attack techniques per-objective before execution using an epsilon-greedy
+selector informed by historical success rates. Runs up to ``max_attempts_per_objective``
 techniques per objective and stops early on success. ``prompt_sending`` is
 excluded from the adaptive technique pool and runs as the baseline comparison
 instead.
@@ -17,8 +17,8 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.models.parameter import Parameter
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.models import Parameter
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 
@@ -76,8 +76,8 @@ def _build_text_adaptive_technique() -> type[ScenarioTechnique]:
 
 class TextAdaptive(AdaptiveScenario):
     """
-    Selects an attack technique for each objective using an epsilon-greedy
-    strategy informed by prior success rates. The scenario stops after a
+    Selects an ordered technique list for each objective before execution,
+    using historical success rates. The scenario stops after a
     successful attack or after ``max_attempts_per_objective`` attempts.
     """
 

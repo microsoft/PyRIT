@@ -15,9 +15,8 @@ from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import ScenarioRegistry, TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.setup.initializers.load_default_datasets import LoadDefaultDatasets
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.setup.initializers import LoadDefaultDatasets
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
@@ -145,7 +144,7 @@ class TestLoadDefaultDatasets:
 
         # Patch OpenAIChatTarget at the fallback construction site so registry
         # introspection does not depend on OPENAI_CHAT_MODEL or other env vars.
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
         from pyrit.score import TrueFalseScorer
 
         fallback_target = MagicMock()
@@ -201,13 +200,13 @@ class TestLoadDefaultDatasetsParameters:
     """Tests for the dataset_names and tags selection parameters."""
 
     def test_supported_parameters_defaults(self) -> None:
-        params = {p.name: p for p in LoadDefaultDatasets().supported_parameters}
+        params = {p.name: p for p in LoadDefaultDatasets.supported_parameters()}
         assert params["dataset_names"].default == []
         assert params["tags"].default == []
 
     async def test_dataset_names_loads_exact_names(self) -> None:
         initializer = LoadDefaultDatasets()
-        initializer.params = {"dataset_names": ["alpha", "beta"]}
+        initializer.set_params_from_args(args={"dataset_names": ["alpha", "beta"]})
 
         with (
             patch.object(ScenarioRegistry, "get_all_registered_class_metadata") as mock_list_metadata,
@@ -228,7 +227,7 @@ class TestLoadDefaultDatasetsParameters:
 
     async def test_tags_selects_via_metadata_filter(self) -> None:
         initializer = LoadDefaultDatasets()
-        initializer.params = {"tags": ["safety"]}
+        initializer.set_params_from_args(args={"tags": ["safety"]})
 
         with (
             patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as mock_names,
@@ -250,7 +249,7 @@ class TestLoadDefaultDatasetsParameters:
 
     async def test_dataset_names_take_precedence_over_tags(self) -> None:
         initializer = LoadDefaultDatasets()
-        initializer.params = {"dataset_names": ["alpha"], "tags": ["safety"]}
+        initializer.set_params_from_args(args={"dataset_names": ["alpha"], "tags": ["safety"]})
 
         with (
             patch.object(SeedDatasetProvider, "get_all_dataset_names_async", new_callable=AsyncMock) as mock_names,

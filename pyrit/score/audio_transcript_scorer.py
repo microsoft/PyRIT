@@ -70,22 +70,27 @@ def _audio_to_wav(input_path: str, *, sample_rate: int, channels: int) -> str:
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         output_path = tmp.name
 
-    with av.open(input_path) as in_container:
-        with av.open(output_path, "w", format="wav") as out_container:
-            out_stream = out_container.add_stream("pcm_s16le", rate=sample_rate, layout=layout)
-            resampler = av.AudioResampler(format="s16", layout=layout, rate=sample_rate)
+    try:
+        with av.open(input_path) as in_container:
+            with av.open(output_path, "w", format="wav") as out_container:
+                out_stream = out_container.add_stream("pcm_s16le", rate=sample_rate, layout=layout)
+                resampler = av.AudioResampler(format="s16", layout=layout, rate=sample_rate)
 
-            for frame in in_container.decode(audio=0):
-                for out_frame in resampler.resample(frame):
+                for frame in in_container.decode(audio=0):
+                    for out_frame in resampler.resample(frame):
+                        for packet in out_stream.encode(out_frame):
+                            out_container.mux(packet)
+
+                for out_frame in resampler.resample(None):
                     for packet in out_stream.encode(out_frame):
                         out_container.mux(packet)
 
-            for out_frame in resampler.resample(None):
-                for packet in out_stream.encode(out_frame):
+                for packet in out_stream.encode(None):
                     out_container.mux(packet)
-
-            for packet in out_stream.encode(None):
-                out_container.mux(packet)
+    except BaseException:
+        # The caller never receives the path of a failed conversion, so it cannot remove the file.
+        Path(output_path).unlink(missing_ok=True)
+        raise
 
     return output_path
 
@@ -159,11 +164,13 @@ class AudioTranscriptHelper:
             expectation (ScoringExpectation | None): Criteria forwarded to the transcript scorer.
 
         Returns:
-            List of scores for the transcribed audio.
+            List of scores for the transcribed audio, or an empty list when the
+            transcript is empty (there is no text to score).
 
         Raises:
             FileNotFoundError: If the audio file does not exist.
-            ValueError: If transcription fails or returns empty text.
+            Exception: Whatever the transcription step raises when it fails; the
+                original exception is re-raised as-is (see ``_transcribe_audio_async``).
         """
         audio_path = message_piece.converted_value
 

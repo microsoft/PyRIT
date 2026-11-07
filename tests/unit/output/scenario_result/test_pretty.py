@@ -4,7 +4,7 @@
 import uuid
 
 import pytest
-from unit.mocks import make_scenario_result
+from unit.mocks import make_scenario_result, make_sequential_attack_results
 
 from pyrit.models import (
     AttackOutcome,
@@ -290,3 +290,22 @@ async def test_render_attacks_empty(printer):
     # Build directly (the _scenario_result helper substitutes a default for {}).
     text = await printer.render_async(make_scenario_result(attack_results={}), view="attacks")
     assert "No attack results" in text
+
+
+async def test_render_attacks_leaves_out_orchestration_envelope_and_labels_children_by_technique(printer):
+    envelope, children = make_sequential_attack_results(
+        atomic_attack_name="adaptive_text_airt_leakage::abc",
+        envelope_outcome=AttackOutcome.SUCCESS,
+        child_outcomes=[AttackOutcome.FAILURE, AttackOutcome.SUCCESS],
+        child_technique_names=["crescendo", "role_play"],
+    )
+    result = _scenario_result(attack_results={"adaptive_text_airt_leakage::abc": [*children, envelope]})
+
+    text = await printer.render_async(result, view="attacks")
+
+    assert envelope.attack_result_id not in text
+    assert all(child.attack_result_id in text for child in children)
+    assert "technique: crescendo" in text
+    assert "technique: role_play" in text
+    assert "technique: adaptive_text_airt_leakage::abc" not in text
+    assert "Total attacks: 2" in text

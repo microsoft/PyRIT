@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.common.mime_type import get_mime_type
+from pyrit.common import get_mime_type
 
 
 @pytest.mark.parametrize(
@@ -18,6 +18,9 @@ from pyrit.common.mime_type import get_mime_type
         ("video.avi", "video/x-msvideo"),
         ("document.rtf", "application/rtf"),
         ("archive.zip", "application/zip"),
+        ("config.yaml", "application/yaml"),
+        ("prompt.yml", "application/yaml"),
+        ("dataset.jsonl", "application/jsonlines"),
     ],
 )
 def test_get_mime_type_explicit_mapping_takes_precedence(file_path: str, expected_mime_type: str):

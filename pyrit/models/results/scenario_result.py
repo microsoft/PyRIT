@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 
 # Runtime-required by Pydantic field / computed-field annotations.
 from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier  # noqa: TC001
@@ -219,7 +219,7 @@ class ScenarioResult(BaseModel):
         for results in techniques_to_process:
             objectives.extend(result.objective for result in results)
 
-        return list(set(objectives))
+        return list(dict.fromkeys(objectives))
 
     def objective_achieved_rate(self, *, atomic_attack_name: str | None = None) -> int:
         """

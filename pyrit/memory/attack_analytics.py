@@ -121,6 +121,22 @@ class RawAnalyticsFacets:
     computed_at: datetime
 
 
+def _note_sqlite_error(error: OperationalError) -> None:
+    """
+    Attach the driver's structured SQLite result-code name to a propagated error.
+
+    A stale snapshot (``SQLITE_BUSY_SNAPSHOT``) reads the same "database is locked"
+    text as a plain lock. The note makes the distinction visible in the formatted
+    traceback without changing the exception type, message, or retry decision.
+    """
+    code = getattr(error.orig, "sqlite_errorcode", None)
+    name = getattr(error.orig, "sqlite_errorname", None)
+    if isinstance(code, int) and isinstance(name, str):
+        note = f"sqlite result code {code} ({name})"
+        if note not in getattr(error, "__notes__", []):
+            error.add_note(note)
+
+
 class AttackAnalyticsReader:
     """
     Read metadata without hydrating AttackResult object graphs or caching reports.
@@ -444,6 +460,7 @@ class AttackAnalyticsReader:
                 return result
             except OperationalError as error:
                 if getattr(error.orig, "sqlite_errorcode", None) != sqlite3.SQLITE_BUSY:
+                    _note_sqlite_error(error)
                     raise
                 control.check()
                 await asyncio.sleep(min(cls.SQLITE_BUSY_RETRY_DELAY, control.remaining))
@@ -584,6 +601,8 @@ class AttackAnalyticsReader:
             except OperationalError as error:
                 if control.expired:
                     raise AnalyticsTimeoutException from error
+                if dialect == "sqlite":
+                    _note_sqlite_error(error)
                 raise
             finally:
                 event.remove(sync_connection, "before_execute", before_statement)
@@ -670,7 +689,9 @@ class AttackAnalyticsReader:
             kind = AttackAnalyticsValueKind(record[f"kind{index}"])
             key = AttackAnalyticsValue(
                 kind=kind,
-                value=record[f"value{index}"] if kind is AttackAnalyticsValueKind.VALUE else None,
+                value=record[f"value{index}"]
+                if kind in {AttackAnalyticsValueKind.VALUE, AttackAnalyticsValueKind.LEGACY_OPERATION_NAME}
+                else None,
             )
         except ValidationError as error:
             if any(issue["type"] == "string_too_long" for issue in error.errors()):
@@ -727,8 +748,9 @@ class AttackAnalyticsReader:
         """
         data = dict(record)
         data["attack_result_id"] = str(data["attack_result_id"])
-        if data["scenario_result_id"] is not None:
-            data["scenario_result_id"] = str(data["scenario_result_id"])
+        for key in ("operation_id", "scenario_result_id"):
+            if data[key] is not None:
+                data[key] = str(data[key])
         if data["targeted_harm_categories"] is None:
             data["targeted_harm_categories"] = []
         if data["labels"] is None:

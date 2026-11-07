@@ -1,11 +1,16 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { generateClientId } from '@/utils/clientId'
-import { toApiError } from './errors'
+import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
+  ApplyChatScorerRequest,
+  ApplyChatScorerResponse,
   TargetInstance,
+  UnregisteredTarget,
+  UnregisteredConverter,
+  SourceInstanceSpec,
   TargetListResponse,
   TargetTypeListResponse,
   ConverterTypeListResponse,
@@ -18,6 +23,9 @@ import type {
   TechniqueInstance,
   TechniqueListResponse,
   TechniqueTypeResponse,
+  TechniqueConfiguration,
+  TechniqueOverride,
+  TechniqueEditResponse,
   CreateTargetRequest,
   InitializerSettingsResponse,
   ListRegisteredInitializersResponse,
@@ -27,12 +35,14 @@ import type {
   LabelOptionsResponse,
   CreateAttackResponse,
   AttackSummary,
+  AttackMetadata,
   AttackListResponse,
   DatasetListResponse,
   SeedExampleDetailResponse,
   SeedExampleListParams,
   SeedExampleListResponse,
   ConversationMessagesResponse,
+  ConversationPageParams,
   AddMessageRequest,
   AddMessageResponse,
   MessageSendRequest,
@@ -44,12 +54,24 @@ import type {
   ListRegisteredScenariosResponse,
   RegisteredScenario,
   RunScenarioRequest,
+  ScenarioPreset,
+  ScenarioPresetListResponse,
+  ScenarioPresetResponse,
+  ScenarioSuite,
+  LaunchScenarioSuiteRequest,
+  ScenarioSuiteExecutionSummary,
+  ScenarioSuiteListResponse,
+  ScenarioSuiteResponse,
+  UpdateScenarioPresetRequest,
+  UpdateScenarioSuiteRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
   ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
+  ScenarioHierarchyNode,
+  ScenarioHierarchyProjection,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -70,8 +92,10 @@ import type {
   FindingEvidenceCreateRequest,
   FindingEvidenceAttachResponse,
   FindingEvidenceListResponse,
+  FindingExportRequest,
   Operation,
   OperationCreate,
+  OperationDetail,
   OperationListResponse,
   OperationUpdate,
   AttackAnalyticsQuery,
@@ -93,7 +117,7 @@ export const operationsApi = {
   list: async (): Promise<OperationListResponse> => {
     return (await apiClient.get('/operations')).data
   },
-  get: async (operationId: string): Promise<Operation> => {
+  get: async (operationId: string): Promise<OperationDetail> => {
     return (await apiClient.get(operationPath(operationId))).data
   },
   create: async (request: OperationCreate): Promise<Operation> => {
@@ -101,6 +125,9 @@ export const operationsApi = {
   },
   update: async (operationId: string, request: OperationUpdate): Promise<Operation> => {
     return (await apiClient.patch(operationPath(operationId), request)).data
+  },
+  delete: async (operationId: string): Promise<void> => {
+    await apiClient.delete(operationPath(operationId))
   },
   listFindings: async (
     operationId: string, params: { limit: number; offset: number; title?: string },
@@ -134,6 +161,13 @@ export const operationsApi = {
     await apiClient.delete(
       `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(evidenceId)}`,
     )
+  },
+  exportFindings: async (
+    operationId: string, request: FindingExportRequest, signal?: AbortSignal,
+  ): Promise<Blob> => {
+    return (await apiClient.post<Blob>(
+      `${operationPath(operationId)}/findings/export`, request, { responseType: 'blob', signal },
+    )).data
   },
 }
 
@@ -211,6 +245,8 @@ apiClient.interceptors.request.use(async (config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // File downloads receive error bodies as Blobs; read them before any check below.
+    await decodeBlobErrorAsync(error)
     const problem = error?.response?.data
     if (
       (error?.response?.status === 400 && problem?.type === 'urn:pyrit:compatibility:invalid') ||
@@ -357,6 +393,10 @@ export const targetsApi = {
     const response = await apiClient.post('/targets', request)
     return response.data
   },
+  buildTarget: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredTarget> => {
+    const response = await apiClient.post<UnregisteredTarget>('/targets', { type, source, register: false })
+    return response.data
+  },
 }
 
 export const techniquesApi = {
@@ -369,6 +409,10 @@ export const techniquesApi = {
     (await apiClient.get('/techniques/types')).data,
   createTechnique: async (request: CreateTechniqueRequest): Promise<TechniqueInstance> =>
     (await apiClient.post('/techniques', request)).data,
+  getConfiguration: async (name: string): Promise<TechniqueConfiguration> =>
+    (await apiClient.get(`/techniques/${encodeURIComponent(name)}/configuration`)).data,
+  validateEdit: async (request: TechniqueOverride): Promise<TechniqueEditResponse> =>
+    (await apiClient.post(`/techniques/${encodeURIComponent(request.source_name)}/edit`, request)).data,
 }
 
 export const convertersApi = {
@@ -389,6 +433,10 @@ export const convertersApi = {
 
   createConverter: async (request: CreateConverterRequest): Promise<ConverterInstance> => {
     const response = await apiClient.post('/converters', request)
+    return response.data
+  },
+  buildConverter: async (type: string, source: SourceInstanceSpec): Promise<UnregisteredConverter> => {
+    const response = await apiClient.post<UnregisteredConverter>('/converters', { type, source, register: false })
     return response.data
   },
 
@@ -429,6 +477,9 @@ export const initializersApi = {
 }
 
 export const attacksApi = {
+  applyScorer: async (attackResultId: string, request: ApplyChatScorerRequest): Promise<ApplyChatScorerResponse> => {
+    return (await apiClient.post(`/attacks/${encodeURIComponent(attackResultId)}/apply-scorer`, request)).data
+  },
   saveConversation: async (request: SaveConversationRequest): Promise<AddMessageResponse> => {
     const response = await apiClient.post('/attacks/save-conversation', request)
     return response.data
@@ -440,6 +491,14 @@ export const attacksApi = {
 
   getAttack: async (attackResultId: string): Promise<AttackSummary> => {
     const response = await apiClient.get(`/attacks/${encodeURIComponent(attackResultId)}`)
+    return response.data
+  },
+
+  getAttackMetadata: async (attackResultId: string, conversationId?: string): Promise<AttackMetadata> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/metadata`
+    const response = conversationId === undefined
+      ? await apiClient.get(url)
+      : await apiClient.get(url, { params: { conversation_id: conversationId } })
     return response.data
   },
 
@@ -460,10 +519,12 @@ export const attacksApi = {
     return response.data
   },
 
-  getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
+  getMessages: async (
+    attackResultId: string, conversationId: string, params?: ConversationPageParams,
+  ): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
-      { params: { conversation_id: conversationId } }
+      { params: { conversation_id: conversationId, ...params } }
     )
     return response.data
   },
@@ -493,10 +554,11 @@ export const attacksApi = {
     return response.data
   },
 
-  getConversations: async (attackResultId: string): Promise<AttackConversationsResponse> => {
-    const response = await apiClient.get(
-      `/attacks/${encodeURIComponent(attackResultId)}/conversations`
-    )
+  getConversations: async (
+    attackResultId: string, params?: ConversationPageParams,
+  ): Promise<AttackConversationsResponse> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/conversations`
+    const response = params ? await apiClient.get(url, { params }) : await apiClient.get(url)
     return response.data
   },
 
@@ -561,6 +623,16 @@ export const attacksApi = {
 export const scoresApi = {
   createManualScore: async (request: ManualScoreRequest): Promise<BackendScore> => {
     const response = await apiClient.post('/scores/manual', request)
+    return response.data
+  },
+}
+
+export const scorersApi = {
+  listScorers: async (limit = 200, cursor?: string): Promise<{
+    items: import('@/types').ScorerInstance[]
+    pagination: { has_more: boolean; next_cursor: string | null }
+  }> => {
+    const response = await apiClient.get('/scorers', { params: { limit, cursor } })
     return response.data
   },
 }
@@ -642,6 +714,7 @@ export const scenariosApi = {
     return response.data
   },
 
+  /** Lists scenario runs by creation time by default or by activity when requested. */
   listRuns: async (params?: {
     limit?: number
     cursor?: string
@@ -649,6 +722,8 @@ export const scenariosApi = {
     run_statuses?: ScenarioRunState[]
     label?: string[]
     operation_id?: string[]
+    reference_id?: string
+    sort_by?: 'created_at' | 'activity'
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,
@@ -671,6 +746,41 @@ export const scenariosApi = {
     return response.data
   },
 
+  getLaunchConfiguration: async (scenarioResultId: string, signal?: AbortSignal): Promise<RunScenarioRequest> =>
+    (await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/launch-configuration`, { signal })).data,
+
+  getRunConversation: async (scenarioResultId: string, conversationId: string): Promise<ConversationMessagesResponse> =>
+    (await apiClient.get(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`,
+    )).data,
+
+  /** Loads one page of hierarchy roots. `cursor` continues roots only, never a node's children. */
+  getRunHierarchy: async (
+    scenarioResultId: string,
+    params?: { max_nodes?: number; cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyProjection> => {
+    const response = await apiClient.get<ScenarioHierarchyProjection>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  /** Loads one page of a node's saved children, continued with that node's `next_children_cursor`. */
+  getRunHierarchyNode: async (
+    scenarioResultId: string,
+    attackResultId: string,
+    params?: { limit?: number; children_cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyNode> => {
+    const response = await apiClient.get<ScenarioHierarchyNode>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
+      { params, signal },
+    )
+    return response.data
+  },
+
   getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
     const response = await apiClient.get('/scenarios/runs/queue', { signal })
     return response.data
@@ -687,6 +797,117 @@ export const scenariosApi = {
 
   resumeRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
     const response = await apiClient.post(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/resume`)
+    return response.data
+  },
+}
+
+export const scenarioPresetsApi = {
+  /** Read definitions without run-size calculation unless explicitly requested. */
+  list: async (
+    signal?: AbortSignal,
+    includeEstimates = false,
+  ): Promise<ScenarioPresetListResponse> => {
+    const params = { include_estimates: includeEstimates }
+    const response = await apiClient.get('/scenario-presets', { params, signal })
+    return response.data
+  },
+
+  get: async (name: string): Promise<ScenarioPresetResponse> => {
+    const response = await apiClient.get(`/scenario-presets/${encodeURIComponent(name)}`)
+    return response.data
+  },
+
+  /** Creates a preset that must not already exist; the server returns 409 when the name is taken. */
+  create: async (preset: ScenarioPreset): Promise<ScenarioPresetResponse> => {
+    const response = await apiClient.post('/scenario-presets', preset)
+    return response.data
+  },
+
+  /**
+   * Replaces a preset the caller has read. `expectedVersion` is the version returned
+   * by the read, so a concurrent edit fails with 409 instead of being overwritten.
+   */
+  update: async (
+    name: string,
+    preset: ScenarioPreset,
+    expectedVersion: string,
+  ): Promise<ScenarioPresetResponse> => {
+    const body: UpdateScenarioPresetRequest = { preset, expected_version: expectedVersion }
+    const response = await apiClient.put(`/scenario-presets/${encodeURIComponent(name)}`, body)
+    return response.data
+  },
+
+  remove: async (name: string): Promise<void> => {
+    await apiClient.delete(`/scenario-presets/${encodeURIComponent(name)}`)
+  },
+}
+
+export const scenarioSuitesApi = {
+  list: async (signal?: AbortSignal): Promise<ScenarioSuiteListResponse> => {
+    const response = await apiClient.get('/scenario-suites', { signal })
+    return response.data
+  },
+
+  get: async (name: string): Promise<ScenarioSuiteResponse> => {
+    const response = await apiClient.get(`/scenario-suites/${encodeURIComponent(name)}`)
+    return response.data
+  },
+
+  /** Creates a suite that must not already exist; the server returns 409 when the name is taken. */
+  create: async (suite: ScenarioSuite): Promise<ScenarioSuiteResponse> => {
+    const response = await apiClient.post('/scenario-suites', suite)
+    return response.data
+  },
+
+  /**
+   * Replaces a suite the caller has read. The expected version makes concurrent
+   * edits fail with 409 instead of silently overwriting another administrator.
+   */
+  update: async (
+    name: string,
+    suite: ScenarioSuite,
+    expectedVersion: string,
+  ): Promise<ScenarioSuiteResponse> => {
+    const body: UpdateScenarioSuiteRequest = { suite, expected_version: expectedVersion }
+    const response = await apiClient.put(`/scenario-suites/${encodeURIComponent(name)}`, body)
+    return response.data
+  },
+
+  remove: async (name: string): Promise<void> => {
+    await apiClient.delete(`/scenario-suites/${encodeURIComponent(name)}`)
+  },
+
+  launch: async (
+    name: string,
+    request: LaunchScenarioSuiteRequest,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.post(
+      `/scenario-suites/${encodeURIComponent(name)}/launch`,
+      request,
+    )
+    return response.data
+  },
+
+  getExecution: async (
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.get(
+      `/scenario-suites/executions/${encodeURIComponent(executionId)}`,
+      { signal },
+    )
+    return response.data
+  },
+
+  cancelExecution: async (
+    executionId: string,
+    signal?: AbortSignal,
+  ): Promise<ScenarioSuiteExecutionSummary> => {
+    const response = await apiClient.post(
+      `/scenario-suites/executions/${encodeURIComponent(executionId)}/cancel`,
+      undefined,
+      { signal },
+    )
     return response.data
   },
 }
@@ -760,4 +981,5 @@ export const datasetsApi = {
     return response.data
   },
 }
+
 import type { RuntimeReadiness, RuntimeStatus } from '@/types'

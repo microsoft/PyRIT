@@ -24,13 +24,15 @@
 # %% [markdown]
 # ## Adding Seeds to the Database
 #
-# PyRIT uses content hashing to prevent duplicate seed prompts from being added to memory. The deduplication logic follows these rules:
+# PyRIT uses content hashing to avoid re-importing stored seeds. Standalone seeds and single-seed groups follow these rules:
 #
-# 1. **Same dataset, duplicate content**: Seed is rejected (not added)
-# 2. **Same dataset, modified content**: Seed is accepted (different hash indicates changes)
+# 1. **Same dataset, duplicate content and execution identity** (seed type, data type, role, response schema, and behavioral inputs such as conditions): Seed is skipped, even if descriptive metadata such as harm categories differs
+# 2. **Same dataset, modified content or execution identity**: Seed is accepted as a new row; the stored original is unchanged
 # 3. **Different dataset, duplicate content**: Seed is accepted (allows the same content across datasets)
 #
-# This ensures data integrity while allowing intentional duplication across different datasets.
+# Multi-seed groups are compared as complete groups, including roles, sequence, metadata, and conditions. Distinct groups retain all their members, even when they share a system prompt or objective with another group. Re-importing an equivalent complete group does not add duplicates, even if its IDs have changed.
+#
+# Deduplication compares against seeds already in storage. Duplicate rows within the same import are preserved. A missing or empty dataset name matches stored content from any dataset.
 
 # %%
 from pyrit.datasets import SeedDatasetProvider

@@ -201,6 +201,21 @@ Builders, contributors, consumers
 
 PyRIT is part of a growing community of GenAI security tools, programs, and research. Whether you're shipping AI products, hunting vulnerabilities, or studying the space, here's where to plug in.
 
+::::{card}
+:link: https://discord.gg/9fMpq3tc8u
+
+:::{image} assets/ecosystem/discord.svg
+:alt: Discord
+:class: ecosystem-logo discord-community-logo
+:::
+
+**Join us on Discord**
+
+Ask questions, share what you're building, and chat with the PyRIT team and community.
+
+**Join the conversation &rarr;**
+::::
+
 ### 🧩 Built on PyRIT
 
 :::::{grid} 1 1 2 2

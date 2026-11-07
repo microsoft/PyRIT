@@ -4,7 +4,7 @@
 import logging
 from pathlib import Path
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH, DATASETS_PATH
 from pyrit.converter.converter import ConverterResult
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
@@ -78,9 +78,10 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
             default_languages = SeedDataset.from_yaml_file(
                 RandomTranslationConverter._DEFAULT_LANGUAGES_SEED_PROMPT_PATH
             )
-            self.languages = [prompt.value for prompt in default_languages.prompts]
-        else:
-            self.languages = languages
+            languages = [prompt.value for prompt in default_languages.prompts]
+        # Seeded selection picks by position, so the pool uses the same order as the identifier.
+        # Otherwise two pools that differ only in order share an identity but choose different languages.
+        self.languages = sorted(languages, key=str.casefold)
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -89,10 +90,12 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
         Returns:
             ComponentIdentifier: The converter identifier.
         """
-        base_identifier = super()._build_identifier()
+        llm_identifier = LLMGenericTextConverter._build_identifier(self)
+        word_level_identifier = WordLevelConverter._build_identifier(self)
         return self._create_identifier(
             params={
-                **base_identifier.params,
+                **llm_identifier.params,
+                **word_level_identifier.params,
                 "languages": sorted(self.languages, key=str.casefold),
             },
             converter_target=self._converter_target.get_identifier(),
@@ -108,7 +111,13 @@ class RandomTranslationConverter(LLMGenericTextConverter, WordLevelConverter):
 
         Returns:
             ConverterResult: The result containing the converted output and its type.
+
+        Raises:
+            ValueError: If the input type is not supported.
         """
+        if not self.input_supported(input_type):
+            raise ValueError(f"Input type {input_type} not supported")
+
         words = prompt.split()
         selected_indices = self._word_selection_strategy.select_words(words=words)
 

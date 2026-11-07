@@ -16,13 +16,16 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from pyrit.models import Message, MessagePiece
-from pyrit.models.literals import MEDIA_PATH_DATA_TYPES, PromptDataType
+from pyrit.models import MEDIA_PATH_DATA_TYPES, Message, MessagePiece, PromptDataType
 
 if TYPE_CHECKING:
-    from pyrit.prompt_target.common.prompt_target import PromptTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
+
+# Metadata that describes the media payload itself, so it still applies to a forwarded copy.
+# Request- or response-scoped state (e.g. a provider's ``video_id``) is not carried into a fresh request.
+_FORWARDED_MEDIA_METADATA_KEYS: frozenset[str] = frozenset({"context_description"})
 
 
 class _ModalityFeedbackRouter:
@@ -262,7 +265,10 @@ class _ModalityFeedbackRouter:
                         role=role,
                         original_value=piece.original_value,
                         original_value_data_type=piece.original_value_data_type,
+                        converted_value=piece.converted_value,
+                        converted_value_data_type=piece.converted_value_data_type,
                         conversation_id=shared_conversation_id,
+                        prompt_metadata=piece.prompt_metadata,
                     )
                 )
         return Message(message_pieces=new_pieces)
@@ -399,6 +405,11 @@ class _ModalityFeedbackRouter:
                 original_value=media_piece.converted_value,
                 original_value_data_type=media_piece.converted_value_data_type,
                 conversation_id=shared_conversation_id,
+                prompt_metadata={
+                    key: value
+                    for key, value in media_piece.prompt_metadata.items()
+                    if key in _FORWARDED_MEDIA_METADATA_KEYS
+                },
             )
             for media_piece in media_pieces
         ]

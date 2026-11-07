@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import azure.cognitiveservices.speech as speechsdk
 
-from pyrit.auth.azure_auth import get_speech_config_async
+from pyrit.auth.azure_auth import get_speech_config_async, validate_speech_region_shape
 from pyrit.common import default_values
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.memory import data_serializer_factory
@@ -70,11 +70,14 @@ class AzureSpeechAudioToTextConverter(Converter):
                 https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support
 
         Raises:
-            ValueError: If the required environment variables or parameters are not set.
+            ValueError: If the required environment variables or parameters are not set, or the region isn't
+                an Azure region name.
         """
-        self._azure_speech_region: str = default_values.get_required_value(
-            env_var_name=self.AZURE_SPEECH_REGION_ENVIRONMENT_VARIABLE,
-            passed_value=azure_speech_region,
+        self._azure_speech_region: str = validate_speech_region_shape(
+            default_values.get_required_value(
+                env_var_name=self.AZURE_SPEECH_REGION_ENVIRONMENT_VARIABLE,
+                passed_value=azure_speech_region,
+            )
         )
 
         self._token_provider: Callable[[], str | Awaitable[str]] | None = None
@@ -235,8 +238,11 @@ class AzureSpeechAudioToTextConverter(Converter):
         """
         Stop continuous recognition upon receiving an event 'evt'.
 
+        Connected to both ``canceled`` and ``session_stopped``: only a cancellation event carries a
+        ``result`` with cancellation details, a session event (``SessionEventArgs``) has none.
+
         Args:
-            evt (speechsdk.SpeechRecognitionEventArgs): Event.
+            evt (speechsdk.SessionEventArgs): Event, a ``SpeechRecognitionCanceledEventArgs`` on cancellation.
             recognizer (speechsdk.SpeechRecognizer): Speech recognizer object.
 
         Raises:
@@ -255,7 +261,7 @@ class AzureSpeechAudioToTextConverter(Converter):
         logger.info(f"CLOSING on {evt}")
         recognizer.stop_continuous_recognition_async()
         self.done = True
-        if evt.result.reason == speechsdk.ResultReason.Canceled:
+        if isinstance(evt, speechsdk.SpeechRecognitionCanceledEventArgs):
             cancellation_details = evt.result.cancellation_details
             logger.info(f"Speech recognition canceled: {cancellation_details.reason}")
             if cancellation_details.reason == speechsdk.CancellationReason.Error:

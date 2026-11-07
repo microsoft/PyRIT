@@ -14,10 +14,12 @@ import {
   targetIdentifierHash,
 } from '@/utils/targetIdentity'
 import type { TargetHashResolution } from '@/utils/targetIdentity'
+import { isGuiTarget, isGuiTargetType } from '@/utils/targetVisibility'
 
 interface RegistryResolution {
   attackId: string | null
   attackLoadSequence: number
+  generation: string
   status: 'idle' | 'resolved' | 'unavailable' | 'ambiguous' | 'error'
   target?: TargetInstance
 }
@@ -47,6 +49,22 @@ function hasCompleteIdentifier(target: TargetInfo | null): target is TargetInfo 
 }
 
 async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashResolution> {
+  if (target.binding) {
+    const source = await targetsApi.buildTarget(target.target_type, {
+      source_name: target.binding.source_name,
+      source_hash: target.binding.source_hash,
+      params: { temperature: target.binding.temperature },
+      effective_hash: target.binding.effective_hash,
+    })
+    if (!isGuiTarget(source)) return { status: 'unavailable' }
+    return {
+      status: 'resolved',
+      target: {
+        ...source, target_registry_name: target.binding.source_name,
+        binding: target.binding, reconstructable: true, supports_temperature_override: true,
+      },
+    }
+  }
   if (target.target_registry_name) {
     try {
       const namedTarget = await targetsApi.getTarget(target.target_registry_name)
@@ -54,7 +72,9 @@ async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashRes
         typeof namedTarget?.identifier?.hash === 'string'
         && targetIdentifierHash(namedTarget) === target.identifier_hash
       ) {
-        return { status: 'resolved' as const, target: namedTarget }
+        return isGuiTarget(namedTarget)
+          ? { status: 'resolved' as const, target: namedTarget }
+          : { status: 'unavailable' }
       }
     } catch (error) {
       if (toApiError(error).status !== 404) throw error
@@ -80,12 +100,13 @@ export function useAttackTargetResolution({
   const [registryResolution, setRegistryResolution] = useState<RegistryResolution>({
     attackId: null,
     attackLoadSequence: 0,
+    generation,
     status: 'idle',
   })
   const [resolutionAttempt, setResolutionAttempt] = useState(0)
 
   useEffect(() => {
-    if (!ready || !attackId || !hasCompleteIdentifier(attackTarget)) return
+    if (!ready || !attackId || !hasCompleteIdentifier(attackTarget) || !isGuiTargetType(attackTarget.target_type)) return
     if (useCreatedTarget) return
 
     let cancelled = false
@@ -98,15 +119,16 @@ export function useAttackTargetResolution({
           setRegistryResolution({
             attackId,
             attackLoadSequence,
+            generation,
             status: 'resolved',
             target: resolution.target,
           })
           return
         }
-        setRegistryResolution({ attackId, attackLoadSequence, status: resolution.status })
+        setRegistryResolution({ attackId, attackLoadSequence, generation, status: resolution.status })
       } catch {
         if (cancelled) return
-        setRegistryResolution({ attackId, attackLoadSequence, status: 'error' })
+        setRegistryResolution({ attackId, attackLoadSequence, generation, status: 'error' })
       }
     }
 
@@ -119,15 +141,17 @@ export function useAttackTargetResolution({
   const getResolutionStatus = (): AttackTargetResolutionStatus => {
     if (!attackId) return 'idle'
     if (targetUnbound && !attackTarget) return 'unbound'
+    if (attackTarget && !isGuiTargetType(attackTarget.target_type)) return 'unavailable'
     if (!hasCompleteIdentifier(attackTarget)) return 'legacy'
     if (useCreatedTarget) {
-      return createdTarget && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
+      return createdTarget && isGuiTarget(createdTarget) && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
         ? 'resolved'
         : 'unavailable'
     }
     if (
       registryResolution.attackId !== attackId
       || registryResolution.attackLoadSequence !== attackLoadSequence
+      || registryResolution.generation !== generation
     ) return 'loading'
     return registryResolution.status
   }
@@ -137,9 +161,9 @@ export function useAttackTargetResolution({
     : null
 
   const retryResolution = useCallback((): void => {
-    setRegistryResolution({ attackId: null, attackLoadSequence: 0, status: 'idle' })
+    setRegistryResolution({ attackId: null, attackLoadSequence: 0, generation, status: 'idle' })
     setResolutionAttempt((attempt) => attempt + 1)
-  }, [])
+  }, [generation])
 
   return {
     activeTarget,

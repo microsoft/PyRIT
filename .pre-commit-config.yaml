@@ -47,6 +47,12 @@ repos:
         language: python
         files: ^pyrit/.*\.py$
         pass_filenames: false
+      - id: check-public-imports
+        name: Prefer public PyRIT package imports
+        entry: python -m build_scripts.check_public_imports
+        language: python
+        additional_dependencies: ['ipython']
+        files: \.(py|ipynb)$
       - id: memory-migrations-check
         name: Check Memory Migrations
         entry: python -m build_scripts.memory_migrations check
@@ -67,7 +73,7 @@ repos:
       - id: detect-private-key
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.0
+    rev: v0.17.3
     hooks:
       - id: ruff-format
       - id: ruff-check

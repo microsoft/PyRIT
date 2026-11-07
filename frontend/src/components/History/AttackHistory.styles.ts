@@ -44,6 +44,18 @@ export const useAttackHistoryStyles = makeStyles({
     alignItems: 'center',
     minHeight: MINIMUM_TOUCH_TARGET_SIZE,
   },
+  // Inner scrolling surface for the virtualized label list. The bound lives here
+  // rather than on the listbox element because autoSize writes an inline max
+  // height on the popup, which would override a class level limit.
+  labelScrollSurface: {
+    // A flex column keeps the virtualizer's spacer elements from collapsing
+    // the visible height when the list shrinks to a few short rows, which
+    // clipped the only option of a one match search by half its height.
+    display: 'flex',
+    flexDirection: 'column',
+    maxHeight: '250px',
+    overflowY: 'auto',
+  },
   filterDropdown: {
     minWidth: '160px',
     ...mobileTouchTargetHeight,
@@ -79,18 +91,15 @@ export const useAttackHistoryStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground2,
   },
   colStatus: { minWidth: '100px', whiteSpace: 'nowrap' as const },
-  colAttackType: { minWidth: '110px', whiteSpace: 'nowrap' as const },
+  colObjective: { minWidth: '240px', width: '35%' },
   colTarget: { minWidth: '120px', whiteSpace: 'nowrap' as const },
   colOperator: { minWidth: '120px', whiteSpace: 'nowrap' as const },
   colOperation: { minWidth: '130px', whiteSpace: 'nowrap' as const },
-  colMessages: { minWidth: '60px', whiteSpace: 'nowrap' as const },
-  colConversations: { minWidth: '70px', whiteSpace: 'nowrap' as const },
-  colConverters: { minWidth: '120px', whiteSpace: 'nowrap' as const },
   colLabels: { minWidth: '180px', whiteSpace: 'nowrap' as const },
   colDate: { minWidth: '100px', whiteSpace: 'nowrap' as const },
-  colAction: { minWidth: '48px', whiteSpace: 'nowrap' as const },
   clickableRow: {
     cursor: 'pointer',
+    backgroundColor: tokens.colorNeutralBackground2,
     ':hover': {
       backgroundColor: tokens.colorNeutralBackground1Hover,
     },
@@ -99,12 +108,21 @@ export const useAttackHistoryStyles = makeStyles({
       outlineOffset: '-2px',
     },
   },
-  previewCell: {
+  objectiveCell: {
+    ...mobileTouchTarget,
     display: 'block',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    maxWidth: '400px',
+    minWidth: 0,
+    maxWidth: '100%',
+    padding: 0,
+    fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightRegular,
+    lineHeight: tokens.lineHeightBase200,
+    textAlign: 'left',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+  },
+  emptyValue: {
+    color: tokens.colorNeutralForeground3,
   },
   nowrap: {
     whiteSpace: 'nowrap',
@@ -113,21 +131,6 @@ export const useAttackHistoryStyles = makeStyles({
     display: 'flex',
     gap: tokens.spacingHorizontalXXS,
     flexWrap: 'wrap',
-  },
-  matchModeToggle: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: tokens.spacingHorizontalXS,
-    paddingInline: tokens.spacingHorizontalXS,
-  },
-  matchModeLabel: {
-    fontSize: tokens.fontSizeBase200,
-    color: tokens.colorNeutralForeground3,
-    userSelect: 'none',
-  },
-  matchModeLabelActive: {
-    color: tokens.colorNeutralForeground1,
-    fontWeight: tokens.fontWeightSemibold,
   },
   pagination: {
     display: 'flex',

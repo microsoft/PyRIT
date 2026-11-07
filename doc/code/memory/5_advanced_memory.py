@@ -29,9 +29,14 @@
 # You can query AzureSQL or SQLite for prompts with labels such as `operator`, `campaign`, or `harm_category`.
 # Select a saved Operation with `operation_id`; it is separate from memory labels.
 #
+# Labels are stored on attack results. To get the prompts for a label, query the attack results
+# by label, then fetch the messages for the conversations you care about: `result.conversation_id`
+# for the main conversation, `result.get_active_conversation_ids()` to add pruned attempts, or
+# `result.get_all_conversation_ids()` to also include related conversations such as an adversarial chat.
+#
 # We take the following steps in Part 1:
 # 1. Send prompts to a text target using `PromptSendingAttack`, passing in `memory_labels` to the execution function.
-# 2. Retrieve these prompts by querying for the corresponding memory label(s).
+# 2. Retrieve these prompts by querying the attack results with the corresponding memory label(s).
 # 3. Resend the retrieved prompts.
 # %%
 import uuid
@@ -73,7 +78,19 @@ from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import TextTarget
 
 memory = CentralMemory.get_memory_instance()
-prompts = await memory.get_message_pieces_async(labels={"prompt_group": group1})
+
+
+async def get_labeled_pieces_async(*, labels: dict[str, str], **filters):
+    """Fetch the main conversation of every attack result carrying these labels."""
+    pieces = []
+    for result in await memory.get_attack_results_async(labels=labels):
+        # Envelope results (e.g. SequentialAttack) have no conversation of their own; an empty ID matches everything.
+        if result.conversation_id:
+            pieces.extend(await memory.get_message_pieces_async(conversation_id=result.conversation_id, **filters))
+    return pieces
+
+
+prompts = await get_labeled_pieces_async(labels={"prompt_group": group1})
 
 # Print original values of queried message pieces (including responses)
 for piece in prompts:
@@ -225,7 +242,7 @@ for piece in combined_pieces:
 
 # %%
 # Retrieve prompts from our labeled group that specifically went through Base64Converter
-labeled_and_filtered = await memory.get_message_pieces_async(
+labeled_and_filtered = await get_labeled_pieces_async(
     labels={"prompt_group": group1},
     identifier_filters=[converter_filter],
 )
@@ -257,7 +274,7 @@ scorer_assist = SubStringScorer(
 )  # intentionally bad scorer that matches when the phrase 'assist' is present in response. But good for demo.
 
 # Retrieve assistant responses from Part 1
-assistant_pieces = await memory.get_message_pieces_async(
+assistant_pieces = await get_labeled_pieces_async(
     labels={"prompt_group": group1},
     role="assistant",
 )

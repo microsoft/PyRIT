@@ -25,6 +25,40 @@ describe('useConversationSave', () => {
   beforeEach(() => jest.resetAllMocks())
   afterEach(() => jest.restoreAllMocks())
 
+  it('uses the personal scorer only for a new attack, not a same-attack save', async () => {
+    jest.mocked(attacksApi.saveConversation).mockResolvedValue(response)
+    const chatScorer = { registry_name: 'default-judge', identifier_hash: 'full-hash' }
+    const { result } = renderHook(() => useConversationSave({ generation: 'ready', ready: true, chatScorer }))
+    await act(async () => { await result.current.save(input, 'new_attack') })
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].chat_scorer).toEqual(chatScorer)
+    await act(async () => { await result.current.save(input, 'same_attack') })
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[1][0]).not.toHaveProperty('chat_scorer')
+  })
+
+  it('leaves blank new chats unconfigured but persists an explicit Off choice', async () => {
+    jest.mocked(attacksApi.saveConversation).mockResolvedValue(response)
+    const context: NewAttackContext = {
+      generation: 'ready', ready: true, chatScorer: { registry_name: 'judge', identifier_hash: 'hash' },
+    }
+    const view = renderHook((props: NewAttackContext) => useConversationSave(props), { initialProps: context })
+    await act(async () => { await view.result.current.save({ ...input, objective: '' }, 'new_attack') })
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0]).not.toHaveProperty('chat_scorer')
+    view.rerender({ ...context, chatScorer: null, chatScorerExplicit: true })
+    await act(async () => { await view.result.current.save({ ...input, objective: '' }, 'new_attack') })
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[1][0]).toHaveProperty('chat_scorer', null)
+  })
+
+  it('suggests a personal default only when a same-attack save introduces the first objective', async () => {
+    jest.mocked(attacksApi.saveConversation).mockResolvedValue(response)
+    const chatScorer = { registry_name: 'judge', identifier_hash: 'hash' }
+    const { result } = renderHook(() => useConversationSave({ generation: 'ready', ready: true, chatScorer }))
+    await act(async () => { await result.current.save({ ...input, initialObjective: '' }, 'same_attack') })
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0]).toMatchObject({
+      default_chat_scorer: chatScorer, expected_objective: '',
+    })
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0]).not.toHaveProperty('chat_scorer')
+  })
+
   it('reuses the attempt after a lost response, then starts a new intentional copy after success', async () => {
     jest.mocked(attacksApi.saveConversation).mockRejectedValueOnce(new Error('Response lost')).mockResolvedValue(response)
     const { result } = renderHook(() => useConversationSave())

@@ -23,9 +23,13 @@ import pytest
 from pyrit.executor.attack import AttackStrategy, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, AttackTechniqueSeedGroup, SeedGroupRequirements, SeedObjective, SeedPrompt
 from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
-from pyrit.scenario import IncompatibleTechniqueError, IncompatibleTechniquePolicy
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import (
+    AttackTechnique,
+    AttackTechniqueFactory,
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
+    TechniqueRequirements,
+)
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
     MatrixCombo,
@@ -33,7 +37,6 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
     build_matrix_atomic_attacks,
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from tests.unit.mocks import MockPromptTarget
 
@@ -500,6 +503,30 @@ class TestLegacyReExports:
 @pytest.mark.usefixtures("patch_central_database")
 class TestBuildMatrixAtomicAttacks:
     """``build_matrix_atomic_attacks`` wires the context into the builder in one call."""
+
+    @pytest.mark.parametrize("override", [False, True])
+    def test_context_converters_are_used_unless_explicitly_overridden(self, override: bool) -> None:
+        from pyrit.converter import Base64Converter
+
+        converter = Base64Converter()
+        context = _context(
+            techniques=[_technique("tech")],
+            seed_groups_by_dataset={"ds": [_seed_group(objective="o1")]},
+        )
+        context.technique_converters["tech"] = [converter]
+        factory = _mock_factory(name="tech")
+        with _patch_registry({"tech": factory}):
+            build_matrix_atomic_attacks(
+                context=context,
+                objective_scorer=MagicMock(spec=TrueFalseScorer),
+                technique_converters={} if override else None,
+            )
+        extra = factory.create.call_args.kwargs["extra_request_converters"]
+        if override:
+            assert extra is None
+        else:
+            assert extra is not None
+            assert extra[0].converters == [converter]
 
     def test_builds_cross_product_grouped_by_technique(self):
         context = _context(

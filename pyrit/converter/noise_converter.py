@@ -5,7 +5,7 @@ import logging
 import pathlib
 import textwrap
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
 from pyrit.models import ComponentIdentifier, SeedPrompt
@@ -69,8 +69,10 @@ class NoiseConverter(LLMGenericTextConverter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
+        base_identifier = super()._build_identifier()
         return self._create_identifier(
             params={
+                **base_identifier.params,
                 "noise": self._noise,
                 "number_errors": self._number_errors,
             },

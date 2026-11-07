@@ -17,17 +17,26 @@ jest.mock('@/services/api', () => ({
   },
 }))
 
+let mockPendingCreate: ((converterId: string, isCurrentOpening: boolean) => void) | undefined
+
 jest.mock('@/components/Registry/CreateConverterDialog', () => ({
   __esModule: true,
   default: ({
     open,
     onCreated,
+    onClose,
   }: {
     open: boolean
-    onCreated: (converterId: string) => void
-  }) => open
-    ? <button onClick={() => onCreated('new-converter')}>Complete converter creation</button>
-    : null,
+    onCreated: (converterId: string, isCurrentOpening: boolean) => void
+    onClose: () => void
+  }) => {
+    if (!open) return null
+    mockPendingCreate = onCreated
+    return <>
+      <button onClick={() => onCreated('new-converter', true)}>Complete converter creation</button>
+      <button onClick={onClose}>Dismiss converter creation</button>
+    </>
+  },
 }))
 
 const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>
@@ -136,6 +145,7 @@ function makePreviewResponse(
 describe('ConverterPanel', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockPendingCreate = undefined
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [textConverter] })
   })
 
@@ -184,7 +194,7 @@ describe('ConverterPanel', () => {
     ) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.queryByTestId('converter-preview-btn')).not.toBeInTheDocument()
     expect(screen.queryByTestId('converter-preview-result')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('combobox', { name: 'Add converter' }))
     const options = screen.getAllByRole('option')
@@ -216,8 +226,8 @@ describe('ConverterPanel', () => {
     await user.type(workingInput, 'manual result')
 
     expect(screen.queryByTestId('converter-preview-btn')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeEnabled()
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
 
     expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}').text).toEqual({
       pieceId: 'text',
@@ -226,6 +236,7 @@ describe('ConverterPanel', () => {
       originalValue: 'original',
       convertedValue: 'manual result',
       convertedDataType: 'text',
+      manuallyEdited: true,
     })
     expect(mockedConvertersApi.previewConversion).not.toHaveBeenCalled()
   })
@@ -327,7 +338,7 @@ describe('ConverterPanel', () => {
     await selectConverter('base64-default')
 
     expect(mockedConvertersApi.previewConversion).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
 
     await user.click(screen.getByTestId('converter-preview-btn'))
 
@@ -344,7 +355,7 @@ describe('ConverterPanel', () => {
     await user.click(screen.getByTestId('converter-preview-btn'))
 
     expect(await screen.findByTestId('converter-preview-error')).toHaveTextContent('Conversion exploded')
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
   })
 
   it('refreshes and selects a converter created from the shared dialog', async () => {
@@ -365,6 +376,31 @@ describe('ConverterPanel', () => {
     expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2)
   })
 
+  it('refreshes a dismissed creation without appending it to a replacement pipeline', async () => {
+    const replacement = makeConverter('replacement', 'Rot13Converter')
+    const created = makeConverter('new-converter', 'CaesarConverter')
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [replacement] })
+      .mockResolvedValueOnce({ items: [replacement, created] })
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+
+    await user.click(screen.getByRole('combobox', { name: 'Add converter' }))
+    await user.click(screen.getByTestId('create-converter-option'))
+    const completeCreate = mockPendingCreate
+    expect(completeCreate).toBeDefined()
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss converter creation' }))
+    await selectConverter('replacement')
+
+    await act(async () => { completeCreate?.('new-converter', false) })
+
+    await waitFor(() => expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('converter-item-replacement')).toBeInTheDocument()
+    expect(screen.queryByTestId('converter-item-new-converter')).not.toBeInTheDocument()
+  })
+
   it('returns the selected registry ID with the converted value', async () => {
     mockedConvertersApi.previewConversion.mockResolvedValue(
       makePreviewResponse(['base64-default'], ['converted']),
@@ -374,8 +410,7 @@ describe('ConverterPanel', () => {
     await screen.findByTestId('converter-panel-list')
     await selectConverter('base64-default')
     await user.click(screen.getByTestId('converter-preview-btn'))
-    expect(await screen.findByTestId('use-converted-btn')).toBeEnabled()
-    await user.click(screen.getByTestId('use-converted-btn'))
+    expect(screen.queryByTestId('use-converted-btn')).not.toBeInTheDocument()
 
     expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')).toEqual({
       text: expect.objectContaining({
@@ -548,7 +583,7 @@ describe('ConverterPanel', () => {
     expect(await screen.findByTestId('converter-preview-result')).toContainElement(
       screen.getByRole('img', { name: 'Converted output preview' }),
     )
-    await user.click(screen.getByTestId('use-converted-btn'))
+    expect(screen.queryByTestId('use-converted-btn')).not.toBeInTheDocument()
     expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')).toEqual({
       text: expect.objectContaining({ pieceType: 'text', convertedValue: 'aGVsbG8=' }),
       image: expect.objectContaining({ pieceType: 'image', convertedValue: outputImage }),
@@ -624,7 +659,7 @@ describe('ConverterPanel', () => {
     await selectConverter('base64-default')
     await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
     await screen.findByRole('textbox', { name: 'Stage 1 output - Text' })
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     const applied = screen.getByTestId('applied-conversions').textContent
 
     panel.rerender({ previewText: 'hello', open: false })
@@ -644,13 +679,13 @@ describe('ConverterPanel', () => {
     await screen.findByTestId('converter-panel-list')
     await selectConverter('base64-default')
     await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(screen.getByTestId('applied-conversions')).toHaveTextContent('base64-default')
 
     await user.click(screen.getByRole('button', { name: 'Remove converter base64-default' }))
 
     expect(screen.getByTestId('applied-conversions')).toHaveTextContent('{}')
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
   })
 
   it.each(['input', 'pipeline'])('ignores a late response after the %s changes and changes back', async (changed: string) => {
@@ -661,7 +696,7 @@ describe('ConverterPanel', () => {
     await screen.findByTestId('converter-panel-list')
     await selectConverter('base64-default')
     await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
 
     if (changed === 'input') {
       panel.rerender({ previewText: 'edited' })
@@ -673,7 +708,7 @@ describe('ConverterPanel', () => {
     await act(async () => { finish(makePreviewResponse(['base64-default'], ['stale'])) })
 
     expect(screen.queryByText('stale')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(screen.getByTestId('applied-conversions')).toHaveTextContent('{}')
   })
 
@@ -703,15 +738,14 @@ describe('ConverterPanel', () => {
 
     expect(await screen.findAllByRole('img', { name: 'same.png preview' })).toHaveLength(2)
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(2)
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(Object.keys(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')))
       .toEqual(['first', 'second'])
 
     mockedConvertersApi.previewConversion.mockRejectedValueOnce(new Error('First image failed'))
     await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
     expect(await screen.findByTestId('converter-preview-error')).toHaveTextContent('First image failed')
-    expect(screen.getByTestId('applied-conversions')).toHaveTextContent('{}')
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(Object.keys(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')))
       .toEqual(['second'])
   })
@@ -770,7 +804,7 @@ describe('ConverterPanel', () => {
     await user.click(screen.getByRole('tab', { name: 'Image' }))
     await selectConverter('image-compressor')
     await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
 
     panel.rerender({ previewText: 'changed', attachments })
     await waitFor(() => expect(Object.keys(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}')))
@@ -788,7 +822,7 @@ describe('ConverterPanel', () => {
     await user.type(workingInput, 'edited')
     await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledWith(expect.objectContaining({ original_value: 'edited' }))
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}').text)
       .toEqual(expect.objectContaining({ originalValue: 'original', convertedValue: 'output' }))
 
@@ -798,7 +832,7 @@ describe('ConverterPanel', () => {
     expect(screen.getByRole('textbox', { name: 'Working input - Text' })).toHaveValue('edited')
     panel.rerender({ previewText: 'new chat input' })
     expect(screen.getByRole('textbox', { name: 'Working input - Text' })).toHaveValue('new chat input')
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
   })
 
   it('runs every remaining stage from an edited output without rerunning the prefix', async () => {
@@ -814,14 +848,14 @@ describe('ConverterPanel', () => {
     await selectConverter('suffix')
     await selectConverter('base64-default')
     await user.click(screen.getByRole('button', { name: 'Convert', exact: true }))
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
 
     const firstOutput = screen.getByRole('textbox', { name: 'Stage 1 output - Text' })
     await user.clear(firstOutput)
     await user.type(firstOutput, 'edited')
     expect(screen.queryByRole('textbox', { name: 'Stage 2 output - Text' })).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Stage 3 output - Text' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(screen.getByTestId('applied-conversions')).toHaveTextContent('{}')
     await user.click(screen.getByRole('button', { name: 'Convert Text from stage 2 to end' }))
     expect(mockedConvertersApi.previewConversion).toHaveBeenLastCalledWith({
@@ -830,7 +864,7 @@ describe('ConverterPanel', () => {
     expect(firstOutput).toHaveValue('edited')
     expect(screen.getByRole('textbox', { name: 'Stage 2 output - Text' })).toHaveValue('edited-two')
     expect(screen.getByRole('textbox', { name: 'Stage 3 output - Text' })).toHaveValue('edited-three')
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}').text)
       .toEqual(expect.objectContaining({
         originalValue: 'hello', convertedValue: 'edited-three',
@@ -877,7 +911,7 @@ describe('ConverterPanel', () => {
     const output = screen.getByRole('textbox', { name: 'Stage 1 output - Text' })
     await user.clear(output)
     if (value) await user.type(output, value)
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}').text.convertedValue).toBe(value)
     expect(mockedConvertersApi.previewConversion).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('button', { name: /from stage 2 to end/ })).not.toBeInTheDocument()
@@ -909,7 +943,7 @@ describe('ConverterPanel', () => {
     expect(screen.getByRole('textbox', { name: 'Stage 1 output - Text' })).toHaveValue('output')
     expect(screen.getByRole('button', { name: 'Convert selection only in Stage 1 output - Text' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Convert Text from stage 2 to end' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Reorder converter suffix' }))
     await user.keyboard('{ArrowUp}')
     expect(screen.queryByRole('textbox', { name: 'Stage 1 output - Text' })).not.toBeInTheDocument()
@@ -932,7 +966,7 @@ describe('ConverterPanel', () => {
     await act(async () => { finish(makePreviewResponse(['base64-default'], ['stale'])) })
     expect(screen.getByRole('textbox', { name: 'Stage 1 output - Text' })).toHaveValue('first changed')
     expect(screen.queryByRole('textbox', { name: 'Stage 2 output - Text' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
   })
 
   it('preserves editable upstream output when a remaining converter fails', async () => {
@@ -949,7 +983,7 @@ describe('ConverterPanel', () => {
     expect(await screen.findByTestId('converter-preview-error')).toHaveTextContent('Conversion from stage 2 failed')
     expect(screen.getByRole('textbox', { name: 'Stage 1 output - Text' })).toHaveValue('first')
     expect(screen.queryByRole('textbox', { name: 'Stage 2 output - Text' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Add converted value' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
   })
 
   it('continues from editable text produced by a media converter using its actual output type', async () => {
@@ -975,7 +1009,7 @@ describe('ConverterPanel', () => {
     expect(mockedConvertersApi.previewConversion).toHaveBeenLastCalledWith({
       original_value: 'edited caption', original_value_data_type: 'text', converter_ids: ['base64-default'],
     })
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}').photo)
       .toEqual(expect.objectContaining({
         originalValue: 'photo.png', convertedValue: 'edited-encoded', convertedDataType: 'text',
@@ -1042,7 +1076,7 @@ describe('ConverterPanel', () => {
       converter_ids: ['base64-default'],
     })
     expect(screen.getByRole('textbox', { name: 'Stage 2 output - Text' })).toHaveValue(`${final} edited`)
-    await user.click(screen.getByRole('button', { name: 'Add converted value' }))
+    expect(screen.queryByRole('button', { name: 'Add converted value' })).not.toBeInTheDocument()
     expect(JSON.parse(screen.getByTestId('applied-conversions').textContent ?? '{}').text.convertedValue)
       .toBe(`${final} edited`)
   })

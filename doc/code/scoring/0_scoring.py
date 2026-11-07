@@ -18,7 +18,7 @@
 # - Was there harmful content in the response? How bad was it?
 #
 # A scorer takes a response (or a whole conversation) and returns one or more
-# [`Score`](../../../pyrit/models/score.py) objects. Scorers are used three ways:
+# [`Score`](../../../pyrit/models/score/score.py) objects. Scorers are used three ways:
 # directly (this page), automatically inside an [attack](../executor/1_single_turn.ipynb#prompt-sending),
 # and over many stored responses with the [batch scorer](#batch-scoring).
 #
@@ -33,6 +33,10 @@
 #
 # The two are convertible: a `float_scale` score becomes `true_false` by applying a
 # threshold (see [Combining & stacking scorers](3_combining_scorers.ipynb)).
+#
+# To change a verdict after a score is created, call `score.set_value(...)` with a `bool`, a
+# number, or `None` for undetermined. It keeps `score_value` and `status` consistent. Assigning
+# `score_value` directly on a `true_false` score is deprecated until 2.0.
 # %% [markdown]
 # ## Scorer reference table
 #
@@ -120,11 +124,20 @@ print(df.to_string(index=False))
 # request. The request itself does not read ambient context. Raw sources do not receive criteria.
 #
 # **Hook migration is required:** a subclass of a migrated scorer that overrides only
-# `_score_piece_async` raises `TypeError` at construction, including for objective-only use.
-# Move that override and its `super()` call to `_score_piece_with_expectation_async`, and
-# forward the complete expectation. PyRIT does not silently bypass the old override or infer
-# how to combine both hooks. Legacy hooks on unmigrated leaves still work for objective-only
-# calls, but cannot accept other typed criteria.
+# `_score_piece_async` raises `LegacyScorerHookError` (a `TypeError`) at construction, including
+# for objective-only use. Move that override and its `super()` call to
+# `_score_piece_with_expectation_async`, and forward the complete expectation. PyRIT does not
+# silently bypass the old override or infer how to combine both hooks. Legacy hooks on unmigrated
+# leaves still work for objective-only calls until 2.0. A leaf that declares any other typed
+# `CONDITION_TYPE` but uses the standard pipeline with only a legacy hook raises
+# `LegacyScorerHookError` at construction, including direct `Scorer` subclasses. Custom pipeline
+# overrides can evaluate the expectation themselves. If they forward typed criteria to a legacy
+# hook, the runtime guard raises the same error without wrapping it.
+#
+# `is_objective_required=True` infers `MatchesObjective` only for an undeclared message scorer.
+# An explicit `CONDITION_TYPE` takes precedence. The scorer validates objective requirements before
+# acquiring evidence. `SelfAskGeneralFloatScaleScorer` requires an objective by default, but a custom
+# validator can select a fixed rubric without that requirement.
 #
 # Generic family scorers consume a `Scorable` without assuming that it resolves to a
 # message. Message scorers also support message-specific entry points and policy. Generic
@@ -161,7 +174,8 @@ print(df.to_string(index=False))
 # the target need not be a language model. Its kind is `scorer_target_response`.
 # Media observation capture remains deferred until its evidence can be snapshotted.
 # Trace-backed tool observations are covered in [Tool-call scoring](5_tool_call_scorer.ipynb), and file-system
-# observations in [File-write scoring](6_file_write_scorer.ipynb).
+# observations in [File-write scoring](6_file_write_scorer.ipynb), and sandboxed program runs in
+# [Program-execution scoring](7_program_execution_scorer.ipynb).
 #
 # Replaying a judgment is different from evaluating a stored run against a new expectation.
 # A retained target judgment answers the original expectation; changing that expectation

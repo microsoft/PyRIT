@@ -12,9 +12,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.backend.models.targets import CreateTargetRequest
-from pyrit.backend.services.target_service import TargetService, get_target_service
+from pyrit.backend.models import CreateTargetRequest
+from pyrit.backend.services import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
+from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities
 from pyrit.registry import TargetRegistry
 from unit.mocks import MockPromptTarget
@@ -256,8 +257,18 @@ class TestListTargetTypes:
         result = await service.list_target_types_async()
 
         openai_entry = next(item for item in result.items if item.target_type == "OpenAIChatTarget")
-        assert "api_key" in openai_entry.supported_auth_modes
-        assert "identity" in openai_entry.supported_auth_modes
+        assert openai_entry.supported_auth_modes == ["api_key", "identity", "none"]
+        azure_ml_entry = next(item for item in result.items if item.target_type == "AzureMLChatTarget")
+        assert azure_ml_entry.supported_auth_modes == ["api_key", "identity"]
+
+    async def test_types_report_no_auth_modes_for_credential_free_target_async(self) -> None:
+        """TextTarget needs no credentials, so its type entry advertises no auth modes."""
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "TextTarget")
+        assert entry.supported_auth_modes == []
 
     async def test_types_include_github_copilot_form_parameters_async(self) -> None:
         service = TargetService()
@@ -282,6 +293,16 @@ class TestListTargetTypes:
 
         entry = next(item for item in result.items if item.target_type == "HuggingFaceChatTarget")
         assert "trust_remote_code" in {parameter.name for parameter in entry.parameters}
+
+    async def test_types_include_azure_blob_target_with_both_auth_modes_async(self) -> None:
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "AzureBlobStorageTarget")
+        assert {"container_url", "sas_token"} <= {parameter.name for parameter in entry.parameters}
+        assert "api_key" in entry.supported_auth_modes
+        assert "identity" in entry.supported_auth_modes
 
     @pytest.mark.parametrize(
         ("target_type", "parameter_names"),
@@ -397,24 +418,6 @@ class TestListTargetTypes:
     @pytest.mark.parametrize(
         ("target_type", "parameter_name", "type_name", "required", "choices"),
         [
-            (
-                "GandalfTarget",
-                "level",
-                "GandalfLevel",
-                True,
-                [
-                    "baseline",
-                    "do-not-tell",
-                    "do-not-tell-and-block",
-                    "gpt-is-password-encoded",
-                    "word-blacklist",
-                    "gpt-blacklist",
-                    "gandalf",
-                    "gandalf-the-white",
-                    "adventure-1",
-                    "adventure-2",
-                ],
-            ),
             (
                 "AzureBlobStorageTarget",
                 "blob_content_type",
@@ -535,6 +538,158 @@ async def test_create_github_copilot_target_requires_token_async(
 
     create_instance.assert_not_called()
     assert service.get_target_object(target_registry_name="copilot") is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("register", [True, False])
+async def test_create_github_copilot_target_accepts_working_directory_async(tmp_path: Path, register: bool) -> None:
+    params = {"model_name": "gpt-5-mini", "github_token": "test-github-token", "working_directory": str(tmp_path)}
+
+    with patch.dict("sys.modules", {"copilot": ModuleType("copilot")}):
+        target = await TargetService().create_target_async(
+            request=CreateTargetRequest(
+                name="copilot" if register else None, type="GitHubCopilotTarget", register=register, params=params
+            )
+        )
+
+    assert target.identifier.params["working_directory"] == str(tmp_path.resolve())
+
+
+class _FileTarget(MockPromptTarget):
+    """A target with a parameter that names a file on the server."""
+
+    def __init__(self, *, data_file: Path | None = None) -> None:
+        super().__init__()
+        self.data_file = data_file
+
+
+class _RequiredFileTarget(MockPromptTarget):
+    """A target that cannot be built without a file on the server."""
+
+    def __init__(self, *, data_file: Path) -> None:
+        super().__init__()
+        self.data_file = data_file
+
+
+class _RequiredUploadTarget(MockPromptTarget):
+    """A target that uploads local files from a folder only the server sets."""
+
+    upload_directory_parameter = "upload_dir"
+
+    def __init__(self, *, upload_dir: Path) -> None:
+        super().__init__()
+        self.upload_dir = upload_dir
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_target_path_parameters_are_left_out_and_rejected() -> None:
+    service = TargetService()
+    service._registry.register_class(_FileTarget)
+    service._registry.register_class(_RequiredFileTarget)
+
+    types = await service.list_target_types_async()
+    with pytest.raises(ValueError, match="'data_file' of '_FileTarget' names a server file"):
+        await service.create_target_async(
+            request=CreateTargetRequest(name="files", type="_FileTarget", params={"data_file": "/etc/hosts"})
+        )
+
+    entries = {item.target_type: item for item in types.items}
+    assert "data_file" not in [parameter.name for parameter in entries["_FileTarget"].parameters]
+    assert "_RequiredFileTarget" not in entries
+    assert service.get_target_object(target_registry_name="files") is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_types_list_a_target_whose_required_path_is_the_server_upload_folder(tmp_path: Path) -> None:
+    service = TargetService()
+    service._registry.register_class(_RequiredUploadTarget)
+
+    with_folder = await service.list_target_types_async(upload_directory=str(tmp_path))
+    without_folder = await service.list_target_types_async()
+
+    entry = next(item for item in with_folder.items if item.target_type == "_RequiredUploadTarget")
+    assert "upload_dir" not in [parameter.name for parameter in entry.parameters]
+    assert all(item.target_type != "_RequiredUploadTarget" for item in without_folder.items)
+
+
+class _RebuildableFolderTarget(MockPromptTarget):
+    """A rebuildable target with a folder callers may set and an upload folder only the server sets."""
+
+    upload_directory_parameter = "allowed_upload_directory"
+    caller_path_parameters = frozenset({"working_directory"})
+
+    def __init__(
+        self,
+        *,
+        label: str = "source",
+        working_directory: Path | None = None,
+        allowed_upload_directory: Path | None = None,
+    ) -> None:
+        super().__init__()
+        self.label = label
+        self.working_directory = working_directory
+        self.allowed_upload_directory = allowed_upload_directory
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "working_directory": self.working_directory,
+            "allowed_upload_directory": self.allowed_upload_directory,
+        }
+
+
+def _register_folder_source(*, service: TargetService, folder: Path) -> _RebuildableFolderTarget:
+    service._registry.register_class(_RebuildableFolderTarget)
+    source = _RebuildableFolderTarget(working_directory=folder, allowed_upload_directory=folder)
+    service._registry.instances.register(source, name="folders")
+    return source
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_build_from_source_rejects_an_upload_folder_override_async(tmp_path: Path) -> None:
+    service = TargetService()
+    source = _register_folder_source(service=service, folder=tmp_path)
+    spec = SourceInstanceSpec(
+        source_name="folders", source_hash=source.get_identifier().hash, params={"allowed_upload_directory": "/"}
+    )
+
+    with pytest.raises(
+        ValueError, match="'allowed_upload_directory' of '_RebuildableFolderTarget' names a server file"
+    ):
+        await service.build_from_source_async(spec)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_build_from_source_accepts_a_working_directory_override_async(tmp_path: Path) -> None:
+    service = TargetService()
+    source = _register_folder_source(service=service, folder=tmp_path)
+    other = tmp_path / "other"
+
+    rebuilt = await service.build_from_source_async(
+        SourceInstanceSpec(
+            source_name="folders", source_hash=source.get_identifier().hash, params={"working_directory": str(other)}
+        )
+    )
+
+    assert isinstance(rebuilt, _RebuildableFolderTarget)
+    assert rebuilt.working_directory == other
+    assert rebuilt.allowed_upload_directory == tmp_path
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_build_from_source_keeps_the_source_folders_async(tmp_path: Path) -> None:
+    service = TargetService()
+    source = _register_folder_source(service=service, folder=tmp_path)
+
+    rebuilt = await service.build_from_source_async(
+        SourceInstanceSpec(source_name="folders", source_hash=source.get_identifier().hash, params={"label": "copy"})
+    )
+
+    assert isinstance(rebuilt, _RebuildableFolderTarget)
+    assert rebuilt is not source
+    assert rebuilt.label == "copy"
+    assert rebuilt.working_directory == tmp_path
+    assert rebuilt.allowed_upload_directory == tmp_path
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -679,6 +834,126 @@ class TestCreateTargetCodeExecution:
             )
 
 
+@pytest.mark.usefixtures("patch_central_database")
+class TestCreateTargetServerCredential:
+    """Admin gate for targets that would authenticate with the server's own stored credentials."""
+
+    @staticmethod
+    def _request(params: dict[str, object] | None = None, *, auth_mode: str = "api_key") -> CreateTargetRequest:
+        return CreateTargetRequest(
+            name="blob",
+            type="AzureBlobStorageTarget",
+            params={"container_url": "https://test.blob.core.windows.net/test", **(params or {})},
+            auth_mode=auth_mode,  # type: ignore[arg-type]
+        )
+
+    @pytest.mark.parametrize("value", ["sas-token", "   leading-space"])
+    def test_caller_supplied_credential_is_allowed_for_non_admin(self, value: str) -> None:
+        service = TargetService()
+
+        service._enforce_server_credential_permission(
+            target_type="AzureBlobStorageTarget", params={"sas_token": value}, is_admin=False
+        )
+
+    @pytest.mark.parametrize("params", [{}, {"sas_token": None}, {"sas_token": ""}])
+    def test_missing_credential_requires_admin(self, params: dict[str, object]) -> None:
+        service = TargetService()
+
+        with pytest.raises(PermissionError, match="requires administrator access"):
+            service._enforce_server_credential_permission(
+                target_type="AzureBlobStorageTarget", params=params, is_admin=False
+            )
+
+    @pytest.mark.parametrize("params", [{}, {"sas_token": ""}])
+    def test_missing_credential_is_allowed_for_admin(self, params: dict[str, object]) -> None:
+        service = TargetService()
+
+        service._enforce_server_credential_permission(
+            target_type="AzureBlobStorageTarget", params=params, is_admin=True
+        )
+
+    def test_target_without_server_credential_parameter_is_untouched(self) -> None:
+        service = TargetService()
+
+        service._enforce_server_credential_permission(
+            target_type="OpenAIChatTarget", params={"endpoint": "https://example.test"}, is_admin=False
+        )
+
+    async def test_create_target_identity_mode_requires_admin_before_construction(self) -> None:
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(PermissionError, match="requires administrator access"),
+        ):
+            await service.create_target_async(request=self._request(auth_mode="identity"), is_admin=False)
+
+        create_instance.assert_not_called()
+        assert service.get_target_object(target_registry_name="blob") is None
+
+    async def test_create_target_identity_mode_with_caller_sas_requires_admin(self) -> None:
+        """Identity mode drops the caller SAS, so it still authenticates with the server's credentials."""
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(PermissionError, match="requires administrator access"),
+        ):
+            await service.create_target_async(
+                request=self._request({"sas_token": "caller-sas"}, auth_mode="identity"), is_admin=False
+            )
+
+        create_instance.assert_not_called()
+
+    async def test_create_target_api_key_without_sas_requires_admin_before_construction(self) -> None:
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(PermissionError, match="requires administrator access"),
+        ):
+            await service.create_target_async(request=self._request(), is_admin=False)
+
+        create_instance.assert_not_called()
+
+    async def test_create_target_without_caller_sas_requires_admin_even_with_environment_sas(self, monkeypatch) -> None:
+        """An environment SAS is a server credential, so a caller who supplies none still needs admin."""
+        monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_SAS_TOKEN", "server-environment-sas")
+        service = TargetService()
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input") as create_instance,
+            pytest.raises(PermissionError, match="requires administrator access"),
+        ):
+            await service.create_target_async(request=self._request(), is_admin=False)
+
+        create_instance.assert_not_called()
+
+    async def test_create_target_with_caller_sas_reaches_construction_for_non_admin(self) -> None:
+        service = TargetService()
+        stop = RuntimeError("stop after construction")
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            pytest.raises(RuntimeError, match="stop after construction"),
+        ):
+            await service.create_target_async(request=self._request({"sas_token": "caller-sas"}), is_admin=False)
+
+        create_instance.assert_called_once()
+
+    async def test_create_target_identity_mode_reaches_construction_for_admin(self) -> None:
+        service = TargetService()
+        stop = RuntimeError("stop after construction")
+
+        with (
+            patch.object(service._registry, "create_instance_from_external_input", side_effect=stop) as create_instance,
+            pytest.raises(RuntimeError, match="stop after construction"),
+        ):
+            await service.create_target_async(request=self._request(auth_mode="identity"), is_admin=True)
+
+        create_instance.assert_called_once()
+
+
 class TestCreateTarget:
     """Tests for TargetService.create_target method."""
 
@@ -788,30 +1063,21 @@ class TestCreateTarget:
         ) as create:
             await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
 
-        create.assert_called_once_with("TextTarget", params={})
+        create.assert_called_once_with("TextTarget", params={}, allowed_path_params=frozenset())
 
-    async def test_create_gandalf_target_coerces_level_string(self, sqlite_instance) -> None:
-        """A Gandalf level from the JSON request is coerced to its enum before construction."""
+    async def test_create_target_rejects_invalid_enum_value(self, sqlite_instance) -> None:
+        """An invalid enum value from the JSON request raises a parameter error before target construction."""
         service = TargetService()
         request = CreateTargetRequest(
-            type="GandalfTarget",
-            params={"level": "baseline"},
+            type="AzureBlobStorageTarget",
+            params={
+                "container_url": "https://test.blob.core.windows.net/test",
+                "sas_token": "valid_sas_token",
+                "blob_content_type": "unknown",
+            },
         )
 
-        result = await service.create_target_async(request=request)
-
-        assert result.identifier.class_name == "GandalfTarget"
-        assert result.target_specific_params == {"level": "baseline"}
-
-    async def test_create_gandalf_target_rejects_invalid_level(self, sqlite_instance) -> None:
-        """An invalid Gandalf level raises a parameter error before target construction."""
-        service = TargetService()
-        request = CreateTargetRequest(
-            type="GandalfTarget",
-            params={"level": "unknown"},
-        )
-
-        with pytest.raises(ValueError, match="Parameter 'level'.*expected one of"):
+        with pytest.raises(ValueError, match="Parameter 'blob_content_type'.*expected one of"):
             await service.create_target_async(request=request)
 
     async def test_create_azure_blob_target_coerces_content_type_string(self, sqlite_instance) -> None:
@@ -1051,7 +1317,7 @@ class TestCreateTargetEntraAuth:
             auth_mode="identity",
         )
 
-        result = await service.create_target_async(request=request)
+        result = await service.create_target_async(request=request, is_admin=True)
 
         target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target_obj._auth_mode == "identity"  # type: ignore[attr-defined]
@@ -1068,7 +1334,7 @@ class TestCreateTargetEntraAuth:
             auth_mode="identity",
         )
 
-        result = await service.create_target_async(request=request)
+        result = await service.create_target_async(request=request, is_admin=True)
 
         target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
         assert target_obj._sas_token is None  # type: ignore[attr-defined]
@@ -1408,3 +1674,40 @@ class TestFrontendBackendCompatibilitySync:
             "frontend/src/components/Config/targetParameterPolicy.ts with a renderable or "
             "explicitly unsupported policy, then update this expected catalog."
         )
+
+
+class TestCreateTargetNoKeyAuth:
+    """No-key auth at the service boundary: the service confirms support and drops any key."""
+
+    async def test_create_openai_target_with_no_key_reads_no_server_credentials(self, sqlite_instance) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPENAI_CHAT_KEY": "server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"X-Server-Secret": "s"}'},
+        ):
+            service = TargetService()
+            request = CreateTargetRequest(
+                type="OpenAIChatTarget",
+                params={
+                    "endpoint": "http://localhost:11434/v1",
+                    "model_name": "llama3",
+                    "api_key": "should-be-ignored",
+                },
+                auth_mode="none",
+            )
+
+            result = await service.create_target_async(request=request)
+
+        target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+        assert target_obj._api_key == "not-needed"  # type: ignore[attr-defined]
+        assert target_obj._headers == {}  # type: ignore[attr-defined]
+
+    async def test_create_target_with_no_key_rejects_unsupported_type(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            type="AzureMLChatTarget",
+            params={"endpoint": "https://example.inference.ml.azure.com/score"},
+            auth_mode="none",
+        )
+
+        with pytest.raises(ValueError, match="does not support no-key authentication"):
+            await service.create_target_async(request=request)

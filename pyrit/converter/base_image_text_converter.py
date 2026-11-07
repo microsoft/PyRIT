@@ -151,7 +151,7 @@ class _BaseImageTextConverter(Converter):
 
     def _wrap_text(self, *, text: str, font: FreeTypeFont, max_width: int) -> list[str]:
         """
-        Word-wrap text to fit within max_width pixels.
+        Word-wrap text to fit within max_width pixels, keeping the text's own line breaks.
 
         Args:
             text (str): The text to wrap.
@@ -166,8 +166,12 @@ class _BaseImageTextConverter(Converter):
         bbox = draw.textbbox((0, 0), string.ascii_letters, font=font)
         avg_char_width = (bbox[2] - bbox[0]) / len(string.ascii_letters)
         max_chars = max(1, int(max_width / avg_char_width))
-        wrapped = textwrap.fill(text, width=max_chars)
-        return wrapped.split("\n")
+        # Wrap each line on its own; textwrap would otherwise turn line breaks into spaces.
+        return [
+            wrapped_line
+            for line in text.splitlines() or [""]
+            for wrapped_line in textwrap.wrap(line, width=max_chars) or [""]
+        ]
 
     def _get_line_height(self, *, font: FreeTypeFont) -> int:
         """

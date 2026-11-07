@@ -75,8 +75,7 @@ for score in scores:
 # Measures textual overlap between a response and a reference text (longest common
 # subsequence, Levenshtein, or Jaccard). Runs locally, no LLM.
 # %%
-from pyrit.score import PlagiarismScorer
-from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric
+from pyrit.score import PlagiarismMetric, PlagiarismScorer
 
 reference = "The quick brown fox jumps over the lazy dog near the river bank."
 plagiarism_scorer = PlagiarismScorer(reference_text=reference, metric=PlagiarismMetric.LCS)
@@ -125,15 +124,21 @@ print(f"[system prompt extraction] overlap={leak_score.get_value()}")
 # It returns a model probability from `0.0` to `1.0`, not calibrated confidence.
 # The instructions and criteria are in `pyrit/datasets/score/decision/objective_achieved.yaml`.
 # LiteLLM converts Boolean and numeric-string answers to numbers before the scorer validates them.
+#
+# Deploy Microsoft-Decision-1 in Microsoft Foundry, set `AZURE_FOUNDRY_DECISION_ENDPOINT` and
+# `AZURE_FOUNDRY_DECISION_MODEL` (the deployment name), and authenticate with Entra ID (`az login`).
 # %%
+from pyrit.auth import get_azure_openai_auth
 from pyrit.models import ContentScorable, ScoringExpectation
 from pyrit.prompt_target import LiteLLMDecisionTarget
 from pyrit.score import DecisionScorer
 
+decision_endpoint = os.environ["AZURE_FOUNDRY_DECISION_ENDPOINT"]
+decision_model = os.environ["AZURE_FOUNDRY_DECISION_MODEL"]
 decision_target = LiteLLMDecisionTarget(
-    model_name="openrouter/microsoft/microsoft-decision-1",
-    endpoint=os.environ.get("MICROSOFT_DECISION_ENDPOINT", "https://openrouter.ai/api"),
-    api_key=os.environ["MICROSOFT_DECISION_KEY"],
+    model_name=f"azure_ai/{decision_model}",
+    endpoint=decision_endpoint,
+    api_key=get_azure_openai_auth(decision_endpoint),
 )
 decision_scorer = DecisionScorer(chat_target=decision_target)
 decision_scores = await decision_scorer.score_async(

@@ -15,7 +15,7 @@ from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models import ComponentIdentifier, Scorable, Score, ScoringExpectation, TargetIdentifier
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
-from pyrit.score.scorer import Scorer
+from pyrit.score import Scorer
 
 
 class _RouteLeafScorer(Scorer):
@@ -77,6 +77,12 @@ class _RouteFailingScorer(_RouteLeafScorer):
         raise RuntimeError("intentional construction failure")
 
 
+class _RoutePythonOnlyScorer(_RouteLeafScorer):
+    def __init__(self, *, dependency: object | None = None) -> None:
+        super().__init__()
+        self.dependency = dependency
+
+
 @pytest.fixture(autouse=True)
 def reset_scorer_registries():
     """Reset registry state and the service cache between API tests."""
@@ -94,6 +100,7 @@ def _register_test_scorers() -> ScorerRegistry:
     registry.register_class(_RouteLeafScorer)
     registry.register_class(_RouteCompositeScorer)
     registry.register_class(_RouteFailingScorer)
+    registry.register_class(_RoutePythonOnlyScorer)
     return registry
 
 
@@ -181,6 +188,29 @@ def test_failed_scorer_creation_never_registers_instance(
     assert client.get(f"/api/scorers/{name}").status_code == 404
 
 
+@pytest.mark.parametrize("register", [True, False])
+@pytest.mark.parametrize("dependency", [None, {}])
+def test_scorer_creation_rejects_python_only_inputs(
+    compatibility_headers: dict[str, str], patch_central_database: None, *, register: bool, dependency: Any
+) -> None:
+    registry = _register_test_scorers()
+    client = TestClient(app, headers=compatibility_headers)
+
+    response = client.post(
+        "/api/scorers",
+        json={
+            "name": "python-only" if register else None,
+            "type": "_RoutePythonOnlyScorer",
+            "params": {"dependency": dependency},
+            "register": register,
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert "cannot be set through the API" in response.text
+    assert registry.instances.get_names() == []
+
+
 def test_duplicate_name_returns_400_and_does_not_replace_instance(compatibility_headers: dict[str, str]) -> None:
     registry = _register_test_scorers()
     first = registry.create_named_instance(name="duplicate", type_name="_RouteLeafScorer", params={"label": "first"})
@@ -240,3 +270,37 @@ def test_type_discovery_is_metadata_only_and_list_paginates_stably(compatibility
     assert first_page.json()["pagination"]["has_more"] is True
     second_page = client.get(f"/api/scorers?limit=1&cursor={first_page.json()['pagination']['next_cursor']}")
     assert second_page.json()["items"][0]["scorer_registry_name"] == "z-last"
+
+
+def test_create_azure_content_filter_scorer_with_api_key(
+    compatibility_headers: dict[str, str], patch_central_database: None
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+
+    response = client.post(
+        "/api/scorers",
+        json={
+            "name": "content-filter",
+            "type": "AzureContentFilterScorer",
+            "params": {
+                "endpoint": "https://contoso.cognitiveservices.azure.com/",
+                "api_key": "test-content-safety-key",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    assert "test-content-safety-key" not in response.text
+    scorer = ScorerRegistry.get_registry_singleton().instances.get("content-filter")
+    assert scorer._api_key == "test-content-safety-key"  # type: ignore[attr-defined]
+
+
+def test_scorer_types_list_azure_content_filter_api_key_as_sensitive(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+
+    response = client.get("/api/scorers/types")
+
+    assert response.status_code == 200
+    entry = next(item for item in response.json()["items"] if item["scorer_type"] == "AzureContentFilterScorer")
+    api_key = next(parameter for parameter in entry["parameters"] if parameter["name"] == "api_key")
+    assert api_key["sensitive"] is True

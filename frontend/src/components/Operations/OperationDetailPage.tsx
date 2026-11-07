@@ -1,38 +1,47 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router'
+import { createSearchParams, Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
   MessageBar, MessageBarBody, Spinner, Text,
 } from '@fluentui/react-components'
-import { ArrowLeftRegular } from '@fluentui/react-icons'
+import { AddRegular, ArrowLeftRegular } from '@fluentui/react-icons'
 
 import { DEFAULT_HISTORY_FILTERS, filtersToSearchParams } from '@/components/History/historyFilters'
 import { operationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
-import type { Finding, FindingCreate, FindingListItem, FindingListResponse, Operation } from '@/types'
+import type { Finding, FindingCreate, FindingListItem, FindingListResponse, OperationDetail } from '@/types'
 import FindingDialog, { type FindingSaveAttempt } from './FindingDialog'
 import FindingEvidenceList from './FindingEvidenceList'
+import FindingExportDialog from './FindingExportDialog'
 import FindingSeverityBadge from './FindingSeverityBadge'
-import OperationDescriptionDialog from './OperationDescriptionDialog'
+import OperationDeleteDialog from './OperationDeleteDialog'
+import OperationEditDialog from './OperationEditDialog'
 import { useOperationsStyles } from './Operations.styles'
 
 const PAGE_SIZE = 20
 
 type OperationState =
-  | { key: string; status: 'loaded'; operation: Operation }
+  | { key: string; status: 'loaded'; operation: OperationDetail }
   | { key: string; status: 'missing' }
   | { key: string; status: 'error'; error: string }
 
-export default function OperationDetailPage() {
-  const { operationId = '' } = useParams()
-  return <OperationDetailContent key={operationId} operationId={operationId} />
+interface OperationDetailPageProps {
+  /** Called after the Operation is renamed or deleted, so views holding it can refresh. */
+  onOperationChanged?: () => void
 }
 
-function OperationDetailContent({ operationId }: { operationId: string }) {
+export default function OperationDetailPage({ onOperationChanged }: OperationDetailPageProps) {
+  const { operationId = '' } = useParams()
+  return <OperationDetailContent key={operationId} operationId={operationId} onOperationChanged={onOperationChanged} />
+}
+
+function OperationDetailContent({ operationId, onOperationChanged }: { operationId: string } & OperationDetailPageProps) {
   const styles = useOperationsStyles()
+  const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
   const rawOffset = Number(params.get('offset') ?? 0)
   const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0
+  const historySearch = filtersToSearchParams({ ...DEFAULT_HISTORY_FILTERS, operationId: [operationId] })
   const [operationRevision, setOperationRevision] = useState(0)
   const [operationState, setOperationState] = useState<OperationState | null>(null)
   const operationKey = JSON.stringify([operationId, operationRevision])
@@ -70,12 +79,13 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
       .catch((cause: unknown) => {
         if (ignore) return
         const apiError = toApiError(cause)
-        setOperationState(apiError.status === 404
-          ? { key: operationKey, status: 'missing' }
-          : { key: operationKey, status: 'error', error: apiError.detail })
+        // A failed usage refresh after a finding change keeps the page; the server still checks before deleting.
+        setOperationState(state => state?.key === operationKey && state.status === 'loaded' ? state
+          : apiError.status === 404 ? { key: operationKey, status: 'missing' }
+            : { key: operationKey, status: 'error', error: apiError.detail })
       })
     return () => { ignore = true }
-  }, [operationId, operationKey])
+  }, [operationId, operationKey, revision])
 
   useEffect(() => {
     let ignore = false
@@ -86,7 +96,11 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
   }, [operationId, offset, requestKey, evidenceRevision])
 
   const navigatePage = (nextOffset: number): void => {
-    setParams(nextOffset > 0 ? { offset: String(nextOffset) } : {})
+    // Writing the same query again would push a duplicate history entry for an
+    // identical URL, so a save or delete on the first page must not navigate.
+    const next = createSearchParams(nextOffset > 0 ? { offset: String(nextOffset) } : {})
+    if (next.toString() === params.toString()) return
+    setParams(next)
   }
 
   const save = async (draft: FindingCreate, attempt: FindingSaveAttempt): Promise<void> => {
@@ -183,11 +197,19 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
           {current.operation.name}
         </Text>
         <div className={styles.headerActions}>
-          <OperationDescriptionDialog operation={current.operation} onSaved={operation => {
-            setOperationState({ key: operationKey, status: 'loaded', operation })
-            setNotice('Operation description saved.')
+          <OperationEditDialog operation={current.operation} onSaved={operation => {
+            setOperationState({ key: operationKey, status: 'loaded', operation: { ...current.operation, ...operation } })
+            setNotice('Operation updated.')
+            onOperationChanged?.()
           }} />
-          <Button ref={newFindingRef} appearance="primary" className={styles.button} onClick={event => {
+          <OperationDeleteDialog operation={current.operation}
+            onInUse={() => { setRevision(value => value + 1) }}
+            onDeleted={() => {
+              onOperationChanged?.()
+              void navigate('/operations')
+            }} />
+          <FindingExportDialog key={current.operation.id} operation={current.operation} />
+          <Button ref={newFindingRef} appearance="primary" className={styles.button} icon={<AddRegular />} onClick={event => {
             returnFocusRef.current = event.currentTarget
             setEditing(null)
             setOpen(true)
@@ -243,9 +265,10 @@ function OperationDetailContent({ operationId }: { operationId: string }) {
           </div>
         </>
       )}
-      <Link className={styles.link} to={`/history/attacks?${filtersToSearchParams({
-        ...DEFAULT_HISTORY_FILTERS, operationId: [current.operation.id],
-      })}`}>All execution history</Link>
+      <div className={styles.headerActions}>
+        <Link className={styles.link} to={`/attack/history?${historySearch}`}>Attack history</Link>
+        <Link className={styles.link} to={`/scanner/history?${historySearch}`}>Scanner history</Link>
+      </div>
     </section>
   )
 }
