@@ -5,11 +5,13 @@ https://github.com/responsibleai/ASSERT
 
 Copyright (c) Microsoft Corporation.
 
-PyRIT includes adapted assignment-sampling algorithms, generation schemas, and
-prompt templates from ASSERT v0.3.0, revision
+PyRIT includes adapted assignment-sampling algorithms, generation schemas,
+policy-scoring rules, and prompt templates from ASSERT v0.3.0, revision
 04b713fe73879208369750b3bd5ad53544f3eecc (2026-09-04). Microsoft Corporation adapted these
-portions to native PyRIT targets, generation strategies, and typed
-seed datasets. ASSERT is not a runtime dependency.
+portions to native PyRIT targets, generation strategies, typed seed datasets,
+and true/false conversation scorers. Scoring templates are adaptations, not
+verbatim copies of ASSERT's full judge or its XML citation protocol.
+ASSERT is not a runtime dependency.
 
 The provenance inventory in third_party/assert-provenance.json identifies the
 source files and the corresponding PyRIT files.

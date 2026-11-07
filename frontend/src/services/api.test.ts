@@ -768,7 +768,8 @@ describe("api service", () => {
   });
 
   describe("attacksApi", () => {
-    it("should create an attack", async () => {
+    it.each([{}, { objective: "Goal" }, { objective: "" }, { objective: null }, { name: "Legacy goal" }])(
+      "should create an attack with objective input %j", async (objectiveInput) => {
       const mockResponse = {
         data: {
           attack_result_id: "ar-123",
@@ -780,10 +781,12 @@ describe("api service", () => {
 
       const result = await attacksApi.createAttack({
         target_registry_name: "test-target",
+        ...objectiveInput,
       });
 
       expect(apiClient.post).toHaveBeenCalledWith("/attacks", {
         target_registry_name: "test-target",
+        ...objectiveInput,
       });
       expect(result.attack_result_id).toBe("ar-123");
       expect(result.conversation_id).toBe("conv-123");

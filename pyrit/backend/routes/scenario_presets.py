@@ -23,7 +23,7 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models.common import IdentifierStr, ProblemDetail
 from pyrit.backend.models.scenario_presets import (
     ScenarioPresetListResponse,
     ScenarioPresetResponse,
@@ -115,7 +115,7 @@ async def list_scenario_presets(  # pyrit-async-suffix-exempt
     response_model=ScenarioPresetResponse,
     responses={404: {"model": ProblemDetail, "description": "Preset not found"}},
 )
-async def get_scenario_preset(name: str) -> ScenarioPresetResponse:  # pyrit-async-suffix-exempt
+async def get_scenario_preset(name: IdentifierStr) -> ScenarioPresetResponse:  # pyrit-async-suffix-exempt
     """
     Get one preset and the version required to update it.
 
@@ -192,7 +192,7 @@ async def create_scenario_preset(  # pyrit-async-suffix-exempt
     },
 )
 async def update_scenario_preset(  # pyrit-async-suffix-exempt
-    name: str,
+    name: IdentifierStr,
     body: UpdateScenarioPresetRequest,
 ) -> ScenarioPresetResponse:
     """
@@ -251,7 +251,7 @@ async def update_scenario_preset(  # pyrit-async-suffix-exempt
     },
 )
 async def delete_scenario_preset(  # pyrit-async-suffix-exempt
-    name: str,
+    name: IdentifierStr,
     expected_version: str | None = Query(None, description="Delete only if the stored preset still has this version"),
 ) -> None:
     """
@@ -294,7 +294,7 @@ async def delete_scenario_preset(  # pyrit-async-suffix-exempt
     },
 )
 async def resolve_scenario_preset(  # pyrit-async-suffix-exempt
-    name: str,
+    name: IdentifierStr,
     body: ResolveScenarioPresetRequest,
 ) -> RunScenarioRequest:
     """

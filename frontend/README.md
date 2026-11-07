@@ -165,6 +165,14 @@ checks show no status message; failed checks show the error text. Active scan an
 chat progress keep their faster polling. Runtime initialization and dataset loading
 remain explicit actions.
 
+## Saved scenario parameters
+
+Parameters from a preset or saved run that have no field when its launch form
+opens are carried unchanged and shown read-only in the run preview. They remain
+read-only in that open form if a runtime refresh adds a field; reopen the
+configuration to edit them against the refreshed catalog. Editable parameters
+removed by a refresh are not submitted, and other drafts are preserved.
+
 ## Resuming a scenario run
 
 Failed runs offer **Resume run** on the run page and **Resume** in Scanner History.
