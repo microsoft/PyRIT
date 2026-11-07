@@ -123,6 +123,52 @@ def test_strict_json_reference_shape_and_nullable_names() -> None:
         parameter.validate_json_value([object()])
 
 
+@pytest.mark.parametrize(
+    "parameter",
+    [
+        Parameter(name="offset", description="", param_type=int | None),
+        Parameter(name="values", description="", param_type=list[int] | None),
+        Parameter(name="mode", description="", param_type=Literal["a", "b"] | None),
+        Parameter(
+            name="target",
+            description="",
+            reference=RegistryReference(component_type=ComponentType.TARGET, annotation=object | None),
+        ),
+        Parameter(
+            name="targets",
+            description="",
+            reference=RegistryReference(component_type=ComponentType.TARGET, annotation=list[object] | None),
+        ),
+    ],
+    ids=["scalar", "list", "choices", "reference", "list-reference"],
+)
+def test_nullable_parameter_round_trip_keeps_accepting_none(parameter: Parameter) -> None:
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+
+    assert parameter.nullable is True
+    assert restored.nullable is True
+    assert parameter.validate_json_value(None) is None
+    assert restored.validate_json_value(None) is None
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    [
+        Parameter(name="offset", description="", param_type=int),
+        Parameter(name="values", description="", param_type=list[int]),
+        Parameter(name="target", description="", reference=RegistryReference(component_type=ComponentType.TARGET)),
+    ],
+    ids=["scalar", "list", "reference"],
+)
+def test_non_nullable_parameter_round_trip_keeps_rejecting_none(parameter: Parameter) -> None:
+    restored = Parameter.model_validate_json(parameter.model_dump_json())
+
+    assert restored.nullable is False
+    for candidate in (parameter, restored):
+        with pytest.raises(ValidationError):
+            candidate.validate_json_value(None)
+
+
 def test_scalar_projection_keeps_enum_values_but_does_not_coerce_source_types() -> None:
     parameter = Parameter(name="speeds", description="", param_type=list[_Speed])
     assert parameter.project_json_value([_Speed.SLOW, _Speed.FAST]) == ["slow", "fast"]
@@ -198,6 +244,7 @@ class TestParameterSerialization:
             "required": False,
             "choices": None,
             "is_list": False,
+            "nullable": False,
             "reference_type": None,
             "variants": None,
             "sensitive": False,

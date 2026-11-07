@@ -95,7 +95,7 @@ class Parameter(BaseModel):
     value's live Python type and its allowed set (a ``Literal[...]`` or ``Enum``
     *is* the allowed set) and drives ``coerce_value`` / ``validate``; it is **not**
     serialized. Serialization instead projects the type into the display fields
-    ``type_name``, ``choices``, ``is_list``, ``sensitive``, ``multiline``, and
+    ``type_name``, ``choices``, ``is_list``, ``nullable``, ``sensitive``, ``multiline``, and
     ``identity_conflicting`` (plus ``required`` from the ``REQUIRED_VALUE``
     sentinel), so a consumer can rebuild a usable contract from the registry
     without the live type travelling on the wire.
@@ -172,7 +172,7 @@ class Parameter(BaseModel):
         Rebuild the live ``param_type`` when validating from a serialized payload.
 
         Serialization drops the live ``param_type`` and projects it onto the
-        display fields ``type_name`` / ``choices`` / ``is_list``. A client that
+        display fields ``type_name`` / ``choices`` / ``is_list`` / ``nullable``. A client that
         deserializes the wire form (e.g. the CLI consuming the REST catalog) has
         those fields but no live type; this reconstructs a coercion-capable
         ``param_type`` from them so the round-tripped ``Parameter`` can still
@@ -191,11 +191,14 @@ class Parameter(BaseModel):
             return data
         data = dict(data)
         if needs_param_type:
-            data["param_type"] = _param_type_from_display(
+            param_type = _param_type_from_display(
                 type_name=data.get("type_name"),
                 choices=data.get("choices"),
                 is_list=bool(data.get("is_list")),
             )
+            if data.get("nullable") and param_type is not None:
+                param_type = param_type | None
+            data["param_type"] = param_type
         if needs_reference:
             data["reference"] = RegistryReference(
                 component_type=ComponentType(data["reference_type"]),
@@ -235,6 +238,13 @@ class Parameter(BaseModel):
     def is_list(self) -> bool:
         """True when the parameter accepts a list of values (e.g. ``list[str]``)."""
         return get_origin(self._display_type) is list
+
+    @computed_field
+    @property
+    def nullable(self) -> bool:
+        """True when ``None`` is an accepted value (e.g. ``int | None`` or an optional reference)."""
+        annotation = self.param_type if self.reference is None else self.reference.annotation
+        return type(None) in get_args(annotation)
 
     @property
     def is_path(self) -> bool:
