@@ -173,7 +173,7 @@ class TargetObjectiveGenerator(
                     context.conversation_id,
                     self._CLEANUP_TIMEOUT_SECONDS,
                 )
-            except Exception as error:  # noqa: BLE001 - cleanup must not replace the generation outcome
+            except Exception as error:  # cleanup must not replace the generation outcome
                 self._logger.warning("Failed to reset generation conversation %s: %s", context.conversation_id, error)
 
     def _parse_response(
