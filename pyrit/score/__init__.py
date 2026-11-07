@@ -58,6 +58,7 @@ if TYPE_CHECKING:
         ResponseHandler,
     )
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
+    from pyrit.score.true_false.physics_consistency_scorer import PhysicsConsistencyScorer
     from pyrit.score.scorer import LegacyScorerHookError, Scorer
     from pyrit.score.scorer_evaluation.human_labeled_dataset import (
         HarmHumanLabeledEntry,
@@ -173,6 +174,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
     "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",
     "get_assert_failure_criterion": "pyrit.score.true_false.assert_policy_scorer",
+    "PhysicsConsistencyScorer": "pyrit.score.true_false.physics_consistency_scorer",
     "ProgramExecutionScorer": "pyrit.score.true_false.program_execution_scorer",
     "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
     "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
