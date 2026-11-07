@@ -149,7 +149,6 @@ from pyrit.models import (
     SeedDatasetSummary,
     SeedGroup,
     SeedIdentifier,
-    SeedObjective,
     SeedOrigin,
     SeedPrompt,
     SeedRecord,
@@ -211,10 +210,6 @@ class OperationInUseError(ValueError):
         """Keep the usage so callers can say what still refers to the Operation."""
         super().__init__(f"Operation '{operation_id}' is in use and cannot be deleted.")
         self.usage = usage
-
-
-#: Canonical key of a seed without conditions or named adversarial prompts.
-_NO_SEED_BEHAVIOR_KEY = json.dumps({}, separators=(",", ":"))
 
 
 Model = TypeVar("Model")
@@ -2831,8 +2826,8 @@ class MemoryInterface(abc.ABC):
 
         Computes per-conversation message count (distinct sequence numbers),
         a truncated last-message preview, the first non-empty labels dict,
-        and the earliest message timestamp using efficient SQL aggregation
-        instead of loading full pieces.
+        and the earliest message timestamp (timezone-aware UTC) using efficient
+        SQL aggregation instead of loading full pieces.
 
         Args:
             conversation_ids: The conversation IDs to query.
@@ -3517,7 +3512,7 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): The category of the score to filter by.
+            score_category (str | None): Return only scores whose category list contains this category.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -3536,7 +3531,14 @@ class MemoryInterface(abc.ABC):
         if score_type:
             conditions.append(ScoreEntry.score_type == score_type)
         if score_category:
-            conditions.append(ScoreEntry.score_category == score_category)
+            # score_category is stored as a JSON array, so match by element membership.
+            conditions.append(
+                self._get_condition_json_array_match(
+                    json_column=ScoreEntry.score_category,
+                    property_path="$",
+                    array_to_match=[score_category],
+                )
+            )
         if sent_after:
             conditions.append(ScoreEntry.timestamp >= sent_after)
         if sent_before:
@@ -5013,13 +5015,18 @@ class MemoryInterface(abc.ABC):
         """
         Insert a list of seeds into the memory storage.
 
-        Standalone seeds with the same value hash, dataset, and behavioral inputs already
-        present in storage are skipped. Multi-seed groups are compared as complete groups,
-        including roles, sequence, metadata, and behavioral inputs, so shared content cannot strip
-        members from a different conversation. Duplicates *within* ``seeds`` are all inserted,
-        because the check looks at what storage held when the call started.
+        Seeds already present in storage are skipped by execution identity: value hash, dataset,
+        seed type, data type, role (``None`` counts as ``user``), response schema, and behavioral
+        inputs. Non-execution metadata such as harm categories or descriptions is not part of that
+        identity, so a metadata-only edit does not create a duplicate and sending a seed standalone
+        or inside a singleton group deduplicates the same way. Retained multi-seed groups keep their
+        complete membership; they are compared as complete groups by full member identity, including
+        roles, sequence, metadata, and behavioral inputs, so shared content cannot strip members from
+        a different conversation. Duplicates *within* ``seeds`` are all inserted, because the check
+        looks at what storage held when the call started.
         When a stored seed is copied to a new group, its caller-visible ID is updated after
-        successful insertion.
+        successful insertion; a copy that would otherwise reuse the stored group ID is moved to a
+        new group so editing it cannot alter the original group.
 
         Args:
             seeds (Sequence[Seed]): A list of seeds to insert.
@@ -5033,25 +5040,44 @@ class MemoryInterface(abc.ABC):
 
     def _insert_prepared_seeds(self, *, seeds: Sequence[Seed[Any]]) -> None:
         """Deduplicate and store seeds after their media is prepared."""
-        existing_pairs, existing_hashes, existing_seeds = self._get_existing_seed_keys(seeds=seeds)
-        retained_group_ids = self._get_new_behavior_group_ids(
-            seeds=seeds, existing_pairs=existing_pairs, existing_hashes=existing_hashes
-        )
-        retained_group_ids.update(self._get_new_seed_group_ids(seeds=seeds, existing_seeds=existing_seeds))
+        existing_seeds = self._get_existing_seed_keys(seeds=seeds)
+        # Compute each stored seed's full member identity once; retained groups and the
+        # complete-group check both use it.
+        existing_group_members: list[tuple[uuid.UUID, str | None, str, uuid.UUID | None]] = []
+        for dataset, seed in existing_seeds:
+            if seed.prompt_group_id is not None:
+                existing_group_members.append(
+                    (seed.prompt_group_id, dataset, self._seed_group_member_key(seed), seed.id)
+                )
+        retained_group_ids = self._get_new_seed_group_ids(seeds=seeds, existing_group_members=existing_group_members)
         stored_group_members = {
-            (seed.prompt_group_id, dataset, self._seed_group_member_key(seed))
-            for dataset, seed in existing_seeds
-            if seed.prompt_group_id is not None
+            (group_id, dataset, member_key)
+            for group_id, dataset, member_key, _ in existing_group_members
+            if group_id in retained_group_ids
         }
-        retained_seed_ids = [seed.id for seed in seeds if seed.prompt_group_id in retained_group_ids]
+        # Everything not retained as a new group is deduplicated by one execution key, computed
+        # once per stored seed. Seeds that are not retained include singleton groups and groups
+        # whose complete membership is already stored, so a metadata-only edit and the same seed
+        # arriving grouped or standalone deduplicate identically.
+        stored_standalone_pairs: set[tuple[str | None, str | None, str]] = set()
+        stored_standalone_hashes: set[tuple[str | None, str]] = set()
+        if any(prompt.value_sha256 and prompt.prompt_group_id not in retained_group_ids for prompt in seeds):
+            for dataset, seed in existing_seeds:
+                standalone_key = self._seed_standalone_key(seed)
+                if dataset:
+                    stored_standalone_pairs.add((seed.value_sha256, dataset, standalone_key))
+                else:
+                    stored_standalone_hashes.add((seed.value_sha256, standalone_key))
+        # Any incoming seed may be a copy of a stored row, not only retained group members, so look
+        # up every seed ID before inserting. A copy keeps its caller-visible ID, but it must not
+        # reuse the stored primary key when its execution identity changed.
+        seed_ids = [seed.id for seed in seeds if seed.id is not None]
         stored_groups = (
             {
                 entry.id: entry.prompt_group_id
-                for entry in self._execute_batched_query(
-                    SeedEntry, batch_column=SeedEntry.id, batch_values=retained_seed_ids
-                )
+                for entry in self._execute_batched_query(SeedEntry, batch_column=SeedEntry.id, batch_values=seed_ids)
             }
-            if retained_seed_ids
+            if seed_ids
             else {}
         )
 
@@ -5060,7 +5086,6 @@ class MemoryInterface(abc.ABC):
         for prompt in seeds:
             if not prompt.value_sha256:
                 continue
-            behavior_key = self._seed_behavior_key(prompt)
             # A seed without a dataset name matches the hash in any dataset, mirroring the
             # filter that is applied when dataset_name is not supplied.
             if prompt.prompt_group_id in retained_group_ids:
@@ -5078,16 +5103,28 @@ class MemoryInterface(abc.ABC):
                     copied_seed_ids.append((prompt, entry.id))
                 entries.append(entry)
                 continue
+            standalone_key = self._seed_standalone_key(prompt)
             if prompt.dataset_name:
-                if (prompt.value_sha256, prompt.dataset_name, behavior_key) in existing_pairs:
+                if (prompt.value_sha256, prompt.dataset_name, standalone_key) in stored_standalone_pairs:
                     continue
-            elif (prompt.value_sha256, behavior_key) in existing_hashes:
+            elif (prompt.value_sha256, standalone_key) in stored_standalone_hashes:
                 continue
-            entries.append(SeedEntry(entry=prompt))
+            entry = SeedEntry(entry=prompt)
+            if prompt.id in stored_groups:
+                entry.id = uuid.uuid4()
+                # A caller that wraps a stored seed in a new group keeps the stored group ID.
+                # Move the independent copy to its own group so editing it cannot alter the
+                # original group's membership.
+                if prompt.prompt_group_id is not None and stored_groups[prompt.id] == prompt.prompt_group_id:
+                    entry.prompt_group_id = uuid.uuid4()
+                copied_seed_ids.append((prompt, entry.id))
+            entries.append(entry)
 
+        group_ids_by_entry = {entry.id: entry.prompt_group_id for entry in entries}
         self._insert_entries(entries=entries)
         for prompt, new_id in copied_seed_ids:
             prompt.id = new_id
+            prompt.prompt_group_id = group_ids_by_entry[new_id]
 
     @staticmethod
     def _seed_group_member_key(seed: Seed[Any]) -> str:
@@ -5123,11 +5160,32 @@ class MemoryInterface(abc.ABC):
             separators=(",", ":"),
         )
 
+    @staticmethod
+    def _seed_standalone_key(seed: Seed[Any]) -> str:
+        """
+        Identify a standalone seed by its execution fields and behavioral inputs.
+
+        Returns:
+            str: Canonical standalone identity.
+        """
+        entry = SeedEntry(entry=seed)
+        return json.dumps(
+            {
+                "seed_type": entry.seed_type,
+                "data_type": entry.data_type,
+                "role": entry.role or "user",
+                "response_json_schema": getattr(seed, "response_json_schema", None),
+                "behavioral_parameters": SeedIdentifier.get_behavioral_parameters(seed),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
     def _get_new_seed_group_ids(
         self,
         *,
         seeds: Sequence[Seed[Any]],
-        existing_seeds: Sequence[tuple[str | None, Seed[Any]]],
+        existing_group_members: Sequence[tuple[uuid.UUID, str | None, str, uuid.UUID | None]],
     ) -> set[uuid.UUID]:
         """
         Retain multi-seed groups unless an equivalent complete group is already stored.
@@ -5145,10 +5203,8 @@ class MemoryInterface(abc.ABC):
             return set()
 
         matches: dict[tuple[str | None, str], dict[uuid.UUID, set[uuid.UUID | None]]] = {}
-        for dataset, seed in existing_seeds:
-            if seed.prompt_group_id is not None:
-                key = (dataset, self._seed_group_member_key(seed))
-                matches.setdefault(key, {}).setdefault(seed.prompt_group_id, set()).add(seed.id)
+        for group_id, dataset, member_key, seed_id in existing_group_members:
+            matches.setdefault((dataset, member_key), {}).setdefault(group_id, set()).add(seed_id)
 
         candidate_groups: dict[uuid.UUID, set[uuid.UUID]] = {}
         for group_id, members in members_by_group.items():
@@ -5193,55 +5249,9 @@ class MemoryInterface(abc.ABC):
                 new_group_ids.add(group_id)
         return new_group_ids
 
-    @staticmethod
-    def _seed_behavior_key(seed: Seed[Any]) -> str:
+    def _get_existing_seed_keys(self, *, seeds: Sequence[Seed[Any]]) -> list[tuple[str | None, Seed[Any]]]:
         """
-        Serialize the behavioral inputs used by seed identifiers.
-
-        Returns:
-            str: Canonical JSON, preserving condition and template-parameter order.
-        """
-        return json.dumps(SeedIdentifier.get_behavioral_parameters(seed), sort_keys=True, separators=(",", ":"))
-
-    def _get_new_behavior_group_ids(
-        self,
-        *,
-        seeds: Sequence[Seed[Any]],
-        existing_pairs: set[tuple[str, str, str]],
-        existing_hashes: set[tuple[str, str]],
-    ) -> set[uuid.UUID]:
-        """
-        Identify groups with new objective conditions or adversarial inputs.
-
-        Retain their companion seeds, including when an objective removes previously stored
-        behavioral inputs. Other multi-seed groups are compared by full membership separately.
-
-        Returns:
-            set[uuid.UUID]: Group IDs whose complete input membership must be retained.
-        """
-        behaviors_by_value: dict[tuple[str, str | None], set[str]] = {}
-        for value_hash, dataset, behavior in existing_pairs:
-            behaviors_by_value.setdefault((value_hash, dataset), set()).add(behavior)
-        for value_hash, behavior in existing_hashes:
-            behaviors_by_value.setdefault((value_hash, None), set()).add(behavior)
-
-        group_ids: set[uuid.UUID] = set()
-        for seed in seeds:
-            if not isinstance(seed, SeedObjective) or seed.prompt_group_id is None or not seed.value_sha256:
-                continue
-            stored_behaviors = behaviors_by_value.get((seed.value_sha256, seed.dataset_name or None), set())
-            behavior_key = self._seed_behavior_key(seed)
-            if behavior_key in stored_behaviors:
-                continue
-            if behavior_key != _NO_SEED_BEHAVIOR_KEY or stored_behaviors - {_NO_SEED_BEHAVIOR_KEY}:
-                group_ids.add(seed.prompt_group_id)
-        return group_ids
-
-    def _get_existing_seed_keys(
-        self, *, seeds: Sequence[Seed[Any]]
-    ) -> tuple[set[tuple[str, str, str]], set[tuple[str, str]], list[tuple[str | None, Seed[Any]]]]:
-        """
-        Look up which value hashes and behavioral inputs are already stored.
+        Look up stored seeds matching incoming value hashes and dataset filters.
 
         Queries in chunks rather than once per seed, which otherwise dominates the cost of
         loading a large dataset. ``get_seeds`` issues the statement directly instead of going
@@ -5258,10 +5268,9 @@ class MemoryInterface(abc.ABC):
             seeds (Sequence[Seed]): The seeds whose hashes should be looked up.
 
         Returns:
-            tuple: The stored
-                (value_sha256, dataset_name, behavior) keys, using the requested
-                dataset name, (value_sha256, behavior) keys irrespective of dataset,
-                and matched seeds paired with their requested dataset filter.
+            list[tuple[str | None, Seed[Any]]]: Matched seeds paired with their requested
+                dataset filter. The requested name is retained because the database may
+                match a different stored spelling under its collation.
         """
         hashes_by_dataset: dict[str | None, set[str]] = {}
         for prompt in seeds:
@@ -5271,8 +5280,6 @@ class MemoryInterface(abc.ABC):
                 # cannot disagree.
                 hashes_by_dataset.setdefault(prompt.dataset_name or None, set()).add(prompt.value_sha256)
 
-        existing_pairs: set[tuple[str, str, str]] = set()
-        existing_hashes: set[tuple[str, str]] = set()
         existing_seeds: list[tuple[str | None, Seed[Any]]] = []
         for dataset_name, dataset_hashes in hashes_by_dataset.items():
             hashes = sorted(dataset_hashes)
@@ -5287,16 +5294,8 @@ class MemoryInterface(abc.ABC):
                     if not existing.value_sha256:
                         continue
                     existing_seeds.append((dataset_name, existing))
-                    behavior_key = self._seed_behavior_key(existing)
-                    if dataset_name:
-                        # The database decided the name matched, so record the name that was
-                        # asked for; the stored spelling can differ under a case-insensitive
-                        # collation.
-                        existing_pairs.add((existing.value_sha256, dataset_name, behavior_key))
-                    else:
-                        existing_hashes.add((existing.value_sha256, behavior_key))
 
-        return existing_pairs, existing_hashes, existing_seeds
+        return existing_seeds
 
     async def add_seed_datasets_to_memory_async(self, *, datasets: Sequence[SeedDataset], added_by: str) -> None:
         """
@@ -7160,6 +7159,38 @@ class MemoryInterface(abc.ABC):
             entry.scenario_metadata = {**(entry.scenario_metadata or {}), **fields}
             flag_modified(entry, "scenario_metadata")
             session.commit()
+
+    def _execute_increment_scenario_number_tries(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Atomically increment and return the number_tries counter for a scenario result.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+
+        Raises:
+            ValueError: If the scenario result is not found in memory.
+        """
+        with closing(self._get_session()) as session:
+            updated_rows = (
+                session.query(ScenarioResultEntry)
+                .filter(ScenarioResultEntry.id == scenario_result_id)
+                .update(
+                    {ScenarioResultEntry.number_tries: ScenarioResultEntry.number_tries + 1},
+                    synchronize_session=False,
+                )
+            )
+            if not updated_rows:
+                raise ValueError(f"Scenario result with ID {scenario_result_id} not found in memory")
+            new_tries: int = session.query(ScenarioResultEntry.number_tries).filter_by(id=scenario_result_id).scalar()
+            session.commit()
+            return new_tries
 
     def _execute_get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
         """Return one ScenarioResult header without hydrating linked attack results."""
@@ -9572,8 +9603,8 @@ class MemoryInterface(abc.ABC):
 
         Computes per-conversation message count (distinct sequence numbers),
         a truncated last-message preview, the first non-empty labels dict,
-        and the earliest message timestamp using efficient SQL aggregation
-        instead of loading full pieces.
+        and the earliest message timestamp (timezone-aware UTC) using efficient
+        SQL aggregation instead of loading full pieces.
 
         Args:
             conversation_ids: The conversation IDs to query.
@@ -9747,7 +9778,7 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): The category of the score to filter by.
+            score_category (str | None): Return only scores whose category list contains this category.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -11755,6 +11786,51 @@ class MemoryInterface(abc.ABC):
         """
         return await self._run_database_operation_async(
             self._execute_update_scenario_metadata_fields, scenario_result_id=scenario_result_id, fields=fields
+        )
+
+    def increment_scenario_number_tries(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Use ``increment_scenario_number_tries_async``.
+
+        This synchronous API is deprecated and can block the caller.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+        """
+        print_deprecation_message(
+            old_item="MemoryInterface.increment_scenario_number_tries",
+            new_item="MemoryInterface.increment_scenario_number_tries_async",
+            removed_in="1.4.0",
+        )
+        return self._execute_increment_scenario_number_tries(
+            scenario_result_id=scenario_result_id,
+        )
+
+    @legacy_sync_override(lambda: MemoryInterface.increment_scenario_number_tries)
+    async def increment_scenario_number_tries_async(
+        self,
+        *,
+        scenario_result_id: str,
+    ) -> int:
+        """
+        Atomically increment and return the number_tries counter for a scenario result.
+
+        Args:
+            scenario_result_id (str): The ID of the scenario result to update.
+
+        Returns:
+            int: The new number_tries value after incrementing.
+
+        Raises:
+            ValueError: If the scenario result is not found.
+        """
+        return await self._run_database_operation_async(
+            self._execute_increment_scenario_number_tries,
+            scenario_result_id=scenario_result_id,
         )
 
     def get_scenario_result_header(self, *, scenario_result_id: str) -> ScenarioResult | None:
