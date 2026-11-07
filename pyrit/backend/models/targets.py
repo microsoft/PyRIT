@@ -92,14 +92,22 @@ class CreateTargetRequest(BaseModel):
             "Opt in to per-caller credentials. The registered target keeps no key: a submitted api_key is "
             "stored only for the creating caller, and every caller must set their own credential before using "
             "the target. Requires register=true and auth_mode 'api_key'; supported by OpenAI-family targets "
-            "(except RealtimeTarget) and LiteLLMChatTarget. Defaults to a shared target."
+            "(except RealtimeTarget) and LiteLLMChatTarget. With source, registers a personal copy of an "
+            "existing target, such as one an initializer configured, that keeps its settings but never its "
+            "credential. Defaults to a shared target."
         ),
     )
 
     @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
-        if self.source is not None and (self.register or self.params or "auth_mode" in self.model_fields_set):
-            raise ValueError("source requires register=false and overrides, including auth_mode, in source.params")
+        if self.source is None:
+            return self
+        if self.params or "auth_mode" in self.model_fields_set:
+            raise ValueError("source requires overrides, including auth_mode, in source.params")
+        if self.register and not self.requires_caller_credential:
+            raise ValueError(
+                "source requires register=false, except for a personal copy with requires_caller_credential=true"
+            )
         return self
 
 

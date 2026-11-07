@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Seque
 from typing import Any, ClassVar, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider, validate_token_provider_headers
+from pyrit.common.constructor_capture import capture_constructor_parameters
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -256,6 +257,7 @@ class LiteLLMChatTarget(PromptTarget):
         )
     )
 
+    @capture_constructor_parameters
     def __init__(
         self,
         *,
@@ -349,6 +351,26 @@ class LiteLLMChatTarget(PromptTarget):
                 derived = self._derive_capabilities_from_litellm(resolved_model)
                 if derived is not None:
                     self._configuration = TargetConfiguration(capabilities=derived)
+
+    def get_reconstruction_parameters(self) -> dict[str, object]:
+        """
+        Return server-only constructor inputs, including resolved environment defaults and authentication.
+
+        Returns:
+            dict[str, object]: Constructor inputs with the resolved model, endpoint, and key or token provider,
+                so a copy never reads the environment again.
+
+        Raises:
+            ValueError: If the target's constructor did not retain its inputs.
+        """
+        parameters = cast("dict[str, object] | None", vars(self).get("_reconstruction_parameters"))
+        if parameters is None:
+            raise ValueError(f"{type(self).__name__} cannot be reconstructed")
+        return {**parameters, "model_name": self._model_name, "endpoint": self._endpoint, "api_key": self._api_key}
+
+    def attach_reconstruction_source(self, source: object) -> None:
+        """Share request pacing, not clients or behavioral configuration."""
+        self._rate_limit_source = getattr(source, "_rate_limit_source", source)
 
     def _validate_token_provider_options(self) -> None:
         if not callable(self._api_key):

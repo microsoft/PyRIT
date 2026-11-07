@@ -99,7 +99,34 @@ DELETE /api/targets/my-gpt
   `PUT /api/targets/{id}/credentials` returns **409** when the deployment runs more than one
   backend worker or replica.
 - A replacement credential is a value the caller obtains and submits again; the backend does not
-  acquire OAuth tokens or refresh them.
+  acquire OAuth tokens or refresh them. The `pyrit_scan` client can re-read and re-send one
+  (`set-target-credential --from-ant --keep-fresh`).
+
+##### Personal copies of existing targets
+
+Some targets only exist because an initializer configured them in Python, with settings the create
+API cannot express. To use such a target with your own credential, register a personal copy:
+
+```http
+POST /api/targets
+{"name": "my-claude", "type": "OpenAIChatTarget", "requires_caller_credential": true,
+ "source": {"source_name": "claude_shared", "source_hash": "<identifier.hash from GET /api/targets>",
+            "params": {"api_key": "<your key>"}}}
+```
+
+- The copy keeps the source's configuration but never its credential: the source's key, token
+  provider, or managed identity is replaced by your own credential, even when the source used
+  `auth_mode` `none`. The source target is unchanged.
+- `source.params` accepts the same overrides as other source clones, including `endpoint` and
+  `headers`. Headers copied from the source go wherever the copy sends requests. `auth_mode`
+  cannot be overridden. An `api_key` override becomes the creator's stored credential, never a
+  static key on the copy.
+- The source must support reconstruction: OpenAI-family targets (except `RealtimeTarget`) and
+  `LiteLLMChatTarget`. Sources that cannot be rebuilt (for example an OpenAI target with a custom
+  `http_client`) or whose configuration cannot use a token provider (for example a LiteLLM route
+  other than `openai/`, or a static authentication header) are rejected.
+- `source` with `register: true` is accepted only for personal copies; other source clones still
+  require `register: false`.
 
 ### Manual attack creation
 

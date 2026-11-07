@@ -977,6 +977,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
         params: Mapping[str, object],
         external_input: bool = False,
         allowed_path_params: frozenset[str] = frozenset(),
+        server_params: Mapping[str, object] | None = None,
     ) -> InstanceT:
         """
         Build an independent component; never change or register the source.
@@ -988,6 +989,10 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
                 Defaults to False.
             allowed_path_params (frozenset[str]): External overrides that can name a
                 server file or folder but that the caller has made safe. Defaults to none.
+            server_params (Mapping[str, object] | None): Constructor arguments the server
+                chooses, such as a credential provider. They are never taken from the
+                external caller and replace both source inputs and overrides with the same
+                name. Defaults to None.
 
         Returns:
             InstanceT: The new component, owned by the caller.
@@ -1039,7 +1044,7 @@ class InstanceHoldingRegistry(Registry[InstanceT, MetadataT]):
             names = sorted(name for name, cls in self._classes.items() if cls is type(source))
         if not names:
             raise ValueError("The source component's class is no longer registered")
-        instance = self.create_instance(names[0], **{**inputs, **raw_params})
+        instance = self.create_instance(names[0], **{**inputs, **raw_params, **(server_params or {})})
         if isinstance(instance, ReconstructionContext):
             instance.attach_reconstruction_source(source)
         return instance

@@ -306,12 +306,19 @@ class TargetService:
         ]
         return TargetTypeResponse(items=items)
 
-    async def build_from_source_async(self, spec: SourceInstanceSpec) -> PromptTarget:
+    async def build_from_source_async(
+        self, spec: SourceInstanceSpec, *, server_params: dict[str, object] | None = None
+    ) -> PromptTarget:
         """
         Rebuild a private target and verify its saved effective identity.
 
         Overrides may set the target's caller path parameters, as on create, but not
         the upload folder, which only the server sets.
+
+        Args:
+            spec: The source and its external overrides.
+            server_params: Constructor arguments the server chooses, such as a caller credential
+                provider, which replace both source inputs and overrides. Defaults to None.
 
         Returns:
             PromptTarget: The caller-owned target.
@@ -322,6 +329,7 @@ class TargetService:
             params=spec.params,
             external_input=True,
             allowed_path_params=type(source).caller_path_parameters,
+            server_params=server_params,
         )
         if spec.effective_hash and target.get_identifier().hash != spec.effective_hash:
             await release_component_async(target)
@@ -530,8 +538,16 @@ class TargetService:
         self._enforce_server_credential_permission(
             target_type=request.type, params=permission_params, is_admin=is_admin
         )
+        source_spec = request.source
+        if source_spec is not None and request.requires_caller_credential:
+            if _AUTH_MODE_PARAM in source_spec.params:
+                raise ValueError("A personal copy always uses caller credentials; omit auth_mode from source.params.")
+            source_spec = source_spec.model_copy(update={"params": dict(source_spec.params)})
         caller_credential = self._take_caller_credential(
-            target_cls=target_cls, request=request, params=params, caller=caller
+            target_cls=target_cls,
+            request=request,
+            params=source_spec.params if source_spec is not None else params,
+            caller=caller,
         )
 
         # LEGACY COMPATIBILITY: The current configuration UI omits the name.
@@ -550,16 +566,17 @@ class TargetService:
         ):
             raise ValueError("The source target type does not match the requested type")
         credential_id = uuid.uuid4().hex if request.requires_caller_credential else None
+        server_params = self._caller_credential_server_params(
+            target_cls=target_cls, credential_id=credential_id, target_registry_name=target_registry_name
+        )
         target_obj = (
-            await self.build_from_source_async(request.source)
-            if request.source
+            await self.build_from_source_async(source_spec, server_params=server_params)
+            if source_spec
             else self._registry.create_instance_from_external_input(
                 request.type,
                 params=params,
                 allowed_path_params=self._allowed_path_params(target_cls=target_cls),
-                server_params=self._caller_credential_server_params(
-                    target_cls=target_cls, credential_id=credential_id, target_registry_name=target_registry_name
-                ),
+                server_params=server_params,
             )
         )
         if not request.register:
@@ -748,6 +765,10 @@ class TargetService:
         """
         Build the server-side provider that resolves each caller's credential for a new target.
 
+        The provider replaces any credential the target would otherwise inherit, such as a personal
+        copy's source key or managed identity, and the target always authenticates with the key it
+        returns.
+
         Returns:
             dict[str, object] | None: Constructor arguments with the provider, or None without a credential.
         """
@@ -757,7 +778,7 @@ class TargetService:
         provider = create_caller_credential_provider(
             store=self._credentials, credential_id=credential_id, component_name=target_registry_name
         )
-        return {parameter_name: provider}
+        return {**target_cls.get_auth_mode_parameters(auth_mode="api_key"), parameter_name: provider}
 
     async def _enforce_code_execution_permission_async(
         self, *, target_type: str, params: dict[str, Any], is_admin: bool
