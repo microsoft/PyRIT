@@ -15,7 +15,7 @@ import textwrap
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.datasets import SeedDatasetFilter, SeedDatasetProvider
 from pyrit.memory import CentralMemory
-from pyrit.models.parameter import Parameter
+from pyrit.models import Parameter
 from pyrit.registry import ScenarioRegistry
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 

@@ -23,15 +23,15 @@ from frontend.e2e.fixtures import analytics_backend
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from pyrit.backend.models.datasets import DatasetListResponse
+    from pyrit.backend.models import DatasetListResponse
     from pyrit.memory import SQLiteMemory
-    from pyrit.models.catalog import (
+    from pyrit.models import (
+        DatasetFetchPolicy,
         ScenarioPreset,
         ScenarioRunSizeEstimate,
         ScenarioRunSizeEstimateRequest,
         StoredPreset,
     )
-    from pyrit.models.scenario_dataset import DatasetFetchPolicy
     from pyrit.scenario.core.scenario_context import ScenarioContext
 
 
@@ -61,11 +61,10 @@ def _register_components(sent: list[str]) -> None:
     from pyrit.models import Message, MessagePiece
     from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
     from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
-    from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Scenario
+    from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, DatasetSource, Scenario
     from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, ScenarioTechnique
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
-    from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
+    from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 
     class LocalDatasetTarget(PromptTarget):
         _DEFAULT_CONFIGURATION = TargetConfiguration(
@@ -157,8 +156,7 @@ def _register_components(sent: list[str]) -> None:
 def _configure_preset_storage(*, database_path: str, patches: ExitStack, mutations: list[dict[str, str]]) -> None:
     from pathlib import Path
 
-    from pyrit.registry import ScenarioPresetRegistry
-    from pyrit.registry.scenario_preset_storage import ScenarioPresetStorage
+    from pyrit.registry import ScenarioPresetRegistry, ScenarioPresetStorage
 
     root = Path(database_path).resolve().parent.parent
     registry = ScenarioPresetRegistry.get_registry_singleton()
@@ -195,12 +193,11 @@ def _install_controls(
     from fastapi import HTTPException
 
     from pyrit.backend.main import app
-    from pyrit.backend.services.dataset_service import DatasetService
-    from pyrit.backend.services.scenario_service import ScenarioService
+    from pyrit.backend.services import DatasetService, ScenarioService
     from pyrit.common import path as paths
     from pyrit.datasets import SeedDatasetProvider
     from pyrit.registry import ScenarioPresetRegistry
-    from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+    from pyrit.scenario import DatasetConfiguration
     from pyrit.setup import configuration_loader
 
     estimating = ContextVar("dataset_acceptance_estimating", default=False)

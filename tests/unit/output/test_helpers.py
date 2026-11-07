@@ -18,10 +18,12 @@ from pyrit.models import (
     ScenarioResult,
     Score,
 )
-from pyrit.output.conversation.source import MemoryConversationSource
-from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
-from pyrit.output.finding_report.report import FindingReport, FindingReportEntry, FindingReportField
-from pyrit.output.helpers import (
+from pyrit.output import (
+    FileSink,
+    IPythonMarkdownSink,
+    Sink,
+    StdoutSink,
+    get_default_sink,
     output_attack_async,
     output_conversation_async,
     output_finding_report_async,
@@ -32,8 +34,10 @@ from pyrit.output.helpers import (
     output_score_async,
     output_scorer_async,
 )
+from pyrit.output.conversation.source import MemoryConversationSource
+from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
+from pyrit.output.finding_report.report import FindingReport, FindingReportEntry, FindingReportField
 from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter
-from pyrit.output.sink import FileSink, IPythonMarkdownSink, Sink, StdoutSink, get_default_sink
 
 # --- get_default_sink tests ---
 
@@ -53,7 +57,7 @@ def test_get_default_sink_explicit_stdout():
     assert isinstance(sink, StdoutSink)
 
 
-@patch("pyrit.common.notebook_utils.is_in_ipython_session", return_value=True)
+@patch("pyrit.common.is_in_ipython_session", return_value=True)
 def test_get_default_sink_auto_detects_notebook(_mock):
     sink = get_default_sink()
     assert isinstance(sink, IPythonMarkdownSink)

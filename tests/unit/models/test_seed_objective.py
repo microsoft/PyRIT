@@ -3,7 +3,7 @@
 
 import pytest
 
-from pyrit.models.seeds.seed_objective import SeedObjective
+from pyrit.models import SeedObjective
 
 
 def test_seed_objective_init():

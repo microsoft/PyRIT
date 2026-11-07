@@ -27,13 +27,13 @@ from pyrit.models import (
 from pyrit.score import (
     ContentScorable,
     MessageScorable,
+    MessageScorableResolver,
     MessageScorer,
     MessageTrueFalseScorer,
     Scorable,
     Scorer,
     ScorerPromptValidator,
 )
-from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import (
     extract_objective_from_previous_turn,
     extract_objective_from_previous_turn_async,

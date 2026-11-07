@@ -12,6 +12,8 @@ from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetSelectionMode,
+    ScenarioDatasetOptions,
     ScenarioDatasetSizeEstimate,
     ScenarioDatasetSummary,
     ScenarioRunSizeComponent,
@@ -22,7 +24,6 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import DatasetLimit, normalize_dataset_limit
-from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource

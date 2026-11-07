@@ -10,8 +10,8 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from pyrit.analytics import AttackStats as AnalyticsAttackStats
+from pyrit.analytics import AttackStats as ResultAnalysisAttackStats
 from pyrit.analytics import compute_outcome_statistics
-from pyrit.analytics.result_analysis import AttackStats as ResultAnalysisAttackStats
 from pyrit.common.pagination import fingerprint_filters
 from pyrit.models import (
     AttackAnalyticsDimension,
