@@ -13,11 +13,12 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.memory import MemoryInterface, PromptMemoryEntry
+from pyrit.memory import MemoryInterface, PromptMemoryEntry, SQLiteMemory
 from pyrit.memory.memory_models import ObservationEntry, ScoreEntry
+from pyrit.message_normalizer import JsonSchemaNormalizer
 from pyrit.models import (
     Acquisition,
     AnswerMatches,
@@ -35,7 +36,7 @@ from pyrit.models import (
     ScoringExpectation,
     UnvalidatedScore,
 )
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import (
     AudioTrueFalseScorer,
     CallableResponseHandler,
@@ -66,6 +67,7 @@ from pyrit.score import (
     TrueFalseScorer,
 )
 from pyrit.score.response_handler import NumericRangeResponseHandler, TrueFalseResponseHandler
+from test_support.fixtures import use_sqlite_memory
 
 _INVALID_RESPONSE = "not valid json"
 _VALID_RESPONSE = '{"score_value":"true","description":"matched","rationale":"reason","metadata":"test"}'
@@ -1647,3 +1649,186 @@ async def test_legacy_contract_keeps_a_changed_wrapper_version_async(
     with pytest.raises(NonReplayableObservationError, match="handler or category"):
         await scorer.score_observation_async(observation=observation, expectation=expectation)
     assert target.send_prompt_async.call_count == 1
+
+
+def _make_configured_target(
+    *,
+    template: str | None = None,
+    supports_json_schema: bool = False,
+    response_text: str = _VALID_RESPONSE,
+) -> MagicMock:
+    target = MagicMock(spec=PromptTarget)
+    target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    target.capabilities = TargetCapabilities(
+        supports_system_prompt=True,
+        supports_multi_turn=True,
+        supports_json_schema=supports_json_schema,
+    )
+    normalizer_overrides = (
+        {CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(schema_instructions_template=template)}
+        if template is not None and not supports_json_schema
+        else None
+    )
+    target.configuration = TargetConfiguration(
+        capabilities=target.capabilities,
+        normalizer_overrides=normalizer_overrides,
+    )
+    target.set_system_prompt_async = AsyncMock()
+    target.reset_conversation_async = AsyncMock()
+    target.send_prompt_async = AsyncMock(return_value=_response(response_text))
+    return target
+
+
+async def test_judgment_replay_rejects_changed_schema_normalizer_template_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    target_a = _make_configured_target(template="WRAPPER_A {schema_json}")
+    target_b = _make_configured_target(template="WRAPPER_B {schema_json}")
+    target_a_clone = _make_configured_target(template="WRAPPER_A {schema_json}")
+
+    scorer_a = SelfAskTrueFalseScorer(chat_target=target_a)
+    scorer_b = SelfAskTrueFalseScorer(chat_target=target_b)
+    scorer_a_clone = SelfAskTrueFalseScorer(chat_target=target_a_clone)
+
+    assert scorer_a.get_identifier().hash == scorer_b.get_identifier().hash == scorer_a_clone.get_identifier().hash
+
+    live = (await scorer_a.score_text_async("candidate response"))[0]
+    assert live.score_value == "true"
+    assert target_a.send_prompt_async.call_count == 1
+
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+
+    # Matching template replays without calling target.
+    replay_same = (await scorer_a_clone.score_observation_async(observation=observation))[0]
+    assert replay_same.score_value == "true"
+    assert target_a_clone.send_prompt_async.call_count == 0
+
+    # Changed template rejects replay.
+    with pytest.raises(NonReplayableObservationError, match="judgment configuration"):
+        await scorer_b.score_observation_async(observation=observation)
+    assert target_b.send_prompt_async.call_count == 0
+
+
+async def test_judgment_replay_rejects_native_vs_adapted_json_schema_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    native_target = _make_configured_target(supports_json_schema=True)
+    adapted_target = _make_configured_target(template="WRAPPER_A {schema_json}", supports_json_schema=False)
+
+    scorer_native = SelfAskTrueFalseScorer(chat_target=native_target)
+    scorer_adapted = SelfAskTrueFalseScorer(chat_target=adapted_target)
+
+    live = (await scorer_native.score_text_async("candidate response"))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+
+    with pytest.raises(NonReplayableObservationError, match="judgment configuration"):
+        await scorer_adapted.score_observation_async(observation=observation)
+    assert adapted_target.send_prompt_async.call_count == 0
+
+
+async def test_judgment_replay_schema_template_variant_verified_after_sqlite_reopen_async(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "sqlite_reopen_judgment.db"
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    memory.__init__(db_path=db_path, skip_schema_migration=False, silent=True)
+    memory.disable_embedding()
+
+    target_a = _make_configured_target(template="WRAPPER_A {schema_json}")
+    scorer_a = SelfAskTrueFalseScorer(chat_target=target_a)
+
+    with use_sqlite_memory(memory):
+        live = (await scorer_a.score_text_async("candidate response"))[0]
+        obs_id = live.observation_ids[0]
+
+    await memory.dispose_engine_async()
+
+    # Reopen SQLite database.
+    reopened = SQLiteMemory.__new__(SQLiteMemory)
+    reopened.__init__(db_path=db_path, skip_schema_migration=True, silent=True)
+    reopened.disable_embedding()
+    try:
+        with use_sqlite_memory(reopened):
+            stored_obs = (await reopened.get_observations_async(observation_ids=[obs_id]))[0]
+
+            # Matching template replays cleanly after reopen without target call.
+            target_a2 = _make_configured_target(template="WRAPPER_A {schema_json}")
+            scorer_a2 = SelfAskTrueFalseScorer(chat_target=target_a2)
+            replay = (await scorer_a2.score_observation_async(observation=stored_obs))[0]
+            assert replay.score_value == "true"
+            assert target_a2.send_prompt_async.call_count == 0
+
+            # Changed template rejects replay on reopened observation.
+            target_b = _make_configured_target(template="WRAPPER_B {schema_json}")
+            scorer_b = SelfAskTrueFalseScorer(chat_target=target_b)
+            with pytest.raises(NonReplayableObservationError, match="judgment configuration"):
+                await scorer_b.score_observation_async(observation=stored_obs)
+            assert target_b.send_prompt_async.call_count == 0
+    finally:
+        await reopened.dispose_engine_async()
+
+
+async def test_judgment_replay_legacy_observation_compatibility_async(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    target = _make_configured_target(template="WRAPPER_A {schema_json}")
+    scorer = SelfAskTrueFalseScorer(chat_target=target)
+
+    live = (await scorer.score_text_async("candidate response"))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=live.observation_ids))[0]
+
+    # Calculate legacy fingerprint without target_adaptation.
+    from pyrit.score.llm_scoring import _contract_fingerprint
+
+    legacy_fingerprint = _contract_fingerprint(
+        handler_identifier=scorer._response_handler._get_replay_identifier(),
+        category=scorer._score_category,
+        judgment_replay_identifier=scorer._get_judgment_replay_identifier(),
+        target_adaptation=None,
+    )
+    assert legacy_fingerprint is not None
+    assert legacy_fingerprint != observation.payload.replay_contract_fingerprint
+
+    # Simulate an observation stored by an earlier version of PyRIT before target_adaptation was added.
+    async with await sqlite_instance.get_session_async() as session:
+        statement = select(ObservationEntry).where(ObservationEntry.id == observation.id)
+        entry = (await session.execute(statement)).scalar_one()
+        new_payload = dict(entry.payload)
+        new_payload["replay_contract_fingerprint"] = legacy_fingerprint
+        entry.payload = new_payload
+        await session.commit()
+
+    legacy_observation = (await sqlite_instance.get_observations_async(observation_ids=[observation.id]))[0]
+    assert legacy_observation.payload.replay_contract_fingerprint == legacy_fingerprint
+
+    # Scorer with target_adaptation should accept the legacy observation.
+    replay = (await scorer.score_observation_async(observation=legacy_observation))[0]
+    assert replay.score_value == "true"
+
+
+def test_target_judgment_adaptation_coverage():
+    from pyrit.score.llm_scoring import _legacy_replay_contract_fingerprints, _target_judgment_adaptation
+
+    assert _target_judgment_adaptation(None) is None
+    assert _target_judgment_adaptation(object()) is None
+
+    class CustomConfig:
+        def project_pipeline(self):
+            return [{"type": "custom", "params": {}}]
+
+    class CustomTarget:
+        configuration = CustomConfig()
+
+    assert _target_judgment_adaptation(CustomTarget()) == [{"type": "custom", "params": {}}]
+
+    handler = MagicMock(spec=ResponseHandler)
+    handler._get_replay_identifier.return_value = {"version": 2}
+    handler._legacy_replay_identifiers.return_value = [{"version": 1}]
+    fingerprints = _legacy_replay_contract_fingerprints(
+        response_handler=handler,
+        response_text="test",
+        category="harm",
+        judgment_replay_identifier={"judgment": 1},
+        target_adaptation=[{"type": "normalizer", "params": {}}],
+    )
+    assert len(fingerprints) == 3

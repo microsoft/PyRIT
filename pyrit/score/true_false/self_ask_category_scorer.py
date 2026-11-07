@@ -401,6 +401,7 @@ class SelfAskCategoryScorer(MessageTrueFalseScorer):
             scorer_identifier=self.get_identifier(),
             judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,
+            target=self.get_chat_target(),
         )
         return [
             unvalidated.to_score(

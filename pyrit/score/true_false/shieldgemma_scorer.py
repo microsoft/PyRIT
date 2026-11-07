@@ -304,6 +304,7 @@ class ShieldGemmaScorer(MessageTrueFalseScorer):
             judgment_replay_identifier=self._get_judgment_replay_identifier(),
             expectation=expectation,
             category=self.SCORE_CATEGORY,
+            target=self.get_chat_target(),
         )
         score = unvalidated.to_score(
             score_value=unvalidated.raw_score_value.lower(),

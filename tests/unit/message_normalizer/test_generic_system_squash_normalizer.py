@@ -7,6 +7,10 @@ from pyrit.message_normalizer import GenericSystemSquashNormalizer
 from pyrit.models import ChatMessageRole, Message, MessagePiece
 
 
+def test_generic_squash_as_identifier_params():
+    assert GenericSystemSquashNormalizer().as_identifier_params() == {}
+
+
 def _make_message(role: ChatMessageRole, content: str) -> Message:
     """Helper to create a Message from role and content."""
     return Message(message_pieces=[MessagePiece(role=role, original_value=content)])
