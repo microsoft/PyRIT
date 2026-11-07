@@ -68,3 +68,12 @@ class TargetInstance(BaseModel):
         None,
         description="Inner targets for composite targets like RoundRobinTarget (full instances, not just identifiers)",
     )
+    requires_caller_credential: bool = Field(
+        False,
+        description="Whether each caller must set their own credential before using this target",
+    )
+    caller_credential_configured: bool = Field(
+        False,
+        description="Whether the requesting caller has set their own credential for this target",
+    )
+    can_delete: bool = Field(False, description="Whether the requesting caller may delete this target")

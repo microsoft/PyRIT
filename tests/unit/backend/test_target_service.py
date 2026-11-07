@@ -1054,7 +1054,7 @@ class TestCreateTarget:
         ) as create:
             await service.create_target_async(request=CreateTargetRequest(type="TextTarget", params={}))
 
-        create.assert_called_once_with("TextTarget", params={}, allowed_path_params=frozenset())
+        create.assert_called_once_with("TextTarget", params={}, allowed_path_params=frozenset(), server_params=None)
 
     async def test_create_target_rejects_invalid_enum_value(self, sqlite_instance) -> None:
         """An invalid enum value from the JSON request raises a parameter error before target construction."""

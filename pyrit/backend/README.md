@@ -37,6 +37,54 @@ API keys do not authenticate incoming GUI users.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `POST /api/targets` - Create (and optionally register) a target
+- `DELETE /api/targets/{id}` - Delete a target the caller created through the API
+- `PUT /api/targets/{id}/credentials` - Set or replace the caller's own credential for a target
+- `DELETE /api/targets/{id}/credentials` - Remove the caller's own credential for a target
+
+#### Caller credentials
+
+A registered OpenAI-family (except `RealtimeTarget`) or `LiteLLMChatTarget` target that was
+created with an `api_key` does not keep that key. The backend stores it in process memory for the
+caller who created the target, and the target asks for the current caller's own credential before
+every request. Every caller can see and use the target's configuration, but nobody can send a
+request with another caller's key: until a caller sets their own credential, their requests
+through the target fail
+with `CallerCredentialRequiredError`, and nothing falls back to the server's environment keys,
+managed identity, or SDK login.
+
+```http
+POST /api/targets
+{"name": "team-gpt", "type": "OpenAIChatTarget",
+ "params": {"endpoint": "https://<resource>/openai/v1", "model_name": "<deployment>", "api_key": "<your key>"}}
+
+PUT /api/targets/team-gpt/credentials
+{"credential": "<your own key or access token>"}
+
+DELETE /api/targets/team-gpt/credentials
+DELETE /api/targets/team-gpt
+```
+
+- Target responses report `requires_caller_credential`, whether the requesting caller has set a
+  credential (`caller_credential_configured`), and whether they may delete the target
+  (`can_delete`). Credentials are never returned or stored in the database, identifiers, logs,
+  or saved bindings.
+- A caller is identified by the configured Entra tenant and their Entra object ID; local mode has
+  one caller. Work a request starts, including background sends and queued scenario runs, uses
+  that caller's credentials. Resuming or replaying a run uses the credential of whoever resumes it.
+- Replacing a credential applies to the caller's next request through the target, including in
+  work that is already running. A request that was already sent finishes with the old value.
+- Only the caller who created a target through the API can delete it. Deleting it forgets every
+  caller's credential for it; running work keeps its target object, but its later requests fail.
+  Neither deletion nor removal revokes the credential at the provider.
+- Credentials are lost when the backend restarts or reinitializes, and are kept in one process:
+  `PUT /api/targets/{id}/credentials` returns **409** when the deployment runs more than one
+  backend worker or replica.
+- A replacement credential is a value the caller obtains and submits again; the backend does not
+  acquire OAuth tokens or refresh them.
+- Other target types, including `RealtimeTarget` (which authenticates once per conversation
+  connection), and targets created with `auth_mode` `identity` or `none` or without a key, keep
+  their existing credential handling.
 
 ### Manual attack creation
 
@@ -390,7 +438,8 @@ API callers are trusted operators, so these are intentional exceptions:
   OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
   of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
-  created them.
+  created them. A key submitted when creating an OpenAI-family or LiteLLM target is the
+  exception: it stays with its caller (see [Caller credentials](#caller-credentials)).
 - Prompt content is not filtered; it is adversarial test data by design.
 - Any file type can be stored as a payload. `GET /api/media` renders only allow-listed image,
   audio, and video file extensions inline; everything else downloads as a file.

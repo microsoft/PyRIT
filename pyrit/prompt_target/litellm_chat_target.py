@@ -5,7 +5,7 @@ import itertools
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, MutableSequence, Sequence
-from typing import Any, NoReturn, cast
+from typing import Any, ClassVar, NoReturn, cast
 
 from pyrit.auth import ensure_async_token_provider
 from pyrit.exceptions import (
@@ -205,6 +205,9 @@ class LiteLLMChatTarget(PromptTarget):
     # Fallback only. The real per-instance configuration is normally derived from LiteLLM's
     # model metadata at construction time (see ``_derive_capabilities_from_litellm``).
     _SUPPORTS_TOOL_CALL_HISTORY = True
+
+    # A callable ``api_key`` is resolved before every send and passed to LiteLLM as a string key.
+    caller_credential_parameter: ClassVar[str | None] = "api_key"
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(
             supports_multi_turn=True,

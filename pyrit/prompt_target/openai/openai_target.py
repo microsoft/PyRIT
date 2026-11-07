@@ -64,6 +64,10 @@ class OpenAITarget(PromptTarget):
     # such as Ollama or vLLM may need no key at all.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key", "identity", "none")
 
+    # The OpenAI SDK resolves a callable ``api_key`` before every request and sends it as it
+    # would send a string key.
+    caller_credential_parameter: ClassVar[str | None] = "api_key"
+
     model_name_environment_variable: str
     endpoint_environment_variable: str
     api_key_environment_variable: str

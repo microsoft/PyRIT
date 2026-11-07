@@ -764,7 +764,12 @@ class Registry(ABC, Generic[T, MetadataT]):
         return cls(**resolved)
 
     def create_instance_from_external_input(
-        self, name: str, *, params: Mapping[str, object], allowed_path_params: frozenset[str] = frozenset()
+        self,
+        name: str,
+        *,
+        params: Mapping[str, object],
+        allowed_path_params: frozenset[str] = frozenset(),
+        server_params: Mapping[str, object] | None = None,
     ) -> T:
         """
         Build a configured instance from external input such as a REST or CLI request.
@@ -781,6 +786,10 @@ class Registry(ABC, Generic[T, MetadataT]):
             params (Mapping[str, object]): Constructor arguments from the external caller.
             allowed_path_params (frozenset[str]): Parameters that can name a server file
                 or folder but that the caller has made safe. Defaults to none.
+            server_params (Mapping[str, object] | None): Constructor arguments the server
+                chooses, such as a credential provider. They are never taken from the
+                external caller and replace any external argument with the same name.
+                Defaults to None.
 
         Returns:
             T: The constructed instance.
@@ -800,7 +809,7 @@ class Registry(ABC, Generic[T, MetadataT]):
             seam_base_type=self._seam_base_type(),
             allowed_path_params=allowed_path_params,
         )
-        return cls(**resolved)
+        return cls(**{**resolved, **(server_params or {})})
 
     def __contains__(self, name: str) -> bool:
         """

@@ -16,6 +16,12 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from pyrit.auth import (
+    CallerCredentialRequiredError,
+    CallerCredentialStore,
+    caller_principal_scope,
+    create_caller_credential_provider,
+)
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -1072,6 +1078,23 @@ async def test_resolve_api_key_async_callable(patch_central_database, litellm_st
 
     t = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=provider)
     assert await t._resolve_api_key_async() == "atok"
+
+
+async def test_send_prompt_uses_each_callers_own_credential(patch_central_database, litellm_stub):
+    store = CallerCredentialStore()
+    store.set_credential(principal="alice", credential_id="shared", credential="alice-key")
+    provider = create_caller_credential_provider(store=store, credential_id="shared", component_name="shared")
+    t = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=provider)
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
+
+    with caller_principal_scope("alice"):
+        await t.send_prompt_async(message=_user_message("hi"))
+    with patch.dict("os.environ", {"LITELLM_API_KEY": "server-key"}), caller_principal_scope("bob"):
+        with pytest.raises(CallerCredentialRequiredError):
+            await t.send_prompt_async(message=_user_message("hi"))
+
+    litellm_stub.acompletion.assert_awaited_once()
+    assert litellm_stub.acompletion.call_args.kwargs["api_key"] == "alice-key"
 
 
 # ---------------------------------------------------------------------------

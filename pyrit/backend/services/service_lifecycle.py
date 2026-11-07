@@ -18,7 +18,7 @@ from pyrit.backend.services.scenario_suite_execution_service import (
     reset_scenario_suite_execution_service_async,
 )
 from pyrit.backend.services.scorer_service import get_scorer_service
-from pyrit.backend.services.target_service import get_target_service
+from pyrit.backend.services.target_service import clear_caller_credentials, get_target_service
 from pyrit.backend.services.technique_service import get_technique_service
 
 
@@ -70,6 +70,8 @@ async def _close_cached_services_async() -> None:
             await reset_scenario_suite_execution_service_async()
             await reset_scenario_run_service_async()
         finally:
+            # Registered targets are replaced with the runtime, so their callers' credentials go too.
+            clear_caller_credentials()
             for factory in (
                 get_attack_service,
                 get_converter_service,

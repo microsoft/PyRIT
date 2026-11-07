@@ -25,9 +25,13 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from pyrit.auth import caller_principal_scope
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 
 logger = logging.getLogger(__name__)
+
+# Local mode serves one loopback user, so every request acts for the same caller.
+_LOCAL_CALLER_PRINCIPAL = "local"
 
 
 class AuthenticationError(Exception):
@@ -107,6 +111,29 @@ def current_user_name(request: Request) -> str | None:
     return user.name or user.email or None
 
 
+def caller_principal(request: Request) -> str | None:
+    """
+    Return the stable key of the caller that owns caller-supplied credentials.
+
+    The key comes only from the server-validated identity: the configured tenant and the
+    user's Microsoft Entra object ID. Local mode has one caller. Display names, email
+    addresses, and request fields are never used.
+
+    Args:
+        request (Request): The request whose caller to identify.
+
+    Returns:
+        str | None: The caller principal, or None when the request has no verified caller.
+    """
+    policy = get_authentication_policy(request)
+    if policy.mode == "local":
+        return _LOCAL_CALLER_PRINCIPAL
+    user = getattr(request.state, "user", None)
+    if not isinstance(user, AuthenticatedUser) or not user.oid:
+        return None
+    return f"entra:{policy.tenant_id}:{user.oid}"
+
+
 class EntraAuthMiddleware(BaseHTTPMiddleware):
     """Authenticate API requests through Microsoft Graph."""
 
@@ -144,7 +171,8 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
         path = get_route_path(request.scope)
         policy = get_authentication_policy(request)
         if policy.mode == "local" or path in self._PUBLIC_PATHS or not path.startswith("/api"):
-            return await call_next(request)
+            with caller_principal_scope(_LOCAL_CALLER_PRINCIPAL if policy.mode == "local" else None):
+                return await call_next(request)
 
         try:
             user = await self._authenticate_request_async(request, policy=policy)
@@ -152,7 +180,10 @@ class EntraAuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
 
         request.state.user = user
-        return await call_next(request)
+        # Work admitted by this request, including background tasks it starts, uses this caller's
+        # credentials for targets that hold caller-supplied credentials.
+        with caller_principal_scope(caller_principal(request)):
+            return await call_next(request)
 
     async def _authenticate_request_async(self, request: Request, *, policy: AuthenticationPolicy) -> AuthenticatedUser:
         """

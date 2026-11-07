@@ -8,7 +8,7 @@ The canonical target instance type (``TargetInstance``) lives in
 ``pyrit.models.catalog.target`` and should be imported from there directly.
 """
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.common.auth_mode import AuthMode
@@ -19,6 +19,7 @@ from pyrit.models.target.target_capabilities import TargetCapabilities
 
 __all__ = [
     "CreateTargetRequest",
+    "SetTargetCredentialRequest",
     "TargetListResponse",
     "TargetTypeEntry",
     "TargetTypeResponse",
@@ -82,7 +83,10 @@ class CreateTargetRequest(BaseModel):
             "Azure identity (Entra ID token or DefaultAzureCredential); requires an Azure "
             "endpoint and is supported by OpenAI-family targets, AzureMLChatTarget, "
             "AzureBlobStorageTarget, and PromptShieldTarget. 'none' reads no key and sends a fixed "
-            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
+            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets. "
+            "For OpenAI-family (except RealtimeTarget) and LiteLLM targets, a registered target does not keep "
+            "the submitted api_key: it is stored for the creating caller, and every other caller must set their "
+            "own credential."
         ),
     )
 
@@ -98,3 +102,16 @@ class UnregisteredTarget(BaseModel):
 
     identifier: TargetIdentifier
     capabilities: TargetCapabilities
+
+
+class SetTargetCredentialRequest(BaseModel):
+    """Request to set or replace the caller's own credential for a target."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    credential: SecretStr = Field(
+        ...,
+        min_length=1,
+        max_length=16384,
+        description="The caller's own API key or access token for this target. It is never returned.",
+    )

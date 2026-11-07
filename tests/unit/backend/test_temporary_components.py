@@ -110,7 +110,9 @@ class TestTemporaryComponents:
         registry = TargetRegistry.get_registry_singleton()
         factory = registry.create_instance_from_external_input
 
-        def create(name: str, *, params: Any, allowed_path_params: Any) -> HuggingFaceChatTarget:
+        def create(
+            name: str, *, params: Any, allowed_path_params: Any, server_params: Any = None
+        ) -> HuggingFaceChatTarget:
             target = factory(name, params=params, allowed_path_params=allowed_path_params)
             assert isinstance(target, HuggingFaceChatTarget)
             constructed.append(target)
