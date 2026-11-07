@@ -4,6 +4,7 @@
 import asyncio
 import json
 import logging
+import threading
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -50,6 +51,10 @@ class HuggingFaceChatTarget(PromptTarget):
 
     # Class-level flag to enable or disable cache
     _cache_enabled = True
+
+    # Instances can share the cached model, and generation used to run one call at a time on the
+    # event loop. Generation now runs on a worker thread, so this keeps it one call at a time.
+    _generation_lock: ClassVar[threading.Lock] = threading.Lock()
 
     # Define the environment variable name for the Hugging Face token
     HUGGINGFACE_TOKEN_ENVIRONMENT_VARIABLE = "HUGGINGFACE_TOKEN"
@@ -365,16 +370,14 @@ class HuggingFaceChatTarget(PromptTarget):
         logger.info(f"Tokenized chat: {input_ids}")
 
         try:
-            # Ensure model is on the correct device (should already be, but safeguard for device changes)
-            self.model.to(self.device)
-
             # Record input length to extract only newly generated tokens
             input_length = input_ids.shape[-1]
 
             generate_kwargs = {"input_ids": input_ids, "attention_mask": attention_mask, **self._generation_params}
 
             logger.info("Generating response from model...")
-            generated_ids = self.model.generate(**generate_kwargs)
+            # Generation is a blocking forward pass that can run for minutes, so keep it off the event loop.
+            generated_ids = await asyncio.to_thread(self._generate, generate_kwargs=generate_kwargs)
 
             logger.info(f"Generated IDs: {generated_ids}")
 
@@ -407,6 +410,21 @@ class HuggingFaceChatTarget(PromptTarget):
         except Exception as e:
             logger.error(f"Error occurred during inference: {e}")
             raise
+
+    def _generate(self, *, generate_kwargs: dict[str, Any]) -> Any:
+        """
+        Run the blocking model generation, one call at a time.
+
+        Args:
+            generate_kwargs (dict[str, Any]): Keyword arguments for ``model.generate()``.
+
+        Returns:
+            Any: The generated token ids.
+        """
+        with HuggingFaceChatTarget._generation_lock:
+            # Ensure model is on the correct device (should already be, but safeguard for device changes)
+            self.model.to(self.device)
+            return self.model.generate(**generate_kwargs)
 
     async def _wait_for_model_and_tokenizer_async(self) -> None:
         """Wait for shared model loading without allowing a send cancellation to cancel it."""

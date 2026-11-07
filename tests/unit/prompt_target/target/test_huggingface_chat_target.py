@@ -20,6 +20,7 @@ from pyrit.models import (
 from pyrit.prompt_target import HuggingFaceChatTarget
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from types import CoroutineType
 
 
@@ -192,6 +193,98 @@ async def test_hf_initialization_with_necessary_files(patch_central_database, mo
         assert args[1] == ["config.json", "tokenizer.json"]
     finally:
         HuggingFaceChatTarget.enable_cache()
+
+
+@pytest.fixture
+def uncached_model() -> Iterator[None]:
+    """Give each test its own model mock instead of the class-level cache shared across tests."""
+    HuggingFaceChatTarget.disable_cache()
+    try:
+        yield
+    finally:
+        HuggingFaceChatTarget.enable_cache()
+
+
+def _user_message(text: str) -> Message:
+    piece = MessagePiece(role="user", original_value=text, converted_value=text, converted_value_data_type="text")
+    return Message(message_pieces=[piece])
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_generate_keeps_event_loop_schedulable() -> None:
+    """Generation must run off the event loop so other tasks keep running while the model works."""
+    hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await hf_chat.load_model_and_tokenizer_async()
+
+    loop = asyncio.get_running_loop()
+    loop_thread_id = threading.get_ident()
+    generate_started = asyncio.Event()
+    generate_release = threading.Event()
+
+    def _blocking_generate(**kwargs: Any) -> list[list[int]]:
+        if threading.get_ident() == loop_thread_id:
+            raise AssertionError("generate() ran on the event loop thread")
+        loop.call_soon_threadsafe(generate_started.set)
+        # Only a task on the event loop releases this, so it is set only while the loop keeps running.
+        assert generate_release.wait(timeout=TEST_WATCHDOG_SECONDS)
+        return [[101, 102, 103]]
+
+    hf_chat.model.generate.side_effect = _blocking_generate
+    send_task = asyncio.ensure_future(hf_chat.send_prompt_async(message=_user_message("Hello")))
+    try:
+        await wait_for_event_async(event=generate_started, tasks=[send_task])
+        probe_result = await asyncio.wait_for(asyncio.sleep(0, result="probe-completed"), timeout=TEST_WATCHDOG_SECONDS)
+        assert probe_result == "probe-completed"
+        assert not send_task.done()
+    finally:
+        generate_release.set()
+        await drain_tasks_async(send_task)
+
+    response = send_task.result()
+    assert response[0].message_pieces[0].original_value == "Assistant's response"
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_concurrent_sends_generate_one_at_a_time() -> None:
+    """Moving generation to worker threads must not let two calls run the shared model at once."""
+    hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await hf_chat.load_model_and_tokenizer_async()
+
+    loop_thread_id = threading.get_ident()
+    active = 0
+    max_active = 0
+    counter_lock = threading.Lock()
+    first_started = threading.Event()
+    release_first = threading.Event()
+
+    def _tracking_generate(**kwargs: Any) -> list[list[int]]:
+        nonlocal active, max_active
+        with counter_lock:
+            active += 1
+            max_active = max(max_active, active)
+            is_first = not first_started.is_set()
+            first_started.set()
+        if is_first and threading.get_ident() != loop_thread_id:
+            # Hold the first call so a second one would overlap it if generation were not serialized.
+            release_first.wait(timeout=TEST_WATCHDOG_SECONDS)
+        with counter_lock:
+            active -= 1
+        return [[101, 102, 103]]
+
+    hf_chat.model.generate.side_effect = _tracking_generate
+    sends = [asyncio.ensure_future(hf_chat.send_prompt_async(message=_user_message(f"Hello {i}"))) for i in range(2)]
+    try:
+        assert await asyncio.to_thread(first_started.wait, TEST_WATCHDOG_SECONDS)
+        await asyncio.sleep(0.05)
+    finally:
+        release_first.set()
+        await drain_tasks_async(*sends)
+
+    assert [task.result()[0].message_pieces[0].original_value for task in sends] == ["Assistant's response"] * 2
+    assert hf_chat.model.generate.call_count == 2
+    assert max_active == 1
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
