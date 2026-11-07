@@ -42,29 +42,34 @@ API keys do not authenticate incoming GUI users.
 - `PUT /api/targets/{id}/credentials` - Set or replace the caller's own credential for a target
 - `DELETE /api/targets/{id}/credentials` - Remove the caller's own credential for a target
 
-#### Caller credentials
+#### Personal targets with caller credentials
 
-A registered OpenAI-family (except `RealtimeTarget`) or `LiteLLMChatTarget` target that was
-created with an `api_key` does not keep that key. The backend stores it in process memory for the
-caller who created the target, and the target asks for the current caller's own credential before
-every request. Every caller can see and use the target's configuration, but nobody can send a
-request with another caller's key: until a caller sets their own credential, their requests
-through the target fail
-with `CallerCredentialRequiredError`, and nothing falls back to the server's environment keys,
-managed identity, or SDK login.
+Targets are shared by default: a key submitted when creating a target is used for every caller's
+requests. To use a personal token or account instead, create the target with
+`"requires_caller_credential": true`. Supported for OpenAI-family targets (except
+`RealtimeTarget`) and `LiteLLMChatTarget`, with `auth_mode` `api_key`.
+
+Such a target keeps no key. The backend stores the creator's `api_key` in process memory for that
+caller only, and the target asks for the current caller's own credential before every request.
+Other callers can see the target, but nobody can send a request with another caller's key: until a
+caller sets their own credential, their requests through the target fail with
+`CallerCredentialRequiredError`, and nothing falls back to the server's environment keys, managed
+identity, or SDK login.
 
 ```http
 POST /api/targets
-{"name": "team-gpt", "type": "OpenAIChatTarget",
+{"name": "my-gpt", "type": "OpenAIChatTarget", "requires_caller_credential": true,
  "params": {"endpoint": "https://<resource>/openai/v1", "model_name": "<deployment>", "api_key": "<your key>"}}
 
-PUT /api/targets/team-gpt/credentials
+PUT /api/targets/my-gpt/credentials
 {"credential": "<your own key or access token>"}
 
-DELETE /api/targets/team-gpt/credentials
-DELETE /api/targets/team-gpt
+DELETE /api/targets/my-gpt/credentials
+DELETE /api/targets/my-gpt
 ```
 
+- The `api_key` is optional at creation; the creator can set it later with
+  `PUT /api/targets/{id}/credentials`, like any other caller.
 - Target responses report `requires_caller_credential`, whether the requesting caller has set a
   credential (`caller_credential_configured`), and whether they may delete the target
   (`can_delete`). Credentials are never returned or stored in the database, identifiers, logs,
@@ -82,9 +87,6 @@ DELETE /api/targets/team-gpt
   backend worker or replica.
 - A replacement credential is a value the caller obtains and submits again; the backend does not
   acquire OAuth tokens or refresh them.
-- Other target types, including `RealtimeTarget` (which authenticates once per conversation
-  connection), and targets created with `auth_mode` `identity` or `none` or without a key, keep
-  their existing credential handling.
 
 ### Manual attack creation
 
@@ -438,8 +440,9 @@ API callers are trusted operators, so these are intentional exceptions:
   OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
   of these.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
-  created them. A key submitted when creating an OpenAI-family or LiteLLM target is the
-  exception: it stays with its caller (see [Caller credentials](#caller-credentials)).
+  created them. A target created with `requires_caller_credential` shares only its
+  configuration; each caller's key stays with that caller (see
+  [Personal targets with caller credentials](#personal-targets-with-caller-credentials)).
 - Prompt content is not filtered; it is adversarial test data by design.
 - Any file type can be stored as a payload. `GET /api/media` renders only allow-listed image,
   audio, and video file extensions inline; everything else downloads as a file.

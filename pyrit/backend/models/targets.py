@@ -83,10 +83,16 @@ class CreateTargetRequest(BaseModel):
             "Azure identity (Entra ID token or DefaultAzureCredential); requires an Azure "
             "endpoint and is supported by OpenAI-family targets, AzureMLChatTarget, "
             "AzureBlobStorageTarget, and PromptShieldTarget. 'none' reads no key and sends a fixed "
-            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets. "
-            "For OpenAI-family (except RealtimeTarget) and LiteLLM targets, a registered target does not keep "
-            "the submitted api_key: it is stored for the creating caller, and every other caller must set their "
-            "own credential."
+            "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
+        ),
+    )
+    requires_caller_credential: bool = Field(
+        False,
+        description=(
+            "Opt in to per-caller credentials. The registered target keeps no key: a submitted api_key is "
+            "stored only for the creating caller, and every caller must set their own credential before using "
+            "the target. Requires register=true and auth_mode 'api_key'; supported by OpenAI-family targets "
+            "(except RealtimeTarget) and LiteLLMChatTarget. Defaults to a shared target."
         ),
     )
 
