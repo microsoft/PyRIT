@@ -10,6 +10,20 @@ export const useFindingExportDialogStyles = makeStyles({
   content: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM },
   messageBar: { flexShrink: 0 },
   list: { margin: 0, padding: 0, listStyleType: 'none' },
+  // Sub-findings indent under their parent, lined up with its title.
+  subList: { margin: 0, padding: 0, paddingInlineStart: TITLE_INDENT, listStyleType: 'none' },
+  // Read to screen readers; the indent and the locked check already show it on screen.
+  visuallyHidden: {
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    padding: 0,
+    margin: '-1px',
+    overflow: 'hidden',
+    clip: 'rect(0, 0, 0, 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
+  },
   row: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: tokens.spacingHorizontalS, minWidth: 0 },
   checkbox: { flex: '1 1 12rem', minWidth: 0 },
   label: { minWidth: 0, overflowWrap: 'anywhere' },

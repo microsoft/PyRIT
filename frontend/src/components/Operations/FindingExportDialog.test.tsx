@@ -23,7 +23,8 @@ function syntheticFinding(index: number, overrides: Partial<FindingListItem> = {
   return {
     id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`, operation_id: OPERATION.id,
     title: `Synthetic finding ${index}`, description: '', severity: 'moderate',
-    created_at: '2026-10-21T12:00:00Z', evidence_count: 0, ...overrides,
+    created_at: '2026-10-21T12:00:00Z', evidence_count: 0, parent_finding_id: null, demonstrated: true,
+    paths: [], child_count: 0, ...overrides,
   }
 }
 
@@ -146,6 +147,68 @@ describe('FindingExportDialog', () => {
     const dialog = await openDialog(user)
     expect(await within(dialog).findByText(/did not advance/)).toBeInTheDocument()
     expect(operationsApi.listFindings).toHaveBeenCalledTimes(1)
+  })
+
+  it('selects a finding with all of its sub-findings and sends only the finding', async () => {
+    const user = userEvent.setup()
+    const parent = syntheticFinding(10, { title: 'Parent', child_count: 1 })
+    const child = syntheticFinding(11, { title: 'Child', parent_finding_id: parent.id, child_count: 1 })
+    const grandchild = syntheticFinding(12, { title: 'Grandchild', parent_finding_id: child.id })
+    // Findings at every depth arrive in listing order; sub-findings nest under their parent.
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([grandchild, parent, ALPHA, child]))
+    renderDialog()
+    const dialog = await openDialog(user)
+    const [parentBox, childBox, grandchildBox] = await Promise.all(['Parent', 'Child', 'Grandchild']
+      .map(title => within(dialog).findByRole('checkbox', { name: title })))
+    const selectAll = within(dialog).getByRole('checkbox', { name: 'Select all' })
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(5)
+    expect(parentBox).toBeChecked()
+    expect(parentBox).toBeEnabled()
+    for (const box of [childBox, grandchildBox]) {
+      expect(box).toBeChecked()
+      expect(box).toBeDisabled()
+    }
+    expect(childBox).toHaveAccessibleDescription(/^Included with “Parent”/)
+    expect(grandchildBox).toHaveAccessibleDescription(/^Included with “Child”/)
+    expect(selectAll).toBeChecked()
+
+    await user.click(parentBox)
+    for (const box of [parentBox, childBox, grandchildBox]) expect(box).not.toBeChecked()
+    expect(childBox).toBeEnabled()
+    expect(selectAll).toBePartiallyChecked()
+
+    await user.click(childBox)
+    expect(childBox).toBeChecked()
+    expect(grandchildBox).toBeChecked()
+    expect(grandchildBox).toBeDisabled()
+    expect(parentBox).not.toBeChecked()
+    await user.click(parentBox)
+    expect(childBox).toBeDisabled()
+    expect(selectAll).toBeChecked()
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+
+    await waitFor(() => expect(operationsApi.exportFindings).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][1].finding_ids).toEqual([parent.id, ALPHA.id])
+  })
+
+  it('counts sub-findings toward the export limit', async () => {
+    jest.replaceProperty(findingExportLimits, 'MAX_EXPORT_FINDINGS', 2)
+    const user = userEvent.setup()
+    const parent = syntheticFinding(10, { title: 'Parent', child_count: 2 })
+    const children = [11, 12].map(index => syntheticFinding(index, { title: `Child ${index}`, parent_finding_id: parent.id }))
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage([parent, ...children]))
+    renderDialog()
+    const dialog = await openDialog(user)
+    expect(await within(dialog).findByText('Select at most 2 findings to download at once.')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Download Word' })).toBeDisabled()
+
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Parent' }))
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Child 11' }))
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Child 12' }))
+    expect(within(dialog).queryByText(/Select at most/)).not.toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Download Word' }))
+    await waitFor(() => expect(operationsApi.exportFindings).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][1].finding_ids).toEqual(children.map(child => child.id))
   })
 
   it('lists and exports once a finding that a later page repeats', async () => {

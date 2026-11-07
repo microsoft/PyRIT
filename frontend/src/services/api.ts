@@ -87,8 +87,11 @@ import type {
   Finding,
   FindingCreate,
   FindingCreateRequest,
+  FindingListItem,
+  FindingListParams,
   FindingListResponse,
   FindingOptionsResponse,
+  FindingPathsUpdateRequest,
   FindingEvidenceCreateRequest,
   FindingEvidenceAttachResponse,
   FindingEvidenceListResponse,
@@ -129,9 +132,7 @@ export const operationsApi = {
   delete: async (operationId: string): Promise<void> => {
     await apiClient.delete(operationPath(operationId))
   },
-  listFindings: async (
-    operationId: string, params: { limit: number; offset: number; title?: string; title_pattern?: string },
-  ): Promise<FindingListResponse> => {
+  listFindings: async (operationId: string, params: FindingListParams): Promise<FindingListResponse> => {
     return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
   },
   createFinding: async (operationId: string, request: FindingCreateRequest): Promise<Finding> => {
@@ -139,6 +140,13 @@ export const operationsApi = {
   },
   updateFinding: async (operationId: string, findingId: string, request: FindingCreate): Promise<Finding> => {
     return (await apiClient.put(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`, request)).data
+  },
+  replaceFindingPaths: async (
+    operationId: string, findingId: string, request: FindingPathsUpdateRequest,
+  ): Promise<FindingListItem> => {
+    return (await apiClient.put(
+      `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/paths`, request,
+    )).data
   },
   deleteFinding: async (operationId: string, findingId: string): Promise<void> => {
     await apiClient.delete(`${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}`)

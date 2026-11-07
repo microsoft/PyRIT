@@ -13,6 +13,8 @@ from pyrit.output.finding_report.report import (
     FindingReportEntry,
     FindingReportEvidence,
     FindingReportField,
+    FindingReportPath,
+    FindingReportStep,
 )
 
 LINK = "https://pyrit.example.test/attacks/a/conversations/b?findingEvidenceId=c"
@@ -336,3 +338,126 @@ async def test_breaks_lines_and_marks_control_characters() -> None:
     breaks = ["**Breaks:** crlf\\", "vt\\", "ff\\", "fs\\", "nel\\", "ls\\", "ps\\", "end", ""]
     assert _consecutive_lines(markdown=markdown, expected=breaks) == breaks
     assert "**Controls:** c1\ufffd c1\ufffd del\ufffd nul\ufffd tab\tend" in markdown.split("\n")
+
+
+def _sub_finding(*, number: str, title: str, demonstrated: bool = True, **kwargs: object) -> FindingReportEntry:
+    return FindingReportEntry(
+        title=title,
+        severity=FindingReportField(label="Severity", value="Moderate"),
+        fields=(),
+        evidence=(),
+        number=number,
+        demonstrated=demonstrated,
+        **kwargs,
+    )
+
+
+def _step(entry: FindingReportEntry) -> FindingReportStep:
+    return FindingReportStep(number=entry.number, title=entry.title, demonstrated=entry.demonstrated)
+
+
+async def test_sub_findings_nest_under_their_parent_with_paths() -> None:
+    recon = _sub_finding(number="1.1", title="Recon")
+    creds = _sub_finding(number="1.2", title="Obtain creds", demonstrated=False)
+    pivot = _sub_finding(number="1.3", title="Pivot")
+    records = _sub_finding(number="1.4", title="Pull records")
+    parent = FindingReportEntry(
+        title="Data theft",
+        severity=FindingReportField(label="Severity", value="Critical"),
+        fields=(FindingReportField(label="Description", value="Customer records left the tenant."),),
+        evidence=(),
+        number="1",
+        paths=(
+            FindingReportPath(name="Credential theft", steps=(_step(recon), _step(creds), _step(records))),
+            FindingReportPath(name="Lateral movement", steps=(_step(recon), _step(pivot), _step(records))),
+        ),
+        children=(recon, creds, pivot, records),
+    )
+    report = FindingReport(operation_name="Synthetic evaluation", findings=(parent,))
+
+    markdown = await MarkdownFindingReportPrinter().render_async(report)
+
+    assert markdown.split("\n")[4:] == [
+        "## 1 Data theft",
+        "",
+        "**Severity:** Critical",
+        "",
+        "**Description:** Customer records left the tenant.",
+        "",
+        "**Paths:**",
+        "",
+        "1. **Credential theft** (partial): 1.1 Recon → 1.2 Obtain creds (not demonstrated) → 1.4 Pull records",
+        "2. **Lateral movement** (complete): 1.1 Recon → 1.3 Pivot → 1.4 Pull records",
+        "",
+        "**Evidence:** none attached",
+        "",
+        "### 1.1 Recon",
+        "",
+        "**Severity:** Moderate",
+        "",
+        "**Evidence:** none attached",
+        "",
+        "### 1.2 Obtain creds",
+        "",
+        "**Severity:** Moderate",
+        "",
+        "**Status:** Not demonstrated",
+        "",
+        "**Evidence:** none attached",
+        "",
+        "### 1.3 Pivot",
+        "",
+        "**Severity:** Moderate",
+        "",
+        "**Evidence:** none attached",
+        "",
+        "### 1.4 Pull records",
+        "",
+        "**Severity:** Moderate",
+        "",
+        "**Evidence:** none attached",
+        "",
+    ]
+
+
+async def test_deep_sub_findings_stop_at_the_deepest_heading() -> None:
+    entry = _sub_finding(number="1.1.1.1.1.1", title="Deepest")
+    for depth in range(5, 0, -1):
+        number = ".".join(["1"] * depth)
+        entry = _sub_finding(number=number, title=f"Depth {depth}", children=(entry,))
+    report = FindingReport(operation_name="Synthetic evaluation", findings=(entry,))
+
+    markdown = await MarkdownFindingReportPrinter().render_async(report)
+
+    assert [line for line in markdown.split("\n") if line.startswith("#")] == [
+        "# Findings - Synthetic evaluation",
+        "## 1 Depth 1",
+        "### 1.1 Depth 2",
+        "#### 1.1.1 Depth 3",
+        "##### 1.1.1.1 Depth 4",
+        "###### 1.1.1.1.1 Depth 5",
+        "###### 1.1.1.1.1.1 Deepest",
+    ]
+
+
+async def test_hostile_path_names_and_steps_stay_inside_their_item() -> None:
+    markdown_it = pytest.importorskip("markdown_it")
+    hostile = _sub_finding(number="1.1", title="- [x](https://evil.example) <img src=x>\n# Forged", demonstrated=False)
+    parent = _sub_finding(
+        number="1",
+        title="Parent",
+        paths=(FindingReportPath(name="- item\n1. Forged *path*", steps=(_step(hostile),)),),
+        children=(hostile,),
+    )
+    report = FindingReport(operation_name="Synthetic evaluation", findings=(parent,))
+
+    markdown = await MarkdownFindingReportPrinter().render_async(report)
+
+    assert (
+        r"1. **- item 1. Forged \*path\*** (partial): "
+        r"1.1 - \[x\](https://evil.example) \<img src=x\> \# Forged (not demonstrated)"
+    ) in markdown.split("\n")
+    tokens = markdown_it.MarkdownIt("commonmark").parse(markdown)
+    children = [child for token in tokens for child in token.children or []]
+    assert {token.type for token in tokens + children}.isdisjoint({"html_block", "html_inline", "image", "link_open"})
+    assert sum(token.type == "list_item_open" for token in tokens) == 1

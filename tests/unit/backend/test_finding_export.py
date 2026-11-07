@@ -6,7 +6,7 @@ import re
 import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -34,6 +34,7 @@ from pyrit.models import (
     ComponentIdentifier,
     ConversationReference,
     ConversationType,
+    DecompositionPath,
     Finding,
     FindingEvidence,
     Message,
@@ -50,6 +51,8 @@ from pyrit.output.finding_report.report import (
     FindingReportEntry,
     FindingReportEvidence,
     FindingReportField,
+    FindingReportPath,
+    FindingReportStep,
 )
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
@@ -282,9 +285,9 @@ async def test_export_downloads_selected_findings_in_dashboard_order(
         export_format=export_format,
     )
     assert _finding_titles(content=response.content, export_format=export_format) == [
-        "Critical finding",
-        "Included finding",
-        "Low finding",
+        "1 Critical finding",
+        "2 Included finding",
+        "3 Low finding",
     ]
     assert _links(content=response.content, export_format=export_format) == [
         ("Restricted-marker test", _dashboard_link(evidence=evidence, conversation_id="main"))
@@ -315,7 +318,7 @@ async def test_export_defaults_to_docx(
         EVIDENCE_NOTE,
         "Finding",
         "Assessment",
-        "Included finding",
+        "1 Included finding",
     ]
 
 
@@ -530,15 +533,21 @@ async def test_report_selects_findings_beyond_the_first_dashboard_page_in_dashbo
                         link_url=_dashboard_link(evidence=evidence, conversation_id="main"),
                     ),
                 ),
+                number="1",
             ),
             FindingReportEntry(
                 title="Included finding",
                 severity=FindingReportField(label="Severity", value="Moderate"),
                 fields=(),
                 evidence=(),
+                number="2",
             ),
             FindingReportEntry(
-                title="Low finding", severity=FindingReportField(label="Severity", value="Low"), fields=(), evidence=()
+                title="Low finding",
+                severity=FindingReportField(label="Severity", value="Low"),
+                fields=(),
+                evidence=(),
+                number="3",
             ),
         ),
     )
@@ -586,7 +595,8 @@ async def test_report_reads_findings_and_evidence_in_one_service_call(
         report = await _report_async(operation_id=operation.id, finding_ids=selected)
 
     batched.assert_awaited_once()
-    assert batched.await_args is not None and batched.await_args.kwargs["finding_ids"] == selected
+    # Selected findings are read with their sub-findings, in the dashboard's order.
+    assert batched.await_args is not None and batched.await_args.kwargs["finding_ids"] == selected[::-1]
     findings_page.assert_not_called()
     evidence_page.assert_not_called()
     assert [finding.title for finding in report.findings] == ["Critical finding", "Low finding"]
@@ -685,6 +695,7 @@ async def test_report_uses_effective_score_and_conversation(sqlite_instance: SQL
                     link_url=_dashboard_link(evidence=evidence, conversation_id=ENCODED_CONVERSATION_ID),
                 ),
             ),
+            number="1",
         ),
     )
 
@@ -779,6 +790,7 @@ async def test_report_projects_optional_and_custom_fields(sqlite_instance: SQLit
             severity=FindingReportField(label="Severity", value="Informational"),
             fields=(FindingReportField(label="Description", value="Only text"),),
             evidence=(),
+            number="1",
         ),
         FindingReportEntry(
             title="Custom finding",
@@ -792,6 +804,7 @@ async def test_report_projects_optional_and_custom_fields(sqlite_instance: SQLit
                     link_url=_dashboard_link(evidence=evidence, conversation_id="main"),
                 ),
             ),
+            number="2",
         ),
     )
 
@@ -1005,3 +1018,155 @@ def test_docx_breaks_lines_and_marks_control_characters() -> None:
 
     assert "Breaks: crlf\nvt\nff\nfs\nnel\nls\nps\nend" in paragraphs
     assert "Controls: c1\ufffd c1\ufffd del\ufffd nul\ufffd tab\tend" in paragraphs
+
+
+async def _save_decomposed_findings_async(memory: SQLiteMemory) -> tuple[Operation, dict[str, Finding]]:
+    """Save "Data theft" with three sub-findings and two paths, and "Separate" with one sub-finding."""
+    operation = await memory.add_operation_async(Operation(name="Decomposed"))
+    stamp = datetime(2026, 11, 6, tzinfo=UTC)
+    named: dict[str, Finding] = {}
+
+    async def add(title: str, minutes: int, parent: str | None = None, **fields: object) -> None:
+        named[title] = await _add_finding_async(
+            memory=memory,
+            operation=operation,
+            title=title,
+            created_at=stamp - timedelta(minutes=minutes),
+            parent_finding_id=named[parent].id if parent else None,
+            **fields,
+        )
+
+    await add("Data theft", 0, severity="critical", description="Records left the tenant.")
+    await add("Separate", 1)
+    # Siblings list newest first, as on the dashboard, so Recon is 1.1.
+    await add("Recon", 2, "Data theft")
+    await add("Obtain creds", 3, "Data theft", demonstrated=False)
+    await add("Pull records", 4, "Data theft")
+    await add("Port scan", 5, "Recon")
+    await add("Lone", 6, "Separate", severity="low")
+    steps = [named[title].id for title in ("Recon", "Obtain creds", "Pull records")]
+    await memory.replace_finding_paths_async(
+        operation_id=operation.id,
+        finding_id=named["Data theft"].id,
+        paths=(
+            DecompositionPath(name="Credential theft", steps=tuple(steps)),
+            DecompositionPath(steps=(steps[0], steps[2])),
+        ),
+    )
+    return operation, named
+
+
+async def test_report_nests_each_selected_subtree_once(sqlite_instance: SQLiteMemory) -> None:
+    operation, named = await _save_decomposed_findings_async(sqlite_instance)
+
+    report = await _report_async(
+        operation_id=operation.id, finding_ids=[named[title].id for title in ("Recon", "Lone", "Data theft")]
+    )
+
+    def outline(entries: tuple[FindingReportEntry, ...]) -> list[object]:
+        return [(entry.number, entry.title, entry.demonstrated, outline(entry.children)) for entry in entries]
+
+    assert outline(report.findings) == [
+        (
+            "1",
+            "Data theft",
+            True,
+            [
+                ("1.1", "Recon", True, [("1.1.1", "Port scan", True, [])]),
+                ("1.2", "Obtain creds", False, []),
+                ("1.3", "Pull records", True, []),
+            ],
+        ),
+        ("2", "Lone", True, []),
+    ]
+    root, lone = report.findings
+    recon, creds, records = (
+        FindingReportStep(number=e.number, title=e.title, demonstrated=e.demonstrated) for e in root.children
+    )
+    assert root.paths == (
+        FindingReportPath(name="Credential theft", steps=(recon, creds, records)),
+        FindingReportPath(name="Path 2", steps=(recon, records)),
+    )
+    assert [path.complete for path in root.paths] == [False, True]
+    # Only a sub-finding listed without its parent names the finding it is part of.
+    assert lone.fields == (FindingReportField(label="Part of", value="Separate"),)
+    assert root.children[0].fields == ()
+
+
+async def test_markdown_export_nests_sub_findings_with_paths_and_status(
+    sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str]
+) -> None:
+    operation, named = await _save_decomposed_findings_async(sqlite_instance)
+
+    response = _export(
+        headers=compatibility_headers,
+        operation_id=operation.id,
+        finding_ids=[named["Data theft"].id, named["Lone"].id],
+        export_format="markdown",
+    )
+
+    assert response.status_code == 200
+    lines = response.content.decode("utf-8").split("\n")
+    assert [line for line in lines if line.startswith("#")] == [
+        "# Findings - Decomposed",
+        "## 1 Data theft",
+        "### 1.1 Recon",
+        "#### 1.1.1 Port scan",
+        "### 1.2 Obtain creds",
+        "### 1.3 Pull records",
+        "## 2 Lone",
+    ]
+    assert (
+        "1. **Credential theft** (partial): 1.1 Recon → 1.2 Obtain creds (not demonstrated) → 1.3 Pull records" in lines
+    )
+    assert "2. **Path 2** (complete): 1.1 Recon → 1.3 Pull records" in lines
+    assert lines.count("**Status:** Not demonstrated") == 1
+    assert "**Part of:** Separate" in lines
+
+
+async def test_docx_export_writes_sub_findings_depth_first(
+    sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str]
+) -> None:
+    operation, named = await _save_decomposed_findings_async(sqlite_instance)
+
+    response = _export(headers=compatibility_headers, operation_id=operation.id, finding_ids=[named["Data theft"].id])
+
+    assert response.status_code == 200
+    cells = _finding_cells(response.content)
+    assert [finding[0] for finding, _ in cells] == [
+        "1 Data theft",
+        "1.1 Recon",
+        "1.1.1 Port scan",
+        "1.2 Obtain creds",
+        "1.3 Pull records",
+    ]
+    assert cells[0] == (
+        [
+            "1 Data theft",
+            "Description: Records left the tenant.",
+            "Paths:",
+            "Credential theft (partial): 1.1 Recon → 1.2 Obtain creds (not demonstrated) → 1.3 Pull records",
+            "Path 2 (complete): 1.1 Recon → 1.3 Pull records",
+            "Evidence: none attached",
+        ],
+        ["Severity: Critical"],
+    )
+    assert cells[3] == (
+        ["1.2 Obtain creds", "Evidence: none attached"],
+        ["Severity: Moderate", "Status: Not demonstrated"],
+    )
+
+
+async def test_export_counts_sub_findings_toward_the_limit(
+    sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str]
+) -> None:
+    operation, named = await _save_decomposed_findings_async(sqlite_instance)
+
+    with patch.object(finding_export, "MAX_EXPORT_FINDINGS", 4):
+        within = _export(headers=compatibility_headers, operation_id=operation.id, finding_ids=[named["Recon"].id])
+        beyond = _export(headers=compatibility_headers, operation_id=operation.id, finding_ids=[named["Data theft"].id])
+
+    assert within.status_code == 200
+    assert beyond.status_code == 422
+    assert "counting sub-findings" in beyond.json()["detail"]
+    assert "content-disposition" not in beyond.headers

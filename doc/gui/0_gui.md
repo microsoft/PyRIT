@@ -262,10 +262,23 @@ Select an operation in the labels bar to associate new chats and scans with it.
 The operation page brings its findings, linked evidence, and execution history
 together.
 
+A finding can be broken into sub-findings, at any depth, to record a
+decomposition such as a multi-step attack. Use **Add sub-finding** on a
+finding, and expand **Sub-findings** to see them. Each finding keeps its own
+severity, and turning off **Demonstrated** marks a step that was attempted but
+not achieved. **Edit paths** records the ordered ways a finding's direct
+sub-findings demonstrate it, for example *recon → obtain credentials → pull
+records* and *recon → pivot → pull records*. A path shows as **Complete** when
+every step was demonstrated and **Partial** otherwise. Deleting a finding also
+deletes its sub-findings; a sub-finding that a path uses can't be deleted until
+you remove it from that path.
+
 **Export findings** on the operation page downloads the findings you select as
-one Word or Markdown document to paste into a report. Evidence appears as links
-to the attacks in PyRIT, without transcripts or media. Nothing is redacted, so
-store and share exported files with care.
+one Word or Markdown document to paste into a report. Selecting a finding
+includes its sub-findings, numbered under it (1, 1.1, 1.2, …), with its paths and
+any steps that were not demonstrated. Evidence appears as links to the attacks
+in PyRIT, without transcripts or media. Nothing is redacted, so store and share
+exported files with care.
 
 ![Operations page with a test operation](images/operations.png)
 

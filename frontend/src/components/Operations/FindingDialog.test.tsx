@@ -29,7 +29,7 @@ describe('FindingDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Save finding' }))
     await waitFor(() => { expect(onSave).toHaveBeenCalledWith({
       title: 'Human assessment', severity: 'critical', description: 'Notes',
-      severity_other: null, harm_type: null, harm_type_other: null,
+      severity_other: null, harm_type: null, harm_type_other: null, demonstrated: true,
     }, ATTEMPT) })
   })
 
@@ -86,7 +86,7 @@ describe('FindingDialog', () => {
     expect(screen.getByRole('textbox', { name: 'Other harm-type' })).toHaveValue('  Team harm  ')
     expect(onSave).toHaveBeenCalledWith({
       title: 'Custom', description: '', severity: 'other', severity_other: '  Team severity  ',
-      harm_type: 'Other', harm_type_other: '  Team harm  ',
+      harm_type: 'Other', harm_type_other: '  Team harm  ', demonstrated: true,
     }, ATTEMPT)
     await user.selectOptions(screen.getByRole('combobox', { name: 'Severity' }), 'low')
     await user.click(screen.getByRole('combobox', { name: 'Harm-type' }))
@@ -96,6 +96,7 @@ describe('FindingDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Save finding' }))
     expect(onSave).toHaveBeenLastCalledWith({
       title: 'Custom', description: '', severity: 'low', severity_other: null, harm_type: null, harm_type_other: null,
+      demonstrated: true,
     }, ATTEMPT)
   })
 
@@ -193,5 +194,37 @@ describe('FindingDialog', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'With evidence' }), {
       id: expect.any(String), attackResultId: 'attack-1',
     })
+  })
+
+  it('shows the parent of a new sub-finding and records whether it was demonstrated', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog parentTitle="Data theft" onSave={onSave}
+      onClose={jest.fn()} /></FluentProvider>)
+    expect(screen.getByRole('heading', { name: 'New sub-finding' })).toBeInTheDocument()
+    expect(screen.getByText('Sub-finding of “Data theft”')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: /parent/i })).not.toBeInTheDocument()
+    await user.type(screen.getByRole('textbox', { name: 'Title' }), 'Obtain creds')
+    const demonstrated = screen.getByRole('switch', { name: 'Demonstrated' })
+    expect(demonstrated).toBeChecked()
+    expect(demonstrated).toHaveAccessibleDescription(/Paths that use it show as partial/)
+    await user.click(demonstrated)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save finding' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Save finding' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'Obtain creds', demonstrated: false }), ATTEMPT)
+  })
+
+  it('arms the unsaved changes guard when only the demonstrated status changes', async () => {
+    const user = userEvent.setup()
+    const events: Event[] = []
+    const listener = (event: Event): void => { events.push(event) }
+    window.addEventListener('beforeunload', listener)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+
+    await user.click(screen.getByRole('switch', { name: 'Demonstrated' }))
+    fireEvent(window, new Event('beforeunload', { cancelable: true }))
+    expect(events[0].defaultPrevented).toBe(true)
+
+    window.removeEventListener('beforeunload', listener)
   })
 })

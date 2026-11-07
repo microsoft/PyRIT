@@ -23,25 +23,38 @@ from pydantic import AnyHttpUrl
 
 from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
+    MAX_EXPORT_FINDINGS,
     EvidenceAvailability,
     FindingEvidenceItem,
     FindingExportFormat,
     FindingExportRequest,
 )
 from pyrit.backend.services.operation_service import OperationService
-from pyrit.models import Finding, FindingSeverity, ScoreStatus
+from pyrit.models import (
+    DecompositionNode,
+    DecompositionPath,
+    DecompositionTree,
+    Finding,
+    FindingSeverity,
+    ScoreStatus,
+)
 from pyrit.models.harm_category import HarmCategory
 from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
 from pyrit.output.finding_report.report import (
     DETAIL_SEPARATOR,
     EVIDENCE_NOTE,
     NO_EVIDENCE,
+    PATH_STEP_SEPARATOR,
+    PATHS_LABEL,
+    STEP_NOT_DEMONSTRATED,
     UNAVAILABLE_EVIDENCE,
     FindingReport,
     FindingReportColumn,
     FindingReportEntry,
     FindingReportEvidence,
     FindingReportField,
+    FindingReportPath,
+    FindingReportStep,
     plain_text,
 )
 
@@ -70,11 +83,17 @@ class FindingExportFile:
     filename: str
 
 
+class FindingExportTooLargeError(ValueError):
+    """Raised when the selected findings, with all of their sub-findings, are more than one export allows."""
+
+
 async def export_findings_async(*, operation_id: UUID, request: FindingExportRequest) -> FindingExportFile:
     """
     Build one document of an Operation's selected findings, in the dashboard's listing order, with evidence references.
 
-    Evidence appears as saved metadata and dashboard links, without transcripts or media.
+    Each selected finding includes all of its sub-findings, nested under it. A sub-finding selected without its
+    parent is listed at the top level and names the finding it is part of. Evidence appears as saved metadata and
+    dashboard links, without transcripts or media.
 
     Returns:
         FindingExportFile: The complete document.
@@ -82,6 +101,7 @@ async def export_findings_async(*, operation_id: UUID, request: FindingExportReq
     Raises:
         OperationNotFoundError: If the Operation does not exist.
         FindingNotFoundError: If a selected finding is not in the Operation.
+        FindingExportTooLargeError: If the findings to include, with sub-findings, exceed ``MAX_EXPORT_FINDINGS``.
     """
     report = await _build_report_async(operation_id=operation_id, request=request)
     now = datetime.now(UTC)
@@ -110,31 +130,106 @@ def _export_filename(*, operation_id: UUID, extension: str, now: datetime) -> st
 async def _build_report_async(*, operation_id: UUID, request: FindingExportRequest) -> FindingReport:
     service = OperationService()
     operation = await service.get_async(operation_id)
-    selected = await service.get_findings_with_evidence_async(
-        operation_id=operation_id, finding_ids=request.finding_ids
-    )
-    report_findings = []
-    for finding, evidence in selected:
-        severity, fields = _project_finding_fields(finding)
-        report_findings.append(
-            FindingReportEntry(
-                title=finding.title,
-                severity=severity,
-                fields=fields,
-                evidence=tuple(
-                    _project_evidence(item=item, operation_id=operation_id, dashboard_origin=request.dashboard_origin)
-                    for item in evidence
-                ),
-            )
+    included = await service.get_finding_subtrees_async(operation_id=operation_id, finding_ids=request.finding_ids)
+    if len(included) > MAX_EXPORT_FINDINGS:
+        raise FindingExportTooLargeError(
+            f"Select at most {MAX_EXPORT_FINDINGS:,} findings to download at once, counting sub-findings."
         )
-    return FindingReport(operation_name=operation.name, findings=tuple(report_findings))
+    selected = await service.get_findings_with_evidence_async(
+        operation_id=operation_id, finding_ids=[finding.id for finding in included]
+    )
+    findings = {finding.id: finding for finding, _ in selected}
+    evidence = {
+        finding.id: tuple(
+            _project_evidence(item=item, operation_id=operation_id, dashboard_origin=request.dashboard_origin)
+            for item in items
+        )
+        for finding, items in selected
+    }
+    # A sub-finding selected without its parent leads its own subtree, and names the finding it is part of.
+    tree = DecompositionTree(
+        DecompositionNode(
+            id=finding.id,
+            parent_id=finding.parent_finding_id if finding.parent_finding_id in findings else None,
+            paths=finding.paths,
+        )
+        for finding in findings.values()
+    )
+    part_of = await service.get_finding_titles_async(
+        operation_id=operation_id,
+        finding_ids=[parent for parent in (findings[root].parent_finding_id for root in tree.roots) if parent],
+    )
+    return FindingReport(
+        operation_name=operation.name,
+        findings=_project_entries(tree=tree, findings=findings, evidence=evidence, part_of=part_of),
+    )
 
 
-def _project_finding_fields(finding: Finding) -> tuple[FindingReportField, tuple[FindingReportField, ...]]:
+def _project_entries(
+    *,
+    tree: DecompositionTree,
+    findings: dict[UUID, Finding],
+    evidence: dict[UUID, tuple[FindingReportEvidence, ...]],
+    part_of: dict[UUID, str],
+) -> tuple[FindingReportEntry, ...]:
+    """
+    Give each finding its place in the report, such as ``1.2``, and nest sub-findings under their parents.
+
+    Returns:
+        tuple[FindingReportEntry, ...]: The top-level entries, in the order the findings were read.
+    """
+    numbers = {root: str(index) for index, root in enumerate(tree.roots, start=1)}
+    visit_order = [finding_id for root in tree.roots for finding_id, _ in tree.walk(root)]
+    for finding_id in visit_order:
+        for index, child in enumerate(tree.get_children(finding_id), start=1):
+            numbers[child] = f"{numbers[finding_id]}.{index}"
+    entries: dict[UUID, FindingReportEntry] = {}
+    roots = set(tree.roots)
+    # Children come after their parents in a walk, so building in reverse finishes them first.
+    for finding_id in reversed(visit_order):
+        finding = findings[finding_id]
+        parent_id = finding.parent_finding_id
+        severity, fields = _project_finding_fields(
+            finding=finding, part_of=part_of.get(parent_id) if parent_id is not None and finding_id in roots else None
+        )
+        entries[finding_id] = FindingReportEntry(
+            title=finding.title,
+            severity=severity,
+            fields=fields,
+            evidence=evidence[finding_id],
+            number=numbers[finding_id],
+            demonstrated=finding.demonstrated,
+            paths=tuple(
+                _project_path(index=index, path=path, findings=findings, numbers=numbers)
+                for index, path in enumerate(finding.paths, start=1)
+            ),
+            children=tuple(entries[child] for child in tree.get_children(finding_id)),
+        )
+    return tuple(entries[root] for root in tree.roots)
+
+
+def _project_path(
+    *, index: int, path: DecompositionPath, findings: dict[UUID, Finding], numbers: dict[UUID, str]
+) -> FindingReportPath:
+    return FindingReportPath(
+        name=path.name if path.name and path.name.strip() else f"Path {index}",
+        steps=tuple(
+            FindingReportStep(
+                number=numbers[step], title=findings[step].title, demonstrated=findings[step].demonstrated
+            )
+            for step in path.steps
+        ),
+    )
+
+
+def _project_finding_fields(
+    *, finding: Finding, part_of: str | None
+) -> tuple[FindingReportField, tuple[FindingReportField, ...]]:
     """
     Label a finding's severity and its populated fields, in report order, and place each in a Word column.
 
-    Narrative text goes in the Finding column and classifications in the Assessment column.
+    Narrative text goes in the Finding column and classifications in the Assessment column. ``part_of`` names the
+    parent of a sub-finding that is listed without it.
 
     Returns:
         tuple[FindingReportField, tuple[FindingReportField, ...]]: The severity, then the populated fields.
@@ -149,6 +244,7 @@ def _project_finding_fields(finding: Finding) -> tuple[FindingReportField, tuple
         FindingReportField(label="Harm-type", value=str(harm_type), column=FindingReportColumn.ASSESSMENT)
         if harm_type
         else None,
+        FindingReportField(label="Part of", value=part_of) if part_of else None,
         FindingReportField(label="Description", value=finding.description) if finding.description else None,
     ]
     return FindingReportField(label="Severity", value=severity), tuple(field for field in fields if field)
@@ -225,21 +321,34 @@ def _render_docx(*, report: FindingReport, now: datetime) -> bytes:
     header = table.rows[0]
     for cell, column in zip(header.cells, _WORD_COLUMNS, strict=True):
         cell.paragraphs[0].add_run(column).bold = True
-    for finding in report.findings:
-        finding_cell, assessment_cell = table.add_row().cells
-        finding_cell.paragraphs[0].add_run(plain_text(finding.title)).bold = True
-        for field in finding.fields:
-            if field.column == FindingReportColumn.FINDING:
-                _write_word_field(paragraph=finding_cell.add_paragraph(), field=field)
-        _add_word_evidence(cell=finding_cell, evidence=finding.evidence)
-        _write_word_field(paragraph=assessment_cell.paragraphs[0], field=finding.severity)
-        for field in finding.fields:
-            if field.column == FindingReportColumn.ASSESSMENT:
-                _write_word_field(paragraph=assessment_cell.add_paragraph(), field=field)
+    # Depth-first without recursion, so a deep decomposition cannot exhaust the stack.
+    pending = list(reversed(report.findings))
+    while pending:
+        finding = pending.pop()
+        _add_word_finding(table=table, finding=finding)
+        pending.extend(reversed(finding.children))
     _set_column_widths(document=document, table=table)
     buffer = BytesIO()
     document.save(buffer)
     return buffer.getvalue()
+
+
+def _add_word_finding(*, table: Table, finding: FindingReportEntry) -> None:
+    """Write one finding's row: its account, paths, and evidence, then its severity, status, and classifications."""
+    finding_cell, assessment_cell = table.add_row().cells
+    finding_cell.paragraphs[0].add_run(plain_text(finding.heading)).bold = True
+    for field in finding.fields:
+        if field.column == FindingReportColumn.FINDING:
+            _write_word_field(paragraph=finding_cell.add_paragraph(), field=field)
+    if finding.paths:
+        _add_word_paths(cell=finding_cell, paths=finding.paths)
+    _add_word_evidence(cell=finding_cell, evidence=finding.evidence)
+    _write_word_field(paragraph=assessment_cell.paragraphs[0], field=finding.severity)
+    if finding.status is not None:
+        _write_word_field(paragraph=assessment_cell.add_paragraph(), field=finding.status)
+    for field in finding.fields:
+        if field.column == FindingReportColumn.ASSESSMENT:
+            _write_word_field(paragraph=assessment_cell.add_paragraph(), field=field)
 
 
 def _replace_template_metadata(*, document: DocxDocument, title: str, now: datetime) -> None:
@@ -274,6 +383,20 @@ def _set_column_widths(*, document: DocxDocument, table: Table) -> None:
         # Word reads each cell's width and LibreOffice the column's, so both are set.
         for cell in column.cells:
             cell.width = width
+
+
+def _add_word_paths(*, cell: _Cell, paths: tuple[FindingReportPath, ...]) -> None:
+    cell.add_paragraph().add_run(f"{PATHS_LABEL}:").bold = True
+    for path in paths:
+        paragraph = cell.add_paragraph(style=_WORD_BULLET_STYLE)
+        paragraph.add_run(plain_text(path.name)).bold = True
+        paragraph.add_run(f" ({path.status}): ")
+        for index, step in enumerate(path.steps):
+            if index:
+                paragraph.add_run(PATH_STEP_SEPARATOR)
+            paragraph.add_run(plain_text(step.label))
+            if not step.demonstrated:
+                paragraph.add_run(f" ({STEP_NOT_DEMONSTRATED})").italic = True
 
 
 def _add_word_evidence(*, cell: _Cell, evidence: tuple[FindingReportEvidence, ...]) -> None:

@@ -10,6 +10,7 @@ from pyrit.backend.models.attacks import ScoreView
 from pyrit.backend.models.common import TextStr
 from pyrit.models import (
     AttackOutcome,
+    DecompositionPath,
     Finding,
     FindingCreate,
     FindingEvidence,
@@ -20,6 +21,7 @@ from pyrit.models import (
 )
 from pyrit.models.harm_category import HarmCategory
 from pyrit.models.operation import OperationName
+from pyrit.models.request_limits import MAX_ITEMS
 
 # Ten pages of the export dialog; the dashboard keeps its selection within this.
 MAX_EXPORT_FINDINGS = 1_000
@@ -64,10 +66,19 @@ class OperationUpdateRequest(BaseModel):
     description: TextStr | None = None
 
 
+class FindingPathItem(DecompositionPath):
+    """A path of a finding, with whether it is complete."""
+
+    complete: bool = Field(description="Whether every step is a demonstrated sub-finding. Derived, never stored.")
+
+
 class FindingListItem(Finding):
-    """A finding with its evidence count."""
+    """A finding with its evidence and sub-finding counts, and whether each of its paths is complete."""
 
     evidence_count: int = Field(ge=0)
+    child_count: int = Field(ge=0, description="The number of direct sub-findings")
+    # A response narrows each path to include its derived completeness; list items are never reassigned.
+    paths: tuple[FindingPathItem, ...] = ()  # type: ignore[ty:invalid-mutable-override]
 
 
 class FindingListResponse(BaseModel):
@@ -79,7 +90,12 @@ class FindingListResponse(BaseModel):
 
 
 class FindingUpdateRequest(FindingCreate):
-    """A finding's editable fields."""
+    """
+    A finding's editable fields, replacing the saved ones.
+
+    An omitted ``parent_finding_id`` makes the finding top-level. A finding moves with its sub-findings, and paths
+    are replaced separately.
+    """
 
     title: TextStr
     description: TextStr = ""
@@ -89,13 +105,45 @@ class FindingUpdateRequest(FindingCreate):
 
 class FindingCreateRequest(FindingUpdateRequest):
     """
-    A finding to record, optionally with one saved attack result as evidence.
+    A finding to record, optionally under a parent finding and with one saved attack result as evidence.
 
     Sending the same ``id`` and content again returns the saved finding, so a client can retry safely.
     """
 
     id: UUID | None = None
     attack_result_id: UUID | None = Field(None, description="A saved attack result to link as evidence")
+
+
+class FindingPathRequest(DecompositionPath):
+    """A path to save. Omit ``id`` to add a new path."""
+
+    name: TextStr | None = None
+    description: TextStr = ""
+    steps: tuple[UUID, ...] = Field(min_length=1, max_length=MAX_ITEMS, description="Direct sub-findings, in order")
+
+
+class FindingPathsUpdateRequest(BaseModel):
+    """Every path of a finding, in order, replacing the saved ones. An empty list removes them all."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    paths: list[FindingPathRequest] = Field(max_length=MAX_ITEMS)
+
+    @field_validator("paths")
+    @classmethod
+    def _reject_repeated_ids(cls, paths: list[FindingPathRequest]) -> list[FindingPathRequest]:
+        """
+        Require each path to appear once.
+
+        Returns:
+            list[FindingPathRequest]: The paths.
+
+        Raises:
+            ValueError: If a path ID repeats.
+        """
+        if len({path.id for path in paths}) != len(paths):
+            raise ValueError("Each path can appear only once.")
+        return paths
 
 
 class FindingEvidenceCreateRequest(BaseModel):
@@ -169,7 +217,9 @@ class FindingExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     finding_ids: list[UUID] = Field(
-        min_length=1, max_length=MAX_EXPORT_FINDINGS, description="Distinct findings of the operation to include"
+        min_length=1,
+        max_length=MAX_EXPORT_FINDINGS,
+        description="Distinct findings of the operation to include, each with all of its sub-findings",
     )
     format: FindingExportFormat = FindingExportFormat.DOCX
     dashboard_origin: AnyHttpUrl = Field(description="The dashboard's origin, which evidence links open")

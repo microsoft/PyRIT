@@ -11,6 +11,7 @@ import { toApiError } from '@/services/errors'
 import type { FindingExportFormat, FindingListItem, Operation } from '@/types'
 import { downloadFile } from '@/utils/downloadFile'
 import { findingExportFilename } from '@/utils/findingExportFilename'
+import { findingChildren, findingDescendantIds, flattenFindingTree } from '@/utils/findingTree'
 
 import { useFindingExportDialogStyles } from './FindingExportDialog.styles'
 import FindingSeverityBadge from './FindingSeverityBadge'
@@ -64,10 +65,18 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
   const session = useRef<AbortController | null>(null)
 
   const findings = load.status === 'loaded' ? load.findings : []
-  const selectedIds = findings.filter(finding => selected.has(finding.id)).map(finding => finding.id)
-  const allSelected = selectedIds.length === findings.length
-  const selectAllChecked = allSelected ? true : selectedIds.length === 0 ? false : 'mixed'
-  const tooMany = selectedIds.length > MAX_EXPORT_FINDINGS
+  const children = findingChildren(findings)
+  const roots = children.get(null) ?? []
+  // A selected finding includes all of its sub-findings, so they show as checked and cannot be unchecked alone.
+  const implied = new Set(findings.filter(finding => selected.has(finding.id))
+    .flatMap(finding => findingDescendantIds(children, finding.id)))
+  const included = findings.filter(finding => selected.has(finding.id) || implied.has(finding.id))
+  const selectedIds = flattenFindingTree(findings)
+    .map(({ finding }) => finding.id)
+    .filter(findingId => selected.has(findingId) && !implied.has(findingId))
+  const allSelected = included.length === findings.length
+  const selectAllChecked = allSelected ? true : included.length === 0 ? false : 'mixed'
+  const tooMany = included.length > MAX_EXPORT_FINDINGS
   // A natively disabled button drops keyboard focus out of the dialog, so while an export runs, and while the list
   // reloads or shows nothing selected after a deleted finding, Download stays focusable but unavailable.
   const downloadKeepsFocus = exporting || (selectedIds.length === 0 && (recovering || removedTitles.length > 0))
@@ -112,7 +121,7 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
       const kept = recovery.current
       recovery.current = null
       if (kept === null) {
-        setSelected(new Set(loaded.keys()))
+        setSelected(new Set((findingChildren([...loaded.values()]).get(null) ?? []).map(finding => finding.id)))
         return
       }
       setSelected(new Set(kept.selected.filter(finding => loaded.has(finding.id)).map(finding => finding.id)))
@@ -144,8 +153,13 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
   const toggle = (findingId: string, checked: boolean): void => {
     setSelected(current => {
       const next = new Set(current)
-      if (checked) next.add(findingId)
-      else next.delete(findingId)
+      if (checked) {
+        next.add(findingId)
+        // Its sub-findings are now included with it, so they no longer need their own selection.
+        for (const descendant of findingDescendantIds(children, findingId)) next.delete(descendant)
+      } else {
+        next.delete(findingId)
+      }
       return next
     })
   }
@@ -206,28 +220,39 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
       )
     }
     if (findings.length === 0) return <Text>This operation has no findings to export.</Text>
-    return (
-      <>
-        <Checkbox label="Select all" checked={selectAllChecked} disabled={exporting}
-          onChange={() => { setSelected(allSelected ? NO_SELECTION : new Set(findings.map(finding => finding.id))) }} />
-        <ul className={styles.list}>
-          {findings.map(finding => {
-            const createdId = `${rowId}-${finding.id}-created`
-            return (
-              <li key={finding.id} className={styles.row}>
+    const renderRows = (rows: readonly FindingListItem[], parentTitle?: string): React.ReactNode => (
+      <ul className={parentTitle === undefined ? styles.list : styles.subList}>
+        {rows.map(finding => {
+          const createdId = `${rowId}-${finding.id}-created`
+          const includedId = `${rowId}-${finding.id}-included`
+          const isImplied = implied.has(finding.id)
+          const subFindings = children.get(finding.id) ?? []
+          return (
+            <li key={finding.id}>
+              <div className={styles.row}>
                 <Checkbox className={styles.checkbox} label={{ children: finding.title, className: styles.label }}
-                  aria-describedby={createdId} checked={selected.has(finding.id)} disabled={exporting}
+                  aria-describedby={isImplied ? `${includedId} ${createdId}` : createdId}
+                  checked={selected.has(finding.id) || isImplied} disabled={exporting || isImplied}
                   onChange={(_, data) => { toggle(finding.id, data.checked === true) }} />
                 <FindingSeverityBadge finding={finding} />
+                {isImplied && <span id={includedId} className={styles.visuallyHidden}>Included with “{parentTitle}”</span>}
                 <Text size={200} className={styles.created}>
                   <time id={createdId} dateTime={finding.created_at}>
                     {new Date(finding.created_at).toLocaleString()}
                   </time>
                 </Text>
-              </li>
-            )
-          })}
-        </ul>
+              </div>
+              {subFindings.length > 0 && renderRows(subFindings, finding.title)}
+            </li>
+          )
+        })}
+      </ul>
+    )
+    return (
+      <>
+        <Checkbox label="Select all" checked={selectAllChecked} disabled={exporting}
+          onChange={() => { setSelected(allSelected ? NO_SELECTION : new Set(roots.map(finding => finding.id))) }} />
+        {renderRows(roots)}
       </>
     )
   }

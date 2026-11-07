@@ -60,6 +60,16 @@ from pyrit.analytics.scenario_statistics import combine_execution_counts
 from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
 from pyrit.common.pagination import DecodedKeysetCursor
+from pyrit.memory._finding_decomposition import (
+    FindingHierarchyError,
+    delete_subtree_async,
+    get_subtree_levels_async,
+    lock_finding_tree_async,
+    reject_path_step_async,
+    require_parent_async,
+    validate_move_async,
+    validate_path_steps_async,
+)
 from pyrit.memory._seed_decomposition import (
     DecompositionIdentity,
     DecompositionUnit,
@@ -138,6 +148,7 @@ from pyrit.models import (
     ConversationStats,
     ConversationType,
     ConverterIdentifier,
+    DecompositionPath,
     Finding,
     FindingCreate,
     FindingEvidence,
@@ -982,21 +993,30 @@ class MemoryInterface(abc.ABC):
         """
         Save a finding, and optionally its evidence, in one transaction.
 
+        A sub-finding's parent must be in the same operation. A new finding has no sub-findings yet, so its paths
+        are set afterwards with ``replace_finding_paths_async``.
+
         Returns:
             Finding: The saved finding, or the finding already saved with this ID.
 
         Raises:
             LookupError: If the finding's Operation does not exist.
+            FindingHierarchyError: If the finding has paths, or its parent is not in its Operation.
             IntegrityError: If the insert fails for a reason other than a taken ID.
         """
+        if finding.paths:
+            raise FindingHierarchyError("A new finding has no sub-findings, so it cannot have paths yet.")
         entry = FindingEntry(finding)
         try:
             async with await self.get_session_async() as session, session.begin():
+                if not await lock_finding_tree_async(session, operation_id=finding.operation_id):
+                    raise LookupError(f"Operation {finding.operation_id} not found")
+                if finding.parent_finding_id is not None:
+                    await require_parent_async(
+                        session, operation_id=finding.operation_id, parent_id=finding.parent_finding_id
+                    )
                 session.add(entry)
                 await session.flush()
-                # Checked after the insert so the write lock is held; SQLite does not enforce the foreign key.
-                if await session.get(OperationEntry, finding.operation_id) is None:
-                    raise LookupError(f"Operation {finding.operation_id} not found")
                 if evidence is not None:
                     session.add(FindingEvidenceEntry(evidence))
                     await session.flush()
@@ -1015,53 +1035,93 @@ class MemoryInterface(abc.ABC):
         self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, request: FindingCreate
     ) -> Finding:
         """
-        Replace a finding's editable fields without changing identity or creation time.
+        Replace a finding's editable fields, including its parent, without changing identity, creation time, or paths.
+
+        A finding moves to another parent, or to the top level, with its sub-findings.
 
         Returns:
             Finding: The updated finding.
 
         Raises:
             LookupError: If the finding does not belong to the operation.
-            RuntimeError: If the database does not return a cursor result.
+            FindingHierarchyError: If the finding would move while it is a step of its parent's paths, or under a
+                parent that is outside the operation, the finding itself, or one of its sub-findings.
         """
         validated = FindingCreate.model_validate(request.model_dump())
         async with await self.get_session_async() as session, session.begin():
-            result = await session.execute(
-                update(FindingEntry)
-                .where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
-                .values(**validated.model_dump(mode="json"))
+            await lock_finding_tree_async(session, operation_id=operation_id)
+            entry = await self._get_finding_entry_async(
+                session=session, operation_id=operation_id, finding_id=finding_id
             )
-            if not isinstance(result, CursorResult):
-                raise RuntimeError("Finding update did not return a database cursor result.")
-            if result.rowcount == 0:
-                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
-            entry = await session.get(FindingEntry, finding_id)
-            if entry is None:
-                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+            if validated.parent_finding_id != entry.parent_finding_id:
+                await validate_move_async(session, entry=entry, parent_id=validated.parent_finding_id)
+            entry.set_fields(validated)
+            await session.flush()
+            return entry.get_finding()
+
+    async def replace_finding_paths_async(
+        self, *, operation_id: uuid.UUID, finding_id: uuid.UUID, paths: Sequence[DecompositionPath]
+    ) -> Finding:
+        """
+        Replace a finding's ordered paths, each an ordered chain of its direct sub-findings, in one transaction.
+
+        Returns:
+            Finding: The updated finding.
+
+        Raises:
+            LookupError: If the finding does not belong to the operation.
+            FindingHierarchyError: If path IDs repeat, or a step is not a direct sub-finding of the finding.
+        """
+        validated = tuple(DecompositionPath.model_validate(path.model_dump()) for path in paths)
+        async with await self.get_session_async() as session, session.begin():
+            await lock_finding_tree_async(session, operation_id=operation_id)
+            entry = await self._get_finding_entry_async(
+                session=session, operation_id=operation_id, finding_id=finding_id
+            )
+            await validate_path_steps_async(session, entry=entry, paths=validated)
+            entry.set_paths(validated)
+            await session.flush()
             return entry.get_finding()
 
     async def delete_finding_async(self, *, operation_id: uuid.UUID, finding_id: uuid.UUID) -> None:
         """
-        Permanently remove a finding within its operation.
+        Permanently remove a finding within its operation, with all of its sub-findings, their paths, and evidence.
 
         Raises:
             LookupError: If the finding does not belong to the operation.
-            RuntimeError: If the database does not return a cursor result.
+            FindingHierarchyError: If the finding is a step of its parent's paths.
         """
         async with await self.get_session_async() as session, session.begin():
-            owner = await session.scalar(
-                select(FindingEntry.id).where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
+            await lock_finding_tree_async(session, operation_id=operation_id)
+            entry = await self._get_finding_entry_async(
+                session=session, operation_id=operation_id, finding_id=finding_id
             )
-            if owner is None:
-                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
-            await session.execute(delete(FindingEvidenceEntry).where(FindingEvidenceEntry.finding_id == finding_id))
-            result = await session.execute(
-                delete(FindingEntry).where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
-            )
-            if not isinstance(result, CursorResult):
-                raise RuntimeError("Finding deletion did not return a database cursor result.")
-            if result.rowcount == 0:
-                raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+            if entry.parent_finding_id is not None:
+                await reject_path_step_async(
+                    session, finding_id=finding_id, parent_id=entry.parent_finding_id, change="deleted"
+                )
+            levels = await get_subtree_levels_async(session, operation_id=operation_id, root_ids=[finding_id])
+            await delete_subtree_async(session, levels=levels)
+
+    @staticmethod
+    async def _get_finding_entry_async(
+        *, session: AsyncSession, operation_id: uuid.UUID, finding_id: uuid.UUID
+    ) -> FindingEntry:
+        """
+        Read a finding's row only within its owning operation.
+
+        Returns:
+            FindingEntry: The row.
+
+        Raises:
+            LookupError: If the finding does not belong to the operation.
+        """
+        entry = await session.scalar(
+            select(FindingEntry).where(FindingEntry.id == finding_id, FindingEntry.operation_id == operation_id)
+        )
+        if entry is None:
+            raise LookupError(f"Finding '{finding_id}' not found in operation '{operation_id}'.")
+        return entry
 
     async def get_findings_async(
         self,
@@ -1071,34 +1131,86 @@ class MemoryInterface(abc.ABC):
         offset: int = 0,
         title_query: str | None = None,
         title_pattern: str | None = None,
+        parent_finding_id: uuid.UUID | None = None,
+        top_level_only: bool = False,
     ) -> list[Finding]:
         """
         Read one page of findings, highest severity first, then newest first.
 
+        Without a parent or top-level filter, every finding is listed, including sub-findings.
+
         Args:
-            operation_id (uuid.UUID | None): Restrict to one operation.
-            limit (int): Maximum findings to return.
-            offset (int): Number of ordered findings to skip.
-            title_query (str | None): Case-insensitive literal title substring.
-            title_pattern (str | None): Full LIKE pattern instead of title_query.
+            operation_id (uuid.UUID | None): Only findings of this operation. Defaults to None.
+            limit (int): The page size. Defaults to 20.
+            offset (int): The number of findings to skip. Defaults to 0.
+            title_query (str | None): Case-insensitive literal title substring. Defaults to None.
+            title_pattern (str | None): Full LIKE pattern instead of title_query. Defaults to None.
+            parent_finding_id (uuid.UUID | None): Only the direct sub-findings of this finding. Defaults to None.
+            top_level_only (bool): Only findings without a parent. Defaults to False.
 
         Returns:
             list[Finding]: The findings on the page.
 
         Raises:
-            ValueError: If the page bounds or pattern are invalid, or both title filters are supplied.
+            ValueError: If the page bounds or pattern are invalid, both title filters are supplied, or both a parent
+                and the top level are requested.
         """
         if limit < 1 or offset < 0:
             raise ValueError("Finding limit must be positive and offset must be nonnegative.")
         validate_text_search(value=title_query, pattern=title_pattern)
+        if top_level_only and parent_finding_id is not None:
+            raise ValueError("Filter findings by a parent or by the top level, not both.")
         statement = select(FindingEntry)
         if operation_id is not None:
             statement = statement.where(FindingEntry.operation_id == operation_id)
+        if parent_finding_id is not None:
+            statement = statement.where(FindingEntry.parent_finding_id == parent_finding_id)
+        if top_level_only:
+            statement = statement.where(FindingEntry.parent_finding_id.is_(None))
         if title_query or title_pattern is not None:
             statement = statement.where(text_match(column=FindingEntry.title, value=title_query, pattern=title_pattern))
         statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
+
+    async def get_finding_subtrees_async(
+        self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+    ) -> list[Finding]:
+        """
+        Read findings of one operation together with all of their sub-findings, at any depth.
+
+        IDs that are not in the operation are omitted.
+
+        Returns:
+            list[Finding]: Each finding once, in the same order as ``get_findings_async``.
+        """
+        if not finding_ids:
+            return []
+        async with await self.get_session_async() as session:
+            levels = await get_subtree_levels_async(session, operation_id=operation_id, root_ids=finding_ids)
+        return await self.get_findings_by_ids_async(
+            operation_id=operation_id, finding_ids=[finding_id for level in levels for finding_id in level]
+        )
+
+    async def get_finding_child_counts_async(self, *, finding_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """
+        Count the direct sub-findings of several findings.
+
+        Returns:
+            dict[uuid.UUID, int]: Counts for findings that have sub-findings.
+        """
+        unique_ids = list(dict.fromkeys(finding_ids))
+        counts: dict[uuid.UUID, int] = {}
+        async with await self.get_session_async() as session:
+            for start in range(0, len(unique_ids), self._MAX_BIND_VARS):
+                statement = (
+                    select(FindingEntry.parent_finding_id, func.count())
+                    .where(FindingEntry.parent_finding_id.in_(unique_ids[start : start + self._MAX_BIND_VARS]))
+                    .group_by(FindingEntry.parent_finding_id)
+                )
+                rows = (await session.execute(statement)).all()
+                counts.update({parent_id: count for parent_id, count in rows if parent_id is not None})
+        return counts
 
     async def get_findings_by_ids_async(
         self, *, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]

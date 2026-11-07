@@ -13,15 +13,17 @@ from pyrit.backend.models.operations import (
     FindingEvidenceCreateRequest,
     FindingEvidenceListResponse,
     FindingExportRequest,
+    FindingListItem,
     FindingListResponse,
     FindingOptionsResponse,
+    FindingPathsUpdateRequest,
     FindingUpdateRequest,
     OperationCreateRequest,
     OperationDetail,
     OperationListResponse,
     OperationUpdateRequest,
 )
-from pyrit.backend.services.finding_export import export_findings_async
+from pyrit.backend.services.finding_export import FindingExportTooLargeError, export_findings_async
 from pyrit.backend.services.operation_service import (
     DuplicateOperationError,
     FindingConflictError,
@@ -131,7 +133,7 @@ async def delete_operation_async(operation_id: UUID) -> Response:
 @router.post("/{operation_id}/findings", response_model=Finding, status_code=status.HTTP_201_CREATED)
 async def create_operation_finding_async(*, operation_id: UUID, request: FindingCreateRequest) -> Finding:
     """
-    Record a finding within an operation, optionally with one saved attack result as evidence.
+    Record a finding in an operation, optionally under a parent and with a saved attack result as evidence.
 
     Retrying with the same ID and content returns the saved finding.
 
@@ -139,7 +141,8 @@ async def create_operation_finding_async(*, operation_id: UUID, request: Finding
         Finding: The saved finding.
 
     Raises:
-        HTTPException: 409 when the ID already belongs to a different finding.
+        HTTPException: 404 when the parent is not in the operation, and 409 when the ID already belongs to a
+            different finding.
     """
     try:
         return await _require_operation_async(
@@ -159,16 +162,34 @@ async def list_operation_findings_async(
     title_pattern: str | None = Query(
         None, max_length=1000, description="Full case-insensitive LIKE pattern instead of title: % and _, / escaping"
     ),
+    parent_finding_id: UUID | None = Query(None, description="Only the direct sub-findings of this finding"),
+    top_level: bool = Query(False, description="Only findings without a parent finding"),
 ) -> FindingListResponse:
     """
     List one page of an operation's findings, by severity and then newest first.
 
+    Without a filter, findings at every depth are listed.
+
     Returns:
         FindingListResponse: One page of findings.
+
+    Raises:
+        HTTPException: 422 when both a parent and the top level are requested.
     """
+    if parent_finding_id is not None and top_level:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Filter by parent_finding_id or top_level, not both.",
+        )
     return await _require_operation_async(
         OperationService().list_findings_async(
-            operation_id=operation_id, limit=limit, offset=offset, title_query=title, title_pattern=title_pattern
+            operation_id=operation_id,
+            limit=limit,
+            offset=offset,
+            title_query=title,
+            title_pattern=title_pattern,
+            parent_finding_id=parent_finding_id,
+            top_level_only=top_level,
         )
     )
 
@@ -178,12 +199,19 @@ async def export_operation_findings_async(*, operation_id: UUID, request: Findin
     """
     Download selected findings of an operation as one Word or Markdown document, in the dashboard's order.
 
-    Evidence appears as saved metadata and dashboard links, without transcripts.
+    Each selected finding includes all of its sub-findings. Evidence appears as saved metadata and dashboard links,
+    without transcripts.
 
     Returns:
         Response: The complete document as an attachment.
+
+    Raises:
+        HTTPException: 422 when the selection has more findings, with their sub-findings, than one export allows.
     """
-    exported = await _require_operation_async(export_findings_async(operation_id=operation_id, request=request))
+    try:
+        exported = await _require_operation_async(export_findings_async(operation_id=operation_id, request=request))
+    except FindingExportTooLargeError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     return Response(
         content=exported.content,
         media_type=exported.media_type,
@@ -196,27 +224,65 @@ async def update_operation_finding_async(
     *, operation_id: UUID, finding_id: UUID, request: FindingUpdateRequest
 ) -> Finding:
     """
-    Replace the editable fields of a finding in its operation.
+    Replace the editable fields of a finding in its operation, including its parent.
+
+    A finding moves with its sub-findings. Its paths are unchanged.
 
     Returns:
         Finding: The updated finding.
+
+    Raises:
+        HTTPException: 409 when the finding would move while its parent's paths use it, or under itself or one of
+            its sub-findings.
     """
-    return await _require_operation_async(
-        OperationService().update_finding_async(operation_id=operation_id, finding_id=finding_id, request=request)
-    )
+    try:
+        return await _require_operation_async(
+            OperationService().update_finding_async(operation_id=operation_id, finding_id=finding_id, request=request)
+        )
+    except FindingConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.put("/{operation_id}/findings/{finding_id}/paths", response_model=FindingListItem)
+async def replace_operation_finding_paths_async(
+    *, operation_id: UUID, finding_id: UUID, request: FindingPathsUpdateRequest
+) -> FindingListItem:
+    """
+    Replace a finding's ordered paths. Each path is an ordered chain of the finding's direct sub-findings.
+
+    Returns:
+        FindingListItem: The finding, with whether each path is complete: every step demonstrated.
+
+    Raises:
+        HTTPException: 409 when a step is not a direct sub-finding of the finding.
+    """
+    try:
+        return await _require_operation_async(
+            OperationService().replace_finding_paths_async(
+                operation_id=operation_id, finding_id=finding_id, request=request
+            )
+        )
+    except FindingConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.delete("/{operation_id}/findings/{finding_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_operation_finding_async(*, operation_id: UUID, finding_id: UUID) -> Response:
     """
-    Permanently remove a finding from its operation.
+    Permanently remove a finding from its operation, with all of its sub-findings and their evidence.
 
     Returns:
         Response: An empty success response.
+
+    Raises:
+        HTTPException: 409 when the finding is a step of its parent's paths.
     """
-    await _require_operation_async(
-        OperationService().delete_finding_async(operation_id=operation_id, finding_id=finding_id)
-    )
+    try:
+        await _require_operation_async(
+            OperationService().delete_finding_async(operation_id=operation_id, finding_id=finding_id)
+        )
+    except FindingConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
