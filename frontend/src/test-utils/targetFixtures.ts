@@ -25,7 +25,7 @@ export interface FlatTargetInput {
 
 export function makeTarget(flat: FlatTargetInput): TargetInstance {
   const identifier: TargetIdentifier = {
-    class_name: flat.target_type ?? 'TextTarget',
+    class_name: flat.target_type ?? 'OpenAIChatTarget',
     hash: flat.identifier_hash ?? `${flat.target_registry_name}-hash`,
     endpoint: flat.endpoint ?? null,
     model_name: flat.model_name ?? null,

@@ -26,7 +26,7 @@ from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import SQLiteMemory
 from pyrit.models import ConverterIdentifier, Message, MessagePiece, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ConverterRegistry
 
 

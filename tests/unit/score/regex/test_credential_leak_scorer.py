@@ -8,11 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import MessagePiece, ScoringExpectation
-from pyrit.score import CredentialLeakScorer
-from pyrit.score.true_false.regex.regex_scorer import RegexScorer
+from pyrit.score import CredentialLeakScorer, RegexScorer
 
 _RSA_KEY_HEADER = "-----BEGIN " + "RSA PRIVATE KEY-----"
 _AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
