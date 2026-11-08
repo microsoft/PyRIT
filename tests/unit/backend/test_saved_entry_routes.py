@@ -12,16 +12,17 @@ from fastapi.testclient import TestClient
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.main import app
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
-from pyrit.backend.models.saved_entries import SavedEntryResponse
+from pyrit.backend.models.saved_entries import SavedEntryResponse, SavedEntryUpdateResponse
 from pyrit.backend.routes import converters, saved_entries
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
-from pyrit.backend.services.saved_entries import SavedEntryStorageError
+from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.saved_entry_service import (
     SavedEntryCaller,
     SavedEntryForbiddenError,
     SavedEntryInUseError,
     SavedEntryNotFoundError,
+    SavedEntryRequestError,
     SavedEntryService,
     SavedEntryVersionRequiredError,
 )
@@ -53,6 +54,7 @@ def test_get_describes_the_saved_file(client: TestClient) -> None:
         "name": "cat_replace",
         "version": "v1",
         "problem": None,
+        "recipe": None,
         "saved_by": "Ada",
         "saved_by_me": True,
         "can_change": True,
@@ -160,3 +162,63 @@ async def test_a_saved_entry_can_be_deleted_while_the_runtime_isnt_ready() -> No
     assert deleted.status_code == 204
     delete.assert_awaited_once()
     assert listed.status_code == 503
+
+
+def test_put_sends_the_changed_recipe_and_returns_the_saved_file(client: TestClient) -> None:
+    updated = SavedEntryUpdateResponse(**_ENTRY.model_dump(), running=True, still_using_old=["temporary converter 'x'"])
+    with patch.object(SavedEntryService, "update_saved_entry_async", AsyncMock(return_value=updated)) as update:
+        response = client.put(
+            "/api/saved-entries/converters/cat_replace",
+            json={"expected_version": "v1", "recipe": {"params": {"pattern": "cat", "replace": "bird"}}},
+        )
+
+    assert response.status_code == 200
+    assert (response.json()["running"], response.json()["still_using_old"]) == (True, ["temporary converter 'x'"])
+    body = update.call_args.kwargs["request"]
+    assert (body.expected_version, body.recipe) == ("v1", {"params": {"pattern": "cat", "replace": "bird"}})
+
+
+@pytest.mark.parametrize(
+    "body", [{"recipe": {}}, {"expected_version": "v1"}, {"expected_version": "v1", "recipe": {}, "x": 1}]
+)
+def test_put_needs_a_version_and_a_recipe(client: TestClient, body: dict[str, object]) -> None:
+    with patch.object(SavedEntryService, "update_saved_entry_async", AsyncMock()) as update:
+        response = client.put("/api/saved-entries/converters/cat_replace", json=body)
+
+    assert response.status_code == 422
+    update.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code"),
+    [
+        (SavedEntryNotFoundError("No saved converter is named 'cat_replace'."), 404),
+        (SavedEntryForbiddenError("Only Ada or an administrator can change saved converter 'cat_replace'."), 403),
+        (SavedEntryInUseError("Saved converter 'cat_replace' changed since it was read."), 409),
+        (SavedEntryRequestError("A saved converter's class can't change."), 422),
+        (SavedEntryConflictError("Converter 'x' was deleted while this was being saved."), 409),
+        (SavedEntryStorageError("Saved converters can't be written right now."), 503),
+        (PermissionError("Only an administrator can set trust_remote_code."), 403),
+        (ValueError("tone must be one of ..."), 400),
+    ],
+)
+def test_put_explains_why_it_didnt_change_it(client: TestClient, error: Exception, status_code: int) -> None:
+    with patch.object(SavedEntryService, "update_saved_entry_async", AsyncMock(side_effect=error)):
+        response = client.put(
+            "/api/saved-entries/converters/cat_replace", json={"expected_version": "v1", "recipe": {}}
+        )
+
+    assert response.status_code == status_code
+    assert response.json()["detail"] == str(error)
+
+
+def test_put_says_when_the_new_settings_cant_be_saved(client: TestClient) -> None:
+    error = NotSaveableError("Uses temporary target 'launch_chat', which won't exist after a restart.")
+    with patch.object(SavedEntryService, "update_saved_entry_async", AsyncMock(side_effect=error)):
+        response = client.put(
+            "/api/saved-entries/converters/cat_replace", json={"expected_version": "v1", "recipe": {}}
+        )
+
+    assert response.status_code == 400
+    assert response.json()["type"] == "/errors/not-saveable"
+    assert response.json()["detail"] == str(error)

@@ -2,11 +2,12 @@
 # Licensed under the MIT license.
 
 """
-Look up and delete saved registry entries through their stored files.
+Look up, change, and delete saved registry entries through their stored files.
 
-Who may delete an entry comes from its file, never from the running entry: the person who saved it or an
+Who may change or delete an entry comes from its file, never from the running entry: the person who saved it or an
 administrator, or anyone when sign-in is off. A file that doesn't say who saved it, such as one that can't be read,
-needs an administrator. An entry that another saved entry names, or that a registered entry holds, isn't deleted.
+needs an administrator. An entry that another saved entry names, or that a registered entry holds, isn't deleted. An
+edit rebuilds the entry through the API that creates one, so it passes every check a new entry does.
 """
 
 from __future__ import annotations
@@ -19,18 +20,35 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from azure.core.exceptions import AzureError
+from pydantic import ValidationError
 
-from pyrit.backend.models.saved_entries import SavedEntryResponse
+from pyrit.backend.models import CreateConverterRequest, CreateScorerRequest, CreateTargetRequest
+from pyrit.backend.models.saved_entries import (
+    SavedEntryResponse,
+    SavedEntryUpdateResponse,
+    UpdateSavedEntryRequest,
+)
+from pyrit.backend.models.techniques import CreateTechniqueRequest
+from pyrit.backend.services import get_converter_service, get_target_service
 from pyrit.backend.services.component_lifecycle import release_component_async
-from pyrit.backend.services.saved_entries import REGISTRIES_BY_KIND, SavedEntryStorageError, saved_entry_lock
+from pyrit.backend.services.saved_entries import (
+    REGISTRIES_BY_KIND,
+    SavedEntryReplacement,
+    SavedEntryStorageError,
+    hold_saved_entry_lock_async,
+)
+from pyrit.backend.services.scorer_service import get_scorer_service
+from pyrit.backend.services.technique_service import get_technique_service
 from pyrit.models import ComponentIdentifier, Identifiable
 from pyrit.models.catalog import (
+    ComponentRecipe,
     RegistryEntryOrigin,
     RegistryRecipeKind,
     RestoreFailure,
     SavedEntryOwner,
     SavedEntryRef,
     StoredRecipe,
+    TechniqueRecipe,
 )
 from pyrit.registry.file_document_storage import DocumentConflictError
 from pyrit.registry.instance_registry import registry_entry_origin
@@ -69,6 +87,10 @@ class SavedEntryVersionRequiredError(ValueError):
 
 class SavedEntryInUseError(ValueError):
     """The saved entry changed since it was read, or something still uses it."""
+
+
+class SavedEntryRequestError(ValueError):
+    """An edit asks for a change a saved entry can't make, such as a different class."""
 
 
 @dataclass(frozen=True)
@@ -112,15 +134,97 @@ class SavedEntryService:
         stored = await _read_async(
             storage=RegistryRecipeStorage(kind=kind, source=recipes_source), kind=kind, name=name
         )
-        owner = _owner(stored)
-        return SavedEntryResponse(
-            kind=kind,
-            name=name,
-            version=stored.version,
-            problem=stored.reason if isinstance(stored, RestoreFailure) else None,
-            saved_by=(owner.name or None) if owner is not None else None,
-            saved_by_me=owner is not None and caller.oid is not None and owner.oid == caller.oid,
-            can_change=_may_change(owner=owner, caller=caller),
+        return _describe(kind=kind, name=name, stored=stored, caller=caller)
+
+    async def update_saved_entry_async(
+        self,
+        *,
+        kind: RegistryRecipeKind,
+        name: str,
+        request: UpdateSavedEntryRequest,
+        recipes_source: str | None,
+        caller: SavedEntryCaller,
+        runtime: RuntimeLifecycle | None,
+    ) -> SavedEntryUpdateResponse:
+        """
+        Change a saved entry's settings, rebuilding it through the API that creates one.
+
+        The running entry is removed while it's rebuilt and put back if the edit fails. Registered entries that hold
+        it keep the old object until the next apply or restart. An entry that hadn't been restored is only saved;
+        Retry restores it. The name, the class or attack type, and who saved it stay the same.
+
+        Args:
+            kind (RegistryRecipeKind): The kind of entry.
+            name (str): The entry's name.
+            request (UpdateSavedEntryRequest): The version the caller read and the changed recipe.
+            recipes_source (str | None): Where saved entries are stored, or None for the default folder.
+            caller (SavedEntryCaller): Who is asking.
+            runtime (RuntimeLifecycle | None): The runtime, to keep the old entry's resources open while work could
+                still be using it.
+
+        Returns:
+            SavedEntryUpdateResponse: The saved file after the edit, and what still holds the old entry.
+
+        Raises:
+            SavedEntryNotFoundError: If no saved entry of the kind has the name.
+            SavedEntryForbiddenError: If the caller may not change it.
+            SavedEntryInUseError: If the file changed since it was read, or can't be read or isn't a valid entry.
+            SavedEntryRequestError: If the recipe changes the class or attack type, or what a saved entry can't hold.
+            NotSaveableError: If the new settings can't be saved, as for a new entry.
+            SavedEntryConflictError: If the new settings conflict with another entry, as for a new entry.
+            SavedEntryStorageError: If storage can't be read or written.
+            PermissionError: If the new settings need an administrator, as for a new entry.
+            ValueError: If the new settings aren't valid, as for a new entry.
+        """
+        singular = _singular(kind)
+        storage = RegistryRecipeStorage(kind=kind, source=recipes_source)
+        async with hold_saved_entry_lock_async():
+            stored = await _read_async(storage=storage, kind=kind, name=name)
+            if not isinstance(stored, StoredRecipe):
+                raise SavedEntryInUseError(
+                    f"Saved {singular} '{name}' can't be read or isn't a valid entry, so it can't be changed. "
+                    "Delete it, then save it again."
+                )
+            owner = stored.recipe.owner
+            if not _may_change(owner=owner, caller=caller):
+                who = owner.name if owner is not None and owner.name else "the person who saved it"
+                raise SavedEntryForbiddenError(f"Only {who} or an administrator can change saved {singular} '{name}'.")
+            if request.expected_version != stored.version:
+                raise SavedEntryInUseError(
+                    f"Saved {singular} '{name}' changed since it was read. Look at it again before changing it."
+                )
+            instances = REGISTRIES_BY_KIND[kind].get_registry_singleton().instances
+            entry = instances.get_entry(name)
+            if entry is not None and registry_entry_origin(entry.metadata) is not RegistryEntryOrigin.SAVED:
+                entry = None
+            holders = _holders(kind=kind, entry=entry) if entry is not None else []
+            if entry is not None:
+                instances.unregister(name, expected_entry=entry)
+            try:
+                await _rebuild_async(
+                    kind=kind,
+                    name=name,
+                    stored=stored.recipe,
+                    changed=request.recipe,
+                    caller=caller,
+                    recipes_source=recipes_source,
+                    replacing=SavedEntryReplacement(version=stored.version, previous=stored.recipe),
+                )
+            except BaseException:
+                _put_back(kind=kind, entry=entry)
+                raise
+            if (
+                entry is not None
+                and not holders
+                and not _registered_anywhere(entry.instance)
+                and (runtime is None or not runtime.has_active_work())
+            ):
+                await release_component_async(entry.instance)
+            updated = await _read_async(storage=storage, kind=kind, name=name)
+        return SavedEntryUpdateResponse(
+            **_describe(kind=kind, name=name, stored=updated, caller=caller).model_dump(),
+            running=entry is not None,
+            still_using_old=holders,
         )
 
     async def delete_saved_entry_async(
@@ -158,7 +262,7 @@ class SavedEntryService:
         """
         singular = _singular(kind)
         storage = RegistryRecipeStorage(kind=kind, source=recipes_source)
-        async with saved_entry_lock():
+        async with hold_saved_entry_lock_async():
             stored = await _read_async(storage=storage, kind=kind, name=name)
             owner = _owner(stored)
             if not _may_change(owner=owner, caller=caller):
@@ -212,6 +316,106 @@ class SavedEntryService:
                 await release_component_async(entry.instance)
             if runtime is not None:
                 runtime.forget_restore_failure(SavedEntryRef(kind=kind, name=name))
+
+
+def _describe(
+    *, kind: RegistryRecipeKind, name: str, stored: StoredRecipe | RestoreFailure, caller: SavedEntryCaller
+) -> SavedEntryResponse:
+    """
+    Describe a saved entry's file for the caller.
+
+    Returns:
+        SavedEntryResponse: Its version and problem, who saved it, whether the caller may change it, and, for a caller
+            who may, what it saves.
+    """
+    owner = _owner(stored)
+    can_change = _may_change(owner=owner, caller=caller)
+    recipe = (
+        stored.recipe.model_dump(mode="json", exclude_none=True, exclude={"owner"})
+        if can_change and isinstance(stored, StoredRecipe)
+        else None
+    )
+    return SavedEntryResponse(
+        kind=kind,
+        name=name,
+        version=stored.version,
+        problem=stored.reason if isinstance(stored, RestoreFailure) else None,
+        recipe=recipe,
+        saved_by=(owner.name or None) if owner is not None else None,
+        saved_by_me=owner is not None and caller.oid is not None and owner.oid == caller.oid,
+        can_change=can_change,
+    )
+
+
+async def _rebuild_async(
+    *,
+    kind: RegistryRecipeKind,
+    name: str,
+    stored: ComponentRecipe | TechniqueRecipe,
+    changed: dict[str, Any],
+    caller: SavedEntryCaller,
+    recipes_source: str | None,
+    replacing: SavedEntryReplacement,
+) -> None:
+    """
+    Build an edited entry through the API that creates one, overwriting its recipe and registering it.
+
+    Raises:
+        SavedEntryRequestError: If the recipe changes the class or attack type, or holds fields a saved entry of the
+            kind doesn't have.
+    """
+    singular = _singular(kind)
+    changes = {key: value for key, value in changed.items() if key not in ("schema_version", "owner")}
+    owner = stored.owner
+    try:
+        if isinstance(stored, TechniqueRecipe):
+            if changes.pop("type", stored.type) != stored.type:
+                raise SavedEntryRequestError(
+                    "A saved technique's attack type can't change. Delete it and save a new one instead."
+                )
+            technique = CreateTechniqueRequest(name=name, type=stored.type, persist=True, **changes)
+            await get_technique_service().create_async(
+                request=technique, owner=owner, recipes_source=recipes_source, replacing=replacing
+            )
+            return
+        for key in ("class_module", "class_name"):
+            if changes.pop(key, getattr(stored, key)) != getattr(stored, key):
+                raise SavedEntryRequestError(
+                    f"A saved {singular}'s class can't change. Delete it and save a new one instead."
+                )
+        params = changes.pop("params", {})
+        if changes:
+            raise SavedEntryRequestError(
+                f"Only the params of a saved {singular} can change; leave out {sorted(changes)}."
+            )
+        if kind is RegistryRecipeKind.TARGETS:
+            auth_mode = params.get("auth_mode")
+            target = CreateTargetRequest(
+                name=name,
+                type=stored.class_name,
+                params=params,
+                persist=True,
+                **({"auth_mode": auth_mode} if auth_mode is not None else {}),
+            )
+            await get_target_service().create_target_async(
+                request=target,
+                is_admin=caller.is_admin,
+                owner=owner,
+                recipes_source=recipes_source,
+                replacing=replacing,
+            )
+        elif kind is RegistryRecipeKind.CONVERTERS:
+            converter = CreateConverterRequest(name=name, type=stored.class_name, params=params, persist=True)
+            await get_converter_service().create_converter_async(
+                request=converter, owner=owner, recipes_source=recipes_source, replacing=replacing
+            )
+        else:
+            scorer = CreateScorerRequest(name=name, type=stored.class_name, params=params, persist=True)
+            await get_scorer_service().create_scorer_async(
+                request=scorer, owner=owner, recipes_source=recipes_source, replacing=replacing
+            )
+    except ValidationError as error:
+        raise SavedEntryRequestError(f"The changed recipe isn't valid for a saved {singular}: {error}") from error
 
 
 async def _wait_until_idle_async(runtime: RuntimeLifecycle) -> bool:

@@ -17,6 +17,7 @@ from pyrit.backend.models.techniques import (
 )
 from pyrit.backend.services.saved_entries import (
     SavedEntryConflictError,
+    SavedEntryReplacement,
     refuse_temporary_entries,
     save_then_register_async,
 )
@@ -106,6 +107,7 @@ class TechniqueService:
         request: CreateTechniqueRequest,
         owner: SavedEntryOwner | None = None,
         recipes_source: str | None = None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> TechniqueInstance:
         """
         Validate, project, and register without sending prompts or creating attacks.
@@ -118,6 +120,8 @@ class TechniqueService:
                 is off. Defaults to None.
             recipes_source (str | None): Where saved entries are stored, or None for the default folder. Defaults to
                 None.
+            replacing (SavedEntryReplacement | None): The saved technique an edit rebuilds, whose recipe is
+                overwritten instead of created, or None. Defaults to None.
 
         Returns:
             TechniqueInstance: Safe settings for the admitted factory.
@@ -128,7 +132,9 @@ class TechniqueService:
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
         if request.persist:
-            return await self._save_async(request=request, owner=owner, recipes_source=recipes_source)
+            return await self._save_async(
+                request=request, owner=owner, recipes_source=recipes_source, replacing=replacing
+            )
         return await asyncio.to_thread(self._create, request)
 
     def _create(self, request: CreateTechniqueRequest) -> TechniqueInstance:
@@ -144,7 +150,12 @@ class TechniqueService:
         )
 
     async def _save_async(
-        self, *, request: CreateTechniqueRequest, owner: SavedEntryOwner | None, recipes_source: str | None
+        self,
+        *,
+        request: CreateTechniqueRequest,
+        owner: SavedEntryOwner | None,
+        recipes_source: str | None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> TechniqueInstance:
         """
         Build the requested technique, save its recipe, then register it as a saved entry.
@@ -184,6 +195,7 @@ class TechniqueService:
             recipe=TechniqueRecipe(**request.model_dump(exclude_unset=True, exclude={"name", "persist"}), owner=owner),
             recipes_source=recipes_source,
             register=lambda metadata: self._registry.instances.register_runtime(factory, metadata=metadata),
+            replacing=replacing,
         )
         return result
 

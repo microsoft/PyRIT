@@ -32,6 +32,7 @@ from pyrit.backend.models.targets import (
 from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.saved_entries import (
     SavedEntryConflictError,
+    SavedEntryReplacement,
     prepare_saved_params_async,
     save_then_register_async,
 )
@@ -423,6 +424,7 @@ class TargetService:
         is_admin: bool = False,
         owner: SavedEntryOwner | None = None,
         recipes_source: str | None = None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> TargetInstance | UnregisteredTarget:
         """
         Create a new target instance from API request.
@@ -456,6 +458,7 @@ class TargetService:
                 authenticates with this server's stored credentials.
             owner: The signed-in user, recorded on a saved target, or None when sign-in is off.
             recipes_source: Where saved entries are stored, or None for the default folder.
+            replacing: The saved target an edit rebuilds, whose recipe is overwritten instead of created, or None.
 
         Returns:
             TargetInstance with the new target's details.
@@ -594,6 +597,7 @@ class TargetService:
                     params=params,
                     owner=owner,
                     recipes_source=recipes_source,
+                    replacing=replacing,
                 )
             target = self._build_instance_from_object(
                 target_registry_name=target_registry_name, target_obj=target_obj, origin=RegistryEntryOrigin.TEMPORARY
@@ -614,6 +618,7 @@ class TargetService:
         params: dict[str, Any],
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> TargetInstance:
         """
         Save the target's recipe, then register the target as a saved entry.
@@ -643,6 +648,7 @@ class TargetService:
             ),
             recipes_source=recipes_source,
             register=lambda metadata: self._registry.instances.register(target_obj, name=name, metadata=metadata),
+            replacing=replacing,
         )
         return target
 

@@ -17,6 +17,7 @@ from pyrit.backend.models import (
 from pyrit.backend.models.scorers import UnregisteredScorer
 from pyrit.backend.services.saved_entries import (
     SavedEntryConflictError,
+    SavedEntryReplacement,
     prepare_saved_params_async,
     save_then_register_async,
 )
@@ -226,6 +227,7 @@ class ScorerService:
         request: CreateScorerRequest,
         owner: SavedEntryOwner | None = None,
         recipes_source: str | None = None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> ScorerInstance | UnregisteredScorer:
         """
         Build a scorer through the shared registry resolver, with optional registration.
@@ -238,6 +240,7 @@ class ScorerService:
             request: The create scorer request with type, params, and name.
             owner: The signed-in user, recorded on a saved scorer, or None when sign-in is off.
             recipes_source: Where saved entries are stored, or None for the default folder.
+            replacing: The saved scorer an edit rebuilds, whose recipe is overwritten instead of created, or None.
 
         Returns:
             ScorerInstance | UnregisteredScorer: A named instance, or an unregistered
@@ -252,7 +255,7 @@ class ScorerService:
         """
         if request.persist and request.name is not None:
             return await self._save_scorer_async(
-                name=request.name, request=request, owner=owner, recipes_source=recipes_source
+                name=request.name, request=request, owner=owner, recipes_source=recipes_source, replacing=replacing
             )
 
         def create() -> ScorerInstance | UnregisteredScorer:
@@ -282,6 +285,7 @@ class ScorerService:
         request: CreateScorerRequest,
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> ScorerInstance:
         """
         Build the requested scorer, save its recipe, then register it as a saved entry.
@@ -335,6 +339,7 @@ class ScorerService:
             ),
             recipes_source=recipes_source,
             register=lambda metadata: self._registry.instances.register(scorer, name=name, metadata=metadata),
+            replacing=replacing,
         )
         return instance
 

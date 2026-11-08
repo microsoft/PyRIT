@@ -13,7 +13,10 @@ import asyncio
 import inspect
 import logging
 import weakref
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 from azure.core.exceptions import AzureError
@@ -57,6 +60,26 @@ REGISTRIES_BY_KIND: Mapping[RegistryRecipeKind, Any] = {
 }
 
 
+@dataclass(frozen=True)
+class SavedEntryReplacement:
+    """
+    A saved entry an edit rebuilds, so its recipe is overwritten instead of created.
+
+    The edit holds ``hold_saved_entry_lock_async()`` and has removed the running entry before the entry is rebuilt.
+
+    Attributes:
+        version (str): The version of the recipe the edit read.
+        previous (ComponentRecipe | TechniqueRecipe): That recipe, written back if the new entry can't be registered.
+    """
+
+    version: str
+    previous: ComponentRecipe | TechniqueRecipe
+
+
+# Whether the running task holds the lock, so it can't wait on it a second time.
+_HOLDING_SAVED_ENTRY_LOCK: ContextVar[bool] = ContextVar("_holding_saved_entry_lock", default=False)
+
+
 def saved_entry_lock() -> asyncio.Lock:
     """
     Return the lock that saving and deleting saved entries hold, so a delete can't miss a save that names the entry.
@@ -69,6 +92,27 @@ def saved_entry_lock() -> asyncio.Lock:
     if lock is None:
         lock = _SAVED_ENTRY_LOCKS[loop] = asyncio.Lock()
     return lock
+
+
+@asynccontextmanager
+async def hold_saved_entry_lock_async() -> AsyncGenerator[None, None]:
+    """
+    Hold the lock that saving, changing, and deleting saved entries take.
+
+    Yields:
+        None: While the lock is held.
+
+    Raises:
+        RuntimeError: If the running task already holds it, which would otherwise wait forever.
+    """
+    if _HOLDING_SAVED_ENTRY_LOCK.get():
+        raise RuntimeError("This task already holds the saved entry lock, so it can't take it again.")
+    async with saved_entry_lock():
+        token = _HOLDING_SAVED_ENTRY_LOCK.set(True)
+        try:
+            yield
+        finally:
+            _HOLDING_SAVED_ENTRY_LOCK.reset(token)
 
 
 # The registries whose entries a saved entry may name; it may use only the ones that come back after a restart.
@@ -272,6 +316,7 @@ async def save_then_register_async(
     recipe: ComponentRecipe | TechniqueRecipe,
     recipes_source: str | None,
     register: Callable[[dict[str, Any]], object],
+    replacing: SavedEntryReplacement | None = None,
 ) -> None:
     """
     Save an entry's recipe, then register the entry as saved.
@@ -287,13 +332,24 @@ async def save_then_register_async(
         recipe (ComponentRecipe | TechniqueRecipe): How to rebuild the entry, naming who saved it.
         recipes_source (str | None): Where saved entries are stored, or None for the default folder.
         register (Callable[[dict[str, Any]], object]): Registers the built entry with the metadata it's given.
+        replacing (SavedEntryReplacement | None): The saved entry an edit rebuilds, whose recipe is overwritten
+            instead, or None to save a new entry. Defaults to None.
 
     Raises:
-        SavedEntryConflictError: If a saved or registered entry of the kind already has the name, or an entry the
-            recipe names was deleted.
-        SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
+        SavedEntryConflictError: If a saved or registered entry of the kind already has the name, an entry the
+            recipe names was deleted, or the recipe an edit replaces changed since it was read.
+        SavedEntryStorageError: If the recipe can't be written, or can't be deleted or put back after registering
+            failed.
     """
-    async with saved_entry_lock():
+    if replacing is not None:
+        if not _HOLDING_SAVED_ENTRY_LOCK.get():
+            raise RuntimeError("An edit must hold the saved entry lock while it replaces a saved entry.")
+        await asyncio.to_thread(_refuse_missing_references, kind=kind, recipe=recipe, recipes_source=recipes_source)
+        await _replace_then_register_async(
+            kind=kind, name=name, recipe=recipe, recipes_source=recipes_source, register=register, replacing=replacing
+        )
+        return
+    async with hold_saved_entry_lock_async():
         # Looking up the recipe's classes can wait on discovery, so it stays off the event loop.
         await asyncio.to_thread(_refuse_missing_references, kind=kind, recipe=recipe, recipes_source=recipes_source)
         await _save_then_register_async(
@@ -355,6 +411,62 @@ async def _save_then_register_async(
         register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
     except Exception as error:
         if not await _delete_recipe_async(storage=storage, singular=singular, name=name):
+            raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
+        if isinstance(error, ValueError):
+            raise SavedEntryConflictError(str(error)) from error
+        raise
+
+
+async def _replace_then_register_async(
+    *,
+    kind: RegistryRecipeKind,
+    name: str,
+    recipe: ComponentRecipe | TechniqueRecipe,
+    recipes_source: str | None,
+    register: Callable[[dict[str, Any]], object],
+    replacing: SavedEntryReplacement,
+) -> None:
+    """
+    Overwrite the recipe an edit read, then register the rebuilt entry, putting the old recipe back if that fails.
+
+    Raises:
+        SavedEntryConflictError: If the recipe changed since it was read, or registering refused the entry.
+        SavedEntryStorageError: If the recipe can't be written, or can't be put back after registering failed.
+    """
+    singular = kind.value.removesuffix("s")
+    storage = RegistryRecipeStorage(kind=kind, source=recipes_source)
+    try:
+        version = await asyncio.to_thread(
+            storage.replace_recipe, name=name, recipe=recipe, expected_version=replacing.version
+        )
+    except DocumentConflictError as error:
+        raise SavedEntryConflictError(
+            f"Saved {singular} '{name}' changed since it was read. Look at it again before changing it."
+        ) from error
+    except (OSError, AzureError, TimeoutError) as error:
+        logger.error(
+            "Saved %s '%s' couldn't be written to %s (%s).",
+            singular,
+            name,
+            storage.display_source,
+            type(error).__name__,
+        )
+        raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
+    try:
+        register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
+    except Exception as error:
+        try:
+            await asyncio.to_thread(
+                storage.replace_recipe, name=name, recipe=replacing.previous, expected_version=version
+            )
+        except (DocumentConflictError, OSError, AzureError, TimeoutError):
+            logger.error(
+                "Saved %s '%s' in %s holds the new settings, but the edited entry couldn't be registered. Its old "
+                "settings come back only if the file is fixed.",
+                singular,
+                name,
+                storage.display_source,
+            )
             raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
         if isinstance(error, ValueError):
             raise SavedEntryConflictError(str(error)) from error

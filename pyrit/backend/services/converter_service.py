@@ -53,6 +53,7 @@ from pyrit.backend.services.saved_entries import (
     NotSaveableError,
     SavedEntryConflictError,
     SavedEntryRemovalError,
+    SavedEntryReplacement,
     prepare_saved_params_async,
     save_then_register_async,
 )
@@ -288,6 +289,7 @@ class ConverterService:
         request: CreateConverterRequest,
         owner: SavedEntryOwner | None = None,
         recipes_source: str | None = None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> ConverterInstance | UnregisteredConverter:
         """
         Create a new converter instance from API request.
@@ -301,6 +303,7 @@ class ConverterService:
             request: The create converter request with type and params.
             owner: The signed-in user, recorded on a saved converter, or None when sign-in is off.
             recipes_source: Where saved entries are stored, or None for the default folder.
+            replacing: The saved converter an edit rebuilds, whose recipe is overwritten instead of created, or None.
 
         Returns:
             ConverterInstance with the new converter's details.
@@ -317,7 +320,7 @@ class ConverterService:
             raise ValueError(f"Converter type '{request.type}' not found")
         if request.persist and request.name is not None:
             return await self._save_converter_async(
-                name=request.name, request=request, owner=owner, recipes_source=recipes_source
+                name=request.name, request=request, owner=owner, recipes_source=recipes_source, replacing=replacing
             )
         if request.register:
             if request.name is None:
@@ -410,6 +413,7 @@ class ConverterService:
         request: CreateConverterRequest,
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
+        replacing: SavedEntryReplacement | None = None,
     ) -> ConverterInstance:
         """
         Build the requested converter, save its recipe, then register it as a saved entry.
@@ -466,6 +470,7 @@ class ConverterService:
             ),
             recipes_source=recipes_source,
             register=lambda metadata: self._registry.instances.register(converter_obj, name=name, metadata=metadata),
+            replacing=replacing,
         )
         return converter
 
