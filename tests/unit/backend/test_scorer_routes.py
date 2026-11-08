@@ -16,7 +16,7 @@ from pyrit.backend.models.common import MAX_CURSOR_LENGTH, MAX_IDENTIFIER_LENGTH
 from pyrit.backend.services.saved_entries import SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models import ComponentIdentifier, Scorable, Score, ScoringExpectation, TargetIdentifier
-from pyrit.models.catalog.registry_recipe import SavedEntryOwner
+from pyrit.models.catalog import SavedEntryOwner
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.score import Scorer

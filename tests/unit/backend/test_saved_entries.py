@@ -7,7 +7,7 @@ import pytest
 
 from pyrit.backend.services.saved_entries import NotSaveableError, refuse_temporary_references
 from pyrit.converter import Base64Converter
-from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
+from pyrit.models import ComponentType, Parameter, RegistryReference
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
