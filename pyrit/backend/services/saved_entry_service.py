@@ -197,7 +197,6 @@ class SavedEntryService:
             entry = instances.get_entry(name)
             if entry is not None and registry_entry_origin(entry.metadata) is not RegistryEntryOrigin.SAVED:
                 entry = None
-            holders = _holders(kind=kind, entry=entry) if entry is not None else []
             if entry is not None:
                 instances.unregister(name, expected_entry=entry)
             try:
@@ -208,11 +207,16 @@ class SavedEntryService:
                     changed=request.recipe,
                     caller=caller,
                     recipes_source=recipes_source,
-                    replacing=SavedEntryReplacement(version=stored.version, previous=stored.recipe),
+                    replacing=SavedEntryReplacement(
+                        version=stored.version, previous=stored.recipe, running=entry is not None
+                    ),
                 )
             except BaseException:
                 _put_back(kind=kind, entry=entry)
                 raise
+            # Listed after the rebuild, since a request that finished during it may have registered an entry that
+            # holds the old one.
+            holders = _holders(kind=kind, entry=entry) if entry is not None else []
             if (
                 entry is not None
                 and not holders
@@ -361,17 +365,24 @@ async def _rebuild_async(
     Build an edited entry through the API that creates one, overwriting its recipe and registering it.
 
     Raises:
-        SavedEntryRequestError: If the recipe changes the class or attack type, or holds fields a saved entry of the
-            kind doesn't have.
+        SavedEntryRequestError: If the recipe changes the name, class, attack type, or who saved the entry, or holds
+            fields a saved entry of the kind doesn't have.
     """
     singular = _singular(kind)
-    changes = {key: value for key, value in changed.items() if key not in ("schema_version", "owner")}
     owner = stored.owner
+    stored_owner = owner.model_dump(mode="json") if owner is not None else None
+    if changed.get("owner", stored_owner) != stored_owner:
+        raise SavedEntryRequestError(f"Who saved a saved {singular} can't change; leave out owner.")
+    changes = {key: value for key, value in changed.items() if key not in ("schema_version", "owner")}
     try:
         if isinstance(stored, TechniqueRecipe):
             if changes.pop("type", stored.type) != stored.type:
                 raise SavedEntryRequestError(
                     "A saved technique's attack type can't change. Delete it and save a new one instead."
+                )
+            if changes.pop("name", name) != name or changes.pop("persist", True) is not True:
+                raise SavedEntryRequestError(
+                    "A saved technique keeps its name and stays saved. Delete it and save a new one instead."
                 )
             technique = CreateTechniqueRequest(name=name, type=stored.type, persist=True, **changes)
             await get_technique_service().create_async(
@@ -388,6 +399,8 @@ async def _rebuild_async(
             raise SavedEntryRequestError(
                 f"Only the params of a saved {singular} can change; leave out {sorted(changes)}."
             )
+        if not isinstance(params, dict):
+            raise SavedEntryRequestError(f"A saved {singular}'s params must be an object.")
         if kind is RegistryRecipeKind.TARGETS:
             auth_mode = params.get("auth_mode")
             target = CreateTargetRequest(

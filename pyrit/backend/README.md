@@ -96,13 +96,14 @@ from starting can be fixed or deleted.
   has.
 - `PUT /api/saved-entries/{kind}/{name}` - Change a saved entry: send back the `recipe` GET returned, changed, as
   `{"expected_version": "<version>", "recipe": {...}}`. A target, converter, or scorer changes its `params`; a
-  technique changes anything its create request takes except its name and attack type. Its name, class or attack
-  type, and who saved it stay the same (**422** otherwise). The entry is rebuilt through the API that creates one, so
-  the same checks and codes apply, such as the typed **400** for settings that can't be saved. The running entry is
-  replaced; registered entries that hold it keep its old settings until the next apply or restart, and the response
-  lists them in `still_using_old`. An entry that wasn't restored is only saved (`running` is false); select Retry to
-  restore it. Who may change it, and the **403**, **404**, **409** for a changed file, and **503** codes, are as for
-  DELETE. A file that can't be read or isn't a valid entry can't be changed (**409**); delete it and save it again.
+  technique changes anything its create request takes except its name, attack type, and `persist`. Its name, class or
+  attack type, and who saved it stay the same, and it stays saved (**422** otherwise). The entry is rebuilt through
+  the API that creates one, so the same checks and codes apply, such as the typed **400** for settings that can't be
+  saved. The running entry is replaced; registered entries that hold it keep its old settings until the next apply or
+  restart, and the response lists them in `still_using_old`. An entry that wasn't restored is only saved (`running` is
+  false); select Retry to restore it. Who may change it, and the **403**, **404**, **409** for a changed file, and
+  **503** codes, are as for DELETE. A file that can't be read or isn't a valid entry can't be changed (**409**);
+  delete it and save it again.
 - `DELETE /api/saved-entries/{kind}/{name}?expected_version=<version>` - Delete the file and remove the entry it
   restored, so it doesn't come back after a restart; a startup entry with the same name stays. Who may delete it
   comes from the file: the person who saved it or an administrator, or anyone when sign-in is off (**403**

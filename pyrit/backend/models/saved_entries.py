@@ -57,7 +57,7 @@ class UpdateSavedEntryRequest(BaseModel):
         ...,
         description=(
             "The recipe GET returned, changed. A target, converter, or scorer changes its params; a technique changes "
-            "anything its create request takes except its name and attack type."
+            "anything its create request takes except its name, attack type, and persist."
         ),
     )
 

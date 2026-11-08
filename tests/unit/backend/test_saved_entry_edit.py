@@ -269,7 +269,7 @@ async def test_replacing_a_saved_entry_needs_the_lock_an_edit_holds(tmp_path: Pa
             recipe=recipe,
             recipes_source=str(tmp_path),
             register=register,
-            replacing=SavedEntryReplacement(version="v1", previous=recipe),
+            replacing=SavedEntryReplacement(version="v1", previous=recipe, running=True),
         )
 
     register.assert_not_called()
@@ -311,7 +311,9 @@ async def test_an_edit_needs_the_version_it_read_and_the_right_to_change_it(tmp_
     ("change", "message"),
     [
         ({"class_name": "ROT13Converter"}, "A saved converter's class can't change."),
-        ({"owner": {"oid": BEN_OID, "name": "Ben"}, "source": "other"}, "Only the params of a saved converter"),
+        ({"owner": {"oid": BEN_OID, "name": "Ben"}}, "Who saved a saved converter can't change"),
+        ({"source": "other"}, "Only the params of a saved converter"),
+        ({"params": None}, "A saved converter's params must be an object."),
     ],
 )
 async def test_an_edit_keeps_the_class_and_holds_only_what_a_saved_entry_can(
@@ -385,6 +387,72 @@ async def test_an_entry_that_holds_the_edited_one_keeps_the_old_object_until_a_r
     release.assert_not_awaited()
 
 
+async def test_an_entry_registered_while_the_edit_rebuilds_keeps_the_old_object(tmp_path: Path) -> None:
+    _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
+    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    old = TargetRegistry.get_registry_singleton().instances.get("saved_chat")
+    details = await _read(tmp_path, TARGETS, "saved_chat")
+    replace_recipe = RegistryRecipeStorage.replace_recipe
+
+    def replace_while_a_request_registers_a_holder(storage: RegistryRecipeStorage, **kwargs: Any) -> str:
+        ConverterRegistry.get_registry_singleton().instances.register(
+            ToneConverter(converter_target=old, tone="formal"), name="formal_tone"
+        )
+        return replace_recipe(storage, **kwargs)
+
+    with (
+        patch.object(RegistryRecipeStorage, "replace_recipe", replace_while_a_request_registers_a_holder),
+        patch("pyrit.backend.services.saved_entry_service.release_component_async", AsyncMock()) as release,
+    ):
+        edited = await _edit(
+            tmp_path,
+            TARGETS,
+            "saved_chat",
+            version=details.version,
+            recipe={**details.recipe, "params": {**details.recipe["params"], "model_name": "gpt-4o-mini"}},
+        )
+
+    assert edited.still_using_old == ["temporary converter 'formal_tone'"]
+    release.assert_not_awaited()
+
+
+@pytest.mark.parametrize("change", [{"name": "other_send"}, {"persist": False}])
+async def test_a_saved_technique_keeps_its_name_and_stays_saved(tmp_path: Path, change: dict[str, Any]) -> None:
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(build_technique_factories())
+    await TechniqueService().create_async(
+        request=CreateTechniqueRequest(name="patient_send", type="PromptSendingAttack", persist=True),
+        owner=ADA,
+        recipes_source=str(tmp_path),
+    )
+    details = await _read(tmp_path, RegistryRecipeKind.TECHNIQUES, "patient_send")
+
+    with pytest.raises(SavedEntryRequestError) as refusal:
+        await _edit(
+            tmp_path,
+            RegistryRecipeKind.TECHNIQUES,
+            "patient_send",
+            version=details.version,
+            recipe={**details.recipe, **change},
+        )
+
+    assert str(refusal.value) == (
+        "A saved technique keeps its name and stays saved. Delete it and save a new one instead."
+    )
+    assert AttackTechniqueRegistry.get_registry_singleton().instances.get("patient_send") is not None
+
+
+async def test_a_saved_target_needs_its_params_as_an_object(tmp_path: Path) -> None:
+    _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
+    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    details = await _read(tmp_path, TARGETS, "saved_chat")
+
+    with pytest.raises(SavedEntryRequestError) as refusal:
+        await _edit(tmp_path, TARGETS, "saved_chat", version=details.version, recipe={**details.recipe, "params": None})
+
+    assert str(refusal.value) == "A saved target's params must be an object."
+    assert TargetRegistry.get_registry_singleton().instances.get("saved_chat") is not None
+
+
 @pytest.mark.parametrize("held", [False, True])
 async def test_the_old_entry_is_released_only_when_nothing_could_use_it(tmp_path: Path, held: bool) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
@@ -429,8 +497,10 @@ async def test_an_entry_that_failed_to_restore_is_fixed_and_comes_back_on_retry(
     )
 
     assert edited.running is False
-    TargetRegistry.reset_registry_singleton()
+    # Retry restores it into the registries as they are, so the edit must not have registered it.
+    assert TargetRegistry.get_registry_singleton().instances.get("saved_chat") is None
     assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert TargetRegistry.get_registry_singleton().instances.get("saved_chat") is not None
 
 
 async def test_a_file_rewritten_after_the_edit_read_it_isnt_overwritten(tmp_path: Path) -> None:

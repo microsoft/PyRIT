@@ -22,8 +22,8 @@ import pyrit.backend.services.runtime_lifecycle as lifecycle_module
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import AuthenticatedUser, EntraAuthMiddleware, require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
-from pyrit.backend.routes import configuration, health, restore_failures, targets
-from pyrit.backend.services import ScenarioRunService
+from pyrit.backend.routes import configuration, health, restore_failures, saved_entries, targets
+from pyrit.backend.services import ScenarioRunService, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
@@ -1607,6 +1607,41 @@ async def test_retry_keeps_what_it_restored_while_other_entries_still_fail_async
     assert isinstance(first, OpenAIChatTarget)
     assert (complete.json()["state"], runtime.state) == ("ready", "ready")
     assert targets.instances.get("first") is first
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_retry_restores_an_entry_an_edit_fixed_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+    # The cached service holds the registry it was made with, so it's made again with this test's.
+    get_target_service.cache_clear()
+    recipes = tmp_path / "recipes"
+    unreachable = {"auth_mode": "identity", "endpoint": "https://api.example.test/v1"}
+    _save_recipe(
+        recipes,
+        kind="targets",
+        name="ghost",
+        document={**_RESTORABLE_TARGET, "params": {**_RESTORABLE_TARGET["params"], **unreachable}},
+    )
+    await _start_with_recipes_async(runtime, recipes=recipes)
+    assert runtime.state == "failed"
+    # The fixture skips the management setup that names the storage source.
+    runtime.app.state.registry_recipes_source = str(recipes)
+    runtime.app.include_router(saved_entries.router, prefix="/api")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        details = (await client.get("/api/saved-entries/targets/ghost")).json()
+        edit = await client.put(
+            "/api/saved-entries/targets/ghost",
+            json={
+                "expected_version": details["version"],
+                "recipe": {**details["recipe"], "params": _RESTORABLE_TARGET["params"]},
+            },
+        )
+    retry = await _retry_async(runtime)
+    get_target_service.cache_clear()
+
+    assert (edit.status_code, edit.json()["running"]) == (200, False)
+    assert (retry.status_code, retry.json()) == (200, {"state": "ready", "outcome": "success", "items": []})
+    assert isinstance(TargetRegistry.get_registry_singleton().instances.get("ghost"), OpenAIChatTarget)
 
 
 @pytest.mark.usefixtures("patch_central_database", "startup_chat")

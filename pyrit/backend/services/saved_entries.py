@@ -70,10 +70,13 @@ class SavedEntryReplacement:
     Attributes:
         version (str): The version of the recipe the edit read.
         previous (ComponentRecipe | TechniqueRecipe): That recipe, written back if the new entry can't be registered.
+        running (bool): Whether the entry was running, so the rebuilt one is registered in its place. One that
+            wasn't, such as an entry that failed to restore, is only saved, and Retry or the next start restores it.
     """
 
     version: str
     previous: ComponentRecipe | TechniqueRecipe
+    running: bool
 
 
 # Whether the running task holds the lock, so it can't wait on it a second time.
@@ -427,7 +430,9 @@ async def _replace_then_register_async(
     replacing: SavedEntryReplacement,
 ) -> None:
     """
-    Overwrite the recipe an edit read, then register the rebuilt entry, putting the old recipe back if that fails.
+    Overwrite the recipe an edit read, then register the rebuilt entry if the old one was running.
+
+    The old recipe is put back if registering fails.
 
     Raises:
         SavedEntryConflictError: If the recipe changed since it was read, or registering refused the entry.
@@ -452,6 +457,8 @@ async def _replace_then_register_async(
             type(error).__name__,
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
+    if not replacing.running:
+        return
     try:
         register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
     except Exception as error:
