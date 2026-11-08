@@ -476,8 +476,8 @@ export interface TargetListResponse {
 }
 
 export interface CreateTargetRequest {
-  /** Registry name; required with `persist`. */
-  name?: string
+  /** Registry name the target is registered under. */
+  name: string
   type: string
   params: Record<string, unknown>
   auth_mode?: TargetAuthMode
