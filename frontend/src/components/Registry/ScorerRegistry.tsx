@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 
 import {
   Checkbox, Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip,
@@ -176,6 +176,16 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
   const { preferences, updatePreferences } = useUserPreferences()
   useAutoRefresh(onRefresh, !loading)
   const [onlySavedByMe, setOnlySavedByMe] = useState(false)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const [focusRestore, setFocusRestore] = useState(0)
+  useEffect(() => {
+    if (focusRestore) heading.current?.focus()
+  }, [focusRestore])
+  const handleDeleted = () => {
+    // The deleted scorer's row, or its whole table, is about to unmount, so focus goes to the page heading.
+    setFocusRestore((current) => current + 1)
+    onRefresh()
+  }
   const savedByMeCount = scorers.filter((scorer) => scorer.saved_by_me === true).length
   // The checkbox only shows while the user has a saved scorer, so it turns off when the last one goes.
   if (onlySavedByMe && savedByMeCount === 0) setOnlySavedByMe(false)
@@ -184,7 +194,7 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
     <div className={styles.root}>
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text as="h1" aria-label="Scorer Registry" size={600} weight="semibold">
+          <Text as="h1" ref={heading} tabIndex={-1} aria-label="Scorer Registry" size={600} weight="semibold">
             <ContextualHelpLabel term="Scorer Registry" labelProps={{ weight: 'semibold' }}>
               Components that evaluate evidence and return a score or verdict. The attack decides what to do with that result.
             </ContextualHelpLabel>
@@ -207,7 +217,7 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
         const items = shown.filter((scorer: ScorerInstance) => scorerFamily(scorer) === family)
         return items.length > 0
           ? <ScorerTable key={family} family={family} title={title} metrics={metrics} scorers={items}
-            onDeleted={onRefresh} /> : null
+            onDeleted={handleDeleted} /> : null
       })}
       {!loading && !error && scorers.length === 0 && <Text>No scorers are registered. Configure scorers through an initializer.</Text>}
     </div>
