@@ -13,7 +13,7 @@ wire for the converter's class, supported data types, and constructor params.
 from pyrit.backend.models import ConverterInstance
 from pyrit.converter import Converter
 from pyrit.models import ConverterIdentifier
-from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin
+from pyrit.models.catalog import RegistryEntryOrigin
 
 
 def converter_object_to_instance(

@@ -25,12 +25,12 @@ from pydantic import ValidationError
 
 from pyrit import converter
 from pyrit.backend.main import app
-from pyrit.backend.models.converters import (
+from pyrit.backend.models import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
 from pyrit.backend.routes import converters as converter_routes
-from pyrit.backend.services.converter_service import (
+from pyrit.backend.services import (
     ConverterService,
     get_converter_service,
 )
@@ -40,7 +40,7 @@ from pyrit.backend.services.saved_entries import (
     SavedEntryRemovalError,
     SavedEntryStorageError,
 )
-from pyrit.common.apply_defaults import apply_defaults, reset_default_values, set_default_value
+from pyrit.common import apply_defaults, reset_default_values, set_default_value
 from pyrit.converter import (
     Base64Converter,
     BinaryConverter,
@@ -55,20 +55,15 @@ from pyrit.converter import (
     SuffixAppendConverter,
     TokenSelectionStrategy,
     TranslationConverter,
+    get_converter_modalities,
 )
-from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
-from pyrit.models.catalog.registry_recipe import (
-    ComponentRecipe,
-    RegistryEntryOrigin,
-    RegistryRecipeKind,
-    SavedEntryOwner,
-)
+from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components import ConverterRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, TargetRegistry
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SAVED_ENTRY_OWNER_METADATA_KEY
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
@@ -2201,7 +2196,7 @@ def _try_instantiate_converter(converter_name: str):
             kwargs[pname] = Base64Converter()
         # TextSelectionStrategy — use a real concrete technique
         elif "TextSelectionStrategy" in ann_str:
-            from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy
+            from pyrit.converter import AllWordsSelectionStrategy
 
             kwargs[pname] = AllWordsSelectionStrategy()
         # Tokenizer protocol — use a representative vocab object
@@ -2209,7 +2204,7 @@ def _try_instantiate_converter(converter_name: str):
             kwargs[pname] = _MockTokenizerWithVocab()
         # TextJailBreak — use string template
         elif "TextJailBreak" in ann_str:
-            from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
+            from pyrit.datasets import TextJailBreak
 
             kwargs[pname] = TextJailBreak(string_template="Test {{ prompt }}")
         # Path — use a temp JPEG file

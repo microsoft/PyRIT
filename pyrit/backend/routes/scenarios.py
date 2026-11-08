@@ -19,42 +19,28 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.analytics import PairedOutcomeStatistics, compute_paired_outcome_statistics
-from pyrit.backend.models.attacks import ConversationMessagesResponse
-from pyrit.backend.models.common import (
-    MAX_IDENTIFIER_LENGTH,
-    MAX_ITEMS,
-    CursorStr,
-    IdentifierStr,
-    LabelFilterStr,
-    ProblemDetail,
-)
-from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
-from pyrit.backend.models.scenarios import (
+from pyrit.backend.models import (
+    ConversationMessagesResponse,
     ListRegisteredScenariosResponse,
+    ProblemDetail,
     ScenarioRunListResponse,
 )
+from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr
+from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
-from pyrit.backend.services.scenario_run_service import (
-    ScenarioRunConflictError,
-    ScenarioRunNotFoundError,
-    get_scenario_run_service,
-)
-from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.backend.services import get_scenario_run_service, get_scenario_service
+from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.models import (
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
     ScenarioQueueSnapshot,
     ScenarioResult,
     ScenarioRunProgress,
-    ScenarioRunState,
-)
-from pyrit.models.catalog import (
-    RegisteredScenario,
-    RunScenarioRequest,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
-    ScenarioRunSummary,
+    ScenarioRunState,
 )
+from pyrit.models.catalog import RegisteredScenario, RunScenarioRequest, ScenarioRunSummary
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 

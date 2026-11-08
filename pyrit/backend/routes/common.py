@@ -7,8 +7,9 @@ from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
 from pyrit.backend.middleware.auth import AuthenticatedUser
-from pyrit.backend.models.common import ProblemDetail, validate_label_filter
-from pyrit.models.catalog.registry_recipe import SavedEntryOwner
+from pyrit.backend.models import ProblemDetail
+from pyrit.backend.models.common import validate_label_filter
+from pyrit.models.catalog import SavedEntryOwner
 
 # Problem type for an entry that can't be saved as asked but can still be created without saving it.
 NOT_SAVEABLE_PROBLEM_TYPE = "/errors/not-saveable"

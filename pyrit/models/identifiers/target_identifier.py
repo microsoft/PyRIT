@@ -9,7 +9,7 @@ from typing import Annotated, ClassVar
 
 from pydantic import Field
 
-from pyrit.common.auth_mode import AuthMode  # noqa: TC001  (runtime-required by Pydantic field annotations)
+from pyrit.common import AuthMode  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.identifiers.component_identifier import ComponentIdentifier
 from pyrit.models.identifiers.evaluation_markers import Evaluate
 from pyrit.models.identifiers.param_markers import Param

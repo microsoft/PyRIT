@@ -7,10 +7,8 @@ from urllib.parse import quote
 
 import pytest
 
-from pyrit.models.catalog.registry_recipe import RestoreFailureReason
-from pyrit.registry.components.converter_registry import ConverterRegistry
-from pyrit.registry.components.scorer_registry import ScorerRegistry
-from pyrit.registry.components.target_registry import TargetRegistry
+from pyrit.models.catalog import RestoreFailureReason
+from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.registry_recipe_rules import (
     SavedEntryRefusedError,
     check_saveable_class,
@@ -45,6 +43,12 @@ def _check(class_name: str, params: dict[str, Any]) -> None:
     registry = TargetRegistry.get_registry_singleton()
     cls = registry.get_class(class_name)
     check_saved_entry_params(cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=params)
+
+
+def test_check_saved_entry_params_accepts_a_target_that_takes_no_credentials() -> None:
+    assert TargetRegistry.get_registry_singleton().get_class("TextTarget").supported_auth_modes == ()
+
+    _check("TextTarget", {})
 
 
 def _refusal(class_name: str, params: dict[str, Any]) -> SavedEntryRefusedError:

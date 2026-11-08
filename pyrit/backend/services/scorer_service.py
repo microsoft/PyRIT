@@ -7,29 +7,28 @@ import asyncio
 from functools import lru_cache
 from typing import Any
 
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scorers import (
+from pyrit.backend.models import (
     CreateScorerRequest,
+    PaginationInfo,
     ScorerListResponse,
     ScorerTypeEntry,
     ScorerTypeResponse,
-    UnregisteredScorer,
 )
+from pyrit.backend.models.scorers import UnregisteredScorer
 from pyrit.backend.services.saved_entries import (
     SavedEntryConflictError,
     prepare_saved_params_async,
     save_then_register_async,
 )
-from pyrit.models import ScorerEvaluationIdentifier, project_behavioral_identity
-from pyrit.models.catalog.registry_recipe import (
+from pyrit.models import ScorerEvaluationIdentifier, ScorerIdentifier, project_behavioral_identity
+from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryEntryOrigin,
     RegistryRecipeKind,
     SavedEntryOwner,
+    ScorerInstance,
 )
-from pyrit.models.catalog.scorer import ScorerInstance
 from pyrit.models.component_spec import RegisteredComponentReference
-from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.instance_registry import registry_entry_origin

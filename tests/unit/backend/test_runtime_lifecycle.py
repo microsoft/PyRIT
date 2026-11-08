@@ -23,25 +23,23 @@ from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import configuration, health, targets
+from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
-from pyrit.backend.services.scenario_run_service import ScenarioRunService, _PreparedRun
+from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.converter import Base64Converter
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
-from pyrit.models.catalog.registry_recipe import ComponentRecipe, RegistryEntryOrigin
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget, TextTarget
-from pyrit.registry.components.converter_registry import ConverterRegistry
-from pyrit.registry.components.scorer_registry import ScorerRegistry
-from pyrit.registry.components.target_registry import TargetRegistry
+from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.scenario import Scenario
 from pyrit.score import SubStringScorer
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, make_scenario_result
 

@@ -17,8 +17,7 @@ from pyrit.executor.promptgen import AssertGenerator
 from pyrit.memory import MemoryInterface
 from pyrit.models import CapabilityName, JsonResponseConfig, Message, TargetCapabilities, WebSearchConfig, WebSearchMode
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import OpenAIResponseTarget, TargetConfiguration
-from pyrit.prompt_target.common.discover_target_capabilities import discover_target_capabilities_async
+from pyrit.prompt_target import OpenAIResponseTarget, TargetConfiguration, discover_target_capabilities_async
 
 
 def _response_with_search(*, search_status: str | None, text: str = '{"answer": "A policy."}') -> Response:

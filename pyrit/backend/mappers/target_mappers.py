@@ -15,10 +15,8 @@ composite ``inner_targets`` (full instances, not bare identifiers), and a curate
 from typing import Any
 
 from pyrit.models import TargetIdentifier
-from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin, SavedEntryOwner
-from pyrit.models.catalog.target import TargetInstance
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner, TargetInstance
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.registry import Reconstructable
 from pyrit.registry.resolution import derive_parameters

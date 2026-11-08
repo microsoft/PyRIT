@@ -34,8 +34,10 @@ import {
 } from '@/components/Parameters/parameterForm'
 import { targetsApi } from '@/services/api'
 import { isNotSaveableError, toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetAuthMode, TargetInstance, TargetTypeEntry } from '@/types'
 import { suggestRegistryName, validateRegistryName } from '@/utils/registryName'
+import { isGuiTarget } from '@/utils/targetVisibility'
 import {
   targetIdentifierHash,
   targetModelName,
@@ -156,12 +158,15 @@ function getTargetNameLabel(targetType: string): string {
   return TARGET_DISPLAY_NAMES[targetType] ?? targetType.replace(/Target$/, '')
 }
 
-function getAuthDescription(entry: TargetTypeEntry): string | null {
+function getAuthDescription(entry: TargetTypeEntry, registryMetadataLoaded: boolean): string | null {
   if (entry.target_type === 'GitHubCopilotTarget') {
 return 'Supported authentication: GitHub token'
   }
   const authModes = entry.supported_auth_modes
-  if (authModes.length === 0) return null
+  if (authModes.length === 0) {
+    // The built-in fallback entries also carry an empty list, so only registry data can say "no credentials".
+    return registryMetadataLoaded ? 'No authentication required' : null
+  }
 
   const labels = authModes.map((mode) => AUTH_MODE_LABELS[mode])
   return `Supported authentication: ${labels.join(' or ')}`
@@ -429,7 +434,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const hasApiKeyField = hasField('api_key')
   const selectedTargetDisplayName = getTargetDisplayName(targetType)
   const selectedTargetAuthDescription = targetTypeEntry
-    ? getAuthDescription(targetTypeEntry)
+    ? getAuthDescription(targetTypeEntry, typeMetadataAvailable)
     : null
   const supportsIdentity = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('identity')
@@ -558,9 +563,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (!open || !isRoundRobin) return
     if (existingTargets && existingTargets.length > 0) return
     let cancelled = false
-    targetsApi.listTargets(200)
-      .then((res) => {
-        if (!cancelled) setAvailableTargets(res.items)
+    listRegisteredTargets()
+      .then((items) => {
+        if (!cancelled) setAvailableTargets(items)
       })
       .catch(() => {
         // Ignore fetch errors — the list will just be empty
@@ -586,6 +591,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     )
     const candidates = availableTargets.filter(
       (t) =>
+        isGuiTarget(t) &&
         getTargetType(t) !== 'RoundRobinTarget' &&
         !selectedNames.has(t.target_registry_name) &&
         !(targetIdentifierHash(t) && selectedHashes.has(targetIdentifierHash(t)!)),
@@ -835,7 +841,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 >
                   {targetTypeOptions.map((entry) => {
                     const displayName = getTargetDisplayName(entry.target_type)
-                    const authDescription = getAuthDescription(entry)
+                    const authDescription = getAuthDescription(entry, typeMetadataAvailable)
                     const accessibleDescription = [
                       displayName,
                       entry.description,

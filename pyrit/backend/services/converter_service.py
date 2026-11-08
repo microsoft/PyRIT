@@ -29,8 +29,8 @@ from typing import Any
 import aiofiles
 import aiofiles.os
 
-from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
-from pyrit.backend.models.converters import (
+from pyrit.backend.mappers import converter_object_to_instance
+from pyrit.backend.models import (
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
@@ -39,6 +39,8 @@ from pyrit.backend.models.converters import (
     ConverterTypeResponse,
     CreateConverterRequest,
     PreviewStep,
+)
+from pyrit.backend.models.converters import (
     UnregisteredConverter,
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async
@@ -56,16 +58,10 @@ from pyrit.backend.services.saved_entries import (
 )
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
-from pyrit.models import ConverterIdentifier, MessagePiece, PromptDataType
-from pyrit.models.catalog.registry_recipe import (
-    ComponentRecipe,
-    RegistryEntryOrigin,
-    RegistryRecipeKind,
-    SavedEntryOwner,
-)
-from pyrit.models.parameter import Parameter
+from pyrit.models import ConverterIdentifier, MessagePiece, Parameter, PromptDataType
+from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.registry.components import ConverterRegistry
+from pyrit.registry import ConverterRegistry
 from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry import Reconstructable
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class

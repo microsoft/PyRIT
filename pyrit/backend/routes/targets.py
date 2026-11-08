@@ -14,10 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
 from pyrit.backend.middleware.auth import current_user_oid, has_admin_access
-from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
-from pyrit.backend.models.targets import (
+from pyrit.backend.models import (
     CreateTargetRequest,
+    ProblemDetail,
     TargetListResponse,
+)
+from pyrit.backend.models.common import CursorStr, IdentifierStr
+from pyrit.backend.models.targets import (
     TargetTypeResponse,
     UnregisteredTarget,
 )
@@ -26,9 +29,9 @@ from pyrit.backend.routes.common import (
     not_saveable_response,
     saved_entry_owner_from_request,
 )
+from pyrit.backend.services import get_target_service
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
-from pyrit.backend.services.target_service import get_target_service
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.catalog import TargetInstance
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 

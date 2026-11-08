@@ -17,10 +17,9 @@ from pyrit.backend.models.common import (
     REGISTRY_INSTANCE_NAME_PATTERN,
     IdentifierStr,
 )
-from pyrit.models import ConverterIdentifier, Parameter, PromptDataType
-from pyrit.models.catalog.registry_recipe import RegistryEntryOrigin
+from pyrit.models import ConverterIdentifier, Parameter, PromptDataType, validate_registry_name
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.models.identifiers.class_name_utils import validate_registry_name
 
 __all__ = [
     "ConverterInstance",

@@ -6,11 +6,14 @@
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
-from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
-from pyrit.backend.models.scorers import (
+from pyrit.backend.models import (
     CreateScorerRequest,
+    ProblemDetail,
     ScorerListResponse,
     ScorerTypeResponse,
+)
+from pyrit.backend.models.common import CursorStr, IdentifierStr
+from pyrit.backend.models.scorers import (
     UnregisteredScorer,
 )
 from pyrit.backend.routes.common import (
@@ -20,7 +23,7 @@ from pyrit.backend.routes.common import (
 )
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.scorer_service import get_scorer_service
-from pyrit.models.catalog.scorer import ScorerInstance
+from pyrit.models.catalog import ScorerInstance
 
 router = APIRouter(prefix="/scorers", tags=["scorers"])
 
