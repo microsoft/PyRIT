@@ -27,6 +27,7 @@ limit. Inline configurations never touch memory.
 from __future__ import annotations
 
 import copy
+import json
 import random
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -40,12 +41,18 @@ from pyrit.models import (
     AllAvailableDatasetSize,
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetExampleReference,
+    DatasetExampleSelectionError,
     DatasetFetchPolicy,
     IndeterminateDatasetSize,
     ScenarioDatasetSizeEstimate,
     Seed,
     SeedDataset,
     SeedGroup,
+    SeedObjective,
+    SeedPrompt,
+    SeedRecord,
+    SeedSimulatedConversation,
     group_seeds_into_attack_groups,
     scenario_dataset_size_from_limit,
 )
@@ -1062,6 +1069,203 @@ class DatasetAttackConfiguration(DatasetConfiguration):
     def _sample_source_groups(self, *, name: str, groups: list[AttackSeedGroup]) -> list[AttackSeedGroup]:
         limit = self.source_limit(name)
         return random.sample(groups, limit) if limit != "all" and len(groups) > limit else groups
+
+
+_SIMULATED_PROMPT_KEYS = (
+    "adversarial_chat_system_prompt",
+    "adversarial_chat_system_prompt_path",
+    "simulated_target_system_prompt",
+    "simulated_target_system_prompt_path",
+    "next_message_system_prompt",
+    "next_message_system_prompt_path",
+)
+
+
+class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
+    """
+    Inline population of already resolved dataset examples.
+
+    Sampling is off and the size budget is the example count. Estimate reads that
+    budget and does not build seeds. Launch builds ``SeedPrompt`` and ``SeedObjective``
+    objects from the stored records. A simulated conversation stays stored JSON until
+    that build, which is also when a legacy prompt file is opened.
+    """
+
+    def __init__(self, *, examples: Sequence[tuple[DatasetExampleReference, Sequence[SeedRecord]]]) -> None:
+        """
+        Hold resolved examples without reading memory again.
+
+        Args:
+            examples: References and their stored members, in request order.
+        """
+        super().__init__(max_per_dataset="all", max_total="all", fetch=DatasetFetchPolicy.NEVER)
+        self._selected_examples = tuple((reference, tuple(members)) for reference, members in examples)
+
+    @property
+    def source_kind(self) -> DatasetSourceKind:
+        """Exact examples are inline records, not a named dataset read."""
+        return DatasetSourceKind.INLINE
+
+    def _default_max_total(self) -> ResolvedDatasetLimit:
+        return "all"
+
+    def _default_max_per_dataset(self) -> ResolvedDatasetLimit:
+        return "all"
+
+    def get_size_budget(self) -> BoundedDatasetSize:
+        """
+        Return the resolved example count.
+
+        An inline configuration with ``max_total="all"`` would otherwise report that the
+        count is unavailable. The examples are already known, so the budget is N.
+
+        Returns:
+            BoundedDatasetSize: One unit per selected example.
+        """
+        return BoundedDatasetSize(value=len(self._selected_examples))
+
+    async def get_attack_seed_groups_async(self, *, apply_sampling: bool = True) -> list[AttackSeedGroup]:
+        """
+        Return every selected group.
+
+        Args:
+            apply_sampling: Ignored. An exact selection is not sampled.
+
+        Returns:
+            list[AttackSeedGroup]: One group per selected example, in request order.
+        """
+        grouped = await self.get_attack_groups_by_dataset_async(apply_sampling=apply_sampling)
+        return [group for groups in grouped.values() for group in groups]
+
+    async def get_attack_groups_by_dataset_async(
+        self, *, apply_sampling: bool = True
+    ) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Return every selected group under the inline dataset label.
+
+        Args:
+            apply_sampling: Ignored. An exact selection is not sampled.
+
+        Returns:
+            dict[str, list[AttackSeedGroup]]: The inline label mapped to every group.
+
+        Raises:
+            DatasetExampleSelectionError: If a stored record cannot be built into one attack group.
+            DatasetConstraintError: If the selection is empty.
+        """
+        del apply_sampling
+        self.validate_configuration()
+        groups = [
+            self._build_attack_group(reference=reference, members=members)
+            for reference, members in self._selected_examples
+        ]
+        if not groups:
+            raise DatasetConstraintError("Resolved attack-group dataset is empty (datasets: <inline>).")
+        flattened = [seed for group in groups for seed in group.seeds]
+        self.validate(ResolvedDataset(seeds=flattened, source_kind=self.source_kind, dataset_names=()))
+        return {INLINE_DATASET_NAME: groups}
+
+    def _build_attack_group(
+        self, *, reference: DatasetExampleReference, members: Sequence[SeedRecord]
+    ) -> AttackSeedGroup:
+        try:
+            seeds = [_seed_from_record(record=member, reference=reference) for member in members]
+            return AttackSeedGroup(seeds=seeds)
+        except DatasetExampleSelectionError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise DatasetExampleSelectionError(
+                code="unsupported",
+                selection_key=reference.selection_key,
+                example_id=reference.example_id,
+                detail="The stored example cannot be built into one attack group.",
+            ) from exc
+
+
+def _seed_from_record(
+    *, record: SeedRecord, reference: DatasetExampleReference
+) -> SeedPrompt | SeedObjective | SeedSimulatedConversation:
+    """
+    Build an executable seed from stored fields.
+
+    Simulated conversations may open legacy prompt files. Other seed types are built in memory.
+
+    Returns:
+        Seed: The seed model for one stored record.
+
+    Raises:
+        DatasetExampleSelectionError: If a simulated conversation cannot be built.
+    """
+    common: dict[str, Any] = {
+        "id": record.id,
+        "origin": record.origin,
+        "value": record.value,
+        "value_sha256": record.value_sha256,
+        "name": record.name,
+        "dataset_name": record.dataset_name,
+        "harm_categories": record.harm_categories,
+        "description": record.description,
+        "authors": record.authors,
+        "groups": record.groups,
+        "source": record.source,
+        "date_added": record.date_added,
+        "added_by": record.added_by,
+        "metadata": record.metadata,
+        "prompt_group_id": record.prompt_group_id,
+    }
+    if record.seed_type == "objective":
+        return SeedObjective(**common, conditions=record.conditions if record.conditions is not None else ())
+    if record.seed_type == "simulated_conversation":
+        return _simulated_conversation_from_record(record=record, reference=reference, common=common)
+    return SeedPrompt(
+        **common,
+        data_type=record.data_type,
+        response_json_schema=record.response_json_schema,
+        parameters=record.parameters,
+        sequence=record.sequence or 0,
+        role=record.role,
+    )
+
+
+def _simulated_conversation_from_record(
+    *, record: SeedRecord, reference: DatasetExampleReference, common: dict[str, Any]
+) -> SeedSimulatedConversation:
+    try:
+        config = json.loads(record.value)
+    except json.JSONDecodeError as exc:
+        raise DatasetExampleSelectionError(
+            code="unsupported",
+            selection_key=reference.selection_key,
+            example_id=reference.example_id,
+            detail="A simulated conversation must remain stored JSON configuration.",
+        ) from exc
+    if not isinstance(config, dict):
+        raise DatasetExampleSelectionError(
+            code="unsupported",
+            selection_key=reference.selection_key,
+            example_id=reference.example_id,
+            detail="A simulated conversation must remain stored JSON configuration.",
+        )
+    prompt_config = {key: config[key] for key in _SIMULATED_PROMPT_KEYS if config.get(key) is not None}
+    is_legacy_record = any(key.endswith("_path") for key in prompt_config)
+    stored = dict(common)
+    stored.pop("value", None)
+    stored["value_sha256"] = None if is_legacy_record else record.value_sha256
+    try:
+        return SeedSimulatedConversation(
+            **stored,
+            num_turns=config.get("num_turns", 3),
+            sequence=config.get("sequence", 0),
+            pyrit_version=config.get("pyrit_version"),
+            **prompt_config,
+        )
+    except (OSError, ValueError) as exc:
+        raise DatasetExampleSelectionError(
+            code="unsupported",
+            selection_key=reference.selection_key,
+            example_id=reference.example_id,
+            detail="The stored simulated conversation cannot be built.",
+        ) from exc
 
 
 class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):

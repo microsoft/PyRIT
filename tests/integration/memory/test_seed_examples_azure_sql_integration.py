@@ -63,6 +63,12 @@ async def test_seed_examples_on_azure_sql(azuresql_instance: AzureSQLMemory):
 
         detail = await azuresql_instance.get_seed_example_async(dataset_name=dataset, example_id=group)
         assert [seed.id for seed in detail] == [seeds[1].id, seeds[0].id]
+        batched = await azuresql_instance.get_seed_examples_by_ids_async(
+            dataset_name=dataset, example_ids=[group, newer, older]
+        )
+        assert list(batched) == [group, newer, older]
+        assert batched[group] == detail
+        assert batched[newer] == await azuresql_instance.get_seed_example_async(dataset_name=dataset, example_id=newer)
     finally:
         async with await azuresql_instance.get_session_async() as session:
             await session.execute(delete(SeedEntry).where(SeedEntry.added_by == test_id))

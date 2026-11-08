@@ -5,8 +5,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
+from pyrit.backend.services.dataset_example_selection import (
+    exact_example_dataset_configuration,
+    resolve_dataset_example_selection_async,
+    scenario_accepts_dataset_config,
+    selection_conflicts_with_datasets,
+)
+from pyrit.models import DatasetExampleSelectionError
 from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario.core import resolve_technique_tokens
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
@@ -14,11 +22,12 @@ from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
-    from pyrit.models import ScenarioDatasetRequest
+    from pyrit.memory import MemoryInterface
+    from pyrit.models import DatasetExampleSelection, ScenarioDatasetRequest
     from pyrit.models.component_spec import RegisteredComponentReference
     from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
-    from pyrit.scenario import Scenario
+    from pyrit.scenario import DatasetAttackConfiguration, Scenario
 
 
 class ScenarioConfigurationResolver:
@@ -115,6 +124,7 @@ class ScenarioConfigurationResolver:
         techniques: list[str] | None = None,
         technique_override: TechniqueOverride | None = None,
         datasets: ScenarioDatasetRequest | None = None,
+        dataset_config: DatasetAttackConfiguration | None = None,
         include_baseline: bool | None = None,
         max_concurrency: int | None = None,
         max_retries: int | None = None,
@@ -124,6 +134,7 @@ class ScenarioConfigurationResolver:
         Resolve shared launch and estimate fields into scenario parameters.
 
         Dataset edits pass through unchanged; the scenario applies and validates them.
+        An exact selection is supplied as ``dataset_config`` by ``resolve_configuration_async``.
 
         Returns:
             dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
@@ -143,7 +154,9 @@ class ScenarioConfigurationResolver:
         if memory_labels:
             resolved["memory_labels"] = memory_labels
 
-        if datasets is not None:
+        if dataset_config is not None:
+            resolved["dataset_config"] = dataset_config
+        elif datasets is not None:
             resolved["dataset_overrides"] = datasets
         if not techniques and technique_override is None:
             return resolved
@@ -213,3 +226,74 @@ class ScenarioConfigurationResolver:
         if resolution.issues:
             raise ValueError(resolution.issues[0].message)
         return resolution.techniques, resolution.technique_converters
+
+    @classmethod
+    async def resolve_configuration_async(
+        cls,
+        *,
+        scenario_name: str,
+        scenario_class: type[Scenario],
+        objective_target: Any | None = None,
+        techniques: list[str] | None = None,
+        technique_override: TechniqueOverride | None = None,
+        datasets: ScenarioDatasetRequest | None = None,
+        example_selection: DatasetExampleSelection | None = None,
+        include_baseline: bool | None = None,
+        max_concurrency: int | None = None,
+        max_retries: int | None = None,
+        memory_labels: dict[str, str] | None = None,
+        memory: MemoryInterface | None = None,
+        reject_exact_selection: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Resolve launch and estimate fields, including an exact example selection.
+
+        Named-dataset requests keep today's override behavior. An exact selection replaces
+        the population and is rejected by the explicit dataset load route.
+
+        Returns:
+            dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
+
+        Raises:
+            DatasetExampleSelectionError: If the exact selection is stale, missing, or unsupported.
+            ValueError: If techniques or dataset overrides are invalid.
+        """
+        dataset_config = None
+        datasets_for_named_mode = datasets
+        if example_selection is not None:
+            if reject_exact_selection:
+                raise DatasetExampleSelectionError(
+                    code="conflicting_mode",
+                    detail="Exact example selection has nothing to fetch.",
+                )
+            if selection_conflicts_with_datasets(datasets):
+                raise DatasetExampleSelectionError(
+                    code="conflicting_mode",
+                    detail=(
+                        "Exact example selection cannot be combined with dataset sources, filters, limits, or fetch."
+                    ),
+                )
+            if not scenario_accepts_dataset_config(scenario_class):
+                raise DatasetExampleSelectionError(
+                    code="unsupported",
+                    detail="This scenario does not accept a dataset configuration.",
+                )
+            resolved_examples = await resolve_dataset_example_selection_async(
+                selection=example_selection, memory=memory
+            )
+            dataset_config = exact_example_dataset_configuration(resolved_examples)
+            datasets_for_named_mode = None
+        return await asyncio.to_thread(
+            cls.resolve_configuration,
+            scenario_name=scenario_name,
+            scenario_class=scenario_class,
+            objective_target=objective_target,
+            techniques=techniques,
+            technique_override=technique_override,
+            datasets=datasets_for_named_mode,
+            dataset_config=dataset_config,
+            include_baseline=include_baseline,
+            max_concurrency=max_concurrency,
+            max_retries=max_retries,
+            memory_labels=memory_labels,
+        )

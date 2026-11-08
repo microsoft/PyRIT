@@ -188,6 +188,21 @@ async def test_seed_example_preview_preserves_ordinary_prose_async(
     assert response.json()["items"][0]["preview"] == value
 
 
+async def test_seed_example_fingerprint_matches_on_list_and_detail(client: AsyncClient, sqlite_instance):
+    seed = _prompt("stored text", harm_categories=["violence"], source="unit")
+    await _store(sqlite_instance, seed)
+
+    listed = await client.get(URL, params={"selection_key": NAMED})
+    detail = await client.get(f"{URL}/{seed.id}", params={"selection_key": NAMED})
+
+    assert listed.status_code == detail.status_code == 200
+    fingerprint = listed.json()["items"][0]["fingerprint"]
+    assert fingerprint == detail.json()["fingerprint"]
+    assert len(fingerprint) == 64
+    assert fingerprint == fingerprint.lower()
+    int(fingerprint, 16)
+
+
 async def test_get_seed_example_returns_full_text_of_truncated_preview(client: AsyncClient, sqlite_instance):
     seed = _prompt("x" * 150)
     await _store(sqlite_instance, seed)

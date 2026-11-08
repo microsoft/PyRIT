@@ -148,13 +148,21 @@ _LAUNCH_REQUEST_FIELDS = (
     "dataset_names",
     "max_dataset_size",
     "dataset_filters",
+    "example_selection",
     "max_concurrency",
     "max_retries",
     "include_baseline",
 )
 # Fields added after the first saved launch records; older records omit them.
 _OPTIONAL_LAUNCH_FIELDS = frozenset(
-    {"adversarial_target_name", "datasets", "max_dataset_size", "technique_override", "objective_scorer"}
+    {
+        "adversarial_target_name",
+        "datasets",
+        "max_dataset_size",
+        "technique_override",
+        "objective_scorer",
+        "example_selection",
+    }
 )
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
@@ -339,10 +347,12 @@ class ScenarioRunService:
             return None
         request = await asyncio.to_thread(self._restore_launch_request, stored=stored)
         await asyncio.to_thread(self._validate_rerun_references, stored=stored, request=request)
-        payload = request.model_dump(
-            mode="json",
-            exclude={"scenario_result_id", "datasets", "dataset_names", "max_dataset_size", "dataset_filters"},
-        )
+        excluded = {"scenario_result_id", "datasets", "dataset_names", "max_dataset_size", "dataset_filters"}
+        if request.example_selection is None:
+            excluded.add("example_selection")
+        payload = request.model_dump(mode="json", exclude=excluded)
+        if request.example_selection is not None:
+            payload["example_selection"] = request.example_selection.model_dump(mode="json")
         if request.dataset_request is not None:
             payload["datasets"] = request.dataset_request.model_dump(mode="json", exclude_unset=True)
         if request.labels is not None:
@@ -678,7 +688,12 @@ class ScenarioRunService:
         identifier = stored.scenario_identifier
         if (
             "scenario_techniques" in declared_names and request.techniques is None and identifier.techniques is None
-        ) or ("dataset_config" in declared_names and request.dataset_request is None and identifier.datasets is None):
+        ) or (
+            "dataset_config" in declared_names
+            and request.dataset_request is None
+            and request.example_selection is None
+            and identifier.datasets is None
+        ):
             raise ScenarioRunConflictError("The saved scenario identity is missing techniques or datasets.")
         custom_params = {
             name: value
@@ -970,14 +985,14 @@ class ScenarioRunService:
             target_name=request.adversarial_target_name
         )
         with override_default_adversarial_target(adversarial_target):
-            init_kwargs = await run_legacy_sync_async(
-                self._configuration_resolver.resolve_configuration,
+            init_kwargs = await self._configuration_resolver.resolve_configuration_async(
                 scenario_name=request.scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
+                example_selection=request.example_selection,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency
                 if "max_concurrency" in declared_names or "max_concurrency" in request.model_fields_set
@@ -1640,6 +1655,8 @@ class ScenarioRunService:
         declared = scenario_class.supported_parameters()
         declared_names = {parameter.name for parameter in declared}
         launch_request = request.model_dump(mode="json", include=set(_LAUNCH_REQUEST_FIELDS))
+        if launch_request.get("example_selection") is None:
+            launch_request.pop("example_selection", None)
         policy_parameter = next(
             (parameter for parameter in declared if parameter.name == "incompatible_technique_policy"),
             None,

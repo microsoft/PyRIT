@@ -266,15 +266,16 @@ class ScenarioService:
         adversarial_target = resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
         objective_target = resolver.resolve_target(target_name=request.target_name) if request.target_name else None
         with override_default_adversarial_target(adversarial_target):
-            kwargs = await asyncio.to_thread(
-                resolver.resolve_configuration,
+            kwargs = await resolver.resolve_configuration_async(
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
+                example_selection=request.example_selection,
                 objective_target=objective_target,
                 include_baseline=request.include_baseline,
+                reject_exact_selection=True,
             )
             constructor_kwargs = resolver.resolve_constructor_kwargs(
                 scenario_class=scenario_class, objective_scorer=request.objective_scorer
@@ -549,14 +550,14 @@ class ScenarioService:
         objective_target = resolver.resolve_target(target_name=request.target_name) if request.target_name else None
         adversarial_target = resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
         with override_default_adversarial_target(adversarial_target):
-            estimate_kwargs = await asyncio.to_thread(
-                resolver.resolve_configuration,
+            estimate_kwargs = await resolver.resolve_configuration_async(
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
+                example_selection=request.example_selection,
                 include_baseline=request.include_baseline,
             )
             return await self._registry.create_and_estimate_async(

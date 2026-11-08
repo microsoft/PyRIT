@@ -150,6 +150,9 @@ if TYPE_CHECKING:
     from pyrit.models.results.strategy_result import StrategyResult, StrategyResultT
     from pyrit.models.retry_event import RetryEvent
     from pyrit.models.scenario_dataset import (
+        DatasetExampleReference,
+        DatasetExampleSelection,
+        DatasetExampleSelectionError,
         DatasetFetchPolicy,
         DatasetSelectionMode,
         DatasetSourceInput,
@@ -375,6 +378,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ConversationObservationPayload": "pyrit.models.score",
     "AllAvailableDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
     "BoundedDatasetSize": "pyrit.models.scenario_dataset_size_estimate",
+    "DatasetExampleReference": "pyrit.models.scenario_dataset",
+    "DatasetExampleSelection": "pyrit.models.scenario_dataset",
+    "DatasetExampleSelectionError": "pyrit.models.scenario_dataset",
     "DatasetFetchPolicy": "pyrit.models.scenario_dataset",
     "DatasetSelectionMode": "pyrit.models.scenario_dataset",
     "DatasetSourceInput": "pyrit.models.scenario_dataset",
