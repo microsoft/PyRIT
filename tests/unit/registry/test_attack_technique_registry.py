@@ -14,7 +14,11 @@ from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import AttackTechniqueRegistry, Registry, TargetRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SavedEntryReplacementError
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SavedEntryReplacementError,
+    record_saved_entry_refusals,
+)
 from pyrit.scenario import AttackTechniqueFactory, ScenarioTechnique
 from pyrit.scenario.core import ScorerOverridePolicy
 from pyrit.setup.initializers.techniques import build_technique_factories
@@ -370,6 +374,18 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
         with pytest.raises(SavedEntryReplacementError, match="Saved technique 'formal'"):
             self.registry.register_from_factories([AttackTechniqueFactory(name="formal", attack_class=_StubAttack)])
 
+        assert self.registry.instances.get("formal") is saved
+
+    def test_register_runtime_records_a_caught_clash_with_a_saved_technique(self):
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+
+        with record_saved_entry_refusals() as refusals:
+            with pytest.raises(ValueError, match="names are case-insensitive"):
+                clash = AttackTechniqueFactory(name="FORMAL", attack_class=_StubAttack)
+                self.registry.instances.register_runtime(clash)
+
+        assert refusals == [("techniques", "formal")]
         assert self.registry.instances.get("formal") is saved
 
     def test_register_from_factories_still_skips_an_existing_startup_technique(self):

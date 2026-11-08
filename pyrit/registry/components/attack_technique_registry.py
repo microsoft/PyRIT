@@ -31,7 +31,11 @@ from pydantic import ValidationError
 
 from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, refuse_saved_entry
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    _record_saved_entry_refusal,
+    refuse_saved_entry,
+)
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
@@ -156,6 +160,8 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
             folded_name = factory.name.casefold()
             if folded_name in names:
+                # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
+                _record_saved_entry_refusal(self.get_entry(names[folded_name]))
                 raise ValueError(f"Technique '{factory.name}' already exists (names are case-insensitive)")
             if folded_name in tags:
                 raise ValueError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
