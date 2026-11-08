@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
-import { convertersApi } from '@/services/api'
+import { convertersApi, savedEntriesApi } from '@/services/api'
 
 import ConverterRegistry from './ConverterRegistry'
 import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
@@ -13,6 +13,10 @@ jest.mock('@/services/api', () => ({
   convertersApi: {
     listConverters: jest.fn(),
     deleteConverter: jest.fn(),
+  },
+  savedEntriesApi: {
+    get: jest.fn(),
+    delete: jest.fn(),
   },
 }))
 
@@ -188,7 +192,7 @@ describe('ConverterRegistry', () => {
     expect(screen.queryByRole('checkbox', { name: /Only converters I saved/ })).not.toBeInTheDocument()
   })
 
-  it('keeps a saved converter from being removed and says why', async () => {
+  it('deletes a saved converter through its saved file and loads the list again', async () => {
     const user = userEvent.setup()
     mockedConvertersApi.listConverters.mockResolvedValue({
       items: [
@@ -196,18 +200,25 @@ describe('ConverterRegistry', () => {
         { ...converter, converter_id: 'launch_base64', origin: 'temporary' },
       ],
     })
+    jest.mocked(savedEntriesApi.get).mockResolvedValue({
+      kind: 'converters', name: 'saved_base64', version: 'v1', problem: null,
+      saved_by: 'Ada', saved_by_me: true, can_change: true,
+    })
+    jest.mocked(savedEntriesApi.delete).mockResolvedValue()
     renderRegistry()
 
-    const savedRemove = await screen.findByRole('button', { name: 'Remove saved_base64' })
-    expect(savedRemove).toHaveAttribute('aria-disabled', 'true')
-    expect(savedRemove).toHaveAccessibleDescription(
-      "Saved converters can't be removed here yet. Delete the converter's saved file and restart the backend.",
-    )
-    await user.click(savedRemove)
-    expect(screen.queryByRole('dialog', { name: 'Remove converter?' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Remove launch_base64' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove saved_base64' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Delete saved converter saved_base64' }))
+    const dialog = await screen.findByRole('dialog', { name: "Delete saved converter 'saved_base64'?" })
+    await within(dialog).findByText('You saved it.')
+    const calls = mockedConvertersApi.listConverters.mock.calls.length
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
 
-    await user.click(screen.getByRole('button', { name: 'Remove launch_base64' }))
-    expect(await screen.findByRole('dialog', { name: 'Remove converter?' })).toBeInTheDocument()
+    expect(savedEntriesApi.delete).toHaveBeenCalledWith('converters', 'saved_base64', 'v1')
+    expect(mockedConvertersApi.deleteConverter).not.toHaveBeenCalled()
+    await waitFor(() => expect(mockedConvertersApi.listConverters.mock.calls.length).toBeGreaterThan(calls))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New Converter' })).toHaveFocus())
   })
 
   it('filters by name, type, and output without changing the registered instances', async () => {

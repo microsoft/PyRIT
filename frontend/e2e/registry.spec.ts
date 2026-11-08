@@ -185,7 +185,9 @@ test("saves a converter from the New Converter dialog and still lists it as Save
 
   const row = page.getByRole("row", { name: new RegExp(name) });
   await expect(row.getByText("Saved", { exact: true })).toBeVisible();
-  await expect(row.getByRole("button", { name: `Remove ${name}` })).toHaveAttribute("aria-disabled", "true");
+  // A saved converter is deleted through its saved file, not removed from the live registry.
+  await expect(row.getByRole("button", { name: `Delete saved converter ${name}` })).toBeEnabled();
+  await expect(row.getByRole("button", { name: `Remove ${name}` })).toHaveCount(0);
   const saved = await request.get(`/api/converters/${name}`, { headers: compatibilityHeaders() });
   expect(saved.ok(), await saved.text()).toBe(true);
   expect((await saved.json()).origin).toBe("saved");
@@ -224,6 +226,38 @@ test("saves a target from the New Target dialog and still lists it as Saved afte
 
   await page.reload();
   await expect(page.getByTestId(`target-row-${name}`).getByText("Saved", { exact: true })).toBeVisible();
+});
+
+test("deletes a saved target from the Targets table so it doesn't come back @seeded", async ({ page, request }) => {
+  const headers = compatibilityHeaders();
+  const name = `deleted_chat_${Date.now()}`;
+  const created = await request.post("/api/targets", {
+    headers,
+    data: {
+      name,
+      type: "OpenAIChatTarget",
+      params: { endpoint: "http://127.0.0.1:9/v1", model_name: "local-test" },
+      auth_mode: "none",
+      persist: true,
+    },
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+
+  await page.goto("/registry/targets");
+  const row = page.getByTestId(`target-row-${name}`);
+  await expect(row.getByText("Saved", { exact: true })).toBeVisible();
+  await row.getByRole("button", { name: `Delete saved target ${name}` }).click();
+  const dialog = page.getByRole("dialog", { name: `Delete saved target '${name}'?` });
+  await expect(dialog.getByText(/deleted for everyone/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Delete" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(row).toHaveCount(0);
+
+  expect((await request.get(`/api/targets/${name}`, { headers })).status()).toBe(404);
+  expect((await request.get(`/api/saved-entries/targets/${name}`, { headers })).status()).toBe(404);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "New Target", exact: true })).toBeVisible();
+  await expect(page.getByTestId(`target-row-${name}`)).toHaveCount(0);
 });
 
 interface RegisteredConverter {
@@ -505,7 +539,7 @@ test.describe("Converter Registry", () => {
     await expect(page.getByText("No Converters Registered")).toBeVisible();
   });
 
-  test("saves a named converter and keeps it from being removed", async ({ page }) => {
+  test("saves a named converter and offers to delete its saved file instead of removing it", async ({ page }) => {
     await page.getByRole("button", { name: "New Converter" }).click();
     const createRequest = page.waitForRequest(
       (request) => request.method() === "POST" && /\/api\/converters$/.test(request.url()),
@@ -517,13 +551,8 @@ test.describe("Converter Registry", () => {
     });
     const row = page.getByRole("row", { name: /caesar_custom/ });
     await expect(row.getByText("Saved", { exact: true })).toBeVisible();
-    const remove = page.getByRole("button", { name: "Remove caesar_custom" });
-    await expect(remove).toHaveAttribute("aria-disabled", "true");
-    await expect(remove).toHaveAccessibleDescription(
-      "Saved converters can't be removed here yet. Delete the converter's saved file and restart the backend.",
-    );
-    await remove.click({ force: true });
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "Delete saved converter caesar_custom" })).toBeEnabled();
+    await expect(row.getByRole("button", { name: "Remove caesar_custom" })).toHaveCount(0);
   });
 
   test("restores focus to the trigger when the add dialog is dismissed", async ({ page }) => {

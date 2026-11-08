@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 
 import { Button, MessageBar, MessageBarActions, MessageBarBody } from '@fluentui/react-components'
 
+import DeleteSavedEntryButton from '@/components/Registry/DeleteSavedEntryButton'
 import { runtimeApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { RegistryRecipeKind, RestoreFailure, RuntimeReadiness } from '@/types'
@@ -61,6 +62,7 @@ interface RestoreFailures {
   retrying: boolean
   retryError: string | null
   retry: () => Promise<void>
+  forget: (failure: RestoreFailure) => void
 }
 
 function useRestoreFailures(failed: boolean, generation: string): RestoreFailures {
@@ -129,7 +131,13 @@ function useRestoreFailures(failed: boolean, generation: string): RestoreFailure
       requestRuntimeRefresh()
     }
   }
-  return { failures: failed ? failures : [], listFailed: failed && listFailed, retrying, retryError, retry }
+  // A deleted entry is gone from the server's list too, so it leaves this one without waiting for the next refresh.
+  const forget = (deleted: RestoreFailure): void => {
+    setFailures((current) => current.filter((failure) => (
+      failure.kind !== deleted.kind || failure.name !== deleted.name
+    )))
+  }
+  return { failures: failed ? failures : [], listFailed: failed && listFailed, retrying, retryError, retry, forget }
 }
 
 function describeFailure(failure: RestoreFailure): string {
@@ -144,7 +152,7 @@ export function RuntimeBanner() {
   const runtime = useRuntime()
   const failed = runtime.state === RESTORE_FAILED_STATE
   const styles = useRuntimeBannerStyles()
-  const { failures, listFailed, retrying, retryError, retry } = useRestoreFailures(failed, runtime.generation)
+  const { failures, listFailed, retrying, retryError, retry, forget } = useRestoreFailures(failed, runtime.generation)
   if (runtime.ready) return null
   if (failed) {
     return (
@@ -156,13 +164,24 @@ export function RuntimeBanner() {
               // Focusable so the list can be scrolled from the keyboard.
               <ul aria-label="Saved entries that couldn't be restored" className={styles.failureList} tabIndex={0}>
                 {failures.map((failure) => (
-                  <li key={`${failure.kind}/${failure.name ?? ''}`}>{describeFailure(failure)}</li>
+                  <li key={`${failure.kind}/${failure.name ?? ''}`}>
+                    {describeFailure(failure)}
+                    {failure.name !== null && (
+                      <DeleteSavedEntryButton
+                        kind={failure.kind}
+                        name={failure.name}
+                        className={styles.failureDelete}
+                        onDeleted={() => forget(failure)}
+                      />
+                    )}
+                  </li>
                 ))}
               </ul>
             )}
             {listFailed && <div>The list of saved entries couldn&apos;t be loaded. Trying again.</div>}
           </div>
-          An administrator can fix or delete these saved files, then select Retry. Retry rebuilds only these entries.
+          Whoever saved an entry, or an administrator, can delete it here; an administrator can also fix its saved
+          file. Then select Retry. Retry rebuilds only these entries.
           {retryError && <div role="alert">{retryError}</div>}
         </MessageBarBody>
         <MessageBarActions>

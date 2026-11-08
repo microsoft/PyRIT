@@ -393,6 +393,9 @@ describe('TechniqueRegistry', () => {
     expect(within(row('saved_one')).getByText('Saved')).toBeInTheDocument()
     expect(within(row('startup_one')).getByText('From configuration')).toBeInTheDocument()
     expect(within(row('temporary_one')).getByText('Temporary')).toBeInTheDocument()
+    // Only a saved technique has a file to delete.
+    expect(within(table).getAllByRole('button', { name: /^Delete saved technique/ }).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Delete saved technique saved_one'])
   })
 
   it('creates a Temporary technique when a converter it uses is Temporary', async () => {

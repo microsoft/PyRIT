@@ -33,6 +33,7 @@ import {
   EyeRegular,
 } from '@fluentui/react-icons'
 
+import DeleteSavedEntryButton from '@/components/Registry/DeleteSavedEntryButton'
 import OriginBadge from '@/components/Registry/OriginBadge'
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
@@ -63,6 +64,8 @@ interface TargetTableProps {
   targets: TargetInstance[]
   defaultAdversarialTarget: TargetInstance | null
   onSetDefaultAdversarialTarget: (target: TargetInstance | null) => void
+  /** Called after a saved target's file is deleted, so the list can be loaded again. */
+  onTargetDeleted?: () => void
 }
 
 /** Format target_specific_params into a short human-readable string. */
@@ -247,6 +250,7 @@ export default function TargetTable({
   targets,
   defaultAdversarialTarget,
   onSetDefaultAdversarialTarget,
+  onTargetDeleted,
 }: TargetTableProps) {
   const styles = useTargetTableStyles()
   const { preferences, updatePreferences } = useUserPreferences()
@@ -450,6 +454,14 @@ export default function TargetTable({
                     >
                       {hidden ? 'Show' : 'Hide'}
                     </Button>
+                    {target.origin === 'saved' && onTargetDeleted && (
+                      <DeleteSavedEntryButton
+                        kind="targets"
+                        name={target.target_registry_name}
+                        className={styles.rowAction}
+                        onDeleted={onTargetDeleted}
+                      />
+                    )}
                   </TableCell>
                 }
                 nameCellClassName={styles.registryNameCell}

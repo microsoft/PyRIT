@@ -2413,6 +2413,20 @@ export interface SavedEntryRef {
   name: string
 }
 
+/** A saved entry's file, as GET /api/saved-entries/{kind}/{name} describes it. */
+export interface SavedEntry {
+  kind: RegistryRecipeKind
+  name: string
+  /** The file's version, sent back when deleting it; null when the file can't be read. */
+  version: string | null
+  /** Why the file can't be used, when it can't be read or isn't a valid entry. */
+  problem: string | null
+  saved_by: string | null
+  saved_by_me: boolean
+  /** Whether the person asking may change or delete it. */
+  can_change: boolean
+}
+
 /** A saved entry, or a whole folder of them when `name` is null, that couldn't be restored. */
 export interface RestoreFailure {
   kind: RegistryRecipeKind

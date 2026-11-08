@@ -24,7 +24,6 @@ import {
   TableHeaderCell,
   TableRow,
   Text,
-  Tooltip,
   mergeClasses,
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
@@ -38,14 +37,12 @@ import { toApiError } from '@/services/errors'
 import type { ConverterInstance } from '@/types'
 
 import CreateConverterDialog from './CreateConverterDialog'
+import DeleteSavedEntryButton from './DeleteSavedEntryButton'
 import OriginBadge from './OriginBadge'
 import SavedBy from './SavedBy'
 import { useConverterRegistryPageStyles } from './ConverterRegistry.styles'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useConverterRegistryStyles } from './Registry.styles'
-
-const SAVED_CONVERTER_REMOVAL_NOTE =
-  "Saved converters can't be removed here yet. Delete the converter's saved file and restart the backend."
 
 // One token per dialog opening. A create response can land after the dialog it
 // was submitted from is gone, and by then another dialog may be open, so the
@@ -385,16 +382,17 @@ export default function ConverterRegistry() {
                   </TableCell>
                   <TableCell className={pageStyles.actionCell}>
                     {converter.origin === 'saved' ? (
-                      <Tooltip content={SAVED_CONVERTER_REMOVAL_NOTE} relationship="description">
-                        <Button
-                          className={pageStyles.removeButton}
-                          appearance="subtle"
-                          size="small"
-                          icon={<DismissRegular className={pageStyles.dismissIcon} />}
-                          aria-label={`Remove ${converter.converter_id}`}
-                          disabledFocusable
-                        />
-                      </Tooltip>
+                      <DeleteSavedEntryButton
+                        kind="converters"
+                        name={converter.converter_id}
+                        iconOnly
+                        className={pageStyles.removeButton}
+                        onDeleted={() => {
+                          // The row is about to unmount, so focus goes to New Converter, as after a removal.
+                          restoreFocus(newConverterRef.current)
+                          void loadConverters(true)
+                        }}
+                      />
                     ) : (
                       <Button
                         {...restoreFocusTarget}

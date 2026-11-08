@@ -164,9 +164,17 @@ Expand a target, scorer, technique, or converter name to inspect its identity
 JSON. Target identity inspection is independent of expanding composite target
 members; defaults, visibility, and the target's configuration columns remain
 available. Converter inputs and outputs stay visible in the table. Use the small
-red X to remove a converter from the live registry; confirmation is required. A
-saved converter can't be removed there yet: delete its file
-(`converters/<name>.json`) in `registry_recipes_source`, then restart the backend.
+red X to remove a converter from the live registry; confirmation is required.
+
+**Delete** on a saved target, converter, scorer, or technique deletes its saved
+file and removes it from the registry, so it doesn't come back after a restart.
+The person who saved it, or an administrator, can delete it; anyone can when
+sign-in is off. The dialog says who saved it. An entry that another saved entry
+uses, or that a registered entry holds, isn't deleted until that one is deleted
+or changed, and an entry isn't deleted while a run, send, or request could be
+using it. If the file changed since the dialog read it, **Look again** shows the
+current one. A saved entry that couldn't be restored can also be deleted from the
+banner that lists it; then select **Retry**.
 
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
@@ -184,8 +192,7 @@ is reinitialized. Give it a registry name of lowercase letters, digits, and
 underscores that starts with a letter; the dialog suggests one from the target
 type and model. Saved targets are kept in `registry_recipes_source`
 (`~/.pyrit/registry_recipes` unless set in your `.pyrit_conf`). To remove a saved
-target, delete its file (`targets/<name>.json`) there, and the file of any saved
-round robin that uses it, then restart the backend. If a startup initializer later
+target, select **Delete** on its row in the Targets table. If a startup initializer later
 registers a target under a saved target's name, the saved one isn't restored and
 the backend isn't ready until that file is renamed or removed and the backend
 restarted.
@@ -219,8 +226,7 @@ that uses a Temporary converter or a Temporary adversarial target is created as
 **Temporary** instead, and the dialog says why. Settings changed for a single run
 in Scanner stay with that run. The Techniques table uses the same three labels and
 **Only techniques I saved**. To
-remove a saved technique, delete its file (`techniques/<name>.json`) in
-`registry_recipes_source`, then restart the backend. Use
+remove a saved technique, select **Delete** next to its name. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.
 
 ![Registry page with registered targets and component tabs](images/registry.png)

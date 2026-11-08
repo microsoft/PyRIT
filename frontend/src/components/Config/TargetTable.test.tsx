@@ -335,10 +335,13 @@ describe('TargetTable', () => {
     ]
     render(
       <TestWrapper>
-        <TargetTable {...defaultProps} targets={targets} />
+        <TargetTable {...defaultProps} targets={targets} onTargetDeleted={jest.fn()} />
       </TestWrapper>
     )
 
+    // Only a saved target has a file to delete.
+    expect(screen.getAllByRole('button', { name: /^Delete saved target/ }).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Delete saved target saved_chat'])
     const labelIn = (name: string): string | null => {
       const row = screen.getByRole('row', { name: new RegExp(`(^|\\s)${name}(\\s|$)`) })
       const label = ['Saved', 'From configuration', 'Temporary'].find((text) => within(row).queryByText(text))

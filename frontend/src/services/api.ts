@@ -377,6 +377,16 @@ export const runtimeApi = {
   },
 }
 
+export const savedEntriesApi = {
+  get: async (kind: RegistryRecipeKind, name: string): Promise<SavedEntry> => {
+    return (await apiClient.get(`/saved-entries/${kind}/${encodeURIComponent(name)}`)).data
+  },
+  delete: async (kind: RegistryRecipeKind, name: string, expectedVersion: string | null): Promise<void> => {
+    const params = expectedVersion === null ? {} : { expected_version: expectedVersion }
+    await apiClient.delete(`/saved-entries/${kind}/${encodeURIComponent(name)}`, { params })
+  },
+}
+
 export const targetsApi = {
   listTargetTypes: async (): Promise<TargetTypeListResponse> => {
     const response = await apiClient.get('/targets/types')
@@ -1000,4 +1010,11 @@ export const datasetsApi = {
   },
 }
 
-import type { RestoreFailureList, RestoreRetryResult, RuntimeReadiness, RuntimeStatus } from '@/types'
+import type {
+  RegistryRecipeKind,
+  RestoreFailureList,
+  RestoreRetryResult,
+  RuntimeReadiness,
+  RuntimeStatus,
+  SavedEntry,
+} from '@/types'

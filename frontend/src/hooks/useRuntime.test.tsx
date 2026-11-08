@@ -6,13 +6,14 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AxiosError, AxiosHeaders } from 'axios'
 
-import { runtimeApi } from '@/services/api'
+import { runtimeApi, savedEntriesApi } from '@/services/api'
 import type { RestoreFailure, RestoreFailureList, RestoreRetryResult } from '@/types'
 
 import { RuntimeBanner, RuntimeProvider, useRuntime } from './useRuntime'
 
 jest.mock('@/services/api', () => ({
   runtimeApi: { getReadiness: jest.fn(), getRestoreFailures: jest.fn(), retryRestore: jest.fn() },
+  savedEntriesApi: { get: jest.fn(), delete: jest.fn() },
 }))
 
 function TestWrapper({ children }: { children: ReactNode }) {
@@ -87,7 +88,33 @@ describe('RuntimeBanner', () => {
     const list = await screen.findByRole('list', { name: "Saved entries that couldn't be restored" })
     expect(await within(list).findByText('Target pool: It uses an entry that does not exist. (target gone)')).toBeInTheDocument()
     expect(within(list).getByText('Saved converters: The folder could not be read.')).toBeInTheDocument()
-    expect(screen.getByText(/fix or delete these saved files, then select Retry/)).toBeInTheDocument()
+    expect(screen.getByText(/Whoever saved an entry, or an administrator, can delete it here/)).toBeInTheDocument()
+    // A folder that couldn't be read isn't one saved entry, so it has nothing to delete.
+    expect(within(list).getAllByRole('button')).toHaveLength(1)
+  })
+
+  it('deletes a saved entry from the list and drops it there at once', async () => {
+    const user = userEvent.setup()
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
+    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost'), brokenTarget('kept')] })
+    jest.mocked(savedEntriesApi.get).mockResolvedValue({
+      kind: 'targets', name: 'ghost', version: 'v1', problem: 'unknown_class',
+      saved_by: null, saved_by_me: false, can_change: true,
+    })
+    jest.mocked(savedEntriesApi.delete).mockResolvedValue()
+
+    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+    const list = await screen.findByRole('list', { name: "Saved entries that couldn't be restored" })
+    await user.click(await within(list).findByRole('button', { name: 'Delete saved target ghost' }))
+    const dialog = await screen.findByRole('dialog', { name: "Delete saved target 'ghost'?" })
+    await within(dialog).findByText(/deleted for everyone/)
+    // Later refreshes never answer, so only the delete itself can take the entry off the list.
+    jest.mocked(runtimeApi.getRestoreFailures).mockReturnValue(new Promise(() => {}))
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    expect(savedEntriesApi.delete).toHaveBeenCalledWith('targets', 'ghost', 'v1')
+    await waitFor(() => expect(within(list).queryByRole('button', { name: 'Delete saved target ghost' })).not.toBeInTheDocument())
+    expect(within(list).getByRole('button', { name: 'Delete saved target kept' })).toBeInTheDocument()
   })
 
   it('does not ask for restore failures in other states', async () => {

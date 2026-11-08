@@ -14,6 +14,7 @@ import {
 } from '@/utils/scorerPresentation'
 
 import OriginBadge from './OriginBadge'
+import DeleteSavedEntryButton from './DeleteSavedEntryButton'
 import SavedBy from './SavedBy'
 import { useConverterRegistryStyles } from './Registry.styles'
 import RegistryIdentityRow from './RegistryIdentityRow'
@@ -36,6 +37,7 @@ interface ScorerTableSection {
 
 interface ScorerTableProps extends ScorerTableSection {
   scorers: ScorerInstance[]
+  onDeleted: () => void
 }
 
 interface ScorerTableSort {
@@ -71,7 +73,7 @@ function MetricCell({ name, value }: { name: string; value: unknown }) {
   )
 }
 
-function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
+function ScorerTable({ title, family, metrics, scorers, onDeleted }: ScorerTableProps) {
   const styles = useConverterRegistryStyles()
   const scorerStyles = useScorerRegistryStyles()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -143,6 +145,9 @@ function ScorerTable({ title, family, metrics, scorers }: ScorerTableProps) {
               nameContent={<>
                 {scorer.origin && <OriginBadge origin={scorer.origin} />}
                 <SavedBy entry={scorer} />
+                {scorer.origin === 'saved' && (
+                  <DeleteSavedEntryButton kind="scorers" name={scorer.scorer_registry_name} onDeleted={onDeleted} />
+                )}
               </>}>
               <TableCell>
                 <Text className={scorerStyles.type}>
@@ -201,7 +206,8 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
       {TABLE_SECTIONS.map(({ family, title, metrics }: ScorerTableSection) => {
         const items = shown.filter((scorer: ScorerInstance) => scorerFamily(scorer) === family)
         return items.length > 0
-          ? <ScorerTable key={family} family={family} title={title} metrics={metrics} scorers={items} /> : null
+          ? <ScorerTable key={family} family={family} title={title} metrics={metrics} scorers={items}
+            onDeleted={onRefresh} /> : null
       })}
       {!loading && !error && scorers.length === 0 && <Text>No scorers are registered. Configure scorers through an initializer.</Text>}
     </div>

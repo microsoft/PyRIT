@@ -17,6 +17,7 @@ import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import CreateTechniqueDialog from './CreateTechniqueDialog'
 import OriginBadge from './OriginBadge'
+import DeleteSavedEntryButton from './DeleteSavedEntryButton'
 import SavedBy from './SavedBy'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useTechniqueRegistryStyles } from './TechniqueRegistry.styles'
@@ -168,6 +169,12 @@ function TechniqueRegistryPage({ ready, runtimeKey }: TechniqueRegistryPageProps
                 nameContent={<>
                   {item.origin && <OriginBadge origin={item.origin} />}
                   <SavedBy entry={item} />
+                  {item.origin === 'saved' && (
+                    <DeleteSavedEntryButton kind="techniques" name={item.name} onDeleted={() => {
+                      setFocusRestore((current) => current + 1)
+                      void load()
+                    }} />
+                  )}
                 </>}>
                 <TableCell>{item.description ?? 'No description'}</TableCell>
                 <TableCell className={styles.nameCell}>{item.attack_type}</TableCell>

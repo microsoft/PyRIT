@@ -76,6 +76,9 @@ describe('ScorerRegistry', () => {
     expect(within(row('saved_judge')).getByText('Saved')).toBeInTheDocument()
     expect(within(row('startup_judge')).getByText('From configuration')).toBeInTheDocument()
     expect(within(row('launch_judge')).getByText('Temporary')).toBeInTheDocument()
+    // Only a saved scorer has a file to delete.
+    expect(screen.getAllByRole('button', { name: /^Delete saved scorer/ }).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Delete saved scorer saved_judge'])
   })
 
   it('says who saved each scorer and lists only yours on request until none are left', async () => {

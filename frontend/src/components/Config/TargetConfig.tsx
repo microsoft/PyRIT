@@ -158,6 +158,7 @@ export default function TargetConfig({
           targets={targets}
           defaultAdversarialTarget={defaultAdversarialTarget}
           onSetDefaultAdversarialTarget={onSetDefaultAdversarialTarget}
+          onTargetDeleted={fetchTargets}
         />
       )}
 
