@@ -128,6 +128,11 @@ class PromptTarget(Identifiable):
     # Why this target type can't be saved even without a credential, or None when it can.
     not_saveable_reason: ClassVar[str | None] = None
 
+    # Constructor parameters that choose where requests go or how they authenticate. A private
+    # copy built from API input keeps its source's values for these, so a credential stays
+    # with the endpoint it was configured for.
+    COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset()
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.
