@@ -513,4 +513,15 @@ describe('TechniqueRegistry', () => {
     expect(within(table).queryByText('bobs_send')).not.toBeInTheDocument()
     expect(within(table).getByText('mine_send')).toBeInTheDocument()
   })
+
+  it('offers no list of your own techniques when none are yours, such as with sign-in off', async () => {
+    techniques.listTechniques.mockResolvedValue(techniquePage([
+      { ...technique('local_send'), origin: 'saved', saved_by: null },
+      { ...technique('bobs_send'), origin: 'saved', saved_by: 'Bob' },
+    ]))
+    render(tree())
+    await screen.findByRole('table', { name: 'Registered techniques' })
+
+    expect(screen.queryByRole('checkbox', { name: /Only techniques I saved/ })).not.toBeInTheDocument()
+  })
 })
