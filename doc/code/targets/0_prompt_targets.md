@@ -119,9 +119,14 @@ than `/openai/deployments/.../chat/completions`. Pass deployment names through
 The SDK owns trailing-slash normalization and appending the operation path.
 
 `OpenAIVideoTarget` retains the deprecated videos API for compatible endpoints.
-This does not restore availability of OpenAI's retired Sora service. SDK 3's
-deprecation warnings remain visible; type-check exceptions are limited to the
-specific SDK calls in that adapter.
+This does not restore availability of [OpenAI's retired Sora service](https://help.openai.com/en/articles/20001152-what-to-know-about-the-sora-discontinuation).
+The Sora generation tutorial and live integration tests have been removed.
+The adapter, public exports, existing environment-variable support, and unit tests
+remain available; no replacement video service is configured by default.
+SDK 3's deprecation warnings remain visible; type-check exceptions are limited to
+the specific SDK calls in that adapter. Video scoring does not depend on Sora:
+see [scoring existing videos](../scoring/1_true_false_scorers.ipynb#scoring-existing-videos)
+and [float-scale media scorers](../scoring/2_float_scale_scorers.ipynb#multimodal-scorers).
 
 The default installation does not require LiteLLM and can resolve to SDK 3.
 The optional `litellm` and `all` extras retain stable LiteLLM releases. A stable
@@ -329,5 +334,4 @@ Like most of PyRIT, targets can be multi-modal.
 
 - [OpenAI Chat Target](./1_openai_chat_target.ipynb) (*text + image --> text*)
 - [OpenAI Image Target](./3_openai_image_target.ipynb) (*text --> image* or *text + image --> image*)
-- [OpenAI Video Target](./4_openai_video_target.ipynb) (*text --> video*)
 - [OpenAI TTS Target](./5_openai_tts_target.ipynb) (*text --> audio*)

@@ -8,7 +8,7 @@ import uuid
 
 import pytest
 
-from pyrit.models.seeds import (
+from pyrit.models import (
     SeedPrompt,
     SeedSimulatedConversation,
 )

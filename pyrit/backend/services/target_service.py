@@ -18,22 +18,22 @@ import uuid
 from functools import lru_cache
 from typing import Any
 
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.targets import (
+from pyrit.backend.mappers import target_object_to_instance
+from pyrit.backend.models import (
     CreateTargetRequest,
+    PaginationInfo,
     TargetListResponse,
+)
+from pyrit.backend.models.targets import (
     TargetTypeEntry,
     TargetTypeResponse,
     UnregisteredTarget,
 )
 from pyrit.backend.services.component_lifecycle import release_component_async
-from pyrit.common import REQUIRED_VALUE, default_values
-from pyrit.common.auth_mode import AUTH_MODES, AuthMode
-from pyrit.models import TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
+from pyrit.models import Parameter, TargetIdentifier
+from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 
@@ -365,7 +365,8 @@ class TargetService:
         ``params``, and for ``identity`` it confirms the target supports it and
         omits the api_key plus any registry-flagged identity-conflicting
         parameters so the target validates its own endpoint and authenticates
-        itself. The request-level ``auth_mode`` is authoritative and is forwarded
+        itself. For ``none`` it likewise confirms support and omits the api_key.
+        The request-level ``auth_mode`` is authoritative and is forwarded
         via ``get_auth_mode_parameters`` to targets that accept it, so the choice
         is explicit rather than inferred from a missing key. A target that uploads
         local files gets the server's upload folder, which callers cannot choose.
@@ -388,8 +389,8 @@ class TargetService:
 
         Raises:
             ValueError: If the target type is not registered, ``params`` carries an
-                ``auth_mode`` that conflicts with the request-level choice, identity
-                auth is requested but unsupported by the target type, or a target that
+                ``auth_mode`` that conflicts with the request-level choice, identity or
+                no-key auth is requested but unsupported by the target type, or a target that
                 uploads local files is requested with its upload folder or while
                 the server configures none. Construction errors (unknown params,
                 incompatible inner targets, unrecognized identity endpoints) are
@@ -428,6 +429,11 @@ class TargetService:
                 for parameter in metadata.parameters:
                     if parameter.identity_conflicting:
                         params.pop(parameter.name, None)
+
+        if request.auth_mode == "none":
+            if "none" not in target_cls.supported_auth_modes:
+                raise ValueError(f"Target type '{request.type}' does not support no-key authentication.")
+            params.pop("api_key", None)
 
         params.update(target_cls.get_auth_mode_parameters(auth_mode=request.auth_mode))
         self._apply_upload_directory(

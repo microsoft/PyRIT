@@ -22,9 +22,8 @@ from unit.mocks import MockPromptTarget
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
+from pyrit.memory import CentralMemory, MemoryInterface, SeedEntry, SQLiteMemory
 from pyrit.memory.memory_interface import PreparedSeedBatch
-from pyrit.memory.memory_models import SeedEntry
 from pyrit.models import (
     AllAvailableDatasetSize,
     AttackSeedGroup,
@@ -42,12 +41,17 @@ from pyrit.scenario import (
     DatasetConfiguration,
     DatasetFetchPolicy,
     DatasetSource,
+    ResolvedDataset,
     Scenario,
 )
-from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, ScenarioTechnique
-from pyrit.scenario.core.dataset_configuration import (
+from pyrit.scenario.core import (
+    AtomicAttack,
+    AttackTechnique,
+    BaselineAttackPolicy,
     DatasetConstraintError,
-    ResolvedDataset,
+    ScenarioTechnique,
+)
+from pyrit.scenario.core.dataset_configuration import (
     require_min_size,
     require_seed_type,
 )

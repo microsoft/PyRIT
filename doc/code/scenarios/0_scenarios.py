@@ -111,9 +111,9 @@ from pyrit.scenario import (
     ScenarioTechnique,
 )
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
-from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+from pyrit.score import TrueFalseScorer
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers.techniques import TechniqueInitializer
+from pyrit.setup.initializers import TechniqueInitializer
 
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-level-await]
 await TechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
@@ -177,7 +177,7 @@ class MyScenario(Scenario):
 # %%
 import logging
 
-from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.backend.services import get_scenario_service
 from pyrit.cli._output import print_scenario_list
 
 logging.getLogger("pyrit").setLevel(logging.ERROR)

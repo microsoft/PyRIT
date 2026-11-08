@@ -19,7 +19,6 @@ def test_lockfile_selects_one_uv_version() -> None:
 @pytest.mark.parametrize(
     ("workflow_name", "job_name"),
     [
-        ("build_and_test.yml", "openai-compatibility"),
         ("build_and_test.yml", "pre-commit"),
         ("build_and_test.yml", "main-job"),
         ("diff_cover.yml", "coverage"),
