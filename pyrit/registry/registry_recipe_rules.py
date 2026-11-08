@@ -150,6 +150,9 @@ def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any]) -> None:
     if auth_mode is None:
         auth_mode = "api_key"
     supported_auth_modes = getattr(cls, "supported_auth_modes", None)
+    if supported_auth_modes is not None and not supported_auth_modes:
+        # A class that declares no auth modes, such as TextTarget, takes no credentials of its own.
+        supported_auth_modes = ("api_key",)
     if supported_auth_modes is not None and auth_mode not in supported_auth_modes:
         modes = ", ".join(f"'{mode}'" for mode in supported_auth_modes)
         raise SavedEntryRefusedError(
