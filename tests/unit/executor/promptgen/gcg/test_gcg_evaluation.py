@@ -15,6 +15,7 @@ pytest.importorskip(
 )
 torch = pytest.importorskip("torch", reason="torch not installed")
 
+from pyrit.executor.promptgen.gcg import CrossEntropyLoss, LossFunction
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (
     AttackPrompt,
     ModelWorker,
@@ -24,8 +25,6 @@ from pyrit.executor.promptgen.gcg.attack.gcg.candidate_evaluator import (
     CandidateEvaluationBatch,
     GCGCandidateEvaluator,
 )
-from pyrit.executor.promptgen.gcg.default_implementations import CrossEntropyLoss
-from pyrit.executor.promptgen.gcg.extension_protocols import LossFunction
 
 
 class _QueueStub:

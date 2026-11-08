@@ -16,16 +16,15 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.dialects import mssql
 
-from pyrit.memory import MemoryInterface
+from pyrit.memory import MemoryInterface, StorageIO
 from pyrit.memory.memory_models import ScorableContentEntry, ScoreEntry
-from pyrit.memory.storage import StorageIO
 from pyrit.models import (
     ComponentIdentifier,
     ContentEntryScorable,
     ContentScorable,
     Score,
 )
-from pyrit.score.message_scorable_resolver import MessageScorableResolver
+from pyrit.score import MessageScorableResolver
 
 
 def _scorer_id() -> ComponentIdentifier:

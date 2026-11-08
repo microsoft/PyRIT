@@ -15,7 +15,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import Field
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     AddMessageResponse,
     AttackConversationsResponse,
@@ -28,27 +28,22 @@ from pyrit.backend.models.attacks import (
     CreateAttackResponse,
     CreateConversationRequest,
     CreateConversationResponse,
-    SaveConversationRequest,
+    ProblemDetail,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
 )
-from pyrit.backend.models.common import (
-    MAX_IDENTIFIER_LENGTH,
-    MAX_ITEMS,
-    CursorStr,
-    IdentifierStr,
-    LabelFilterStr,
-    ProblemDetail,
-)
+from pyrit.backend.models.attacks import AttackMetadata, SaveConversationRequest
+from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr
 from pyrit.backend.models.scores import ApplyChatScorerRequest, ApplyChatScorerResponse
 from pyrit.backend.routes.common import parse_label_query_params
-from pyrit.backend.services.attack_service import AttackObjectiveConflictError, get_attack_service
+from pyrit.backend.services import get_attack_service
+from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError, get_chat_scoring_service
 from pyrit.backend.services.history_replay import HistoryReplayError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.media_persistence import MediaAccessDeniedError
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.memory.memory_interface import AttackStateConflictError
 
 logger = logging.getLogger(__name__)
@@ -343,6 +338,40 @@ async def get_attack(attack_result_id: IdentifierStr) -> AttackSummary:  # pyrit
         )
 
     return attack
+
+
+@router.get(
+    "/{attack_result_id}/metadata",
+    response_model=AttackMetadata,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid metadata request"},
+        404: {"model": ProblemDetail, "description": "Attack not found"},
+    },
+)
+async def get_attack_metadata_async(
+    *,
+    attack_result_id: IdentifierStr,
+    conversation_id: IdentifierStr | None = Query(None, description="Selected main or pruned conversation to validate"),
+) -> AttackMetadata:
+    """
+    Get Chat metadata without downloading either complete conversation-reference array.
+
+    Membership is checked independently of reference paging. An invalid selection is
+    reported in the metadata rather than replacing it with the main conversation.
+    GET /attacks/{id} retains its full legacy summary.
+
+    Returns:
+        AttackMetadata: Metadata, pruned-reference count, and selected membership.
+    """
+    try:
+        metadata = await get_attack_service().get_attack_metadata_async(
+            attack_result_id=attack_result_id, conversation_id=conversation_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if metadata is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Attack '{attack_result_id}' not found")
+    return metadata
 
 
 @router.patch(

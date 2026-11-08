@@ -46,14 +46,13 @@ import pathlib
 
 from pyrit.executor.attack import (
     AttackExecutor,
+    AttackScoringConfig,
     PromptSendingAttack,
 )
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import AttackSeedGroup, SeedObjective, SeedOrigin, SeedPrompt
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.score.true_false.self_ask_refusal_scorer import SelfAskRefusalScorer
-from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
+from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)  # type: ignore

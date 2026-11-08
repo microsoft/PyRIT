@@ -9,6 +9,7 @@ import json
 import os
 import tempfile
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,15 +21,22 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import AuthenticatedUser
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageResponse,
     AttackListResponse,
     AttackSummary,
     ConversationMessagesResponse,
+    ConverterInstance,
+    ConverterInstanceListResponse,
+    ConverterPreviewResponse,
+    ConverterTypeResponse,
     CreateAttackResponse,
     MessagePieceView,
     MessageView,
+    PaginationInfo,
+    PreviewStep,
     ScoreView,
+    TargetListResponse,
     TargetResponseStatus,
 )
 from pyrit.backend.models.common import (
@@ -37,30 +45,20 @@ from pyrit.backend.models.common import (
     MAX_ITEMS,
     MAX_LABEL_KEY_LENGTH,
     MAX_LABEL_VALUE_LENGTH,
-    PaginationInfo,
-)
-from pyrit.backend.models.converters import (
-    ConverterInstance,
-    ConverterInstanceListResponse,
-    ConverterPreviewResponse,
-    ConverterTypeResponse,
-    PreviewStep,
 )
 from pyrit.backend.models.scores import ApplyChatScorerResponse
-from pyrit.backend.models.targets import (
-    TargetListResponse,
-    TargetTypeResponse,
-)
+from pyrit.backend.models.targets import TargetTypeResponse
 from pyrit.backend.routes import version as version_routes
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.routes.scores import _get_user_identifier
-from pyrit.backend.services.attack_service import AttackObjectiveConflictError, AttackService
+from pyrit.backend.services import AttackService
+from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.catalog import TargetInstance
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -233,7 +231,8 @@ class TestAttackRoutes:
             assert response.status_code == status.HTTP_200_OK
             assert mock_service.list_attacks_async.call_args.kwargs["include_scenario_attacks"] is False
 
-    def test_create_attack_success(self, client: TestClient) -> None:
+    @pytest.mark.parametrize("field", ["objective", "name"])
+    def test_create_attack_success(self, *, client: TestClient, field: str) -> None:
         """Test successful attack creation."""
         now = datetime.now(UTC)
 
@@ -248,14 +247,30 @@ class TestAttackRoutes:
             )
             mock_get_service.return_value = mock_service
 
-            response = client.post(
-                "/api/attacks",
-                json={"target_registry_name": "target-1", "name": "Test Attack"},
-            )
+            with (
+                pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective")
+                if field == "name"
+                else nullcontext()
+            ):
+                response = client.post(
+                    "/api/attacks",
+                    json={"target_registry_name": "target-1", field: "Test objective"},
+                )
 
             assert response.status_code == status.HTTP_201_CREATED
             data = response.json()
             assert data["conversation_id"] == "attack-1"
+            request = mock_service.create_attack_async.call_args.kwargs["request"]
+            assert request.objective == "Test objective"
+
+    def test_create_attack_rejects_conflicting_objective_alias(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.attacks.get_attack_service") as service,
+            pytest.warns(DeprecationWarning, match="CreateAttackRequest.objective"),
+        ):
+            response = client.post("/api/attacks", json={"objective": "", "name": "Legacy objective"})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        service.assert_not_called()
 
     def test_create_attack_target_not_found(self, client: TestClient) -> None:
         """Test attack creation with non-existent target."""
@@ -1258,6 +1273,16 @@ class TestTargetRoutes:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_list_target_types_marks_hack_a_prompt_credentials_sensitive(self, client: TestClient) -> None:
+        response = client.get("/api/targets/types")
+
+        assert response.status_code == status.HTTP_200_OK
+        entry = next(item for item in response.json()["items"] if item["target_type"] == "HackAPromptTarget")
+        sensitive = {parameter["name"]: parameter["sensitive"] for parameter in entry["parameters"]}
+        assert sensitive["cookie"] is True
+        assert sensitive["session_id"] is True
+        assert sensitive["challenge_slug"] is False
+
     def test_create_target_success(self, client: TestClient) -> None:
         """Test successful target creation."""
         with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
@@ -1521,6 +1546,18 @@ class TestConverterRoutes:
         response = client.get("/api/converters/catalog")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    @pytest.mark.parametrize("converter_type", ["AzureSpeechAudioToTextConverter", "AzureSpeechTextToAudioConverter"])
+    def test_list_converter_types_marks_azure_speech_key_sensitive(
+        self, client: TestClient, converter_type: str
+    ) -> None:
+        response = client.get("/api/converters/types")
+
+        assert response.status_code == status.HTTP_200_OK
+        entry = next(item for item in response.json()["items"] if item["converter_type"] == converter_type)
+        sensitive = {parameter["name"]: parameter["sensitive"] for parameter in entry["parameters"]}
+        assert sensitive["azure_speech_key"] is True
+        assert sensitive["azure_speech_region"] is False
 
     def test_create_converter_success(self, client: TestClient) -> None:
         """Test successful converter instance creation."""

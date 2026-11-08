@@ -15,30 +15,37 @@ import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.backend.models.attacks import (
+from pyrit.backend.mappers import target_object_to_instance
+from pyrit.backend.models import (
+    ConverterPreviewRequest,
     CreateAttackRequest,
     CreateConversationRequest,
+    CreateConverterRequest,
+    CreateScorerRequest,
+    CreateTargetRequest,
     MessagePieceRequest,
     MessageRequest,
+)
+from pyrit.backend.models.attacks import (
     SaveConversationRequest,
 )
-from pyrit.backend.models.converters import ConverterPreviewRequest, CreateConverterRequest
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
-from pyrit.backend.models.scorers import CreateScorerRequest
-from pyrit.backend.models.targets import CreateTargetRequest
 from pyrit.backend.routes import converters, scorers, targets
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import (
+    AttackService,
+    ConverterService,
+    TargetService,
+    get_converter_service,
+    get_target_service,
+)
 from pyrit.backend.services.component_lifecycle import construct_component_async, release_component_async
-from pyrit.backend.services.converter_service import ConverterService, get_converter_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler
 from pyrit.backend.services.message_send_service import MessageSendService, resolve_applied_converter_identifiers
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
-from pyrit.backend.services.target_service import TargetService, get_target_service
-from pyrit.common.apply_defaults import reset_default_values, set_default_value
-from pyrit.common.brick_contract import forward_init_parameters
+from pyrit.common import forward_init_parameters, reset_default_values, set_default_value
 from pyrit.converter import (
     CaesarConverter,
     Converter,
@@ -262,6 +269,43 @@ class TestTemporaryComponents:
             try:
                 assert private._api_key is source._api_key
                 assert await private._api_key() == "test-token"
+                assert private.get_identifier().temperature == 0.8
+            finally:
+                await private.cleanup_target_async()
+        finally:
+            await source.cleanup_target_async()
+
+    @pytest.mark.parametrize("auth_mode", ["none", "identity", "api_key"])
+    def test_source_takes_its_auth_mode_only_from_source_params(self, auth_mode: str) -> None:
+        source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
+
+        with pytest.raises(ValidationError, match="including auth_mode"):
+            CreateTargetRequest(type="OpenAIChatTarget", source=source, register=False, auth_mode=auth_mode)
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"temperature": 0.8},
+            {"temperature": 0.8, "api_key": None},
+            {"temperature": 0.8, "headers": None},
+            {"temperature": 0.8, "headers": ""},
+        ],
+    )
+    async def test_no_key_source_stays_no_key_async(self, overrides: dict[str, Any]) -> None:
+        source = OpenAIChatTarget(endpoint="http://localhost:11434/v1", model_name="llama3", auth_mode="none")
+        registry = TargetRegistry.get_registry_singleton()
+        registry.instances.register(source, name="source")
+        try:
+            with patch.dict(
+                "os.environ",
+                {"OPENAI_CHAT_KEY": "server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"X-Server-Secret": "s"}'},
+            ):
+                private = await TargetService().build_from_source_async(
+                    SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params=overrides)
+                )
+            try:
+                assert private._api_key == "not-needed"
+                assert private._headers == {}
                 assert private.get_identifier().temperature == 0.8
             finally:
                 await private.cleanup_target_async()

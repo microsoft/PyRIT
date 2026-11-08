@@ -169,6 +169,8 @@ class AttackSeedGroup(SeedGroup):
 
         The original group is not mutated. Technique seeds are inserted at
         ``technique.insertion_index`` (or appended at the end when ``None``).
+        When requested, the objective is appended as a separate final user prompt
+        after merged static prompts and reserved simulated-conversation sequences.
 
         Args:
             technique: A validated AttackTechniqueSeedGroup whose seeds will be merged.
@@ -212,6 +214,22 @@ class AttackSeedGroup(SeedGroup):
             technique_seeds=technique_seeds,
             prepend_technique=technique.prompt_placement == "prepend",
         )
+
+        if technique.append_objective_prompt:
+            next_seq = (
+                max(
+                    (
+                        seed.sequence_range.stop - 1 if isinstance(seed, SeedSimulatedConversation) else seed.sequence
+                        for seed in merged_seeds
+                        if isinstance(seed, (SeedPrompt, SeedSimulatedConversation))
+                    ),
+                    default=-1,
+                )
+                + 1
+            )
+            merged_seeds.append(
+                SeedPrompt(value=self.objective.value, data_type="text", role="user", sequence=next_seq)
+            )
 
         return AttackSeedGroup(seeds=merged_seeds)
 

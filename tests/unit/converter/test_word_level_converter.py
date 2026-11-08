@@ -3,7 +3,7 @@
 
 import pytest
 
-from pyrit.converter.text_selection_strategy import (
+from pyrit.converter import (
     AllWordsSelectionStrategy,
     WordIndexSelectionStrategy,
     WordKeywordSelectionStrategy,
