@@ -37,13 +37,14 @@ class _LocalDatasetLoader(SeedDatasetProvider):
         """
         self.file_path = file_path
 
-        # Pre-load to get dataset name
+        # Read metadata without constructing seed objects during catalog discovery.
         try:
-            dataset = SeedDataset.from_yaml_file(file_path)
+            dataset = self._read_yaml()
             # Use the dataset_name from the YAML if available, otherwise use filename
-            self._dataset_name: str = (
-                getattr(dataset, "dataset_name", None) or getattr(dataset, "name", None) or file_path.stem
-            )
+            name = dataset.get("dataset_name") or dataset.get("name")
+            self._dataset_name: str = name if isinstance(name, str) and name else file_path.stem
+            description = dataset.get("description")
+            self.description = description if isinstance(description, str) else None
         except Exception as e:
             logger.warning(f"Could not pre-load dataset from {file_path}: {e}")
             self._dataset_name = file_path.stem

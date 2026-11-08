@@ -46,13 +46,13 @@ function uniqueLabels(values: readonly string[]): FilterOption[] {
 
 function modalityOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
   const values: string[] = []
-  for (const dataset of datasets) values.push(...dataset.modalities)
+  for (const dataset of datasets) values.push(...(dataset.loaded ? dataset.modalities : dataset.provider?.modalities ?? []))
   return uniqueLabels(values)
 }
 
 function harmOptions(datasets: readonly DatasetInfo[]): FilterOption[] {
   const values: string[] = []
-  for (const dataset of datasets) values.push(...dataset.harm_categories)
+  for (const dataset of datasets) values.push(...(dataset.loaded ? dataset.harm_categories : dataset.provider?.harm_categories ?? []))
   return uniqueLabels(values)
 }
 
@@ -66,7 +66,7 @@ export default function DatasetCatalog() {
     () => catalogQueryFromSearchParams(new URLSearchParams(catalogSearch)),
     [catalogSearch],
   )
-  const { datasets, loading, error } = useLoadedDatasets()
+  const { datasets, loading, error } = useLoadedDatasets(true)
 
   const filtered = useMemo(() => filterDatasets(datasets, query), [datasets, query])
   const modalities = useMemo(() => modalityOptions(datasets), [datasets])
@@ -90,13 +90,24 @@ export default function DatasetCatalog() {
         <div className={styles.headerText}>
           <Text id={titleId} as="h1" size={600} weight="semibold">Datasets</Text>
           <Text size={300} className={styles.subtitle}>
-            Loaded datasets in memory. Search, filters, and sort stay in the address bar.
-            This view does not download datasets or list individual examples.
+            Browse stored datasets and built-in providers. Search, filters, and sort stay in the address bar.
           </Text>
         </div>
       </div>
 
       <div className={styles.filters}>
+        <Select
+          aria-label="Dataset view"
+          value={query.view ?? 'memory'}
+          onChange={(_, data) => updateQuery({
+            ...query,
+            view: data.value === 'available' ? 'available' : data.value === 'all' ? 'all' : 'memory',
+          })}
+        >
+          <option value="memory">In memory</option>
+          <option value="available">Available</option>
+          <option value="all">All datasets</option>
+        </Select>
         <Input
           className={styles.search}
           contentBefore={<SearchRegular />}

@@ -139,8 +139,14 @@ original attack and conversation. A loading, missing, or read-only destination
 does not consume the draft. Starting a new attack or leaving the Chat/Datasets
 journey discards the handoff; refreshing the browser does not retain it.
 
-The **Datasets** page shows summaries of datasets already loaded into the backend's
-memory. When memory is empty, **Learn how to load datasets into memory** opens the
+The **Datasets** page offers **In memory**, **Available**, and **All datasets** views.
+Available providers describe their default configuration, including known source and
+access links, declared modalities and harm categories, and approximate size and load time.
+These hints appear separately from exact stored counts and provenance. Missing facts
+appear as unknown. Access requirements show environment-variable names only; configuring
+credentials still requires permission from the source. Opening an unloaded provider shows
+its description on the same detail route. The view, search, filters and sort stay in the URL.
+When memory is empty, **Learn how to load datasets into memory** opens the
 [dataset-loading guide](https://microsoft.github.io/PyRIT/latest/code/datasets/loading-datasets/).
 Use the same memory as the backend. The visible catalog checks for changes each minute.
 The catalog does not download providers or prefetch individual examples.

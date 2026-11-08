@@ -25,6 +25,20 @@ function makeDataset(overrides: Partial<DatasetInfo> & Pick<DatasetInfo, 'name' 
 }
 
 describe('datasetQuery', () => {
+  it('keeps provider availability independent of stored data and preserves the view in the URL', () => {
+    const stored = makeDataset({ name: 'stored', selection_key: 'dataset:named:stored' })
+    const available = makeDataset({
+      name: 'provider', selection_key: 'dataset:named:provider', loaded: false, provider_available: true,
+      logical_examples: null,
+    })
+    const both = makeDataset({ name: 'both', selection_key: 'dataset:named:both', provider_available: true })
+    const datasets = [stored, available, both]
+    expect(filterDatasets(datasets, DEFAULT_DATASET_CATALOG_QUERY).map((item) => item.name)).toEqual(['both', 'stored'])
+    const query = { ...DEFAULT_DATASET_CATALOG_QUERY, view: 'available' as const }
+    expect(filterDatasets(datasets, query).map((item) => item.name)).toEqual(['both', 'provider'])
+    expect(catalogQueryFromSearchParams(catalogQueryToSearchParams(query))).toEqual(query)
+    expect(filterDatasets(datasets, { ...query, view: 'all' })).toHaveLength(3)
+  })
   it('omits default catalog filters and restores special characters', () => {
     expect(catalogQueryToSearchParams(DEFAULT_DATASET_CATALOG_QUERY).toString()).toBe('')
     expect(catalogQueryIsDefault(DEFAULT_DATASET_CATALOG_QUERY)).toBe(true)

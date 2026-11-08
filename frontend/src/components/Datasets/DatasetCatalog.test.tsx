@@ -38,7 +38,7 @@ function expectOnlyLoadedDatasetGets(): void {
   expect(catalogCalls.length).toBeGreaterThan(0)
   for (const call of catalogCalls) {
     expect(call[1]).toEqual(expect.objectContaining({
-      params: { loaded_only: true },
+      params: { loaded_only: false },
     }))
   }
   for (const call of mockGet.mock.calls) {
@@ -157,6 +157,26 @@ describe('DatasetCatalog', () => {
     mockGet.mockReturnValue(new Promise(() => {}))
     render(<Harness initialPath="/datasets" />)
     expect(screen.getByText('Loading datasets...')).toBeInTheDocument()
+  })
+
+  it('keeps the available view when opening an unloaded provider and returning', async () => {
+    const user = userEvent.setup()
+    const available = makeDataset({
+      name: 'unloaded', selection_key: 'dataset:named:unloaded', loaded: false,
+      provider_available: true, logical_examples: null, seed_pieces: null, objectives: null,
+    })
+    mockCatalog([LOADED, available])
+    render(<Harness initialPath="/datasets" />)
+    await screen.findByRole('link', { name: LOADED.name })
+    expect(screen.queryByRole('link', { name: 'unloaded' })).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Dataset view' }), 'available')
+    await user.click(await screen.findByRole('link', { name: 'unloaded' }))
+    expect(await screen.findByText("This provider's dataset has not been loaded into memory.")).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Back to datasets' })).toHaveAttribute('href', '/datasets?view=available')
+    await user.click(screen.getByRole('link', { name: 'Back to datasets' }))
+    expect(await screen.findByRole('link', { name: 'unloaded' })).toBeInTheDocument()
+    expect(currentUrl().searchParams.get('view')).toBe('available')
+    expect(mockGet.mock.calls.filter((call) => String(call[0]).startsWith('/datasets/seeds'))).toHaveLength(0)
   })
 
   it('renders summary cards from the catalog response', async () => {

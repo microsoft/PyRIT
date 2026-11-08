@@ -168,6 +168,20 @@ class SeedDatasetMetadata:
                 )
 
 
+@dataclass(frozen=True)
+class SeedDatasetDescriptor:
+    """Local facts about a provider's default configuration, independent of stored seeds."""
+
+    name: str
+    description: str | None = None
+    source_url: str | None = None
+    license_url: str | None = None
+    access_url: str | None = None
+    required_environment_variables: tuple[str, ...] = ()
+    metadata: SeedDatasetMetadata | None = None
+    unavailable_reason: str | None = None
+
+
 class SeedDatasetFilter:
     """
     Filter for discovering datasets by metadata criteria.

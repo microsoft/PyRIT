@@ -52,6 +52,8 @@ class _SGXSTestDataset(_RemoteDatasetLoader):
     """
 
     HF_DATASET_NAME: str = "walledai/SGXSTest"
+    required_environment_variables = ("HUGGINGFACE_TOKEN",)
+    access_url = f"https://huggingface.co/datasets/{HF_DATASET_NAME}"
 
     # Metadata
     harm_categories: list[str] = [

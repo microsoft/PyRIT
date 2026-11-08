@@ -37,7 +37,7 @@ export default function DatasetSelection({ activeAttackId, activeConversationId 
   // Stay mounted while a catalog reload unmounts the table, so a runtime change
   // is still compared with the generation that owned the current page.
   const seedBrowser = useSeedExampleBrowserState(selectionKey ?? '')
-  const { datasets, loading, error, refresh } = useLoadedDatasets()
+  const { datasets, loading, error, refresh } = useLoadedDatasets(true)
   const dataset = selectionKey == null
     ? undefined
     : datasets.find((item) => item.selection_key === selectionKey)
@@ -67,7 +67,7 @@ export default function DatasetSelection({ activeAttackId, activeConversationId 
           <div className={styles.summary}>
             <DatasetCard dataset={dataset} linked={false} />
           </div>
-          <div className={styles.browser}>
+          {dataset.loaded ? <div className={styles.browser}>
             <SeedExampleBrowserView
               dataset={dataset}
               onCatalogStale={refresh}
@@ -75,11 +75,11 @@ export default function DatasetSelection({ activeAttackId, activeConversationId 
               activeAttackId={activeAttackId}
               activeConversationId={activeConversationId}
             />
-          </div>
+          </div> : <Text>This provider's dataset has not been loaded into memory.</Text>}
         </>
       ) : !error && (
         <>
-          <Text size={300}>No loaded dataset matches this selection.</Text>
+          <Text size={300}>No dataset matches this selection.</Text>
           {selectionKey ? <p className={styles.selectionKey}>{shownSelectionKey(selectionKey)}</p> : null}
         </>
       )}

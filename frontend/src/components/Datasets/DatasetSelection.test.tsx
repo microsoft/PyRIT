@@ -40,7 +40,7 @@ function expectOnlyLoadedDatasetGets(): void {
   expect(catalogCalls.length).toBeGreaterThan(0)
   for (const call of catalogCalls) {
     expect(call[1]).toEqual(expect.objectContaining({
-      params: { loaded_only: true },
+      params: { loaded_only: false },
     }))
   }
   for (const call of mockGet.mock.calls) {
@@ -154,6 +154,24 @@ describe('DatasetSelection', () => {
     expect(screen.queryByRole('link', { name: 'harmbench' })).not.toBeInTheDocument()
     const summary = screen.getByRole('article', { name: 'harmbench' })
     expect(within(summary).queryByRole('heading')).not.toBeInTheDocument()
+  })
+
+  it('shows an unloaded provider on its detail route without requesting seeds', async () => {
+    const available = makeDataset({
+      name: 'public-provider', selection_key: 'dataset:named:public-provider', loaded: false,
+      logical_examples: null, seed_pieces: null, objectives: null,
+      provider: {
+        description: 'Default public dataset description', source_url: 'https://example.com/dataset',
+        license_url: null, access_url: null, required_environment_variables: ['HUGGINGFACE_TOKEN'],
+        modalities: ['text'], harm_categories: [], size: ['medium'], load_time: [], unavailable_reason: null,
+      },
+    })
+    mockGet.mockResolvedValue({ data: { items: [available] } })
+    renderSelection(datasetDetailPath(available.selection_key))
+    expect(await screen.findByText('Default public dataset description')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Source' })).toHaveAttribute('href', 'https://example.com/dataset')
+    expect(screen.getByText(/Access may require HUGGINGFACE_TOKEN/)).toBeInTheDocument()
+    expect(seedCalls()).toEqual([])
   })
 
   it('shows not-found for an unknown key and renders that key as text', async () => {

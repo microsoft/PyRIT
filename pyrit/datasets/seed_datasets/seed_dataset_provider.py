@@ -7,11 +7,17 @@ import inspect
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import fields as dc_fields
-from typing import Any
+from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from tqdm import tqdm
 
-from pyrit.datasets.seed_datasets.seed_metadata import SeedDatasetFilter, SeedDatasetLoadTime, SeedDatasetMetadata
+from pyrit.datasets.seed_datasets.seed_metadata import (
+    SeedDatasetDescriptor,
+    SeedDatasetFilter,
+    SeedDatasetLoadTime,
+    SeedDatasetMetadata,
+)
 from pyrit.models import SeedDataset
 
 logger = logging.getLogger(__name__)
@@ -36,6 +42,10 @@ class SeedDatasetProvider(ABC):
 
     _registry: dict[str, type["SeedDatasetProvider"]] = {}
     load_time: SeedDatasetLoadTime = SeedDatasetLoadTime.UNINITIALIZED
+    description: str | None = None
+    license_url: ClassVar[str | None] = None
+    access_url: ClassVar[str | None] = None
+    required_environment_variables: ClassVar[tuple[str, ...]] = ()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
@@ -131,6 +141,72 @@ class SeedDatasetProvider(ABC):
                 raise ValueError(f"Multiple registered providers have dataset name '{name}'.")
             providers[name] = provider
         return providers
+
+    async def describe_async(self) -> SeedDatasetDescriptor:
+        """
+        Describe default provider metadata without fetching or materializing any seeds.
+
+        Returns:
+            Local provider facts and any available metadata.
+        """
+        metadata = None
+        unavailable_reason = None
+        try:
+            parsed_metadata = await self._parse_metadata_async()
+            metadata = parsed_metadata if isinstance(parsed_metadata, SeedDatasetMetadata) else None
+        except Exception:
+            unavailable_reason = "Provider metadata is unavailable."
+            logger.warning("Could not describe metadata for %s", type(self).__name__)
+        source = getattr(self, "source", None)
+        if not source and (hub_name := getattr(self, "HF_DATASET_NAME", None)):
+            source = f"https://huggingface.co/datasets/{hub_name}"
+        urls = []
+        for value in (source, self.license_url, self.access_url):
+            # Expose only public links, never credentials or query parameters from configuration.
+            try:
+                parsed = urlsplit(value) if isinstance(value, str) else None
+                urls.append(
+                    value
+                    if parsed
+                    and parsed.scheme in {"https", "http"}
+                    and parsed.netloc
+                    and not parsed.username
+                    and not parsed.password
+                    and not parsed.query
+                    else None
+                )
+            except ValueError:
+                urls.append(None)
+        return SeedDatasetDescriptor(
+            name=self.dataset_name,
+            description=self.description or inspect.cleandoc(type(self).__doc__ or "") or None,
+            source_url=urls[0],
+            license_url=urls[1],
+            access_url=urls[2],
+            required_environment_variables=self.required_environment_variables,
+            metadata=metadata,
+            unavailable_reason=unavailable_reason,
+        )
+
+    @classmethod
+    async def get_all_dataset_descriptors_async(cls) -> dict[str, SeedDatasetDescriptor]:
+        """
+        Describe default configurations, isolating unsupported providers from catalog browsing.
+
+        Returns:
+            Descriptors indexed by the existing dataset names.
+        """
+        provider_classes = await asyncio.to_thread(cls.get_all_providers)
+        descriptors = {}
+        for provider_class in provider_classes.values():
+            try:
+                provider = await asyncio.to_thread(provider_class)
+                descriptor = await provider.describe_async()
+                if descriptor.name:
+                    descriptors.setdefault(descriptor.name, descriptor)
+            except Exception:
+                logger.warning("Default configuration unavailable for %s", provider_class.__name__)
+        return descriptors
 
     @classmethod
     async def get_all_dataset_names_async(cls, filters: SeedDatasetFilter | None = None) -> list[str]:

@@ -72,9 +72,38 @@ export default function DatasetCard({ dataset, linked }: DatasetCardProps) {
       )}
       {linked && (
         <span id={descriptionId} className={styles.visuallyHidden}>
-          Opens this dataset and lists its stored examples.
+          {dataset.loaded ? 'Opens this dataset and lists its stored examples.' : 'Opens provider information.'}
         </span>
       )}
+      <div className={styles.badges}>
+        {dataset.loaded && <Badge appearance="outline">In memory</Badge>}
+        {dataset.provider_available && <Badge appearance="outline">Available</Badge>}
+      </div>
+      {dataset.provider && <section aria-label="Provider metadata">
+        <Text weight="semibold">Default provider</Text>
+        <p>{dataset.provider.description ?? 'Description unknown.'}</p>
+        {dataset.provider.unavailable_reason && <p>{dataset.provider.unavailable_reason}</p>}
+        <dl>
+          {([
+            ['Source', dataset.provider.source_url],
+            ['License', dataset.provider.license_url],
+            ['Access', dataset.provider.access_url],
+          ] as const).map(([label, url]) => <div key={label}>
+            <dt>{label}</dt>
+            <dd>{url && /^https?:\/\//.test(url)
+              ? <a href={url} target="_blank" rel="noopener noreferrer">{label}</a>
+              : UNKNOWN_LABEL}</dd>
+          </div>)}
+          <div><dt>Declared modalities</dt><dd>{dataset.provider.modalities.join(', ') || UNKNOWN_LABEL}</dd></div>
+          <div><dt>Declared harm categories</dt><dd>{dataset.provider.harm_categories.join(', ') || UNKNOWN_LABEL}</dd></div>
+          <div><dt>Approximate size</dt><dd>{dataset.provider.size.join(', ') || UNKNOWN_LABEL}</dd></div>
+          <div><dt>Estimated load time</dt><dd>{dataset.provider.load_time.join(', ') || UNKNOWN_LABEL}</dd></div>
+        </dl>
+        {dataset.provider.required_environment_variables.length > 0 && <p>
+          Access may require {dataset.provider.required_environment_variables.join(', ')}.
+          Configuring credentials does not establish permission to access the source.
+        </p>}
+      </section>}
       <dl className={styles.counts} aria-label="Counts">
         <div className={styles.count}>
           <dt className={styles.countTerm}>Logical examples</dt>

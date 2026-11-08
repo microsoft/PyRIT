@@ -25,6 +25,7 @@ export const DATASET_SORT_LABELS: Record<DatasetSort, string> = {
 }
 
 export interface DatasetCatalogQuery {
+  readonly view?: 'memory' | 'available' | 'all'
   readonly search: string
   readonly modalities: readonly string[]
   readonly harmCategories: readonly string[]
@@ -48,6 +49,8 @@ export function isDatasetSort(value: string): value is DatasetSort {
 export function catalogQueryFromSearchParams(params: URLSearchParams): DatasetCatalogQuery {
   const sortValue = params.get(SORT_PARAM)
   return {
+    ...(params.get('view') === 'available' ? { view: 'available' as const }
+      : params.get('view') === 'all' ? { view: 'all' as const } : {}),
     search: params.get(SEARCH_PARAM) ?? '',
     modalities: [...new Set(params.getAll(MODALITY_PARAM))],
     harmCategories: [...new Set(params.getAll(HARM_CATEGORY_PARAM))],
@@ -59,6 +62,7 @@ export function catalogQueryFromSearchParams(params: URLSearchParams): DatasetCa
 /** Encodes catalog search, facets, and sort, omitting filters that are already the default. */
 export function catalogQueryToSearchParams(query: DatasetCatalogQuery): URLSearchParams {
   const params = new URLSearchParams()
+  if (query.view && query.view !== 'memory') params.set('view', query.view)
   if (query.search) params.set(SEARCH_PARAM, query.search)
   for (const modality of new Set(query.modalities)) params.append(MODALITY_PARAM, modality)
   for (const category of new Set(query.harmCategories)) params.append(HARM_CATEGORY_PARAM, category)
@@ -69,6 +73,7 @@ export function catalogQueryToSearchParams(query: DatasetCatalogQuery): URLSearc
 
 export function catalogQueryIsDefault(query: DatasetCatalogQuery): boolean {
   return query.search === ''
+    && (query.view == null || query.view === 'memory')
     && query.modalities.length === 0
     && query.harmCategories.length === 0
     && !query.unlabeled
@@ -83,13 +88,15 @@ function matchesSearch(name: string, search: string): boolean {
 
 function matchesModalities(dataset: DatasetInfo, modalities: readonly string[]): boolean {
   if (modalities.length === 0) return true
-  return modalities.some((modality) => dataset.modalities.includes(modality))
+  const values = dataset.loaded ? dataset.modalities : dataset.provider?.modalities ?? []
+  return modalities.some((modality) => values.includes(modality))
 }
 
 function matchesHarm(dataset: DatasetInfo, query: DatasetCatalogQuery): boolean {
   const harmSelected = query.harmCategories.length > 0 || query.unlabeled
   if (!harmSelected) return true
-  const categoryMatch = query.harmCategories.some((category) => dataset.harm_categories.includes(category))
+  const categories = dataset.loaded ? dataset.harm_categories : dataset.provider?.harm_categories ?? []
+  const categoryMatch = query.harmCategories.some((category) => categories.includes(category))
   const unlabeledMatch = query.unlabeled && dataset.has_unlabeled_harm_categories
   return categoryMatch || unlabeledMatch
 }
@@ -126,6 +133,8 @@ export function filterDatasets(
 ): DatasetInfo[] {
   const matched: DatasetInfo[] = []
   for (const dataset of datasets) {
+    if ((query.view ?? 'memory') === 'memory' && !dataset.loaded) continue
+    if (query.view === 'available' && !dataset.provider_available) continue
     if (!matchesSearch(dataset.name, query.search)) continue
     if (!matchesModalities(dataset, query.modalities)) continue
     if (!matchesHarm(dataset, query)) continue

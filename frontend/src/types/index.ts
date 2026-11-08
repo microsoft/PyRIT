@@ -1369,11 +1369,25 @@ export interface ChangeMainConversationResponse {
  * Wire shape of `DatasetInfo` from `GET /api/datasets`.
  * Null counts mean the total is unknown, not zero.
  */
+export interface DatasetProviderInfo {
+  description: string | null
+  source_url: string | null
+  license_url: string | null
+  access_url: string | null
+  required_environment_variables: string[]
+  modalities: string[]
+  harm_categories: string[]
+  size: string[]
+  load_time: string[]
+  unavailable_reason: string | null
+}
+
 export interface DatasetInfo {
   name: string
   selection_key: string
   loaded: boolean
   provider_available: boolean
+  provider?: DatasetProviderInfo | null
   origins?: string[]
   logical_examples: number | null
   seed_pieces: number | null
