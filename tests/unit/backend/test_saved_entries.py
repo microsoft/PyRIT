@@ -12,7 +12,7 @@ from pyrit.backend.services.saved_entries import (
     prepare_saved_copy_params_async,
     refuse_temporary_references,
 )
-from pyrit.converter import Base64Converter
+from pyrit.converter import Base64Converter, ToneConverter
 from pyrit.models import ComponentType, Parameter, RegistryReference
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.score import SubStringScorer
@@ -107,12 +107,15 @@ async def test_a_copy_to_save_cant_hold_a_credential_even_one_its_class_lets_cop
 
     with pytest.raises(NotSaveableError) as refusal:
         await prepare_saved_copy_params_async(
-            registry=registry, type_name="ToneConverter", params={"token": "typed-key", "tone": "formal"}
+            registry=registry,
+            type_name="ToneConverter",
+            cls=ToneConverter,
+            params={"token": "typed-key", "tone": "formal"},
         )
 
     assert str(refusal.value) == (
         "Saved entries can't hold credentials ('token'). It can still be created without saving it."
     )
     assert await prepare_saved_copy_params_async(
-        registry=registry, type_name="ToneConverter", params={"tone": "formal"}
+        registry=registry, type_name="ToneConverter", cls=ToneConverter, params={"tone": "formal"}
     ) == {"tone": "formal"}

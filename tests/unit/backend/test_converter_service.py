@@ -2830,6 +2830,67 @@ class TestPersistConverterWithADefaultTarget:
             "It can still be created without saving it."
         )
 
+    @pytest.mark.parametrize("cleared", ["", None])
+    async def test_a_copy_that_clears_its_target_names_the_default_in_the_saved_file(
+        self, tmp_path: Path, cleared: str | None
+    ) -> None:
+        startup_chat = TargetRegistry.get_registry_singleton().instances.get("startup_chat")
+        source = _register_startup_translation(converter_target=MockPromptTarget())
+        set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=startup_chat)
+
+        try:
+            await ConverterService().create_converter_async(
+                request=_translation_copy_request(source=source, params={"converter_target": cleared}),
+                recipes_source=str(tmp_path),
+            )
+        finally:
+            ConverterRegistry.reset_registry_singleton()
+
+        saved = _saved_converter(tmp_path, "copied_translation")
+        assert (saved["source"], saved["params"]) == ("startup_translation", {"converter_target": "startup_chat"})
+
+    @pytest.mark.parametrize("cleared", ["", None])
+    async def test_a_copy_that_clears_its_target_is_refused_when_the_default_is_gone_after_a_restart(
+        self, tmp_path: Path, cleared: str | None
+    ) -> None:
+        launch_chat = TargetRegistry.get_registry_singleton().instances.get("launch_chat")
+        source = _register_startup_translation(converter_target=MockPromptTarget())
+        set_default_value(class_type=TranslationConverter, parameter_name="converter_target", value=launch_chat)
+
+        try:
+            with pytest.raises(NotSaveableError) as refusal:
+                await ConverterService().create_converter_async(
+                    request=_translation_copy_request(source=source, params={"converter_target": cleared}),
+                    recipes_source=str(tmp_path),
+                )
+        finally:
+            ConverterRegistry.reset_registry_singleton()
+
+        assert str(refusal.value) == (
+            "Uses temporary target 'launch_chat', which won't exist after a restart. "
+            "It can still be created without saving it."
+        )
+        assert not (tmp_path / "converters").exists()
+
+
+def _register_startup_translation(*, converter_target: PromptTarget) -> TranslationConverter:
+    source = TranslationConverter(converter_target=converter_target, language="French")
+    converters = ConverterRegistry.get_registry_singleton().instances
+    converters.register(source, name="startup_translation")
+    converters.mark_configuration_entries()
+    return source
+
+
+def _translation_copy_request(*, source: TranslationConverter, params: dict[str, Any]) -> CreateConverterRequest:
+    return CreateConverterRequest(
+        name="copied_translation",
+        type="TranslationConverter",
+        persist=True,
+        source=SourceInstanceSpec(
+            source_name="startup_translation", source_hash=source.get_identifier().hash, params=params
+        ),
+    )
+
 
 def _register_own_target_converter(service: ConverterService) -> PromptTarget:
     """Register a converter class whose constructor names its own target, with a Temporary target as the default."""

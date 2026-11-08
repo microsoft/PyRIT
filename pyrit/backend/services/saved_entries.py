@@ -103,24 +103,27 @@ async def prepare_saved_params_async(
 
 
 async def prepare_saved_copy_params_async(
-    *, registry: InstanceHoldingRegistry[Any, Any], type_name: str, params: Mapping[str, Any]
+    *, registry: InstanceHoldingRegistry[Any, Any], type_name: str, cls: type, params: Mapping[str, Any]
 ) -> dict[str, Any]:
     """
     Refuse the changes a copy to save can't hold.
 
     A copy is rebuilt from the entry it copies, which keeps where requests go and how they sign in, so only the
-    changes are checked: they can't hold a credential or name a Temporary entry.
+    changes are checked: they can't hold a credential or name a Temporary entry. A reference the changes clear
+    takes the configured default, so the recipe names that entry, as it does for an entry that isn't a copy.
 
     Args:
         registry (InstanceHoldingRegistry[Any, Any]): The registry the copy's class is registered in.
         type_name (str): The name the class is registered under.
+        cls (type): The class the copy is built from.
         params (Mapping[str, Any]): The copy's changes.
 
     Returns:
         dict[str, Any]: The changes to build and save the copy with.
 
     Raises:
-        NotSaveableError: If a change holds a credential, or names a Temporary entry.
+        NotSaveableError: If a change holds a credential, names a Temporary entry, or clears a reference whose
+            default won't exist after a restart.
     """
     saved_params = dict(params)
     metadata = await asyncio.to_thread(registry.get_registered_class_metadata, type_name)
@@ -129,6 +132,9 @@ async def prepare_saved_copy_params_async(
         check_saved_copy_params(parameters=parameters, params=saved_params)
     except SavedEntryRefusedError as error:
         raise NotSaveableError(f"{error} It can still be created without saving it.") from error
+    # A reference the changes leave out comes from the copied entry, so only the ones they clear take a default.
+    changed = [parameter for parameter in parameters if parameter.name in saved_params]
+    _name_default_references(cls=cls, parameters=changed, params=saved_params)
     refuse_temporary_references(parameters=parameters, params=saved_params)
     return saved_params
 
