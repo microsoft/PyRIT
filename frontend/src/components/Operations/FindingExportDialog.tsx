@@ -122,9 +122,7 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
     }
     loadAllPages().catch((cause: unknown) => {
       if (ignore) return
-      const detail = toApiError(cause).detail
-        ?? (cause instanceof Error && cause.message ? cause.message : undefined)
-      setLoad({ status: 'error', error: detail })
+      setLoad({ status: 'error', error: toApiError(cause).detail })
       setRecovering(false)
     })
     return () => { ignore = true }
