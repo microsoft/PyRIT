@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from pyrit.converter.math_obfuscation_converter import MathObfuscationConverter
+from pyrit.converter import MathObfuscationConverter
 from pyrit.registry import ConverterRegistry
 
 
