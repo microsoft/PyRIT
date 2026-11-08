@@ -23,20 +23,19 @@ from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import AuthenticatedUser, EntraAuthMiddleware, require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import configuration, health, restore_failures
+from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
-from pyrit.backend.services.scenario_run_service import ScenarioRunService, _PreparedRun
+from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
-from pyrit.models.catalog.registry_recipe import RegistryRecipeKind, RestoreFailure, RestoreFailureReason
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models.catalog import RegistryRecipeKind, RestoreFailure, RestoreFailureReason, RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry.components.converter_registry import ConverterRegistry
-from pyrit.registry.components.target_registry import TargetRegistry
+from pyrit.registry import ConverterRegistry, TargetRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.scenario import Scenario
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 from unit.mocks import MockPromptTarget, make_scenario_result
 
 

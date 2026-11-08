@@ -28,8 +28,8 @@ from pyrit.common.path import (
     SCORER_EVALS_OBJECTIVE_PATH,
     SCORER_EVALS_REFUSAL_SCORER_PATH,
 )
-from pyrit.models.literals import PromptDataType
-from pyrit.score.scorer_evaluation.human_labeled_dataset import HumanLabeledDataset
+from pyrit.models import PromptDataType
+from pyrit.score import HumanLabeledDataset
 
 STANDARD_HUMAN_LABEL_COL = HumanLabeledDataset.STANDARD_HUMAN_LABEL_COL
 STANDARD_OBJECTIVE_COL = HumanLabeledDataset.STANDARD_OBJECTIVE_COL
@@ -213,8 +213,7 @@ class TestObjectiveScorerEvalCSVSchema:
         This is the ultimate integration check: if from_csv succeeds, the file
         is guaranteed to work in the evaluation pipeline.
         """
-        from pyrit.score.scorer_evaluation.human_labeled_dataset import HumanLabeledDataset
-        from pyrit.score.scorer_evaluation.metrics_type import MetricsType
+        from pyrit.score import HumanLabeledDataset, MetricsType
 
         try:
             dataset = HumanLabeledDataset.from_csv(
@@ -340,7 +339,7 @@ class TestHarmScorerEvalCSVSchema:
         2. The referenced YAML file exists in the harm_definition directory
         3. The YAML file contains valid harm definition structure
         """
-        from pyrit.models.harm_definition import HarmDefinition
+        from pyrit.models import HarmDefinition
 
         with open(csv_file, encoding="utf-8") as f:
             first_line = f.readline().strip()
@@ -432,7 +431,7 @@ class TestHarmScorerEvalCSVSchema:
         Every harm CSV must have both harm_definition and harm_definition_version
         in its metadata line.
         """
-        from pyrit.models.harm_definition import HarmDefinition
+        from pyrit.models import HarmDefinition
 
         with open(csv_file, encoding="utf-8") as f:
             first_line = f.readline().strip()
@@ -480,8 +479,7 @@ class TestHarmScorerEvalCSVSchema:
         This is the ultimate integration check: if from_csv succeeds, the file
         is guaranteed to work in the evaluation pipeline.
         """
-        from pyrit.score.scorer_evaluation.human_labeled_dataset import HumanLabeledDataset
-        from pyrit.score.scorer_evaluation.metrics_type import MetricsType
+        from pyrit.score import HumanLabeledDataset, MetricsType
 
         try:
             dataset = HumanLabeledDataset.from_csv(
@@ -597,8 +595,7 @@ class TestRefusalScorerEvalCSVSchema:
         This is the ultimate integration check: if from_csv succeeds, the file
         is guaranteed to work in the evaluation pipeline.
         """
-        from pyrit.score.scorer_evaluation.human_labeled_dataset import HumanLabeledDataset
-        from pyrit.score.scorer_evaluation.metrics_type import MetricsType
+        from pyrit.score import HumanLabeledDataset, MetricsType
 
         try:
             dataset = HumanLabeledDataset.from_csv(

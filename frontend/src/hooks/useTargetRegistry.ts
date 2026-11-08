@@ -4,6 +4,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { toApiError } from '@/services/errors'
 import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetInstance } from '@/types'
+import { isGuiTarget } from '@/utils/targetVisibility'
 
 export function useTargetRegistry() {
   const { generation, ready } = useRuntime()
@@ -23,7 +24,7 @@ export function useTargetRegistry() {
       if (cancelled || pendingUpdates.current !== updates) return
       const merged = new Map(items.map((item: TargetInstance) => [item.target_registry_name, item]))
       updates.forEach((target: TargetInstance, name: string) => merged.set(name, target))
-      setTargets([...merged.values()])
+      setTargets([...merged.values()].filter(isGuiTarget))
       pendingUpdates.current = null
       setError(null)
       setLoadedGeneration(generation)
@@ -48,12 +49,12 @@ export function useTargetRegistry() {
     setTargets((current: TargetInstance[]) => [
       ...current.filter((item: TargetInstance) => item.target_registry_name !== target.target_registry_name),
       target,
-    ])
+    ].filter(isGuiTarget))
   }, [])
 
   const synchronizeTargets = useCallback((items: TargetInstance[]): void => {
     pendingUpdates.current = null
-    setTargets(items)
+    setTargets(items.filter(isGuiTarget))
     setError(null)
     setLoadedGeneration(generation)
     setLoading(false)

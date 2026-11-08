@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.cyberseceval_prompt_injection_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     CyberSecEvalInjectionType,
     CyberSecEvalRiskCategory,
     _CyberSecEvalPromptInjectionDataset,

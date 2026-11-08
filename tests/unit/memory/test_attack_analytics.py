@@ -29,7 +29,7 @@ from sqlalchemy.sql.selectable import CTE
 from pyrit.converter import Base64Converter
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.memory import MemoryInterface, SQLiteMemory
+from pyrit.memory import AttackResultEntry, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_sql import (
     JsonArrayEmpty,
     JsonIsArray,
@@ -40,7 +40,7 @@ from pyrit.memory.analytics_sql import (
 )
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsOption
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
-from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry, Base, TargetIdentifierEntry
+from pyrit.memory.memory_models import AttackIdentifierEntry, Base, TargetIdentifierEntry
 from pyrit.memory.query_control import QueryControl
 from pyrit.models import (
     AtomicAttackIdentifier,

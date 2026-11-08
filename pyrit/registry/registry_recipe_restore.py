@@ -9,7 +9,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from pyrit.models.catalog.registry_recipe import (
+from pyrit.models import ComponentType
+from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryRecipeKind,
     RegistryRestoreReport,
@@ -19,14 +20,13 @@ from pyrit.models.catalog.registry_recipe import (
     StoredRecipe,
     TechniqueRecipe,
 )
-from pyrit.models.parameter import ComponentType
 from pyrit.registry.file_document_storage import describe_storage_error
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
 
-    from pyrit.models.parameter import Parameter
+    from pyrit.models import Parameter
     from pyrit.registry.registry import InstanceHoldingRegistry
 
 

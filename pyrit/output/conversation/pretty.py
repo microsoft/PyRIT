@@ -363,7 +363,7 @@ class PrettyConversationMemoryPrinter(PrettyConversationPrinter):
         if piece.converted_value_data_type != "image_path" or piece.response_error != "none":
             return
 
-        from pyrit.common.notebook_utils import is_in_ipython_session
+        from pyrit.common import is_in_ipython_session
 
         if not is_in_ipython_session():
             return

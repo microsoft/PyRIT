@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from scipy.io import wavfile
 
-from pyrit.converter.audio_frequency_converter import AudioFrequencyConverter
+from pyrit.converter import AudioFrequencyConverter
 
 
 @pytest.mark.usefixtures("sqlite_instance")
