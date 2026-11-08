@@ -87,7 +87,7 @@ describe('ScorerRegistry', () => {
     expect(screen.queryByText('Message * true_false')).not.toBeInTheDocument()
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell')
     expect(cells.slice(2).map((cell: HTMLElement) => cell.textContent)).toEqual([
-      'Message', '95.7%', '0.0%', '94.0%', '91.0%', '0.25s',
+      'Message', '95.7%', '0.0%', '94.0%', '0.9100', '0.25s',
     ])
     await user.hover(within(cells[3]).getByText('95.7%'))
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Recorded value: 0.95678')
