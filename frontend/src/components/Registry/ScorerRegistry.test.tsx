@@ -1,8 +1,9 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { savedEntriesApi } from '@/services/api'
 import { readUserPreferences } from '@/utils/userPreferences'
 import type { ScorerInstance } from '@/types'
 
@@ -79,6 +80,32 @@ describe('ScorerRegistry', () => {
     // Only a saved scorer has a file to delete.
     expect(screen.getAllByRole('button', { name: /^Delete saved scorer/ }).map((button) => button.getAttribute('aria-label')))
       .toEqual(['Delete saved scorer saved_judge'])
+  })
+
+  it('moves focus to the page heading after a saved scorer is deleted', async () => {
+    const user = userEvent.setup()
+    jest.spyOn(savedEntriesApi, 'get').mockResolvedValue({
+      kind: 'scorers', name: 'saved_judge', version: 'v1', problem: null, saved_by: 'Ada', saved_by_me: true,
+      can_change: true,
+    })
+    const deleteEntry = jest.spyOn(savedEntriesApi, 'delete').mockResolvedValue()
+    const onRefresh = jest.fn()
+    const saved: ScorerInstance[] = [{ ...scorers[0], scorer_registry_name: 'saved_judge', origin: 'saved' }]
+    const tree = (items: ScorerInstance[]) => <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="alice">
+      <ScorerRegistry scorers={items} loading={false} error={null} onRefresh={onRefresh} />
+    </UserPreferencesProvider></FluentProvider>
+    const { rerender } = render(tree(saved))
+
+    await user.click(screen.getByRole('button', { name: 'Delete saved scorer saved_judge' }))
+    const dialog = await screen.findByRole('dialog', { name: "Delete saved scorer 'saved_judge'?" })
+    await user.click(await within(dialog).findByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1))
+    // The refreshed list no longer has the scorer, so its table unmounts.
+    rerender(tree([]))
+
+    expect(deleteEntry).toHaveBeenCalledWith('scorers', 'saved_judge', 'v1')
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Scorer Registry' })).toHaveFocus())
+    jest.restoreAllMocks()
   })
 
   it('says who saved each scorer and lists only yours on request until none are left', async () => {

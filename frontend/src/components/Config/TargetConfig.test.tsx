@@ -5,7 +5,7 @@ import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import TargetConfig from "./TargetConfig";
 import { advanceAutoRefresh, installAutoRefreshTimers } from "@/test-utils/autoRefresh";
-import { targetsApi } from "../../services/api";
+import { savedEntriesApi, targetsApi } from "../../services/api";
 import type { TargetInstance, TargetListResponse } from "../../types";
 
 installAutoRefreshTimers();
@@ -13,6 +13,10 @@ jest.mock("../../services/api", () => ({
   targetsApi: {
     listTargets: jest.fn(),
     createTarget: jest.fn(),
+  },
+  savedEntriesApi: {
+    get: jest.fn(),
+    delete: jest.fn(),
   },
 }));
 
@@ -52,6 +56,7 @@ jest.mock("./CreateTargetDialog", () => {
 });
 
 const mockedTargetsApi = targetsApi as jest.Mocked<typeof targetsApi>;
+const mockedSavedEntriesApi = savedEntriesApi as jest.Mocked<typeof savedEntriesApi>;
 
 const TestWrapper: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -230,6 +235,31 @@ describe("TargetConfig", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Default adversarial target" }), sampleTargets[0].target_registry_name);
 
     expect(onSetDefaultAdversarialTarget).toHaveBeenCalledWith(sampleTargets[0]);
+  });
+
+  it("should move focus to New Target after a saved target is deleted", async () => {
+    const user = userEvent.setup();
+    const saved = makeTarget({ target_registry_name: "saved_chat", target_type: "OpenAIChatTarget", origin: "saved" });
+    mockedTargetsApi.listTargets
+      .mockResolvedValueOnce({ items: [saved, ...sampleTargets], pagination: { limit: 200, has_more: false } })
+      .mockResolvedValue({ items: sampleTargets, pagination: { limit: 200, has_more: false } });
+    mockedSavedEntriesApi.get.mockResolvedValue({
+      kind: "targets", name: "saved_chat", version: "v1", problem: null, saved_by: "Ada", saved_by_me: true,
+      can_change: true,
+    });
+    mockedSavedEntriesApi.delete.mockResolvedValue();
+
+    render(
+      <TestWrapper>
+        <TargetConfig {...defaultProps} />
+      </TestWrapper>
+    );
+    await user.click(await screen.findByRole("button", { name: "Delete saved target saved_chat" }));
+    const dialog = await screen.findByRole("dialog", { name: "Delete saved target 'saved_chat'?" });
+    await user.click(await within(dialog).findByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(screen.queryByText("saved_chat")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "New Target" })).toHaveFocus();
   });
 
   it("should show the adversarial default without an objective default control", async () => {
