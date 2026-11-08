@@ -10,14 +10,15 @@ from pyrit.exceptions import (
     ComponentRole,
     ExecutionContext,
     clear_execution_context,
+    remove_markdown_json,
     set_execution_context,
 )
 from pyrit.exceptions.exceptions_helpers import (
     extract_json_from_string,
     log_exception,
     remove_end_md_json,
-    remove_markdown_json,
     remove_start_md_json,
+    summarize_exception,
 )
 
 
@@ -83,6 +84,42 @@ def test_extract_json_from_string(input_str, expected_output):
 )
 def test_remove_markdown_json(input_str, expected_output):
     assert remove_markdown_json(input_str) == expected_output
+
+
+@pytest.mark.parametrize(
+    "error, expected",
+    [
+        (ValueError("plain failure"), "plain failure"),
+        (ValueError(), ""),
+        (
+            ExceptionGroup("Both failed", [ValueError("first"), RuntimeError()]),
+            "Both failed (2 sub-exceptions): [ValueError: first; RuntimeError]",
+        ),
+        (
+            ExceptionGroup("Outer", [ExceptionGroup("Inner", [KeyError("key")]), OSError("disk")]),
+            "Outer (2 sub-exceptions): [ExceptionGroup: Inner (1 sub-exception): [KeyError: 'key']; OSError: disk]",
+        ),
+    ],
+)
+def test_summarize_exception(error, expected):
+    assert summarize_exception(error) == expected
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_summarize_exception_preserves_group_child_causes(*, nested: bool) -> None:
+    cause = RuntimeError("connection reset")
+    error = ValueError("fetch failed")
+    error.__cause__ = cause
+    group = ExceptionGroup("Fetches failed", [error, OSError("disk full")])
+    if nested:
+        group = ExceptionGroup("Outer", [group])
+
+    summary = summarize_exception(group)
+
+    assert "ValueError: fetch failed Caused by RuntimeError: connection reset" in summary
+    assert "OSError: disk full" in summary
+    assert summarize_exception(error) == "fetch failed"
+    assert error.__cause__ is cause
 
 
 class TestLogException:

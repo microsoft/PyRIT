@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario import DatasetConfiguration
 from pyrit.scenario.core.scenario_context import ScenarioContext
 
 

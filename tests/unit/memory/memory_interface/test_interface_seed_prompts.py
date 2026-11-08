@@ -15,8 +15,7 @@ from sqlalchemy import String, event, select
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import SQLAlchemyError
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import AnswerMatches, MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedOrigin, SeedPrompt
 
 
@@ -467,6 +466,37 @@ async def test_get_seeds_with_dataset_name_pattern_startswith(sqlite_instance: M
     result = await sqlite_instance.get_seeds_async(dataset_name_pattern="harm%")
     assert len(result) == 2
     assert all(seed.dataset_name.startswith("harm") for seed in result)
+
+
+async def test_add_seeds_mixed_case_url_schemes_hash_original_value(
+    sqlite_instance: MemoryInterface, tmp_path: Path
+) -> None:
+    """Regression test for #3861: mixed-case URL schemes hash the original spelling.
+
+    Before the fix, a mixed-case scheme was misclassified as a local file path and
+    ingestion raised FileNotFoundError; a future fix must not lowercase the stored
+    URL or its hash input either. No URL is fetched.
+    """
+    urls = [
+        "HTTPS://example.invalid/é?q=☃",
+        "HtTp://example.invalid/é?q=☃",
+        "https://example.invalid/é?q=☃",
+    ]
+    local_file = tmp_path / "seed.txt"
+    local_file.write_bytes(b"local-seed-content")
+
+    seeds = [SeedPrompt(value=url, dataset_name="dataset", data_type="url") for url in urls]
+    seeds.append(SeedPrompt(value=str(local_file), dataset_name="dataset", data_type="url"))
+
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seeds, added_by="test")
+
+    stored = await sqlite_instance.get_seeds_async(dataset_name="dataset")
+    assert len(stored) == 4
+    by_value = {seed.value: seed for seed in stored}
+    for url in urls:
+        assert by_value[url].value == url
+        assert by_value[url].value_sha256 == sha256(url.encode("utf-8")).hexdigest()
+    assert by_value[str(local_file)].value_sha256 == sha256(b"local-seed-content").hexdigest()
 
 
 async def test_get_seeds_with_dataset_name_pattern_contains(sqlite_instance: MemoryInterface):

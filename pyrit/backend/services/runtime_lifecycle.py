@@ -26,7 +26,7 @@ from pyrit.backend.services.service_lifecycle import (
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
 from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import validate_reinitialization_memory
 
@@ -220,7 +220,7 @@ class RuntimeLifecycle:
                 await self._management_async(config)
                 self.version = current_version
                 self._publish(config)
-            except (Exception, asyncio.CancelledError) as error:
+            except (Exception, asyncio.CancelledError, BaseExceptionGroup) as error:
                 logger.exception(
                     "PyRIT live apply failed phase=%s generation=%s",
                     "mutation" if mutated else "preflight",
@@ -236,7 +236,8 @@ class RuntimeLifecycle:
                     if mutated
                     else "Configuration or memory settings are invalid. Memory changes require a restart."
                 )
-                if isinstance(error, asyncio.CancelledError):
+                # Only non-Exception errors can carry cancellation, including mixed exception groups.
+                if not isinstance(error, Exception):
                     raise
             finally:
                 logger.info("PyRIT apply outcome=%s generation=%s", self.outcome, self.generation)
@@ -298,7 +299,7 @@ class RuntimeLifecycle:
             errors.append(error)
         try:
             await close_services_async()
-        except (Exception, asyncio.CancelledError) as error:
+        except (Exception, asyncio.CancelledError, BaseExceptionGroup) as error:
             errors.append(error)
         try:
             if get_analytics_service.cache_info().currsize:

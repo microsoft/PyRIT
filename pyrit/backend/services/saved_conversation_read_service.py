@@ -5,13 +5,12 @@
 
 import uuid
 
-from pyrit.backend.mappers._preview import format_last_message_preview
-from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
-from pyrit.backend.models.attacks import (
+from pyrit.backend.mappers import format_last_message_preview, pyrit_messages_to_dto_async
+from pyrit.backend.models import (
     AttackConversationsResponse,
     ConversationMessagesResponse,
+    PaginationInfo,
 )
-from pyrit.backend.models.common import PaginationInfo
 from pyrit.common.pagination import decode_keyset_cursor, encode_keyset_cursor, fingerprint_filters
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import MessagePieceKeysetCursor

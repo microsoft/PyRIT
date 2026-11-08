@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.scenario.core.dataset_configuration import DatasetConfiguration
+from pyrit.scenario import DatasetConfiguration
 
 
 @pytest.fixture(autouse=True)

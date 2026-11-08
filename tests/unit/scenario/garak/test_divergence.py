@@ -25,9 +25,8 @@ from pyrit.models import (
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.scenario import DatasetAttackConfiguration
-from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration
+from pyrit.scenario.core import DatasetConstraintError
 from pyrit.scenario.scenarios.garak import Divergence, DivergenceDatasetConfiguration, DivergenceTechnique
 from pyrit.score import DivergenceScorer, SubStringScorer, TrueFalseInverterScorer
 

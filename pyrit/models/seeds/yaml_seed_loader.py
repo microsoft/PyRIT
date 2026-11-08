@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 
-from pyrit.common.utils import verify_and_resolve_path
+from pyrit.common import verify_and_resolve_path
 from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.models.seeds.seed import Seed
 from pyrit.models.seeds.seed_dataset import SeedDataset
