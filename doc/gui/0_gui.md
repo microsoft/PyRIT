@@ -189,7 +189,10 @@ the backend isn't ready until that file is renamed or removed and the backend
 restarted.
 
 Saved targets can't hold credentials yet, so choose Identity-based or No key
-authentication when the target supports it. A target that needs an API key or
+authentication when the target supports it. When the server lists keys for the
+target type in `server_credentials`, you can also choose **Server credential** and
+pick one by name: the key stays on the server, and the endpoint is set to the only
+address that key is sent to. A target that needs an API key or
 another credential value, a type that can't be saved, or a round robin that uses
 a Temporary target is created as **Temporary** instead, and the dialog says why.
 A Temporary target is gone after the backend restarts or is reinitialized.

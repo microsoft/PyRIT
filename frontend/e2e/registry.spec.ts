@@ -168,6 +168,45 @@ test("saves a target from the New Target dialog and still lists it as Saved afte
   await expect(page.getByTestId(`target-row-${name}`).getByText("Saved", { exact: true })).toBeVisible();
 });
 
+test("saves a target that uses a server credential by its name, with no key @seeded", async ({ page, request }) => {
+  const name = `listed_chat_${Date.now()}`;
+  const sent: unknown[] = [];
+  page.on("request", (outgoing) => {
+    if (outgoing.method() === "POST" && new URL(outgoing.url()).pathname === "/api/targets") {
+      sent.push(outgoing.postDataJSON());
+    }
+  });
+  await page.goto("/registry/targets");
+  await page.getByRole("button", { name: "New Target", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  const picker = dialog.getByRole("combobox", { name: "Target Type" });
+  await expect(picker).toBeEnabled();
+  await picker.click();
+  await page.getByRole("option", { name: /Implementation: OpenAIChatTarget/ }).click();
+  await dialog.getByRole("radio", { name: /^Server credential/ }).check();
+  const endpoint = dialog.getByPlaceholder("https://your-resource.openai.azure.com/");
+  await expect(endpoint).toHaveValue("https://e2e-listed.example.test/v1");
+  await expect(endpoint).toHaveAttribute("readonly", "");
+  await expect(dialog.getByPlaceholder("API key (stored in memory only)")).toHaveCount(0);
+  await dialog.getByPlaceholder("e.g. gpt-4o, my-deployment").fill("listed-model");
+  await dialog.getByRole("textbox", { name: /Registry Name/ }).fill(name);
+  await dialog.getByRole("button", { name: "Save Target" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  expect(sent).toEqual([{
+    name,
+    type: "OpenAIChatTarget",
+    params: { endpoint: "https://e2e-listed.example.test/v1", model_name: "listed-model" },
+    auth_mode: "api_key",
+    server_credential: "e2e_listed",
+    persist: true,
+  }]);
+  await expect(page.getByTestId(`target-row-${name}`).getByText("Saved", { exact: true })).toBeVisible();
+  const saved = await request.get(`/api/targets/${name}`, { headers: compatibilityHeaders() });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  expect(await saved.text()).not.toContain("e2e-listed-key");
+});
+
 interface RegisteredConverter {
   converter_id: string;
   identifier: {

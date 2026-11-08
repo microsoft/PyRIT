@@ -138,7 +138,7 @@ export default defineConfig({
             `cd .. && uv run --no-sync python -m pyrit.backend.pyrit_backend ` +
             `--auth-mode local --host 127.0.0.1 --port ${E2E_BACKEND_PORT} --log-level warning ` +
             `--config-file "${SEEDED_BACKEND_CONFIG_FILE}"`,
-          env: { PYRIT_DEV_MODE: "true" },
+          env: { PYRIT_DEV_MODE: "true", PYRIT_E2E_LISTED_KEY: "e2e-listed-key" },
           url: `${E2E_BACKEND_URL}/api/health`,
           reuseExistingServer: false,
           timeout: 120_000,

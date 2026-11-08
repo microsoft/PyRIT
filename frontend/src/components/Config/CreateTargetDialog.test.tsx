@@ -3033,6 +3033,98 @@ describe("CreateTargetDialog saving", () => {
     });
   });
 
+  const SERVER_CREDENTIAL_TYPES: TargetTypeListResponse = {
+    items: SAVEABLE_TARGET_TYPES.items.map((entry) => (
+      entry.target_type === "OpenAIChatTarget"
+        ? {
+          ...entry,
+          server_credentials: [
+            { name: "contoso", endpoint: "https://api.contoso.com/v1" },
+            { name: "fabrikam", endpoint: "https://fabrikam.openai.azure.com/openai/v1" },
+          ],
+        }
+        : entry
+    )),
+  };
+
+  it("should save a target that uses a server credential by sending its name and no key", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargetTypes.mockResolvedValue(SERVER_CREDENTIAL_TYPES);
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    await user.click(screen.getByRole("radio", { name: /^Server credential/ }));
+    const endpointInput = screen.getByPlaceholderText("https://your-resource.openai.azure.com/");
+    expect(endpointInput).toHaveValue("https://api.contoso.com/v1");
+    expect(endpointInput).toHaveAttribute("readonly");
+    expect(screen.queryByPlaceholderText("API key (stored in memory only)")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Server credential" }), "fabrikam");
+    expect(endpointInput).toHaveValue("https://fabrikam.openai.azure.com/openai/v1");
+    await pasteInto(user, screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "gpt-4o");
+    await user.click(screen.getByRole("button", { name: "Save Target" }));
+
+    await waitFor(() => expect(defaultProps.onCreated).toHaveBeenCalledTimes(1));
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+      name: "openai_chat_gpt_4o",
+      type: "OpenAIChatTarget",
+      params: { endpoint: "https://fabrikam.openai.azure.com/openai/v1", model_name: "gpt-4o" },
+      auth_mode: "api_key",
+      server_credential: "fabrikam",
+      persist: true,
+    });
+  });
+
+  it("should keep the server credential's endpoint, and drop its name, when a key is typed instead", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargetTypes.mockResolvedValue(SERVER_CREDENTIAL_TYPES);
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    await user.click(screen.getByRole("radio", { name: /^Server credential/ }));
+    await user.click(screen.getByRole("radio", { name: "API Key" }));
+    const endpointInput = screen.getByPlaceholderText("https://your-resource.openai.azure.com/");
+    expect(endpointInput).toHaveValue("https://api.contoso.com/v1");
+    expect(endpointInput).not.toHaveAttribute("readonly");
+    await pasteInto(user, screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "gpt-4o");
+    await user.type(screen.getByPlaceholderText("API key (stored in memory only)"), "test-key");
+
+    expect(screen.getByRole("status", { name: "This target can't be saved" })).toHaveTextContent(
+      /Choose Microsoft Entra ID or No key or Server credential to save this one\./,
+    );
+    await user.click(screen.getByRole("button", { name: "Create as Temporary" }));
+    await waitFor(() => expect(defaultProps.onCreated).toHaveBeenCalledTimes(1));
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+      name: "openai_chat_gpt_4o",
+      type: "OpenAIChatTarget",
+      params: { endpoint: "https://api.contoso.com/v1", model_name: "gpt-4o", api_key: "test-key" },
+      persist: false,
+    });
+  });
+
+  it("should not offer a server credential for a type the server lists none for", async () => {
+    mockedTargetsApi.listTargetTypes.mockResolvedValue(SERVER_CREDENTIAL_TYPES);
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    expect(screen.getByRole("radio", { name: /^Server credential/ })).toBeInTheDocument();
+    await selectTargetType("GitHubCopilotTarget");
+
+    expect(screen.queryByRole("radio", { name: /^Server credential/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Server credential" })).not.toBeInTheDocument();
+  });
+
   it("should offer Temporary with the reason when the target uses an API key", async () => {
     const user = userEvent.setup();
     render(

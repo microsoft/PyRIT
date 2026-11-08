@@ -11,3 +11,8 @@ initializers:
 initialization_scripts:
   - tests/end_to_end/browser_initializer.py
 operation: browser_proposed
+# A key users can pick by name for OpenAI targets. The value set in playwright.config.ts is never sent anywhere.
+server_credentials:
+  - name: e2e_listed
+    env_var: PYRIT_E2E_LISTED_KEY
+    endpoint: https://e2e-listed.example.test/v1
