@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from pyrit.models import ComponentIdentifier, Identifiable
-from pyrit.models.catalog.registry_recipe import SavedEntryOwner
+from pyrit.models.catalog import SavedEntryOwner
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator, Mapping
