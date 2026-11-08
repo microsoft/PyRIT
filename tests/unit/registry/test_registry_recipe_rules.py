@@ -510,6 +510,16 @@ def test_resolve_listed_credential_returns_the_key_for_its_endpoint(
         ("OpenAIChatTarget", {"endpoint": "http://api.contoso.com/v1"}, [_LISTED], _MISMATCH),
         ("OpenAIChatTarget", {"endpoint": "https://api.contoso.com:8443/v1"}, [_LISTED], _MISMATCH),
         ("OpenAIChatTarget", {"endpoint": "https://api.contoso.com.example.test/v1"}, [_LISTED], _MISMATCH),
+        ("OpenAIChatTarget", {"endpoint": "https://api.contoso.com/v1?api-version=1"}, [_LISTED], _MISMATCH),
+        (
+            "OpenAIChatTarget",
+            {"endpoint": "https://[2001:db8::1:444]/v1"},
+            [ServerCredential(name="contoso", env_var="CONTOSO_TEST_KEY", endpoint="https://[2001:db8::1]:444/v1")],
+            (
+                "Server credential 'contoso' is only sent to https://[2001:db8::1]:444/v1, so 'endpoint' must be "
+                "that address."
+            ),
+        ),
         ("OpenAIChatTarget", {}, [_LISTED], _MISMATCH),
     ],
 )
