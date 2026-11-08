@@ -613,6 +613,8 @@ export interface TechniqueInstance {
   identifier: ComponentIdentifier
   /** Supplied factory creation inputs, with live component credentials omitted. */
   creation_statement: string
+  /** Whether the technique comes back after a restart. */
+  origin?: RegistryEntryOrigin | null
 }
 
 export interface TechniqueTypeEntry {
@@ -634,6 +636,8 @@ export interface TechniqueTypeResponse {
 
 export interface CreateTechniqueRequest {
   name: string
+  /** Save the technique so it comes back after the backend restarts or is reinitialized. */
+  persist?: boolean
   description?: string
   tags: string[]
   type: string

@@ -73,15 +73,18 @@ test("creates and selects a runtime technique with the real backend @seeded", as
     await requestConverters.click();
     await page.getByTestId(`converter-option-${converterName}`).click();
   }
+  // The converter was created without saving it, so the technique can only be Temporary.
+  await expect(page.getByRole("dialog").getByText(`Uses temporary converter '${converterName}'`)).toBeVisible();
   const create = page.waitForResponse((response) => response.url().endsWith("/api/techniques") && response.request().method() === "POST");
-  await page.getByRole("button", { name: "Add technique" }).click();
+  await page.getByRole("button", { name: "Create as Temporary" }).click();
   const created = await create;
   expect(created.status()).toBe(201);
   const createdTechnique = await created.json();
+  expect(createdTechnique.origin).toBe("temporary");
   const body = created.request().postDataJSON();
   expect(body).toMatchObject({
     name, type: "PromptSendingAttack", params: { max_attempts_on_failure: 0 },
-    request_converters: [converterName, converterName], response_converters: [],
+    request_converters: [converterName, converterName], response_converters: [], persist: false,
   });
   expect(body).not.toHaveProperty("factory_options");
   expect(body).not.toHaveProperty("seed_technique");
@@ -118,7 +121,7 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await page.getByRole("button", { name: "New technique" }).click();
   await page.getByRole("textbox", { name: "Registry name" }).fill("old_runtime_response");
   await page.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
-  await page.getByRole("button", { name: "Add technique" }).click();
+  await page.getByRole("button", { name: "Save technique" }).click();
   await createStarted;
   replacementGeneration = "registry-replacement-test";
   await expect(page.getByRole("dialog")).not.toBeVisible();
@@ -140,6 +143,30 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   await checkbox.check();
   await expect(checkbox).toBeChecked();
   expect(promptRequests).toEqual([]);
+});
+
+test("saves a technique from the New technique dialog and still lists it as Saved after a reload @seeded", async ({ page, request }) => {
+  const name = `saved_send_${Date.now()}`;
+  await page.goto("/registry/techniques");
+  await page.getByRole("button", { name: "New technique" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "Registry name" }).fill(name);
+  await dialog.getByRole("textbox", { name: "Description" }).fill("Saved from the browser");
+  await dialog.getByRole("combobox", { name: "Attack type", exact: true }).selectOption("PromptSendingAttack");
+  await expect(dialog.getByText("This technique can't be saved")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Save technique" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByRole("textbox", { name: "Search techniques" }).fill(name);
+  const row = page.getByRole("row", { name: new RegExp(name) });
+  await expect(row.getByText("Saved", { exact: true })).toBeVisible();
+  const saved = await request.get(`/api/techniques/${name}`, { headers: compatibilityHeaders() });
+  expect(saved.ok(), await saved.text()).toBe(true);
+  expect((await saved.json()).origin).toBe("saved");
+
+  await page.reload();
+  await page.getByRole("textbox", { name: "Search techniques" }).fill(name);
+  await expect(page.getByRole("row", { name: new RegExp(name) }).getByText("Saved", { exact: true })).toBeVisible();
 });
 
 test("saves a converter from the New Converter dialog and still lists it as Saved after a reload @seeded", async ({ page, request }) => {
