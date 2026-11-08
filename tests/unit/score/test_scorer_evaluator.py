@@ -1084,6 +1084,50 @@ async def test_run_evaluation_deduplicates_csv_paths_async(*, tmp_path: Path, pa
     assert metrics.dataset_version == "1.0_1.0"
 
 
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_run_evaluation_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_enum: bool) -> None:
+    source_file = inspect.getsourcefile(ScorerEvaluator)
+    assert source_file is not None
+    source = Path(source_file).read_text(encoding="utf-8")
+    enum_source = inspect.getsource(RegistryUpdateBehavior)
+    if extend_enum:
+        enum_source += '\n    FUTURE = "future"\n'
+    enum_import = "from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior"
+    assert source.count(enum_import) == 1
+    probe = tmp_path / "registry_dispatch.py"
+    probe.write_text(
+        source.replace(
+            enum_import,
+            "from enum import Enum\nfrom pyrit.score.scorer_evaluation.metrics_type import MetricsType\n" + enum_source,
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(update_registry_behavior)" in output, output
+        assert "RegistryUpdateBehavior.FUTURE" in output, output
+
+
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
     "update_registry_behavior, checks_existing, writes_registry",
