@@ -47,6 +47,18 @@ def test_math_obfuscation_digit_lines_are_true_identities(digit):
         assert int(match.group(1)) - int(match.group(2)) == 1
 
 
+@pytest.mark.parametrize("character", ["\u00b2", "\u2083", "\u00bd", "\u2167", "\u4e94"])
+def test_math_obfuscation_other_numeric_characters_use_explicit_multiplication(character):
+    converter = MathObfuscationConverter(min_n=2, max_n=9, rng=random.Random(3), hint="", suffix="")
+
+    result = asyncio.run(converter.convert_async(prompt=character * 20))
+
+    for line in result.output_text.splitlines():
+        match = re.fullmatch(rf"{character} = (\d)\*{character} - (\d)\*{character}", line)
+        assert match is not None, line
+        assert int(match.group(1)) - int(match.group(2)) == 1
+
+
 def test_math_obfuscation_digits_and_letters_in_one_prompt():
     converter = MathObfuscationConverter(rng=random.Random(1), hint="", suffix="")
 
