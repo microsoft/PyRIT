@@ -81,7 +81,8 @@ Temporary target, converter, or scorer, or, for a converter, need or keep an upl
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
 converter copy made with `source` can't be saved yet (**422**). A taken name receives **409**, and storage that can't
 be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
-`temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
+`temporary`, and its `saved_by` and `saved_by_me` say who saved it, both as for targets. A saved converter can't be
+removed through the API yet (**409**): delete its file under
 `registry_recipes_source` and restart the backend.
 
 ### Manual attack creation
@@ -263,8 +264,8 @@ name, is saved under `registry_recipes_source` with the signed-in user recorded,
 at every start. A request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without
 `persist`, if a converter or the adversarial target it names is Temporary. A name or tag that clashes with a
 registered technique receives **409**, and storage that can't be written receives **503**. Each listed technique's
-`origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, as for targets. Settings
-changed for a single run aren't saved.
+`origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, and `saved_by` and
+`saved_by_me` say who saved it, as for targets. Settings changed for a single run aren't saved.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.

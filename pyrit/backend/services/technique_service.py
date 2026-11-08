@@ -24,7 +24,7 @@ from pyrit.models import ComponentType
 from pyrit.models.catalog import RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner, TechniqueRecipe
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry
 from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
-from pyrit.registry.instance_registry import registry_entry_origin
+from pyrit.registry.instance_registry import registry_entry_origin, saved_entry_owner
 from pyrit.scenario.core import AttackTechniqueFactory
 
 
@@ -35,16 +35,24 @@ class TechniqueService:
         """Bind to the runtime registry; service lifecycle clears this binding on reset."""
         self._registry = AttackTechniqueRegistry.get_registry_singleton()
 
-    async def list_async(self, *, limit: int = 50, cursor: str | None = None) -> TechniqueListResponse:
+    async def list_async(
+        self, *, limit: int = 50, cursor: str | None = None, current_user_oid: str | None = None
+    ) -> TechniqueListResponse:
         """
         List factories in registry-name order, including advanced programmatic definitions.
+
+        Args:
+            limit (int): The most techniques to return. Defaults to 50.
+            cursor (str | None): The registry name to start after, or None for the first page. Defaults to None.
+            current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, used to mark the
+                techniques they saved. Defaults to None.
 
         Returns:
             TechniqueListResponse: A page and its pagination metadata.
         """
-        return await asyncio.to_thread(self._list, limit=limit, cursor=cursor)
+        return await asyncio.to_thread(self._list, limit=limit, cursor=cursor, current_user_oid=current_user_oid)
 
-    def _list(self, *, limit: int, cursor: str | None) -> TechniqueListResponse:
+    def _list(self, *, limit: int, cursor: str | None, current_user_oid: str | None) -> TechniqueListResponse:
         entries = self._registry.instances.get_all_instances()
         start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), 0)
         page = entries[start : start + limit]
@@ -52,7 +60,11 @@ class TechniqueService:
         return TechniqueListResponse(
             items=[
                 technique_to_instance(
-                    name=entry.name, factory=entry.instance, origin=registry_entry_origin(entry.metadata)
+                    name=entry.name,
+                    factory=entry.instance,
+                    origin=registry_entry_origin(entry.metadata),
+                    owner=saved_entry_owner(entry.metadata),
+                    current_user_oid=current_user_oid,
                 )
                 for entry in page
             ],
@@ -64,9 +76,14 @@ class TechniqueService:
             ),
         )
 
-    async def get_async(self, name: str) -> TechniqueInstance | None:
+    async def get_async(self, *, name: str, current_user_oid: str | None = None) -> TechniqueInstance | None:
         """
         Get safe settings for a named factory.
+
+        Args:
+            name (str): The technique's registry name.
+            current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, used to mark a technique
+                they saved. Defaults to None.
 
         Returns:
             TechniqueInstance | None: The factory settings, if registered.
@@ -75,7 +92,12 @@ class TechniqueService:
         if entry is None:
             return None
         return await asyncio.to_thread(
-            technique_to_instance, name=name, factory=entry.instance, origin=registry_entry_origin(entry.metadata)
+            technique_to_instance,
+            name=name,
+            factory=entry.instance,
+            origin=registry_entry_origin(entry.metadata),
+            owner=saved_entry_owner(entry.metadata),
+            current_user_oid=current_user_oid,
         )
 
     async def create_async(
@@ -147,8 +169,14 @@ class TechniqueService:
             await asyncio.to_thread(self._registry.instances.check_runtime_available, factory)
         except TechniqueSelectorConflictError as error:
             raise SavedEntryConflictError(str(error)) from error
+        # The user saving the technique is the one asking, so the response marks it as theirs.
         result = await asyncio.to_thread(
-            technique_to_instance, name=request.name, factory=factory, origin=RegistryEntryOrigin.SAVED
+            technique_to_instance,
+            name=request.name,
+            factory=factory,
+            origin=RegistryEntryOrigin.SAVED,
+            owner=owner,
+            current_user_oid=owner.oid if owner is not None else None,
         )
         await save_then_register_async(
             kind=RegistryRecipeKind.TECHNIQUES,

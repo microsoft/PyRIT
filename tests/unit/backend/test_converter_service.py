@@ -2366,6 +2366,7 @@ class TestPersistConverter:
         )
 
         assert converter.origin is RegistryEntryOrigin.SAVED
+        assert (converter.saved_by, converter.saved_by_me) == ("Ada", True)
         assert _saved_converter(tmp_path, "caesar_converter") == {
             "schema_version": 1,
             "class_module": "pyrit.converter.caesar_converter",

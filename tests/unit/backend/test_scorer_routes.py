@@ -12,6 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
+from pyrit.backend.middleware.auth import current_user_oid
+from pyrit.backend.models import PaginationInfo, ScorerListResponse
 from pyrit.backend.models.common import MAX_CURSOR_LENGTH, MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 from pyrit.backend.services.saved_entries import SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.scorer_service import get_scorer_service
@@ -408,3 +410,29 @@ def test_create_scorer_maps_save_errors(
         "/srv/registry-recipes",
         True,
     )
+
+
+@pytest.mark.parametrize(("signed_in", "expected"), [(True, "user-oid"), (False, None)])
+def test_scorer_list_and_get_pass_the_signed_in_users_object_id(
+    compatibility_headers: dict[str, str], signed_in: bool, expected: str | None
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    if signed_in:
+        app.dependency_overrides[current_user_oid] = lambda: "user-oid"
+    try:
+        with patch("pyrit.backend.routes.scorers.get_scorer_service") as get_service:
+            service = get_service.return_value
+            service.list_scorers_async = AsyncMock(
+                return_value=ScorerListResponse(
+                    items=[], pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None)
+                )
+            )
+            service.get_scorer_async = AsyncMock(return_value=None)
+
+            client.get("/api/scorers")
+            client.get("/api/scorers/missing")
+    finally:
+        app.dependency_overrides.pop(current_user_oid, None)
+
+    assert service.list_scorers_async.call_args.kwargs["current_user_oid"] == expected
+    assert service.get_scorer_async.call_args.kwargs["current_user_oid"] == expected

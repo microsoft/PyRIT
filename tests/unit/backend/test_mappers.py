@@ -31,6 +31,7 @@ from pyrit.backend.mappers.attack_mappers import (
 )
 from pyrit.backend.models import AddMessageRequest, MessagePieceRequest, ScoreView
 from pyrit.backend.models._media import build_filename, infer_mime_type
+from pyrit.converter import Base64Converter
 from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -2203,6 +2204,32 @@ class TestConverterObjectToInstance:
         assert result.identifier.supported_input_types is None
         assert result.identifier.supported_output_types is None
         assert result.identifier.params == {}
+
+    @pytest.mark.parametrize(
+        ("owner", "current_user_oid", "saved_by"),
+        [
+            (SavedEntryOwner(oid="ada-oid", name="Ada"), "ada-oid", ("Ada", True)),
+            (SavedEntryOwner(oid="ada-oid", name="Ada"), "bob-oid", ("Ada", False)),
+            (SavedEntryOwner(oid="ada-oid", name="Ada"), None, ("Ada", False)),
+            (SavedEntryOwner(oid="ada-oid", name=""), "ada-oid", (None, True)),
+            (None, "ada-oid", (None, False)),
+        ],
+    )
+    def test_says_who_saved_the_converter_and_whether_it_was_the_caller(
+        self, owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
+    ) -> None:
+        result = converter_object_to_instance(
+            converter_id="c-1",
+            converter_obj=Base64Converter(),
+            is_llm_based=False,
+            description=None,
+            origin=RegistryEntryOrigin.SAVED,
+            owner=owner,
+            current_user_oid=current_user_oid,
+        )
+
+        assert (result.saved_by, result.saved_by_me) == saved_by
+        assert "ada-oid" not in result.model_dump_json()
 
 
 # ============================================================================

@@ -13,7 +13,7 @@ wire for the converter's class, supported data types, and constructor params.
 from pyrit.backend.models import ConverterInstance
 from pyrit.converter import Converter
 from pyrit.models import ConverterIdentifier
-from pyrit.models.catalog import RegistryEntryOrigin
+from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner
 
 
 def converter_object_to_instance(
@@ -23,6 +23,8 @@ def converter_object_to_instance(
     is_llm_based: bool,
     description: str | None,
     origin: RegistryEntryOrigin | None = None,
+    owner: SavedEntryOwner | None = None,
+    current_user_oid: str | None = None,
 ) -> ConverterInstance:
     """
     Build a ConverterInstance DTO from a registry converter object.
@@ -38,6 +40,10 @@ def converter_object_to_instance(
         description (str | None): The converter class description.
         origin (RegistryEntryOrigin | None): Where the registered converter comes from, or None when it isn't
             registered.
+        owner (SavedEntryOwner | None): Who saved the converter, or None when it isn't saved or was saved with
+            sign-in off.
+        current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, or None when nobody is
+            signed in.
 
     Returns:
         ConverterInstance DTO wrapping the converter's identifier.
@@ -48,4 +54,6 @@ def converter_object_to_instance(
         is_llm_based=is_llm_based,
         description=description,
         origin=origin,
+        saved_by=(owner.name or None) if owner is not None else None,
+        saved_by_me=owner is not None and current_user_oid is not None and owner.oid == current_user_oid,
     )

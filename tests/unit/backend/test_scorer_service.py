@@ -520,6 +520,7 @@ async def test_saves_a_scorer_that_restore_rebuilds(tmp_path: Path) -> None:
     )
 
     assert scorer.origin is RegistryEntryOrigin.SAVED
+    assert (scorer.saved_by, scorer.saved_by_me) == ("Ada", True)
     assert _saved_scorer(tmp_path, "leak_substring") == {
         "schema_version": 1,
         "class_module": "pyrit.score.true_false.substring_scorer",
@@ -776,3 +777,31 @@ async def test_a_default_list_with_a_temporary_scorer_is_not_saved(
         "It can still be created without saving it."
     )
     assert not (tmp_path / "scorers").exists()
+
+
+@pytest.mark.parametrize(
+    ("owner", "current_user_oid", "saved_by"),
+    [
+        (SavedEntryOwner(oid="ada-oid", name="Ada"), "ada-oid", ("Ada", True)),
+        (SavedEntryOwner(oid="ada-oid", name="Ada"), "bob-oid", ("Ada", False)),
+        (SavedEntryOwner(oid="ada-oid", name="Ada"), None, ("Ada", False)),
+        (SavedEntryOwner(oid="ada-oid", name=""), "ada-oid", (None, True)),
+        (None, "ada-oid", (None, False)),
+    ],
+)
+async def test_list_and_get_say_who_saved_each_scorer(
+    owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
+) -> None:
+    ScorerRegistry.get_registry_singleton().instances.register(
+        SubStringScorer(substring="x"),
+        name="leak",
+        metadata={SAVED_ENTRY_METADATA_KEY: "scorers", SAVED_ENTRY_OWNER_METADATA_KEY: owner},
+    )
+    service = ScorerService()
+
+    listed = (await service.list_scorers_async(current_user_oid=current_user_oid)).items
+    fetched = await service.get_scorer_async(scorer_registry_name="leak", current_user_oid=current_user_oid)
+
+    assert [(item.saved_by, item.saved_by_me) for item in listed] == [saved_by]
+    assert fetched is not None and (fetched.saved_by, fetched.saved_by_me) == saved_by
+    assert "ada-oid" not in fetched.model_dump_json()

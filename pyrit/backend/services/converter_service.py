@@ -62,7 +62,7 @@ from pyrit.models import ConverterIdentifier, MessagePiece, Parameter, PromptDat
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry import ConverterRegistry
-from pyrit.registry.instance_registry import registry_entry_origin
+from pyrit.registry.instance_registry import registry_entry_origin, saved_entry_owner
 from pyrit.registry.registry import Reconstructable
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
@@ -87,7 +87,13 @@ class ConverterService:
         self._provenance_key = secrets.token_bytes(32)
 
     def _build_instance_from_object(
-        self, *, converter_id: str, converter_obj: Any, origin: RegistryEntryOrigin | None = None
+        self,
+        *,
+        converter_id: str,
+        converter_obj: Any,
+        origin: RegistryEntryOrigin | None = None,
+        owner: SavedEntryOwner | None = None,
+        current_user_oid: str | None = None,
     ) -> ConverterInstance:
         """
         Build a ConverterInstance from a registry object.
@@ -105,6 +111,8 @@ class ConverterService:
             is_llm_based=metadata.is_llm_based if metadata else False,
             description=description,
             origin=origin,
+            owner=owner,
+            current_user_oid=current_user_oid,
         )
         if isinstance(converter_obj, Reconstructable):
             try:
@@ -141,16 +149,24 @@ class ConverterService:
         for entry in owned_entries:
             self._registry.instances.unregister(entry.name, expected_entry=entry)
 
-    async def list_converters_async(self) -> ConverterInstanceListResponse:
+    async def list_converters_async(self, *, current_user_oid: str | None = None) -> ConverterInstanceListResponse:
         """
         List all converter instances.
+
+        Args:
+            current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, used to mark the
+                converters they saved. Defaults to None.
 
         Returns:
             ConverterInstanceListResponse containing all registered converters.
         """
         items = [
             self._build_instance_from_object(
-                converter_id=entry.name, converter_obj=entry.instance, origin=registry_entry_origin(entry.metadata)
+                converter_id=entry.name,
+                converter_obj=entry.instance,
+                origin=registry_entry_origin(entry.metadata),
+                owner=saved_entry_owner(entry.metadata),
+                current_user_oid=current_user_oid,
             )
             for entry in self._registry.instances.get_all_instances()
         ]
@@ -201,9 +217,16 @@ class ConverterService:
             return str(error)
         return self._required_upload_refusal(converter_type=converter_type)
 
-    async def get_converter_async(self, *, converter_id: str) -> ConverterInstance | None:
+    async def get_converter_async(
+        self, *, converter_id: str, current_user_oid: str | None = None
+    ) -> ConverterInstance | None:
         """
         Get a converter instance by ID.
+
+        Args:
+            converter_id (str): The converter's registry name.
+            current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, used to mark a converter
+                they saved. Defaults to None.
 
         Returns:
             ConverterInstance if found, None otherwise.
@@ -212,7 +235,11 @@ class ConverterService:
         if entry is None:
             return None
         return self._build_instance_from_object(
-            converter_id=converter_id, converter_obj=entry.instance, origin=registry_entry_origin(entry.metadata)
+            converter_id=converter_id,
+            converter_obj=entry.instance,
+            origin=registry_entry_origin(entry.metadata),
+            owner=saved_entry_owner(entry.metadata),
+            current_user_oid=current_user_oid,
         )
 
     def get_converter_object(self, *, converter_id: str) -> Any | None:
@@ -423,8 +450,13 @@ class ConverterService:
         converter_obj = await construct_component_async(
             self._registry.create_instance_from_external_input, request.type, params=params
         )
+        # The user saving the converter is the one asking, so the response marks it as theirs.
         converter = self._build_instance_from_object(
-            converter_id=name, converter_obj=converter_obj, origin=RegistryEntryOrigin.SAVED
+            converter_id=name,
+            converter_obj=converter_obj,
+            origin=RegistryEntryOrigin.SAVED,
+            owner=owner,
+            current_user_oid=owner.oid if owner is not None else None,
         )
         await save_then_register_async(
             kind=RegistryRecipeKind.CONVERTERS,

@@ -3,9 +3,12 @@
 
 """REST endpoints for scorer types and named scorer instances."""
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 
+from pyrit.backend.middleware.auth import current_user_oid
 from pyrit.backend.models import (
     CreateScorerRequest,
     ProblemDetail,
@@ -41,6 +44,7 @@ async def list_scorer_types() -> ScorerTypeResponse:  # pyrit-async-suffix-exemp
 
 @router.get("", response_model=ScorerListResponse)
 async def list_scorers(
+    user_oid: Annotated[str | None, Depends(current_user_oid)],
     limit: int = Query(50, ge=1, le=200, description="Maximum items per page"),
     cursor: CursorStr | None = Query(None, description="Scorer registry name to start after"),
 ) -> ScorerListResponse:  # pyrit-async-suffix-exempt
@@ -50,7 +54,7 @@ async def list_scorers(
     Returns:
         ScorerListResponse: The requested page of scorer instances.
     """
-    return await get_scorer_service().list_scorers_async(limit=limit, cursor=cursor)
+    return await get_scorer_service().list_scorers_async(limit=limit, cursor=cursor, current_user_oid=user_oid)
 
 
 @router.post(
@@ -107,14 +111,19 @@ async def create_scorer(
     response_model=ScorerInstance,
     responses={404: {"model": ProblemDetail, "description": "Scorer not found"}},
 )
-async def get_scorer(scorer_registry_name: IdentifierStr) -> ScorerInstance:  # pyrit-async-suffix-exempt
+async def get_scorer(  # pyrit-async-suffix-exempt
+    scorer_registry_name: IdentifierStr,
+    user_oid: Annotated[str | None, Depends(current_user_oid)],
+) -> ScorerInstance:
     """
     Get a named scorer instance.
 
     Returns:
         ScorerInstance: The requested scorer.
     """
-    scorer = await get_scorer_service().get_scorer_async(scorer_registry_name=scorer_registry_name)
+    scorer = await get_scorer_service().get_scorer_async(
+        scorer_registry_name=scorer_registry_name, current_user_oid=user_oid
+    )
     if scorer is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

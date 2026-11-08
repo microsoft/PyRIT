@@ -10,7 +10,7 @@ from typing import Any
 
 from pyrit.backend.models.techniques import TechniqueConfiguration, TechniqueInstance
 from pyrit.models import Identifiable, SeedPrompt
-from pyrit.models.catalog import RegistryEntryOrigin
+from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner
 from pyrit.models.technique_edit import TechniqueSettings
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry
 from pyrit.registry.resolution import project_parameter_value
@@ -86,7 +86,12 @@ def _format_creation_calls(factory: AttackTechniqueFactory) -> str:
 
 
 def technique_to_instance(
-    *, name: str, factory: AttackTechniqueFactory, origin: RegistryEntryOrigin | None = None
+    *,
+    name: str,
+    factory: AttackTechniqueFactory,
+    origin: RegistryEntryOrigin | None = None,
+    owner: SavedEntryOwner | None = None,
+    current_user_oid: str | None = None,
 ) -> TechniqueInstance:
     """
     Map a real factory without constructing an attack or resolving default targets.
@@ -96,6 +101,10 @@ def technique_to_instance(
         factory (AttackTechniqueFactory): The registered factory.
         origin (RegistryEntryOrigin | None): Where the technique comes from, or None when it isn't known.
             Defaults to None.
+        owner (SavedEntryOwner | None): Who saved the technique, or None when it isn't saved or was saved with
+            sign-in off. Defaults to None.
+        current_user_oid (str | None): The signed-in user's Microsoft Entra object ID, or None when nobody is
+            signed in. Defaults to None.
 
     Returns:
         TechniqueInstance: Catalog metadata and the supplied factory creation inputs.
@@ -110,6 +119,8 @@ def technique_to_instance(
         identifier=factory.get_identifier(),
         creation_statement=_format_creation_calls(factory),
         origin=origin,
+        saved_by=(owner.name or None) if owner is not None else None,
+        saved_by_me=owner is not None and current_user_oid is not None and owner.oid == current_user_oid,
     )
 
 

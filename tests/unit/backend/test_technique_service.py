@@ -20,7 +20,9 @@ from pydantic import ValidationError
 
 from pyrit.backend.main import app
 from pyrit.backend.mappers.technique_mappers import technique_to_instance
-from pyrit.backend.models.techniques import CreateTechniqueRequest
+from pyrit.backend.middleware.auth import current_user_oid
+from pyrit.backend.models import PaginationInfo
+from pyrit.backend.models.techniques import CreateTechniqueRequest, TechniqueListResponse
 from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.service_lifecycle import close_services_async
@@ -107,7 +109,7 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
     service = TechniqueService()
     response = await service.list_async()
     assert {entry.name for entry in response.items} == set(registry.instances.get_names())
-    item = await service.get_async(response.items[0].name)
+    item = await service.get_async(name=response.items[0].name)
     assert item == response.items[0]
     assert item is not None
     assert set(item.model_dump()) == {
@@ -120,8 +122,10 @@ async def test_catalog_real_factories_and_alias_metadata_async(registry: AttackT
         "identifier",
         "creation_statement",
         "origin",
+        "saved_by",
+        "saved_by_me",
     }
-    assert await service.get_async("missing") is None
+    assert await service.get_async(name="missing") is None
     AttackRegistry.get_registry_singleton().register_class(PromptSendingAttack, name="alias")
     metadata = await service.types_async()
     assert "alias" in {entry.attack_type for entry in metadata.items}
@@ -946,6 +950,7 @@ async def test_saves_a_technique_that_restore_rebuilds(saving_catalog: AttackTec
     created = await TechniqueService().create_async(request=request, owner=owner, recipes_source=str(tmp_path))
 
     assert created.origin is RegistryEntryOrigin.SAVED
+    assert (created.saved_by, created.saved_by_me) == ("Ada", True)
     assert _saved_technique(tmp_path, "base64_send") == {
         "schema_version": 1,
         "type": "PromptSendingAttack",
@@ -1109,7 +1114,7 @@ async def test_list_get_and_create_tell_where_each_technique_comes_from(
     )
 
     listed = {item.name: item.origin for item in (await service.list_async(limit=200)).items}
-    fetched = [await service.get_async(name) for name in (startup_name, "saved_send", "temporary_send")]
+    fetched = [await service.get_async(name=name) for name in (startup_name, "saved_send", "temporary_send")]
 
     assert (saved.origin, temporary.origin) == (RegistryEntryOrigin.SAVED, RegistryEntryOrigin.TEMPORARY)
     assert {name: listed[name] for name in (startup_name, "saved_send", "temporary_send")} == {
@@ -1189,3 +1194,72 @@ def test_rest_create_passes_the_owner_and_maps_save_errors(
         "/srv/registry-recipes",
         True,
     )
+
+
+@pytest.mark.parametrize(
+    ("owner", "current_user_oid", "saved_by"),
+    [
+        (SavedEntryOwner(oid="ada-oid", name="Ada"), "ada-oid", ("Ada", True)),
+        (SavedEntryOwner(oid="ada-oid", name="Ada"), "bob-oid", ("Ada", False)),
+        (SavedEntryOwner(oid="ada-oid", name="Ada"), None, ("Ada", False)),
+        (SavedEntryOwner(oid="ada-oid", name=""), "ada-oid", (None, True)),
+        (None, "ada-oid", (None, False)),
+    ],
+)
+def test_says_who_saved_the_technique_and_whether_it_was_the_caller(
+    owner: SavedEntryOwner | None, current_user_oid: str | None, saved_by: tuple[str | None, bool]
+) -> None:
+    factory = AttackTechniqueFactory(name="send", attack_class=PromptSendingAttack)
+
+    result = technique_to_instance(
+        name="send", factory=factory, origin=RegistryEntryOrigin.SAVED, owner=owner, current_user_oid=current_user_oid
+    )
+
+    assert (result.saved_by, result.saved_by_me) == saved_by
+    assert "ada-oid" not in result.model_dump_json()
+
+
+async def test_list_and_get_say_who_saved_each_technique(
+    saving_catalog: AttackTechniqueRegistry, tmp_path: Path
+) -> None:
+    service = TechniqueService()
+    ada = SavedEntryOwner(oid="ada-oid", name="Ada")
+    await service.create_async(request=_persist_technique("adas_send"), owner=ada, recipes_source=str(tmp_path))
+    await service.create_async(request=_persist_technique("anonymous_send"), recipes_source=str(tmp_path))
+
+    for current_user_oid, mine in (("ada-oid", True), ("bob-oid", False), (None, False)):
+        listed = {
+            item.name: (item.saved_by, item.saved_by_me)
+            for item in (await service.list_async(limit=200, current_user_oid=current_user_oid)).items
+        }
+        fetched = await service.get_async(name="adas_send", current_user_oid=current_user_oid)
+
+        assert listed["adas_send"] == ("Ada", mine)
+        assert listed["anonymous_send"] == (None, False)
+        assert fetched is not None and (fetched.saved_by, fetched.saved_by_me) == ("Ada", mine)
+
+
+@pytest.mark.parametrize(("signed_in", "expected"), [(True, "user-oid"), (False, None)])
+def test_technique_list_and_get_pass_the_signed_in_users_object_id(
+    compatibility_headers: dict[str, str], signed_in: bool, expected: str | None
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    if signed_in:
+        app.dependency_overrides[current_user_oid] = lambda: "user-oid"
+    try:
+        with patch("pyrit.backend.routes.techniques.get_technique_service") as get_service:
+            service = get_service.return_value
+            service.list_async = AsyncMock(
+                return_value=TechniqueListResponse(
+                    items=[], pagination=PaginationInfo(limit=50, has_more=False, next_cursor=None, prev_cursor=None)
+                )
+            )
+            service.get_async = AsyncMock(return_value=None)
+
+            client.get("/api/techniques")
+            client.get("/api/techniques/missing")
+    finally:
+        app.dependency_overrides.pop(current_user_oid, None)
+
+    assert service.list_async.call_args.kwargs["current_user_oid"] == expected
+    assert service.get_async.call_args.kwargs["current_user_oid"] == expected
