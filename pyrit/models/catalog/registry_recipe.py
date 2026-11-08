@@ -72,6 +72,10 @@ class ComponentRecipe(_RegistryRecipe):
         max_length=MAX_ITEMS,
         description="Constructor parameters as the API accepted them; other entries are named, never embedded",
     )
+    server_credential: _Identifier | None = Field(
+        None,
+        description="The server credential from this server's list that supplies the key; the key isn't stored",
+    )
     owner: SavedEntryOwner | None = Field(None, description="Who saved the entry; None when sign-in is off")
 
 

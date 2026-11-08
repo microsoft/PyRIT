@@ -100,6 +100,43 @@ class TestConfigurationLoader:
         assert config.registry_recipes_source == "https://account.blob.core.windows.net/pyrit-storage/registry-recipes"
         assert ConfigurationLoader().registry_recipes_source is None
 
+    def test_server_credentials_load_from_yaml(self, tmp_path: pathlib.Path) -> None:
+        """Test loading the server credentials users can pick, by name, variable, and endpoint."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "server_credentials:\n"
+            "  - name: contoso\n"
+            "    env_var: CONTOSO_KEY\n"
+            "    endpoint: https://api.contoso.com/v1\n",
+            encoding="utf-8",
+        )
+
+        config = ConfigurationLoader.from_yaml_file(config_path)
+
+        assert [(entry.name, entry.env_var, entry.endpoint) for entry in config.server_credentials] == [
+            ("contoso", "CONTOSO_KEY", "https://api.contoso.com/v1")
+        ]
+        assert ConfigurationLoader().server_credentials == []
+
+    @pytest.mark.parametrize(
+        ("entries", "message"),
+        [
+            ({"name": "contoso"}, "server_credentials must be a list"),
+            (
+                [
+                    {"name": "contoso", "env_var": "A_KEY", "endpoint": "https://a.example/v1"},
+                    {"name": "contoso", "env_var": "B_KEY", "endpoint": "https://b.example/v1"},
+                ],
+                "Each server credential needs its own name",
+            ),
+            ([{"name": "contoso", "env_var": "A_KEY", "endpoint": "https://user:pw@a.example/v1"}], "endpoint"),
+        ],
+    )
+    def test_server_credentials_refuse_a_bad_list(self, entries: object, message: str) -> None:
+        """Test refusing a malformed list, a repeated name, and an endpoint that can carry a credential."""
+        with pytest.raises(ValueError, match=message):
+            ConfigurationLoader(server_credentials=entries)  # type: ignore[arg-type]
+
     @pytest.mark.parametrize("invalid_value", ["", "   ", 42])
     def test_registry_recipes_source_rejects_invalid_value(self, invalid_value: object) -> None:
         """Test rejecting empty or non-string sources for saved registry entries."""

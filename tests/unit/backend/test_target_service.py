@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from azure.core.exceptions import AzureError
+from pydantic import ValidationError
 
 from pyrit.backend.models import CreateTargetRequest
 from pyrit.backend.services import TargetService, get_target_service
@@ -24,7 +25,15 @@ from pyrit.backend.services.target_service import (
     SavedTargetStorageError,
 )
 from pyrit.models import ComponentIdentifier
-from pyrit.models.catalog import ComponentRecipe, RegistryRecipeKind, SavedEntryOwner, TargetInstance, TargetOrigin
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryRecipeKind,
+    RestoreFailureReason,
+    SavedEntryOwner,
+    ServerCredential,
+    TargetInstance,
+    TargetOrigin,
+)
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities, TextTarget
 from pyrit.registry import TargetRegistry
@@ -2041,3 +2050,158 @@ class TestSaveTarget:
         fetched = await service.get_target_async(target_registry_name="temporary_one")
         assert isinstance(fetched, TargetInstance)
         assert fetched.origin is TargetOrigin.TEMPORARY
+
+
+_CONTOSO = ServerCredential(name="contoso", env_var="CONTOSO_TEST_KEY", endpoint="https://api.contoso.com/v1")
+
+
+def _listed_request(
+    *, persist: bool = False, endpoint: str = "https://api.contoso.com/v1", target_type: str = "OpenAIChatTarget"
+) -> CreateTargetRequest:
+    return CreateTargetRequest(
+        name="contoso_chat",
+        type=target_type,
+        params={"endpoint": endpoint, "model_name": "gpt-4o"} if target_type == "OpenAIChatTarget" else {},
+        server_credential="contoso",
+        persist=persist,
+    )
+
+
+@pytest.mark.usefixtures("sqlite_instance")
+class TestServerCredentials:
+    async def test_builds_a_target_with_a_listed_key_without_returning_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CONTOSO_TEST_KEY", "listed-key")
+        service = TargetService()
+
+        target = await service.create_target_async(request=_listed_request(), server_credentials=[_CONTOSO])
+
+        target_obj = service.get_target_object(target_registry_name="contoso_chat")
+        assert target_obj._api_key == "listed-key"  # type: ignore[attr-defined]
+        assert target.origin is TargetOrigin.TEMPORARY
+        assert "listed-key" not in target.model_dump_json()
+
+    async def test_saves_the_credential_name_and_restore_reads_the_key_again(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("CONTOSO_TEST_KEY", "listed-key")
+        service = TargetService()
+
+        target = await service.create_target_async(
+            request=_listed_request(persist=True), recipes_source=str(tmp_path), server_credentials=[_CONTOSO]
+        )
+
+        assert target.origin is TargetOrigin.SAVED
+        assert _saved_document(tmp_path, "contoso_chat") == {
+            "schema_version": 1,
+            "class_module": "pyrit.prompt_target.openai.openai_chat_target",
+            "class_name": "OpenAIChatTarget",
+            "params": {
+                "endpoint": "https://api.contoso.com/v1",
+                "model_name": "gpt-4o",
+                "auth_mode": "api_key",
+                "headers": "{}",
+            },
+            "server_credential": "contoso",
+        }
+        monkeypatch.setenv("CONTOSO_TEST_KEY", "rotated-key")
+        TargetRegistry.reset_registry_singleton()
+        assert RegistryRecipeRestorer(source=str(tmp_path), server_credentials=[_CONTOSO]).restore().failures == []
+        restored = TargetRegistry.get_registry_singleton().instances.get("contoso_chat")
+        assert restored is not None
+        assert restored._api_key == "rotated-key"  # type: ignore[attr-defined]
+
+    @pytest.mark.parametrize(
+        ("changes", "message"),
+        [
+            ({"credentials": []}, "This server has no server credential named 'contoso'."),
+            (
+                {"endpoint": "https://api.contoso.com.evil.example/v1"},
+                (
+                    "Server credential 'contoso' is only sent to https://api.contoso.com/v1, so 'endpoint' must be "
+                    "that address."
+                ),
+            ),
+            ({"unset": True}, "Server credential 'contoso' isn't set on this server."),
+            ({"target_type": "TextTarget"}, "'TextTarget' can't use a server credential."),
+        ],
+    )
+    async def test_refuses_a_credential_it_cant_use_for_this_target(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, changes: dict[str, Any], message: str
+    ) -> None:
+        if changes.get("unset"):
+            monkeypatch.delenv("CONTOSO_TEST_KEY", raising=False)
+        else:
+            monkeypatch.setenv("CONTOSO_TEST_KEY", "listed-key")
+        request = _listed_request(
+            persist=True,
+            endpoint=changes.get("endpoint", "https://api.contoso.com/v1"),
+            target_type=changes.get("target_type", "OpenAIChatTarget"),
+        )
+
+        with pytest.raises(ValueError) as refusal:
+            await TargetService().create_target_async(
+                request=request, recipes_source=str(tmp_path), server_credentials=changes.get("credentials", [_CONTOSO])
+            )
+
+        assert str(refusal.value) == message
+        assert TargetRegistry.get_registry_singleton().instances.get("contoso_chat") is None
+        assert not (tmp_path / "targets").exists()
+
+    @pytest.mark.parametrize(
+        ("credentials", "unset", "message"),
+        [
+            ([], False, "This server has no server credential named 'contoso'."),
+            ([_CONTOSO], True, "Server credential 'contoso' isn't set on this server."),
+        ],
+    )
+    async def test_a_saved_target_doesnt_restore_without_its_listed_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        credentials: list[ServerCredential],
+        unset: bool,
+        message: str,
+    ) -> None:
+        monkeypatch.setenv("CONTOSO_TEST_KEY", "listed-key")
+        await TargetService().create_target_async(
+            request=_listed_request(persist=True), recipes_source=str(tmp_path), server_credentials=[_CONTOSO]
+        )
+        if unset:
+            monkeypatch.delenv("CONTOSO_TEST_KEY")
+        TargetRegistry.reset_registry_singleton()
+
+        failures = RegistryRecipeRestorer(source=str(tmp_path), server_credentials=credentials).restore().failures
+
+        assert [(failure.name, failure.reason, failure.message) for failure in failures] == [
+            ("contoso_chat", RestoreFailureReason.UNSUPPORTED_CREDENTIAL, message)
+        ]
+        assert TargetRegistry.get_registry_singleton().instances.get("contoso_chat") is None
+
+    async def test_types_list_the_credentials_each_type_can_use(self) -> None:
+        response = await TargetService().list_target_types_async(server_credentials=[_CONTOSO])
+
+        choices = {item.target_type: [(c.name, c.endpoint) for c in item.server_credentials] for item in response.items}
+        assert choices["OpenAIChatTarget"] == [("contoso", "https://api.contoso.com/v1")]
+        assert choices["TextTarget"] == []
+        assert "CONTOSO_TEST_KEY" not in response.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"params": {"api_key": "typed-key"}}, "Send either an api_key or a server_credential, not both"),
+        ({"auth_mode": "identity"}, "server_credential needs auth_mode 'api_key'"),
+        ({"server_credential": "Contoso"}, "server_credential"),
+        (
+            {"register": False, "source": {"source_name": "startup_chat", "source_hash": "abc123", "params": {}}},
+            "server_credential can't be used with source",
+        ),
+    ],
+)
+def test_a_request_with_a_server_credential_sends_no_key_of_its_own(fields: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        CreateTargetRequest.model_validate(
+            {"name": "contoso_chat", "type": "OpenAIChatTarget", "params": {}, "server_credential": "contoso", **fields}
+        )

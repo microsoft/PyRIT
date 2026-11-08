@@ -30,7 +30,7 @@ from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
-from pyrit.models.catalog import ComponentRecipe, RunScenarioRequest
+from pyrit.models.catalog import ComponentRecipe, RunScenarioRequest, ServerCredential
 from pyrit.prompt_target import OpenAIChatTarget, TextTarget
 from pyrit.registry import ConverterRegistry, TargetRegistry
 from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY
@@ -693,12 +693,16 @@ async def test_management_publishes_target_upload_directory(tmp_path: Path) -> N
         env_files=[],
         target_upload_directory=str(tmp_path),
         registry_recipes_source=str(tmp_path / "recipes"),
+        server_credentials=[{"name": "contoso", "env_var": "CONTOSO_KEY", "endpoint": "https://api.contoso.com/v1"}],
     )
 
     await service._management_async(config)
 
     assert app.state.target_upload_directory == str(tmp_path)
     assert app.state.registry_recipes_source == str(tmp_path / "recipes")
+    assert app.state.server_credentials == [
+        ServerCredential(name="contoso", env_var="CONTOSO_KEY", endpoint="https://api.contoso.com/v1")
+    ]
 
 
 async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repair(tmp_path: Path) -> None:
@@ -712,6 +716,7 @@ async def test_invalid_cold_configuration_requires_restart_but_retains_raw_repai
     assert not app.state.allow_custom_initializers
     assert app.state.target_upload_directory is None
     assert app.state.registry_recipes_source is None
+    assert app.state.server_credentials == []
     assert app.state.environment_file_service is None
     content, version = await source.read_with_version_async()
     assert content == "broken: ["
@@ -1002,10 +1007,15 @@ def _save_recipe(root: Path, *, kind: str, name: str, document: dict[str, object
 
 
 async def _start_with_recipes_async(
-    runtime: RuntimeLifecycle, *, recipes: Path, initialize: Callable[..., object] | None = None
+    runtime: RuntimeLifecycle,
+    *,
+    recipes: Path,
+    initialize: Callable[..., object] | None = None,
+    server_credentials: list[ServerCredential] | None = None,
 ) -> None:
     config = await runtime._load_async()
     config.registry_recipes_source = str(recipes)
+    config.server_credentials = server_credentials or []
     with (
         patch.object(config, "initialize_pyrit_async", AsyncMock(side_effect=initialize)),
         patch.object(lifecycle_module, "get_scenario_run_service", return_value=MagicMock(spec=ScenarioRunService)),
@@ -1073,6 +1083,33 @@ async def test_startup_marks_the_targets_its_scripts_register_but_not_saved_ones
     assert startup_entry is not None and saved_entry is not None
     assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
     assert CONFIGURATION_ENTRY_METADATA_KEY not in saved_entry.metadata
+
+
+@pytest.mark.usefixtures("patch_central_database", "startup_chat")
+async def test_startup_restores_a_target_that_names_a_server_credential_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CONTOSO_TEST_KEY", "listed-key")
+    credentials = [ServerCredential(name="contoso", env_var="CONTOSO_TEST_KEY", endpoint="https://api.contoso.com/v1")]
+    recipes = tmp_path / "recipes"
+    _save_recipe(
+        recipes,
+        kind="targets",
+        name="contoso_chat",
+        document={
+            "class_module": OpenAIChatTarget.__module__,
+            "class_name": "OpenAIChatTarget",
+            "params": {"endpoint": "https://api.contoso.com/v1", "model_name": "gpt-4o", "headers": "{}"},
+            "server_credential": "contoso",
+        },
+    )
+
+    await _start_with_recipes_async(runtime, recipes=recipes, server_credentials=credentials)
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    restored = TargetRegistry.get_registry_singleton().instances.get("contoso_chat")
+    assert restored is not None
+    assert restored._api_key == "listed-key"  # type: ignore[attr-defined]
 
 
 class _LoopBoundTarget(MockPromptTarget):

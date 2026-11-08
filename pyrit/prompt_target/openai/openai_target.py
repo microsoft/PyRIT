@@ -69,6 +69,7 @@ class OpenAITarget(PromptTarget):
         {"api_key": None, "headers": "{}"}
     )
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
+    listed_credential_parameters: ClassVar[tuple[str, str] | None] = ("api_key", "endpoint")
 
     COPY_LOCKED_PARAMETER_NAMES: ClassVar[frozenset[str]] = frozenset(
         {"endpoint", "auth_mode", "api_key", "headers", "httpx_client_kwargs"}

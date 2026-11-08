@@ -18,6 +18,7 @@ from pyrit.models.component_spec import SourceInstanceSpec
 
 __all__ = [
     "CreateTargetRequest",
+    "ServerCredentialChoice",
     "TargetListResponse",
     "TargetTypeEntry",
     "TargetTypeResponse",
@@ -26,6 +27,13 @@ __all__ = [
 
 def _default_auth_modes() -> list[AuthMode]:
     return ["api_key"]
+
+
+class ServerCredentialChoice(BaseModel):
+    """A server credential users can pick, without the key or the variable that holds it."""
+
+    name: str = Field(..., description="The name to send as server_credential")
+    endpoint: str = Field(..., description="The only endpoint the credential is sent to")
 
 
 class TargetTypeEntry(BaseModel):
@@ -51,6 +59,10 @@ class TargetTypeEntry(BaseModel):
         None, description="Why a target of this type can't be saved, or None when it can be with a saveable mode"
     )
     description: str | None = Field(None, description="Short description of the target from its docstring")
+    server_credentials: list[ServerCredentialChoice] = Field(
+        default_factory=list,
+        description="Server credentials an administrator lets users pick for a target of this type",
+    )
 
 
 class TargetTypeResponse(BaseModel):
@@ -87,6 +99,14 @@ class CreateTargetRequest(BaseModel):
         ),
     )
     source: SourceInstanceSpec | None = None
+    server_credential: str | None = Field(
+        None,
+        pattern=r"^[a-z][a-z0-9_]{0,63}$",
+        description=(
+            "A server credential from this server's list to use as the target's key, with auth_mode 'api_key'. "
+            "The target's endpoint must be the credential's; the key is never returned or saved"
+        ),
+    )
     type: IdentifierStr = Field(..., description="Target type (e.g., 'OpenAIChatTarget')")
     params: dict[IdentifierStr, JSONValue] = Field(
         default_factory=dict, max_length=MAX_ITEMS, description="Target constructor parameters"
@@ -102,6 +122,18 @@ class CreateTargetRequest(BaseModel):
             "placeholder, for OpenAI-compatible servers that need no key; supported by OpenAI-family targets."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_server_credential(self) -> "CreateTargetRequest":
+        if self.server_credential is None:
+            return self
+        if self.auth_mode != "api_key":
+            raise ValueError("server_credential needs auth_mode 'api_key'")
+        if self.params.get("api_key") not in (None, ""):
+            raise ValueError("Send either an api_key or a server_credential, not both")
+        if self.source is not None:
+            raise ValueError("server_credential can't be used with source")
+        return self
 
     @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":

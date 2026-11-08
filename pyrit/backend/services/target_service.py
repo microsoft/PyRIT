@@ -29,6 +29,7 @@ from pyrit.backend.models import (
     TargetListResponse,
 )
 from pyrit.backend.models.targets import (
+    ServerCredentialChoice,
     TargetTypeEntry,
     TargetTypeResponse,
     UnregisteredTarget,
@@ -41,6 +42,7 @@ from pyrit.models.catalog import (
     RegistryRecipeKind,
     RestoreFailureReason,
     SavedEntryOwner,
+    ServerCredential,
     TargetInstance,
     TargetOrigin,
 )
@@ -53,6 +55,7 @@ from pyrit.registry.registry_recipe_rules import (
     SavedEntryRefusedError,
     check_saveable_class,
     check_saved_entry_params,
+    resolve_listed_credential,
 )
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
@@ -252,7 +255,9 @@ class TargetService:
             and parameter.is_allowed_external_input(allowed_path_params=target_cls.caller_path_parameters)
         ]
 
-    async def list_target_types_async(self, *, upload_directory: str | None = None) -> TargetTypeResponse:
+    async def list_target_types_async(
+        self, *, upload_directory: str | None = None, server_credentials: Sequence[ServerCredential] = ()
+    ) -> TargetTypeResponse:
         """
         List all available target types from the target class registry.
 
@@ -269,6 +274,8 @@ class TargetService:
         Args:
             upload_directory (str | None): Folder the server lets API-created targets upload files
                 from, or None when the server configures none.
+            server_credentials (Sequence[ServerCredential]): The server credentials an administrator lets
+                users pick; each type that can use one lists them by name and endpoint. Defaults to none.
 
         Returns:
             TargetTypeResponse containing all available target classes.
@@ -296,6 +303,12 @@ class TargetService:
                     saveable_auth_modes=saveable_auth_modes,
                     not_saveable_reason=not_saveable_reason,
                     description=metadata.class_description or None,
+                    server_credentials=[
+                        ServerCredentialChoice(name=credential.name, endpoint=credential.endpoint)
+                        for credential in server_credentials
+                    ]
+                    if self._registry.get_class(metadata.class_name).listed_credential_parameters
+                    else [],
                 )
             )
         return TargetTypeResponse(items=items)
@@ -417,6 +430,7 @@ class TargetService:
         is_admin: bool = False,
         owner: SavedEntryOwner | None = None,
         recipes_source: str | None = None,
+        server_credentials: Sequence[ServerCredential] = (),
     ) -> TargetInstance | UnregisteredTarget:
         """
         Create a new target instance from API request.
@@ -450,6 +464,7 @@ class TargetService:
                 authenticates with this server's stored credentials.
             owner: The signed-in user, recorded on a saved target, or None when sign-in is off.
             recipes_source: Where saved entries are stored, or None for the default folder.
+            server_credentials: The server credentials an administrator lets users pick.
 
         Returns:
             TargetInstance with the new target's details.
@@ -538,10 +553,26 @@ class TargetService:
         self._enforce_server_credential_permission(
             target_type=request.type, params=permission_params, is_admin=is_admin
         )
+        listed: tuple[str, str] | None = None
+        if request.server_credential is not None:
+            try:
+                listed = resolve_listed_credential(
+                    cls=target_cls,
+                    params=params,
+                    name=request.server_credential,
+                    server_credentials=server_credentials,
+                )
+            except SavedEntryRefusedError as error:
+                raise ValueError(str(error)) from error
         if request.persist:
             params = await self._prepare_saved_params_async(
-                target_type=request.type, target_cls=target_cls, params=params
+                target_type=request.type,
+                target_cls=target_cls,
+                params=params,
+                listed_credential_parameter=listed[0] if listed is not None else None,
             )
+        # The key reaches only the target being built; a saved recipe names the credential instead.
+        build_params = {**params, listed[0]: listed[1]} if listed is not None else params
 
         # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
         # Remove it when the name becomes required for registered targets.
@@ -567,7 +598,9 @@ class TargetService:
             await self.build_from_source_async(request.source)
             if request.source
             else self._registry.create_instance_from_external_input(
-                request.type, params=params, allowed_path_params=self._allowed_path_params(target_cls=target_cls)
+                request.type,
+                params=build_params,
+                allowed_path_params=self._allowed_path_params(target_cls=target_cls),
             )
         )
         if not request.register:
@@ -586,6 +619,7 @@ class TargetService:
                     target_cls=target_cls,
                     target_obj=target_obj,
                     params=params,
+                    server_credential=request.server_credential,
                     owner=owner,
                     recipes_source=recipes_source,
                 )
@@ -599,7 +633,12 @@ class TargetService:
             raise
 
     async def _prepare_saved_params_async(
-        self, *, target_type: str, target_cls: type[PromptTarget], params: dict[str, Any]
+        self,
+        *,
+        target_type: str,
+        target_cls: type[PromptTarget],
+        params: dict[str, Any],
+        listed_credential_parameter: str | None = None,
     ) -> dict[str, Any]:
         """
         Turn off the server values a target to save would read, then refuse what it still can't hold.
@@ -618,7 +657,12 @@ class TargetService:
         metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, target_type)
         parameters = metadata.parameters if metadata is not None else ()
         try:
-            check_saved_entry_params(cls=target_cls, parameters=parameters, params=saved_params)
+            check_saved_entry_params(
+                cls=target_cls,
+                parameters=parameters,
+                params=saved_params,
+                listed_credential_parameter=listed_credential_parameter,
+            )
         except SavedEntryRefusedError as error:
             # The address needs fixing; creating the target without saving it wouldn't make it usable.
             if error.reason is RestoreFailureReason.INVALID_RECIPE:
@@ -654,6 +698,7 @@ class TargetService:
         target_cls: type[PromptTarget],
         target_obj: PromptTarget,
         params: dict[str, Any],
+        server_credential: str | None,
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
     ) -> TargetInstance:
@@ -674,7 +719,13 @@ class TargetService:
         target = self._build_instance_from_object(
             target_registry_name=name, target_obj=target_obj, origin=TargetOrigin.SAVED
         )
-        recipe = ComponentRecipe(class_module=target_cls.__module__, class_name=type_name, params=params, owner=owner)
+        recipe = ComponentRecipe(
+            class_module=target_cls.__module__,
+            class_name=type_name,
+            params=params,
+            server_credential=server_credential,
+            owner=owner,
+        )
         storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=recipes_source)
         try:
             await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)

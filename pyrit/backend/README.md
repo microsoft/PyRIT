@@ -38,15 +38,19 @@ API keys do not authenticate incoming GUI users.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 - `GET /api/targets/types` - List the target types that can be created, with their parameters and auth
-  modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), and why a type can't be saved
-  at all (`not_saveable_reason`)
+  modes, the auth modes a saved target of each type can use (`saveable_auth_modes`), why a type can't be saved
+  at all (`not_saveable_reason`), and the server credentials a target of each type can use
+  (`server_credentials`: each one's name and endpoint)
 - `POST /api/targets` - Create a target
 
 A created target is Temporary: a restart or reinitialization removes it. With `"persist": true`, `register` left on,
 and a name that starts with a lowercase letter and has at most 64 lowercase letters, digits, and underscores
 (otherwise **422**), the target is saved under `registry_recipes_source` and restored at every start, and the
-signed-in user is recorded as the one who saved it. A saved target can't hold or use a key: it authenticates with
-Microsoft Entra ID (`"auth_mode": "identity"`, through this server's Azure identity) or needs no key. An OpenAI
+signed-in user is recorded as the one who saved it. A saved target can't hold a key: it authenticates with
+Microsoft Entra ID (`"auth_mode": "identity"`, through this server's Azure identity), needs no key, or names a key
+an administrator listed in `server_credentials` (`"server_credential": "<name>"` with `"auth_mode": "api_key"`). That
+key is read from this server's environment, only sent to the credential's endpoint, and never saved; a credential
+that isn't listed or set, or an endpoint that isn't the credential's, receives a plain **400**. An OpenAI
 target's empty `headers` is set to `"{}"` first, so a saved one doesn't send this server's
 `OPENAI_ADDITIONAL_REQUEST_HEADERS`; settings the OpenAI SDK reads by itself (`OPENAI_CUSTOM_HEADERS`,
 `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) still apply. After the usual permission checks, a request receives **400**
@@ -412,7 +416,8 @@ API callers are trusted operators, so these are intentional exceptions:
   server's environment, sent even to an endpoint the caller chose, or a token for the server's
   Azure identity, sent to the Azure endpoint or container the caller chose. For an
   OpenAI-compatible server that needs no key, set `auth_mode` to `none` so the target uses none
-  of these.
+  of these. A key listed in `server_credentials` is only sent to its listed endpoint, so list a
+  variable that holds only that key, not one a target reads on its own.
 - Registered targets, converters, and scorers are shared: any API caller can use them, whoever
   created them.
 - Prompt content is not filtered; it is adversarial test data by design.

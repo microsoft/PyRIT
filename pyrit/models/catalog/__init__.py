@@ -67,6 +67,7 @@ if TYPE_CHECKING:
         StoredScenarioSuite,
     )
     from pyrit.models.catalog.scorer import ScorerInstance
+    from pyrit.models.catalog.server_credential import ServerCredential, normalized_endpoint
     from pyrit.models.catalog.target import TargetInstance, TargetOrigin
 
 _LAZY_EXPORTS: dict[str, str] = {
@@ -84,6 +85,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SavedEntryOwner": "pyrit.models.catalog.registry_recipe",
     "SavedEntryRef": "pyrit.models.catalog.registry_recipe",
     "ScorerInstance": "pyrit.models.catalog.scorer",
+    "ServerCredential": "pyrit.models.catalog.server_credential",
+    "normalized_endpoint": "pyrit.models.catalog.server_credential",
     "RegisteredScenario": "pyrit.models.catalog.scenario",
     "RunScenarioRequest": "pyrit.models.catalog.scenario",
     "ScenarioLaunchConfiguration": "pyrit.models.catalog.scenario",

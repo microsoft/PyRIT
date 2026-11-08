@@ -104,7 +104,10 @@ async def list_target_types(request: Request) -> TargetTypeResponse:  # pyrit-as
         TargetTypeResponse: Available target types and build parameters.
     """
     service = get_target_service()
-    return await service.list_target_types_async(upload_directory=_target_upload_directory(request))
+    return await service.list_target_types_async(
+        upload_directory=_target_upload_directory(request),
+        server_credentials=getattr(request.app.state, "server_credentials", ()),
+    )
 
 
 @router.post(
@@ -157,6 +160,7 @@ async def create_target(
             is_admin=has_admin_access(request),
             owner=_saved_entry_owner(request),
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
+            server_credentials=getattr(request.app.state, "server_credentials", ()),
         )
     except SavedTargetRefusedError as e:
         problem = ProblemDetail(

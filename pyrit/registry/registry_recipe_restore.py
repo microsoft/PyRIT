@@ -22,13 +22,18 @@ from pyrit.models.catalog import (
 )
 from pyrit.registry.file_document_storage import describe_storage_error
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_rules import (
+    SavedEntryRefusedError,
+    check_saved_entry_params,
+    resolve_listed_credential,
+)
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from pyrit.models import Parameter
+    from pyrit.models.catalog import ServerCredential
     from pyrit.registry.registry import InstanceHoldingRegistry
 
 
@@ -72,15 +77,18 @@ class RegistryRecipeRestorer:
     }
     _KIND_ORDER: ClassVar[tuple[RegistryRecipeKind, ...]] = tuple(RegistryRecipeKind)
 
-    def __init__(self, *, source: str | None = None) -> None:
+    def __init__(self, *, source: str | None = None, server_credentials: Sequence[ServerCredential] = ()) -> None:
         """
         Initialize the restorer.
 
         Args:
             source (str | None): Local directory or Azure Blob URI holding the per-registry folders.
                 Defaults to ``registry_recipes`` under the PyRIT configuration directory.
+            server_credentials (Sequence[ServerCredential]): The server credentials an administrator lets
+                saved targets use. Defaults to none.
         """
         self._storages = {kind: RegistryRecipeStorage(kind=kind, source=source) for kind in RegistryRecipeKind}
+        self._server_credentials = tuple(server_credentials)
 
     def read(self) -> SavedRecipes:
         """
@@ -213,7 +221,17 @@ class RegistryRecipeRestorer:
             )
             raise _RecipeRejectedError(reason=RestoreFailureReason.MODULE_MISMATCH, message=message)
         parameters = registry.get_class_metadata(cls).parameters
-        check_saved_entry_params(cls=cls, parameters=parameters, params=recipe.params)
+        listed_parameter = None
+        if recipe.server_credential is not None:
+            listed_parameter, _ = resolve_listed_credential(
+                cls=cls,
+                params=recipe.params,
+                name=recipe.server_credential,
+                server_credentials=self._server_credentials,
+            )
+        check_saved_entry_params(
+            cls=cls, parameters=parameters, params=recipe.params, listed_credential_parameter=listed_parameter
+        )
         try:
             registry.instances.validate_name_available(ref.name)
         except ValueError as error:
@@ -392,10 +410,20 @@ class RegistryRecipeRestorer:
                 if stored.ref.kind is RegistryRecipeKind.TARGETS:
                     # As in the target API, a target may let callers set some path parameters, such as a working folder.
                     allowed_path_params = registry.get_class(recipe.class_name).caller_path_parameters
+                params = dict(recipe.params)
+                if recipe.server_credential is not None:
+                    # The key is read from this server's environment only to build the entry; it's never stored.
+                    key_parameter, key = resolve_listed_credential(
+                        cls=registry.get_class(recipe.class_name),
+                        params=recipe.params,
+                        name=recipe.server_credential,
+                        server_credentials=self._server_credentials,
+                    )
+                    params[key_parameter] = key
                 registry.create_named_instance(
                     name=stored.ref.name,
                     type_name=recipe.class_name,
-                    params=recipe.params,
+                    params=params,
                     registry_metadata={SAVED_ENTRY_METADATA_KEY: stored.ref.kind.value},
                     external_input=True,
                     allowed_path_params=allowed_path_params,

@@ -64,7 +64,7 @@ from pyrit.backend.services.target_service import (
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
-from pyrit.models.catalog import SavedEntryOwner, TargetInstance
+from pyrit.models.catalog import SavedEntryOwner, ServerCredential, TargetInstance
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -1484,6 +1484,26 @@ class TestTargetRoutes:
 
         assert _saved_entry_owner(request) == SavedEntryOwner(oid="user-oid", name=expected)
         assert _saved_entry_owner(Request({"type": "http"})) is None
+
+    def test_types_and_create_pass_the_server_credentials_users_can_pick(self, client: TestClient) -> None:
+        credentials = [ServerCredential(name="contoso", env_var="CONTOSO_KEY", endpoint="https://api.contoso.com/v1")]
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch.object(client.app.state, "server_credentials", credentials, create=True),
+        ):
+            service = mock_get_service.return_value
+            service.list_target_types_async = AsyncMock(return_value=TargetTypeResponse(items=[]))
+            service.create_target_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.get("/api/targets/types")
+            client.post(
+                "/api/targets",
+                json={"name": "contoso_chat", "type": "OpenAIChatTarget", "params": {}, "server_credential": "contoso"},
+            )
+
+        assert service.list_target_types_async.call_args.kwargs["server_credentials"] == credentials
+        assert service.create_target_async.call_args.kwargs["server_credentials"] == credentials
+        assert service.create_target_async.call_args.kwargs["request"].server_credential == "contoso"
 
     def test_create_target_passes_admin_flag_from_request(self, client: TestClient) -> None:
         """The route resolves administrator access and forwards it to the service."""

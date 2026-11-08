@@ -7,12 +7,13 @@ from urllib.parse import quote
 
 import pytest
 
-from pyrit.models.catalog import RestoreFailureReason
+from pyrit.models.catalog import RestoreFailureReason, ServerCredential
 from pyrit.registry import ConverterRegistry, TargetRegistry
 from pyrit.registry.registry_recipe_rules import (
     SavedEntryRefusedError,
     check_saveable_class,
     check_saved_entry_params,
+    resolve_listed_credential,
 )
 
 _ENDPOINT = "https://contoso.openai.azure.com/openai/v1"
@@ -426,3 +427,123 @@ def test_check_saveable_class_agrees_with_the_check_a_save_runs() -> None:
             else:
                 with pytest.raises(SavedEntryRefusedError):
                     check_saved_entry_params(cls=cls, parameters=metadata.parameters, params=entry)
+
+
+_LISTED = ServerCredential(name="contoso", env_var="CONTOSO_TEST_KEY", endpoint="https://api.contoso.com/v1")
+_MISMATCH = (
+    "Server credential 'contoso' is only sent to https://api.contoso.com/v1, so 'endpoint' must be that address."
+)
+
+
+def _check_with_listed_key(params: dict[str, Any]) -> None:
+    registry = TargetRegistry.get_registry_singleton()
+    cls = registry.get_class("OpenAIChatTarget")
+    check_saved_entry_params(
+        cls=cls,
+        parameters=registry.get_class_metadata(cls).parameters,
+        params=params,
+        listed_credential_parameter="api_key",
+    )
+
+
+def test_check_saved_entry_params_accepts_an_empty_key_a_server_credential_fills() -> None:
+    _check_with_listed_key({"auth_mode": "api_key", "endpoint": "https://api.contoso.com/v1", "headers": "{}"})
+
+
+@pytest.mark.parametrize(
+    ("params", "message"),
+    [
+        (
+            {"auth_mode": "api_key", "endpoint": "https://api.contoso.com/v1", "headers": "{}", "api_key": "typed"},
+            "Saved entries can't hold credentials ('api_key').",
+        ),
+        (
+            {"auth_mode": "api_key", "endpoint": "https://api.contoso.com/v1"},
+            (
+                "'headers' is empty, so 'OpenAIChatTarget' can use this server's credential instead. "
+                "Saved entries set it to '{}'."
+            ),
+        ),
+    ],
+)
+def test_check_saved_entry_params_still_refuses_what_a_server_credential_doesnt_fill(
+    params: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(SavedEntryRefusedError) as refusal:
+        _check_with_listed_key(params)
+
+    assert str(refusal.value) == message
+
+
+@pytest.mark.parametrize("class_name", _OPENAI_CLASSES)
+def test_openai_targets_take_a_server_credential_as_their_key_for_their_endpoint(class_name: str) -> None:
+    cls = TargetRegistry.get_registry_singleton().get_class(class_name)
+
+    assert cls.listed_credential_parameters == ("api_key", "endpoint")
+
+
+@pytest.mark.parametrize("endpoint", ["https://api.contoso.com/v1", "HTTPS://API.Contoso.com:443/v1/"])
+def test_resolve_listed_credential_returns_the_key_for_its_endpoint(
+    monkeypatch: pytest.MonkeyPatch, endpoint: str
+) -> None:
+    monkeypatch.setenv("CONTOSO_TEST_KEY", "listed-key")
+    cls = TargetRegistry.get_registry_singleton().get_class("OpenAIChatTarget")
+
+    resolved = resolve_listed_credential(
+        cls=cls, params={"endpoint": endpoint}, name="contoso", server_credentials=[_LISTED]
+    )
+
+    assert resolved == ("api_key", "listed-key")
+
+
+@pytest.mark.parametrize(
+    ("class_name", "params", "credentials", "message"),
+    [
+        ("TextTarget", {}, [_LISTED], "'TextTarget' can't use a server credential."),
+        (
+            "OpenAIChatTarget",
+            {"endpoint": "https://api.contoso.com/v1"},
+            [ServerCredential(name="fabrikam", env_var="CONTOSO_TEST_KEY", endpoint="https://api.contoso.com/v1")],
+            "This server has no server credential named 'contoso'.",
+        ),
+        ("OpenAIChatTarget", {"endpoint": "https://api.contoso.com/v2"}, [_LISTED], _MISMATCH),
+        ("OpenAIChatTarget", {"endpoint": "http://api.contoso.com/v1"}, [_LISTED], _MISMATCH),
+        ("OpenAIChatTarget", {"endpoint": "https://api.contoso.com:8443/v1"}, [_LISTED], _MISMATCH),
+        ("OpenAIChatTarget", {"endpoint": "https://api.contoso.com.example.test/v1"}, [_LISTED], _MISMATCH),
+        ("OpenAIChatTarget", {}, [_LISTED], _MISMATCH),
+    ],
+)
+def test_resolve_listed_credential_refuses_a_credential_this_entry_cant_use(
+    monkeypatch: pytest.MonkeyPatch,
+    class_name: str,
+    params: dict[str, Any],
+    credentials: list[ServerCredential],
+    message: str,
+) -> None:
+    monkeypatch.setenv("CONTOSO_TEST_KEY", "listed-key")
+    cls = TargetRegistry.get_registry_singleton().get_class(class_name)
+
+    with pytest.raises(SavedEntryRefusedError) as refusal:
+        resolve_listed_credential(cls=cls, params=params, name="contoso", server_credentials=credentials)
+
+    assert refusal.value.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
+    assert str(refusal.value) == message
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_resolve_listed_credential_refuses_a_key_that_isnt_set(
+    monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    if value is None:
+        monkeypatch.delenv("CONTOSO_TEST_KEY", raising=False)
+    else:
+        monkeypatch.setenv("CONTOSO_TEST_KEY", value)
+    cls = TargetRegistry.get_registry_singleton().get_class("OpenAIChatTarget")
+
+    with pytest.raises(SavedEntryRefusedError) as refusal:
+        resolve_listed_credential(
+            cls=cls, params={"endpoint": "https://api.contoso.com/v1"}, name="contoso", server_credentials=[_LISTED]
+        )
+
+    assert refusal.value.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
+    assert str(refusal.value) == "Server credential 'contoso' isn't set on this server."
