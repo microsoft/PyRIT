@@ -368,6 +368,31 @@ async def test_a_delete_waits_for_requests_in_flight_to_finish(tmp_path: Path) -
     assert not (tmp_path / "converters" / "cat_replace.json").exists()
 
 
+async def test_an_entry_a_request_comes_to_hold_while_the_delete_waits_isnt_deleted(tmp_path: Path) -> None:
+    _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
+    assert _restore(tmp_path) == []
+    targets = TargetRegistry.get_registry_singleton().instances
+    runtime = _runtime()
+    version = await _version(tmp_path, TARGETS, "saved_chat")
+    busy = iter([True, False])
+
+    def finish_a_request_that_registers_a_holder() -> bool:
+        still_busy = next(busy)
+        if not still_busy:
+            ConverterRegistry.get_registry_singleton().instances.register(
+                ToneConverter(converter_target=targets.get("saved_chat"), tone="formal"), name="formal_tone"
+            )
+        return still_busy
+
+    with patch.object(runtime, "_has_active_work", side_effect=finish_a_request_that_registers_a_holder):
+        with pytest.raises(SavedEntryInUseError) as refusal:
+            await _delete(tmp_path, TARGETS, "saved_chat", version=version, runtime=runtime)
+
+    assert "temporary converter 'formal_tone'" in str(refusal.value)
+    assert targets.get("saved_chat") is not None
+    assert (tmp_path / "targets" / "saved_chat.json").exists()
+
+
 async def test_an_entry_that_failed_to_restore_is_deleted_and_no_longer_listed(tmp_path: Path) -> None:
     _write(
         tmp_path,

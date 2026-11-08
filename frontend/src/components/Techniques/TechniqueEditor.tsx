@@ -113,7 +113,7 @@ export default function TechniqueEditor({
   const [revision, setRevision] = useState(0)
   const [validating, setValidating] = useState(false)
   const [saveRefusal, setSaveRefusal] = useState<{ formKey: string, reason: string } | null>(null)
-  const [nameConflict, setNameConflict] = useState<{ name: string, detail: string } | null>(null)
+  const [nameConflict, setNameConflict] = useState<{ name: string, tags: string, detail: string } | null>(null)
 
   function update<Value>(setter: Dispatch<SetStateAction<Value>>, value: Value): void {
     if (autoApply) {
@@ -187,7 +187,7 @@ export default function TechniqueEditor({
   const formKey = JSON.stringify([selectedType, values, requestConverters, responseConverters, adversarialTarget])
   const refusedReason = saveRefusal?.formKey === formKey ? saveRefusal.reason : null
   const temporaryReason = editing ? null : predictedTemporaryReason ?? refusedReason
-  const nameConflictDetail = nameConflict?.name === name ? nameConflict.detail : null
+  const nameConflictDetail = nameConflict?.name === name && nameConflict.tags === tags ? nameConflict.detail : null
   const nameMessage = editing ? null
     : nameConflictDetail ?? (temporaryReason === null && name ? validateRegistryName(name) : null)
 
@@ -305,8 +305,8 @@ export default function TechniqueEditor({
         if (!original && temporaryReason === null && isNotSaveableError(apiError)) {
           setSaveRefusal({ formKey, reason: apiError.detail })
         } else if (!original && apiError.status === 409 && apiError.type === undefined) {
-          // A taken name or tag is a 409 without a problem type.
-          setNameConflict({ name, detail: apiError.detail })
+          // A taken name or tag is a 409 without a problem type, so changing either lets the user try again.
+          setNameConflict({ name, tags, detail: apiError.detail })
         } else {
           fail(apiError.detail)
         }
