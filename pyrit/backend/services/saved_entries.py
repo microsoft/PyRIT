@@ -142,23 +142,39 @@ def _name_default_references(*, cls: type, parameters: Sequence[Parameter], para
             # The constructor's own default comes back the same way at every start.
             continue
         component_type = parameter.reference.component_type
-        registry = _REFERENCED_REGISTRIES.get(component_type)
-        entries = (
-            [item for item in registry.get_registry_singleton().instances.get_all_instances() if item.instance is value]
-            if registry is not None
-            else []
+        names = [
+            _registered_name(parameter_name=parameter.name, component_type=component_type, instance=item)
+            for item in (value if isinstance(value, (list, tuple)) else [value])
+        ]
+        params[parameter.name] = names if isinstance(value, (list, tuple)) else names[0]
+
+
+def _registered_name(*, parameter_name: str, component_type: ComponentType, instance: Any) -> str:
+    """
+    Name the registered entry that holds a default reference, preferring a name that comes back at every start.
+
+    Returns:
+        str: The entry's registry name.
+
+    Raises:
+        NotSaveableError: If no registered entry holds the instance.
+    """
+    registry = _REFERENCED_REGISTRIES.get(component_type)
+    entries = (
+        [item for item in registry.get_registry_singleton().instances.get_all_instances() if item.instance is instance]
+        if registry is not None
+        else []
+    )
+    if not entries:
+        raise NotSaveableError(
+            f"'{parameter_name}' is left to a default {component_type.value} that isn't registered, so it won't "
+            f"exist after a restart. Name a {component_type.value} to save it, or create it without saving it."
         )
-        if not entries:
-            raise NotSaveableError(
-                f"'{parameter.name}' is left to a default {component_type.value} that isn't registered, so it won't "
-                f"exist after a restart. Name a {component_type.value} to save it, or create it without saving it."
-            )
-        # Of several names for the default, one that comes back at every start can be saved.
-        entry = next(
-            (item for item in entries if registry_entry_origin(item.metadata) is not RegistryEntryOrigin.TEMPORARY),
-            entries[0],
-        )
-        params[parameter.name] = entry.name
+    entry = next(
+        (item for item in entries if registry_entry_origin(item.metadata) is not RegistryEntryOrigin.TEMPORARY),
+        entries[0],
+    )
+    return entry.name
 
 
 def refuse_temporary_references(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:

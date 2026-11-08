@@ -18,6 +18,7 @@ from pyrit.backend.services.chat_scoring_service import ChatScoringService
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
+from pyrit.common import REQUIRED_VALUE, apply_defaults, reset_default_values, set_default_value
 from pyrit.models import (
     ComponentIdentifier,
     Scorable,
@@ -42,7 +43,10 @@ from pyrit.score import (
     OtelToolCallScorer,
     Scorer,
     SubStringScorer,
+    TrueFalseCompositeScorer,
     TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
 )
 
 
@@ -711,3 +715,57 @@ async def test_a_scorer_save_finds_and_builds_the_scorer_off_the_event_loop(tmp_
 
     assert len(threads) >= 3
     assert set(threads) == {"worker"}
+
+
+def _register_default_composite_scorer(default: list[Any]) -> None:
+    """Register a composite scorer class whose scorers come from a configured default."""
+
+    class DefaultCompositeScorer(TrueFalseCompositeScorer):
+        @apply_defaults
+        def __init__(self, *, scorers: list[TrueFalseScorer] = REQUIRED_VALUE) -> None:
+            super().__init__(aggregator=TrueFalseScoreAggregator.AND, scorers=scorers)
+
+    ScorerRegistry.get_registry_singleton().register_class(DefaultCompositeScorer)
+    set_default_value(class_type=DefaultCompositeScorer, parameter_name="scorers", value=default)
+
+
+@pytest.fixture
+def startup_and_launch_scorers() -> Iterator[tuple[SubStringScorer, SubStringScorer]]:
+    scorers = ScorerRegistry.get_registry_singleton().instances
+    startup, launch = SubStringScorer(substring="startup"), SubStringScorer(substring="launch")
+    scorers.register(startup, name="startup_substring")
+    scorers.mark_configuration_entries()
+    scorers.register(launch, name="launch_substring")
+    yield startup, launch
+    reset_default_values()
+
+
+async def test_a_saved_scorer_names_each_scorer_in_a_default_list(
+    tmp_path: Path, startup_and_launch_scorers: tuple[SubStringScorer, SubStringScorer]
+) -> None:
+    startup, _ = startup_and_launch_scorers
+    _register_default_composite_scorer(default=[startup, startup])
+
+    await ScorerService().create_scorer_async(
+        request=_persist_scorer("composite", "DefaultCompositeScorer", {}), recipes_source=str(tmp_path)
+    )
+
+    assert _saved_scorer(tmp_path, "composite")["params"] == {"scorers": ["startup_substring", "startup_substring"]}
+
+
+async def test_a_default_list_with_a_temporary_scorer_is_not_saved(
+    tmp_path: Path, startup_and_launch_scorers: tuple[SubStringScorer, SubStringScorer]
+) -> None:
+    startup, launch = startup_and_launch_scorers
+    _register_default_composite_scorer(default=[startup, launch])
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await ScorerService().create_scorer_async(
+            request=_persist_scorer("composite", "DefaultCompositeScorer", {}), recipes_source=str(tmp_path)
+        )
+
+    assert str(refusal.value) == (
+        "Uses temporary scorer 'launch_substring', which won't exist after a restart. "
+        "It can still be created without saving it."
+    )
+    assert not (tmp_path / "scorers").exists()
