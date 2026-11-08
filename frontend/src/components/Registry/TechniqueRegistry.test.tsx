@@ -527,4 +527,27 @@ describe('TechniqueRegistry', () => {
 
     expect(screen.queryByRole('checkbox', { name: /Only techniques I saved/ })).not.toBeInTheDocument()
   })
+
+  it('lets a taken tag be changed and saved again', async () => {
+    techniques.createTechnique.mockRejectedValueOnce(
+      axiosError(409, { detail: "Tag 'first' conflicts with technique 'first'" }),
+    )
+    render(tree())
+    const user = await openCreate()
+    await user.type(screen.getByRole('textbox', { name: 'Registry name' }), 'fresh')
+    const tags = screen.getByRole('textbox', { name: 'Tags' })
+    await user.type(tags, 'first')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Attack type' }), 'PromptSendingAttack')
+    await user.click(screen.getByRole('button', { name: 'Save technique' }))
+    expect(await screen.findByText("Tag 'first' conflicts with technique 'first'")).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save technique' })).toBeDisabled()
+
+    await user.clear(tags)
+    await user.type(tags, 'single_turn')
+    expect(screen.queryByText("Tag 'first' conflicts with technique 'first'")).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save technique' }))
+
+    await waitFor(() => expect(techniques.createTechnique).toHaveBeenCalledTimes(2))
+    expect(techniques.createTechnique.mock.calls[1][0]).toMatchObject({ name: 'fresh', tags: ['single_turn'] })
+  })
 })
