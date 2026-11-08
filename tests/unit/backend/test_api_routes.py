@@ -51,7 +51,7 @@ from pyrit.backend.models.targets import TargetTypeResponse
 from pyrit.backend.routes import version as version_routes
 from pyrit.backend.routes.common import parse_label_query_params, saved_entry_owner_from_request
 from pyrit.backend.routes.scores import _get_user_identifier
-from pyrit.backend.services import AttackService
+from pyrit.backend.services import AttackService, get_converter_service
 from pyrit.backend.services.attack_service import AttackObjectiveConflictError
 from pyrit.backend.services.chat_scoring_service import ChatScoringError
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
@@ -1912,6 +1912,9 @@ class TestConverterRoutes:
     def test_create_converter_saves_a_copy_through_the_api(
         self, client: TestClient, patch_central_database: None, tmp_path: Path
     ) -> None:
+        # The cached service holds the registry it was made with, so both start from this test's state.
+        get_converter_service.cache_clear()
+        ConverterRegistry.reset_registry_singleton()
         source = SearchReplaceConverter(pattern="cat", replace="dog")
         instances = ConverterRegistry.get_registry_singleton().instances
         instances.register(source, name="startup_replace")
@@ -1931,6 +1934,7 @@ class TestConverterRoutes:
             with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
                 response = client.post("/api/converters", json=body)
         finally:
+            get_converter_service.cache_clear()
             ConverterRegistry.reset_registry_singleton()
 
         assert response.status_code == status.HTTP_201_CREATED, response.text
