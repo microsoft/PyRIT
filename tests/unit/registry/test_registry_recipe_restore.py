@@ -17,20 +17,16 @@ from pydantic import ValidationError
 
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.converter import Base64Converter, ColloquialWordswapConverter
-from pyrit.models.catalog.registry_recipe import (
+from pyrit.models import Parameter
+from pyrit.models.catalog import (
     RegistryRecipeKind,
     RestoreFailure,
     RestoreFailureReason,
     SavedEntryRef,
     TechniqueRecipe,
 )
-from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import GitHubCopilotTarget, OpenAIChatTarget, RoundRobinTarget
-from pyrit.registry.components.attack_registry import AttackRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.registry.components.converter_registry import ConverterRegistry
-from pyrit.registry.components.scorer_registry import ScorerRegistry
-from pyrit.registry.components.target_registry import TargetRegistry
+from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage

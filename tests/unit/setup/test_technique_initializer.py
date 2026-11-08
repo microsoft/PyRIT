@@ -24,10 +24,8 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import SeedPrompt
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.score import TrueFalseScorer
-from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestionPaths
+from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
+from pyrit.score import TrueFalseQuestionPaths, TrueFalseScorer
 from pyrit.setup.initializers import TechniqueInitializer
 from pyrit.setup.initializers.techniques import (
     build_technique_factories,

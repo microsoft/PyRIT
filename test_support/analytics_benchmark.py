@@ -232,8 +232,8 @@ class AnalyticsBenchmark:
     async def _seed_async(self) -> None:
         from sqlalchemy import insert
 
+        from pyrit.memory import AttackResultEntry
         from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
-        from pyrit.memory.memory_models import AttackResultEntry
         from pyrit.models import AttackResultMetadata, AttackResultRole, Operation
 
         memory = self.memory
@@ -486,7 +486,7 @@ class AnalyticsBenchmark:
     async def _write_async(self) -> None:
         from sqlalchemy import insert, update
 
-        from pyrit.memory.memory_models import AttackResultEntry
+        from pyrit.memory import AttackResultEntry
 
         transaction = 0
         try:
@@ -540,7 +540,7 @@ class AnalyticsBenchmark:
     async def _verify_final_async(self) -> None:
         from sqlalchemy import func, select
 
-        from pyrit.memory.memory_models import AttackResultEntry
+        from pyrit.memory import AttackResultEntry
 
         async with await self.memory.get_session_async() as session:
             rows = await session.execute(

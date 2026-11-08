@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async, wait_for_event_async
 
-from pyrit.output.sink import FileSink, IPythonMarkdownSink, Sink, StdoutSink, get_default_sink
+from pyrit.output import FileSink, IPythonMarkdownSink, Sink, StdoutSink, get_default_sink
 
 
 def test_sink_is_abstract():

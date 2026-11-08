@@ -16,9 +16,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from pyrit.models import TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance, TargetOrigin
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.models.catalog import TargetInstance, TargetOrigin
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry import Reconstructable

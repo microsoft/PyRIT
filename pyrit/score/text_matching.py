@@ -6,7 +6,7 @@
 import re
 
 from pyrit.common.text_matching import ExactTextMatching
-from pyrit.models.score.text_matcher import Contains, Equals, Regex, TextMatcher
+from pyrit.models import Contains, Equals, Regex, TextMatcher
 
 
 def match_text(*, matcher: TextMatcher, text: str) -> bool:

@@ -16,17 +16,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from azure.core.exceptions import AzureError
 
-from pyrit.backend.models.targets import CreateTargetRequest
+from pyrit.backend.models import CreateTargetRequest
+from pyrit.backend.services import TargetService, get_target_service
 from pyrit.backend.services.target_service import (
     SavedTargetConflictError,
     SavedTargetRefusedError,
     SavedTargetStorageError,
-    TargetService,
-    get_target_service,
 )
 from pyrit.models import ComponentIdentifier
-from pyrit.models.catalog.registry_recipe import ComponentRecipe, RegistryRecipeKind, SavedEntryOwner
-from pyrit.models.catalog.target import TargetInstance, TargetOrigin
+from pyrit.models.catalog import ComponentRecipe, RegistryRecipeKind, SavedEntryOwner, TargetInstance, TargetOrigin
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities, TextTarget
 from pyrit.registry import TargetRegistry
@@ -274,6 +272,15 @@ class TestListTargetTypes:
         assert openai_entry.supported_auth_modes == ["api_key", "identity", "none"]
         azure_ml_entry = next(item for item in result.items if item.target_type == "AzureMLChatTarget")
         assert azure_ml_entry.supported_auth_modes == ["api_key", "identity"]
+
+    async def test_types_report_no_auth_modes_for_credential_free_target_async(self) -> None:
+        """TextTarget needs no credentials, so its type entry advertises no auth modes."""
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "TextTarget")
+        assert entry.supported_auth_modes == []
 
     async def test_types_say_which_auth_modes_a_saved_target_can_use_and_why_none_can(self) -> None:
         service = TargetService()

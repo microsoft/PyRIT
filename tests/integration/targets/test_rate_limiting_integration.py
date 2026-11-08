@@ -16,9 +16,10 @@ from integration.mocks import MockPromptTarget
 from pyrit.converter import Base64Converter, StringJoinConverter
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, SeedGroup, SeedPrompt
-from pyrit.prompt_normalizer import NormalizerRequest, PromptNormalizer
-from pyrit.prompt_normalizer.converter_configuration import (
+from pyrit.prompt_normalizer import (
     ConverterConfiguration,
+    NormalizerRequest,
+    PromptNormalizer,
 )
 
 

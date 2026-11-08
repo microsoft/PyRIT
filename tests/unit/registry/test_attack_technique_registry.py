@@ -9,15 +9,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+from pyrit.executor.attack import AttackScoringConfig
 from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
 from pyrit.prompt_target import PromptTarget, TargetRequirements
-from pyrit.registry import Registry, TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SavedEntryReplacementError
-from pyrit.scenario import ScenarioTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory, ScorerOverridePolicy
+from pyrit.registry import AttackTechniqueRegistry, Registry, TargetRegistry
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SavedEntryReplacementError,
+    record_saved_entry_refusals,
+)
+from pyrit.scenario import AttackTechniqueFactory, ScenarioTechnique
+from pyrit.scenario.core import ScorerOverridePolicy
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
@@ -373,6 +376,18 @@ class TestAttackTechniqueRegistryScorerOverridePolicy:
 
         assert self.registry.instances.get("formal") is saved
 
+    def test_register_runtime_records_a_caught_clash_with_a_saved_technique(self):
+        saved = AttackTechniqueFactory(name="formal", attack_class=_StubAttack, technique_tags=["custom"])
+        self.registry.instances.register_runtime(saved, metadata={SAVED_ENTRY_METADATA_KEY: "techniques"})
+
+        with record_saved_entry_refusals() as refusals:
+            with pytest.raises(ValueError, match="names are case-insensitive"):
+                clash = AttackTechniqueFactory(name="FORMAL", attack_class=_StubAttack)
+                self.registry.instances.register_runtime(clash)
+
+        assert refusals == [("techniques", "formal")]
+        assert self.registry.instances.get("formal") is saved
+
     def test_register_from_factories_still_skips_an_existing_startup_technique(self):
         startup = AttackTechniqueFactory(name="startup", attack_class=_StubAttack)
         self.registry.register_from_factories([startup])
@@ -462,7 +477,7 @@ class TestScorerOverrideTypeInference:
 
     def test_tap_factory_rejects_generic_config_with_raise_policy(self):
         """TAP factory raises when given a generic AttackScoringConfig and policy is RAISE."""
-        from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
+        from pyrit.executor.attack import TreeOfAttacksWithPruningAttack
 
         factory = AttackTechniqueFactory(
             name="tap_raise",
@@ -484,7 +499,7 @@ class TestScorerOverrideTypeInference:
         """TAP factory logs warning and skips override when policy is WARN."""
         import logging
 
-        from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
+        from pyrit.executor.attack import TreeOfAttacksWithPruningAttack
 
         factory = AttackTechniqueFactory(
             name="tap_warn",
@@ -516,7 +531,7 @@ class TestScorerOverrideTypeInference:
         """TAP factory silently skips override when policy is SKIP."""
         import logging
 
-        from pyrit.executor.attack.multi_turn.tree_of_attacks import TreeOfAttacksWithPruningAttack
+        from pyrit.executor.attack import TreeOfAttacksWithPruningAttack
 
         factory = AttackTechniqueFactory(
             name="tap_skip",
@@ -545,9 +560,11 @@ class TestScorerOverrideTypeInference:
 
     def test_tap_factory_accepts_tap_scoring_config(self):
         """TAP factory forwards TAPAttackScoringConfig regardless of policy."""
+        from pyrit.executor.attack import (
+            TreeOfAttacksWithPruningAttack,
+        )
         from pyrit.executor.attack.multi_turn.tree_of_attacks import (
             TAPAttackScoringConfig,
-            TreeOfAttacksWithPruningAttack,
         )
         from pyrit.score import FloatScaleThresholdScorer
 
@@ -576,7 +593,7 @@ class TestScorerOverrideTypeInference:
 
     def test_prompt_sending_factory_accepts_any_config(self):
         """PromptSendingAttack accepts base AttackScoringConfig — any config passes through."""
-        from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+        from pyrit.executor.attack import PromptSendingAttack
         from pyrit.memory import CentralMemory
 
         factory = AttackTechniqueFactory(
@@ -602,8 +619,8 @@ class TestScorerOverrideTypeInference:
 
     def test_prompt_sending_factory_accepts_tap_scoring_config(self):
         """PromptSendingAttack accepts TAPAttackScoringConfig (subclass of base) — passes through."""
+        from pyrit.executor.attack import PromptSendingAttack
         from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
-        from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
         from pyrit.memory import CentralMemory
         from pyrit.score import FloatScaleThresholdScorer
 

@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from pydantic import ValidationError
 
 from pyrit.common.azure_storage import is_azure_blob_uri
-from pyrit.models.catalog.registry_recipe import (
+from pyrit.models.catalog import (
     ComponentRecipe,
     IgnoredRecipeFile,
     RegistryRecipeKind,
