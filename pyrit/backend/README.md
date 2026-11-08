@@ -42,7 +42,9 @@ API keys do not authenticate incoming GUI users.
   at all (`not_saveable_reason`)
 - `POST /api/targets` - Create a target
 
-A created target is Temporary: a restart or reinitialization removes it. With `"persist": true`, `register` left on,
+A registered target needs a `name` (otherwise **422**); only `"register": false`, which returns the target's
+descriptor without registering it, works without one. A created target is Temporary: a restart or
+reinitialization removes it. With `"persist": true`, `register` left on,
 and a name that starts with a lowercase letter and has at most 64 lowercase letters, digits, and underscores
 (otherwise **422**), the target is saved under `registry_recipes_source` and restored at every start, and the
 signed-in user is recorded as the one who saved it. A saved target can't hold or use a key: it authenticates with

@@ -1304,7 +1304,7 @@ class TestTargetRoutes:
 
             response = client.post(
                 "/api/targets",
-                json={"type": "TextTarget", "params": {}},
+                json={"name": "text_target", "type": "TextTarget", "params": {}},
             )
 
             assert response.status_code == status.HTTP_201_CREATED
@@ -1320,7 +1320,7 @@ class TestTargetRoutes:
 
             response = client.post(
                 "/api/targets",
-                json={"type": "InvalidTarget", "params": {}},
+                json={"name": "invalid_target", "type": "InvalidTarget", "params": {}},
             )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -1342,7 +1342,7 @@ class TestTargetRoutes:
 
             response = client.post(
                 "/api/targets",
-                json={"type": "TextTarget", "params": {}},
+                json={"name": "text_target", "type": "TextTarget", "params": {}},
             )
 
             assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1358,7 +1358,9 @@ class TestTargetRoutes:
             mock_get_service.return_value = mock_service
 
             types_response = client.get("/api/targets/types")
-            create_response = client.post("/api/targets", json={"type": "HTTPXAPITarget", "params": {}})
+            create_response = client.post(
+                "/api/targets", json={"name": "upload_target", "type": "HTTPXAPITarget", "params": {}}
+            )
 
         assert types_response.status_code == status.HTTP_200_OK
         assert create_response.status_code == status.HTTP_400_BAD_REQUEST
@@ -1376,7 +1378,7 @@ class TestTargetRoutes:
 
             response = client.post(
                 "/api/targets",
-                json={"type": "HuggingFaceChatTarget", "params": {"trust_remote_code": True}},
+                json={"name": "remote_code", "type": "HuggingFaceChatTarget", "params": {"trust_remote_code": True}},
             )
 
             assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -1461,10 +1463,19 @@ class TestTargetRoutes:
 
         assert mock_get_service.return_value.create_target_async.call_args.kwargs["owner"] == owner
 
+    @pytest.mark.parametrize("fields", [{}, {"register": True}, {"name": None}])
+    def test_create_target_needs_a_name_to_register_it(self, client: TestClient, fields: dict[str, object]) -> None:
+        with patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service:
+            response = client.post("/api/targets", json={"type": "TextTarget", "params": {}, **fields})
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+        assert "name is required when register=true" in json.dumps(response.json())
+        mock_get_service.return_value.create_target_async.assert_not_called()
+
     @pytest.mark.parametrize(
         ("fields", "message"),
         [
-            ({}, "persist requires a name"),
+            ({}, "name is required when register=true"),
             ({"name": "Contoso-GPT"}, "Invalid registry name"),
             ({"name": "contoso", "register": False}, "persist requires register=true"),
         ],
@@ -1501,7 +1512,7 @@ class TestTargetRoutes:
             )
             mock_get_service.return_value = mock_service
 
-            response = client.post("/api/targets", json={"type": "TextTarget", "params": {}})
+            response = client.post("/api/targets", json={"name": "text_target", "type": "TextTarget", "params": {}})
 
             assert response.status_code == status.HTTP_201_CREATED
             mock_has_admin.assert_called_once()

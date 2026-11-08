@@ -69,13 +69,11 @@ class TargetListResponse(BaseModel):
 class CreateTargetRequest(BaseModel):
     """Request to create a new target instance."""
 
-    # LEGACY COMPATIBILITY: The GUI now sends a name whenever it registers a target. Requiring the name for
-    # registered targets would break API callers that leave it out, so that is left to a separate breaking change.
     name: str | None = Field(
         None,
         min_length=1,
         pattern=REGISTRY_INSTANCE_NAME_PATTERN,
-        description="Unique registry name, required with persist; when omitted, the backend generates one",
+        description="Unique registry name, required unless register is false",
     )
     register: bool = Field(True, description="Register the object; false returns only its descriptor")
     persist: bool = Field(
@@ -104,6 +102,12 @@ class CreateTargetRequest(BaseModel):
     )
 
     @model_validator(mode="after")
+    def _validate_registration(self) -> "CreateTargetRequest":
+        if self.register and self.name is None:
+            raise ValueError("name is required when register=true")
+        return self
+
+    @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
         if self.source is not None and (self.register or self.params or "auth_mode" in self.model_fields_set):
             raise ValueError("source requires register=false and overrides, including auth_mode, in source.params")
@@ -115,9 +119,8 @@ class CreateTargetRequest(BaseModel):
             return self
         if not self.register:
             raise ValueError("persist requires register=true")
-        if self.name is None:
-            raise ValueError("persist requires a name")
-        validate_registry_name(self.name)
+        if self.name is not None:
+            validate_registry_name(self.name)
         return self
 
 

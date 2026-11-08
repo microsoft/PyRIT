@@ -14,7 +14,6 @@ Targets can be:
 
 import asyncio
 import logging
-import uuid
 from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from typing import Any
@@ -543,10 +542,9 @@ class TargetService:
                 target_type=request.type, target_cls=target_cls, params=params
             )
 
-        # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
-        # Remove it when the name becomes required for registered targets.
-        target_registry_name = request.name or f"compat_{uuid.uuid4().hex}"
+        target_registry_name = request.name
         if request.register:
+            assert target_registry_name is not None  # the request requires a name to register a target
             try:
                 self._registry.instances.validate_name_available(target_registry_name)
             except ValueError as error:
@@ -578,6 +576,7 @@ class TargetService:
                 )
             finally:
                 await release_component_async(target_obj)
+        assert target_registry_name is not None  # the request requires a name to register a target
         try:
             if request.persist:
                 return await self._save_and_register_async(
