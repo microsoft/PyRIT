@@ -26,7 +26,7 @@ from pydantic import (
     model_validator,
 )
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE
+from pyrit.common import REQUIRED_VALUE
 
 _SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool, Path)
 _SCALAR_NAME_TO_TYPE: dict[str, type | types.UnionType] = {

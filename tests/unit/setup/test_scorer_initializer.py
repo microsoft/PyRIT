@@ -85,7 +85,7 @@ class TestScorerInitializerInitialize:
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
 
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
@@ -316,7 +316,7 @@ class TestScorerInitializerBestObjective:
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
 
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
@@ -448,7 +448,7 @@ class TestScorerInitializerCategoryTags:
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
 
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
@@ -600,7 +600,7 @@ class TestScorerInitializerRoundRobin:
 
     def _register_mock_target(self, *, name: str, underlying_model: str = "gpt-4o") -> MagicMock:
         """Register a mock OpenAIChatTarget in the TargetRegistry."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
 
         target = MagicMock(spec=OpenAIChatTarget)
         target._temperature = None
@@ -625,7 +625,7 @@ class TestScorerInitializerRoundRobin:
 
     def _register_mock_rr_target(self, *, name: str) -> MagicMock:
         """Register a mock RoundRobinTarget under the given name."""
-        from pyrit.models.identifiers import ComponentIdentifier
+        from pyrit.models import ComponentIdentifier
         from pyrit.prompt_target import RoundRobinTarget
 
         rr_mock = MagicMock(spec=RoundRobinTarget)

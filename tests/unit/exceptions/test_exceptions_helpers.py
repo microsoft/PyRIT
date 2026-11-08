@@ -10,13 +10,13 @@ from pyrit.exceptions import (
     ComponentRole,
     ExecutionContext,
     clear_execution_context,
+    remove_markdown_json,
     set_execution_context,
 )
 from pyrit.exceptions.exceptions_helpers import (
     extract_json_from_string,
     log_exception,
     remove_end_md_json,
-    remove_markdown_json,
     remove_start_md_json,
     summarize_exception,
 )

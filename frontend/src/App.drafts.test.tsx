@@ -323,7 +323,7 @@ async function returnToChat(user: UserEvent): Promise<void> {
 
 async function visitHistory(user: UserEvent): Promise<void> {
   await user.click(screen.getByRole('tab', { name: 'History', exact: true }))
-  await screen.findByRole('row', { name: 'Open ManualAttack attack' })
+  await screen.findByRole('row', { name: 'Open attack: No objective' })
 }
 
 async function addConverter(user: UserEvent): Promise<void> {
@@ -825,7 +825,7 @@ describe('App draft handoff with the real chat and composer', () => {
     renderChat()
     await user.type(await screen.findByPlaceholderText('Type prompt here'), 'Only for my unsaved chat')
     await visitHistory(user)
-    await user.click(screen.getByRole('row', { name: 'Open ManualAttack attack' }))
+    await user.click(screen.getByRole('row', { name: 'Open attack: No objective' }))
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
     await visitHistory(user)
@@ -841,7 +841,7 @@ describe('App draft handoff with the real chat and composer', () => {
     renderChat()
     await user.type(await screen.findByPlaceholderText('Type prompt here'), 'Older working draft')
     await visitHistory(user)
-    await user.click(screen.getByRole('row', { name: 'Open ManualAttack attack' }))
+    await user.click(screen.getByRole('row', { name: 'Open attack: No objective' }))
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Newer work in the saved chat')
     await user.click(screen.getByRole('tab', { name: 'Chat', exact: true }))
