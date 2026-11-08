@@ -336,6 +336,26 @@ class RuntimeLifecycle:
             finally:
                 logger.info("PyRIT apply outcome=%s generation=%s", self.outcome, self.generation)
 
+    def has_active_work(self) -> bool:
+        """
+        Return whether a request, run, send, or estimate could still be using a registered entry.
+
+        Returns:
+            bool: Whether any admitted or background runtime operation remains.
+        """
+        return self._has_active_work()
+
+    def forget_restore_failure(self, ref: "SavedEntryRef") -> None:
+        """
+        Stop listing a saved entry whose file was deleted among the ones that couldn't be restored.
+
+        Args:
+            ref (SavedEntryRef): The deleted entry.
+        """
+        self.restore_failures = [
+            failure for failure in self.restore_failures if (failure.kind, failure.name) != (ref.kind, ref.name)
+        ]
+
     def _has_active_work(self) -> bool:
         """Return whether any admitted or background runtime operation remains."""
         service = peek_scenario_run_service()

@@ -23,7 +23,7 @@ from pyrit.models.catalog import (
     StoredRecipe,
     TechniqueRecipe,
 )
-from pyrit.registry.file_document_storage import FileDocumentStorage
+from pyrit.registry.file_document_storage import FileDocumentStorage, describe_storage_error
 
 
 @dataclass(frozen=True)
@@ -143,23 +143,51 @@ class RegistryRecipeStorage(FileDocumentStorage):
         content = recipe.model_dump_json(indent=2, exclude_none=True).encode("utf-8")
         return self._save_document_conditional(name=name, content=content, expected_version=None)
 
-    def delete_recipe(self, name: str) -> bool:
+    def read_recipe(self, name: str) -> StoredRecipe | RestoreFailure | None:
         """
-        Delete a saved recipe, such as one whose entry couldn't be registered after it was saved.
+        Read one saved recipe.
 
         Args:
             name (str): The entry's name.
 
         Returns:
+            StoredRecipe | RestoreFailure | None: The recipe, why its file can't be used, or None if no
+                recipe of this kind has the name.
+
+        Raises:
+            ValueError: If the name isn't a legal registry name.
+            AzureError: If the Blob container can't be read.
+        """
+        try:
+            content = self._read_document_bytes(name)
+        except OSError as error:
+            return self._failure(
+                name=name, reason=RestoreFailureReason.UNREADABLE_RECIPE, message=describe_storage_error(error)
+            )
+        if content is None:
+            return None
+        return self._parse_recipe(name=name, content=content)
+
+    def delete_recipe(self, name: str, *, expected_version: str | None = None) -> bool:
+        """
+        Delete a saved recipe.
+
+        Args:
+            name (str): The entry's name.
+            expected_version (str | None): The version the caller read, so a recipe that changed since then
+                isn't deleted, or None to delete whatever is stored. Defaults to None.
+
+        Returns:
             bool: True if the recipe existed and was deleted, False if it was already gone.
 
         Raises:
+            DocumentConflictError: If the stored version isn't ``expected_version``.
             ValueError: If the name isn't a legal registry name.
             TimeoutError: If a local delete could not acquire the document lock.
             OSError: If the local folder can't be written.
             AzureError: If the Blob container can't be written.
         """
-        return self._delete_document(name)
+        return self._delete_document(name, expected_version=expected_version)
 
     def _parse_recipe(self, *, name: str, content: bytes) -> StoredRecipe | RestoreFailure:
         """

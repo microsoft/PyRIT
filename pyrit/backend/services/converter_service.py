@@ -267,8 +267,8 @@ class ConverterService:
                 return False
             if registry_entry_origin(entry.metadata) is RegistryEntryOrigin.SAVED:
                 raise SavedEntryRemovalError(
-                    f"Saved converter '{converter_id}' can't be removed yet, since it comes back from its saved "
-                    "file at every start."
+                    f"Saved converter '{converter_id}' comes back from its saved file at every start, so delete it "
+                    f"with DELETE /api/saved-entries/converters/{converter_id} instead."
                 )
 
             owned_paths = self._get_owned_artifact_paths(entry.metadata)

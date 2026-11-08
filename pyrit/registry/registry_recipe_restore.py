@@ -231,7 +231,7 @@ class RegistryRecipeRestorer:
             registry.instances.validate_name_available(ref.name)
         except ValueError as error:
             raise _RecipeRejectedError(reason=RestoreFailureReason.NAME_CLASH, message=str(error)) from error
-        return self._parameter_references(parameters=parameters, params=recipe.params)
+        return self.recipe_references(kind=ref.kind, recipe=recipe)
 
     def _technique_references(self, *, ref: SavedEntryRef, recipe: TechniqueRecipe) -> list[SavedEntryRef]:
         """
@@ -255,13 +255,45 @@ class RegistryRecipeRestorer:
         except KeyError as error:
             message = f"'{recipe.type}' is not a registered attack type."
             raise _RecipeRejectedError(reason=RestoreFailureReason.UNKNOWN_CLASS, message=message) from error
-        converters = [*(recipe.request_converters or []), *(recipe.response_converters or [])]
-        references = [SavedEntryRef(kind=RegistryRecipeKind.CONVERTERS, name=name) for name in converters]
-        if recipe.adversarial_chat is not None:
-            references.append(SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name=recipe.adversarial_chat))
         parameters = attack_registry.get_class_metadata(attack_class).parameters
         check_saved_entry_params(cls=attack_class, parameters=parameters, params=recipe.params)
-        return references + self._parameter_references(parameters=parameters, params=recipe.params)
+        return self.recipe_references(kind=RegistryRecipeKind.TECHNIQUES, recipe=recipe)
+
+    def recipe_references(
+        self, *, kind: RegistryRecipeKind, recipe: ComponentRecipe | TechniqueRecipe
+    ) -> list[SavedEntryRef]:
+        """
+        List the entries a saved recipe names, as restoring it reads them.
+
+        A recipe whose class or attack type isn't registered names nothing, since it can't be restored.
+
+        Args:
+            kind (RegistryRecipeKind): The kind of entry the recipe saves.
+            recipe (ComponentRecipe | TechniqueRecipe): The recipe.
+
+        Returns:
+            list[SavedEntryRef]: The named entries, in the order the recipe names them.
+        """
+        if isinstance(recipe, TechniqueRecipe):
+            from pyrit.registry.components.attack_registry import AttackRegistry
+
+            converters = [*(recipe.request_converters or []), *(recipe.response_converters or [])]
+            references = [SavedEntryRef(kind=RegistryRecipeKind.CONVERTERS, name=name) for name in converters]
+            if recipe.adversarial_chat is not None:
+                references.append(SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name=recipe.adversarial_chat))
+            attack_registry = AttackRegistry.get_registry_singleton()
+            try:
+                attack_class = attack_registry.get_class(recipe.type)
+            except KeyError:
+                return references
+            parameters = attack_registry.get_class_metadata(attack_class).parameters
+            return references + self._parameter_references(parameters=parameters, params=recipe.params)
+        registry = self._get_registry(kind)
+        try:
+            cls = registry.get_class(recipe.class_name)
+        except KeyError:
+            return []
+        return self._parameter_references(parameters=registry.get_class_metadata(cls).parameters, params=recipe.params)
 
     def _parameter_references(
         self, *, parameters: Sequence[Parameter], params: Mapping[str, Any]

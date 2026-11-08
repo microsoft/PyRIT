@@ -81,9 +81,28 @@ Temporary target, converter, or scorer, or, for a converter, need or keep an upl
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
 converter copy made with `source` can't be saved yet (**422**). A taken name receives **409**, and storage that can't
 be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
-`temporary`, and its `saved_by` and `saved_by_me` say who saved it, both as for targets. A saved converter can't be
-removed through the API yet (**409**): delete its file under
-`registry_recipes_source` and restart the backend.
+`temporary`, and its `saved_by` and `saved_by_me` say who saved it, both as for targets. `DELETE /api/converters/{id}`
+refuses a saved converter (**409**); delete it with `DELETE /api/saved-entries/converters/{id}` instead.
+
+### Saved entries
+
+Saved targets, converters, scorers, and techniques are addressed by their saved files, where `kind` is `targets`,
+`converters`, `scorers`, or `techniques`. These routes answer while the runtime isn't ready, so an entry that keeps it
+from starting can be deleted.
+
+- `GET /api/saved-entries/{kind}/{name}` - The file's `version`, why it can't be used if it can't (`problem`), who
+  saved it (`saved_by`, `saved_by_me`), and whether the caller may change or delete it (`can_change`). **404** when no saved
+  file has the name, including a name only a startup entry has.
+- `DELETE /api/saved-entries/{kind}/{name}?expected_version=<version>` - Delete the file and remove the entry it
+  restored, so it doesn't come back after a restart; a startup entry with the same name stays. Who may delete it
+  comes from the file: the person who saved it or an administrator, or anyone when sign-in is off (**403**
+  otherwise). A file that doesn't say who saved it, such as one that can't be read or isn't a valid entry, needs an
+  administrator. `expected_version` is required (**422**) unless the file can't be read. **409** when the file
+  changed since that version, another saved entry names this one (they're listed), a registered entry of any origin
+  holds it (they're listed; a Temporary one is gone after the next restart or reinitialization), or a request, run,
+  send, or estimate is in progress. **503** when storage can't be read or written. A deleted entry that couldn't be
+  restored leaves `GET /api/restore-failures`; select Retry to finish recovering. Saving and deleting take turns, and
+  a save checks again that the entries it names still come back after a restart (**409** otherwise).
 
 ### Manual attack creation
 

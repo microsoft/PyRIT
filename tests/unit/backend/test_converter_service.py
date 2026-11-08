@@ -2645,8 +2645,8 @@ class TestPersistConverter:
             await upload_service.delete_converter_async(converter_id="base64_converter")
 
         assert str(refusal.value) == (
-            "Saved converter 'base64_converter' can't be removed yet, since it comes back from its saved file at "
-            "every start."
+            "Saved converter 'base64_converter' comes back from its saved file at every start, so delete it with "
+            "DELETE /api/saved-entries/converters/base64_converter instead."
         )
         assert upload_service._registry.instances.get("base64_converter") is not None
         assert (tmp_path / "converters" / "base64_converter.json").exists()

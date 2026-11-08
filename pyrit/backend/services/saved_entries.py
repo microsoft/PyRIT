@@ -12,6 +12,7 @@ entry is registered as saved. If registering fails, the recipe is deleted again.
 import asyncio
 import inspect
 import logging
+import weakref
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -26,17 +27,49 @@ from pyrit.models.catalog import (
     RestoreFailureReason,
     TechniqueRecipe,
 )
-from pyrit.registry import ConverterRegistry, InstanceHoldingRegistry, RegistryEntry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    InstanceHoldingRegistry,
+    RegistryEntry,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.file_document_storage import DocumentConflictError
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
     SAVED_ENTRY_OWNER_METADATA_KEY,
     registry_entry_origin,
 )
+from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
 logger = logging.getLogger(__name__)
+
+_SAVED_ENTRY_LOCKS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+
+REGISTRIES_BY_KIND: Mapping[RegistryRecipeKind, Any] = {
+    RegistryRecipeKind.TARGETS: TargetRegistry,
+    RegistryRecipeKind.CONVERTERS: ConverterRegistry,
+    RegistryRecipeKind.SCORERS: ScorerRegistry,
+    RegistryRecipeKind.TECHNIQUES: AttackTechniqueRegistry,
+}
+
+
+def saved_entry_lock() -> asyncio.Lock:
+    """
+    Return the lock that saving and deleting saved entries hold, so a delete can't miss a save that names the entry.
+
+    Returns:
+        asyncio.Lock: The lock for the running event loop.
+    """
+    loop = asyncio.get_running_loop()
+    lock = _SAVED_ENTRY_LOCKS.get(loop)
+    if lock is None:
+        lock = _SAVED_ENTRY_LOCKS[loop] = asyncio.Lock()
+    return lock
+
 
 # The registries whose entries a saved entry may name; it may use only the ones that come back after a restart.
 _REFERENCED_REGISTRIES: Mapping[ComponentType, Any] = {
@@ -244,7 +277,9 @@ async def save_then_register_async(
     Save an entry's recipe, then register the entry as saved.
 
     The recipe is written only if no saved entry of the kind has the name, so of two saves under one name only one
-    succeeds. If registering then fails, the recipe is deleted again.
+    succeeds. If registering then fails, the recipe is deleted again. Saving holds the lock deleting does, and first
+    checks that every entry the recipe names still comes back after a restart, since one may have been deleted after
+    the request was checked.
 
     Args:
         kind (RegistryRecipeKind): The kind of entry.
@@ -252,6 +287,48 @@ async def save_then_register_async(
         recipe (ComponentRecipe | TechniqueRecipe): How to rebuild the entry, naming who saved it.
         recipes_source (str | None): Where saved entries are stored, or None for the default folder.
         register (Callable[[dict[str, Any]], object]): Registers the built entry with the metadata it's given.
+
+    Raises:
+        SavedEntryConflictError: If a saved or registered entry of the kind already has the name, or an entry the
+            recipe names was deleted.
+        SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
+    """
+    async with saved_entry_lock():
+        # Looking up the recipe's classes can wait on discovery, so it stays off the event loop.
+        await asyncio.to_thread(_refuse_missing_references, kind=kind, recipe=recipe, recipes_source=recipes_source)
+        await _save_then_register_async(
+            kind=kind, name=name, recipe=recipe, recipes_source=recipes_source, register=register
+        )
+
+
+def _refuse_missing_references(
+    *, kind: RegistryRecipeKind, recipe: ComponentRecipe | TechniqueRecipe, recipes_source: str | None
+) -> None:
+    """
+    Refuse a recipe that names an entry which no longer comes back after a restart.
+
+    Raises:
+        SavedEntryConflictError: If a named entry isn't registered, or is Temporary.
+    """
+    for ref in RegistryRecipeRestorer(source=recipes_source).recipe_references(kind=kind, recipe=recipe):
+        entry = REGISTRIES_BY_KIND[ref.kind].get_registry_singleton().instances.get_entry(ref.name)
+        if entry is None or registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
+            raise SavedEntryConflictError(
+                f"{ref.kind.value.removesuffix('s').capitalize()} '{ref.name}' was deleted while this was being "
+                "saved, so it can't be saved now."
+            )
+
+
+async def _save_then_register_async(
+    *,
+    kind: RegistryRecipeKind,
+    name: str,
+    recipe: ComponentRecipe | TechniqueRecipe,
+    recipes_source: str | None,
+    register: Callable[[dict[str, Any]], object],
+) -> None:
+    """
+    Write a recipe under a free name, then register its entry, deleting the recipe again if registering fails.
 
     Raises:
         SavedEntryConflictError: If a saved or registered entry of the kind already has the name.

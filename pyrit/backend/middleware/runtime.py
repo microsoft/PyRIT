@@ -44,7 +44,7 @@ class RuntimeAdmissionMiddleware:
             await self.app(scope, receive, send)
             return
         management = path == "/api/config" or path.startswith(
-            ("/api/config/", "/api/initializers", "/api/restore-failures/")
+            ("/api/config/", "/api/initializers", "/api/restore-failures/", "/api/saved-entries/")
         )
         apply_route = path.startswith("/api/config/runtime")
         write = management and scope["method"] not in ("GET", "HEAD", "OPTIONS") and not apply_route

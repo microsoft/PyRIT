@@ -1831,8 +1831,8 @@ class TestConverterRoutes:
 
     def test_delete_converter_refuses_a_saved_converter(self, client: TestClient) -> None:
         refusal = SavedEntryRemovalError(
-            "Saved converter 'base64_converter' can't be removed yet, since it comes back from its saved file at "
-            "every start."
+            "Saved converter 'base64_converter' comes back from its saved file at every start, so delete it with "
+            "DELETE /api/saved-entries/converters/base64_converter instead."
         )
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
             mock_get_service.return_value.delete_converter_async = AsyncMock(side_effect=refusal)
