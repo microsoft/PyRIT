@@ -453,7 +453,7 @@ describe('TargetTable', () => {
       )
 
       await user.click(screen.getByRole('checkbox', { name: 'Only targets I saved (2)' }))
-      await pickFilterOption(user, 'Filter by type:', 'TextTarget')
+      await pickFilterOption(user, 'Filter by type:', 'OpenAIChatTarget')
 
       expect(listedNames()).toEqual(['mine_chat'])
     })
