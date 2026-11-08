@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from pyrit.models import Parameter
     from pyrit.models.technique_edit import TechniqueChanges
     from pyrit.prompt_normalizer import ConverterConfiguration
+    from pyrit.registry.instance_registry import RegistryEntry
     from pyrit.scenario import (
         AttackTechniqueFactory,
         ScenarioTechnique,
@@ -63,6 +64,13 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _record_saved_techniques_with_tag(*, entries: list[RegistryEntry[AttackTechniqueFactory]], folded_tag: str) -> None:
+    """Record each saved technique with a tag as a refused use, as a clash over the tag can leave it standing in."""
+    for entry in entries:
+        if folded_tag in {tag.casefold() for tag in entry.instance.technique_tags}:
+            _record_saved_entry_refusal(entry)
 
 
 def _attack_technique_factory_type() -> type[AttackTechniqueFactory]:
@@ -199,12 +207,18 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
                 f"Technique '{factory.name}' already exists (names are case-insensitive)"
             )
         if folded_name in tags:
+            # Code that catches this error would leave the saved techniques with that tag standing in, so they're
+            # recorded too.
+            _record_saved_techniques_with_tag(entries=entries, folded_tag=folded_name)
             raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
         for tag in factory.technique_tags:
             folded = tag.casefold()
+            if folded in names:
+                _record_saved_entry_refusal(self.get_entry(names[folded]))
             if folded in names or folded == folded_name:
                 raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
             if folded in tags and tags[folded] != tag:
+                _record_saved_techniques_with_tag(entries=entries, folded_tag=folded)
                 raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
         _validate_generated_member_collisions(
             class_name="ScenarioTechnique",
