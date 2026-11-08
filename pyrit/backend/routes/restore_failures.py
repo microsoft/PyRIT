@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, status
 
 from pyrit.backend.middleware.auth import has_admin_access
-from pyrit.models.catalog.registry_recipe import RestoreFailure, RestoreFailureReason
+from pyrit.models.catalog import RestoreFailure, RestoreFailureReason
 
 router = APIRouter(prefix="/restore-failures", tags=["restore-failures"])
 
