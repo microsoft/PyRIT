@@ -64,6 +64,23 @@ def check_saved_entry_params(*, cls: type, parameters: Sequence[Parameter], para
     _check_destinations(cls=cls, params=params)
 
 
+def check_saved_copy_params(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
+    """
+    Refuse the changes a saved copy stores if they hold a credential.
+
+    A copy is rebuilt from the entry it copies, which keeps where requests go and how they sign in, so only the
+    changes the copy stores are checked.
+
+    Args:
+        parameters (Sequence[Parameter]): The class's constructor parameters.
+        params (Mapping[str, Any]): The copy's changes.
+
+    Raises:
+        SavedEntryRefusedError: If a change holds a credential.
+    """
+    _check_stored_credentials(parameters=parameters, params=params)
+
+
 def check_saveable_class(cls: type) -> tuple[str, ...]:
     """
     Return the auth modes a saved entry of ``cls`` can use, before any of its values are known.

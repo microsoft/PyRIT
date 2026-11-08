@@ -12,6 +12,7 @@ from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.registry_recipe_rules import (
     SavedEntryRefusedError,
     check_saveable_class,
+    check_saved_copy_params,
     check_saved_entry_params,
 )
 
@@ -593,3 +594,17 @@ def test_check_saveable_class_refuses_only_the_converters_and_scorers_that_use_t
             ),
         ),
     }
+
+
+def test_check_saved_copy_params_refuses_only_a_change_that_holds_a_credential() -> None:
+    registry = ConverterRegistry.get_registry_singleton()
+    cls = registry.get_class("AzureSpeechTextToAudioConverter")
+    parameters = registry.get_class_metadata(cls).parameters
+    changes = {"synthesis_voice_name": "en-US-AvaNeural"}
+
+    # A copy signs in the way the converter it copies does, so an empty key isn't refused as on a saved entry.
+    check_saved_copy_params(parameters=parameters, params=changes)
+    with pytest.raises(SavedEntryRefusedError, match="can use this server's credential"):
+        check_saved_entry_params(cls=cls, parameters=parameters, params=changes)
+    with pytest.raises(SavedEntryRefusedError, match=r"Saved entries can't hold credentials \('azure_speech_key'\)"):
+        check_saved_copy_params(parameters=parameters, params={**changes, "azure_speech_key": "copy-key"})

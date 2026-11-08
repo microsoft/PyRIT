@@ -61,10 +61,12 @@ from pyrit.backend.services.saved_entries import (
     SavedEntryRemovalError,
     SavedEntryStorageError,
 )
+from pyrit.converter import SearchReplaceConverter
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import SavedEntryOwner, TargetInstance
+from pyrit.registry import ConverterRegistry
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -1907,16 +1909,41 @@ class TestConverterRoutes:
             True,
         )
 
+    def test_create_converter_saves_a_copy_through_the_api(
+        self, client: TestClient, patch_central_database: None, tmp_path: Path
+    ) -> None:
+        source = SearchReplaceConverter(pattern="cat", replace="dog")
+        instances = ConverterRegistry.get_registry_singleton().instances
+        instances.register(source, name="startup_replace")
+        instances.mark_configuration_entries()
+        body = {
+            "name": "bird_replace",
+            "type": "SearchReplaceConverter",
+            "persist": True,
+            "source": {
+                "source_name": "startup_replace",
+                "source_hash": source.get_identifier().hash,
+                "params": {"replace": "bird"},
+            },
+        }
+
+        try:
+            with patch.object(client.app.state, "registry_recipes_source", str(tmp_path), create=True):
+                response = client.post("/api/converters", json=body)
+        finally:
+            ConverterRegistry.reset_registry_singleton()
+
+        assert response.status_code == status.HTTP_201_CREATED, response.text
+        assert response.json()["origin"] == "saved"
+        saved = json.loads((tmp_path / "converters" / "bird_replace.json").read_text())
+        assert (saved["source"], saved["params"]) == ("startup_replace", {"replace": "bird"})
+
     @pytest.mark.parametrize(
         ("fields", "message"),
         [
             ({}, "name is required when register=true"),
             ({"name": "Shift-Two"}, "Invalid registry name"),
             ({"name": "shift", "register": False}, "persist requires register=true"),
-            (
-                {"name": "shift", "source": {"source_name": "caesar", "source_hash": "a" * 64, "params": {}}},
-                "persist can't be used with source",
-            ),
         ],
     )
     def test_create_converter_checks_what_persist_needs(

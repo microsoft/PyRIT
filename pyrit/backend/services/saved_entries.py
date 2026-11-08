@@ -27,7 +27,11 @@ from pyrit.registry.instance_registry import (
     SAVED_ENTRY_OWNER_METADATA_KEY,
     registry_entry_origin,
 )
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_rules import (
+    SavedEntryRefusedError,
+    check_saved_copy_params,
+    check_saved_entry_params,
+)
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
 logger = logging.getLogger(__name__)
@@ -96,6 +100,66 @@ async def prepare_saved_params_async(
     _name_default_references(cls=cls, parameters=parameters, params=saved_params)
     refuse_temporary_references(parameters=parameters, params=saved_params)
     return saved_params
+
+
+async def prepare_saved_copy_params_async(
+    *, registry: InstanceHoldingRegistry[Any, Any], type_name: str, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """
+    Refuse the changes a copy to save can't hold.
+
+    A copy is rebuilt from the entry it copies, which keeps where requests go and how they sign in, so only the
+    changes are checked: they can't hold a credential or name a Temporary entry.
+
+    Args:
+        registry (InstanceHoldingRegistry[Any, Any]): The registry the copy's class is registered in.
+        type_name (str): The name the class is registered under.
+        params (Mapping[str, Any]): The copy's changes.
+
+    Returns:
+        dict[str, Any]: The changes to build and save the copy with.
+
+    Raises:
+        NotSaveableError: If a change holds a credential, or names a Temporary entry.
+    """
+    saved_params = dict(params)
+    metadata = await asyncio.to_thread(registry.get_registered_class_metadata, type_name)
+    parameters = metadata.parameters if metadata is not None else ()
+    try:
+        check_saved_copy_params(parameters=parameters, params=saved_params)
+    except SavedEntryRefusedError as error:
+        raise NotSaveableError(f"{error} It can still be created without saving it.") from error
+    refuse_temporary_references(parameters=parameters, params=saved_params)
+    return saved_params
+
+
+def copied_entry_name(*, registry: InstanceHoldingRegistry[Any, Any], kind: RegistryRecipeKind, source: object) -> str:
+    """
+    Name the registered entry a copy to save copies, preferring a name that comes back at every start.
+
+    Args:
+        registry (InstanceHoldingRegistry[Any, Any]): The registry that holds the copied entry.
+        kind (RegistryRecipeKind): The kind of entry.
+        source (object): The copied entry's object.
+
+    Returns:
+        str: The copied entry's registry name.
+
+    Raises:
+        NotSaveableError: If the copied entry is Temporary, so it won't exist after a restart.
+        ValueError: If the copied entry is no longer registered.
+    """
+    singular = kind.value.removesuffix("s")
+    entries = [entry for entry in registry.instances.get_all_instances() if entry.instance is source]
+    if not entries:
+        raise ValueError(f"The {singular} to copy is no longer registered")
+    lasting = [entry for entry in entries if registry_entry_origin(entry.metadata) is not RegistryEntryOrigin.TEMPORARY]
+    if not lasting:
+        raise NotSaveableError(
+            f"Copies temporary {singular} '{entries[0].name}', which won't exist after a restart. "
+            "It can still be created without saving it."
+        )
+    return lasting[0].name
 
 
 def _name_default_references(*, cls: type, parameters: Sequence[Parameter], params: dict[str, Any]) -> None:

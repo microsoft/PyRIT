@@ -79,7 +79,9 @@ would save a key, use one of this server's keys or its Azure identity (the Azure
 Safety scorer, and the audio scorers), or a model from this server (the local refusal classifier scorer), use a
 Temporary target, converter, or scorer, or, for a converter, need or keep an uploaded file. A target left out of the
 request and filled from the configured defaults is saved by name, so it must be registered and not Temporary. A
-converter copy made with `source` can't be saved yet (**422**). A taken name receives **409**, and storage that can't
+converter copy made with `source` is saved as its changes and the name of the converter it copies, which can't be
+Temporary (otherwise **400** as above); it's rebuilt from that converter at every start, so it keeps where that
+converter sends requests and how it signs in. A taken name receives **409**, and storage that can't
 be written receives **503**. Each listed converter's and scorer's `origin` is `saved`, `configuration`, or
 `temporary`, as for targets. A saved converter can't be removed through the API yet (**409**): delete its file under
 `registry_recipes_source` and restart the backend.

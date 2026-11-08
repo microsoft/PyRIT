@@ -120,7 +120,8 @@ class CreateConverterRequest(BaseModel):
         description=(
             "Save the converter so it comes back after the backend restarts or is reinitialized (true), or keep it "
             "only until then (false). A saved converter needs a name of lowercase letters, digits, and underscores, "
-            "can't hold or use a key or an uploaded file, and can't be a copy made with source."
+            "and can't hold or use a key or an uploaded file. A copy made with source is saved as its changes and is "
+            "rebuilt from the converter it copies, which must not be Temporary."
         ),
     )
     source: SourceInstanceSpec | None = None
@@ -148,8 +149,6 @@ class CreateConverterRequest(BaseModel):
         if self.name is None:
             raise ValueError("persist requires a name")
         validate_registry_name(self.name)
-        if self.source is not None:
-            raise ValueError("persist can't be used with source: a copy of a converter can't be saved yet")
         return self
 
 

@@ -22,7 +22,11 @@ from pyrit.models.catalog import (
 )
 from pyrit.registry.file_document_storage import describe_storage_error
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SAVED_ENTRY_OWNER_METADATA_KEY
-from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
+from pyrit.registry.registry_recipe_rules import (
+    SavedEntryRefusedError,
+    check_saved_copy_params,
+    check_saved_entry_params,
+)
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage
 
 if TYPE_CHECKING:
@@ -212,12 +216,19 @@ class RegistryRecipeRestorer:
             )
             raise _RecipeRejectedError(reason=RestoreFailureReason.MODULE_MISMATCH, message=message)
         parameters = registry.get_class_metadata(cls).parameters
-        check_saved_entry_params(cls=cls, parameters=parameters, params=recipe.params)
+        if recipe.source is None:
+            check_saved_entry_params(cls=cls, parameters=parameters, params=recipe.params)
+        else:
+            # A copy takes everything else, including where it sends requests and how it signs in, from its source.
+            check_saved_copy_params(parameters=parameters, params=recipe.params)
         try:
             registry.instances.validate_name_available(ref.name)
         except ValueError as error:
             raise _RecipeRejectedError(reason=RestoreFailureReason.NAME_CLASH, message=str(error)) from error
-        return self._parameter_references(parameters=parameters, params=recipe.params)
+        references = self._parameter_references(parameters=parameters, params=recipe.params)
+        if recipe.source is not None:
+            references.insert(0, SavedEntryRef(kind=ref.kind, name=recipe.source))
+        return references
 
     def _technique_references(self, *, ref: SavedEntryRef, recipe: TechniqueRecipe) -> list[SavedEntryRef]:
         """
@@ -385,6 +396,8 @@ class RegistryRecipeRestorer:
         try:
             if isinstance(recipe, TechniqueRecipe):
                 self._build_technique(name=stored.ref.name, recipe=recipe)
+            elif recipe.source is not None:
+                self._build_copy(kind=stored.ref.kind, name=stored.ref.name, source_name=recipe.source, recipe=recipe)
             else:
                 registry = self._get_registry(stored.ref.kind)
                 allowed_path_params: frozenset[str] = frozenset()
@@ -409,6 +422,28 @@ class RegistryRecipeRestorer:
                 stored=stored, reason=RestoreFailureReason.BUILD_ERROR, message=self._safe_message(error)
             )
         return None
+
+    def _build_copy(self, *, kind: RegistryRecipeKind, name: str, source_name: str, recipe: ComponentRecipe) -> None:
+        """
+        Build a copy from the entry it copies with its saved changes, then register it.
+
+        Raises:
+            _RecipeRejectedError: If the copied entry is gone or is no longer the copy's class.
+        """
+        registry = self._get_registry(kind)
+        source = registry.instances.get(source_name)
+        if source is None:
+            message = f"Copies {self._singular(kind)} '{source_name}', which doesn't exist."
+            raise _RecipeRejectedError(reason=RestoreFailureReason.MISSING_DEPENDENCY, message=message)
+        if type(source).__name__ != recipe.class_name:
+            message = f"Copies '{source_name}', which is now a '{type(source).__name__}', not a '{recipe.class_name}'."
+            raise _RecipeRejectedError(reason=RestoreFailureReason.BUILD_ERROR, message=message)
+        copy = registry.recreate_instance(source=source, params=recipe.params, external_input=True)
+        registry.instances.register(
+            copy,
+            name=name,
+            metadata={SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner},
+        )
 
     @staticmethod
     def _build_technique(*, name: str, recipe: TechniqueRecipe) -> None:

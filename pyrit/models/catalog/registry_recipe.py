@@ -80,6 +80,13 @@ class ComponentRecipe(_RegistryRecipe):
         max_length=MAX_ITEMS,
         description="Constructor parameters as the API accepted them; other entries are named, never embedded",
     )
+    source: _Identifier | None = Field(
+        None,
+        description=(
+            "For a copy made with Save as new, the entry of the same kind it copies. The copy is rebuilt from that "
+            "entry at every start with params as its changes, so the entry's connection settings aren't stored"
+        ),
+    )
     owner: SavedEntryOwner | None = Field(None, description="Who saved the entry; None when sign-in is off")
 
 

@@ -53,6 +53,8 @@ from pyrit.backend.services.saved_entries import (
     NotSaveableError,
     SavedEntryConflictError,
     SavedEntryRemovalError,
+    copied_entry_name,
+    prepare_saved_copy_params_async,
     prepare_saved_params_async,
     save_then_register_async,
 )
@@ -60,6 +62,7 @@ from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
 from pyrit.models import ConverterIdentifier, MessagePiece, Parameter, PromptDataType
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
+from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry import ConverterRegistry
 from pyrit.registry.instance_registry import registry_entry_origin
@@ -399,6 +402,10 @@ class ConverterService:
             SavedEntryConflictError: If a saved or registered converter already has the name.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
+        if request.source is not None:
+            return await self._save_converter_copy_async(
+                name=name, request=request, source_spec=request.source, owner=owner, recipes_source=recipes_source
+            )
         refusal = self._required_upload_refusal(converter_type=request.type)
         if refusal is not None:
             raise NotSaveableError(f"{refusal} It can still be created without saving it.")
@@ -431,6 +438,78 @@ class ConverterService:
             name=name,
             recipe=ComponentRecipe(
                 class_module=converter_cls.__module__, class_name=request.type, params=params, owner=owner
+            ),
+            recipes_source=recipes_source,
+            register=lambda metadata: self._registry.instances.register(converter_obj, name=name, metadata=metadata),
+        )
+        return converter
+
+    async def _save_converter_copy_async(
+        self,
+        *,
+        name: str,
+        request: CreateConverterRequest,
+        source_spec: SourceInstanceSpec,
+        owner: SavedEntryOwner | None,
+        recipes_source: str | None,
+    ) -> ConverterInstance:
+        """
+        Build a copy of a registered converter with the requested changes, save it, then register it as saved.
+
+        The recipe names the copied converter and holds only the changes, so the copy is rebuilt from that converter
+        at every start and keeps where it sends requests and how it signs in.
+
+        Returns:
+            ConverterInstance: The saved copy.
+
+        Raises:
+            NotSaveableError: If the copied converter is Temporary, or a change holds a credential, names a Temporary
+                entry, or is an uploaded file.
+            SavedEntryConflictError: If a saved or registered converter already has the name.
+            SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
+            ValueError: If the copied converter changed, isn't the requested type, or the changes are invalid.
+        """
+        converter_cls = self._registry.get_class(request.type)
+        source = self._registry.resolve_source(name=source_spec.source_name, identifier_hash=source_spec.source_hash)
+        if type(source) is not converter_cls:
+            raise ValueError("The source converter type does not match the requested type")
+        uploads = [
+            parameter
+            for parameter in self._upload_params(converter_type=request.type)
+            if parameter in source_spec.params
+        ]
+        if uploads:
+            raise NotSaveableError(
+                f"Saved converters can't keep uploaded files yet, so leave out '{uploads[0]}'. "
+                "It can still be created without saving it."
+            )
+        source_name = copied_entry_name(registry=self._registry, kind=RegistryRecipeKind.CONVERTERS, source=source)
+        params = await prepare_saved_copy_params_async(
+            registry=self._registry, type_name=request.type, params=source_spec.params
+        )
+        try:
+            self._registry.instances.validate_name_available(name)
+        except ValueError as error:
+            if name in self._registry.instances:
+                raise SavedEntryConflictError(str(error)) from error
+            raise
+        converter_obj = await construct_component_async(
+            self._registry.recreate_instance, source=source, params=params, external_input=True
+        )
+        if source_spec.effective_hash and converter_obj.get_identifier().hash != source_spec.effective_hash:
+            raise ValueError("Temporary converter configuration has changed")
+        converter = self._build_instance_from_object(
+            converter_id=name, converter_obj=converter_obj, origin=RegistryEntryOrigin.SAVED
+        )
+        await save_then_register_async(
+            kind=RegistryRecipeKind.CONVERTERS,
+            name=name,
+            recipe=ComponentRecipe(
+                class_module=converter_cls.__module__,
+                class_name=request.type,
+                params=params,
+                source=source_name,
+                owner=owner,
             ),
             recipes_source=recipes_source,
             register=lambda metadata: self._registry.instances.register(converter_obj, name=name, metadata=metadata),

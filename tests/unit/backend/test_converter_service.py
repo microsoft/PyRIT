@@ -52,6 +52,7 @@ from pyrit.converter import (
     RepeatTokenConverter,
     RolePlayToolCallConverter,
     ROT13Converter,
+    SearchReplaceConverter,
     SelectiveTextConverter,
     SuffixAppendConverter,
     TokenSelectionStrategy,
@@ -60,7 +61,13 @@ from pyrit.converter import (
 )
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
-from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RestoreFailureReason,
+    SavedEntryOwner,
+)
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -2863,3 +2870,150 @@ async def test_types_say_why_a_converter_type_cant_be_saved() -> None:
         "ImageOverlayConverter",
         "TransparencyAttackConverter",
     }
+
+
+def _copy_request(name: str, *, source: Any, params: dict[str, Any]) -> CreateConverterRequest:
+    return CreateConverterRequest(
+        name=name,
+        type=type(source).__name__,
+        persist=True,
+        source=SourceInstanceSpec(
+            source_name="startup_replace", source_hash=source.get_identifier().hash, params=params
+        ),
+    )
+
+
+@pytest.fixture
+def startup_replace() -> SearchReplaceConverter:
+    source = SearchReplaceConverter(pattern="cat", replace="dog")
+    instances = ConverterRegistry.get_registry_singleton().instances
+    instances.register(source, name="startup_replace")
+    instances.mark_configuration_entries()
+    return source
+
+
+async def test_saves_a_copy_as_its_changes_and_rebuilds_it_from_the_converter_it_copies(
+    startup_replace: SearchReplaceConverter, tmp_path: Path
+) -> None:
+    owner = SavedEntryOwner(oid="00000000-0000-0000-0000-000000000001", name="Ada")
+
+    copy = await ConverterService().create_converter_async(
+        request=_copy_request("bird_replace", source=startup_replace, params={"replace": "bird"}),
+        owner=owner,
+        recipes_source=str(tmp_path),
+    )
+
+    assert copy.origin is RegistryEntryOrigin.SAVED
+    assert _saved_converter(tmp_path, "bird_replace") == {
+        "schema_version": 1,
+        "class_module": "pyrit.converter.search_replace_converter",
+        "class_name": "SearchReplaceConverter",
+        "params": {"replace": "bird"},
+        "source": "startup_replace",
+        "owner": {"oid": owner.oid, "name": "Ada"},
+    }
+
+    # After a restart the copy takes its other settings from the converter it copies, as that is now.
+    ConverterRegistry.reset_registry_singleton()
+    instances = ConverterRegistry.get_registry_singleton().instances
+    instances.register(SearchReplaceConverter(pattern="fish", replace="dog"), name="startup_replace")
+    instances.mark_configuration_entries()
+    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+
+    restored = instances.get_entry("bird_replace")
+    assert restored is not None
+    assert restored.metadata == {SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+    assert (
+        restored.instance.get_identifier().params["pattern"],
+        restored.instance.get_identifier().params["replace_list"],
+    ) == (
+        "fish",
+        ["bird"],
+    )
+
+
+async def test_a_copy_of_a_temporary_converter_is_not_saved(tmp_path: Path) -> None:
+    source = SearchReplaceConverter(pattern="cat", replace="dog")
+    ConverterRegistry.get_registry_singleton().instances.register(source, name="startup_replace")
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await ConverterService().create_converter_async(
+            request=_copy_request("bird_replace", source=source, params={"replace": "bird"}),
+            recipes_source=str(tmp_path),
+        )
+
+    assert str(refusal.value) == (
+        "Copies temporary converter 'startup_replace', which won't exist after a restart. "
+        "It can still be created without saving it."
+    )
+    assert ConverterRegistry.get_registry_singleton().instances.get("bird_replace") is None
+    assert not (tmp_path / "converters").exists()
+
+
+async def test_a_saved_copy_still_keeps_where_its_source_sends_requests(tmp_path: Path) -> None:
+    source = AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key="source-key")
+    instances = ConverterRegistry.get_registry_singleton().instances
+    instances.register(source, name="startup_speech")
+    instances.mark_configuration_entries()
+    request = CreateConverterRequest(
+        name="westus_speech",
+        type="AzureSpeechTextToAudioConverter",
+        persist=True,
+        source=SourceInstanceSpec(
+            source_name="startup_speech",
+            source_hash=source.get_identifier().hash,
+            params={"azure_speech_region": "westus"},
+        ),
+    )
+
+    with pytest.raises(ValueError, match="A copy keeps its source's connection settings"):
+        await ConverterService().create_converter_async(request=request, recipes_source=str(tmp_path))
+
+    assert not (tmp_path / "converters").exists()
+
+
+async def test_a_copy_whose_converter_is_gone_doesnt_restore(
+    startup_replace: SearchReplaceConverter, tmp_path: Path
+) -> None:
+    await ConverterService().create_converter_async(
+        request=_copy_request("bird_replace", source=startup_replace, params={"replace": "bird"}),
+        recipes_source=str(tmp_path),
+    )
+    ConverterRegistry.reset_registry_singleton()
+
+    failures = RegistryRecipeRestorer(source=str(tmp_path)).restore().failures
+
+    assert [(failure.name, failure.reason, failure.message) for failure in failures] == [
+        (
+            "bird_replace",
+            RestoreFailureReason.MISSING_DEPENDENCY,
+            "Uses converter 'startup_replace', which doesn't exist.",
+        )
+    ]
+    assert ConverterRegistry.get_registry_singleton().instances.get("bird_replace") is None
+
+
+async def test_restores_a_copy_of_a_saved_converter_after_the_converter_it_copies(tmp_path: Path) -> None:
+    service = ConverterService()
+    saved = await service.create_converter_async(
+        request=_persist("cat_replace", "SearchReplaceConverter", {"pattern": "cat", "replace": "dog"}),
+        recipes_source=str(tmp_path),
+    )
+    source = ConverterRegistry.get_registry_singleton().instances.get(saved.converter_id)
+    request = CreateConverterRequest(
+        name="bird_replace",
+        type="SearchReplaceConverter",
+        persist=True,
+        source=SourceInstanceSpec(
+            source_name="cat_replace", source_hash=source.get_identifier().hash, params={"replace": "bird"}
+        ),
+    )
+    await service.create_converter_async(request=request, recipes_source=str(tmp_path))
+    ConverterRegistry.reset_registry_singleton()
+
+    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+
+    restored = ConverterRegistry.get_registry_singleton().instances.get("bird_replace")
+    assert restored is not None
+    assert restored.get_identifier().params["pattern"] == "cat"
+    assert restored.get_identifier().params["replace_list"] == ["bird"]
