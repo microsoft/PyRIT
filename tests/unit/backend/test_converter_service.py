@@ -3017,3 +3017,92 @@ async def test_restores_a_copy_of_a_saved_converter_after_the_converter_it_copie
     assert restored is not None
     assert restored.get_identifier().params["pattern"] == "cat"
     assert restored.get_identifier().params["replace_list"] == ["bird"]
+
+
+async def test_a_saved_copy_takes_its_sign_in_from_the_converter_it_copies(tmp_path: Path) -> None:
+    source = AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key="source-key")
+    instances = ConverterRegistry.get_registry_singleton().instances
+    instances.register(source, name="startup_speech")
+    instances.mark_configuration_entries()
+    request = CreateConverterRequest(
+        name="ava_speech",
+        type="AzureSpeechTextToAudioConverter",
+        persist=True,
+        source=SourceInstanceSpec(
+            source_name="startup_speech",
+            source_hash=source.get_identifier().hash,
+            params={"synthesis_voice_name": "en-US-AvaNeural"},
+        ),
+    )
+
+    await ConverterService().create_converter_async(request=request, recipes_source=str(tmp_path))
+    ConverterRegistry.reset_registry_singleton()
+    restarted = ConverterRegistry.get_registry_singleton().instances
+    restarted.register(
+        AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key="source-key"),
+        name="startup_speech",
+    )
+    restarted.mark_configuration_entries()
+
+    assert "source-key" not in (tmp_path / "converters" / "ava_speech.json").read_text()
+    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    restored = restarted.get("ava_speech")
+    assert restored is not None
+    assert restored.get_identifier().params["synthesis_voice_name"] == "en-US-AvaNeural"
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_a_copy_can_only_change_to_entries_that_come_back_after_a_restart(tmp_path: Path) -> None:
+    targets = TargetRegistry.get_registry_singleton().instances
+    chat = MockPromptTarget()
+    targets.register(chat, name="chat")
+    targets.mark_configuration_entries()
+    targets.register(MockPromptTarget(), name="temporary_chat")
+    source = TranslationConverter(converter_target=chat, language="French")
+    converters = ConverterRegistry.get_registry_singleton().instances
+    converters.register(source, name="startup_translation")
+    converters.mark_configuration_entries()
+    request = CreateConverterRequest(
+        name="spanish_translation",
+        type="TranslationConverter",
+        persist=True,
+        source=SourceInstanceSpec(
+            source_name="startup_translation",
+            source_hash=source.get_identifier().hash,
+            params={"language": "Spanish", "converter_target": "temporary_chat"},
+        ),
+    )
+
+    try:
+        with pytest.raises(NotSaveableError) as refusal:
+            await ConverterService().create_converter_async(request=request, recipes_source=str(tmp_path))
+    finally:
+        TargetRegistry.reset_registry_singleton()
+
+    assert str(refusal.value) == (
+        "Uses temporary target 'temporary_chat', which won't exist after a restart. "
+        "It can still be created without saving it."
+    )
+    assert not (tmp_path / "converters").exists()
+
+
+async def test_a_copy_is_not_saved_when_its_settings_changed_since_they_were_shown(
+    startup_replace: SearchReplaceConverter, tmp_path: Path
+) -> None:
+    request = _copy_request("bird_replace", source=startup_replace, params={"replace": "bird"})
+    request.source = request.source.model_copy(update={"effective_hash": "a" * 64}) if request.source else None
+
+    with pytest.raises(ValueError, match="Temporary converter configuration has changed"):
+        await ConverterService().create_converter_async(request=request, recipes_source=str(tmp_path))
+
+    assert not (tmp_path / "converters").exists()
+
+
+async def test_a_copy_with_a_taken_name_is_a_conflict(startup_replace: SearchReplaceConverter, tmp_path: Path) -> None:
+    with pytest.raises(SavedEntryConflictError, match="already"):
+        await ConverterService().create_converter_async(
+            request=_copy_request("startup_replace", source=startup_replace, params={"replace": "bird"}),
+            recipes_source=str(tmp_path),
+        )
+
+    assert not (tmp_path / "converters").exists()
