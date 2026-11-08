@@ -18,16 +18,19 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from pyrit.backend.middleware.auth import require_admin
-from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
+from pyrit.backend.models import (
+    ListRegisteredInitializersResponse,
+    ProblemDetail,
+    RegisterInitializerRequest,
+)
+from pyrit.backend.models.common import CursorStr, IdentifierStr
 from pyrit.backend.models.initializers import (
     ConfiguredInitializerSetting,
     CustomInitializerListResponse,
     InitializerSettingsResponse,
-    ListRegisteredInitializersResponse,
-    RegisterInitializerRequest,
 )
-from pyrit.backend.services.initializer_service import get_initializer_service
-from pyrit.models.catalog.initializer import RegisteredInitializer
+from pyrit.backend.services import get_initializer_service
+from pyrit.models.catalog import RegisteredInitializer
 
 router = APIRouter(prefix="/initializers", tags=["initializers"])
 

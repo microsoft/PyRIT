@@ -5,11 +5,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
-    _COMIC_JAILBREAK_QUERY_PROMPT,
+from pyrit.datasets.seed_datasets.remote import (
     COMIC_JAILBREAK_TEMPLATES,
     ComicJailbreakTemplateConfig,
     _ComicJailbreakDataset,
+)
+from pyrit.datasets.seed_datasets.remote.comic_jailbreak_dataset import (
+    _COMIC_JAILBREAK_QUERY_PROMPT,
 )
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 

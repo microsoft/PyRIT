@@ -12,14 +12,14 @@ import ParameterField from '@/components/Parameters/ParameterField'
 import ConverterChainField from '@/components/Converters/ConverterChainField'
 import ReferenceField from '@/components/Parameters/ReferenceField'
 import { buildParametersFromForm, getInitialFormValues, type ParameterFormValue } from '@/components/Parameters/parameterForm'
-import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
+import { convertersApi, techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
   ConverterInstance, ConverterSelection,
 } from '@/types'
-import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
 
@@ -140,12 +140,7 @@ export default function TechniqueEditor({
               'adversarial_system_prompt', 'adversarial_seed_prompt', 'adversarial_prompt_template',
             ].includes(field)),
           }] }) : techniquesApi.listTypes(),
-          fetchAllPages(
-            (cursor: string | undefined) => targetsApi.listTargets(200, cursor),
-            undefined,
-            (entry) => entry.target_registry_name,
-            true,
-          ),
+          listRegisteredTargets(),
           convertersApi.listConverters(),
         ])
         if (ignore) return

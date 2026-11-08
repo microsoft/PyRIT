@@ -6,7 +6,7 @@ import logging
 import uuid
 from typing import Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.converter import Converter, ConverterResult
 from pyrit.exceptions import (
     InvalidJsonException,
