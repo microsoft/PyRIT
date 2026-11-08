@@ -2118,7 +2118,14 @@ describe("MessageList", () => {
 
     it("does not carry a failed download error into a different conversation", async () => {
       const user = userEvent.setup();
-      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, blob: jest.fn() });
+      const failedBlob = jest.fn().mockResolvedValue(
+        new Blob([JSON.stringify({ detail: "Not found" })], { type: "application/json" }),
+      );
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        blob: failedBlob,
+      });
       const firstMessages: Message[] = [{
         role: "assistant",
         content: "First conversation",
@@ -2147,6 +2154,7 @@ describe("MessageList", () => {
       const { rerender } = render(<TestWrapper><MessageList conversationId="conversation-a" messages={firstMessages} /></TestWrapper>);
       await user.click(screen.getByTestId("download-btn-0-0"));
       expect(await screen.findByRole("alert")).toHaveTextContent("Download failed. Please try again.");
+      expect(failedBlob).not.toHaveBeenCalled();
 
       rerender(<TestWrapper><MessageList conversationId="conversation-b" messages={secondMessages} /></TestWrapper>);
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
