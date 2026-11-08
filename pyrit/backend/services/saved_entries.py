@@ -19,7 +19,13 @@ from azure.core.exceptions import AzureError
 
 from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.models import ComponentType, Parameter
-from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, RestoreFailureReason
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RestoreFailureReason,
+    TechniqueRecipe,
+)
 from pyrit.registry import ConverterRegistry, InstanceHoldingRegistry, RegistryEntry, ScorerRegistry, TargetRegistry
 from pyrit.registry.file_document_storage import DocumentConflictError
 from pyrit.registry.instance_registry import (
@@ -191,30 +197,46 @@ def refuse_temporary_references(*, parameters: Sequence[Parameter], params: Mapp
     for parameter in parameters:
         if parameter.reference is None:
             continue
-        component_type = parameter.reference.component_type
         value = params.get(parameter.name)
-        for name in value if isinstance(value, list) else [value]:
-            if not isinstance(name, str) or not name:
-                continue
-            registry = _REFERENCED_REGISTRIES.get(component_type)
-            if registry is None:
-                raise NotSaveableError(
-                    f"Uses {component_type.value} '{name}', which saved entries can't use yet. "
-                    "It can still be created without saving it."
-                )
-            entry = registry.get_registry_singleton().instances.get_entry(name)
-            if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
-                raise NotSaveableError(
-                    f"Uses temporary {component_type.value} '{name}', which won't exist after a restart. "
-                    "It can still be created without saving it."
-                )
+        refuse_temporary_entries(
+            component_type=parameter.reference.component_type,
+            names=value if isinstance(value, list) else [value],
+        )
+
+
+def refuse_temporary_entries(*, component_type: ComponentType, names: Sequence[Any]) -> None:
+    """
+    Refuse an entry to save that names a Temporary entry, which won't exist after a restart.
+
+    Args:
+        component_type (ComponentType): The kind of entry the names refer to.
+        names (Sequence[Any]): The names the entry uses; values that aren't names are skipped.
+
+    Raises:
+        NotSaveableError: If a name is a Temporary entry, or an entry of a kind saved entries can't use.
+    """
+    for name in names:
+        if not isinstance(name, str) or not name:
+            continue
+        registry = _REFERENCED_REGISTRIES.get(component_type)
+        if registry is None:
+            raise NotSaveableError(
+                f"Uses {component_type.value} '{name}', which saved entries can't use yet. "
+                "It can still be created without saving it."
+            )
+        entry = registry.get_registry_singleton().instances.get_entry(name)
+        if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
+            raise NotSaveableError(
+                f"Uses temporary {component_type.value} '{name}', which won't exist after a restart. "
+                "It can still be created without saving it."
+            )
 
 
 async def save_then_register_async(
     *,
     kind: RegistryRecipeKind,
     name: str,
-    recipe: ComponentRecipe,
+    recipe: ComponentRecipe | TechniqueRecipe,
     recipes_source: str | None,
     register: Callable[[dict[str, Any]], object],
 ) -> None:
@@ -227,7 +249,7 @@ async def save_then_register_async(
     Args:
         kind (RegistryRecipeKind): The kind of entry.
         name (str): The entry's name.
-        recipe (ComponentRecipe): How to rebuild the entry, naming who saved it.
+        recipe (ComponentRecipe | TechniqueRecipe): How to rebuild the entry, naming who saved it.
         recipes_source (str | None): Where saved entries are stored, or None for the default folder.
         register (Callable[[dict[str, Any]], object]): Registers the built entry with the metadata it's given.
 

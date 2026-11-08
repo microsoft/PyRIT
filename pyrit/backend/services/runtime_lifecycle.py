@@ -26,6 +26,7 @@ from pyrit.backend.services.service_lifecycle import (
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
 from pyrit.registry import (
+    AttackTechniqueRegistry,
     ConverterRegistry,
     InitializerRegistry,
     ScenarioPresetRegistry,
@@ -139,8 +140,8 @@ class RuntimeLifecycle:
         """
         Rebuild saved registry entries after the startup scripts have registered theirs.
 
-        The startup scripts' targets, converters, and scorers are marked first, so they can be told apart
-        from ones that are gone after a restart, such as ones a scan's launch scripts register. A failure
+        The startup scripts' targets, converters, scorers, and techniques are marked first, so they can be told
+        apart from ones that are gone after a restart, such as ones a scan's launch scripts register. A failure
         keeps the runtime not ready, since a scan that would have used a missing entry could quietly fall
         back to a different one. Fixing the stored file and restarting recovers.
 
@@ -150,7 +151,7 @@ class RuntimeLifecycle:
         Returns:
             bool: Whether every saved entry was restored.
         """
-        for registry in (TargetRegistry, ConverterRegistry, ScorerRegistry):
+        for registry in (TargetRegistry, ConverterRegistry, ScorerRegistry, AttackTechniqueRegistry):
             registry.get_registry_singleton().instances.mark_configuration_entries()
         restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
         # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, as

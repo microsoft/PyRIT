@@ -260,8 +260,8 @@ class TestRestoreOrderAndRebuild:
         assert isinstance(TargetRegistry.get_registry_singleton().instances.get("a_pool"), RoundRobinTarget)
 
     def test_technique_recipe_matches_the_create_request(self) -> None:
-        recipe_fields = set(TechniqueRecipe.model_fields) - {"schema_version"}
-        request_fields = set(CreateTechniqueRequest.model_fields) - {"name"}
+        recipe_fields = set(TechniqueRecipe.model_fields) - {"schema_version", "owner"}
+        request_fields = set(CreateTechniqueRequest.model_fields) - {"name", "persist"}
         request = CreateTechniqueRequest.model_validate({"name": "formal_red_team", **_TECHNIQUE})
         recipe = TechniqueRecipe.model_validate(_TECHNIQUE)
 
@@ -274,7 +274,7 @@ class TestRestoreOrderAndRebuild:
         recipe = TechniqueRecipe.model_validate({"type": "RedTeamingAttack"})
         request = CreateTechniqueRequest.model_validate({"name": "formal_red_team", "type": "RedTeamingAttack"})
 
-        assert recipe.model_dump(exclude={"schema_version"}) == request.model_dump(exclude={"name"})
+        assert recipe.model_dump(exclude={"schema_version", "owner"}) == request.model_dump(exclude={"name", "persist"})
 
     @pytest.mark.parametrize(
         "changes",

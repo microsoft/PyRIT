@@ -136,8 +136,29 @@ class AttackTechniqueMetadata(RegistryMetadata):
     """Shared metadata type for the inherited, empty technique class catalog."""
 
 
+class TechniqueSelectorConflictError(ValueError):
+    """A technique's name or a tag conflicts with the name or a tag of a registered technique."""
+
+
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
     """Factory storage with an atomic runtime-admission path."""
+
+    def check_runtime_available(self, factory: AttackTechniqueFactory) -> None:
+        """
+        Check that a technique could be registered now, without registering it.
+
+        Args:
+            factory (AttackTechniqueFactory): The technique to check.
+
+        Raises:
+            TechniqueSelectorConflictError: If the name or a tag conflicts with a registered technique.
+            ValueError: If the technique can't be registered for another reason, such as a scenario pool it breaks.
+        """
+        from pyrit.registry.components.scenario_registry import ScenarioRegistry
+
+        ScenarioRegistry.get_registry_singleton().get_class_names()
+        with self._lock:
+            self._check_available(factory)
 
     def register_runtime(self, factory: AttackTechniqueFactory, *, metadata: dict[str, Any] | None = None) -> None:
         """
@@ -148,38 +169,51 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             metadata (dict[str, Any] | None): Optional per-entry metadata. Defaults to None.
 
         Raises:
-            ValueError: If the name or a tag conflicts with an existing selector.
+            TechniqueSelectorConflictError: If the name or a tag conflicts with a registered technique.
+            ValueError: If the technique can't be registered for another reason, such as a scenario pool it breaks.
         """
         from pyrit.registry.components.scenario_registry import ScenarioRegistry
 
         # Discover builders before taking the instance lock; discovery has its own catalog lock.
         ScenarioRegistry.get_registry_singleton().get_class_names()
         with self._lock:
-            entries = self.get_all_instances()
-            names = {entry.name.casefold(): entry.name for entry in entries}
-            tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
-            folded_name = factory.name.casefold()
-            if folded_name in names:
-                # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
-                _record_saved_entry_refusal(self.get_entry(names[folded_name]))
-                raise ValueError(f"Technique '{factory.name}' already exists (names are case-insensitive)")
-            if folded_name in tags:
-                raise ValueError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
-            for tag in factory.technique_tags:
-                folded = tag.casefold()
-                if folded in names or folded == folded_name:
-                    raise ValueError(f"Tag '{tag}' conflicts with a technique name")
-                if folded in tags and tags[folded] != tag:
-                    raise ValueError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
-            _validate_generated_member_collisions(
-                class_name="ScenarioTechnique",
-                factories=[factory],
-                aggregate_tags=set(factory.technique_tags) - {"all", "default"},
-            )
-            AttackTechniqueRegistry.get_registry_singleton().validate_scenario_pools(
-                {**{entry.name: entry.instance for entry in entries}, factory.name: factory}
-            )
+            self._check_available(factory)
             self.register(factory, name=factory.name, tags=factory.technique_tags, metadata=metadata)
+
+    def _check_available(self, factory: AttackTechniqueFactory) -> None:
+        """
+        Check a technique against the registered ones; the caller holds the instance lock.
+
+        Raises:
+            TechniqueSelectorConflictError: If the name or a tag conflicts with a registered technique.
+            ValueError: If the technique can't be registered for another reason, such as a scenario pool it breaks.
+        """
+        entries = self.get_all_instances()
+        names = {entry.name.casefold(): entry.name for entry in entries}
+        tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
+        folded_name = factory.name.casefold()
+        if folded_name in names:
+            # Code that catches this error would leave a saved technique standing in, so the clash is recorded.
+            _record_saved_entry_refusal(self.get_entry(names[folded_name]))
+            raise TechniqueSelectorConflictError(
+                f"Technique '{factory.name}' already exists (names are case-insensitive)"
+            )
+        if folded_name in tags:
+            raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
+        for tag in factory.technique_tags:
+            folded = tag.casefold()
+            if folded in names or folded == folded_name:
+                raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
+            if folded in tags and tags[folded] != tag:
+                raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
+        _validate_generated_member_collisions(
+            class_name="ScenarioTechnique",
+            factories=[factory],
+            aggregate_tags=set(factory.technique_tags) - {"all", "default"},
+        )
+        AttackTechniqueRegistry.get_registry_singleton().validate_scenario_pools(
+            {**{entry.name: entry.instance for entry in entries}, factory.name: factory}
+        )
 
 
 class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechniqueMetadata]):

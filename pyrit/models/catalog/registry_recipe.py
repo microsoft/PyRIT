@@ -103,6 +103,7 @@ class TechniqueRecipe(_RegistryRecipe):
     adversarial_system_prompt: str | None = None
     adversarial_seed_prompt: str | None = None
     adversarial_prompt_template: str | None = None
+    owner: SavedEntryOwner | None = Field(None, description="Who saved the entry; None when sign-in is off")
 
     @field_validator("tags")
     @classmethod

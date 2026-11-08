@@ -222,7 +222,7 @@ async def test_creation_and_editing_share_strict_input_and_attack_validation_asy
         params={"max_attempts_on_failure": value},
     )
     if type(value) is int and value >= 0:
-        created = await TechniqueService().create_async(request)
+        created = await TechniqueService().create_async(request=request)
         admitted = TechniqueEditService.validate(specification)
         copied = TechniqueEditService.resolve(admitted.override)
         assert (
@@ -232,7 +232,7 @@ async def test_creation_and_editing_share_strict_input_and_attack_validation_asy
     else:
         revision = edit_catalog.catalog_revision
         with pytest.raises(ValueError):
-            await TechniqueService().create_async(request)
+            await TechniqueService().create_async(request=request)
         with pytest.raises(ValueError):
             TechniqueEditService.validate(specification)
         assert edit_catalog.catalog_revision == revision
@@ -747,7 +747,7 @@ async def test_gui_created_technique_converts_both_history_roles_but_not_system_
     edit_catalog: AttackTechniqueRegistry,
 ) -> None:
     created = await TechniqueService().create_async(
-        CreateTechniqueRequest(name="gui_replay", type="PromptSendingAttack", request_converters=["base64"])
+        request=CreateTechniqueRequest(name="gui_replay", type="PromptSendingAttack", request_converters=["base64"])
     )
     factory = edit_catalog.instances.get(created.name)
     assert factory is not None
@@ -821,7 +821,7 @@ async def test_gui_creation_without_request_converters_keeps_default_history_pol
     edit_catalog: AttackTechniqueRegistry, request_converters: list[str] | None
 ) -> None:
     created = await TechniqueService().create_async(
-        CreateTechniqueRequest(
+        request=CreateTechniqueRequest(
             name="without_requests",
             type="PromptSendingAttack",
             request_converters=request_converters,

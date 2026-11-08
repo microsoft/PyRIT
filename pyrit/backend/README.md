@@ -229,7 +229,7 @@ IDs remain available through the single-node and saved-conversation APIs.
 | `GET /api/techniques` | A page of active registered technique factories |
 | `GET /api/techniques/types` | Attack-class parameters and supported converter/adversarial controls |
 | `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
-| `POST /api/techniques` | Validate and register a basic runtime technique; 201 on success |
+| `POST /api/techniques` | Validate and register a basic runtime technique, saving it with `persist`; 201 on success |
 
 The list accepts `limit` (default 50, range 1-200) and `cursor` (the last returned
 registry name). Results use registry-name order. Follow `pagination.next_cursor`
@@ -256,6 +256,15 @@ or executing attacks. Target and scorer compatibility stays an initialization ch
 Constrained list inputs are resolved to their declared enum or literal values.
 Deferred Python validation uses the same configured-default rules as decorated
 constructors; the factory retains omitted arguments and explicit `None` values.
+
+A created technique is Temporary unless the request sets `"persist": true`. A technique to save needs a name of
+lowercase letters, digits, and underscores that starts with a letter (otherwise **422**). Its request, without the
+name, is saved under `registry_recipes_source` with the signed-in user recorded, and it's rebuilt with the same call
+at every start. A request receives **400** with `"type": "/errors/not-saveable"`, and can be sent again without
+`persist`, if a converter or the adversarial target it names is Temporary. A name or tag that clashes with a
+registered technique receives **409**, and storage that can't be written receives **503**. Each listed technique's
+`origin` is `saved`, `configuration` (registered by a startup script), or `temporary`, as for targets. Settings
+changed for a single run aren't saved.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.

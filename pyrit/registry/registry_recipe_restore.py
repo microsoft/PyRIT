@@ -421,13 +421,17 @@ class RegistryRecipeRestorer:
         from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        args = recipe.model_dump(exclude_unset=True, exclude={"schema_version", "type", "tags"})
+        args = recipe.model_dump(exclude_unset=True, exclude={"schema_version", "type", "tags", "owner"})
         factory = registry.create_factory(
             name=name, attack_type=recipe.type, technique_tags=recipe.tags, strict_json=True, **args
         )
         try:
             registry.instances.register_runtime(
-                factory, metadata={SAVED_ENTRY_METADATA_KEY: RegistryRecipeKind.TECHNIQUES.value}
+                factory,
+                metadata={
+                    SAVED_ENTRY_METADATA_KEY: RegistryRecipeKind.TECHNIQUES.value,
+                    SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner,
+                },
             )
         except ValueError as error:
             raise _RecipeRejectedError(reason=RestoreFailureReason.NAME_CLASH, message=str(error)) from error
