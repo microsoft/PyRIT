@@ -717,7 +717,7 @@ async def test_a_scorer_save_finds_and_builds_the_scorer_off_the_event_loop(tmp_
     assert set(threads) == {"worker"}
 
 
-def _register_default_composite_scorer(default: list[Any]) -> None:
+def _register_default_composite_scorer(default: list[Any] | tuple[Any, ...]) -> None:
     """Register a composite scorer class whose scorers come from a configured default."""
 
     class DefaultCompositeScorer(TrueFalseCompositeScorer):
@@ -730,33 +730,40 @@ def _register_default_composite_scorer(default: list[Any]) -> None:
 
 
 @pytest.fixture
-def startup_and_launch_scorers() -> Iterator[tuple[SubStringScorer, SubStringScorer]]:
+def startup_and_launch_scorers() -> Iterator[tuple[SubStringScorer, SubStringScorer, SubStringScorer]]:
     scorers = ScorerRegistry.get_registry_singleton().instances
-    startup, launch = SubStringScorer(substring="startup"), SubStringScorer(substring="launch")
+    startup, other_startup = SubStringScorer(substring="startup"), SubStringScorer(substring="other")
+    launch = SubStringScorer(substring="launch")
     scorers.register(startup, name="startup_substring")
+    scorers.register(other_startup, name="other_startup_substring")
     scorers.mark_configuration_entries()
     scorers.register(launch, name="launch_substring")
-    yield startup, launch
+    yield startup, other_startup, launch
     reset_default_values()
 
 
+@pytest.mark.parametrize("container", [list, tuple])
 async def test_a_saved_scorer_names_each_scorer_in_a_default_list(
-    tmp_path: Path, startup_and_launch_scorers: tuple[SubStringScorer, SubStringScorer]
+    tmp_path: Path,
+    startup_and_launch_scorers: tuple[SubStringScorer, SubStringScorer, SubStringScorer],
+    container: Callable[[list[Any]], list[Any] | tuple[Any, ...]],
 ) -> None:
-    startup, _ = startup_and_launch_scorers
-    _register_default_composite_scorer(default=[startup, startup])
+    startup, other_startup, _ = startup_and_launch_scorers
+    _register_default_composite_scorer(default=container([startup, other_startup, startup]))
 
     await ScorerService().create_scorer_async(
         request=_persist_scorer("composite", "DefaultCompositeScorer", {}), recipes_source=str(tmp_path)
     )
 
-    assert _saved_scorer(tmp_path, "composite")["params"] == {"scorers": ["startup_substring", "startup_substring"]}
+    assert _saved_scorer(tmp_path, "composite")["params"] == {
+        "scorers": ["startup_substring", "other_startup_substring", "startup_substring"]
+    }
 
 
 async def test_a_default_list_with_a_temporary_scorer_is_not_saved(
-    tmp_path: Path, startup_and_launch_scorers: tuple[SubStringScorer, SubStringScorer]
+    tmp_path: Path, startup_and_launch_scorers: tuple[SubStringScorer, SubStringScorer, SubStringScorer]
 ) -> None:
-    startup, launch = startup_and_launch_scorers
+    startup, _, launch = startup_and_launch_scorers
     _register_default_composite_scorer(default=[startup, launch])
 
     with pytest.raises(NotSaveableError) as refusal:
