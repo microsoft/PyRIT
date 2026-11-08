@@ -1092,9 +1092,10 @@ function App() {
   const operatorAlias = account?.username ? account.username.split('@')[0].toLowerCase() : null
   return (
     <RuntimeProvider>
-      <RuntimeBanner />
       <UserPreferencesProvider key={accountKey ?? 'account-loading'} accountKey={accountKey}>
         <ThemeProvider>
+          {/* Inside the theme, so the banner and the dialogs it opens are drawn with it. */}
+          <RuntimeBanner />
           <ChatDraftProvider>
             <AppContent operatorAlias={operatorAlias} />
           </ChatDraftProvider>
