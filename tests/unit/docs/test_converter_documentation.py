@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from pyrit.converter.converter import get_converter_modalities
+from pyrit.converter import get_converter_modalities
 
 
 def get_all_converter_classes():

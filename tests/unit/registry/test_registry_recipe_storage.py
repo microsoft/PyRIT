@@ -12,7 +12,7 @@ import pytest
 from azure.storage.blob import ContainerClient
 
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
-from pyrit.models.catalog.registry_recipe import (
+from pyrit.models.catalog import (
     ComponentRecipe,
     IgnoredRecipeFile,
     RegistryRecipeKind,

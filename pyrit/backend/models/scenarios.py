@@ -13,7 +13,8 @@ Scenario parameters are described by the shared ``pyrit.models.Parameter``.
 from pydantic import BaseModel, Field
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.models.catalog.scenario import RegisteredScenario, ScenarioRunListItem
+from pyrit.models import ScenarioRunListItem
+from pyrit.models.catalog import RegisteredScenario
 
 __all__ = [
     "ListRegisteredScenariosResponse",

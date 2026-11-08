@@ -8,11 +8,13 @@ from unittest import mock
 import pytest
 
 from pyrit.registry import InitializerRegistry
-from pyrit.setup.configuration_loader import (
+from pyrit.setup import (
     ConfigurationLoader,
+    initialize_from_config_async,
+)
+from pyrit.setup.configuration_loader import (
     InitializerConfig,
     ServerConfig,
-    initialize_from_config_async,
 )
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 

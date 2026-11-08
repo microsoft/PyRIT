@@ -22,8 +22,9 @@ import {
 } from '@fluentui/react-components'
 
 import HelpField from '@/components/HelpField'
-import { convertersApi, targetsApi } from '@/services/api'
+import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
 import { mapMediaUrl } from '@/utils/media'
@@ -91,6 +92,7 @@ interface ParameterInputProps {
   onBrowse: () => void
   onFiles: (files: File[], onReadSuccess?: () => void) => void
   allowUploads: boolean
+  disabled?: boolean
   selectedFile?: SelectedFile
 }
 
@@ -182,6 +184,7 @@ function ParameterInput({
   onBrowse,
   onFiles,
   allowUploads,
+  disabled = false,
   selectedFile,
 }: ParameterInputProps) {
   const styles = useCreateConverterDialogStyles()
@@ -192,6 +195,7 @@ function ParameterInput({
   const [manualValue, setManualValue] = useState<string | null>(null)
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
   const help = parameter.description?.trim()
+  const uploadsDisabled = disabled || !allowUploads
 
   useLayoutEffect(() => {
     if (focusPathInput.current && pathInputRef.current) {
@@ -220,7 +224,7 @@ function ParameterInput({
           : `Select a registered ${parameter.reference_type}.`}
         validationMessage={showError ? 'Required' : undefined}
       >
-        <Select value={value} onChange={(_, data) => onChange(data.value)}>
+        <Select disabled={disabled} value={value} onChange={(_, data) => onChange(data.value)}>
           <option value="">Select a registered {parameter.reference_type}</option>
           {referenceOptions.map((option) => (
             <option key={option.name} value={option.name}>
@@ -237,6 +241,7 @@ function ParameterInput({
     return (
       <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
         <Switch
+          disabled={disabled}
           checked={checked}
           label={checked ? 'True' : 'False'}
           onChange={(_, data) => onChange(data.checked ? 'true' : 'false')}
@@ -248,7 +253,7 @@ function ParameterInput({
   if (parameter.choices?.length) {
     return (
       <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
-        <Select value={value || parameterDefaultValue(parameter)} onChange={(_, data) => onChange(data.value)}>
+        <Select disabled={disabled} value={value || parameterDefaultValue(parameter)} onChange={(_, data) => onChange(data.value)}>
           {parameter.required && !parameter.default && <option value="">Select a value</option>}
           {parameter.choices.map((choice) => (
             <option key={choice} value={choice}>{choice}</option>
@@ -289,7 +294,7 @@ function ParameterInput({
       validationMessage={showError ? 'Required' : undefined}
     >
       {(controlProps: FieldControlProps) => isFile ? (
-        <FileDropZone disabled={!allowUploads}
+        <FileDropZone disabled={uploadsDisabled}
           label="Drop file" onFiles={handleFiles}>
           <div {...(hasFileValue ? controlProps : {})} role={hasFileValue ? 'group' : undefined} className={styles.fileRow}>
             {hasFileValue ? <div className={styles.filePreview}>
@@ -303,7 +308,7 @@ function ParameterInput({
               </div>
             </div> : <Input
               input={{ ref: pathInputRef }}
-              disabled={!allowUploads}
+              disabled={uploadsDisabled}
               className={styles.fileInput}
               value={value}
               placeholder={defaultValue && !defaultValue.startsWith('data:') ? defaultValue : pathPlaceholder}
@@ -312,10 +317,10 @@ function ParameterInput({
                 onChange(data.value)
               }}
             />}
-            <Button ref={replaceButtonRef} type="button" className={styles.fileButton} disabled={!allowUploads} onClick={onBrowse}>
+            <Button ref={replaceButtonRef} type="button" className={styles.fileButton} disabled={uploadsDisabled} onClick={onBrowse}>
               {hasFileValue ? 'Replace' : 'Upload'}
             </Button>
-            {hasFileValue && <Button type="button" className={styles.fileButton} disabled={!allowUploads}
+            {hasFileValue && <Button type="button" className={styles.fileButton} disabled={uploadsDisabled}
               aria-label={`Remove ${imagePreview ? 'image' : 'file'} for ${parameter.name}`} onClick={() => {
                 focusPathInput.current = true
                 onChange('')
@@ -324,6 +329,9 @@ function ParameterInput({
         </FileDropZone>
       ) : (
         <Input
+          // Read-only, not disabled: a disabled input drops focus to <body>
+          // when the form is submitted with Enter, and Escape stops closing the dialog.
+          readOnly={disabled}
           type={parameter.sensitive ? 'password' : 'text'}
           value={value}
           placeholder={parameterDefaultValue(parameter) || undefined}
@@ -383,7 +391,7 @@ export default function CreateConverterDialog({
         setSubmitting(false)
         return Promise.all([
           convertersApi.listConverterTypes(),
-          targetsApi.listTargets(200),
+          listRegisteredTargets(),
           convertersApi.listConverters(),
         ])
       })
@@ -392,7 +400,7 @@ export default function CreateConverterDialog({
         const [response, targetResponse, converterResponse] = responses
         if (!cancelled) {
           setConverterTypes(editing ? response.items : response.items.filter(canConfigureConverterType))
-          setTargets(targetResponse.items)
+          setTargets(targetResponse)
           setConverters(converterResponse.items)
           if (editing) {
             const entry = response.items.find((item) => item.converter_type === editing.converter.identifier.class_name)
@@ -404,7 +412,7 @@ export default function CreateConverterDialog({
               ])),
               ...editing.spec?.params,
             }
-            const defaultTarget = resolveDefaultAdversarialTarget(preferences, targetResponse.items)
+            const defaultTarget = resolveDefaultAdversarialTarget(preferences, targetResponse)
             const defaultedParameters = new Set<string>()
             for (const parameter of entry?.parameters ?? []) {
               const reference = params[parameter.name]
@@ -414,7 +422,7 @@ export default function CreateConverterDialog({
               }
               if (!reference || typeof reference !== 'object' || !('hash' in reference)) continue
               if (parameter.reference_type === 'target') {
-                params[parameter.name] = targetResponse.items.find(
+                params[parameter.name] = targetResponse.find(
                   (target) => target.identifier.hash === reference.hash,
                 )?.target_registry_name ?? ''
               } else if (parameter.reference_type === 'converter') {
@@ -711,7 +719,7 @@ export default function CreateConverterDialog({
                     validationMessage={showValidation && !selectedType ? 'Select a converter type' : undefined}
                   >
                     <Dropdown
-                      disabled={Boolean(editing)}
+                      disabled={Boolean(editing) || submitting}
                       aria-label="Converter type"
                       className={styles.typeDropdown}
                       listbox={{ className: styles.typeListbox }}
@@ -788,6 +796,7 @@ export default function CreateConverterDialog({
                     }
                   >
                     <Input
+                      readOnly={submitting}
                       value={registryName}
                       onChange={(_, data) => {
                         setRegistryName(data.value)
@@ -837,6 +846,7 @@ export default function CreateConverterDialog({
                           onFiles={(files: File[], onReadSuccess?: () => void) =>
                             readFiles(parameter.name, files, onReadSuccess)}
                           allowUploads={allowUploads}
+                          disabled={submitting}
                           selectedFile={selectedFiles[parameter.name]}
                         />}
                       </div>
