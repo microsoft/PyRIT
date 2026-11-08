@@ -34,10 +34,12 @@ from pyrit.backend.models.common import (
     PaginationInfo,
     TextStr,
 )
+from pyrit.common import print_deprecation_message
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
     ChatMessageRole,
+    ComponentIdentifier,
     ConversationReference,
     ConversationSummary,
     Message,
@@ -55,6 +57,7 @@ class TargetInfo(BaseModel):
 
     target_type: str = Field(..., description="Target class name (e.g., 'OpenAIChatTarget')")
     target_registry_name: str | None = Field(None, description="Registry alias used to create the attack")
+    identifier: ComponentIdentifier | None = Field(None, description="Persisted target identity for inspection")
     endpoint: str | None = Field(None, description="Target endpoint URL")
     model_name: str | None = Field(None, description="Model or deployment name")
     identifier_hash: str = Field(..., description="Canonical target identifier hash")
@@ -319,6 +322,7 @@ class AttackSummary(AttackResult[MessagePieceView, ScoreView]):
         return TargetInfo(
             target_type=target_id.class_name,
             target_registry_name=target_registry_name if isinstance(target_registry_name, str) else None,
+            identifier=target_id,
             endpoint=cast("str | None", target_id.params.get("endpoint") or None),
             model_name=cast("str | None", target_id.params.get("model_name") or None),
             identifier_hash=target_id.hash,
@@ -585,7 +589,11 @@ TargetBindingInput = Annotated[TargetBinding, AfterValidator(_limit_target_bindi
 
 class CreateAttackRequest(_AttackAttributionInput):
     """
-    Request to create a new attack.
+    Request to create a new manual attack.
+
+    ``objective`` is the goal, not the strategy type or a display name.
+    The deprecated ``name`` input aliases ``objective`` when it is omitted
+    or null. If both are non-null, they must match exactly, including empty strings.
 
     For branching from an existing conversation into a new attack, provide
     ``source_conversation_id`` and ``cutoff_index``.  The backend will
@@ -594,7 +602,13 @@ class CreateAttackRequest(_AttackAttributionInput):
     supplied in ``labels`` (typically the current operator's labels).
     """
 
-    name: TextStr | None = Field(None, description="Attack name/label")
+    objective: TextStr | None = Field(None, description="Attack objective; omitted or null means no objective")
+    name: TextStr | None = Field(
+        None,
+        description="Deprecated input alias for objective, not a display name or strategy type. "
+        "Used when objective is omitted or null; non-null values must match when both are supplied.",
+        json_schema_extra={"deprecated": True},
+    )
     target_binding: TargetBindingInput | None = None
     chat_scorer: RegisteredComponentReference | None = None
     target_registry_name: IdentifierStr | None = Field(
@@ -614,6 +628,28 @@ class CreateAttackRequest(_AttackAttributionInput):
     prepended_conversation: list[MessageRequest] | None = Field(
         None, description="Messages to prepend (system prompts, branching context)", max_length=200
     )
+
+    @model_validator(mode="after")
+    def _normalize_legacy_objective(self) -> "CreateAttackRequest":
+        """
+        Normalize the deprecated name input.
+
+        Returns:
+            The request with its resolved objective.
+
+        Raises:
+            ValueError: If non-null name and objective values disagree.
+        """
+        if self.name is not None:
+            print_deprecation_message(
+                old_item="CreateAttackRequest.name",
+                new_item="CreateAttackRequest.objective",
+                removed_in="1.4.0",
+            )
+            if self.objective is not None and self.objective != self.name:
+                raise ValueError("name and objective must match when both are supplied")
+            self.objective = self.name
+        return self
 
 
 class CreateAttackResponse(BaseModel):

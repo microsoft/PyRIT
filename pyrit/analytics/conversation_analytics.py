@@ -3,9 +3,9 @@
 
 import numpy as np
 
+from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
-from pyrit.common.deprecation import print_deprecation_message
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_models import (
     ConversationMessageWithSimilarity,
     EmbeddingMessageWithSimilarity,

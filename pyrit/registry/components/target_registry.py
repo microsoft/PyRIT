@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pyrit.models.identifiers import TargetIdentifier
+from pyrit.models import TargetIdentifier
 from pyrit.registry.registry import InstanceHoldingRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
 

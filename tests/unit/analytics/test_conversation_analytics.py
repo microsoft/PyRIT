@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 
-from pyrit.analytics.conversation_analytics import ConversationAnalytics, cosine_similarity
-from pyrit.memory.memory_interface import MemoryInterface
-from pyrit.memory.memory_models import EmbeddingDataEntry
+from pyrit.analytics import ConversationAnalytics
+from pyrit.analytics.conversation_analytics import cosine_similarity
+from pyrit.memory import EmbeddingDataEntry, MemoryInterface
 from pyrit.models import MessagePiece, flatten_to_message_pieces
 from unit.mocks import get_sample_conversations
 

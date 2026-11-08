@@ -42,11 +42,13 @@ if TYPE_CHECKING:
     from pyrit.models import Parameter
     from pyrit.models.technique_edit import TechniqueChanges
     from pyrit.prompt_normalizer import ConverterConfiguration
-    from pyrit.scenario.core.attack_technique_factory import (
+    from pyrit.scenario import (
         AttackTechniqueFactory,
+        ScenarioTechnique,
+    )
+    from pyrit.scenario.core import (
         ScorerOverridePolicy,
     )
-    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
     class _CachedScenarioTechniqueClass(Protocol):
         """A scenario enum function with the existing cache-reset interface."""
@@ -70,7 +72,7 @@ def _attack_technique_factory_type() -> type[AttackTechniqueFactory]:
     Returns:
         type[AttackTechniqueFactory]: The ``AttackTechniqueFactory`` class.
     """
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+    from pyrit.scenario import AttackTechniqueFactory
 
     return AttackTechniqueFactory
 
@@ -92,7 +94,7 @@ def _validate_generated_member_collisions(
     Raises:
         ValueError: If a factory or aggregate would collide with a reserved or generated member.
     """
-    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+    from pyrit.scenario import ScenarioTechnique
 
     inherited_names = {
         name for base in (*ScenarioTechnique.__mro__, *type(ScenarioTechnique).__mro__) for name in vars(base)
@@ -213,7 +215,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
                 is empty either way; the flag is accepted for parity with other
                 registries.
         """
-        from pyrit.scenario.core.attack_technique_factory import ScorerOverridePolicy
+        from pyrit.scenario.core import ScorerOverridePolicy
 
         super().__init__(lazy_discovery=lazy_discovery)
         self.instances = TechniqueInstanceRegistry(instance_type=_attack_technique_factory_type)
@@ -248,7 +250,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         from pyrit.executor.attack import AttackConverterConfig
         from pyrit.registry.components.attack_registry import AttackRegistry
         from pyrit.registry.resolution import resolve_constructor_args, resolve_reference_value
-        from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+        from pyrit.scenario import AttackTechniqueFactory
 
         registry = AttackRegistry.get_registry_singleton()
         try:
@@ -429,7 +431,7 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         Raises:
             TypeError: If the effective history configuration is not a supported configuration.
         """
-        from pyrit.executor.attack.component import PrependedConversationConfig
+        from pyrit.executor.attack import PrependedConversationConfig
 
         settings = factory.get_effective_attack_kwargs()
         if "prepended_conversation_config" not in settings:

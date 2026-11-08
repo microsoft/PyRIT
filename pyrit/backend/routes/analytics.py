@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from pyrit.analytics import AttackResultAnalytics
-from pyrit.backend.models.common import ProblemDetail
+from pyrit.backend.models import ProblemDetail
 from pyrit.backend.services.analytics_service import get_analytics_service_async
 from pyrit.models import (
     AttackAnalyticsFacetQuery,

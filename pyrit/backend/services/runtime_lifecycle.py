@@ -27,12 +27,12 @@ from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
 from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import validate_reinitialization_memory
 
 if TYPE_CHECKING:
-    from pyrit.models.catalog.registry_recipe import IgnoredRecipeFile, RestoreFailure
+    from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure
 
 logger = logging.getLogger(__name__)
 

@@ -94,6 +94,8 @@ class AttackTechnique(Identifiable):
                 technique_seeds = list(technique_seed_ids)
             if self._seed_technique.prompt_placement != "preserve":
                 identifier_params = {"prompt_placement": self._seed_technique.prompt_placement}
+            if self._seed_technique.append_objective_prompt:
+                identifier_params = {**(identifier_params or {}), "append_objective_prompt": True}
 
         if self._requirements.adaptation is not None:
             identifier_params = {

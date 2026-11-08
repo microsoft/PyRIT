@@ -16,16 +16,18 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
-from pyrit.registry.instance_registry import (
-    SAVED_ENTRY_METADATA_KEY,
+from pyrit.registry import (
     DefaultInstanceRegistry,
     InstanceRegistry,
     RegistryEntry,
-    SavedEntryReplacementError,
     SupportsInstances,
+    TagQuery,
+)
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SavedEntryReplacementError,
     record_saved_entry_refusals,
 )
-from pyrit.registry.tag_query import TagQuery
 
 
 class _TestItem(Identifiable):

@@ -24,16 +24,17 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration
+from pyrit.scenario.scenarios.airt import (
+    Multilingual,
+)
 from pyrit.scenario.scenarios.airt.multilingual import (
     _DEFAULT_NUM_LANGUAGES,
     _LANGUAGES_METADATA_KEY,
     _PROMPT_SENDING,
     _RANDOM_TRANSLATION,
     _TRANSLATION,
-    Multilingual,
     _build_multilingual_technique,
 )
 from pyrit.score import SubStringScorer, TrueFalseScorer

@@ -9,10 +9,12 @@ from pyrit.models import (
     Message,
     MessagePiece,
 )
-from pyrit.prompt_target.playwright_copilot_target import (
-    CopilotSelectors,
+from pyrit.prompt_target import (
     CopilotType,
     PlaywrightCopilotTarget,
+)
+from pyrit.prompt_target.playwright_copilot_target import (
+    CopilotSelectors,
 )
 
 
