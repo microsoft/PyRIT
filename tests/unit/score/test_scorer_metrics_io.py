@@ -13,10 +13,13 @@ import pytest
 
 from pyrit.models import ComponentIdentifier
 from pyrit.models.harm_category import HarmCategory
-from pyrit.score.scorer_evaluation.scorer_metrics import (
+from pyrit.score import (
     HarmScorerMetrics,
     ObjectiveScorerMetrics,
     ScorerMetricsWithIdentity,
+    find_objective_metrics_by_eval_hash,
+    get_all_harm_metrics,
+    get_all_objective_metrics,
 )
 from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     _append_jsonl_entry,
@@ -25,9 +28,6 @@ from pyrit.score.scorer_evaluation.scorer_metrics_io import (
     _rewrite_jsonl_atomically,
     add_evaluation_results,
     find_harm_metrics_by_eval_hash,
-    find_objective_metrics_by_eval_hash,
-    get_all_harm_metrics,
-    get_all_objective_metrics,
     replace_evaluation_results,
 )
 

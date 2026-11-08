@@ -12,9 +12,9 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
 from pyrit.backend.middleware.auth import AuthenticatedUser
-from pyrit.backend.models.attacks import AddMessageResponse, AttackSummary, ConversationMessagesResponse
+from pyrit.backend.models import AddMessageResponse, AttackSummary, ConversationMessagesResponse
 from pyrit.backend.routes.attacks import router
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.memory.memory_interface import AttackStateConflictError
 

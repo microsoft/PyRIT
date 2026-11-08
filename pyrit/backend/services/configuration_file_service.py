@@ -18,7 +18,7 @@ from azure.core.exceptions import ResourceNotFoundError
 
 from pyrit.common.azure_storage import has_sas_signature, is_azure_blob_uri, redact_url_credentials
 from pyrit.common.yaml_helper import safe_load_yaml
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 
 
 class ConfigurationFileConflictError(Exception):

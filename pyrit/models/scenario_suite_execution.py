@@ -10,11 +10,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from pyrit.models.catalog.scenario import (
-    ScenarioLaunchConfiguration,
+from pyrit.models.catalog import (
     ScenarioRunSummary,
 )
-from pyrit.models.request_limits import MAX_ITEMS
+from pyrit.models.catalog.scenario import (
+    ScenarioLaunchConfiguration,
+)
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 from pyrit.models.results.scenario_result import ScenarioRunState
 
 SCENARIO_SUITE_EXECUTION_METADATA_KEY = "scenario_suite_execution"
@@ -27,13 +29,14 @@ class ScenarioSuiteLaunchEntrySnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     entry_id: UUID = Field(..., description="Stable suite-entry identity")
-    preset_name: str = Field(..., description="Preset name shown for this entry")
+    preset_name: str = Field(..., max_length=MAX_IDENTIFIER_LENGTH, description="Preset name shown for this entry")
     origin: Literal["stored", "registered"] | None = Field(
         ...,
         description="Reviewed preset origin, or None when the entry was unresolved",
     )
     preset_version: str | None = Field(
         ...,
+        max_length=MAX_IDENTIFIER_LENGTH,
         description="Reviewed stored preset version, or None for registered or unresolved presets",
     )
 
@@ -45,6 +48,7 @@ class LaunchScenarioSuiteRequest(ScenarioLaunchConfiguration):
 
     expected_version: str | None = Field(
         None,
+        max_length=MAX_IDENTIFIER_LENGTH,
         description="Reviewed stored suite version; None only for a suite registered in code",
     )
     entries: list[ScenarioSuiteLaunchEntrySnapshot] = Field(

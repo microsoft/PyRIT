@@ -6,7 +6,7 @@ from typing import assert_type
 
 import pytest
 
-from pyrit.registry.tag_query import TagQuery
+from pyrit.registry import TagQuery
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router'
 
 import { attacksApi, targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { AttackSummary, ConversationMessagesResponse, RegisteredComponentReference, ScorerInstance } from '@/types'
+import type { AttackMetadata, AttackSummary, ConversationMessagesResponse, RegisteredComponentReference, ScorerInstance, TargetInfo } from '@/types'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
@@ -49,6 +49,7 @@ jest.mock('@/services/api', () => ({
   },
   attacksApi: {
     getAttack: jest.fn(),
+    getAttackMetadata: jest.fn(),
     getMessages: jest.fn(),
     getConversations: jest.fn(),
     submitMessageSend: jest.fn(),
@@ -77,10 +78,23 @@ const savedAttack: AttackSummary = {
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   target: {
-    target_type: 'TextTarget',
+    target_type: 'OpenAIChatTarget',
     target_registry_name: 'target-b',
     identifier_hash: targetB.identifier.hash,
   },
+}
+const savedMetadata: AttackMetadata = {
+  attack_result_id: savedAttack.attack_result_id,
+  conversation_id: savedAttack.conversation_id,
+  objective: savedAttack.objective,
+  labels: savedAttack.labels,
+  operator: savedAttack.operator,
+  target: savedAttack.target,
+  execution_read_only: false,
+  last_response_message_piece_id: 'saved-response',
+  related_conversation_count: 0,
+  selected_conversation_id: savedAttack.conversation_id,
+  selected_conversation_valid: true,
 }
 const savedMessages: ConversationMessagesResponse = {
   conversation_id: 'saved-conversation',
@@ -131,6 +145,7 @@ describe('App target selection with the chat composer', () => {
     })
     jest.mocked(targetsApi.getTarget).mockResolvedValue(targetB)
     jest.mocked(attacksApi.getAttack).mockResolvedValue(savedAttack)
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue(savedMetadata)
     jest.mocked(attacksApi.getMessages).mockResolvedValue(savedMessages)
     jest.mocked(attacksApi.getConversations).mockResolvedValue({
       main_conversation_id: 'saved-conversation', conversations: [],
@@ -166,6 +181,40 @@ describe('App target selection with the chat composer', () => {
     await waitFor(() => expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective?.registryName).toBe('target-b'))
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-b'))
+  })
+
+  it('does not offer an SDK-only target or restore it as the last-used target', async () => {
+    const sdkTarget = makeTarget({
+      target_registry_name: 'sdk-demo', target_type: 'TextTarget',
+      capabilities: { supports_multi_turn: true },
+    })
+    saveDefault('alice', sdkTarget)
+    jest.mocked(targetsApi.listTargets).mockResolvedValue({
+      items: [sdkTarget, targetA], pagination: { limit: 200, has_more: false },
+    })
+    render(<App />, { wrapper: TestWrapper })
+    const selector = screen.getByRole('combobox', { name: 'Objective target' })
+    await waitFor(() => expect(selector).toBeEnabled())
+    expect(selector).toHaveValue('')
+    expect(screen.queryByRole('option', { name: /sdk-demo/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /target-a/ })).toBeInTheDocument()
+  })
+
+  it('keeps saved TextTarget history readable without allowing another send', async () => {
+    const user = userEvent.setup()
+    const sdkInfo: TargetInfo = {
+      target_type: 'TextTarget', target_registry_name: 'target-b', identifier_hash: targetB.identifier.hash,
+    }
+    jest.mocked(attacksApi.getAttack).mockResolvedValue({ ...savedAttack, target: sdkInfo })
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue({ ...savedMetadata, target: sdkInfo })
+    render(<App />, { wrapper: TestWrapper })
+    await user.click(screen.getByRole('link', { name: 'Open saved chat' }))
+    expect(await screen.findByText('Saved reply from target B')).toBeInTheDocument()
+    expect(screen.getByTestId('target-resolution-unavailable-banner')).toHaveTextContent('unavailable in the GUI. Sending is disabled')
+    expect(screen.queryByPlaceholderText('Type prompt here')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument()
+    expect(targetsApi.getTarget).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
   })
 
   it('selects a new-chat target from the badge without changing the default', async () => {

@@ -86,6 +86,11 @@ describe('metadata-driven target parameters', () => {
 })
 
 describe('target type configurability', () => {
+  it('excludes TextTarget even though it needs no parameters', () => {
+    expect(canConfigureTargetType(makeTargetType('TextTarget', []))).toBe(false)
+    expect(canConfigureTargetType(makeTargetType('CredentialFreeTarget', []))).toBe(true)
+  })
+
   it('accepts required metadata and specially owned parameters', () => {
     const entry = makeTargetType('RoundRobinTarget', [
       makeParameter({
