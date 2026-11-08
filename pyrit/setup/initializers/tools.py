@@ -9,7 +9,7 @@ from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry
 from pyrit.registry.instance_registry import refuse_saved_entry
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import AttackTechniqueFactory
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 

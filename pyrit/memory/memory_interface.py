@@ -54,10 +54,11 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import visitors
 from sqlalchemy.sql.elements import ClauseElement
 
-from pyrit.analytics.outcome_statistics import compute_outcome_statistics, success_percentage
+from pyrit.analytics import compute_outcome_statistics
+from pyrit.analytics.outcome_statistics import success_percentage
 from pyrit.analytics.scenario_statistics import combine_execution_counts
+from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override, run_legacy_sync_async
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.pagination import DecodedKeysetCursor
 from pyrit.memory.analytics_sql import JsonArrayItems, JsonArrayJoin, JsonArrayValue, JsonContainer, JsonScalar, UuidHex
 

@@ -14,7 +14,8 @@ from pyrit.memory import MemoryInterface
 from pyrit.models import Message, MessagePiece, ScenarioRunState, SeedObjective, SeedOrigin
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, DatasetSource
-from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_rapid_response_technique
+from pyrit.scenario.scenarios.airt import RapidResponse
+from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
 from pyrit.score import SubStringScorer
 
 

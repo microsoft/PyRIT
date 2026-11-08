@@ -13,8 +13,12 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-from pyrit.executor.attack import AttackScoringConfig, MultiPromptSendingAttack, PromptSendingAttack
-from pyrit.executor.attack.component.conversation_manager import ConversationManager
+from pyrit.executor.attack import (
+    AttackScoringConfig,
+    ConversationManager,
+    MultiPromptSendingAttack,
+    PromptSendingAttack,
+)
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     Acquisition,

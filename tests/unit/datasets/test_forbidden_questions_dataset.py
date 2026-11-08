@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.forbidden_questions_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     _ForbiddenQuestionsDataset,
 )
 from pyrit.models import SeedDataset, SeedPrompt

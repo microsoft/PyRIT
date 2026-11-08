@@ -10,13 +10,12 @@ from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar
 
 import numpy as np
 
-from pyrit.common.utils import verify_and_resolve_path
+from pyrit.common import verify_and_resolve_path
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from pyrit.models import ComponentIdentifier
-    from pyrit.models.harm_definition import HarmDefinition
+    from pyrit.models import ComponentIdentifier, HarmDefinition
 
 M = TypeVar("M", bound="ScorerMetrics")
 
@@ -257,7 +256,7 @@ class HarmScorerMetrics(ScorerMetrics):
             return None
 
         if self._harm_definition_obj is None:
-            from pyrit.models.harm_definition import HarmDefinition
+            from pyrit.models import HarmDefinition
 
             self._harm_definition_obj = HarmDefinition.from_yaml(self.harm_definition)
 

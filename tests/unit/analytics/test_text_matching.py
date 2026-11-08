@@ -5,7 +5,7 @@ import math
 
 import pytest
 
-from pyrit.analytics.text_matching import ApproximateTextMatching, ExactTextMatching
+from pyrit.analytics import ApproximateTextMatching, ExactTextMatching
 
 
 class TestExactTextMatching:

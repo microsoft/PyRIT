@@ -39,7 +39,7 @@ export function makeTarget(flat: FlatTarget): TargetInstanceMock {
   return {
     target_registry_name: flat.target_registry_name,
     identifier: {
-      class_name: flat.target_type ?? "TextTarget",
+      class_name: flat.target_type ?? "OpenAIChatTarget",
       hash: `${flat.target_registry_name}-hash`,
       endpoint: flat.endpoint ?? null,
       model_name: flat.model_name ?? null,

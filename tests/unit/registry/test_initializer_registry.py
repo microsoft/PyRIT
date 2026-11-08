@@ -9,11 +9,11 @@ import pytest
 
 from pyrit.cli._cli_args import _parse_initializer_arg
 from pyrit.common import REQUIRED_VALUE
-from pyrit.models.parameter import Parameter
-from pyrit.registry.components.initializer_registry import PYRIT_PATH, InitializerRegistry
+from pyrit.models import Parameter
+from pyrit.registry import InitializerRegistry, discover_in_directory
+from pyrit.registry.components.initializer_registry import PYRIT_PATH
 from pyrit.registry.custom_initializer_storage import CustomInitializerStorage
-from pyrit.registry.discovery import discover_in_directory
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import _execute_initializers_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 

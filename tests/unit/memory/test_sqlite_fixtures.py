@@ -19,9 +19,9 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 
-from pyrit.common.singleton import Singleton
-from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory, migration
-from pyrit.memory.memory_models import Base, PromptMemoryEntry
+from pyrit.common import Singleton
+from pyrit.memory import CentralMemory, MemoryInterface, PromptMemoryEntry, SQLiteMemory, migration
+from pyrit.memory.memory_models import Base
 from pyrit.memory.memory_session import MemorySession
 from pyrit.models import MessagePiece
 from unit import conftest as unit_fixtures

@@ -457,7 +457,7 @@ class TestCrescendoAttackInitialization:
         missing_capability: str,
     ):
         """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
-        from pyrit.prompt_target.common.target_capabilities import CapabilityName
+        from pyrit.prompt_target import CapabilityName
 
         missing = {
             "multi_turn": CapabilityName.MULTI_TURN,

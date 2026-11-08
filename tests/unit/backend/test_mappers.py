@@ -16,35 +16,43 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit.backend.mappers import (
+    attack_result_to_summary_async,
+    converter_object_to_instance,
+    pyrit_messages_to_dto_async,
+    request_piece_to_pyrit_message_piece,
+    request_to_pyrit_message,
+    target_object_to_instance,
+)
 from pyrit.backend.mappers.attack_mappers import (
     _is_azure_blob_url,
     _resolve_media_url,
     _sign_blob_url_async,
-    attack_result_to_summary_async,
-    pyrit_messages_to_dto_async,
-    request_piece_to_pyrit_message_piece,
-    request_to_pyrit_message,
 )
-from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
-from pyrit.backend.mappers.target_mappers import target_object_to_instance, target_origin
+from pyrit.backend.mappers.target_mappers import target_origin
+from pyrit.backend.models import AddMessageRequest, MessagePieceRequest, ScoreView
 from pyrit.backend.models._media import build_filename, infer_mime_type
-from pyrit.backend.models.attacks import AddMessageRequest, MessagePieceRequest, ScoreView
 from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     ComponentIdentifier,
+    ConversationStats,
     Message,
     MessagePiece,
     PromptDataType,
     Score,
 )
-from pyrit.models.catalog.registry_recipe import SavedEntryOwner
-from pyrit.models.catalog.target import TargetOrigin
-from pyrit.models.conversation_stats import ConversationStats
-from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, TextTarget, WebsocketTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.models.catalog import SavedEntryOwner, TargetOrigin
+from pyrit.prompt_target import (
+    CapabilityName,
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
+    TextTarget,
+    WebsocketTarget,
+)
 from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, SAVED_ENTRY_METADATA_KEY
 from unit.mocks import MockPromptTarget
 
@@ -589,7 +597,7 @@ class TestAttackResultToSummary:
 
     async def test_retry_events_mapped_to_response(self) -> None:
         """Test that retry events on an AttackResult are inherited by the AttackSummary."""
-        from pyrit.models.retry_event import RetryEvent
+        from pyrit.models import RetryEvent
 
         now = datetime.now(UTC)
         ar = _make_attack_result()
@@ -1999,7 +2007,7 @@ class TestTargetObjectToInstanceRoundRobin:
 
     def test_round_robin_populates_inner_targets(self) -> None:
         """Inner targets list is populated for RoundRobinTarget objects."""
-        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+        from pyrit.prompt_target import RoundRobinTarget
 
         # Build a mock RoundRobinTarget with two inner targets
         rr = MagicMock(spec=RoundRobinTarget)
@@ -2037,7 +2045,7 @@ class TestTargetObjectToInstanceRoundRobin:
         assert result.inner_targets[1].identifier.endpoint == "https://b.openai.azure.com"
 
     def test_inner_targets_name_nobody_as_their_saver(self) -> None:
-        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+        from pyrit.prompt_target import RoundRobinTarget
 
         inner = MagicMock(spec=PromptTarget)
         inner.capabilities = TargetCapabilities()
@@ -2070,7 +2078,7 @@ class TestTargetObjectToInstanceRoundRobin:
         (``targetIdentity.hoistFromInner``); the mapper faithfully reflects that a
         RoundRobinTarget's own identifier has no model_name.
         """
-        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+        from pyrit.prompt_target import RoundRobinTarget
 
         rr = MagicMock(spec=RoundRobinTarget)
         rr.capabilities = TargetCapabilities()
@@ -2108,7 +2116,7 @@ class TestTargetObjectToInstanceRoundRobin:
 
     def test_round_robin_inner_targets_retain_distinct_models(self) -> None:
         """Inner targets keep their own deployment names; the mapper does not merge them."""
-        from pyrit.prompt_target.round_robin_target import RoundRobinTarget
+        from pyrit.prompt_target import RoundRobinTarget
 
         rr = MagicMock(spec=RoundRobinTarget)
         rr.capabilities = TargetCapabilities()

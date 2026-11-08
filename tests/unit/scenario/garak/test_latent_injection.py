@@ -14,12 +14,14 @@ from unit.mocks import MockPromptTarget
 from pyrit.converter import SearchReplaceConverter
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
-from pyrit.scenario.core.dataset_configuration import (
+from pyrit.scenario import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     ResolvedDataset,
 )
-from pyrit.scenario.scenarios.garak.latent_injection import (
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
+from pyrit.scenario.scenarios.garak import (
     LatentInjection,
     LatentInjectionDatasetConfiguration,
     LatentInjectionTechnique,

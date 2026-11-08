@@ -10,9 +10,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from pyrit.models.catalog import (
+    ScenarioRunSummary,
+)
 from pyrit.models.catalog.scenario import (
     ScenarioLaunchConfiguration,
-    ScenarioRunSummary,
 )
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 from pyrit.models.results.scenario_result import ScenarioRunState

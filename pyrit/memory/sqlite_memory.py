@@ -25,8 +25,8 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.util.concurrency import greenlet_spawn
 
+from pyrit.common import Singleton
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.common.singleton import Singleton
 from pyrit.memory.analytics_sql import UnicodeLower
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
