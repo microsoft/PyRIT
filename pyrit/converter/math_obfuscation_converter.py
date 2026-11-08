@@ -23,6 +23,8 @@ class MathObfuscationConverter(Converter):
     The transformation follows these rules:
 
     * Each non-space character becomes one algebraic line.
+    * Decimal digits write the multiplication explicitly, as in `5 = 8*5 - 7*5`,
+      because `85 - 75` would read as two-digit numbers.
     * Space characters are represented as blank output lines.
     * Newline characters are preserved as blank output lines.
 
@@ -150,7 +152,8 @@ class MathObfuscationConverter(Converter):
                 continue
 
             n = rng.randint(self._min_n, self._max_n)
-            line = f"{ch} = {n}{ch} - {n - 1}{ch}"
+            multiply = "*" if ch.isdecimal() else ""
+            line = f"{ch} = {n}{multiply}{ch} - {n - 1}{multiply}{ch}"
 
             # Add hint inline after the first equation
             if not first_equation_added and self._hint:
