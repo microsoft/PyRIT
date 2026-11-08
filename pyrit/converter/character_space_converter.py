@@ -2,17 +2,16 @@
 # Licensed under the MIT license.
 
 import re
-import string
 
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.models import PromptDataType
 
-_PUNCTUATION_PATTERN = re.compile(f"[{re.escape(string.punctuation)}]")
+_PUNCTUATION_PATTERN = re.compile("[!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~]")
 
 
 class CharacterSpaceConverter(Converter):
     """
-    Spaces out the input prompt and removes specified punctuations.
+    Spaces out the input prompt and removes ASCII punctuation except backslashes.
 
     For more information on the bypass strategy, refer to [@robustintelligence2024bypass].
     """
