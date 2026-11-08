@@ -140,12 +140,14 @@ class MathObfuscationConverter(Converter):
         lines: list[str] = []
         first_equation_added = False
 
-        for ch in prompt:
+        normalized_prompt = prompt.replace("\r\n", "\n").replace("\r", "\n")
+
+        for ch in normalized_prompt:
             if ch == "\n":
                 lines.append("")
                 continue
 
-            if ch == " ":
+            if ch in (" ", "\t"):
                 lines.append("")
                 continue
 

@@ -48,6 +48,54 @@ def test_math_obfuscation_spaces_and_newlines():
     assert lines[4].startswith("C =")
 
 
+def test_math_obfuscation_crlf_and_cr():
+    """CRLF and CR should be treated as newlines without generating control character equations."""
+    converter = MathObfuscationConverter(rng=random.Random(1), hint="", suffix="")
+
+    result_crlf = asyncio.run(converter.convert_async(prompt="A\r\nB"))
+    lines_crlf = result_crlf.output_text.splitlines()
+    assert lines_crlf[0].startswith("A =")
+    assert lines_crlf[1] == ""
+    assert lines_crlf[2].startswith("B =")
+    assert not any(line.startswith("\r =") for line in lines_crlf)
+
+    result_cr = asyncio.run(converter.convert_async(prompt="A\rB"))
+    lines_cr = result_cr.output_text.splitlines()
+    assert lines_cr[0].startswith("A =")
+    assert lines_cr[1] == ""
+    assert lines_cr[2].startswith("B =")
+    assert not any(line.startswith("\r =") for line in lines_cr)
+
+
+def test_math_obfuscation_tabs():
+    """Horizontal tabs should be treated as whitespace word separators."""
+    converter = MathObfuscationConverter(rng=random.Random(1), hint="", suffix="")
+
+    result = asyncio.run(converter.convert_async(prompt="A\tB"))
+    lines = result.output_text.splitlines()
+    assert lines[0].startswith("A =")
+    assert lines[1] == ""
+    assert lines[2].startswith("B =")
+    assert not any(line.startswith("\t =") for line in lines)
+
+
+def test_math_obfuscation_mixed_control_whitespace():
+    """Mixed tabs, CRLF, and spaces should process cleanly with equations only for letters."""
+    converter = MathObfuscationConverter(rng=random.Random(1), hint="", suffix="")
+
+    result = asyncio.run(converter.convert_async(prompt="A\tB\r\nC\rD"))
+    lines = result.output_text.splitlines()
+    assert len(lines) == 7
+    assert lines[0].startswith("A =")
+    assert lines[1] == ""
+    assert lines[2].startswith("B =")
+    assert lines[3] == ""
+    assert lines[4].startswith("C =")
+    assert lines[5] == ""
+    assert lines[6].startswith("D =")
+    assert not any(line.startswith(("\r =", "\t =")) for line in lines)
+
+
 def test_math_obfuscation_empty_string():
     """Empty input should produce empty output."""
     converter = MathObfuscationConverter(rng=random.Random(0), hint="", suffix="")
