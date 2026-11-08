@@ -12,8 +12,7 @@ from typing import Literal
 
 import pytest
 
-from pyrit.common import REQUIRED_VALUE
-from pyrit.common.apply_defaults import reset_default_values, set_default_value
+from pyrit.common import REQUIRED_VALUE, reset_default_values, set_default_value
 from pyrit.common.brick_contract import get_constructor_owners
 from pyrit.converter import (
     ArabiziConverter,
@@ -30,14 +29,14 @@ from pyrit.converter import (
     TranslationConverter,
     VariationConverter,
 )
-from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType
-from pyrit.models.parameter import ComponentType
+from pyrit.models import ComponentIdentifier, ComponentType, Message, MessagePiece, PromptDataType
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
-from pyrit.registry.components import (
+from pyrit.registry import (
     ConverterMetadata,
     ConverterRegistry,
     TargetRegistry,
 )
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, record_saved_entry_refusals
 from pyrit.registry.resolution import derive_parameters
 
 
@@ -198,6 +197,17 @@ class TestConverterRegistryRegisterInstance:
 
         assert isinstance(converter, Base64Converter)
         assert registry.instances.get("base64") is converter
+
+    def test_create_named_instance_records_a_caught_clash_with_a_saved_entry(self, registry: ConverterRegistry):
+        saved = Base64Converter()
+        registry.instances.register(saved, name="base64", metadata={SAVED_ENTRY_METADATA_KEY: "converters"})
+
+        with record_saved_entry_refusals() as refusals:
+            with pytest.raises(ValueError, match="already exists"):
+                registry.create_named_instance(name="base64", type_name="Base64Converter")
+
+        assert refusals == [("converters", "base64")]
+        assert registry.instances.get("base64") is saved
 
     def test_create_named_instance_stores_registry_metadata(self, registry: ConverterRegistry):
         converter = registry.create_named_instance(
@@ -629,7 +639,7 @@ class TestDeriveParameters:
     """Tests for the converter-parameter derivation into the ``Parameter`` contract."""
 
     def test_preserves_optional_annotation_and_scalar_display(self) -> None:
-        from pyrit.models.identifiers import ConverterIdentifier
+        from pyrit.models import ConverterIdentifier
 
         params = derive_parameters(cls=_UnionTargetConverter, identifier_type=ConverterIdentifier)
         offset_param = next(p for p in params if p.name == "offset")
@@ -640,7 +650,7 @@ class TestDeriveParameters:
         assert offset_param.is_string_coercible is True
 
     def test_target_becomes_reference(self) -> None:
-        from pyrit.models.identifiers import ConverterIdentifier
+        from pyrit.models import ConverterIdentifier
 
         params = derive_parameters(cls=_UnionTargetConverter, identifier_type=ConverterIdentifier)
         target_param = next(p for p in params if p.name == "converter_target")
@@ -687,7 +697,7 @@ class TestRegistrationGate:
         assert "Base64Converter" in names
 
     def test_every_converter_derives_a_contract(self, registry: ConverterRegistry) -> None:
-        from pyrit.models.identifiers import ConverterIdentifier
+        from pyrit.models import ConverterIdentifier
 
         for name in registry.get_class_names():
             cls = registry.get_class(name)
@@ -702,7 +712,7 @@ class TestRegistrationGate:
                     )
 
     def test_is_llm_based_matches_target_reference(self, registry: ConverterRegistry) -> None:
-        from pyrit.models.identifiers import ConverterIdentifier
+        from pyrit.models import ConverterIdentifier
 
         for meta in registry.get_all_registered_class_metadata():
             parameters = derive_parameters(
@@ -716,7 +726,7 @@ class TestRegistrationGate:
     def test_register_class_raises_for_unresolvable_reference(self, registry: ConverterRegistry) -> None:
         from unittest.mock import patch
 
-        from pyrit.models.parameter import Parameter, RegistryReference
+        from pyrit.models import Parameter, RegistryReference
 
         target_ref = Parameter(
             name="converter_target",

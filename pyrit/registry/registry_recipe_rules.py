@@ -10,12 +10,12 @@ import unicodedata
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlsplit
 
-from pyrit.models.catalog.registry_recipe import RestoreFailureReason
+from pyrit.models.catalog import RestoreFailureReason
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from pyrit.models.parameter import Parameter
+    from pyrit.models import Parameter
 
 _URL_SCHEMES = frozenset({"http", "https", "ws", "wss"})
 _URL_QUERY_KEYS = frozenset({"api-version"})

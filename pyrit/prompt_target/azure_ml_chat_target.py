@@ -13,8 +13,7 @@ from pyrit.auth import (
     get_azure_async_token_provider,
     is_azure_ml_endpoint,
 )
-from pyrit.common import default_values, net_utility
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import default_values, net_utility, print_deprecation_message
 from pyrit.exceptions import (
     EmptyResponseException,
     RateLimitException,

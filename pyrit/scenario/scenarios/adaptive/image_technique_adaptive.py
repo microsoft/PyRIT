@@ -22,9 +22,9 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.common import apply_defaults
-from pyrit.models.parameter import Parameter
+from pyrit.models import Parameter
 from pyrit.prompt_target import TargetRequirements
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
 

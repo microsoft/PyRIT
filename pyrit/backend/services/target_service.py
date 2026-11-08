@@ -21,28 +21,30 @@ from typing import Any
 
 from azure.core.exceptions import AzureError
 
-from pyrit.backend.mappers.target_mappers import target_object_to_instance, target_origin
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.targets import (
+from pyrit.backend.mappers import target_object_to_instance
+from pyrit.backend.mappers.target_mappers import target_origin
+from pyrit.backend.models import (
     CreateTargetRequest,
+    PaginationInfo,
     TargetListResponse,
+)
+from pyrit.backend.models.targets import (
     TargetTypeEntry,
     TargetTypeResponse,
     UnregisteredTarget,
 )
 from pyrit.backend.services.component_lifecycle import release_component_async
-from pyrit.common import REQUIRED_VALUE, default_values
-from pyrit.common.auth_mode import AUTH_MODES, AuthMode
-from pyrit.models import TargetIdentifier
-from pyrit.models.catalog.registry_recipe import (
+from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
+from pyrit.models import ComponentType, Parameter, TargetIdentifier
+from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryRecipeKind,
     RestoreFailureReason,
     SavedEntryOwner,
+    TargetInstance,
+    TargetOrigin,
 )
-from pyrit.models.catalog.target import TargetInstance, TargetOrigin
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.models.parameter import ComponentType, Parameter
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 from pyrit.registry.file_document_storage import DocumentConflictError

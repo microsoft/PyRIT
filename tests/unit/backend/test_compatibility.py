@@ -24,7 +24,7 @@ from pyrit.backend.routes.version import VersionResponse
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.memory import CentralMemory
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 
 
 @pytest.fixture

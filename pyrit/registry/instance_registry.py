@@ -409,8 +409,6 @@ class DefaultInstanceRegistry(Generic[T]):
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
             if not replace:
-                # A script that catches the duplicate-name error would leave the saved entry standing in.
-                _record_saved_entry_refusal(self._registry_items.get(name))
                 self.validate_name_available(name)
             else:
                 replaced = self._registry_items.get(name)
@@ -457,6 +455,8 @@ class DefaultInstanceRegistry(Generic[T]):
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
             if name in self._registry_items:
+                # Code that catches this error would leave a saved entry standing in, so the clash is recorded.
+                _record_saved_entry_refusal(self._registry_items[name])
                 raise ValueError(f"Instance '{name}' already exists")
 
     def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:

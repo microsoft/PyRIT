@@ -14,8 +14,8 @@ from pyrit.converter import Base64Converter, Converter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, ScenarioDatasetRequest, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration
+from pyrit.scenario.core import DatasetConstraintError
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     ApiKey,
     ApiKeyDatasetConfiguration,
