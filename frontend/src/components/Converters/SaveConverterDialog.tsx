@@ -2,12 +2,13 @@ import { useEffect, useId, useRef, useState } from 'react'
 
 import {
   Button, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
-  Field, Input, MessageBar, MessageBarBody, Text,
+  Field, Input, MessageBar, MessageBarBody, MessageBarTitle, Text,
 } from '@fluentui/react-components'
 
 import { convertersApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
+import { isNotSaveableError, toApiError } from '@/services/errors'
 import type { ConverterInstance, SourceInstanceSpec } from '@/types'
+import { validateRegistryName } from '@/utils/registryName'
 
 import { useSaveConverterDialogStyles } from './SaveConverterDialog.styles'
 
@@ -28,6 +29,9 @@ export default function SaveConverterDialog({
   const [submitting, setSubmitting] = useState(false)
   const [showValidation, setShowValidation] = useState(false)
   const [error, setError] = useState<string>()
+  // A refusal comes from the converter being copied or the changes, so a new name doesn't lift it.
+  const [refusal, setRefusal] = useState<string | null>(null)
+  const [nameConflict, setNameConflict] = useState<{ name: string, detail: string } | null>(null)
   const active = useRef(true)
   const pending = useRef(false)
   const errorRef = useRef<HTMLDivElement>(null)
@@ -41,9 +45,14 @@ export default function SaveConverterDialog({
     active.current = false
     onClose()
   }
+  const persist = refusal === null
+  const trimmed = name.trim()
+  const nameMessage = nameConflict?.name === trimmed ? nameConflict.detail
+    : !trimmed ? 'Enter a registry name'
+      : persist ? validateRegistryName(trimmed) : null
   const save = async (): Promise<void> => {
     if (pending.current) return
-    if (!name.trim()) {
+    if (nameMessage !== null) {
       setShowValidation(true)
       return
     }
@@ -51,10 +60,20 @@ export default function SaveConverterDialog({
     setSubmitting(true)
     setError(undefined)
     try {
-      const converter = await convertersApi.createConverter({ name: name.trim(), type: converterType, source })
+      const converter = await convertersApi.createConverter({ name: trimmed, type: converterType, source, persist })
       onSaved(converter, active.current)
     } catch (err: unknown) {
-      if (active.current) setError(toApiError(err).detail)
+      if (active.current) {
+        const apiError = toApiError(err)
+        if (persist && isNotSaveableError(apiError)) {
+          setRefusal(apiError.detail)
+        } else if (apiError.status === 409 && apiError.type === undefined) {
+          setNameConflict({ name: trimmed, detail: apiError.detail })
+          setShowValidation(true)
+        } else {
+          setError(apiError.detail)
+        }
+      }
     } finally {
       pending.current = false
       if (active.current) setSubmitting(false)
@@ -70,13 +89,19 @@ export default function SaveConverterDialog({
             event.preventDefault()
             void save()
           }}>
-            <Text>Save these settings under a new name. The original converter stays unchanged.
-              The new converter is Temporary: it&apos;s gone after the backend restarts or is reinitialized.</Text>
+            <Text>Save these settings under a new name. The original converter stays unchanged. The new converter
+              comes back after the backend restarts or is reinitialized, rebuilt from the original with these changes.</Text>
+            {refusal !== null && <MessageBar intent="warning" role="status">
+              <MessageBarBody>
+                <MessageBarTitle>This converter can&apos;t be saved</MessageBarTitle>
+                {refusal} A Temporary converter is gone after the backend restarts or is reinitialized.
+              </MessageBarBody>
+            </MessageBar>}
             {error && <MessageBar intent="error">
               <MessageBarBody ref={errorRef} tabIndex={-1} role="alert">{error}</MessageBarBody>
             </MessageBar>}
-            <Field label="Registry name" required
-              validationMessage={showValidation && !name.trim() ? 'Enter a registry name' : undefined}>
+            <Field label="Registry name" required hint="Lowercase letters, digits, and underscores, starting with a letter."
+              validationMessage={showValidation && nameMessage !== null ? nameMessage : undefined}>
               <Input value={name} disabled={submitting} onChange={(_, data) => setName(data.value)} />
             </Field>
           </form>
@@ -84,7 +109,9 @@ export default function SaveConverterDialog({
         <DialogActions>
           <Button onClick={close}>Cancel</Button>
           <Button appearance="primary" type="submit" form={formId}
-            disabled={submitting} disabledFocusable={submitting}>{submitting ? 'Saving...' : 'Save'}</Button>
+            disabled={submitting} disabledFocusable={submitting}>
+            {submitting ? 'Saving...' : persist ? 'Save' : 'Create as Temporary'}
+          </Button>
         </DialogActions>
       </DialogBody>
     </DialogSurface>

@@ -222,7 +222,9 @@ describe('TechniqueEditor', () => {
       await user.type(screen.getByRole('textbox', { name: /Registry name/ }), 'saved_base64{Enter}')
       await screen.findByRole('button', { name: `Settings for converter saved_base64, ${label} stage 2` })
       expect(screen.queryByText('Temporary')).not.toBeInTheDocument()
-      expect(convertersApi.createConverter).toHaveBeenCalledWith({ name: 'saved_base64', type: 'Base64Converter', source })
+      expect(convertersApi.createConverter).toHaveBeenCalledWith({
+        name: 'saved_base64', type: 'Base64Converter', source, persist: true,
+      })
       await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
       expect(onApplied.mock.calls[0][0].override.changes[chain]).toEqual(['base64', 'saved_base64'])
     },

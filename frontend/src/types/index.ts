@@ -569,12 +569,13 @@ export type CreateConverterRequest = {
 } & ({
   params?: Record<string, unknown>
   source?: never
-  /** Save the converter so it comes back after a restart; a copy made with `source` can't be saved yet. */
+  /** Save the converter so it comes back after a restart. */
   persist?: boolean
 } | {
   source: SourceInstanceSpec
   params?: never
-  persist?: never
+  /** Save the copy as its changes, rebuilt from the converter it copies after a restart. */
+  persist?: boolean
 })
 
 export interface SourceInstanceSpec {
