@@ -216,6 +216,41 @@ describe('ScenarioRunPage', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'First objective' })).toHaveFocus())
   })
 
+  it('restores focus to the objective opener when the objective dialog closes', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const objective = screen.getByRole('button', { name: 'First objective' })
+    await user.click(objective)
+    const dialog = within(await screen.findByRole('dialog'))
+    await user.click(dialog.getByRole('button', { name: 'Close', exact: true }))
+    await waitFor(() => expect(objective).toHaveFocus())
+  })
+
+  it('restores focus to the objective opener after Escape and on reopening', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const objective = screen.getByRole('button', { name: 'First objective' })
+    await user.click(objective)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(objective).toHaveFocus())
+    await user.click(objective)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(objective).toHaveFocus())
+  })
+
+  it('restores focus to the technique opener when attack details are dismissed with Escape', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await expand(user)
+    const details = screen.getAllByRole('button', { name: /^Open details for PromptSendingAttack:/ })[0]
+    await user.click(details)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(details).toHaveFocus())
+  })
+
   it('shows per-group and per-objective success rates without restoring paired outcomes', () => {
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
     expect(within(screen.getByLabelText('Scan summary')).getByText('50%', { exact: true })).toBeInTheDocument()
