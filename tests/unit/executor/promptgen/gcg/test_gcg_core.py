@@ -4,6 +4,7 @@
 import json
 import pickle
 import threading
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -20,6 +21,12 @@ attack_manager_mod = pytest.importorskip(
 )
 torch = pytest.importorskip("torch", reason="torch not installed")
 
+from pyrit.executor.promptgen.gcg import (  # noqa: E402
+    GCGAlgorithmConfig,
+    GCGModelConfig,
+    GCGStrategyConfig,
+    SuffixInitializer,  # noqa: E402
+)
 from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E402
     AttackPrompt,
     EvaluateAttack,
@@ -34,8 +41,9 @@ from pyrit.executor.promptgen.gcg.attack.base.attack_manager import (  # noqa: E
     get_embedding_matrix,
     get_embeddings,
 )
-from pyrit.executor.promptgen.gcg.config import GCGAlgorithmConfig, GCGModelConfig, GCGStrategyConfig  # noqa: E402
-from pyrit.executor.promptgen.gcg.extension_protocols import SuffixInitializer  # noqa: E402
+from pyrit.executor.promptgen.gcg.attack.gcg.candidate_proposer import (  # noqa: E402
+    _hf_vocabulary_identity,
+)
 
 gcg_attack_mod = pytest.importorskip(
     "pyrit.executor.promptgen.gcg.attack.gcg.gcg_attack",
@@ -62,6 +70,7 @@ generator_mod = pytest.importorskip(
 GCGGenerator = generator_mod.GCGGenerator
 
 from unit.executor.promptgen.gcg.trajectory_stubs import (  # noqa: E402
+    IntTokenizer,
     RecordingGCGAttack,
     TrajectoryPromptManager,
     TrajectoryWorker,
@@ -1175,11 +1184,137 @@ class TestGetWorkersChatTemplateValidation:
         worker.start.assert_not_called()
 
 
+class TestVocabularyIdentity:
+    @pytest.mark.parametrize(
+        ("added_token", "num_embeddings", "same_identity"),
+        [
+            (None, 27, True),
+            # new_domain_term gets id 27, so it is only sampleable with a 28th embedding row.
+            ("new_domain_term", 27, True),
+            ("new_domain_term", 28, False),
+        ],
+    )
+    def test_vocabulary_identity_covers_only_sampleable_ids(
+        self, *, added_token: str | None, num_embeddings: int, same_identity: bool
+    ) -> None:
+        other = _fast_tokenizer()
+        if added_token is not None:
+            other.add_tokens([added_token])
+
+        identity = _hf_vocabulary_identity(tokenizer=_fast_tokenizer(), num_embeddings=num_embeddings)
+        other_identity = _hf_vocabulary_identity(tokenizer=other, num_embeddings=num_embeddings)
+
+        assert (identity == other_identity) is same_identity
+
+    def test_vocabulary_identity_differs_for_a_different_vocabulary(self) -> None:
+        words = _hf_vocabulary_identity(tokenizer=_fast_tokenizer(), num_embeddings=27)
+        bytes_ = _hf_vocabulary_identity(tokenizer=_fast_tokenizer(byte_level=True), num_embeddings=27)
+
+        assert words != bytes_
+
+    def test_vocabulary_identity_ignores_dictionary_order(self) -> None:
+        tokenizer = _fast_tokenizer()
+        identity = _hf_vocabulary_identity(tokenizer=tokenizer, num_embeddings=27)
+        with patch.object(tokenizer, "get_vocab", return_value=dict(reversed(list(tokenizer.get_vocab().items())))):
+            assert _hf_vocabulary_identity(tokenizer=tokenizer, num_embeddings=27) == identity
+
+
 class TestCheckGcgCapabilities:
+    def test_round_trip_render_failure_restores_prompt_and_identifies_model(self) -> None:
+        tokenizer = _fast_tokenizer()
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init="unknown_control")
+        control, input_ids, control_slice = prompt.control, prompt.input_ids.tolist(), prompt._control_slice
+
+        with pytest.raises(ValueError, match="'fake/model'.*cannot be rendered") as error:
+            attack_manager_mod._check_gcg_capabilities(
+                model=_tiny_model("llama"), tokenizer=tokenizer, model_path="fake/model", prompts=[prompt]
+            )
+
+        assert isinstance(error.value.__cause__, ValueError)
+        assert (prompt.control, prompt.input_ids.tolist(), prompt._control_slice) == (
+            control,
+            input_ids,
+            control_slice,
+        )
+
+    def test_rejects_control_that_does_not_round_trip(self) -> None:
+        from tokenizers import decoders
+
+        tokenizer = _fast_tokenizer()
+        # Decoding without spaces turns the control "hello world" into the unknown word "helloworld".
+        tokenizer.backend_tokenizer.decoder = decoders.Fuse()
+        prompt = AttackPrompt(goal="Say it", target="Sure", tokenizer=tokenizer, control_init="hello world")
+
+        with pytest.raises(ValueError, match="'hello world' does not survive .* comes back as 'helloworld'"):
+            attack_manager_mod._check_gcg_capabilities(
+                model=_tiny_model("llama"), tokenizer=tokenizer, model_path="fake/model", prompts=[prompt]
+            )
+        assert prompt.control == "hello world"
+        assert prompt.control_toks.tolist() == tokenizer("hello world", add_special_tokens=False).input_ids
+
     def test_accepts_tiny_model_with_fast_tokenizer(self) -> None:
         attack_manager_mod._check_gcg_capabilities(
             model=_tiny_model("llama"), tokenizer=_fast_tokenizer(), model_path="fake/model"
         )
+
+    @pytest.mark.parametrize("byte_level", [False, True])
+    @pytest.mark.parametrize("control_init", ["! !", "  hello", "hello  world"])
+    def test_round_trip_check_leaves_the_prompt_unchanged(self, *, byte_level: bool, control_init: str) -> None:
+        tokenizer = _fast_tokenizer(byte_level=byte_level)
+        prompt = AttackPrompt(goal="Say it", target="done", tokenizer=tokenizer, control_init=control_init)
+        control, input_ids, control_slice = prompt.control, prompt.input_ids.tolist(), prompt._control_slice
+        model = _tiny_model("llama")
+        model.resize_token_embeddings(len(tokenizer), mean_resizing=False)
+
+        expectation = (
+            pytest.raises(ValueError, match="does not survive")
+            if byte_level and control_init == "  hello"
+            else nullcontext()
+        )
+        with expectation:
+            attack_manager_mod._check_gcg_capabilities(
+                model=model,
+                tokenizer=tokenizer,
+                model_path="fake/model",
+                prompts=[prompt],
+            )
+
+        assert (prompt.control, prompt.input_ids.tolist(), prompt._control_slice) == (
+            control,
+            input_ids,
+            control_slice,
+        )
+
+    @pytest.mark.parametrize("control", ["unknown_control", "hello world"])
+    def test_round_trip_failure_prevents_all_workers_from_starting(
+        self, *, control: str, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+    ) -> None:
+        from tokenizers import decoders
+
+        preflight_params.control_init = control
+        preflight_workers[0].tokenizer.add_tokens(["unknown_control"])
+        preflight_workers[-1].tokenizer = _fast_tokenizer()
+        preflight_workers[-1].tokenizer.backend_tokenizer.decoder = decoders.Fuse()
+
+        with pytest.raises(ValueError, match="'fake/held-out-model'"):
+            attack_manager_mod.start_workers(params=preflight_params, workers=preflight_workers)
+
+        for worker in preflight_workers:
+            worker.start.assert_not_called()
+
+    def test_rejects_shared_control_that_changes_another_workers_tokens(
+        self, *, preflight_workers: list[MagicMock], preflight_params: SimpleNamespace
+    ) -> None:
+        preflight_params.control_init = "hello  world"
+        worker = preflight_workers[-1]
+        worker.tokenizer = _fast_tokenizer(byte_level=True)
+        worker.model.resize_token_embeddings(len(worker.tokenizer), mean_resizing=False)
+
+        with pytest.raises(ValueError, match="'fake/held-out-model'.*shared control"):
+            attack_manager_mod.start_workers(params=preflight_params, workers=preflight_workers)
+
+        for worker in preflight_workers:
+            worker.start.assert_not_called()
 
     def test_accepts_unused_added_tokens_beyond_embeddings(self) -> None:
         # <start_of_turn> and <end_of_turn> (ids 25 and 26) are added tokens the ChatML
@@ -1455,6 +1590,7 @@ class _WorkerStub:
         self.model = MagicMock()
         self.model.device = "cpu"
         self.tokenizer = tokenizer
+        self._vocabulary_identities: dict[int, str] = {}
         self.results = _Queue([])
         self._gradient = gradient
         self._logits = logits
@@ -2202,6 +2338,15 @@ def _run_trajectory(
         "controls": log["controls"],
         "losses": [round(loss, 6) for loss in log["losses"]],
     }
+
+
+def test_vocabulary_cache_survives_real_steps_and_progressive_phases(tmp_path: Path) -> None:
+    get_vocab = IntTokenizer.get_vocab
+    with patch.object(IntTokenizer, "get_vocab", autospec=True, side_effect=get_vocab) as read_vocab:
+        result = _run_trajectory("progressive-goals-models-2w-2g", seed=42, logfile=tmp_path / "vocabulary-cache.json")
+
+    assert len([event for event in result["events"] if event[0] == "attack"]) > 1
+    assert read_vocab.call_count == 2
 
 
 class TestRandomSeedDeterminism:

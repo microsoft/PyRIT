@@ -13,7 +13,8 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from pyrit.backend.middleware.auth import AuthenticatedUser, require_admin
-from pyrit.backend.models.common import IdentifierStr, ProblemDetail
+from pyrit.backend.models import ProblemDetail
+from pyrit.backend.models.common import IdentifierStr
 from pyrit.backend.models.configuration import (
     ConfigurationFileContent,
     EnvironmentFileContent,
@@ -29,7 +30,7 @@ from pyrit.backend.services.configuration_file_service import (
 from pyrit.backend.services.environment_file_service import EnvironmentFileConflictError, EnvironmentFileService
 from pyrit.common.yaml_helper import safe_load_yaml
 from pyrit.exceptions import KeyVaultInitializationException
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/config", tags=["config"], dependencies=[Depends(require_admin)])

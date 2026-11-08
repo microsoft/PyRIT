@@ -22,12 +22,12 @@ from pydantic import ValidationError
 
 from pyrit import converter
 from pyrit.backend.main import app
-from pyrit.backend.models.converters import (
+from pyrit.backend.models import (
     ConverterPreviewRequest,
     CreateConverterRequest,
 )
 from pyrit.backend.routes import converters as converter_routes
-from pyrit.backend.services.converter_service import (
+from pyrit.backend.services import (
     ConverterService,
     get_converter_service,
 )
@@ -35,6 +35,7 @@ from pyrit.converter import (
     Base64Converter,
     BinaryConverter,
     CaesarConverter,
+    ColloquialWordswapConverter,
     ImageCompressionConverter,
     QRCodeConverter,
     RepeatTokenConverter,
@@ -44,13 +45,13 @@ from pyrit.converter import (
     SuffixAppendConverter,
     TokenSelectionStrategy,
     TranslationConverter,
+    get_converter_modalities,
 )
-from pyrit.converter.converter import get_converter_modalities
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.registry.components import ConverterRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, TargetRegistry
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
@@ -277,6 +278,21 @@ async def test_converter_input_errors_return_400_async(
             )
     assert exc.value.status_code == 400
     assert next(iter(params)) in exc.value.detail
+
+
+@pytest.mark.parametrize("converter_type", ["AzureSpeechTextToAudioConverter", "AzureSpeechAudioToTextConverter"])
+async def test_speech_converter_region_must_be_a_region_name_async(
+    upload_service: ConverterService, converter_type: str
+) -> None:
+    with patch.object(converter_routes, "get_converter_service", return_value=upload_service):
+        with pytest.raises(HTTPException) as exc:
+            await converter_routes.create_converter(
+                CreateConverterRequest(
+                    name="speech", type=converter_type, params={"azure_speech_region": "example.com#"}
+                )
+            )
+    assert exc.value.status_code == 400
+    assert "azure_speech_region must be an Azure region name" in exc.value.detail
 
 
 async def test_binary_creation_from_metadata_and_selection_async(upload_service: ConverterService) -> None:
@@ -919,6 +935,59 @@ class TestPersistDataUriParams:
         assert entry.metadata["owned_artifact_paths"] == []
         assert list(upload_service._upload_path.iterdir()) == []
         assert await upload_service.delete_converter_async(converter_id=response.converter_id)
+
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_variants_and_previews_accept_uploaded_path_overrides(self, upload_service: ConverterService) -> None:
+        source = ColloquialWordswapConverter(deterministic=True)
+        upload_service._registry.instances.register(source, name="wordswap")
+        spec = SourceInstanceSpec(
+            source_name="wordswap",
+            source_hash=source.get_identifier().hash,
+            params={"wordswap_path": _make_data_uri(mime_type="application/yaml", content=b"hello:\n  - wassup\n")},
+        )
+
+        variant = await upload_service.create_converter_async(
+            request=CreateConverterRequest(type="ColloquialWordswapConverter", register=False, source=spec)
+        )
+        preview = await upload_service.preview_conversion_async(
+            request=ConverterPreviewRequest(
+                original_value="hello there", converter_ids=["wordswap"], converter_specs=[spec]
+            )
+        )
+
+        assert variant.identifier.params["substitution_keys"] == ["hello"]
+        assert preview.converted_value == "wassup there"
+        assert list(upload_service._upload_path.iterdir()) == []
+
+    @pytest.mark.usefixtures("patch_central_database")
+    async def test_variants_and_previews_reject_server_path_overrides(
+        self, upload_service: ConverterService, tmp_path: Path
+    ) -> None:
+        source = ColloquialWordswapConverter(deterministic=True)
+        upload_service._registry.instances.register(source, name="wordswap")
+        server_file = tmp_path / "server.yaml"
+        server_file.write_text("hello:\n  - leaked\n", encoding="utf-8")
+        spec = SourceInstanceSpec(
+            source_name="wordswap", source_hash=source.get_identifier().hash, params={"wordswap_path": str(server_file)}
+        )
+
+        with pytest.raises(ValueError, match="'wordswap_path' must be uploaded as a data URI"):
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(type="ColloquialWordswapConverter", register=False, source=spec)
+            )
+        with pytest.raises(ValueError, match="'wordswap_path' must be uploaded as a data URI"):
+            await upload_service.create_converter_async(
+                request=CreateConverterRequest(
+                    type="ColloquialWordswapConverter", register=True, name="saved_wordswap", source=spec
+                )
+            )
+        assert upload_service._registry.instances.get("saved_wordswap") is None
+        with pytest.raises(ValueError, match="'wordswap_path' must be uploaded as a data URI"):
+            await upload_service.preview_conversion_async(
+                request=ConverterPreviewRequest(
+                    original_value="hello", converter_ids=["wordswap"], converter_specs=[spec]
+                )
+            )
 
     @pytest.mark.parametrize("value", [r"C:\server\input.mp4", "input.mp4", "https://example.org/input.mp4", 123])
     async def test_path_or_str_rest_rejects_non_upload_non_blob_values(
@@ -2101,7 +2170,7 @@ def _try_instantiate_converter(converter_name: str):
             kwargs[pname] = Base64Converter()
         # TextSelectionStrategy — use a real concrete technique
         elif "TextSelectionStrategy" in ann_str:
-            from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy
+            from pyrit.converter import AllWordsSelectionStrategy
 
             kwargs[pname] = AllWordsSelectionStrategy()
         # Tokenizer protocol — use a representative vocab object
@@ -2109,7 +2178,7 @@ def _try_instantiate_converter(converter_name: str):
             kwargs[pname] = _MockTokenizerWithVocab()
         # TextJailBreak — use string template
         elif "TextJailBreak" in ann_str:
-            from pyrit.datasets.jailbreak.text_jailbreak import TextJailBreak
+            from pyrit.datasets import TextJailBreak
 
             kwargs[pname] = TextJailBreak(string_template="Test {{ prompt }}")
         # Path — use a temp JPEG file

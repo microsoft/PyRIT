@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import {
   test as base,
   expect,
+  selectChatTarget,
   type APIRequestContext,
   type Page,
   type Request,
@@ -236,11 +237,7 @@ test.describe("Chat processing recovery @seeded", () => {
   test.setTimeout(90_000);
 
   test.beforeEach(async ({ page, localTarget }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: "Registry", exact: true }).click();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true })
-      .selectOption(localTarget.registryName);
-    await page.getByRole("button", { name: "Attacks", exact: true }).click();
+    await selectChatTarget(page, localTarget.registryName);
   });
 
   test("keeps the drawer closed when a delayed send refresh discovers another conversation", async ({
@@ -303,7 +300,7 @@ test.describe("Chat processing recovery @seeded", () => {
         let releaseMetadata: () => void = () => {};
         const metadataGate = new Promise<void>((resolve) => { releaseMetadata = resolve; });
         let metadataStarted = false;
-        await page.route((url: URL) => url.pathname === `/api/attacks/${attackId}`, async (route: Route) => {
+        await page.route((url: URL) => url.pathname === `/api/attacks/${attackId}/metadata`, async (route: Route) => {
           if (route.request().method() === "GET") {
             metadataStarted = true;
             await metadataGate;
@@ -311,7 +308,7 @@ test.describe("Chat processing recovery @seeded", () => {
           await route.continue();
         });
         try {
-          await page.goto(`/attacks/${attackId}`);
+          await page.goto(`/attack/chat/${attackId}`);
           await expect.poll(() => metadataStarted).toBe(true);
           await expect(page.getByText("Loading conversation...", { exact: true })).toBeVisible();
           const toggle = page.getByTestId("toggle-panel-btn");

@@ -16,10 +16,12 @@ from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar
 
 from pyrit.common import default_values
 from pyrit.common.logger import logger
-from pyrit.exceptions import clear_execution_context, get_exception_execution_context, get_execution_context
-from pyrit.exceptions.retry_collector import (
+from pyrit.exceptions import (
     RetryCollector,
+    clear_execution_context,
     clear_retry_collector,
+    get_exception_execution_context,
+    get_execution_context,
     set_retry_collector,
 )
 from pyrit.models import StrategyResultT

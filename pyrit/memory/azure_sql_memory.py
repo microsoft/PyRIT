@@ -34,15 +34,16 @@ from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import ColumnElement, TextClause
 
-from pyrit.auth.azure_auth import AsyncAzureAuth, AzureAuth
-from pyrit.common import default_values
-from pyrit.common.singleton import Singleton
+from pyrit.auth import AzureAuth
+from pyrit.auth.azure_auth import AsyncAzureAuth
+from pyrit.common import Singleton, default_values
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     CustomUUID,
     PromptMemoryEntry,
     ScenarioResultEntry,
+    UTCDateTime,
 )
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import AzureBlobStorageIO
@@ -728,20 +729,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                         ORDER BY p2.sequence DESC, p2.id DESC
                     ) AS latest
                     """
-                )
+                ).columns(created_at=UTCDateTime())
 
                 rows = session.execute(sql, params).fetchall()
 
                 for row in rows:
-                    conv_id, msg_count, last_preview, last_data_type, raw_created_at = row
-
-                    created_at = None
-                    if raw_created_at is not None:
-                        if isinstance(raw_created_at, str):
-                            created_at = datetime.fromisoformat(raw_created_at)
-                        else:
-                            created_at = raw_created_at
-
+                    conv_id, msg_count, last_preview, last_data_type, created_at = row
                     result[conv_id] = ConversationStats(
                         message_count=msg_count,
                         last_message_preview=last_preview,

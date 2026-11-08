@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,10 +25,10 @@ class TestAzureSpeechAudioToTextConverter:
     )
     def test_azure_speech_audio_text_converter_initialization(self, mock_get_required_value):
         converter = AzureSpeechAudioToTextConverter(
-            azure_speech_region="dummy_region", azure_speech_key="dummy_key", recognition_language="es-ES"
+            azure_speech_region="westus2", azure_speech_key="dummy_key", recognition_language="es-ES"
         )
         assert converter._recognition_language == "es-ES"
-        assert converter._azure_speech_region == "dummy_region"
+        assert converter._azure_speech_region == "westus2"
         assert converter._azure_speech_key == "dummy_key"
         assert converter.done is False
 
@@ -51,7 +52,7 @@ class TestAzureSpeechAudioToTextConverter:
         mock_logger.return_value = MagicMock()
 
         # Call the stop_cb function with the mock event
-        converter = AzureSpeechAudioToTextConverter()
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="eastus")
         converter.stop_cb(evt=mock_event, recognizer=MockSpeechRecognizer)
 
         # Check if the callback function worked as expected
@@ -68,7 +69,7 @@ class TestAzureSpeechAudioToTextConverter:
         # from inventing one.
         event = MagicMock(spec=speechsdk.SessionEventArgs)
         recognizer = MagicMock(spec=speechsdk.SpeechRecognizer)
-        converter = AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key="test_key")
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="eastus", azure_speech_key="test_key")
 
         converter.stop_cb(evt=event, recognizer=recognizer)
 
@@ -86,7 +87,7 @@ class TestAzureSpeechAudioToTextConverter:
         event.result.cancellation_details.reason = speechsdk.CancellationReason.Error
         event.result.cancellation_details.error_details = "Mock error details"
         recognizer = MagicMock(spec=speechsdk.SpeechRecognizer)
-        converter = AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key="test_key")
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="eastus", azure_speech_key="test_key")
 
         converter.stop_cb(evt=event, recognizer=recognizer)
 
@@ -114,7 +115,7 @@ class TestAzureSpeechAudioToTextConverter:
         mock_logger.return_value = MagicMock()
 
         # Call the transcript_cb function with the mock event
-        converter = AzureSpeechAudioToTextConverter()
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="eastus")
         transcript = ["sample", "transcript"]
         converter.transcript_cb(evt=mock_event, transcript=transcript)
 
@@ -127,7 +128,7 @@ class TestAzureSpeechAudioToTextConverter:
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
     )
     def test_azure_speech_audio_text_converter_input_supported(self, mock_get_required_value):
-        converter = AzureSpeechAudioToTextConverter()
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="eastus")
         assert converter.input_supported("image_path") is False
         assert converter.input_supported("audio_path") is True
 
@@ -136,7 +137,7 @@ class TestAzureSpeechAudioToTextConverter:
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
     )
     async def test_azure_speech_audio_text_converter_nonexistent_path(self, mock_get_required_value):
-        converter = AzureSpeechAudioToTextConverter()
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="eastus")
         prompt = "nonexistent_path2.wav"
         with pytest.raises(FileNotFoundError):
             assert await converter.convert_async(prompt=prompt, input_type="audio_path")
@@ -147,7 +148,7 @@ class TestAzureSpeechAudioToTextConverter:
     )
     @patch("os.path.exists", return_value=True)
     async def test_azure_speech_audio_text_converter_non_wav_file(self, mock_path_exists, mock_get_required_value):
-        converter = AzureSpeechAudioToTextConverter()
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="eastus")
         prompt = "dummy_audio.mp3"
         with pytest.raises(ValueError):
             assert await converter.convert_async(prompt=prompt, input_type="audio_path")
@@ -157,10 +158,25 @@ class TestAzureSpeechAudioToTextConverter:
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
     )
     def test_init_with_key_uses_key_auth(self, mock_get_required_value):
-        converter = AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key="test_key")
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="eastus", azure_speech_key="test_key")
         assert converter._azure_speech_key == "test_key"
         assert converter._azure_speech_resource_id is None
         assert converter._token_provider is None
+
+    def test_init_keeps_a_region_name_without_surrounding_whitespace(self):
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region=" EastUS ", azure_speech_key="test_key")
+        assert converter._azure_speech_region == "EastUS"
+
+    @pytest.mark.parametrize("region", ["example.com#", "example.com/x?"])
+    def test_init_rejects_a_region_that_is_not_a_region_name(self, region):
+        with pytest.raises(ValueError, match="azure_speech_region must be an Azure region name"):
+            AzureSpeechAudioToTextConverter(azure_speech_region=region, azure_speech_key="test_key")
+
+    def test_init_rejects_a_region_from_the_environment_that_is_not_a_region_name(self):
+        region_variable = AzureSpeechAudioToTextConverter.AZURE_SPEECH_REGION_ENVIRONMENT_VARIABLE
+        with patch.dict(os.environ, {region_variable: "example.com#"}):
+            with pytest.raises(ValueError, match="azure_speech_region must be an Azure region name"):
+                AzureSpeechAudioToTextConverter(azure_speech_key="test_key")
 
     @patch("pyrit.common.default_values.get_non_required_value", return_value="")
     @patch(
@@ -169,7 +185,7 @@ class TestAzureSpeechAudioToTextConverter:
     )
     def test_init_with_resource_id_auto_entra(self, mock_required, mock_non_required):
         converter = AzureSpeechAudioToTextConverter(
-            azure_speech_region="test_region", azure_speech_resource_id="test_resource_id"
+            azure_speech_region="eastus", azure_speech_resource_id="test_resource_id"
         )
         assert converter._azure_speech_key is None
         assert converter._azure_speech_resource_id == "test_resource_id"
@@ -179,7 +195,7 @@ class TestAzureSpeechAudioToTextConverter:
     @patch.dict("os.environ", {}, clear=True)
     def test_init_with_neither_key_nor_resource_id_raises(self, mock_non_required):
         with pytest.raises(ValueError):
-            AzureSpeechAudioToTextConverter(azure_speech_region="test_region")
+            AzureSpeechAudioToTextConverter(azure_speech_region="eastus")
 
     @patch(
         "pyrit.common.default_values.get_required_value",
@@ -190,7 +206,7 @@ class TestAzureSpeechAudioToTextConverter:
             return "my_token"
 
         converter = AzureSpeechAudioToTextConverter(
-            azure_speech_region="test_region",
+            azure_speech_region="eastus",
             azure_speech_key=my_provider,
             azure_speech_resource_id="test_resource_id",
         )
@@ -210,7 +226,7 @@ class TestAzureSpeechAudioToTextConverter:
             return "my_token"
 
         converter = AzureSpeechAudioToTextConverter(
-            azure_speech_region="test_region",
+            azure_speech_region="eastus",
             azure_speech_key=my_provider,
             azure_speech_resource_id="test_resource_id",
         )
@@ -220,7 +236,7 @@ class TestAzureSpeechAudioToTextConverter:
             key=converter._azure_speech_key,
             region=converter._azure_speech_region,
         )
-        MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_token", region="test_region")
+        MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_token", region="eastus")
 
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(
@@ -234,7 +250,7 @@ class TestAzureSpeechAudioToTextConverter:
             return "my_async_token"
 
         converter = AzureSpeechAudioToTextConverter(
-            azure_speech_region="test_region",
+            azure_speech_region="eastus",
             azure_speech_key=my_async_provider,
             azure_speech_resource_id="test_resource_id",
         )
@@ -244,7 +260,7 @@ class TestAzureSpeechAudioToTextConverter:
             key=converter._azure_speech_key,
             region=converter._azure_speech_region,
         )
-        MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_async_token", region="test_region")
+        MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_async_token", region="eastus")
 
     @patch("pyrit.common.default_values.get_non_required_value", return_value="")
     @patch.dict("os.environ", {}, clear=True)
@@ -253,7 +269,7 @@ class TestAzureSpeechAudioToTextConverter:
             return "my_token"
 
         with pytest.raises(ValueError, match="AZURE_SPEECH_RESOURCE_ID"):
-            AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key=my_provider)
+            AzureSpeechAudioToTextConverter(azure_speech_region="eastus", azure_speech_key=my_provider)
 
     @patch(
         "pyrit.converter.azure_speech_audio_to_text_converter.get_speech_config_async",
@@ -275,7 +291,7 @@ class TestAzureSpeechAudioToTextConverter:
         mock_speech_config = MagicMock()
         mock_get_config.return_value = mock_speech_config
 
-        converter = AzureSpeechAudioToTextConverter(azure_speech_region="test_region", azure_speech_key="test_key")
+        converter = AzureSpeechAudioToTextConverter(azure_speech_region="eastus", azure_speech_key="test_key")
 
         with patch.object(converter, "_recognize_audio", return_value="hello world") as mock_recognize:
             result = await converter.convert_async(prompt="test.wav", input_type="audio_path")

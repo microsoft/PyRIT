@@ -24,14 +24,16 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.common import ProblemDetail
-from pyrit.backend.models.scenario_presets import (
+from pyrit.backend.models import (
+    ProblemDetail,
     ScenarioPresetListResponse,
     ScenarioPresetResponse,
     UpdateScenarioPresetRequest,
 )
-from pyrit.backend.services.scenario_preset_service import get_scenario_preset_service
-from pyrit.models.catalog import ResolveScenarioPresetRequest, RunScenarioRequest, ScenarioPreset
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.backend.services import get_scenario_preset_service
+from pyrit.models import ResolveScenarioPresetRequest, ScenarioPreset
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetNameRegisteredError
 from pyrit.registry.file_document_storage import describe_storage_error
 
@@ -125,7 +127,7 @@ async def list_scenario_presets(  # pyrit-async-suffix-exempt
     response_model=ScenarioPresetResponse,
     responses={404: {"model": ProblemDetail, "description": "Preset not found"}},
 )
-async def get_scenario_preset(name: str) -> ScenarioPresetResponse:  # pyrit-async-suffix-exempt
+async def get_scenario_preset(name: IdentifierStr) -> ScenarioPresetResponse:  # pyrit-async-suffix-exempt
     """
     Get one preset and the version required to update it.
 
@@ -202,7 +204,7 @@ async def create_scenario_preset(  # pyrit-async-suffix-exempt
     },
 )
 async def update_scenario_preset(  # pyrit-async-suffix-exempt
-    name: str,
+    name: IdentifierStr,
     body: UpdateScenarioPresetRequest,
 ) -> ScenarioPresetResponse:
     """
@@ -257,7 +259,7 @@ async def update_scenario_preset(  # pyrit-async-suffix-exempt
     dependencies=[Depends(require_admin)],
     responses={404: {"model": ProblemDetail, "description": "Preset not found"}},
 )
-async def delete_scenario_preset(name: str) -> None:  # pyrit-async-suffix-exempt
+async def delete_scenario_preset(name: IdentifierStr) -> None:  # pyrit-async-suffix-exempt
     """
     Delete one stored preset.
 
@@ -287,7 +289,7 @@ async def delete_scenario_preset(name: str) -> None:  # pyrit-async-suffix-exemp
     },
 )
 async def resolve_scenario_preset(  # pyrit-async-suffix-exempt
-    name: str,
+    name: IdentifierStr,
     body: ResolveScenarioPresetRequest,
 ) -> RunScenarioRequest:
     """
