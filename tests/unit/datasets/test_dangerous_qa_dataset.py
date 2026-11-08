@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.dangerous_qa_dataset import _DangerousQADataset
+from pyrit.datasets.seed_datasets.remote import _DangerousQADataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 

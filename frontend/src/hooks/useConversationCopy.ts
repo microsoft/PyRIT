@@ -206,7 +206,7 @@ export function useConversationCopy(options: UseConversationCopyOptions): Conver
       if (isFailedPrompt && copiedMessages.length === 0 && !executionReadOnly) {
         const response = await attacksApi.createAttack({
           target_registry_name: target?.target_registry_name,
-          name: objective || undefined,
+          objective: objective || undefined,
           labels,
           ...(defaultChatScorer === null || objective.trim() && defaultChatScorer
             ? { chat_scorer: defaultChatScorer } : {}),

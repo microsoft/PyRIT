@@ -11,7 +11,7 @@ from uuid import UUID
 
 import pytest
 
-from pyrit.models.catalog import ScenarioSuite, ScenarioSuiteEntry
+from pyrit.models import ScenarioSuite, ScenarioSuiteEntry
 from pyrit.registry import (
     ScenarioSuiteConflictError,
     ScenarioSuiteNameRegisteredError,

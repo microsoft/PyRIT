@@ -17,13 +17,18 @@ from pyrit.exceptions import (
     InvalidJsonException,
     PyritException,
 )
+from pyrit.executor.attack import (
+    AttackAdversarialConfig,
+)
+from pyrit.executor.attack.component import (
+    AdversarialReply,
+    AdversarialTurn,
+    _AdversarialConversationManager,
+)
 from pyrit.executor.attack.component.adversarial_conversation_manager import (
     _BLOCKED_FEEDBACK_TEXT,
     _DEFAULT_ADVERSARIAL_SCHEMA_NAME,
     _EMPTY_FEEDBACK_TEXT,
-    AdversarialReply,
-    AdversarialTurn,
-    _AdversarialConversationManager,
     _build_adversarial_feedback_text,
     _build_adversarial_prompt_metadata,
     _parse_adversarial_reply,
@@ -31,7 +36,6 @@ from pyrit.executor.attack.component.adversarial_conversation_manager import (
 from pyrit.executor.attack.core.attack_config import (
     DEFAULT_ADVERSARIAL_FIRST_MESSAGE,
     DEFAULT_ADVERSARIAL_PROMPT_TEMPLATE,
-    AttackAdversarialConfig,
 )
 from pyrit.models import (
     JSON_SCHEMA_METADATA_KEY,

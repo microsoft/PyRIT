@@ -198,6 +198,30 @@ describe('useConversationCopy', () => {
     expect(options.setBusy).toHaveBeenLastCalledWith(false)
   })
 
+  it.each([
+    { label: 'with an objective', objective: 'Keep this goal', sent: 'Keep this goal' },
+    { label: 'without an objective', objective: '', sent: undefined },
+  ])('should create a failed-prompt branch $label using objective and not name', async ({ objective, sent }) => {
+    const createAttack = jest.mocked(attacksApi.createAttack)
+    createAttack.mockResolvedValue({ attack_result_id: 'retry', conversation_id: 'retry-conv', created_at: '' })
+    const { result, options } = renderCopy({
+      objective,
+      recoverableSend: { history: [], historyCutoffIndex: -1, failedRequestMessageIndex: 2 },
+    })
+
+    await act(async () => { await result.current.copyConversation(2, 'new_attack') })
+
+    expect(createAttack).toHaveBeenCalledWith(expect.objectContaining({
+      target_registry_name: undefined,
+      objective: sent,
+      labels: { operator: 'me' },
+    }))
+    expect(createAttack.mock.calls[0][0]).not.toHaveProperty('name')
+    expect(saveConversation).not.toHaveBeenCalled()
+    expect(options.onConversationCreated).toHaveBeenCalledWith('retry', 'retry-conv', objective, null)
+    expect(options.restoreRecoverableDraft).toHaveBeenCalled()
+  })
+
   it('should explain why branching needs a configured target', () => {
     const { result, rerender, options } = renderCopy({ targetResolutionStatus: 'idle' })
 

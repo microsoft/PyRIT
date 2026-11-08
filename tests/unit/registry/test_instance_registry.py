@@ -15,13 +15,13 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
-from pyrit.registry.instance_registry import (
+from pyrit.registry import (
     DefaultInstanceRegistry,
     InstanceRegistry,
     RegistryEntry,
     SupportsInstances,
+    TagQuery,
 )
-from pyrit.registry.tag_query import TagQuery
 
 
 class _TestItem(Identifiable):

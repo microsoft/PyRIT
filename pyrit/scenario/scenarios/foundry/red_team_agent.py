@@ -21,8 +21,10 @@ from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
+    AsciiSmugglerConverter,
     AtbashConverter,
     Base64Converter,
+    BinaryConverter,
     CaesarConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
@@ -40,32 +42,32 @@ from pyrit.converter import (
     UnicodeSubstitutionConverter,
     UrlConverter,
 )
-from pyrit.converter.binary_converter import BinaryConverter
-from pyrit.converter.token_smuggling.ascii_smuggler_converter import AsciiSmugglerConverter
 from pyrit.datasets import TextJailBreak
 from pyrit.executor.attack import (
+    AttackAdversarialConfig,
+    AttackConverterConfig,
+    AttackScoringConfig,
     AttackStrategy,
     CrescendoAttack,
     PromptSendingAttack,
     RedTeamingAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackConverterConfig, AttackScoringConfig
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
 )
-from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import PromptTarget
+from pyrit.scenario.core import get_default_adversarial_target
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import TechniqueRequirements, check_target_compatibility
 
