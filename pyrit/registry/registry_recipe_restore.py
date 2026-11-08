@@ -26,7 +26,7 @@ from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_s
 from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from pyrit.models import Parameter
     from pyrit.registry.registry import InstanceHoldingRegistry
@@ -103,18 +103,22 @@ class RegistryRecipeRestorer:
                 )
         return SavedRecipes(listings=tuple(listings), failures=tuple(failures))
 
-    def restore(self, *, saved: SavedRecipes | None = None) -> RegistryRestoreReport:
+    def restore(
+        self, *, saved: SavedRecipes | None = None, restored: Collection[SavedEntryRef] = ()
+    ) -> RegistryRestoreReport:
         """
         Rebuild every saved entry that can be rebuilt and register it.
 
         Entries are built on the calling thread, as the target API builds them, because a constructor
         can need the running event loop. Call it when the registries hold only startup entries, as they
-        do at startup and after an apply resets them; an entry restored earlier would otherwise clash
-        with itself by name. If any registry's folder can't be read, nothing is built, since entries
-        in the other folders may name entries in the unread one.
+        do at startup and after an apply resets them, plus the entries named in ``restored``; any other
+        entry restored earlier would clash with itself by name. If any registry's folder can't be read,
+        nothing is built, since entries in the other folders may name entries in the unread one.
 
         Args:
             saved (SavedRecipes | None): What ``read`` returned. Defaults to reading now.
+            restored (Collection[SavedEntryRef]): Saved entries an earlier restore already rebuilt and
+                registered. They are left as they are, and entries that use them can be built.
 
         Returns:
             RegistryRestoreReport: What was restored, what failed and why, and which files were ignored.
@@ -122,13 +126,23 @@ class RegistryRecipeRestorer:
         saved = saved if saved is not None else self.read()
         listings, failures = list(saved.listings), list(saved.failures)
         ignored = [file for listing in listings for file in listing.ignored]
-        failures.extend(failure for listing in listings for failure in listing.failures)
+        failures.extend(
+            failure
+            for listing in listings
+            for failure in listing.failures
+            if failure.name is None or SavedEntryRef(kind=failure.kind, name=failure.name) not in restored
+        )
         if len(listings) < len(self._storages):
             return RegistryRestoreReport(failures=self._sorted(failures), ignored=ignored)
-        stored = {recipe.ref: recipe for listing in listings for recipe in listing.recipes.values()}
+        stored = {
+            recipe.ref: recipe
+            for listing in listings
+            for recipe in listing.recipes.values()
+            if recipe.ref not in restored
+        }
         planned = self._plan_all(stored=stored, failures=failures)
-        restored = self._build_in_order(planned=planned, failures=failures)
-        return RegistryRestoreReport(restored=restored, failures=self._sorted(failures), ignored=ignored)
+        built = self._build_in_order(planned=planned, failures=failures)
+        return RegistryRestoreReport(restored=built, failures=self._sorted(failures), ignored=ignored)
 
     def _plan_all(
         self, *, stored: Mapping[SavedEntryRef, StoredRecipe], failures: list[RestoreFailure]
