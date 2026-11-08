@@ -43,7 +43,7 @@ generator_mod = pytest.importorskip(
     reason="GCG optional dependencies (torch, transformers, etc.) not installed",
 )
 
-from pyrit.executor.promptgen.gcg.config import (  # noqa: E402
+from pyrit.executor.promptgen.gcg import (  # noqa: E402
     GCGAlgorithmConfig,
     GCGModelConfig,
     GCGOutputConfig,

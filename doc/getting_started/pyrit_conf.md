@@ -94,7 +94,7 @@ initializers:
         - scorer
 ```
 
-Use `pyrit list initializers` in the CLI to see all registered initializers. See the [initializer documentation notebook](../code/setup/pyrit_initializer.ipynb) for reference.
+Run `pyrit_scan list-initializers` (or `list-initializers` inside `pyrit_shell`) to see all registered initializers. See the [initializer documentation notebook](../code/setup/pyrit_initializer.ipynb) for reference.
 
 #### Recommended Defaults
 

@@ -13,14 +13,20 @@ from sqlalchemy import inspect, or_, select, text
 from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Query, Session
 
-from pyrit.common.singleton import Singleton
-from pyrit.converter.base64_converter import Base64Converter
-from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, MemoryInterface, PromptMemoryEntry
-from pyrit.memory.memory_interface import AttackResultKeysetCursor, MessagePieceKeysetCursor, _AttackResultQuery
-from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
+from pyrit.common import Singleton
+from pyrit.converter import Base64Converter
+from pyrit.memory import (
+    AttackResultKeysetCursor,
+    AzureSQLMemory,
+    EmbeddingDataEntry,
+    MemoryInterface,
+    PromptMemoryEntry,
+    set_message_piece_sha256_async,
+)
+from pyrit.memory.memory_interface import MessagePieceKeysetCursor, _AttackResultQuery
+from pyrit.memory.memory_models import ScenarioResultEntry, UTCDateTime
 from pyrit.models import Conversation, MessagePiece
-from pyrit.prompt_target.text_target import TextTarget
+from pyrit.prompt_target import TextTarget
 from unit.mocks import get_azure_sql_memory_async, get_sample_conversation_entries
 
 if TYPE_CHECKING:
@@ -595,6 +601,20 @@ def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: A
     assert not any("label_" in k for k in params)
 
 
+def test_get_conversation_stats_types_created_at_as_utc_datetime(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The raw aggregate is typed with UTCDateTime so its result processor reattaches UTC."""
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=["conversation"])
+
+    sql = session.execute.call_args.args[0]
+    assert isinstance(sql.selected_columns.created_at.type, UTCDateTime)
+
+
 def test_get_conversation_stats_uses_one_latest_row_apply(
     uninitialized_memory_interface: AzureSQLMemory,
 ) -> None:
@@ -683,6 +703,29 @@ def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
         )
     )
     assert "scenario_registry_name_1" in combined_statement.compile().params
+
+
+def test_scenario_history_reference_id_binds_pruned_conversation_fallback(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    reference_id = uuid.uuid4()
+    session = MagicMock(spec=Session)
+    session.execute.return_value.all.return_value = []
+    with (
+        patch.object(memory_interface, "_get_session", return_value=session),
+        patch.object(memory_interface, "_uid", return_value="history_reference"),
+    ):
+        result = memory_interface._execute_get_scenario_run_history_page(reference_id=reference_id, limit=1)
+
+    compiled = session.execute.call_args.args[0].compile(dialect=mssql.dialect())
+    sql = " ".join(str(compiled).split())
+    assert result == ([], {}, False)
+    assert 'OPENJSON(JSON_QUERY("AttackResultEntries".pruned_conversation_ids, :pp_history_reference))' in sql
+    assert compiled.params["pp_history_reference"] == "$"
+    assert compiled.params["mv_history_reference_0"] == str(reference_id)
+    assert str(reference_id) not in sql
+    assert "[AttackResultEntries].attribution_parent_id = [ScenarioResultEntries].id" in sql
+    assert "LOWER(value) = :mv_history_reference_0" in sql
 
 
 def test_scenario_history_legacy_label_condition_binds_each_value(
@@ -805,7 +848,7 @@ def test_get_condition_json_property_match_sql_text(
 
 def test_get_condition_json_array_match_all_mode_joins_with_and(memory_interface: AzureSQLMemory):
     """match_mode='all' (default) produces per-element EXISTS clauses joined by AND."""
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     condition = memory_interface._get_condition_json_array_match(
         json_column=AttackResultEntry.atomic_attack_identifier,
@@ -826,7 +869,7 @@ def test_get_condition_json_array_match_any_mode_joins_with_or(memory_interface:
     The outer parens are essential: without them, operator precedence would bind the outer
     ``ISJSON(...) = 1 AND`` tighter than the inner ``OR``, corrupting the predicate.
     """
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     condition = memory_interface._get_condition_json_array_match(
         json_column=AttackResultEntry.atomic_attack_identifier,
@@ -849,7 +892,7 @@ def test_get_condition_json_array_match_any_mode_preserves_empty_absence_overloa
     """match_mode is ignored when array_to_match is empty — always returns the 'no converters' predicate."""
     import re
 
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     def _normalize(condition) -> str:
         # _uid() generates a random per-call suffix on param names; strip it for equality.

@@ -108,6 +108,16 @@ for private vulnerability reporting.
   - **Partner integration tests.** Ensure the partner integration tests are also passing. These tests validate that we are not breaking contracts with partner teams (e.g., Foundry). If any are failing, coordinate with the affected partner teams before proceeding with the release.
   - **Azure key-based auth is disabled in our tenant.** Our Azure subscription has API-key (local) auth turned off, so Azure target integration tests authenticate with Microsoft Entra ID. Tests that run notebooks requiring Azure API keys are deliberately skipped; otherwise they fail with HTTP 403 `AuthenticationTypeDisabled` ("Key based authentication is disabled for this resource"). Do not re-enable key auth for our tenant. When validating a release manually, authenticate Azure targets with Entra (`az login`) rather than API keys.
 - **Update scorer metrics.** Run `python -m build_scripts.evaluate_scorers` and commit the results so that scorer evaluation metrics are up to date.
+  Completion may use cached metrics; it does not guarantee fresh scoring.
+  Blocked judge requests produce undetermined judgments rather than aborting the evaluation.
+  A blocked response being evaluated is different: existing scorer semantics still apply
+  (normally false, or true for refusal scorers).
+  Metrics exclude a response from every trial if its final verdict is undetermined in any trial;
+  exclusions are not counted as true/false judgments or penalized in F1/accuracy.
+  Review the evaluated/input counts, excluded counts, and partial-coverage warnings before
+  interpreting metrics as full-dataset results. Legacy cached metrics without input counts
+  have unknown coverage. Evaluations with no determined results or other errors still fail:
+  the script finishes the remaining scorers, then exits nonzero without reporting overall success.
 
 ## 2. Decide the Next Version
 
