@@ -184,14 +184,14 @@ class SavedEntryService:
             if entry is not None and registry_entry_origin(entry.metadata) is not RegistryEntryOrigin.SAVED:
                 entry = None
             if entry is not None:
-                holders = _holders(kind=kind, entry=entry)
-                if holders:
-                    raise SavedEntryInUseError(_in_use_message(singular=singular, name=name, users=holders))
+                _refuse_held(kind=kind, entry=entry)
                 if runtime is not None and not await _wait_until_idle_async(runtime):
                     raise SavedEntryInUseError(
                         f"Saved {singular} '{name}' could be in use by a request, run, or send in progress. "
                         "Try again when it finishes."
                     )
+                # A request that finished during the wait may have registered an entry that holds this one.
+                _refuse_held(kind=kind, entry=entry)
                 instances.unregister(name, expected_entry=entry)
             try:
                 await asyncio.to_thread(storage.delete_recipe, name, expected_version=stored.version)
@@ -315,6 +315,18 @@ def _holders(*, kind: RegistryRecipeKind, entry: RegistryEntry[Any]) -> list[str
                 origin = _ORIGIN_WORDS[registry_entry_origin(other.metadata)]
                 holders.append(f"{origin} {_singular(other_kind)} '{other.name}'")
     return holders
+
+
+def _refuse_held(*, kind: RegistryRecipeKind, entry: RegistryEntry[Any]) -> None:
+    """
+    Refuse to remove an entry that a registered entry holds.
+
+    Raises:
+        SavedEntryInUseError: If a registered entry holds it.
+    """
+    holders = _holders(kind=kind, entry=entry)
+    if holders:
+        raise SavedEntryInUseError(_in_use_message(singular=_singular(kind), name=entry.name, users=holders))
 
 
 def _held_hashes(instance: object) -> set[str]:
