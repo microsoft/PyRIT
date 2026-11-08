@@ -20,7 +20,7 @@ from azure.core.exceptions import AzureError
 from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.models import ComponentType, Parameter
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, RestoreFailureReason
-from pyrit.registry import ConverterRegistry, InstanceHoldingRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, InstanceHoldingRegistry, RegistryEntry, ScorerRegistry, TargetRegistry
 from pyrit.registry.file_document_storage import DocumentConflictError
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
@@ -160,7 +160,7 @@ def _registered_name(*, parameter_name: str, component_type: ComponentType, inst
         NotSaveableError: If no registered entry holds the instance.
     """
     registry = _REFERENCED_REGISTRIES.get(component_type)
-    entries = (
+    entries: list[RegistryEntry[Any]] = (
         [item for item in registry.get_registry_singleton().instances.get_all_instances() if item.instance is instance]
         if registry is not None
         else []
