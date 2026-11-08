@@ -2972,6 +2972,66 @@ async def test_a_saved_copy_still_keeps_where_its_source_sends_requests(tmp_path
     assert not (tmp_path / "converters").exists()
 
 
+async def test_a_copy_that_changes_its_sources_key_is_refused_even_unsaved(tmp_path: Path) -> None:
+    source = AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key="source-key")
+    instances = ConverterRegistry.get_registry_singleton().instances
+    instances.register(source, name="startup_speech")
+    instances.mark_configuration_entries()
+    request = CreateConverterRequest(
+        name="typed_key_speech",
+        type="AzureSpeechTextToAudioConverter",
+        persist=True,
+        source=SourceInstanceSpec(
+            source_name="startup_speech",
+            source_hash=source.get_identifier().hash,
+            params={"azure_speech_key": "typed-key"},
+        ),
+    )
+
+    with pytest.raises(ValueError) as refusal:
+        await ConverterService().create_converter_async(request=request, recipes_source=str(tmp_path))
+
+    assert not isinstance(refusal.value, NotSaveableError)
+    assert str(refusal.value) == (
+        "A copy keeps its source's connection settings, so it can't set azure_speech_key. "
+        "Create a new one to use different settings."
+    )
+    assert not (tmp_path / "converters").exists()
+
+
+async def test_a_saved_copy_edited_to_change_where_its_source_sends_requests_doesnt_restore(tmp_path: Path) -> None:
+    instances = ConverterRegistry.get_registry_singleton().instances
+    instances.register(
+        AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key="source-key"),
+        name="startup_speech",
+    )
+    instances.mark_configuration_entries()
+    folder = tmp_path / "converters"
+    folder.mkdir()
+    (folder / "westus_speech.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "class_module": AzureSpeechTextToAudioConverter.__module__,
+                "class_name": "AzureSpeechTextToAudioConverter",
+                "params": {"azure_speech_region": "westus"},
+                "source": "startup_speech",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    failures = RegistryRecipeRestorer(source=str(tmp_path)).restore().failures
+
+    assert [(failure.name, failure.reason) for failure in failures] == [
+        ("westus_speech", RestoreFailureReason.BUILD_ERROR)
+    ]
+    assert "A copy keeps its source's connection settings, so it can't set azure_speech_region." in (
+        failures[0].message
+    )
+    assert instances.get("westus_speech") is None
+
+
 async def test_a_copy_whose_converter_is_gone_doesnt_restore(
     startup_replace: SearchReplaceConverter, tmp_path: Path
 ) -> None:

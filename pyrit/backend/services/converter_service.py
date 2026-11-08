@@ -484,17 +484,19 @@ class ConverterService:
                 "It can still be created without saving it."
             )
         source_name = copied_entry_name(registry=self._registry, kind=RegistryRecipeKind.CONVERTERS, source=source)
-        params = await prepare_saved_copy_params_async(
-            registry=self._registry, type_name=request.type, params=source_spec.params
-        )
         try:
             self._registry.instances.validate_name_available(name)
         except ValueError as error:
             if name in self._registry.instances:
                 raise SavedEntryConflictError(str(error)) from error
             raise
+        # A copy can't change its source's connection settings even unsaved, so that refusal comes before the
+        # saving checks, whose refusal says the copy can still be created without saving it.
         converter_obj = await construct_component_async(
-            self._registry.recreate_instance, source=source, params=params, external_input=True
+            self._registry.recreate_instance, source=source, params=source_spec.params, external_input=True
+        )
+        params = await prepare_saved_copy_params_async(
+            registry=self._registry, type_name=request.type, params=source_spec.params
         )
         if source_spec.effective_hash and converter_obj.get_identifier().hash != source_spec.effective_hash:
             raise ValueError("Temporary converter configuration has changed")

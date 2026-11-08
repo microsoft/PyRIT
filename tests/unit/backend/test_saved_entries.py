@@ -2,10 +2,16 @@
 # Licensed under the MIT license.
 
 from collections.abc import Iterator
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
-from pyrit.backend.services.saved_entries import NotSaveableError, refuse_temporary_references
+from pyrit.backend.services.saved_entries import (
+    NotSaveableError,
+    prepare_saved_copy_params_async,
+    refuse_temporary_references,
+)
 from pyrit.converter import Base64Converter
 from pyrit.models import ComponentType, Parameter, RegistryReference
 from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
@@ -88,3 +94,25 @@ class TestRefuseTemporaryReferences:
         assert str(refusal.value) == (
             "Uses scenario 'nightly', which saved entries can't use yet. It can still be created without saving it."
         )
+
+
+async def test_a_copy_to_save_cant_hold_a_credential_even_one_its_class_lets_copies_change() -> None:
+    registry = MagicMock()
+    registry.get_registered_class_metadata.return_value = SimpleNamespace(
+        parameters=[
+            Parameter(name="token", description="token", sensitive=True),
+            Parameter(name="tone", description="tone"),
+        ]
+    )
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await prepare_saved_copy_params_async(
+            registry=registry, type_name="ToneConverter", params={"token": "typed-key", "tone": "formal"}
+        )
+
+    assert str(refusal.value) == (
+        "Saved entries can't hold credentials ('token'). It can still be created without saving it."
+    )
+    assert await prepare_saved_copy_params_async(
+        registry=registry, type_name="ToneConverter", params={"tone": "formal"}
+    ) == {"tone": "formal"}
