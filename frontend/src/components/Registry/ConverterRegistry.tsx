@@ -4,6 +4,7 @@ import type { MouseEvent } from 'react'
 import {
   Badge,
   Button,
+  Checkbox,
   Dialog,
   DialogActions,
   DialogBody,
@@ -38,6 +39,7 @@ import type { ConverterInstance } from '@/types'
 
 import CreateConverterDialog from './CreateConverterDialog'
 import OriginBadge from './OriginBadge'
+import SavedBy from './SavedBy'
 import { useConverterRegistryPageStyles } from './ConverterRegistry.styles'
 import RegistryIdentityRow from './RegistryIdentityRow'
 import { useConverterRegistryStyles } from './Registry.styles'
@@ -251,7 +253,12 @@ export default function ConverterRegistry() {
     })
   }
 
+  const [onlySavedByMe, setOnlySavedByMe] = useState(false)
+  const savedByMeCount = converters.filter((converter) => converter.saved_by_me === true).length
+  // The checkbox only shows while the user has a saved converter, so it turns off when the last one goes.
+  if (onlySavedByMe && savedByMeCount === 0) setOnlySavedByMe(false)
   const visible = converters.filter((converter: ConverterInstance) => (
+    (!onlySavedByMe || converter.saved_by_me === true) &&
     `${converter.converter_id} ${converter.identifier.class_name} ${converter.description ?? ''}`.toLowerCase().includes(search.toLowerCase())
     && (!typeFilter || converter.identifier.class_name === typeFilter)
     && (!outputFilter || converter.identifier.supported_output_types?.includes(outputFilter))
@@ -330,6 +337,10 @@ export default function ConverterRegistry() {
               {outputs.map((output: string) => <option key={output} value={output}>{output.replace('_path', '')}</option>)}
             </Select>
           </Field>
+          {savedByMeCount > 0 && (
+            <Checkbox checked={onlySavedByMe} label={`Only converters I saved (${savedByMeCount})`}
+              onChange={(_, data) => setOnlySavedByMe(data.checked === true)} />
+          )}
           {(search || typeFilter || outputFilter) && <Button appearance="subtle" onClick={() => {
             setSearch('')
             setTypeFilter('')
@@ -356,7 +367,10 @@ export default function ConverterRegistry() {
                 <RegistryIdentityRow key={converter.converter_id} name={converter.converter_id}
                   identity={converter.identifier} columns={5} expanded={expanded.has(converter.converter_id)}
                   onToggle={() => toggleDetails(converter.converter_id)}
-                  nameContent={converter.origin && <OriginBadge origin={converter.origin} />}>
+                  nameContent={<>
+                    {converter.origin && <OriginBadge origin={converter.origin} />}
+                    <SavedBy entry={converter} />
+                  </>}>
                   <TableCell>
                     <div className={pageStyles.type}>
                     <Text>{converter.identifier.class_name}</Text>

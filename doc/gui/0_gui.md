@@ -210,13 +210,15 @@ that need an uploaded file), a converter with an uploaded file, or one that uses
 Temporary target is created as **Temporary** instead, and the dialog says why.
 **Save to registry** on a converter's changed settings, in chat or in a technique
 edit, makes a Temporary copy. The Converters and Scorers tables use the same three
-labels; scorers can be saved through the API.
+labels and say who saved each entry, with **Only converters I saved** and **Only
+scorers I saved** to list just yours; scorers can be saved through the API.
 
 **New technique** saves the technique the same way. Give it a registry name of
 lowercase letters, digits, and underscores that starts with a letter. A technique
 that uses a Temporary converter or a Temporary adversarial target is created as
 **Temporary** instead, and the dialog says why. Settings changed for a single run
-in Scanner stay with that run. The Techniques table uses the same three labels. To
+in Scanner stay with that run. The Techniques table uses the same three labels and
+**Only techniques I saved**. To
 remove a saved technique, delete its file (`techniques/<name>.json`) in
 `registry_recipes_source`, then restart the backend. Use
 [initializers](../code/setup/0_setup.md) for repeatable component setup.

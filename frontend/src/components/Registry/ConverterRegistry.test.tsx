@@ -152,6 +152,42 @@ describe('ConverterRegistry', () => {
     expect(within(row('unlabeled_base64')).queryByText(/Saved|From configuration|Temporary/)).not.toBeInTheDocument()
   })
 
+  it('says who saved each converter and lists only yours on request', async () => {
+    const user = userEvent.setup()
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [
+        { ...converter, converter_id: 'mine_base64', origin: 'saved', saved_by: 'Ada', saved_by_me: true },
+        { ...converter, converter_id: 'bobs_base64', origin: 'saved', saved_by: 'Bob' },
+        { ...converter, converter_id: 'local_base64', origin: 'saved', saved_by: null },
+        { ...converter, converter_id: 'startup_base64', origin: 'configuration' },
+      ],
+    })
+    renderRegistry()
+
+    const table = await screen.findByRole('table', { name: 'Converter instances' })
+    const caption = (name: string): string | null => (
+      within(within(table).getByRole('row', { name: new RegExp(name) })).queryByText(/^Saved by /)?.textContent ?? null
+    )
+    expect(['mine_base64', 'bobs_base64', 'local_base64', 'startup_base64'].map(caption)).toEqual([
+      'Saved by you', 'Saved by Bob', null, null,
+    ])
+    await user.click(screen.getByRole('checkbox', { name: 'Only converters I saved (1)' }))
+    expect(within(table).queryByRole('row', { name: /bobs_base64/ })).not.toBeInTheDocument()
+    expect(within(table).getByRole('row', { name: /mine_base64/ })).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: 'Only converters I saved (1)' }))
+    expect(within(table).getByRole('row', { name: /bobs_base64/ })).toBeInTheDocument()
+  })
+
+  it('offers no list of your own converters when none are yours, such as with sign-in off', async () => {
+    mockedConvertersApi.listConverters.mockResolvedValue({
+      items: [{ ...converter, converter_id: 'local_base64', origin: 'saved', saved_by: null }],
+    })
+    renderRegistry()
+
+    await screen.findByRole('table', { name: 'Converter instances' })
+    expect(screen.queryByRole('checkbox', { name: /Only converters I saved/ })).not.toBeInTheDocument()
+  })
+
   it('keeps a saved converter from being removed and says why', async () => {
     const user = userEvent.setup()
     mockedConvertersApi.listConverters.mockResolvedValue({

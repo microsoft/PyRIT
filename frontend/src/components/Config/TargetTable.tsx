@@ -37,6 +37,7 @@ import OriginBadge from '@/components/Registry/OriginBadge'
 import RegistryIdentityRow from '@/components/Registry/RegistryIdentityRow'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import type { TargetInstance } from '@/types'
+import { savedByText } from '@/utils/registryOrigin'
 import {
   sameTarget,
   targetEndpoint,
@@ -79,12 +80,6 @@ function formatParams(params?: Record<string, unknown> | null): string {
     }
   }
   return parts.join('\n')
-}
-
-/** Who saved a target, shown under its badges, or null when nobody signed in saved it. */
-function savedByText(target: TargetInstance): string | null {
-  if (target.saved_by_me) return 'Saved by you'
-  return target.saved_by ? `Saved by ${target.saved_by}` : null
 }
 
 const COLUMN_TOOLTIPS = {

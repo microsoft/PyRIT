@@ -78,6 +78,30 @@ describe('ScorerRegistry', () => {
     expect(within(row('launch_judge')).getByText('Temporary')).toBeInTheDocument()
   })
 
+  it('says who saved each scorer and lists only yours on request until none are left', async () => {
+    const user = userEvent.setup()
+    const saved: ScorerInstance[] = [
+      { ...scorers[0], scorer_registry_name: 'mine_judge', origin: 'saved', saved_by: 'Ada', saved_by_me: true },
+      { ...scorers[0], scorer_registry_name: 'bobs_judge', origin: 'saved', saved_by: 'Bob' },
+      { ...scorers[0], scorer_registry_name: 'startup_judge', origin: 'configuration' },
+    ]
+    const tree = (items: ScorerInstance[]) => <FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="alice">
+      <ScorerRegistry scorers={items} loading={false} error={null} onRefresh={jest.fn()} />
+    </UserPreferencesProvider></FluentProvider>
+    const rendered = render(tree(saved))
+
+    const caption = (name: string): string | null => (
+      within(screen.getByRole('row', { name: new RegExp(name) })).queryByText(/^Saved by /)?.textContent ?? null
+    )
+    expect(['mine_judge', 'bobs_judge', 'startup_judge'].map(caption)).toEqual(['Saved by you', 'Saved by Bob', null])
+    await user.click(screen.getByRole('checkbox', { name: 'Only scorers I saved (1)' }))
+    expect(screen.queryByRole('row', { name: /bobs_judge/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /mine_judge/ })).toBeInTheDocument()
+    rendered.rerender(tree(saved.slice(1)))
+    expect(screen.queryByRole('checkbox', { name: /Only scorers I saved/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('row', { name: /bobs_judge/ })).toBeInTheDocument()
+  })
+
   it('shows nested types, canonical identity JSON, primary metrics, and average time', async () => {
     const user = userEvent.setup()
     const evaluated: ScorerInstance = {
