@@ -4,9 +4,9 @@
 import pathlib
 import uuid
 
-from pyrit.common.apply_defaults import apply_defaults
+from pyrit.common import apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.converter.converter import ConverterResult
+from pyrit.converter import ConverterResult
 from pyrit.executor.promptgen.fuzzer.fuzzer_converter_base import (
     FuzzerConverter,
 )

@@ -11,19 +11,16 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.common import IdentifierStr, ProblemDetail
-from pyrit.backend.models.scenario_suites import (
+from pyrit.backend.models import (
+    ProblemDetail,
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
     UpdateScenarioSuiteRequest,
 )
-from pyrit.backend.services.scenario_suite_execution_service import (
-    ScenarioSuiteExecutionCapacityError,
-    get_scenario_suite_execution_service,
-)
-from pyrit.backend.services.scenario_suite_service import get_scenario_suite_service
-from pyrit.models import LaunchScenarioSuiteRequest, ScenarioSuiteExecutionSummary
-from pyrit.models.catalog import ScenarioSuite
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.backend.services import get_scenario_suite_execution_service, get_scenario_suite_service
+from pyrit.backend.services.scenario_suite_execution_service import ScenarioSuiteExecutionCapacityError
+from pyrit.models import LaunchScenarioSuiteRequest, ScenarioSuite, ScenarioSuiteExecutionSummary
 from pyrit.registry import (
     ScenarioSuiteConflictError,
     ScenarioSuiteExecutionNotFoundError,

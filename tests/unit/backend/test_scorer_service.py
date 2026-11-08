@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.backend.models.scorers import CreateScorerRequest
+from pyrit.backend.models import CreateScorerRequest
 from pyrit.backend.services.chat_scoring_service import ChatScoringService
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
@@ -27,32 +27,23 @@ from pyrit.models import (
     ScoringExpectation,
     TargetIdentifier,
 )
-from pyrit.models.catalog.registry_recipe import (
-    ComponentRecipe,
-    RegistryEntryOrigin,
-    RegistryRecipeKind,
-    SavedEntryOwner,
-)
+from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.prompt_target import TextTarget
-from pyrit.registry import ScorerRegistry, TargetRegistry
-from pyrit.registry.instance_registry import (
-    SAVED_ENTRY_METADATA_KEY,
-    SAVED_ENTRY_OWNER_METADATA_KEY,
-    DefaultInstanceRegistry,
-)
+from pyrit.registry import DefaultInstanceRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SAVED_ENTRY_OWNER_METADATA_KEY
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.score import (
     ManualScorer,
     MessageToolCallScorer,
+    ObjectiveScorerMetrics,
+    ObservationSource,
     OtelToolCallScorer,
+    Scorer,
     SubStringScorer,
     TrueFalseInverterScorer,
 )
-from pyrit.score.observation.observation_source import ObservationSource
-from pyrit.score.scorer import Scorer
-from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 
 
 class _ServiceScorer(Scorer):

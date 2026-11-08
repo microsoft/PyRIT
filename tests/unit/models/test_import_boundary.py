@@ -57,7 +57,7 @@ KNOWN_TOP_LEVEL_VIOLATIONS: dict[str, dict[str, str]] = {}
 # explicit.
 KNOWN_LAZY_VIOLATIONS: dict[str, dict[str, str]] = {
     "pyrit.models.identifiers.evaluation_identifier": {
-        "pyrit.executor.attack.core.attack_strategy": "phase-7",
+        "pyrit.executor.attack": "phase-7",
     },
 }
 

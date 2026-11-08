@@ -19,7 +19,7 @@ from pyrit.models import ComponentIdentifier, Scorable, Score, ScoringExpectatio
 from pyrit.models.catalog.registry_recipe import SavedEntryOwner
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
-from pyrit.score.scorer import Scorer
+from pyrit.score import Scorer
 
 
 class _RouteLeafScorer(Scorer):

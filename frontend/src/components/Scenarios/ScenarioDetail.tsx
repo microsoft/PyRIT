@@ -70,7 +70,7 @@ import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import ScenarioEstimateSection from './ScenarioEstimateSection'
 import ScenarioRunPreviewDialog from './ScenarioRunPreviewDialog'
 import ScenarioTechniqueSection from './ScenarioTechniqueSection'
-import { scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
+import { datasetTotalLimit, scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
 import { formatCarriedParameterPreview } from './scenarioLaunchPresentation'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { carriedPresetScenarioParams, seedPresetTechniques, untouchedPresetScenarioParams } from './scenarioPresetSeed'
@@ -695,8 +695,9 @@ function ScenarioLaunchForm({
     ],
     [isBaselineForbidden, supportsBaseline, supportsTechniques, techniqueOptions],
   )
+  const datasetSelectionLimit = datasetTotalLimit(datasetEdits, datasetDefaults)
   const datasetSizeLabel = !datasetOptions.total_limit ? 'Not applicable'
-    : effectiveDatasets.max_total === 'all' ? 'No total limit' : String(effectiveDatasets.max_total)
+    : datasetSelectionLimit === 'all' ? 'No total limit' : String(datasetSelectionLimit)
 
   const handleTechniqueChange = (technique: SelectableTechnique, checked: boolean): void => {
     if (technique.isBaseline) {

@@ -7,10 +7,8 @@ from urllib.parse import quote
 
 import pytest
 
-from pyrit.models.catalog.registry_recipe import RestoreFailureReason
-from pyrit.registry.components.converter_registry import ConverterRegistry
-from pyrit.registry.components.scorer_registry import ScorerRegistry
-from pyrit.registry.components.target_registry import TargetRegistry
+from pyrit.models.catalog import RestoreFailureReason
+from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.registry_recipe_rules import (
     SavedEntryRefusedError,
     check_saveable_class,

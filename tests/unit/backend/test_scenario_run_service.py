@@ -21,12 +21,9 @@ import pytest
 import pyrit.backend.services.scenario_configuration_resolver as _resolver_mod
 import pyrit.backend.services.scenario_progress_read_model as _progress_mod
 import pyrit.backend.services.scenario_run_service as _svc_mod
+from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.scenario_progress_read_model import ScenarioPlanLookup, ScenarioProgressReadModel
-from pyrit.backend.services.scenario_run_service import (
-    SavedEntryLaunchConflictError,
-    ScenarioRunConflictError,
-    ScenarioRunService,
-)
+from pyrit.backend.services.scenario_run_service import SavedEntryLaunchConflictError, ScenarioRunConflictError
 from pyrit.common.utils import to_sha256
 from pyrit.converter import Base64Converter, Converter, ROT13Converter
 from pyrit.executor.attack import PromptSendingAttack
@@ -51,6 +48,8 @@ from pyrit.models import (
     Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
+    ScenarioDatasetOptions,
+    ScenarioDatasetRequest,
     ScenarioIdentifier,
     ScenarioObjectiveScorerMetrics,
     ScenarioProgressResult,
@@ -60,28 +59,24 @@ from pyrit.models import (
     ScenarioRunPlanAtomicGroup,
     ScenarioRunPlanSeedGroup,
     ScenarioRunState,
+    ScenarioTechniqueSummary,
     ScoreStatus,
     SeedObjective,
     config_hash,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioTechniqueSummary
-from pyrit.models.scenario_dataset import ScenarioDatasetOptions, ScenarioDatasetRequest
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.models.catalog import RunScenarioRequest
+from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
-from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
+from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core import (
     DatasetAttackConfiguration,
     DatasetConfiguration,
     get_default_adversarial_target,
 )
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.scenario.scenarios.airt.jailbreak import Jailbreak
-from pyrit.scenario.scenarios.airt.scam import Scam
-from pyrit.setup.initializers.converters import ConverterInitializer
-from pyrit.setup.initializers.tools import ToolsInitializer
+from pyrit.scenario.scenarios.airt import Jailbreak, Scam
+from pyrit.setup.initializers import ConverterInitializer, ToolsInitializer
 from unit.async_utils import wait_for_completion_async
 from unit.mocks import (
     MockPromptTarget,
@@ -4314,8 +4309,7 @@ class TestScenarioRunServiceFailedAttackReporting:
         assert fetched.attack_retries == []
 
     async def test_retry_events_surface_per_attack(self, mock_memory) -> None:
-        from pyrit.models import AttackOutcome
-        from pyrit.models.retry_event import RetryEvent
+        from pyrit.models import AttackOutcome, RetryEvent
 
         attack = MagicMock()
         attack.outcome = AttackOutcome.SUCCESS

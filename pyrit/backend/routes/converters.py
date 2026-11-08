@@ -11,14 +11,17 @@ Converter types are set at app startup - you cannot add new types at runtime.
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
-from pyrit.backend.models.common import IdentifierStr, ProblemDetail
-from pyrit.backend.models.converters import (
+from pyrit.backend.models import (
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
     ConverterPreviewResponse,
     ConverterTypeResponse,
     CreateConverterRequest,
+    ProblemDetail,
+)
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.backend.models.converters import (
     UnregisteredConverter,
 )
 from pyrit.backend.routes.common import (
@@ -26,7 +29,7 @@ from pyrit.backend.routes.common import (
     not_saveable_response,
     saved_entry_owner_from_request,
 )
-from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.services import get_converter_service
 from pyrit.backend.services.saved_entries import (
     NotSaveableError,
     SavedEntryConflictError,
