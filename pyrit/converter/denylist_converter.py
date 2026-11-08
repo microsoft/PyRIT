@@ -89,7 +89,8 @@ class DenylistConverter(LLMGenericTextConverter):
         # check if the prompt contains any words from the  denylist and if so,
         # update the prompt replacing the denied words with synonyms
         denylist = self._prompt_kwargs.get("denylist", [])
-        if any(word in prompt for word in denylist):
+        prompt_lower = prompt.lower()
+        if any(word.lower() in prompt_lower for word in denylist):
             return await super().convert_async(prompt=prompt, input_type=input_type)
         logger.info(f"Prompt does not contain any words from the denylist. prompt: {prompt}, denylist: {denylist}")
         return ConverterResult(output_text=prompt, output_type=input_type)
