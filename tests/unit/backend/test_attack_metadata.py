@@ -10,8 +10,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.models.attacks import AttackMetadata, AttackSummary
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.models import AttackSummary
+from pyrit.backend.models.attacks import AttackMetadata
+from pyrit.backend.services import AttackService
 from pyrit.memory import SQLiteMemory, set_message_piece_sha256_async
 from pyrit.models import (
     AtomicAttackIdentifier,

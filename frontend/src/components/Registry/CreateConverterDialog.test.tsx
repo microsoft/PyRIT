@@ -1181,6 +1181,23 @@ describe('CreateConverterDialog', () => {
     })
   }
 
+  it('should exclude SDK-only converter targets while loading all registry pages', async () => {
+    mockTargetConverter()
+    mockedTargetsApi.listTargets
+      .mockResolvedValueOnce({
+        items: [makeTarget({ target_registry_name: 'sdk-demo', target_type: 'TextTarget' })],
+        pagination: { limit: 200, has_more: true, next_cursor: 'next' },
+      })
+      .mockResolvedValueOnce({
+        items: [rewriteTarget], pagination: { limit: 200, has_more: false },
+      })
+    renderDialog()
+    await selectConverterType('PersuasionConverter')
+    expect(screen.queryByRole('option', { name: /sdk-demo/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /^rewrite-target / })).toBeInTheDocument()
+    expect(mockedTargetsApi.listTargets).toHaveBeenCalledWith(200, 'next')
+  })
+
   it.each([
     ['environment', null, 'adversarial_chat'],
     ['saved', targetReference(rewriteTarget), 'rewrite-target'],

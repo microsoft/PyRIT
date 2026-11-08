@@ -14,7 +14,7 @@ from pyrit import converter
 from pyrit.common.random_context import get_random_generator, random_execution
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.models import ComponentIdentifier, ConverterIdentifier, Identifiable, PromptDataType
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import TargetRequirements
 
 if TYPE_CHECKING:
     import random
@@ -90,7 +90,7 @@ class Converter(Identifiable):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Converter")
         if "__init__" in cls.__dict__:

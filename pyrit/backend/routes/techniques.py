@@ -7,7 +7,8 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
+from pyrit.backend.models import ProblemDetail
+from pyrit.backend.models.common import CursorStr, IdentifierStr
 from pyrit.backend.models.techniques import (
     CreateTechniqueRequest,
     TechniqueConfiguration,

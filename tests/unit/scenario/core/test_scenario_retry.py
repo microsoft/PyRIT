@@ -9,8 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-from pyrit.executor.attack import AttackParameters, AttackStrategy, SingleTurnAttackContext
-from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.executor.attack import AttackExecutorResult, AttackParameters, AttackStrategy, SingleTurnAttackContext
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
     AttackPreparationFailureKind,
@@ -888,8 +887,7 @@ class TestScenarioForeignKeyResumeRegression:
         that contract in (the resume mocks bypass it intentionally)."""
         from pyrit.executor.attack import AttackStrategy
         from pyrit.models import AttackSeedGroup, SeedObjective
-        from pyrit.scenario import AtomicAttack
-        from pyrit.scenario.core.attack_technique import AttackTechnique
+        from pyrit.scenario import AtomicAttack, AttackTechnique
 
         mock_attack = MagicMock(spec=AttackStrategy)
         duplicate_groups = [

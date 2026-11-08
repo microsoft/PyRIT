@@ -8,8 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import MockPromptTarget, get_sample_conversations
 
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
+from pyrit.executor.attack import PromptSendingAttack, SequentialAttack, SequentialChildAttack
 from pyrit.memory import CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.models import (
     AttackOutcome,

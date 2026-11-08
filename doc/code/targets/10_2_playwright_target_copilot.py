@@ -37,7 +37,7 @@ from pyrit.models import SeedGroup, SeedPrompt
 from pyrit.output import output_attack_async
 from pyrit.prompt_target import CopilotType, OpenAIChatTarget, PlaywrightCopilotTarget
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
-from pyrit.setup.initialization import IN_MEMORY, initialize_pyrit_async
+from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY)
 

@@ -16,9 +16,8 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.techniques import CreateTechniqueRequest
+from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
-from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.common.apply_defaults import GlobalDefaultValues
@@ -36,17 +35,18 @@ from pyrit.executor.attack import (
     AttackParameters,
     AttackScoringConfig,
     AttackStrategy,
+    PrependedConversationConfig,
     PromptSendingAttack,
     RedTeamingAttack,
+    SimulatedConversationResult,
 )
-from pyrit.executor.attack.component import PrependedConversationConfig
-from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
     Message,
+    ScenarioRunSizeEstimateRequest,
     SeedGroup,
     SeedGroupRequirements,
     SeedObjective,
@@ -54,7 +54,7 @@ from pyrit.models import (
     SeedSimulatedConversation,
     load_next_message_prompt,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSizeEstimateRequest
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.component_spec import RegisteredComponentReference, SourceInstanceSpec
 from pyrit.models.technique_edit import (
     SimulationChanges,
@@ -64,11 +64,11 @@ from pyrit.models.technique_edit import (
     TechniqueSettings,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, ScorerRegistry, TargetRegistry
+from pyrit.scenario import TechniqueRequirements
 from pyrit.scenario.core import AttackTechniqueFactory
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
-from pyrit.scenario.scenarios.technique.execute import Execute
+from pyrit.scenario.scenarios.technique import Execute
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
 

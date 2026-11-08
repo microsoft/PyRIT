@@ -543,7 +543,8 @@ class TestTargetInitializerConfigTagPropagation:
         """An empty ``config.tags`` list must not trigger an ``add_tags`` call (no spurious empty-list passes)."""
         from unittest.mock import MagicMock, patch
 
-        from pyrit.setup.initializers.targets import TargetConfig, TargetInitializer
+        from pyrit.setup.initializers import TargetInitializer
+        from pyrit.setup.initializers.targets import TargetConfig
 
         config = TargetConfig(
             registry_name="empty_tags_target",

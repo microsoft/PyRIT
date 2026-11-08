@@ -44,9 +44,7 @@ if TYPE_CHECKING:
     from types import ModuleType
     from typing import Self
 
-    from pyrit.models import Identifiable
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
-    from pyrit.models.parameter import ComponentType, Parameter
+    from pyrit.models import ComponentIdentifier, ComponentType, Identifiable, Parameter
 
 logger = logging.getLogger(__name__)
 
