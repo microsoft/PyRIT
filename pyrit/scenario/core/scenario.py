@@ -26,10 +26,9 @@ from pyrit.common import default_values, get_global_default_values
 from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException, ScenarioRunInProgressException
 from pyrit.exceptions.exceptions_helpers import summarize_exception
-from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
+from pyrit.executor.attack import AttackContext, AttackExecutor, AttackExecutorResult
 from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution, _observe_interrupted_executions
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
-from pyrit.executor.attack.core.attack_strategy import AttackContext
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     SCENARIO_CONVERSATIONS_METADATA_KEY,
@@ -41,9 +40,16 @@ from pyrit.models import (
     AttackResultSelection,
     AttackSeedGroup,
     BoundedDatasetSize,
+    ComponentType,
+    DatasetFetchPolicy,
     DatasetLimitInput,
     DatasetLimitState,
     IndeterminateDatasetSize,
+    Parameter,
+    RegistryReference,
+    ScenarioDatasetOptions,
+    ScenarioDatasetRequest,
+    ScenarioDatasetSettings,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSizeEstimate,
     ScenarioDatasetSummary,
@@ -62,15 +68,7 @@ from pyrit.models import (
     ScenarioRunState,
     config_hash,
 )
-from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
-from pyrit.models.scenario_dataset import (
-    DatasetFetchPolicy,
-    ScenarioDatasetOptions,
-    ScenarioDatasetRequest,
-    ScenarioDatasetSettings,
-)
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -187,7 +185,7 @@ class Scenario(ABC):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Scenario")
 
@@ -242,7 +240,7 @@ class Scenario(ABC):
             The scenario description is automatically extracted from the class's docstring (__doc__)
             with whitespace normalized for display.
         """
-        from pyrit.registry.registry_metadata import RegistryMetadata
+        from pyrit.registry import RegistryMetadata
 
         description = RegistryMetadata.description_from_docstring(self.__class__)
 
