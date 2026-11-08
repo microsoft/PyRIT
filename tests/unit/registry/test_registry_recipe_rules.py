@@ -42,6 +42,12 @@ def _check(class_name: str, params: dict[str, Any]) -> None:
     check_saved_entry_params(cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=params)
 
 
+def test_check_saved_entry_params_accepts_a_target_that_takes_no_credentials() -> None:
+    assert TargetRegistry.get_registry_singleton().get_class("TextTarget").supported_auth_modes == ()
+
+    _check("TextTarget", {})
+
+
 def _refusal(class_name: str, params: dict[str, Any]) -> SavedEntryRefusedError:
     with pytest.raises(SavedEntryRefusedError) as refusal:
         _check(class_name, params)
