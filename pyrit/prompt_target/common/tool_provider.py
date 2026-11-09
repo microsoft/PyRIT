@@ -37,6 +37,15 @@ class ToolInfrastructureError(Exception):
         self.invoked = invoked
 
 
+class ToolInputError(ValueError):
+    """
+    The tool rejected a correctable request before anything ran.
+
+    Targets return the reason to the model and record the call as not invoked, without ending the turn.
+    Never use this for an executed operation's error or an unknown execution outcome.
+    """
+
+
 class Tool(ABC):
     """A tool that a target can advertise and execute."""
 
@@ -90,6 +99,9 @@ class Tool(ABC):
 
         Returns:
             The JSON-serializable tool result.
+
+        Raises:
+            ToolInputError: If the request was rejected and nothing ran.
         """
 
 

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,6 +16,7 @@ from pyrit.prompt_target import (
     FunctionTool,
     MCPToolProvider,
     OpenAIResponseTarget,
+    ToolInputError,
     ToolProvider,
     collect_tools_async,
     tool,
@@ -452,6 +453,37 @@ async def test_mismatched_arguments_reach_model_as_tool_error(*, arguments: str,
             assert execution == ToolExecutionMetadata(invoked=False)
             target.validate_tool_history(result)
     assert executed == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_tool_input_error_records_a_bounded_reason_without_an_invocation_async(
+    *, strict: bool, legacy: bool
+) -> None:
+    message = "unsupported input " * 200
+
+    async def lookup_async(*, key: str) -> str:
+        raise ToolInputError(message)
+
+    def callback(arguments: dict[str, object]) -> Awaitable[dict[str, object]]:
+        raise ToolInputError(message)
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://example.invalid",
+        api_key="not-a-key",
+        tools=[] if legacy else [FunctionTool(function=lookup_async)],
+        custom_functions={"lookup_async": callback} if legacy else None,
+        fail_on_missing_function=strict,
+    )
+    result = await target._execute_call_section_async({"name": "lookup_async", "arguments": '{"key": "missing"}'})
+    assert result.invoked is False
+    assert result.output == {
+        "error": "tool_input_error",
+        "function": "lookup_async",
+        "message": message[: target._MAX_ERROR_MESSAGE_CHARS],
+    }
 
 
 @pytest.mark.usefixtures("patch_central_database")

@@ -18,7 +18,7 @@ from openai.types.responses import ResponseOutputText
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece, ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import FunctionTool, OpenAIResponseTarget, ToolInfrastructureError
+from pyrit.prompt_target import FunctionTool, OpenAIResponseTarget, ToolInfrastructureError, ToolInputError
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
 
 
@@ -480,16 +480,43 @@ def test_max_tool_rounds_must_be_a_nonnegative_integer(patch_central_database, m
         )
 
 
-def test_identifier_records_max_tool_rounds_only_with_local_tools(patch_central_database) -> None:
-    async def noop(*, value: str) -> str:
+@pytest.mark.parametrize("execute_tools", [False, True])
+def test_identifier_records_max_tool_rounds_only_with_local_tools(
+    *, patch_central_database: None, execute_tools: bool
+) -> None:
+    async def noop_async(*, value: str) -> str:
         return value
 
-    plain = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k")
+    tool = FunctionTool(function=noop_async)
+    plain = OpenAIResponseTarget(
+        model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", execute_tools=execute_tools
+    )
     with_tools = OpenAIResponseTarget(
-        model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", tools=[FunctionTool(function=noop)]
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="k",
+        tools=[tool],
+        execute_tools=execute_tools,
+    )
+    with_longer_limit = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="k",
+        tools=[tool],
+        execute_tools=execute_tools,
+        max_tool_rounds=20,
     )
     assert "max_tool_rounds" not in plain.get_identifier().params
-    assert with_tools.get_identifier().params["max_tool_rounds"] == 10
+    default_identifier = with_tools.get_identifier()
+    longer_identifier = with_longer_limit.get_identifier()
+    if execute_tools:
+        assert default_identifier.params["max_tool_rounds"] == 10
+        assert longer_identifier.params["max_tool_rounds"] == 20
+        assert default_identifier.hash != longer_identifier.hash
+    else:
+        assert "max_tool_rounds" not in default_identifier.params
+        assert "max_tool_rounds" not in longer_identifier.params
+        assert default_identifier.hash == longer_identifier.hash
 
 
 @pytest.mark.parametrize("max_tool_rounds", [0, 2])
@@ -528,21 +555,134 @@ async def test_tool_rounds_stop_at_the_limit_with_every_call_answered_async(
     )
 
 
-async def test_tool_infrastructure_error_ends_the_turn_with_every_call_answered_async(patch_central_database) -> None:
+@pytest.mark.parametrize("max_tool_rounds", [1, 2])
+async def test_tool_round_limit_counts_parallel_responses_and_answers_every_pending_call_async(
+    *, patch_central_database: None, max_tool_rounds: int
+) -> None:
     executed: list[str] = []
 
-    async def lookup(*, key: str) -> str:
+    async def lookup_async(*, key: str) -> str:
         executed.append(key)
-        if key == "broken":
-            raise ToolInfrastructureError("the sandbox is unreachable")
         return key
 
     target = OpenAIResponseTarget(
-        model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", tools=[FunctionTool(function=lookup)]
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="k",
+        tools=[FunctionTool(function=lookup_async)],
+        max_tool_rounds=max_tool_rounds,
     )
-    round_one = create_mock_function_call_response("call_ok", "lookup", {"key": "ok"})
+    call_pairs = (("a", "b"), ("c", "d"), ("e", "f"))
+    responses: list[MagicMock] = []
+    for first_key, second_key in call_pairs:
+        response = create_mock_function_call_response(f"call_{first_key}", "lookup_async", {"key": first_key})
+        response.output.extend(
+            create_mock_function_call_response(f"call_{second_key}", "lookup_async", {"key": second_key}).output
+        )
+        responses.append(response)
+    with patch.object(
+        target._async_client.responses, "create", new_callable=AsyncMock, side_effect=responses
+    ) as create:
+        result = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
+
+    assert create.await_count == max_tool_rounds + 1
+    allowed_keys = [key for pair in call_pairs[:max_tool_rounds] for key in pair]
+    assert executed == allowed_keys
+    assert _call_outputs(result) == [(f"call_{key}", key, True) for key in allowed_keys] + [
+        (f"call_{key}", {"error": "max_tool_rounds_exhausted"}, False) for key in call_pairs[max_tool_rounds]
+    ]
+    final = result[-1].get_piece()
+    assert final.original_value_data_type == "error" and final.response_error == "processing"
+    assert ToolLoopStop.from_metadata(metadata=final.prompt_metadata) == ToolLoopStop(
+        reason=ToolLoopStopReason.MAX_TOOL_ROUNDS_EXHAUSTED
+    )
+    target.validate_tool_history(result)
+    assert filter_non_replayable_messages(messages=result) == result[:-1]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("strict_dispatch", [False, True])
+async def test_input_rejection_preserves_same_round_and_model_retry_async(
+    *, legacy: bool, strict_dispatch: bool
+) -> None:
+    executed: list[str] = []
+
+    async def lookup_async(*, key: str) -> dict[str, str]:
+        if key == "rejected":
+            raise ToolInputError("choose a supported key")
+        executed.append(key)
+        return {"value": key}
+
+    async def legacy_lookup_async(arguments: dict[str, Any]) -> dict[str, str]:
+        return await lookup_async(key=arguments["key"])
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        fail_on_missing_function=strict_dispatch,
+        tools=[] if legacy else [FunctionTool(function=lookup_async, name="lookup")],
+        custom_functions={"lookup": legacy_lookup_async} if legacy else None,
+    )
+    first = create_mock_function_call_response("call_rejected", "lookup", {"key": "rejected"})
+    first.output.extend(create_mock_function_call_response("call_same_round", "lookup", {"key": "same-round"}).output)
+    retry = create_mock_function_call_response("call_retry", "lookup", {"key": "corrected"})
+    with patch.object(
+        target._async_client.responses,
+        "create",
+        new_callable=AsyncMock,
+        side_effect=[first, retry, create_mock_text_response("done")],
+    ) as create:
+        responses = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
+
+    assert create.await_count == 3
+    assert executed == ["same-round", "corrected"]
+    assert _call_outputs(responses) == [
+        (
+            "call_rejected",
+            {"error": "tool_input_error", "function": "lookup", "message": "choose a supported key"},
+            False,
+        ),
+        ("call_same_round", {"value": "same-round"}, True),
+        ("call_retry", {"value": "corrected"}, True),
+    ]
+    assert responses[-1].get_value() == "done"
+    assert all(
+        ToolLoopStop.from_metadata(metadata=piece.prompt_metadata) is None
+        for response in responses
+        for piece in response.message_pieces
+    )
+    target.validate_tool_history(responses)
+    second_request = create.await_args_list[1].kwargs["input"]
+    outputs = [entry for entry in second_request if entry.get("type") == "function_call_output"]
+    assert [entry["call_id"] for entry in outputs] == ["call_rejected", "call_same_round"]
+    assert json.loads(outputs[0]["output"])["message"] == "choose a supported key"
+
+
+@pytest.mark.parametrize("invoked", [None, False], ids=["unknown-outcome", "not-invoked"])
+async def test_tool_infrastructure_error_ends_the_turn_with_every_call_answered_async(
+    *, patch_central_database: None, invoked: bool | None
+) -> None:
+    executed: list[str] = []
+    failure = (
+        ToolInfrastructureError("the sandbox is unreachable")
+        if invoked is None
+        else ToolInfrastructureError("the sandbox is unreachable", invoked=invoked)
+    )
+
+    async def lookup_async(*, key: str) -> str:
+        executed.append(key)
+        if key == "broken":
+            raise failure
+        return key
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", tools=[FunctionTool(function=lookup_async)]
+    )
+    round_one = create_mock_function_call_response("call_ok", "lookup_async", {"key": "ok"})
     for call_id, key in (("call_broken", "broken"), ("call_skipped", "skipped")):
-        round_one.output.extend(create_mock_function_call_response(call_id, "lookup", {"key": key}).output)
+        round_one.output.extend(create_mock_function_call_response(call_id, "lookup_async", {"key": key}).output)
     with patch.object(
         target._async_client.responses, "create", new_callable=AsyncMock, side_effect=[round_one]
     ) as create:
@@ -552,11 +692,18 @@ async def test_tool_infrastructure_error_ends_the_turn_with_every_call_answered_
     assert executed == ["ok", "broken"]
     assert _call_outputs(result) == [
         ("call_ok", "ok", True),
-        ("call_broken", {"error": "tool_infrastructure_error", "message": "The tool's infrastructure failed."}, True),
+        (
+            "call_broken",
+            {"error": "tool_infrastructure_error", "message": "The tool's infrastructure failed."},
+            invoked is not False,
+        ),
         ("call_skipped", {"error": "tool_not_executed", "message": "An earlier tool call failed."}, False),
     ]
     final = result[-1].get_piece()
     assert final.response_error == "processing" and "the sandbox is unreachable" in final.original_value
+    assert ToolLoopStop.from_metadata(metadata=final.prompt_metadata) == ToolLoopStop(
+        reason=ToolLoopStopReason.TOOL_INFRASTRUCTURE_ERROR
+    )
     target.validate_tool_history(result)
     assert filter_non_replayable_messages(messages=result) == result[:-1]
 

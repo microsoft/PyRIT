@@ -48,6 +48,7 @@ from pyrit.prompt_target.common.tool_call_history import parse_function_call, pa
 from pyrit.prompt_target.common.tool_provider import (
     Tool,
     ToolInfrastructureError,
+    ToolInputError,
     ToolProvider,
     _ScopedToolProvider,
     collect_tools_async,
@@ -330,7 +331,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 )
                 or None,
                 "tool_providers": [provider.identifier for provider in self._tool_providers] or None,
-                "max_tool_rounds": self._max_tool_rounds if self._has_local_tools() else None,
+                "max_tool_rounds": self._max_tool_rounds if self._execute_tools and self._has_local_tools() else None,
             },
         )
 
@@ -1197,26 +1198,37 @@ class OpenAIResponseTarget(OpenAITarget):
                 invoked=False,
             )
 
-        if configured_tool is not None:
-            try:
-                configured_tool.validate_arguments(arguments=args)
-            except ValueError as exc:
-                if self._fail_on_missing_function:
-                    raise
-                logger.warning("Invalid arguments for function '%s': %s", name, exc)
-                return _ToolDispatchResult(
-                    output={
-                        "error": "malformed_arguments",
-                        "function": name,
-                        "raw_arguments": args_json,
-                        "message": str(exc)[: self._MAX_ERROR_MESSAGE_CHARS],
-                    },
-                    invoked=False,
-                )
-            return _ToolDispatchResult(output=await configured_tool.execute_async(arguments=args), invoked=True)
+        try:
+            if configured_tool is not None:
+                try:
+                    configured_tool.validate_arguments(arguments=args)
+                except ValueError as exc:
+                    if self._fail_on_missing_function:
+                        raise
+                    logger.warning("Invalid arguments for function '%s': %s", name, exc)
+                    return _ToolDispatchResult(
+                        output={
+                            "error": "malformed_arguments",
+                            "function": name,
+                            "raw_arguments": args_json,
+                            "message": str(exc)[: self._MAX_ERROR_MESSAGE_CHARS],
+                        },
+                        invoked=False,
+                    )
+                return _ToolDispatchResult(output=await configured_tool.execute_async(arguments=args), invoked=True)
 
-        if custom_function is not None:
-            return _ToolDispatchResult(output=await custom_function(args), invoked=True)
+            if custom_function is not None:
+                return _ToolDispatchResult(output=await custom_function(args), invoked=True)
+        except ToolInputError as error:
+            logger.warning("Function '%s' rejected before execution: %s", name, error)
+            return _ToolDispatchResult(
+                output={
+                    "error": "tool_input_error",
+                    "function": name,
+                    "message": str(error)[: self._MAX_ERROR_MESSAGE_CHARS],
+                },
+                invoked=False,
+            )
 
         if self._fail_on_missing_function:
             raise KeyError(f"Function '{name}' is not registered")

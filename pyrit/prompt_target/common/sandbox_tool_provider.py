@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import re
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -23,7 +22,7 @@ from pyrit._code_execution import (
     resolve_sandbox,
 )
 from pyrit.models.code_execution import _ProgramInvocation
-from pyrit.prompt_target.common.tool_provider import Tool, ToolInfrastructureError
+from pyrit.prompt_target.common.tool_provider import Tool, ToolInfrastructureError, ToolInputError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -136,7 +135,7 @@ class _SandboxTool(Tool):
             _SandboxRun: The run, with exactly one event.
 
         Raises:
-            SandboxInputError: If the sandbox rejected the input; nothing ran.
+            ToolInputError: If the sandbox rejected the input; nothing ran.
             ToolInfrastructureError: If the sandbox failed, so the model can't fix it. It records whether
                 anything may have run.
         """
@@ -147,6 +146,8 @@ class _SandboxTool(Tool):
                 invocations=(invocation,),
                 timeout_seconds=timeout_seconds,
             )
+        except SandboxInputError as error:
+            raise ToolInputError(str(error)) from error
         except (SandboxBusyError, SandboxSessionLostError, SandboxUnavailableError) as error:
             message = f"The sandbox could not run {self.name}, and nothing ran: {error}"
             raise ToolInfrastructureError(message, invoked=False) from error
@@ -228,19 +229,19 @@ class _RunProgramTool(_SandboxTool):
             arguments (dict[str, object]): Arguments supplied by the model.
 
         Returns:
-            object: The exit code and bounded output, or the reason the sandbox rejected the call.
+            object: The exit code and bounded output.
+
+        Raises:
+            ToolInputError: If the sandbox rejected the input; nothing ran.
         """
         values = _RunArguments.model_validate(arguments)
         invocation = _ProgramInvocation(arguments=tuple(values.arguments), stdin=values.stdin)
-        try:
-            run = await self._run_async(
-                program=values.program,
-                runtime_profile_name=self._profile_name,
-                invocation=invocation,
-                timeout_seconds=values.timeout_seconds,
-            )
-        except SandboxInputError as error:
-            return {"error": "SandboxInputError", "message": str(error)}
+        run = await self._run_async(
+            program=values.program,
+            runtime_profile_name=self._profile_name,
+            invocation=invocation,
+            timeout_seconds=values.timeout_seconds,
+        )
         return self._result(run=run)
 
     def _result(self, *, run: _SandboxRun) -> dict[str, object]:
@@ -303,17 +304,15 @@ class _FileTool(_SandboxTool):
             dict[str, Any]: The result, or the error the model caused.
 
         Raises:
+            ToolInputError: If the sandbox rejected the input; nothing ran.
             ToolInfrastructureError: If the program reported no result.
         """
-        try:
-            run = await self._run_async(
-                program=program,
-                runtime_profile_name=self._runtime,
-                invocation=_ProgramInvocation(),
-                timeout_seconds=None,
-            )
-        except SandboxInputError as error:
-            return {"error": "SandboxInputError", "message": str(error)}
+        run = await self._run_async(
+            program=program,
+            runtime_profile_name=self._runtime,
+            invocation=_ProgramInvocation(),
+            timeout_seconds=None,
+        )
         event = run.events[0]
         if event.timed_out:
             return {"error": "TimeoutError", "message": f"{self.name} did not finish in time."}
@@ -431,7 +430,7 @@ class _ReadFileTool(_FileTool):
             return result
         try:
             data = base64.b64decode(result["data"], validate=True)
-        except (KeyError, TypeError, binascii.Error) as error:
+        except (KeyError, TypeError, ValueError) as error:
             raise ToolInfrastructureError("read_file reported a malformed result.") from error
         return {
             "path": values.path,
@@ -488,8 +487,9 @@ class SandboxToolProvider:
     offers ``write_file``, ``read_file`` and ``list_dir``, which run as small Python programs. Each call
     runs once, and its result is JSON: the exit code and output, cut at ``max_output_chars`` per stream.
     Arguments are checked against the sandbox's limits before anything runs, so a rejected call is never
-    recorded as invoked. A sandbox failure raises ``ToolInfrastructureError``, so a target with a bounded
-    tool loop ends the turn instead of asking the model to fix it.
+    recorded as invoked. An adapter's input rejection raises ``ToolInputError`` with the same no-run
+    guarantee. A sandbox failure raises ``ToolInfrastructureError``, so a target with a bounded tool loop
+    ends the turn instead of asking the model to fix it.
 
     Experimental: it is built on ``pyrit._code_execution``, which may change without a deprecation cycle.
     """

@@ -184,6 +184,27 @@ async def test_preflight_failures_prevent_execution_async(
     launch.assert_not_awaited()
 
 
+@pytest.mark.parametrize("backend_variable", ["DOCKER_HOST", "DOCKER_CONTEXT", None])
+async def test_backend_support_is_rechecked_before_each_execution_async(
+    *, client: DockerSandboxClient, backend_variable: str | None
+) -> None:
+    with (
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=_process()),
+        patch.object(client, "_control_async", _control()),
+    ):
+        assert (await _run_async(client)).events[0].exit_code == 0
+    backend = patch.dict(os.environ, {backend_variable: "different-backend"}) if backend_variable else nullcontext()
+    with (
+        backend,
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as launch,
+        patch.object(client, "_control_async", _control(capabilities="none true true true true true")) as control,
+        pytest.raises(SandboxExecutionError, match="must support cgroup"),
+    ):
+        await _run_async(client)
+    control.assert_awaited()
+    launch.assert_not_awaited()
+
+
 def test_run_arguments_enforce_runtime_and_isolation(client: DockerSandboxClient, tmp_path: Path) -> None:
     command = ("python3", "-I", "/program/main.py", "argument")
     argv = client._run_arguments(

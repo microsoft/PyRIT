@@ -35,15 +35,18 @@ The model sees ordinary tools in its own API:
 | Tool | What it does |
 |------|--------------|
 | `run_<runtime>` | Runs a program once, such as `run_python` or `run_powershell`, with optional arguments, standard input and timeout |
-| `write_file`, `read_file`, `list_dir` | Work with files, in sandboxes whose files persist between calls |
+| `write_file`, `read_file`, `list_dir` | Work with files in an `environment` sandbox whose `file_runtime_profile_name` names a Python 3 runtime |
 
 Results are JSON. `run_<runtime>` returns the exit code, the output of each stream (cut at
 `max_output_chars`, and marked when cut), whether the program timed out, and how long it took. A program
 that fails is an ordinary result the model can read and fix.
 
 Arguments are checked against the sandbox's limits before anything runs, so a call rejected there goes back to
-the model as an error, with the reason, and is never recorded as invoked. When the sandbox itself fails, the
-tool raises `ToolInfrastructureError`, and `OpenAIResponseTarget` ends the turn with an error response
+the model as an error, with the reason, and is never recorded as invoked. If an adapter rejects a validated
+request before execution, the tool raises `ToolInputError`; the target returns its reason with `invoked=False`
+and lets the model correct the call. Executed programs that report an error still count as invoked.
+When the sandbox itself fails, the tool raises `ToolInfrastructureError`, and `OpenAIResponseTarget`
+ends the turn with an error response
 instead of asking the model to fix a problem that isn't its own. Every call the model made still gets a
 result, so the conversation's history stays valid; the model is told only that the tool's infrastructure
 failed, while the error response, which is never replayed to the model, keeps the details. Its `ToolLoopStop`
