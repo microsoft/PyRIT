@@ -5,8 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.converter import ConverterResult
-from pyrit.converter.logic_jailbreak_converter import LogicJailbreakConverter
+from pyrit.converter import ConverterResult, LogicJailbreakConverter
 from pyrit.models import Message, MessagePiece, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
