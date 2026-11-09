@@ -175,8 +175,13 @@ export interface ChatDraftHandoffContextValue {
   preserveDraft: (
     state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>,
     expectedSequence?: number,
+    retainedImportId?: string,
   ) => void
-  clearPreservedDraft: (expectedSequence?: number) => void
+  clearPreservedDraft: (
+    expectedSequence?: number,
+    targetAttackId?: string | null,
+    targetConversationId?: string | null,
+  ) => void
   /** Pass the sequence captured before preparing an import to reject stale async results. */
   stagePendingImport: (
     payload: Omit<PendingImportPayload, 'id' | 'sequence' | 'stagedAt'>,
@@ -193,6 +198,10 @@ export interface ChatDraftHandoffContextValue {
     currentConversationId?: string | null,
     expectedSequence?: number,
   ) => ChatDraftContent | null
+  getPreservedDraft: (
+    currentAttackId?: string | null,
+    currentConversationId?: string | null,
+  ) => ChatDraftContextState | null
   isDraftDirty: (draft?: Partial<ChatDraftContent> | null) => boolean
 }
 
@@ -880,6 +889,8 @@ export interface AttackAnalyticsFacetQuery {
   readonly dimension: AttackAnalyticsDimension
   readonly filters?: AttackAnalyticsFilters
   readonly search?: string
+  /** Full LIKE pattern instead of literal search (% and _, / escaping). */
+  readonly search_pattern?: string
   readonly offset?: number
   readonly limit?: number
 }
@@ -1490,6 +1501,8 @@ export interface SeedExampleListParams {
   limit?: number
   cursor?: string
   search?: string
+  /** Full LIKE pattern instead of literal search (% and _, / escaping). */
+  value_pattern?: string
   modality?: readonly string[]
   seed_type?: readonly SeedType[]
   harm_category?: readonly string[]

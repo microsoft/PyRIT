@@ -22,6 +22,16 @@ available to assistive technology while the help is closed. Required markers,
 validation errors, input-format guidance, and unavailable-estimate reasons
 stay visible.
 
+## GUI targets
+
+`TextTarget` is an SDK demonstration and manual-workflow target that writes to
+the Python host's text stream without returning a response. It remains available
+in the SDK and REST API, but is excluded from GUI creation, registries, and target
+choices, including converter, technique, and round-robin references. Registered
+round-robin targets containing a `TextTarget` are excluded as well.
+Saved history remains readable, but chats bound to a `TextTarget` cannot send
+further prompts from the GUI.
+
 ## Conversation selection
 
 Opening a saved attack with related conversations automatically opens the
@@ -125,9 +135,13 @@ keeps the current reading position.
 
 Chat drafts stay in memory while you visit Datasets and return. Text, attachments,
 system prompts, the selected target, and converter setup/results return to their
-original attack and conversation. A loading, missing, or read-only destination
-does not consume the draft. Starting a new attack or leaving the Chat/Datasets
-journey discards the handoff; refreshing the browser does not retain it.
+original attack and conversation, including across sidebar navigation and direct
+conversation switches. Each conversation retains its own draft. A loading,
+missing, or read-only destination does not consume the draft. Importing into a
+new conversation uses the source conversation's setup, not another retained draft.
+Starting a new attack clears retained drafts; refreshing the browser does not
+retain them. Switching conversations does not cancel an in-flight send or let
+its completion clear another conversation's input.
 
 The **Datasets** page shows summaries of datasets already loaded into the backend's
 memory. When memory is empty, **Learn how to load datasets into memory** opens the

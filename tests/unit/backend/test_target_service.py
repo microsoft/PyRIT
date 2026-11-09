@@ -261,6 +261,15 @@ class TestListTargetTypes:
         azure_ml_entry = next(item for item in result.items if item.target_type == "AzureMLChatTarget")
         assert azure_ml_entry.supported_auth_modes == ["api_key", "identity"]
 
+    async def test_types_report_no_auth_modes_for_credential_free_target_async(self) -> None:
+        """TextTarget needs no credentials, so its type entry advertises no auth modes."""
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "TextTarget")
+        assert entry.supported_auth_modes == []
+
     async def test_types_include_github_copilot_form_parameters_async(self) -> None:
         service = TargetService()
 

@@ -540,7 +540,7 @@ async def test_finding_search_escapes_sql_server_bracket_wildcards(sqlite_instan
         await sqlite_instance.get_findings_async(title_query="[Proof]")
     statement = session.scalars.call_args.args[0]
     compiled = statement.compile(dialect=mssql.dialect())
-    assert compiled.params["title_1"] == "%/[Proof]%"
+    assert "%/[Proof]%" in compiled.params.values()
     assert "ESCAPE '/'" in str(compiled)
 
 
