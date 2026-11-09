@@ -403,7 +403,7 @@ export default function TechniqueEditor({
                         return <HelpField key={field} label={label} help={help}>
                           {template && <div className={styles.promptControls}>
                             <Badge appearance="tint" color={customized ? 'brand' : 'informative'}>{customized ? 'Customized' : 'Default'}</Badge>
-                            <Button size="small" appearance="subtle" disabled={inputsDisabled || !customized}
+                            <Button className={styles.action} size="small" appearance="subtle" disabled={inputsDisabled || !customized}
                               aria-label={`Reset ${label.toLowerCase()} to default`}
                               onClick={() => update(setter, promptValue(original, field))}>Reset to default</Button>
                           </div>}
