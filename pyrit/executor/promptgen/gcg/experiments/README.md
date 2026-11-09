@@ -67,7 +67,8 @@ one step of each progressive phase. A mixed run trains two Qwen2.5 sizes that
 share a gradient group alongside a DeepSeek distill that does not, with a
 held-out TinyLlama model. These runs cover template rendering, slicing,
 gradients, candidate filtering, and scoring, not attack success on the full
-model. The Gemma, Llama 3.2, and
+model. Worker gradients and losses must be finite, and every gradient row must
+have a finite, nonzero norm before normalization. The Gemma, Llama 3.2, and
 Mistral 7B/Nemo rows use unsloth's ungated mirrors, so no Hugging Face token is
 needed.
 

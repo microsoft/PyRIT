@@ -3,7 +3,7 @@
 
 """Integration tests for the GCG compatibility matrix in ``experiments/README.md``.
 
-Each case loads a representative checkpoint's real tokenizer and config from the
+Each checkpoint case loads its real tokenizer and config from the
 Hugging Face Hub, but not its weights. Workers come from the real ``get_workers``,
 so tokenizer setup and the preflight run unchanged, but each one holds a tiny
 randomly initialized float16 model built from that config and runs operations
@@ -103,8 +103,76 @@ class _InProcessWorker(ModelWorker):
         task = ModelWorkerTask(obj=deepcopy(ob), operation=operation, args=args, kwargs=kwargs)
         context = torch.enable_grad() if operation is ModelWorkerOperation.GRAD else torch.no_grad()
         with context:
-            self.results.put(ModelWorker._execute_task(model=self.model, task=task))
+            result = ModelWorker._execute_task(model=self.model, task=task)
+            if operation in (ModelWorkerOperation.GRAD, ModelWorkerOperation.LOSS, ModelWorkerOperation.TEST_LOSS):
+                values = torch.as_tensor(result)
+                assert torch.isfinite(values).all(), f"{operation.value} returned non-finite values"
+                if operation is ModelWorkerOperation.GRAD:
+                    row_norms = values.norm(dim=-1)
+                    assert torch.isfinite(row_norms).all() and (row_norms > 0).all(), (
+                        "Gradient rows must have finite, nonzero norms"
+                    )
+            self.results.put(result)
         return self
+
+
+@pytest.fixture
+def in_process_worker() -> _InProcessWorker:
+    worker = object.__new__(_InProcessWorker)
+    worker.model = None
+    worker.results = queue.Queue()
+    worker.operations = []
+    return worker
+
+
+@pytest.mark.parametrize(
+    "operation", [ModelWorkerOperation.GRAD, ModelWorkerOperation.LOSS, ModelWorkerOperation.TEST_LOSS]
+)
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_in_process_worker_rejects_nonfinite_results(
+    *, in_process_worker: _InProcessWorker, operation: ModelWorkerOperation, value: float
+) -> None:
+    result: Any = torch.tensor([[1.0, 1.0], [1.0, value]], dtype=torch.float16)
+    if operation is ModelWorkerOperation.TEST_LOSS:
+        result = result.tolist()
+    with (
+        patch.object(ModelWorker, "_execute_task", return_value=result),
+        pytest.raises(AssertionError, match="returned non-finite values"),
+    ):
+        in_process_worker(None, operation)
+    assert in_process_worker.results.empty()
+
+
+@pytest.mark.parametrize("row", [[0.0, 0.0], [65504.0, 65504.0]])
+def test_in_process_worker_rejects_invalid_gradient_norms(
+    *, in_process_worker: _InProcessWorker, row: list[float]
+) -> None:
+    result = torch.tensor([[1.0, 1.0], row], dtype=torch.float16)
+    with (
+        patch.object(ModelWorker, "_execute_task", return_value=result),
+        pytest.raises(AssertionError, match="Gradient rows must have finite, nonzero norms"),
+    ):
+        in_process_worker(None, ModelWorkerOperation.GRAD)
+    assert in_process_worker.results.empty()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [ModelWorkerOperation.GRAD, ModelWorkerOperation.LOSS, ModelWorkerOperation.TEST_LOSS, ModelWorkerOperation.TEST],
+)
+def test_in_process_worker_preserves_valid_results(
+    *, in_process_worker: _InProcessWorker, operation: ModelWorkerOperation
+) -> None:
+    result: Any = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float16)
+    if operation is ModelWorkerOperation.TEST_LOSS:
+        result = result.tolist()
+    elif operation is ModelWorkerOperation.TEST:
+        result = [(True, 0), (False, 1)]
+    with patch.object(ModelWorker, "_execute_task", return_value=result):
+        returned_worker = in_process_worker(None, operation)
+    assert returned_worker is in_process_worker
+    assert in_process_worker.results.get_nowait() is result
+    assert in_process_worker.operations == [operation]
 
 
 def _run_attack(
