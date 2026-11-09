@@ -21,6 +21,7 @@ class DenylistConverter(LLMGenericTextConverter):
     Replaces forbidden words or phrases in a prompt with synonyms using an LLM.
 
     An existing ``PromptTarget`` is used to perform the conversion (like Azure OpenAI).
+    Matching is Unicode-aware and case-insensitive. The original prompt is sent to the target.
     """
 
     @apply_defaults
@@ -89,8 +90,8 @@ class DenylistConverter(LLMGenericTextConverter):
         # check if the prompt contains any words from the  denylist and if so,
         # update the prompt replacing the denied words with synonyms
         denylist = self._prompt_kwargs.get("denylist", [])
-        prompt_lower = prompt.lower()
-        if any(word.lower() in prompt_lower for word in denylist):
+        prompt_casefolded = prompt.casefold()
+        if any(word.casefold() in prompt_casefolded for word in denylist):
             return await super().convert_async(prompt=prompt, input_type=input_type)
         logger.info(f"Prompt does not contain any words from the denylist. prompt: {prompt}, denylist: {denylist}")
         return ConverterResult(output_text=prompt, output_type=input_type)
