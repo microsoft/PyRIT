@@ -3,11 +3,12 @@
 
 """References for constructing private variants of registered components."""
 
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from pyrit.models.identifiers.component_identifier import JSONValue
+from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
 
 
 class RegisteredComponentReference(BaseModel):
@@ -22,10 +23,12 @@ class SourceInstanceSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    source_name: str = Field(min_length=1)
-    source_hash: str = Field(min_length=1)
-    params: dict[str, JSONValue] = Field(default_factory=dict)
-    effective_hash: str | None = None
+    source_name: str = Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    source_hash: str = Field(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)
+    params: dict[Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)], JSONValue] = Field(
+        default_factory=dict, max_length=MAX_ITEMS
+    )
+    effective_hash: str | None = Field(None, max_length=MAX_IDENTIFIER_LENGTH)
 
 
 class TargetBinding(BaseModel):

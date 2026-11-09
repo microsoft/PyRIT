@@ -1,11 +1,5 @@
-export type ConverterMatchMode = 'any' | 'all'
-
 export interface HistoryFilters {
-  attackTypes: string[]
   outcome: string
-  converter: string[]
-  converterMatchMode: ConverterMatchMode
-  hasConverters: boolean | undefined
   includeScenarioAttacks: boolean
   operator: string[]
   operationId: string[]
@@ -14,11 +8,7 @@ export interface HistoryFilters {
 }
 
 export const DEFAULT_HISTORY_FILTERS: HistoryFilters = {
-  attackTypes: [],
   outcome: '',
-  converter: [],
-  converterMatchMode: 'any',
-  hasConverters: undefined,
   includeScenarioAttacks: true,
   operator: [],
   operationId: [],
@@ -28,13 +18,8 @@ export const DEFAULT_HISTORY_FILTERS: HistoryFilters = {
 
 /** Builds the history filter state from a URL query string. */
 export function filtersFromSearchParams(params: URLSearchParams): HistoryFilters {
-  const hasConverters = params.get('hasConverters')
   return {
-    attackTypes: params.getAll('attackType'),
     outcome: params.get('outcome') ?? '',
-    converter: params.getAll('converter'),
-    converterMatchMode: params.get('converterMatch') === 'all' ? 'all' : 'any',
-    hasConverters: hasConverters === null ? undefined : hasConverters === 'true',
     includeScenarioAttacks: params.get('includeScannerAttacks') !== 'false',
     operator: params.getAll('operator'),
     operationId: params.getAll('operation_id'),
@@ -46,11 +31,7 @@ export function filtersFromSearchParams(params: URLSearchParams): HistoryFilters
 /** Encodes history filter state into a URL query string, omitting inactive filters. */
 export function filtersToSearchParams(filters: HistoryFilters): URLSearchParams {
   const params = new URLSearchParams()
-  for (const attackType of filters.attackTypes) params.append('attackType', attackType)
   if (filters.outcome) params.set('outcome', filters.outcome)
-  for (const converter of filters.converter) params.append('converter', converter)
-  if (filters.converterMatchMode === 'all') params.set('converterMatch', 'all')
-  if (filters.hasConverters !== undefined) params.set('hasConverters', String(filters.hasConverters))
   if (!filters.includeScenarioAttacks) params.set('includeScannerAttacks', 'false')
   for (const operator of filters.operator) params.append('operator', operator)
   for (const operationId of filters.operationId) params.append('operation_id', operationId)

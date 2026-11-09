@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.executor.benchmark.fairness_bias import (
+from pyrit.executor.benchmark import (
     FairnessBiasBenchmark,
     FairnessBiasBenchmarkContext,
 )

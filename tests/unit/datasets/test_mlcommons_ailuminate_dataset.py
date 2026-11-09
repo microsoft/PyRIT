@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.mlcommons_ailuminate_dataset import _MLCommonsAILuminateDataset
+from pyrit.datasets.seed_datasets.remote import _MLCommonsAILuminateDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 AILUMINATE_EXPECTED_HAZARD_CATEGORIES = [

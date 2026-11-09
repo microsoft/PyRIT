@@ -9,18 +9,19 @@ import asyncio
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pyrit.common import REQUIRED_VALUE, apply_defaults
-from pyrit.executor.attack import AttackScoringConfig
-from pyrit.executor.attack.component.conversation_manager import get_prepended_turn_count
-from pyrit.executor.attack.compound.sequential_attack import (
+from pyrit.executor.attack import (
+    AttackScoringConfig,
     SequenceCompletionPolicy,
     SequentialAttack,
     SequentialChildAttack,
 )
+from pyrit.executor.attack.component import get_prepended_turn_count
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackSeedGroup,
     BoundedDatasetSize,
+    Parameter,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
@@ -28,7 +29,6 @@ from pyrit.models import (
     SeedPrompt,
     config_hash,
 )
-from pyrit.models.parameter import Parameter
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (

@@ -262,6 +262,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   persists it. Outbound request metadata is separate from chat role, so missing trace
   links remain detectable on tool and assistant continuations.
 - Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
+- A target that runs tools itself bounds its tool loop. When a tool raises `ToolInfrastructureError`
+  because its own infrastructure failed, the target answers every pending call and ends the turn with
+  an error response whose metadata says why (`ToolLoopStop`), rather than asking the model to fix
+  infrastructure. `OpenAIResponseTarget` does this today.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
 - **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
 
@@ -336,6 +340,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   conditions before scoring. Wrappers expose their children; `get_condition_types()` derives their
   combined coverage. Use separate leaves and a composite for independent checks.
 - `score_observation_async` coordinates replay of stored evidence without calling the target. Scorer target response replay owns the checks for the exact original expectation, scorer configuration, and response-handler contract; evidence resolution checks that scored evidence and response content are unchanged.
+- `find_matching_scores` selects the stored results that the same scorer configuration produced for the same evidence and the input `score_async` prepares. The scorer owns this match rule; callers decide whether a match replaces a new evaluation and how it is recorded.
+- Same-input wrappers check the current evidence snapshots of every child that contributed to a stored result. Branch participation is private `Score` state, persisted in the nullable `ScoreEntries.snapshot_participation` column, never in caller-owned `score_metadata`. Unknown or invalid provenance checks branches conservatively; snapshot-free legacy matching remains valid. Conversation participants each require a distinct linked complete observation matching the current ordered conversation, while unused fallback and non-applicable branches do not invalidate a result with known provenance.
+- Same-input inverter, threshold, and fallback roots retain the original input anchor even when a child acquires conversation evidence. Child observations and private participation still determine freshness; copying a child judgment must not change which input the wrapper result can match.
 - Tool-event observations can be matched against new tool-name expectations
   without querying the trace client again. This does not relax scorer target response replay rules.
 - **Does not own**: acting on its own result. A scorer evaluates a response and returns a score; branching on that score is the attack's job, and aggregating scores across runs is analytics'. It may call a target to evaluate, but it doesn't send the attack's objective prompt or manage the conversation.
@@ -477,6 +484,7 @@ The below describes the user-facing surfaces built on top of the framework.
 - Wherever possible it should reuse other components rather than reimplementing them (e.g. the registry to build components, `pyrit.models` for its model layer), while adding presentation-specific information on top as needed.
 - Organized into `routes/`, `services/`, `models/`, `mappers/`, and `middleware/`, and launched through the `pyrit_backend` command (configurable via `PYRIT_API_HOST` / `PYRIT_API_PORT` / `PYRIT_API_RELOAD`).
 - Saved-result analytics routes consume the cached SDK directly and serialize shared models. The shared runtime owns admission, busy checks, SDK draining and cache invalidation before memory replacement/disposal, including work still cleaning up after an HTTP timeout. It does not calculate statistics or add an SDK authorization scope.
+- `ChatScoringService` owns manual chat scoring policy: the scorer and input for the next evaluation, reuse of a complete matching result, publication to the attack, and the latest-response result and outcome that the frontend shows.
 
 ## [CLI](../scanner/0_scanner)
 

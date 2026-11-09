@@ -58,7 +58,7 @@ async function capture(page: Page, name: string): Promise<void> {
   const directory = process.env.PYRIT_ANALYTICS_SCREENSHOT_DIR
   if (!directory) return
   await expect(page.getByRole('region', { name: 'Outcome summary' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeEnabled()
+  await expect(page.getByTestId('analytics-page')).toHaveAttribute('aria-busy', 'false')
   await mkdir(directory, { recursive: true })
   await page.screenshot({ path: path.join(directory, name), fullPage: true })
 }
@@ -92,8 +92,9 @@ test.afterEach(async ({ page }: { page: Page }) => {
   expect(errors.get(page)).toEqual([])
 })
 
-test('counts every saved ID and keeps result paging, presentation, and freshness independent', async ({ page }: { page: Page }) => {
+test('counts every saved ID and preserves result paging and presentation during minute updates', async ({ page }: { page: Page }) => {
   const requests = observe(page)
+  await page.clock.install()
   const report = await openReport(page)
   expect(report.summary).toMatchObject({ total_results: 204, successes: 83, failures: 41, errors: 20, undetermined: 60 })
   const summary = page.getByRole('region', { name: 'Outcome summary' })
@@ -102,7 +103,7 @@ test('counts every saved ID and keeps result paging, presentation, and freshness
   expect(requests.reports).toHaveLength(1)
   expect(requests.facets).toHaveLength(0)
   expect(requests.reports[0].headers()['pyrit-compatibility-id']).toBe(getCompatibilityId())
-  const refreshed = await page.getByText(/Last refreshed:/).locator('time').getAttribute('datetime')
+  await expect(page.getByText(/Last refreshed:|Page read:/)).toHaveCount(0)
   const results = page.getByRole('region', { name: 'Matching AttackResults' })
   await results.getByRole('button', { name: 'Next', exact: true }).click()
   await expect(results.getByText('Page 2', { exact: true })).toBeVisible()
@@ -112,17 +113,17 @@ test('counts every saved ID and keeps result paging, presentation, and freshness
   await expect(summary.getByText(formatAnalyticsPercent(report.summary.success_rate_all), { exact: true })).toBeVisible()
   await expect(summary.getByText('83 success / 204 all results')).toBeVisible()
   await expect(results.getByText('Page 2', { exact: true })).toBeVisible()
-  await page.clock.install()
-  await page.clock.fastForward(300_000)
+  await page.clock.fastForward(30_000)
   expect(requests.reports).toHaveLength(1)
   expect(requests.results).toHaveLength(1)
-  expect(await page.getByText(/Last refreshed:/).locator('time').getAttribute('datetime')).toBe(refreshed)
   const reloaded = page.waitForResponse(reportResponse)
-  await page.getByRole('button', { name: 'Reload', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Reload', exact: true })).toHaveCount(0)
+  await page.clock.fastForward(60_000)
   await page.clock.fastForward(250)
   await readReport(await reloaded)
-  await expect(results.getByText('Page 1', { exact: true })).toBeVisible()
+  await expect(results.getByText('Page 2', { exact: true })).toBeVisible()
   expect(requests.reports).toHaveLength(2)
+  await expect.poll(() => requests.results.length).toBe(2)
 })
 
 test('drills into a real heatmap cell and opens its saved result through the normal route', async ({ page }: { page: Page }) => {
@@ -157,14 +158,14 @@ test('drills into a real heatmap cell and opens its saved result through the nor
   const sharedUrl = page.url()
   await row.focus()
   await page.keyboard.press('Enter')
-  await expect(page).toHaveURL(new RegExp(`/attacks/${id}$`))
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/${id}$`))
   await expect(page.getByText('This is a safe, locally stored example response for analytics browser checks.')).toBeVisible()
   await page.getByRole('button', { name: 'Analytics', exact: true }).click()
   await expect(page).toHaveURL(sharedUrl)
   await expect(page.getByRole('row', { name: `Open result ${id}` })).toBeVisible()
   await page.getByRole('row', { name: `Open result ${id}` }).focus()
   await page.keyboard.press('Space')
-  await expect(page).toHaveURL(new RegExp(`/attacks/${id}$`))
+  await expect(page).toHaveURL(new RegExp(`/attack/chat/${id}$`))
   await page.goBack()
   await expect(page).toHaveURL(sharedUrl)
   await expect(page.getByRole('row', { name: `Open result ${id}` })).toBeVisible()
@@ -283,7 +284,7 @@ test('recovers invalid links explicitly and migrates valid legacy query links wi
   await page.goto('/analytics#analytics=invalid-json')
   await expect(page.getByText(/Cannot restore this analytics link/)).toBeVisible()
   expect(requests.reports).toHaveLength(0)
-  await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Reload', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Reset analytics view' }).click()
   await expect(page.getByRole('region', { name: 'Outcome summary' })).toBeVisible()
   expect(requests.reports).toHaveLength(1)
@@ -353,7 +354,8 @@ test.describe('narrow touch layout', () => {
     await page.getByRole('button', { name: 'More filters', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Add filter', exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Fewer filters', exact: true }).click()
-    for (const name of ['Reload', 'Operation', 'Operator', 'Objective target']) {
+    await expect(page.getByRole('button', { name: 'Reload', exact: true })).toHaveCount(0)
+    for (const name of ['Operation', 'Operator', 'Objective target']) {
       const box = await page.getByRole('button', { name, exact: true }).boundingBox()
       expect(box?.height).toBeGreaterThanOrEqual(44)
     }

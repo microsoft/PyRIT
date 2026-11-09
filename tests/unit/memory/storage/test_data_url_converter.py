@@ -8,9 +8,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from PIL import Image
 
+from pyrit.memory.storage import (
+    convert_local_image_to_data_url_async,
+)
 from pyrit.memory.storage.data_url_converter import (
     OPENAI_VISION_SUPPORTED_IMAGE_FORMATS,
-    convert_local_image_to_data_url_async,
 )
 
 

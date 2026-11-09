@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.moral_integrity_corpus_dataset import _MICDataset
+from pyrit.datasets.seed_datasets.remote import _MICDataset
 
 
 class TestMICDataset:

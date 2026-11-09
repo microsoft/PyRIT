@@ -20,10 +20,10 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import CreateIndex, CreateTable
 
+from pyrit.memory import AttackResultEntry
 from pyrit.memory.alembic.versions.e5f7a9c1b3d2_add_identifiers_tables import IdentifierGraphInserter
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
-from pyrit.memory.analytics_sql import UnicodeCaseFold
-from pyrit.memory.memory_models import AttackResultEntry
+from pyrit.memory.analytics_sql import UnicodeCaseFold, text_match
 from pyrit.models import AtomicAttackIdentifier, AttackIdentifier, TargetIdentifier, compute_eval_hash
 
 if TYPE_CHECKING:
@@ -336,11 +336,24 @@ def test_unicode_casefold_compiles_per_dialect() -> None:
     assert mssql_sql == "LOWER(:param_1)"
 
 
+@pytest.mark.parametrize(
+    ("casefold", "function"),
+    [(False, "pyrit_analytics_lower"), (True, "pyrit_analytics_casefold")],
+)
+def test_text_match_preserves_backend_fold_selection(*, casefold: bool, function: str) -> None:
+    expression = text_match(column=literal("CAF\u00c9", UnicodeText()), value="caf\u00e9", casefold=casefold)
+    sqlite_sql = str(expression.compile(dialect=sqlite.dialect()))
+    assert sqlite_sql.count(function) == 2
+    mssql_sql = str(expression.compile(dialect=mssql.dialect()))
+    assert mssql_sql.count("LOWER(") == 2
+    assert "ESCAPE '/'" in mssql_sql
+
+
 def test_seed_value_search_folds_both_sides_in_the_real_statement() -> None:
     """The seed search statement itself folds column and pattern in SQL."""
     from sqlalchemy import true
 
-    from pyrit.memory.sqlite_memory import SQLiteMemory
+    from pyrit.memory import SQLiteMemory
 
     conditions = SQLiteMemory._seed_example_filters(
         SQLiteMemory.__new__(SQLiteMemory),
@@ -349,6 +362,7 @@ def test_seed_value_search_folds_both_sides_in_the_real_statement() -> None:
         harm_categories=None,
         seed_types=None,
         value_search="CAFÉ",
+        value_pattern=None,
     )
     assert conditions, "the value search must produce a condition"
     for dialect, fold_marker in (

@@ -22,8 +22,10 @@ from sqlalchemy.sql.elements import BindParameter
 from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.sql.selectable import Join, Lateral
 
+from pyrit.common.text_search import compile_like_pattern, contains_pattern, validate_text_search
+
 if TYPE_CHECKING:
-    from sqlalchemy.sql import ColumnElement
+    from sqlalchemy.sql import ColumnElement, SQLColumnExpression
     from sqlalchemy.sql.compiler import SQLCompiler
 
 
@@ -65,6 +67,44 @@ def _sqlite_fold_case(*, value: str, fallback_function: str) -> str:
         f"CASE WHEN typeof({value}) = 'text' AND length(CAST({value} AS BLOB)) = length({value}) "
         f"THEN lower({value}) ELSE {fallback_function}({value}) END"
     )
+
+
+def text_match(
+    *,
+    column: SQLColumnExpression[Any],
+    value: str | None = None,
+    pattern: str | None = None,
+    casefold: bool = False,
+) -> ColumnElement[bool]:
+    """
+    Match a literal substring or an explicit full LIKE pattern, ignoring case.
+
+    Both operands use the backend's Unicode-lowering support. NULL never matches;
+    an empty pattern matches empty text. Callers retain their existing empty-query
+    no-filter behavior by not constructing a predicate for an empty literal query.
+
+    Args:
+        column (SQLColumnExpression[Any]): The text expression to search.
+        value (str | None): A literal substring instead of a pattern.
+        pattern (str | None): A full portable LIKE pattern instead of a literal.
+        casefold (bool): Use per-character folding for SQLite literal substring searches.
+            Defaults to the existing Unicode-lowering behavior.
+
+    Returns:
+        ColumnElement[bool]: A parameterized case-insensitive predicate.
+
+    Raises:
+        ValueError: If neither or both filters are supplied, or an escape is dangling.
+    """
+    validate_text_search(value=value, pattern=pattern)
+    if pattern is not None:
+        encoded = compile_like_pattern(pattern)
+    elif value is not None:
+        encoded = contains_pattern(value)
+    else:
+        raise ValueError("A literal text filter or a pattern is required.")
+    fold = UnicodeCaseFold if casefold else UnicodeLower
+    return fold(column).like(fold(literal(encoded, UnicodeText())), escape="/")
 
 
 @compiles(UnicodeLower, "sqlite")

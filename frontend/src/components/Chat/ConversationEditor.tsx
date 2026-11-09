@@ -8,6 +8,7 @@ import { AddRegular, AttachRegular, DismissRegular } from '@fluentui/react-icons
 import { useBeforeUnload, useBlocker } from 'react-router'
 
 import { usePieceConverters } from '@/hooks/useChatConverters'
+import { useAttachmentUploads } from '@/hooks/useAttachmentUploads'
 import type { useConversationDraft } from '@/hooks/useConversationDraft'
 import type {
   AddMessageResponse, ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessageAttachment,
@@ -165,9 +166,12 @@ interface ConversationEditorProps {
   onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void
   onSave?: (destination: SaveConversationRequest['destination']) => void
   onExit?: () => Promise<boolean>
+  onDiscard?: (navigatingAway?: boolean) => void
+  onUploadErrorChange?: (reason: string | undefined) => void
   saveDestination?: SaveConversationRequest['destination']
   saveLabel?: string
   initialConverters?: ChatConverterSnapshot
+  blockNavigation?: boolean
 }
 
 export interface ConversationEditorHandle {
@@ -179,9 +183,9 @@ export interface ConversationEditorHandle {
 }
 
 export default function ConversationEditor({
-  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit,
+  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit, onDiscard,
   saveDestination: directSaveDestination, saveLabel = 'Save conversation',
-  initialConverters,
+  initialConverters, blockNavigation = true, onUploadErrorChange,
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -190,8 +194,20 @@ export default function ConversationEditor({
   const [discardOpen, setDiscardOpen] = useState(false)
   const { draft, saving, error, dirty, validationError, targetError, changePiece, changeAttachments, insert, addPiece } = controller
   const messages = useMemo(() => draft?.messages ?? [], [draft?.messages])
+  const attachments = useMemo(() => messages.flatMap((message: ConversationDraftMessage) =>
+    message.pieces.filter((piece: ConversationDraftPiece) => piece.file).map(draftAttachment)), [messages])
+  const uploads = useAttachmentUploads(attachments)
+  const uploadError = uploads.errors.length ? 'Retry or remove attachments whose uploads failed.' : undefined
+  useEffect(() => {
+    onUploadErrorChange?.(uploadError)
+    return () => { onUploadErrorChange?.(undefined) }
+  }, [onUploadErrorChange, uploadError])
   const target = draft?.target
-  const blocker = useBlocker(controller.shouldBlock)
+  const shouldBlock = useCallback(() => {
+    if (blockNavigation === false) return false
+    return controller.shouldBlock()
+  }, [blockNavigation, controller])
+  const blocker = useBlocker(shouldBlock)
   useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
     if (controller.shouldBlock()) {
       event.preventDefault()
@@ -226,17 +242,20 @@ export default function ConversationEditor({
   const cancel = (): void => {
     if (saving) return
     if (dirty) setDiscardOpen(true)
-    else controller.discard()
+    else {
+      controller.discard()
+      onDiscard?.(false)
+    }
   }
   const save = (destination: SaveConversationRequest['destination']): void => {
-    if (converters.isConverting) return
+    if (converters.isConverting || uploadError) return
     if (onSave) onSave(destination)
     else void controller.save(destination, onSaved)
   }
   useImperativeHandle(ref, () => ({
     convertConversation: () => openConverters(),
     saveToNewAttack: () => {
-      if (!saving && !converters.isConverting && !validationError && !targetError && !newAttackDisabledReason) save('new_attack')
+      if (!saving && !converters.isConverting && !uploadError && !validationError && !targetError && !newAttackDisabledReason) save('new_attack')
     },
     finishEditing: () => converters.isConverting ? Promise.resolve(false) : onExit?.() ?? Promise.resolve(true),
     getConverters: converters.snapshot,
@@ -249,7 +268,7 @@ export default function ConversationEditor({
   const unsupportedSelected = messages.some((message: ConversationDraftMessage) => selected.has(message.id)
     && message.pieces.some((piece: ConversationDraftPiece) => piece.data_type !== 'text' && !isPathDataType(piece.data_type)))
   const saveDisabledReason = (converters.isConverting ? 'Wait for conversion to finish before saving.' : undefined)
-    ?? validationError ?? targetError
+    ?? uploadError ?? validationError ?? targetError
     ?? (directSaveDestination === 'same_attack' ? sameAttackDisabledReason : newAttackDisabledReason)
   return (
     <div className={styles.root} data-testid="conversation-editor">
@@ -259,6 +278,13 @@ export default function ConversationEditor({
       </div>}
       <div className={styles.content}>
       <div className={styles.thread}>
+        {uploads.pending && <Text role="status">Uploading attachments...</Text>}
+        {uploads.errors.map(({ id, file, detail }: { id: string; file: File; detail: string }) => (
+          <MessageBar key={id} intent="error"><MessageBarBody>
+            Upload failed for {file.name}: {detail}{' '}
+            <Button className={styles.button} disabled={saving} onClick={() => uploads.retry(file)}>Retry upload</Button>
+          </MessageBarBody></MessageBar>
+        ))}
         {validationError && <MessageBar intent="error"><MessageBarBody>{validationError}</MessageBarBody></MessageBar>}
         {targetError && <MessageBar intent="warning"><MessageBarBody>
           {targetError} Select a compatible target or clear the target to save a new unbound attack.
@@ -345,7 +371,7 @@ export default function ConversationEditor({
           relationship="description">
         <span tabIndex={saveDisabledReason ? 0 : undefined} aria-label={saveDisabledReason ?? undefined}>
         <Button className={styles.button} appearance="primary"
-          disabled={saving || converters.isConverting || Boolean(validationError)
+          disabled={saving || converters.isConverting || Boolean(uploadError) || Boolean(validationError)
             || Boolean(directSaveDestination && (!messages.length || targetError
               || (directSaveDestination === 'same_attack' ? sameAttackDisabledReason : newAttackDisabledReason)))}
           onClick={() => { if (directSaveDestination) save(directSaveDestination); else setSaveDialogOpen(true) }}>
@@ -358,7 +384,7 @@ export default function ConversationEditor({
       </div>
       {saveDialogOpen && <SaveConversationDialog sameAttackDisabledReason={sameAttackDisabledReason}
         newAttackDisabledReason={newAttackDisabledReason}
-        validationError={validationError ?? targetError}
+        validationError={uploadError ?? validationError ?? targetError}
         objectiveChanged={draft?.objective.trim() !== draft?.initialObjective} saving={saving} error={error}
         onClose={() => setSaveDialogOpen(false)} onSave={save} />}
       <Dialog open={discardOpen || blocker.state === 'blocked'} onOpenChange={(_event, data) => {
@@ -370,7 +396,9 @@ export default function ConversationEditor({
           <DialogActions>
             <Button className={styles.button} onClick={() => { setDiscardOpen(false); if (blocker.state === 'blocked') blocker.reset() }}>Keep editing</Button>
             <Button className={styles.button} disabled={saving} onClick={() => {
+              const isNavigating = blocker.state === 'blocked'
               controller.discard()
+              onDiscard?.(isNavigating)
               if (blocker.state === 'blocked') blocker.proceed()
             }}>Discard draft</Button>
           </DialogActions>

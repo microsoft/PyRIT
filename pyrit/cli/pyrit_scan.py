@@ -41,11 +41,11 @@ from pyrit.cli._cli_args import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from pyrit.models import Parameter
     from pyrit.models.catalog import (
         RunScenarioRequest,
         ScenarioRunSummary,
     )
-    from pyrit.models.parameter import Parameter
 
 
 def _is_read_timeout(exc: BaseException) -> bool:
@@ -242,7 +242,9 @@ def _build_client_parent() -> ArgumentParser:
     """
     parser = ArgumentParser(add_help=False)
     group = parser.add_argument_group("server options")
-    group.add_argument("--request-timeout", type=float, default=None, help=_REQUEST_TIMEOUT_HELP)
+    group.add_argument(
+        "--request-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_REQUEST_TIMEOUT_HELP
+    )
     group.add_argument("--start-server", action="store_true", help=_START_SERVER_HELP)
     group.add_argument(
         "--startup-timeout", type=_positive_finite_float, default=None, metavar="SECONDS", help=_STARTUP_TIMEOUT_HELP
@@ -479,7 +481,7 @@ def _scenario_value_coercer(*, name: str, annotation: Any) -> Callable[[Any], An
     if annotation is None or annotation is str:
         return None
 
-    from pyrit.models.parameter import Parameter
+    from pyrit.models import Parameter
 
     element_param = Parameter(name=name, description="", param_type=annotation)
 
@@ -582,7 +584,7 @@ _LEGACY_COMMAND_FLAGS: dict[str, str] = {
 
 def _warn_legacy(*, old: str, new: str) -> None:
     """Warn (visibly and via ``DeprecationWarning``) about a legacy ``pyrit_scan`` invocation."""
-    from pyrit.common.deprecation import print_deprecation_message
+    from pyrit.common import print_deprecation_message
 
     print_deprecation_message(old_item=f"pyrit_scan {old}", new_item=f"pyrit_scan {new}", removed_in="1.3.0")
     # DeprecationWarning is suppressed by default in a CLI, so also print a visible note.
@@ -1112,11 +1114,12 @@ async def _run_scenario_async(
             client=client,
             scenario_result_id=scenario_result_id,
         )
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n\nCancelling scenario run...")
+        cancellation_task = asyncio.create_task(client.cancel_scenario_run_async(scenario_result_id=scenario_result_id))
         try:
-            await client.cancel_scenario_run_async(scenario_result_id=scenario_result_id)
-            print("Scenario run cancelled.")
+            await asyncio.shield(cancellation_task)
+            print("Cancellation request sent to server.")
         except Exception:
             print("Warning: could not cancel scenario run on server.")
         return 1

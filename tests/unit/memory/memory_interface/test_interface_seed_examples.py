@@ -15,8 +15,7 @@ from sqlalchemy.sql import Select
 
 from pyrit.common.pagination import DecodedKeysetCursor
 from pyrit.common.utils import to_sha256
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import Seed, SeedObjective, SeedPrompt, SeedRecord, SeedSimulatedConversation
 
 DATASET = "browse"
@@ -201,6 +200,20 @@ async def test_get_seed_examples_value_search_casefold_expansions_hold_on_sqlite
 
     assert await _ids(sqlite_instance, value_search="STRASSE") == [strasse]
     assert await _ids(sqlite_instance, value_search="straße") == [strasse]
+
+
+async def test_get_seed_examples_value_pattern_preserves_single_character_wildcards(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    sharp_s, double_s = uuid4(), uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="\u00df", dataset_name=DATASET, prompt_group_id=sharp_s),
+        SeedPrompt(value="ss", dataset_name=DATASET, prompt_group_id=double_s),
+    )
+
+    assert await _ids(sqlite_instance, value_pattern="_") == [sharp_s]
+    assert set(await _ids(sqlite_instance, value_search="SS")) == {sharp_s, double_s}
 
 
 async def test_get_seed_examples_keeps_named_and_unnamed_scopes_apart(sqlite_instance: MemoryInterface):
