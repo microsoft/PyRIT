@@ -52,3 +52,9 @@ The `MemoryDatabaseType` is a `Literal` with 3 options: IN_MEMORY, SQLITE, AZURE
    - To configure AzureSQLMemory without an extra argument list, these keys should be in your `.env` file:
      - `AZURE_SQL_DB_CONNECTION_STRING`
      - `AZURE_STORAGE_ACCOUNT_DB_DATA_CONTAINER_URL`
+   - Optional connection pool sizing (read when the engine is created):
+     - `PYRIT_AZURE_SQL_POOL_SIZE` (default `5`) and `PYRIT_AZURE_SQL_MAX_OVERFLOW` (default `10`) bound how many
+       memory operations can use the database at once; `PYRIT_AZURE_SQL_POOL_TIMEOUT` (default `30` seconds) is how
+       long an operation waits for a free connection.
+     - Async operations run on a dedicated thread pool with one thread per pooled connection, so lock contention in
+       the database cannot exhaust the event loop's default executor.

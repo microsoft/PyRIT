@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import os
 import uuid
 from collections.abc import AsyncGenerator, MutableSequence, Sequence
@@ -1413,3 +1414,91 @@ def test_metadata_conditions_match_literal_keys_in_all_wrappers(
             "md_value_1": "1",
         }
         assert compiled.positiontup == ["md_key_0", "md_key_0", "md_value_0", "md_key_1", "md_key_1", "md_value_1"]
+
+
+POOL_VARIABLES = (AzureSQLMemory.POOL_SIZE_ENV, AzureSQLMemory.MAX_OVERFLOW_ENV, AzureSQLMemory.POOL_TIMEOUT_ENV)
+
+
+@pytest.fixture
+def no_pool_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    for variable in POOL_VARIABLES:
+        monkeypatch.delenv(variable, raising=False)
+
+
+def test_pool_settings_default_to_sqlalchemy_queue_pool(no_pool_overrides: None) -> None:
+    assert AzureSQLMemory._pool_settings() == {"pool_size": 5, "max_overflow": 10, "pool_timeout": 30}
+
+
+def test_pool_settings_read_environment_overrides(no_pool_overrides: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(AzureSQLMemory.POOL_SIZE_ENV, "5")
+    monkeypatch.setenv(AzureSQLMemory.MAX_OVERFLOW_ENV, " 0 ")
+    monkeypatch.setenv(AzureSQLMemory.POOL_TIMEOUT_ENV, "90")
+
+    assert AzureSQLMemory._pool_settings() == {"pool_size": 5, "max_overflow": 0, "pool_timeout": 90}
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "message"),
+    [
+        (AzureSQLMemory.POOL_SIZE_ENV, "0", "at least 1"),
+        (AzureSQLMemory.MAX_OVERFLOW_ENV, "-1", "at least 0"),
+        (AzureSQLMemory.POOL_TIMEOUT_ENV, "soon", "must be an integer"),
+    ],
+)
+def test_pool_settings_reject_invalid_overrides(
+    no_pool_overrides: None, monkeypatch: pytest.MonkeyPatch, variable: str, value: str, message: str
+) -> None:
+    monkeypatch.setenv(variable, value)
+    with pytest.raises(ValueError, match=message):
+        AzureSQLMemory._pool_settings()
+
+
+def test_sync_engine_is_created_with_the_pool_settings(
+    uninitialized_memory_interface: AzureSQLMemory, no_pool_overrides: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(AzureSQLMemory.POOL_SIZE_ENV, "7")
+    uninitialized_memory_interface._connection_string = "mssql+pyodbc:///?odbc_connect=DRIVER%3Dunit"
+    with patch("pyrit.memory.azure_sql_memory.create_engine") as create_engine:
+        engine = uninitialized_memory_interface._create_engine(has_echo=False)
+
+    assert engine is create_engine.return_value
+    create_engine.assert_called_once_with(
+        uninitialized_memory_interface._connection_string,
+        pool_recycle=1800,
+        pool_pre_ping=True,
+        echo=False,
+        pool_size=7,
+        max_overflow=10,
+        pool_timeout=30,
+    )
+
+
+async def test_async_engine_gets_pool_settings_and_one_sql_thread_per_connection(
+    uninitialized_memory_interface: AzureSQLMemory, no_pool_overrides: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(AzureSQLMemory.POOL_SIZE_ENV, "5")
+    monkeypatch.setenv(AzureSQLMemory.MAX_OVERFLOW_ENV, "3")
+    uninitialized_memory_interface._connection_string = "mssql+pyodbc:///?odbc_connect=DRIVER%3Dunit"
+    uninitialized_memory_interface._verbose = False
+    uninitialized_memory_interface._async_auth = {}
+    uninitialized_memory_interface._async_executors = {}
+    with patch("pyrit.memory.azure_sql_memory.create_async_engine") as create_async_engine:
+        engine = uninitialized_memory_interface._create_async_engine()
+
+    executor = uninitialized_memory_interface._async_executors.pop(asyncio.get_running_loop())
+    try:
+        assert engine is create_async_engine.return_value
+        assert create_async_engine.call_args.kwargs | {"async_creator": None} == {
+            "async_creator": None,
+            "pool_recycle": 1800,
+            "pool_pre_ping": True,
+            "echo": False,
+            "pool_size": 5,
+            "max_overflow": 3,
+            "pool_timeout": 30,
+        }
+        # A thread for every connection the pool can hand out, so a lock holder can always commit.
+        assert executor._max_workers == 8
+        assert executor is not asyncio.get_running_loop()._default_executor
+    finally:
+        executor.shutdown(wait=False)

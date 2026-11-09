@@ -319,8 +319,10 @@ async def test_azure_disposal_failure_discards_engine_and_credential(failing_res
     memory = AzureSQLMemory.__new__(AzureSQLMemory)
     engine = MagicMock(dispose=AsyncMock())
     auth = MagicMock(spec=AsyncAzureAuth)
+    executor = MagicMock(spec=ThreadPoolExecutor)
     memory._async_engines = {loop: engine}
     memory._async_auth = {loop: auth}
+    memory._async_executors = {loop: executor}
     close = engine.dispose if failing_resource == "engine" else auth.close_async
     close.side_effect = [RuntimeError("close failed"), None]
 
@@ -328,6 +330,8 @@ async def test_azure_disposal_failure_discards_engine_and_credential(failing_res
         await memory.dispose_loop_resources_async()
     assert memory._async_engines == {}
     assert memory._async_auth == {}
+    assert memory._async_executors == {}
+    executor.shutdown.assert_called_once_with(wait=False)
     auth.close_async.assert_awaited_once()
     await memory.dispose_loop_resources_async()
     assert memory._async_engines == {}
@@ -347,6 +351,7 @@ async def test_azure_async_token_connection_removes_trusted_connection(
     memory._connection_string = "mssql+pyodbc://localhost/test?driver=ODBC+Driver+18+for+SQL+Server"
     memory._verbose = False
     memory._async_auth = {}
+    memory._async_executors = {}
     engine = MagicMock()
     engine.dialect.create_connect_args.return_value = (
         [],
@@ -363,6 +368,9 @@ async def test_azure_async_token_connection_removes_trusted_connection(
     mock_aioodbc_connect.assert_awaited_once()
     assert mock_aioodbc_connect.call_args.kwargs["dsn"] == "Driver=unit-test;Database=test"
     assert memory.SQL_COPT_SS_ACCESS_TOKEN in mock_aioodbc_connect.call_args.kwargs["attrs_before"]
+    executor = memory._async_executors.pop(asyncio.get_running_loop())
+    assert mock_aioodbc_connect.call_args.kwargs["executor"] is executor
+    executor.shutdown(wait=False)
 
 
 async def test_azure_closed_loop_drops_both_owned_resources() -> None:
@@ -371,8 +379,10 @@ async def test_azure_closed_loop_drops_both_owned_resources() -> None:
     memory = AzureSQLMemory.__new__(AzureSQLMemory)
     engine = MagicMock()
     auth = MagicMock(spec=AsyncAzureAuth)
+    executor = MagicMock(spec=ThreadPoolExecutor)
     memory._async_engines = {loop: engine}
     memory._async_auth = {loop: auth}
+    memory._async_executors = {loop: executor}
     with pytest.warns(DeprecationWarning), pytest.raises(RuntimeError, match="owning event loops"):
         memory.dispose_engine()
     assert memory._async_engines == {loop: engine}
@@ -381,7 +391,9 @@ async def test_azure_closed_loop_drops_both_owned_resources() -> None:
     await memory.dispose_loop_resources_async()
     assert memory._async_engines == {}
     assert memory._async_auth == {}
+    assert memory._async_executors == {}
     engine.sync_engine.dispose.assert_called_once_with(close=False)
+    executor.shutdown.assert_called_once_with(wait=False)
     auth.close_async.assert_awaited_once()
 
 
@@ -734,6 +746,7 @@ async def test_azure_async_creator_preserves_options_and_refreshes_token(mock_ai
     memory._verbose = False
     memory._async_auth = {}
     memory._async_engines = {}
+    memory._async_executors = {}
     engine = MagicMock(spec=AsyncEngine)
     engine.dialect = MSDialectAsync_aioodbc()
     credential = MagicMock(spec=AsyncAzureAuth)
@@ -760,9 +773,15 @@ async def test_azure_async_creator_preserves_options_and_refreshes_token(mock_ai
             assert factory.call_args.args[0].drivername == "mssql+aioodbc"
             assert factory.call_args.kwargs["pool_pre_ping"] is True
             assert factory.call_args.kwargs["pool_recycle"] == 1800
+            executor = memory._async_executors[asyncio.get_running_loop()]
+            assert options["executor"] is executor
+            assert mock_aioodbc_connect.await_args_list[1].kwargs["executor"] is executor
         finally:
             await memory.dispose_loop_resources_async()
     credential.close_async.assert_awaited_once()
     engine.dispose.assert_awaited_once()
     assert memory._async_auth == {}
     assert memory._async_engines == {}
+    assert memory._async_executors == {}
+    with pytest.raises(RuntimeError, match="shutdown"):
+        executor.submit(lambda: None)
