@@ -18,18 +18,26 @@ const OFF_PAGE_ID = '00000000-0000-0000-0000-00010b00006e'
 const SAVED_REQUEST = 'Synthetic request for Step 5. No external model was called.'
 const SAVED_RESPONSE = 'Stored example response for Step 5. This is offline sample data.'
 
-const test = base.extend<{ savedReads: SavedReads }>({
-  savedReads: async (
-    { page }: { page: Page }, provide: (reads: SavedReads) => Promise<void>,
-  ): Promise<void> => {
-    const { reads, dispose } = captureSavedReads(page)
-    try {
-      await provide(reads)
-    } finally {
-      await dispose()
-    }
-  },
-})
+async function provideSavedReads(
+  { page }: { page: Parameters<typeof captureSavedReads>[0] }, provide: (reads: SavedReads) => Promise<void>,
+): Promise<void> {
+  const { reads, dispose } = captureSavedReads(page)
+  const failures: unknown[] = []
+  try {
+    await provide(reads)
+  } catch (error: unknown) {
+    failures.push(error)
+  }
+  try {
+    await dispose()
+  } catch (error: unknown) {
+    failures.push(error)
+  }
+  if (failures.length === 1) throw failures[0]
+  if (failures.length > 1) throw new AggregateError(failures, 'Saved metadata fixture and cleanup both failed')
+}
+
+const test = base.extend<{ savedReads: SavedReads }>({ savedReads: provideSavedReads })
 
 test.describe('saved metadata observer ownership', () => {
   const metadata: AttackMetadata = {
@@ -163,32 +171,37 @@ test.describe('saved metadata observer ownership', () => {
     expect(separate.pendingCount).toBe(0)
   })
 
-  for (const failing of [false, true]) {
-    test(`settles reads and removes only owned listeners after ${failing ? 'an assertion failure' : 'success'}`, async (): Promise<void> => {
+  for (const failureMode of ['none', 'assertion', 'cleanup', 'both'] as const) {
+    test(`settles reads and preserves ${failureMode} failures while removing only owned listeners`, async (): Promise<void> => {
       const page = new EventEmitter()
       const events = ['request', 'response', 'requestfailed'] as const
       for (const event of events) page.on(event, (): void => {})
       const before = events.map((event): number => page.listenerCount(event))
-      const { reads, dispose } = captureSavedReads(page)
-      expect(events.map((event): number => page.listenerCount(event)))
-        .toEqual(before.map((count: number): number => count + 1))
+      const provided = Promise.withResolvers<SavedReads>()
       const value = request()
       const body = Promise.withResolvers<AttackMetadata>()
-      page.emit('request', value)
-      page.emit('response', {
-        url: value.url, request: () => value, status: (): number => 200, json: () => body.promise,
+      const assertionFailure = new Error('Earlier assertion failed')
+      const bodyFailure = new Error('Body failed during assertion cleanup')
+      const assertionFails = failureMode === 'assertion' || failureMode === 'both'
+      const cleanupFails = failureMode === 'cleanup' || failureMode === 'both'
+      const completion = provideSavedReads({ page }, async (reads: SavedReads): Promise<void> => {
+        provided.resolve(reads)
+        expect(events.map((event): number => page.listenerCount(event)))
+          .toEqual(before.map((count: number): number => count + 1))
+        page.emit('request', value)
+        page.emit('response', {
+          url: value.url, request: () => value, status: (): number => 200, json: () => body.promise,
+        })
+        if (assertionFails) throw assertionFailure
       })
-      const failure = new Error('Body failed during assertion cleanup')
-      const finish = async (): Promise<void> => {
-        try {
-          if (failing) throw new Error('Earlier assertion failed')
-        } finally {
-          await dispose()
-        }
-      }
-      const finished = failing
-        ? expect(finish()).rejects.toMatchObject({ cause: failure })
-        : finish()
+      const finished = failureMode === 'both'
+        ? expect(completion).rejects.toMatchObject({
+          name: 'AggregateError', errors: [assertionFailure, { cause: bodyFailure }],
+        })
+        : assertionFails ? expect(completion).rejects.toBe(assertionFailure)
+          : cleanupFails ? expect(completion).rejects.toMatchObject({ cause: bodyFailure })
+            : completion
+      const reads = await provided.promise
       expect(page.listenerCount('request')).toBe(before[0])
       expect(reads.pendingCount).toBe(1)
       const unowned = request(OFF_PAGE_ID)
@@ -197,7 +210,7 @@ test.describe('saved metadata observer ownership', () => {
         url: unowned.url, request: () => unowned, status: (): number => 200,
         json: (): never => { throw new Error('Cleanup must not start an unowned body read') },
       })
-      if (failing) body.reject(failure)
+      if (cleanupFails) body.reject(bodyFailure)
       else body.resolve(metadata)
       await finished
       expect(reads.pendingCount).toBe(0)
