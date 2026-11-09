@@ -868,11 +868,11 @@ def test_get_condition_json_array_match_all_mode_joins_with_and(memory_interface
     assert " OR " not in sql_text
 
 
-def test_get_condition_json_array_match_any_mode_joins_with_or(memory_interface: AzureSQLMemory):
-    """match_mode='any' produces per-element EXISTS clauses joined by OR and wrapped in parens.
+def test_get_condition_json_array_match_any_mode_shreds_json_once(memory_interface: AzureSQLMemory):
+    """match_mode='any' shreds the JSON array once and matches every value with one IN list.
 
-    The outer parens are essential: without them, operator precedence would bind the outer
-    ``ISJSON(...) = 1 AND`` tighter than the inner ``OR``, corrupting the predicate.
+    One EXISTS per value would re-parse each row's JSON once per value, which scales with the
+    length of the id list (score anchors for a whole conversation).
     """
     from pyrit.memory import AttackResultEntry
 
@@ -884,11 +884,30 @@ def test_get_condition_json_array_match_any_mode_joins_with_or(memory_interface:
         match_mode="any",
     )
     sql_text = str(condition.compile(compile_kwargs={"literal_binds": False}))
-    assert sql_text.count("EXISTS(SELECT 1 FROM OPENJSON") == 2
-    assert " OR " in sql_text
-    # The only "AND" in the statement should be the outer ISJSON(...) = 1 AND (...)
-    # wrapper — none of the per-element EXISTS clauses should be AND-joined.
+    assert sql_text.count("EXISTS(SELECT 1 FROM OPENJSON") == 1
+    assert " IN (:mv_" in sql_text
+    assert " OR " not in sql_text
+    # The only "AND" is the outer ISJSON(...) = 1 AND (...) wrapper.
     assert sql_text.count(" AND ") == 1
+    values = sorted(value for key, value in condition.compile().params.items() if key.startswith("mv_"))
+    assert values == ["base64converter", "rot13converter"]
+
+
+def test_get_condition_json_array_match_all_mode_requires_every_value(memory_interface: AzureSQLMemory):
+    """match_mode='all' keeps one EXISTS per value, AND-joined inside the ISJSON wrapper."""
+    from pyrit.memory import AttackResultEntry
+
+    condition = memory_interface._get_condition_json_array_match(
+        json_column=AttackResultEntry.atomic_attack_identifier,
+        property_path="$.children.attack_technique.children.attack.children.request_converters",
+        array_element_path="$.class_name",
+        array_to_match=["Base64Converter", "ROT13Converter"],
+        match_mode="all",
+    )
+    sql_text = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    assert sql_text.count("EXISTS(SELECT 1 FROM OPENJSON") == 2
+    assert " IN (" not in sql_text
+    assert sql_text.count(" AND ") == 2
 
 
 def test_get_condition_json_array_match_any_mode_preserves_empty_absence_overload(
