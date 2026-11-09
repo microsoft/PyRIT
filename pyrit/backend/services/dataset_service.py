@@ -13,23 +13,27 @@ import ntpath
 import posixpath
 import re
 from collections.abc import Sequence
+from fnmatch import translate
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from pyrit.backend.mappers import format_last_message_preview
 from pyrit.backend.mappers.attack_mappers import resolve_client_media_url_async
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.datasets import (
-    DatasetDeletionResponse,
+from pyrit.backend.models import (
     DatasetInfo,
     DatasetListResponse,
+    PaginationInfo,
+)
+from pyrit.backend.models.datasets import (
+    DatasetDeletionResponse,
     SeedExampleDetailResponse,
     SeedExampleListResponse,
     SeedExampleSummary,
     SeedMemberView,
 )
 from pyrit.common.pagination import DecodedKeysetCursor, decode_keyset_cursor, encode_keyset_cursor, fingerprint_filters
+from pyrit.common.text_search import compile_like_pattern, validate_text_search
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.exceptions.dataset_exception import DatasetAPIException
 from pyrit.memory import CentralMemory
@@ -176,6 +180,7 @@ class DatasetService:
         limit: int = 20,
         cursor: str | None = None,
         search: str | None = None,
+        value_pattern: str | None = None,
         data_types: Sequence[PromptDataType] | None = None,
         harm_categories: Sequence[str] | None = None,
         seed_types: Sequence[SeedType] | None = None,
@@ -193,6 +198,8 @@ class DatasetService:
             cursor (str | None): The ``next_cursor`` of the previous page.
             search (str | None): Literal text that the value of a text prompt or objective must contain,
                 ignoring case. Simulated-conversation configurations are not searched.
+            value_pattern (str | None): A full case-insensitive LIKE pattern instead of search.
+                '%' and '_' are wildcards; '/' escapes the next character.
             data_types (Sequence[PromptDataType] | None): Match examples with a member of any of these data types.
             harm_categories (Sequence[str] | None): Match examples with a member in any of these harm categories.
             seed_types (Sequence[SeedType] | None): Match examples with a member of any of these seed types.
@@ -205,6 +212,7 @@ class DatasetService:
             ValueError: If the selection key or the cursor is not valid.
         """
         dataset_name = self._parse_selection_key(selection_key)
+        validate_text_search(value=search, pattern=value_pattern)
         fingerprint = fingerprint_filters(
             filters={
                 "selection_key": selection_key,
@@ -212,6 +220,7 @@ class DatasetService:
                 "harm_categories": [category.lower() for category in harm_categories] if harm_categories else None,
                 "seed_types": seed_types or None,
                 "search": search or None,
+                "value_pattern": value_pattern,
             }
         )
         after = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
@@ -230,6 +239,7 @@ class DatasetService:
                 harm_categories=harm_categories,
                 seed_types=seed_types,
                 search=search,
+                value_pattern=value_pattern,
             )
         else:
             examples, total, next_after = await self._memory.get_seed_examples_async(
@@ -240,6 +250,7 @@ class DatasetService:
                 harm_categories=harm_categories,
                 seed_types=seed_types,
                 value_search=search,
+                value_pattern=value_pattern,
             )
         next_cursor = (
             encode_keyset_cursor(
@@ -324,6 +335,24 @@ class DatasetService:
             ) from exc
 
     @staticmethod
+    def _editing_pattern(pattern: str | None) -> re.Pattern[str] | None:
+        if pattern is None:
+            return None
+        characters = iter(compile_like_pattern(pattern).lower())
+        glob = ""
+        for character in characters:
+            if character == "/":
+                character = next(characters)
+            elif character == "%":
+                glob += "*"
+                continue
+            elif character == "_":
+                glob += "?"
+                continue
+            glob += f"[{character}]" if character in "*?[" else character
+        return re.compile(translate(glob))
+
+    @staticmethod
     def _editing_page(
         *,
         records: Sequence[SeedRecord],
@@ -333,7 +362,9 @@ class DatasetService:
         harm_categories: Sequence[str] | None,
         seed_types: Sequence[SeedType] | None,
         search: str | None,
+        value_pattern: str | None,
     ) -> tuple[dict[UUID, list[SeedRecord]], int, DecodedKeysetCursor | None]:
+        pattern = DatasetService._editing_pattern(value_pattern)
         groups: dict[UUID, list[SeedRecord]] = {}
         for record in records:
             groups.setdefault(record.prompt_group_id or record.id, []).append(record)
@@ -356,6 +387,15 @@ class DatasetService:
                     seed.data_type == "text"
                     and seed.seed_type != "simulated_conversation"
                     and search.lower() in seed.value.lower()
+                    for seed in members
+                )
+            )
+            and (
+                pattern is None
+                or any(
+                    seed.data_type == "text"
+                    and seed.seed_type != "simulated_conversation"
+                    and pattern.fullmatch(seed.value.lower()) is not None
                     for seed in members
                 )
             )

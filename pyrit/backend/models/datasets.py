@@ -17,8 +17,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pyrit.backend.models.common import PaginationInfo
-from pyrit.models import PromptDataType, SeedRecord, SeedType
-from pyrit.models.scenario_dataset import ScenarioDatasetSettings
+from pyrit.models import PromptDataType, ScenarioDatasetSettings, SeedRecord, SeedType
 
 
 class DatasetInfo(BaseModel):

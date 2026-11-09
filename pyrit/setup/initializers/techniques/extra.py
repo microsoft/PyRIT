@@ -29,8 +29,7 @@ from pyrit.executor.attack import (
 )
 from pyrit.models import AttackTechniqueSeedGroup, SeedGroupRequirements, SeedPrompt
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
+from pyrit.scenario import AttackTechniqueFactory, TechniqueRequirements
 
 
 def get_technique_factories() -> list[AttackTechniqueFactory]:

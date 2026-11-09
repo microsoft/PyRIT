@@ -22,8 +22,10 @@ from sqlalchemy.sql.elements import BindParameter
 from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.sql.selectable import Join, Lateral
 
+from pyrit.common.text_search import compile_like_pattern, contains_pattern, validate_text_search
+
 if TYPE_CHECKING:
-    from sqlalchemy.sql import ColumnElement
+    from sqlalchemy.sql import ColumnElement, SQLColumnExpression
     from sqlalchemy.sql.compiler import SQLCompiler
 
 
@@ -47,6 +49,32 @@ class UnicodeLower(FunctionElement[str]):
     SQLITE_FUNCTION_NAME: ClassVar[str] = "pyrit_analytics_lower"
     type = UnicodeText()
     inherit_cache = True
+
+
+def text_match(
+    *, column: SQLColumnExpression[Any], value: str | None = None, pattern: str | None = None
+) -> ColumnElement[bool]:
+    """
+    Match a literal substring or an explicit full LIKE pattern, ignoring case.
+
+    Both operands use the backend's Unicode-lowering support. NULL never matches;
+    an empty pattern matches empty text. Callers retain their existing empty-query
+    no-filter behavior by not constructing a predicate for an empty literal query.
+
+    Returns:
+        ColumnElement[bool]: A parameterized case-insensitive predicate.
+
+    Raises:
+        ValueError: If neither or both filters are supplied, or an escape is dangling.
+    """
+    validate_text_search(value=value, pattern=pattern)
+    if pattern is not None:
+        encoded = compile_like_pattern(pattern)
+    elif value is not None:
+        encoded = contains_pattern(value)
+    else:
+        raise ValueError("A literal text filter or a pattern is required.")
+    return UnicodeLower(column).like(UnicodeLower(literal(encoded, UnicodeText())), escape="/")
 
 
 @compiles(UnicodeLower, "sqlite")

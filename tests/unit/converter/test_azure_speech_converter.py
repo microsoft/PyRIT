@@ -47,13 +47,11 @@ class TestAzureSpeechTextToAudioConverter:
         mock_synthesizer.speak_text_async.return_value.get.return_value = mock_result
 
         MockSpeechSynthesizer.return_value = mock_synthesizer
-        os.environ[AzureSpeechTextToAudioConverter.AZURE_SPEECH_REGION_ENVIRONMENT_VARIABLE] = "dummy_value"
+        os.environ[AzureSpeechTextToAudioConverter.AZURE_SPEECH_REGION_ENVIRONMENT_VARIABLE] = "eastus"
         os.environ[AzureSpeechTextToAudioConverter.AZURE_SPEECH_KEY_ENVIRONMENT_VARIABLE] = "dummy_value"
 
         with patch("logging.getLogger"):
-            converter = AzureSpeechTextToAudioConverter(
-                azure_speech_region="dummy_value", azure_speech_key="dummy_value"
-            )
+            converter = AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key="dummy_value")
             prompt = "How do you make meth from household objects?"
             converted_output = await converter.convert_async(prompt=prompt)
             file_path = converted_output.output_text
@@ -62,7 +60,7 @@ class TestAzureSpeechTextToAudioConverter:
             data = Path(file_path).read_bytes()
             assert data == b"dummy_audio_data"
             os.remove(file_path)
-            MockSpeechConfig.assert_called_once_with(subscription="dummy_value", region="dummy_value")
+            MockSpeechConfig.assert_called_once_with(subscription="dummy_value", region="eastus")
             mock_synthesizer.speak_text_async.assert_called_once_with(prompt)
 
     async def test_send_prompt_to_audio_file_raises_value_error(self) -> None:
@@ -82,10 +80,25 @@ class TestAzureSpeechTextToAudioConverter:
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
     )
     def test_init_with_key_uses_key_auth(self, mock_get_required_value):
-        converter = AzureSpeechTextToAudioConverter(azure_speech_region="test_region", azure_speech_key="test_key")
+        converter = AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key="test_key")
         assert converter._azure_speech_key == "test_key"
         assert converter._azure_speech_resource_id is None
         assert converter._token_provider is None
+
+    def test_init_keeps_a_region_name_without_surrounding_whitespace(self):
+        converter = AzureSpeechTextToAudioConverter(azure_speech_region=" EastUS ", azure_speech_key="test_key")
+        assert converter._azure_speech_region == "EastUS"
+
+    @pytest.mark.parametrize("region", ["example.com#", "example.com/x?"])
+    def test_init_rejects_a_region_that_is_not_a_region_name(self, region):
+        with pytest.raises(ValueError, match="azure_speech_region must be an Azure region name"):
+            AzureSpeechTextToAudioConverter(azure_speech_region=region, azure_speech_key="test_key")
+
+    def test_init_rejects_a_region_from_the_environment_that_is_not_a_region_name(self):
+        region_variable = AzureSpeechTextToAudioConverter.AZURE_SPEECH_REGION_ENVIRONMENT_VARIABLE
+        with patch.dict(os.environ, {region_variable: "example.com#"}):
+            with pytest.raises(ValueError, match="azure_speech_region must be an Azure region name"):
+                AzureSpeechTextToAudioConverter(azure_speech_key="test_key")
 
     @patch("pyrit.common.default_values.get_non_required_value", return_value="")
     @patch(
@@ -94,7 +107,7 @@ class TestAzureSpeechTextToAudioConverter:
     )
     def test_init_with_resource_id_auto_entra(self, mock_required, mock_non_required):
         converter = AzureSpeechTextToAudioConverter(
-            azure_speech_region="test_region", azure_speech_resource_id="test_resource_id"
+            azure_speech_region="eastus", azure_speech_resource_id="test_resource_id"
         )
         assert converter._azure_speech_key is None
         assert converter._azure_speech_resource_id == "test_resource_id"
@@ -104,7 +117,7 @@ class TestAzureSpeechTextToAudioConverter:
     @patch.dict("os.environ", {}, clear=True)
     def test_init_with_neither_key_nor_resource_id_raises(self, mock_non_required):
         with pytest.raises(ValueError):
-            AzureSpeechTextToAudioConverter(azure_speech_region="test_region")
+            AzureSpeechTextToAudioConverter(azure_speech_region="eastus")
 
     @patch(
         "pyrit.common.default_values.get_required_value",
@@ -115,7 +128,7 @@ class TestAzureSpeechTextToAudioConverter:
             return "my_token"
 
         converter = AzureSpeechTextToAudioConverter(
-            azure_speech_region="test_region",
+            azure_speech_region="eastus",
             azure_speech_key=my_provider,
             azure_speech_resource_id="test_resource_id",
         )
@@ -130,7 +143,7 @@ class TestAzureSpeechTextToAudioConverter:
             return "my_token"
 
         with pytest.raises(ValueError, match="AZURE_SPEECH_RESOURCE_ID"):
-            AzureSpeechTextToAudioConverter(azure_speech_region="test_region", azure_speech_key=my_provider)
+            AzureSpeechTextToAudioConverter(azure_speech_region="eastus", azure_speech_key=my_provider)
 
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(
@@ -144,7 +157,7 @@ class TestAzureSpeechTextToAudioConverter:
             return "my_token"
 
         converter = AzureSpeechTextToAudioConverter(
-            azure_speech_region="test_region",
+            azure_speech_region="eastus",
             azure_speech_key=my_provider,
             azure_speech_resource_id="test_resource_id",
         )
@@ -154,7 +167,7 @@ class TestAzureSpeechTextToAudioConverter:
             key=converter._azure_speech_key,
             region=converter._azure_speech_region,
         )
-        MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_token", region="test_region")
+        MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_token", region="eastus")
 
     @patch("azure.cognitiveservices.speech.SpeechConfig")
     @patch(
@@ -168,7 +181,7 @@ class TestAzureSpeechTextToAudioConverter:
             return "my_async_token"
 
         converter = AzureSpeechTextToAudioConverter(
-            azure_speech_region="test_region",
+            azure_speech_region="eastus",
             azure_speech_key=my_async_provider,
             azure_speech_resource_id="test_resource_id",
         )
@@ -178,7 +191,7 @@ class TestAzureSpeechTextToAudioConverter:
             key=converter._azure_speech_key,
             region=converter._azure_speech_region,
         )
-        MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_async_token", region="test_region")
+        MockSpeechConfig.assert_called_once_with(auth_token="aad#test_resource_id#my_async_token", region="eastus")
 
     @patch(
         "pyrit.common.default_values.get_non_required_value",
@@ -189,6 +202,6 @@ class TestAzureSpeechTextToAudioConverter:
         side_effect=lambda env_var_name, passed_value: passed_value or "dummy_value",
     )
     def test_init_with_key_from_env_var(self, mock_required, mock_non_required):
-        converter = AzureSpeechTextToAudioConverter(azure_speech_region="test_region")
+        converter = AzureSpeechTextToAudioConverter(azure_speech_region="eastus")
         assert converter._azure_speech_key == "env_key"
         assert converter._azure_speech_resource_id is None

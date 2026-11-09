@@ -9,7 +9,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from pyrit.models.catalog.scenario_preset import ScenarioPreset, StoredPreset
+from pyrit.models import ScenarioPreset, StoredPreset
 from pyrit.registry.file_document_storage import DocumentConflictError, FileDocumentStorage
 
 if TYPE_CHECKING:

@@ -17,9 +17,12 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
-from pyrit.memory import MemoryInterface, SQLiteMemory
-from pyrit.memory.memory_models import (
+from pyrit.memory import (
     AttackResultEntry,
+    MemoryInterface,
+    SQLiteMemory,
+)
+from pyrit.memory.memory_models import (
     ConversationEntry,
     ConverterIdentifierEntry,
     PromptConverterIdentifierEntry,

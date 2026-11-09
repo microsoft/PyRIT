@@ -6,6 +6,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
@@ -73,6 +74,30 @@ def test_private_score_participation_has_unique_head_and_upgrades_current_parent
                 column["name"] for column in sa.inspect(connection).get_columns("ScoreEntries")
             }
             command.upgrade(config, "head")
+        check_schema_migrations(engine=engine)
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("parent", ["a9c3e7f1b205", "d6de1045cca4"])
+def test_dataset_and_http_fingerprint_heads_upgrade_to_one_complete_schema(parent: str) -> None:
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic"))
+    scripts = ScriptDirectory.from_config(config)
+    assert scripts.get_heads() == ["b7d9f1a3c5e8"]
+    engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config.attributes["connection"] = connection
+            config.attributes["version_table"] = "pyrit_memory_alembic_version"
+            command.upgrade(config, parent)
+            command.upgrade(config, "head")
+            inspector = sa.inspect(connection)
+            assert "DatasetLifecycleEntries" in inspector.get_table_names()
+            assert "http_request_fingerprint" in {
+                column["name"] for column in inspector.get_columns("TargetIdentifiers")
+            }
+            assert connection.scalar(sa.text("SELECT version_num FROM pyrit_memory_alembic_version")) == "b7d9f1a3c5e8"
         check_schema_migrations(engine=engine)
     finally:
         engine.dispose()

@@ -22,8 +22,8 @@ import pyrit.backend.services.service_lifecycle as services_module
 from pyrit.analytics import AttackResultAnalytics
 from pyrit.backend.main import app as backend_app
 from pyrit.backend.main import lifespan
+from pyrit.backend.middleware import register_error_handlers
 from pyrit.backend.middleware.compatibility import CompatibilityAPI
-from pyrit.backend.middleware.error_handlers import register_error_handlers
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes.analytics import router
 from pyrit.backend.services.analytics_service import close_analytics_service_async, get_analytics_service
@@ -32,7 +32,7 @@ from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.service_lifecycle import close_services_async, has_active_analytics_work
 from pyrit.exceptions.analytics_exception import AnalyticsBusyException
 from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader
 from unit.async_utils import get_defined_tasks, wait_for_completion_async, wait_for_event_async
 
 
