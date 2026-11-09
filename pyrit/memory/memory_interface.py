@@ -6793,8 +6793,7 @@ class MemoryInterface(abc.ABC):
         )
         return [entry.get_attack_result() for entry in entries]
 
-    @staticmethod
-    def _attack_results_not_superseded_condition(*, conditions: list[Any]) -> Any:
+    def _attack_results_not_superseded_condition(self, *, conditions: list[Any]) -> Any:
         """
         Build the anti-join predicate keeping only the newest matching row per conversation.
 
@@ -6815,6 +6814,12 @@ class MemoryInterface(abc.ABC):
         # correlate(None) stops SQLAlchemy from hoisting the inner FROM onto the outer row,
         # which would make every candidate trivially supersede itself.
         newer = candidates.correlate(None).subquery("newer")
+        # Both id operands go through the backend-specific UUID ordering
+        # expression: SQL Server's native uniqueidentifier order differs from
+        # the SDK's string comparison, and the tiebreak must pick the same row
+        # the post-fetch Python dedup picks on every backend.
+        newer_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=newer.c.id)
+        row_id_order = self._get_scenario_attempt_id_order_expression(attempt_id=AttackResultEntry.id)
 
         return not_(
             exists(
@@ -6827,7 +6832,7 @@ class MemoryInterface(abc.ABC):
                             newer.c.timestamp > AttackResultEntry.timestamp,
                             and_(
                                 newer.c.timestamp == AttackResultEntry.timestamp,
-                                newer.c.id > AttackResultEntry.id,
+                                newer_id_order > row_id_order,
                             ),
                         ),
                     )
@@ -6876,7 +6881,9 @@ class MemoryInterface(abc.ABC):
         seen: dict[str, AttackResultEntry] = {}
         for entry in entries:
             prev = seen.get(entry.conversation_id)
-            if prev is None or entry.timestamp > prev.timestamp:
+            # Timestamp ties break by the greater id, the same rule the
+            # paginated SQL anti-join applies, so both paths keep one row.
+            if prev is None or (entry.timestamp, str(entry.id)) > (prev.timestamp, str(prev.id)):
                 seen[entry.conversation_id] = entry
         return [entry.get_attack_result() for entry in seen.values()]
 
