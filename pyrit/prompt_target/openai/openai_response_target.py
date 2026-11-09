@@ -330,7 +330,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 )
                 or None,
                 "tool_providers": [provider.identifier for provider in self._tool_providers] or None,
-                "max_tool_rounds": self._max_tool_rounds if self._has_local_tools() else None,
+                "max_tool_rounds": self._max_tool_rounds if self._execute_tools and self._has_local_tools() else None,
             },
         )
 

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from pyrit._code_execution.client import (
     SandboxBusyError,
     SandboxExecutionError,
+    SandboxInputError,
     SandboxRevisionChangedError,
     SandboxSessionLostError,
 )
@@ -105,6 +106,7 @@ async def check_sandbox_contract_async(
     Use a sandbox you can reset or discard: the checks write files, and reset the sandbox when it supports
     reset. They take a few seconds, plus a run that times out and, for an ``environment`` sandbox, a wait
     to show that run was stopped. The session is released at the end, pass or fail.
+    Custom probe programs must fit ``max_input_bytes``, including any arguments and standard input.
 
     Args:
         sandbox (Sandbox): The adapter to check, connected to a live sandbox.
@@ -147,25 +149,41 @@ async def _check_all_async(*, sandbox: Sandbox, probes: SandboxProbes, timeout_p
 
 
 async def _check_round_trip_async(*, sandbox: Sandbox, probes: SandboxProbes) -> None:
+    limit = sandbox.get_capabilities().max_output_bytes
     text = "contract check: h\u00e9llo \u2713"
+    if len(text.encode("utf-8")) > limit:
+        text = "\u00e9" if limit >= 2 else "x"
     event = await _run_async(sandbox=sandbox, probes=probes, program=probes.print_text(text), check="round trip")
     _require(event.exit_code == 0, f"A program that succeeds must exit 0, not {event.exit_code}: {event.stderr!r}")
     _require(_lines(event.stdout) == text, f"Standard output must come back exactly as UTF-8; got {event.stdout!r}.")
-    event = await _run_async(
-        sandbox=sandbox, probes=probes, program=probes.fail_with("contract failure", 3), check="exit code"
-    )
+    failure = "contract failure"[:limit]
+    event = await _run_async(sandbox=sandbox, probes=probes, program=probes.fail_with(failure, 3), check="exit code")
     _require(event.exit_code == 3, f"The program's own exit code must come back; expected 3, got {event.exit_code}.")
-    _require("contract failure" in event.stderr, f"Standard error must come back; got {event.stderr!r}.")
+    _require(failure in event.stderr, f"Standard error must come back; got {event.stderr!r}.")
     _require(event.stdout == "", f"Standard output must not include standard error; got {event.stdout!r}.")
 
 
 async def _check_arguments_and_input_async(*, sandbox: Sandbox, probes: SandboxProbes) -> None:
+    capabilities = sandbox.get_capabilities()
     arguments = ("alpha", "two words", 'quote\'s "mark"')
+    argument_limit = capabilities.max_input_bytes - len(probes.echo_arguments.encode("utf-8"))
+    if capabilities.max_arguments_bytes is not None:
+        argument_limit = min(argument_limit, capabilities.max_arguments_bytes)
+    if (
+        sum(len(argument.encode("utf-8")) for argument in arguments) > argument_limit
+        or len("\n".join(arguments).encode("utf-8")) > capabilities.max_output_bytes
+    ):
+        arguments = ("x",)
     event = await _run_async(
         sandbox=sandbox, probes=probes, program=probes.echo_arguments, arguments=arguments, check="arguments"
     )
     _require(_lines(event.stdout) == "\n".join(arguments), f"Arguments must reach the program; got {event.stdout!r}.")
-    text = "line one\nline two\n"
+    input_limit = min(
+        capabilities.max_output_bytes,
+        capabilities.max_input_bytes - len(probes.echo_stdin.encode("utf-8")),
+    )
+    _require(input_limit >= 1, "The stdin probe must fit max_input_bytes with at least one byte of standard input.")
+    text = "line one\nline two\n"[:input_limit]
     event = await _run_async(sandbox=sandbox, probes=probes, program=probes.echo_stdin, stdin=text, check="stdin")
     _require(_lines(event.stdout) == text, f"Standard input must reach the program; got {event.stdout!r}.")
 
@@ -202,20 +220,32 @@ async def _check_nothing_persists_async(*, sandbox: Sandbox, probes: SandboxProb
 
 async def _check_session_hooks_async(*, sandbox: Sandbox, probes: SandboxProbes) -> None:
     await sandbox.release_async()
-    session_id = await sandbox._open_session_async(owner="pyrit-contract-check")
-    await sandbox._close_session_async(session_id=session_id)
+    await _run_async(sandbox=sandbox, probes=probes, program=probes.print_text(""), check="session open")
+    session_id = sandbox._session_id
+    if session_id is None:
+        raise SandboxContractError("Opening an environment session must retain its identifier.")
+    await sandbox.release_async()
+    _require(
+        (await sandbox.get_status_async()).condition is SandboxCondition.READY,
+        "Closing a session must succeed; cleanup could not be confirmed.",
+    )
     try:
-        await sandbox._close_session_async(session_id=session_id)
+        await sandbox._call_control_async(
+            sandbox._close_session_async(session_id=session_id), action="close a closed session"
+        )
     except Exception as error:
         raise SandboxContractError(f"Closing a closed session must succeed; it raised {error!r}.") from error
     try:
-        await sandbox._execute_async(
-            session_id=session_id,
-            runtime_profile_name=probes.runtime_profile_name,
-            program=probes.print_text("must not run"),
-            arguments=(),
-            stdin=None,
-            timeout_seconds=sandbox.get_capabilities().default_timeout_seconds,
+        await sandbox._call_control_async(
+            sandbox._execute_async(
+                session_id=session_id,
+                runtime_profile_name=probes.runtime_profile_name,
+                program=probes.print_text("must not run"),
+                arguments=(),
+                stdin=None,
+                timeout_seconds=sandbox.get_capabilities().default_timeout_seconds,
+            ),
+            action="run in a closed session",
         )
     except SandboxSessionLostError:
         return
@@ -254,12 +284,15 @@ async def _check_reset_async(*, sandbox: Sandbox, probes: SandboxProbes) -> None
 
 async def _check_limits_async(*, sandbox: Sandbox, probes: SandboxProbes) -> None:
     capabilities = sandbox.get_capabilities()
-    program = probes.print_text("padded")
-    padding = capabilities.max_input_bytes - len(program.encode("utf-8")) - len(probes.comment_prefix) - 1
+    text = "padded"[: capabilities.max_output_bytes]
+    program = probes.print_text(text)
+    padding = (
+        capabilities.max_input_bytes - len(program.encode("utf-8")) - len(probes.comment_prefix.encode("utf-8")) - 1
+    )
     _require(padding >= 0, "max_input_bytes must fit the probe program.")
     program += probes.comment_prefix + "x" * padding + "\n"
     event = await _run_async(sandbox=sandbox, probes=probes, program=program, check="largest program")
-    _require(event.stdout == "padded", f"A program of max_input_bytes ({capabilities.max_input_bytes}) must run.")
+    _require(event.stdout == text, f"A program of max_input_bytes ({capabilities.max_input_bytes}) must run.")
     limit = capabilities.max_output_bytes
     event = await _run_async(sandbox=sandbox, probes=probes, program=probes.print_repeated("x", limit), check="output")
     _require(
@@ -273,7 +306,8 @@ async def _check_limits_async(*, sandbox: Sandbox, probes: SandboxProbes) -> Non
 
 
 async def _check_timeout_async(*, sandbox: Sandbox, probes: SandboxProbes, timeout_seconds: float) -> None:
-    timeout = min(timeout_seconds, sandbox.get_capabilities().max_timeout_seconds)
+    capabilities = sandbox.get_capabilities()
+    timeout = min(timeout_seconds, capabilities.max_timeout_seconds, capabilities.default_timeout_seconds)
     name, _ = _marker()
     program = probes.sleep_then_write(timeout + 1, name, "late")
     started = time.monotonic()
@@ -292,6 +326,7 @@ async def _check_timeout_async(*, sandbox: Sandbox, probes: SandboxProbes, timeo
 
 async def _write_marker_async(*, sandbox: Sandbox, probes: SandboxProbes) -> tuple[str, str]:
     name, token = _marker()
+    token = token[: sandbox.get_capabilities().max_output_bytes]
     event = await _run_async(sandbox=sandbox, probes=probes, program=probes.write_marker(name, token), check="write")
     _require(event.exit_code == 0, f"Writing a file in the working directory must succeed: {event.stderr!r}")
     return name, token
@@ -320,6 +355,11 @@ async def _run_async(
             invocations=(_ProgramInvocation(arguments=arguments, stdin=stdin),),
             timeout_seconds=timeout_seconds,
         )
+    except SandboxInputError as error:
+        raise SandboxContractError(
+            f"The {check} probe does not fit the sandbox's declared limits; supply smaller probe programs or inputs: "
+            f"{error}"
+        ) from error
     except SandboxExecutionError as error:
         raise SandboxContractError(f"The {check} check could not run: {error}") from error
     _require(len(run.events) == 1, f"The {check} check must produce one result; got {len(run.events)}.")

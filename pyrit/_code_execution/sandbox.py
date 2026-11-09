@@ -765,6 +765,8 @@ class Sandbox(Identifiable, ABC):
                 execution_ids.append(result.execution_id)
             if not result.cleanup_confirmed:
                 detail = "; ".join(result.warnings) or "cleanup was not confirmed"
+                if not result.warnings:
+                    warnings.append(detail)
                 if deadline is not None:
                     self._quarantine(reason=f"A run's processes may still be running: {detail}")
                 if index + 1 < len(request.invocations):
@@ -913,12 +915,24 @@ class Sandbox(Identifiable, ABC):
 
         Returns:
             str: The session identifier.
+
+        Raises:
+            SandboxBusyError: If opening exhausted the acquisition budget or the session's usable lifetime.
         """
         if self._session_id is not None and not self._needs_renewal(timeout_seconds=request.timeout_seconds):
             return self._session_id
         if self._session_id is not None:
             await self._discard_session_async()
-        return await self._open_session_with_retry_async(request=request, deadline=deadline)
+        session_id = await self._open_session_with_retry_async(request=request, deadline=deadline)
+        if time.monotonic() >= deadline:
+            reason = "The sandbox acquisition deadline expired while opening a session; nothing ran."
+        elif self._needs_renewal(timeout_seconds=request.timeout_seconds):
+            reason = "The opened session has insufficient lifetime for this run; nothing ran."
+        else:
+            return session_id
+        await self._discard_session_async()
+        self._raise_if_unusable()
+        raise SandboxBusyError(reason)
 
     def _needs_renewal(self, *, timeout_seconds: float) -> bool:
         """
@@ -952,6 +966,10 @@ class Sandbox(Identifiable, ABC):
             if request.abandoned():
                 raise _CallerGaveUpError
             sent_at = time.monotonic()
+            if sent_at >= deadline:
+                raise SandboxBusyError(
+                    "The sandbox acquisition deadline expired before opening a session; nothing ran."
+                )
             try:
                 session_id = await self._call_control_async(
                     self._open_session_async(owner=self._owner), action="open a session"
