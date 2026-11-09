@@ -398,8 +398,7 @@ rules whatever the backend, and return typed invocation results.
   API; the base class owns the rules: validation against declared limits, one shared session per
   `environment` sandbox (state persists, callers take turns), retries only when nothing ran, renewal,
   idle close, cancellation, reset, quarantine and evidence. A `call` sandbox keeps nothing between calls.
-- A sandbox may keep state between calls, so a program can see what earlier calls left. Runs are
-  reproducible only in a `call` sandbox, such as the Docker example.
+- A sandbox may keep state between calls, so a program can see what earlier calls left.
 - PyRIT does not own environments. The one-image Docker example is the only exception:
   `DockerSandboxClient` manages disposable containers; callers supply the daemon and pinned image.
 - **Does not own**: interpreting results, scoring criteria, message or seed creation, memory

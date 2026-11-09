@@ -9,6 +9,7 @@ import asyncio
 import logging
 import sys
 import time
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -134,9 +135,13 @@ async def test_invalid_requests_fail_before_anything_runs_async(request_settings
 async def test_timeout_must_fit_in_a_session_async() -> None:
     capabilities = FakeSandbox.DEFAULT_CAPABILITIES.model_copy(update={"max_session_seconds": 100.0})
     fake = FakeSandbox(capabilities=capabilities)
-    with pytest.raises(SandboxInputError, match="session limit"):
-        await _run_async(fake, timeout_seconds=50)
-    assert (await _run_async(fake, timeout_seconds=40)).events[0].exit_code == 0
+    with patch("pyrit._code_execution.sandbox.time", SimpleNamespace(monotonic=lambda: 1_000.0)):
+        try:
+            with pytest.raises(SandboxInputError, match="session limit"):
+                await _run_async(fake, timeout_seconds=50)
+            assert (await _run_async(fake, timeout_seconds=40)).events[0].exit_code == 0
+        finally:
+            await fake.close_async()
 
 
 # ---- one shared session, taking turns (I2) -----------------------------------------------------
@@ -214,6 +219,99 @@ async def test_lock_wait_and_busy_retries_share_one_deadline_async() -> None:
     ):
         await _run_async(fake)
     assert open_session.call_args.kwargs["deadline"] == acquire.call_args.kwargs["deadline"]
+
+
+async def test_a_delayed_retry_never_opens_after_the_acquisition_deadline_async() -> None:
+    now = [1_000.0]
+    fake = FakeSandbox(acquire_timeout_seconds=5)
+    fake.fail_next(hook=FakeSandboxHook.OPEN, error=SandboxBusyError("held"))
+
+    async def delayed_sleep_async(self: object, seconds: float) -> None:
+        now[0] += 10
+
+    try:
+        with (
+            patch("pyrit._code_execution.sandbox.time", SimpleNamespace(monotonic=lambda: now[0])),
+            patch(
+                "pyrit._code_execution.sandbox._ExecutionRequest.sleep_unless_abandoned_async",
+                new=delayed_sleep_async,
+            ),
+            patch.object(fake, "_open_session_async", wraps=fake._open_session_async) as open_session,
+            pytest.raises(SandboxBusyError, match="deadline"),
+        ):
+            await _run_async(fake)
+        assert open_session.await_count == 1 and fake.runs == [] and fake.open_sessions == set()
+    finally:
+        await fake.close_async()
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+async def test_a_successful_open_after_the_deadline_is_closed_without_execution_async(close_fails: bool) -> None:
+    now = [1_000.0]
+    fake = FakeSandbox(acquire_timeout_seconds=5)
+    open_session = fake._open_session_async
+    opening, finish = asyncio.Event(), asyncio.Event()
+
+    async def open_async(*, owner: str) -> str:
+        opening.set()
+        await finish.wait()
+        session_id = await open_session(owner=owner)
+        now[0] += 10
+        return session_id
+
+    if close_fails:
+        fake.fail_next(hook=FakeSandboxHook.CLOSE, error=RuntimeError("cannot confirm close"))
+    with (
+        patch("pyrit._code_execution.sandbox.time", SimpleNamespace(monotonic=lambda: now[0])),
+        patch.object(fake, "_open_session_async", side_effect=open_async),
+    ):
+        caller = asyncio.create_task(_run_async(fake))
+        try:
+            await asyncio.wait_for(opening.wait(), TEST_WATCHDOG_SECONDS)
+            assert not caller.done() and fake._lock.locked()
+            finish.set()
+            expected = SandboxUnavailableError if close_fails else SandboxBusyError
+            with pytest.raises(expected, match="quarantined" if close_fails else "deadline"):
+                await asyncio.wait_for(caller, TEST_WATCHDOG_SECONDS)
+            assert fake.runs == [] and fake._session_id is None and not fake._lock.locked()
+            assert fake.open_sessions == ({"fake-session-1"} if close_fails else set())
+            condition = SandboxCondition.QUARANTINED if close_fails else SandboxCondition.READY
+            assert (await fake.get_status_async()).condition is condition
+        finally:
+            finish.set()
+            await _finish_async(caller)
+            await fake.close_async()
+        assert fake.open_sessions == set()
+
+
+@pytest.mark.parametrize("open_seconds", [0.0, 40.0, 40.001, 110.0])
+async def test_a_new_session_must_have_enough_lifetime_after_opening_async(open_seconds: float) -> None:
+    now = [1_000.0]
+    capabilities = FakeSandbox.DEFAULT_CAPABILITIES.model_copy(update={"max_session_seconds": 200.0})
+    fake = FakeSandbox(capabilities=capabilities)
+    open_session = fake._open_session_async
+
+    async def open_async(*, owner: str) -> str:
+        session_id = await open_session(owner=owner)
+        now[0] += open_seconds
+        return session_id
+
+    with (
+        patch("pyrit._code_execution.sandbox.time", SimpleNamespace(monotonic=lambda: now[0])),
+        patch.object(fake, "_open_session_async", side_effect=open_async),
+    ):
+        try:
+            if open_seconds > 40.0:
+                with pytest.raises(SandboxBusyError, match="lifetime"):
+                    await _run_async(fake, timeout_seconds=100)
+                assert fake.runs == [] and fake.open_sessions == set()
+                assert fake.closed_sessions == ["fake-session-1"]
+                assert (await fake.get_status_async()).condition is SandboxCondition.READY
+            else:
+                assert (await _run_async(fake, timeout_seconds=100)).events[0].exit_code == 0
+                assert len(fake.runs) == 1
+        finally:
+            await fake.close_async()
 
 
 async def test_closing_stops_a_busy_open_from_retrying_async() -> None:
@@ -922,6 +1020,29 @@ async def test_a_status_failure_reports_unavailable_async() -> None:
 
 
 # ---- evidence and identity (I11, I12) ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("state_kind", [SandboxStateKind.CALL, SandboxStateKind.ENVIRONMENT])
+@pytest.mark.parametrize("invocation_count", [1, 2])
+async def test_final_unconfirmed_cleanup_always_retains_a_warning_async(
+    *, state_kind: SandboxStateKind, invocation_count: int
+) -> None:
+    fake = FakeSandbox(
+        capabilities=SandboxCapabilities(runtime_profiles=_PYTHON, state_kind=state_kind),
+        handler=lambda run: ProcessResult(exit_code=0, cleanup_confirmed=run.arguments != ("last",)),
+    )
+    invocations = tuple(_ProgramInvocation(arguments=("first",)) for _ in range(invocation_count - 1))
+    invocations += (_ProgramInvocation(arguments=("last",)),)
+    try:
+        run = await _run_async(fake, invocations=invocations)
+        assert len(run.events) == invocation_count and run.reasons == ()
+        assert run.warnings == ("cleanup was not confirmed",)
+        condition = (
+            SandboxCondition.QUARANTINED if state_kind is SandboxStateKind.ENVIRONMENT else SandboxCondition.READY
+        )
+        assert (await fake.get_status_async()).condition is condition
+    finally:
+        await fake.close_async()
 
 
 async def test_runs_keep_warnings_execution_ids_and_durations_async() -> None:
