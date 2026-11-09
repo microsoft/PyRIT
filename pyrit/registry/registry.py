@@ -73,7 +73,7 @@ MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
 ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 
 
-def _get_metadata_value(metadata: Any, key: str) -> tuple[bool, Any]:
+def _get_metadata_value(metadata: Any, *, key: str) -> tuple[bool, Any]:
     """
     Get a value from a metadata object by key.
 
@@ -125,7 +125,7 @@ def _matches_filters(
     """
     if include_filters:
         for key, filter_value in include_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 return False
             if isinstance(actual_value, (list, tuple)):
@@ -136,7 +136,7 @@ def _matches_filters(
 
     if exclude_filters:
         for key, filter_value in exclude_filters.items():
-            found, actual_value = _get_metadata_value(metadata, key)
+            found, actual_value = _get_metadata_value(metadata, key=key)
             if not found:
                 continue
             if isinstance(actual_value, (list, tuple)):

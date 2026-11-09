@@ -9,6 +9,7 @@ All public ``print_*`` functions accept typed ``pyrit.models`` objects
 ``ScenarioRunSummary``, ``ScenarioResult``).
 """
 
+import inspect
 import json
 from datetime import UTC, datetime
 from typing import Literal
@@ -147,6 +148,26 @@ def test_header_prints_with_cyan(capsys):
     _output._header("Section Title")
     captured = capsys.readouterr()
     assert "Section Title" in captured.out
+
+
+@pytest.mark.parametrize(
+    ("text", "max_length", "expected"),
+    [
+        ("", 10, ""),
+        ("short", 10, "short"),
+        ("exact", 5, "exact"),
+        ("longer text", 8, "longe..."),
+        ("word  more", 9, "word..."),
+        ("long", 3, "..."),
+    ],
+)
+def test_truncate_text_preserves_behavior(*, text: str, max_length: int, expected: str) -> None:
+    assert _output._truncate_text(text, max_length=max_length) == expected
+
+
+def test_truncate_text_max_length_is_keyword_only() -> None:
+    parameter = inspect.signature(_output._truncate_text).parameters["max_length"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 def test_wrap_short_text_single_line():
