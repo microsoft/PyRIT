@@ -76,6 +76,31 @@ Here are some examples:
 | **A2ATarget**                       | **No** (multi-turn, but no editable history)     | Text-only Agent-to-Agent endpoints through the official a2a-sdk (v0.3 / v1.0).                |
 | **AzureBlobStorageTarget**          | **No**                                            | Used primarily for storage; not for conversation-based AI.                                       |
 
+## Target authentication
+
+Targets are shared by default, including their configured authentication. In CoPyRIT, a
+**personal target** shares its configuration but uses each caller's own provider credential.
+Create one with `requires_caller_credential: true`, either from scratch or as a personal copy
+of an existing target. Copying replaces the source's authentication without changing the source.
+
+![Personal target credential flow: each caller submits a token to a process-memory store keyed by caller and target. Before every provider request, the target resolves only the current caller's token. A missing token stops the request without falling back to another user or server credentials.](../../assets/caller-credential-flow.svg)
+
+The backend's authenticated caller identity and the model provider's credential are separate.
+Each caller sets their provider token with `pyrit_scan set-target-credential` or
+`PUT /api/targets/{id}/credentials`. Background work and queued scenarios retain the caller
+who started them; the target resolves that caller's current token before every provider request.
+Other callers can see the target but must set their own token before using it.
+
+Caller credentials require one backend worker and one replica. They live only in process
+memory and are lost on restart or reinitialization. The backend does not refresh tokens;
+the CLI's `--from-ant --keep-fresh` option can obtain and re-submit them.
+
+Personal-target creation supports OpenAI-family targets except `RealtimeTarget`, and
+`LiteLLMChatTarget` with an explicit `openai/` model route, using `auth_mode="api_key"`.
+See [personal targets with caller credentials](../../../pyrit/backend/README.md#personal-targets-with-caller-credentials)
+for API examples, supported settings, and credential lifecycle details, and
+[the scanner guide](../../scanner/1_pyrit_scan.ipynb) for CLI usage.
+
 ## OpenAI SDK compatibility
 
 PyRIT supports OpenAI Python SDK 2.20 and later 2.x releases, and SDK 3.x.

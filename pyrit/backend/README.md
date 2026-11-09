@@ -44,6 +44,9 @@ API keys do not authenticate incoming GUI users.
 
 #### Personal targets with caller credentials
 
+See [target authentication](../../doc/code/targets/0_prompt_targets.md#target-authentication)
+for a diagram of target creation, per-caller credential storage, and request-time lookup.
+
 Targets are shared by default: a key submitted when creating a target is used for every caller's
 requests. To use a personal token or account instead, create the target with
 `"requires_caller_credential": true`. Supported for OpenAI-family targets (except
