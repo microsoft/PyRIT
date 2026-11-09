@@ -53,6 +53,7 @@ export default function FindingPathsDialog({ operationId, finding, subFindings, 
     update(key, draft => {
       const steps = [...draft.steps]
       const [step] = steps.splice(from, 1)
+      if (step === undefined) return draft
       steps.splice(to, 0, step)
       return { ...draft, steps }
     })

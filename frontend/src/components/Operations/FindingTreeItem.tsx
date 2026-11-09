@@ -49,7 +49,7 @@ export default function FindingTreeItem({
 }: FindingTreeItemProps) {
   const styles = useOperationsStyles()
   const treeStyles = useFindingTreeItemStyles()
-  const Heading = HEADINGS[Math.min(depth, HEADINGS.length - 1)]
+  const Heading = HEADINGS[Math.min(depth, HEADINGS.length - 1)] ?? 'h6'
   const isExpanded = expanded.has(finding.id)
   const childCount = finding.child_count
   return (
