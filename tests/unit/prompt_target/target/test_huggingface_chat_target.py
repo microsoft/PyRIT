@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from asyncio import Task
 from concurrent.futures import ThreadPoolExecutor
@@ -20,6 +21,7 @@ from unit.async_utils import (
     wait_for_event_async,
 )
 
+from pyrit.exceptions import EmptyResponseException
 from pyrit.models import (
     Message,
     MessagePiece,
@@ -1072,3 +1074,73 @@ async def test_effective_generation_config_in_metadata():
     assert effective_config["temperature"] == 1.0
     # Model defaults should also be present
     assert effective_config["eos_token_id"] == 2
+
+
+_EOS_TOKEN_ID = 2
+_PROMPT_TOKEN_IDS = [5, 6, 7]
+
+
+async def _target_generating(*, new_token_ids: list[int], decoded_text: str) -> HuggingFaceChatTarget:
+    """Build a target whose model returns the prompt followed by ``new_token_ids``."""
+    import torch  # type: ignore[ty:unresolved-import]
+
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False, max_new_tokens=3)
+    await target.load_model_and_tokenizer_async()
+    target.model.generation_config.eos_token_id = _EOS_TOKEN_ID
+    target.tokenizer.eos_token_id = _EOS_TOKEN_ID
+    target.tokenizer.apply_chat_template.return_value.to.return_value = {
+        "input_ids": torch.tensor([_PROMPT_TOKEN_IDS]),
+        "attention_mask": torch.ones(1, len(_PROMPT_TOKEN_IDS), dtype=torch.long),
+    }
+    target.model.generate.side_effect = None
+    target.model.generate.return_value = torch.tensor([_PROMPT_TOKEN_IDS + new_token_ids])
+    target.tokenizer.decode.return_value = decoded_text
+    return target
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+@pytest.mark.parametrize(
+    ("new_token_ids", "finish_reason"),
+    [
+        ([101, 102, 103], "length"),
+        ([101, 102, _EOS_TOKEN_ID], "stop"),
+        ([101, _EOS_TOKEN_ID], "stop"),
+    ],
+    ids=["hits-limit", "eos-at-limit", "eos-before-limit"],
+)
+async def test_response_records_why_generation_stopped(
+    new_token_ids: list[int], finish_reason: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    target = await _target_generating(new_token_ids=new_token_ids, decoded_text="partial answer")
+
+    with caplog.at_level(logging.WARNING):
+        response = await target.send_prompt_async(message=_user_message("Hello"))
+
+    piece = response[0].message_pieces[0]
+    assert piece.original_value == "partial answer"
+    assert piece.prompt_metadata["finish_reason"] == finish_reason
+    assert any("max_new_tokens" in record.message for record in caplog.records) is (finish_reason == "length")
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_empty_truncated_response_is_returned_without_retry() -> None:
+    target = await _target_generating(new_token_ids=[101, 102, 103], decoded_text="")
+
+    response = await target.send_prompt_async(message=_user_message("Hello"))
+
+    piece = response[0].message_pieces[0]
+    assert piece.original_value == ""
+    assert piece.response_error == "empty"
+    assert piece.prompt_metadata["finish_reason"] == "length"
+    target.model.generate.assert_called_once()
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_empty_response_that_was_not_truncated_still_raises() -> None:
+    target = await _target_generating(new_token_ids=[_EOS_TOKEN_ID], decoded_text="")
+
+    with pytest.raises(EmptyResponseException):
+        await target.send_prompt_async(message=_user_message("Hello"))
