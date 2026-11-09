@@ -114,6 +114,25 @@ describe('useConversationCopy', () => {
     expect(options.onSelectConversation).not.toHaveBeenCalled()
   })
 
+  it('should claim a recovered prompt destination before navigating and restoring the composer', async () => {
+    jest.mocked(attacksApi.createAttack).mockResolvedValue({
+      attack_result_id: 'recovered-attack', conversation_id: 'recovered-conversation', related_conversation_ids: [],
+    })
+    const transitions: string[] = []
+    const { result } = renderCopy({
+      recoverableSend: { history: [], historyCutoffIndex: -1, failedRequestMessageIndex: 0 },
+      onRestoreDestination: (attackId: string, conversationId: string) => {
+        transitions.push(`retain:${attackId}:${conversationId}`)
+      },
+      onConversationCreated: () => { transitions.push('navigate') },
+      restoreRecoverableDraft: () => { transitions.push('restore') },
+    })
+
+    await act(async () => { await result.current.copyConversation(0, 'new_attack') })
+
+    expect(transitions).toEqual(['retain:recovered-attack:recovered-conversation', 'navigate', 'restore'])
+  })
+
   it('should send technique copies to the technique runner without a target', async () => {
     const { result, options } = renderCopy()
 

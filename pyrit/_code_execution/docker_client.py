@@ -176,7 +176,6 @@ class DockerSandboxClient(Sandbox):
     _MAX_ARGUMENTS_BYTES = 16_384
     # Backend checks, a stalled client and container removal each take up to the control timeout.
     _EXECUTE_GRACE_SECONDS = 180.0
-    _BACKEND_CHECK_SECONDS = 60.0
 
     def __init__(
         self,
@@ -223,7 +222,6 @@ class DockerSandboxClient(Sandbox):
         self._pids_limit = pids_limit
         self._max_output_bytes = max_output_bytes
         self._temp_root = Path(tempfile.gettempdir())
-        self._backend_checked_at: dict[str, float] = {}
         self.get_capabilities()
 
     def _build_identifier(self) -> ComponentIdentifier:
@@ -301,10 +299,7 @@ class DockerSandboxClient(Sandbox):
         """
         del session_id
         profile = self._profiles[runtime_profile_name]
-        checked_at = self._backend_checked_at.get(profile.image)
-        if checked_at is None or time.monotonic() - checked_at >= self._BACKEND_CHECK_SECONDS:
-            await self._validate_backend_async(profile=profile)
-            self._backend_checked_at[profile.image] = time.monotonic()
+        await self._validate_backend_async(profile=profile)
         workspace_dir = self._temp_root / f"pyrit-program-{uuid.uuid4().hex}"
         program_dir = workspace_dir / "program"
         program_path = program_dir / profile.program_filename
