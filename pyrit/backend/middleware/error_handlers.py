@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pyrit.backend.middleware.request_size import RequestTooLargeError, request_too_large_response
 from pyrit.backend.models import FieldError, ProblemDetail
 from pyrit.exceptions.analytics_exception import AnalyticsException
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,39 @@ def register_error_handlers(app: FastAPI) -> None:
 
         return JSONResponse(
             status_code=status.HTTP_403_FORBIDDEN,
+            content=problem.model_dump(exclude_none=True),
+        )
+
+    @app.exception_handler(DocumentStorageUnavailableError)
+    async def storage_unavailable_handler(  # pyrit-async-suffix-exempt
+        request: Request,
+        exc: DocumentStorageUnavailableError,
+    ) -> JSONResponse:
+        """
+        Handle stored documents that can't be read or written as 503 Service Unavailable.
+
+        The log names the storage location, without credentials, and the reason, with the
+        traceback at debug level. The response never carries a path or URL.
+
+        Returns:
+            JSONResponse: RFC 7807 problem detail response with 503 status.
+        """
+        logger.warning(f"{exc} ({request.method} {request.url.path})")
+        logger.debug("Storage error details", exc_info=exc)
+        if isinstance(exc, DocumentUnreadableError):
+            detail = f"{exc.label} '{exc.name}' can't be read: {exc.reason}"
+        else:
+            detail = f"{exc.label} storage is unavailable"
+        problem = ProblemDetail(
+            type="/errors/storage-unavailable",
+            title="Service Unavailable",
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail,
+            instance=str(request.url.path),
+        )
+
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content=problem.model_dump(exclude_none=True),
         )
 
