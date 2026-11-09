@@ -221,7 +221,9 @@ class RoundRobinTarget(PromptTarget):
 
         for target in targets_to_try:
             try:
-                responses = await target._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                responses = await target._send_with_capabilities_async(
+                    normalized_conversation=normalized_conversation, capabilities=self.capabilities
+                )
 
                 inner_id_hash = target.get_identifier().hash
                 for response in responses:

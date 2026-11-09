@@ -1,14 +1,95 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
+from contextlib import ExitStack
+from functools import partial
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
 from pyrit.models import CapabilityName, Message
 from pyrit.prompt_target import RoundRobinTarget, TargetCapabilities, TargetConfiguration
 
 # ── Construction validation ──────────────────────────────────────────────────
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("error", [None, ValueError, asyncio.CancelledError])
+async def test_dispatch_capabilities_are_scoped_and_restored_async(error: type[BaseException] | None) -> None:
+    children = [MockPromptTarget(), MockPromptTarget()]
+    parent = RoundRobinTarget(targets=children)
+    parent.apply_capabilities(capabilities=parent.capabilities.model_copy(update={"supports_json_output": True}))
+    configurations = [child.configuration for child in children]
+    identifiers = [child.get_identifier().hash for child in children]
+
+    async def send_async(*, target: MockPromptTarget, normalized_conversation: list[Message]) -> list[Message]:
+        config = target._get_json_response_config(message_piece=normalized_conversation[-1].get_piece())
+        assert config.enabled
+        index = children.index(target)
+        assert target.configuration is configurations[index]
+        assert not target.configuration.capabilities.supports_json_output
+        assert target.get_identifier().hash == identifiers[index]
+        assert all(not other.capabilities.supports_json_output for other in children if other is not target)
+        if error is not None:
+            raise error("Dispatch interrupted")
+        return [Message.from_prompt(role="assistant", prompt="{}")]
+
+    with ExitStack() as stack:
+        for child in children:
+            stack.enter_context(
+                patch.object(
+                    child, "_send_prompt_to_target_async", new=AsyncMock(side_effect=partial(send_async, target=child))
+                )
+            )
+        message = Message.from_prompt(role="user", prompt="Return JSON.")
+        message.get_piece().prompt_metadata["response_format"] = "json"
+        if error is None:
+            await parent.send_prompt_async(message=message)
+        else:
+            with pytest.raises(error):
+                await parent.send_prompt_async(message=message)
+        for child in children:
+            assert not child.capabilities.supports_json_output
+            with pytest.raises(ValueError, match="JSON response format"):
+                await child.send_prompt_async(message=message)
+    assert all(child.configuration is original for child, original in zip(children, configurations, strict=True))
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_dispatch_capabilities_do_not_leak_to_concurrent_child_send_async() -> None:
+    children = [MockPromptTarget(), MockPromptTarget()]
+    parent = RoundRobinTarget(targets=children)
+    parent.apply_capabilities(capabilities=parent.capabilities.model_copy(update={"supports_json_output": True}))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original = children[0].configuration
+
+    async def send_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        config = children[0]._get_json_response_config(message_piece=normalized_conversation[-1].get_piece())
+        assert config.enabled
+        entered.set()
+        await asyncio.wait_for(release.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        return [Message.from_prompt(role="assistant", prompt="{}")]
+
+    with patch.object(children[0], "_send_prompt_to_target_async", new=AsyncMock(side_effect=send_async)):
+        message = Message.from_prompt(role="user", prompt="Return JSON.")
+        message.get_piece().prompt_metadata["response_format"] = "json"
+        sending = asyncio.create_task(parent.send_prompt_async(message=message))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            assert children[0].configuration is original
+            assert not children[0].capabilities.supports_json_output
+            with pytest.raises(ValueError, match="JSON response format"):
+                await children[0].send_prompt_async(message=message)
+        finally:
+            release.set()
+            responses = await sending
+        assert responses[0].get_piece().original_value == "{}"
+    assert children[0].configuration is original
+    assert not children[0].capabilities.supports_json_output
 
 
 @pytest.mark.usefixtures("patch_central_database")

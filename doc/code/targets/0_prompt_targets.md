@@ -330,6 +330,10 @@ Each probe sends a minimal request (bounded by `per_probe_timeout_s`, default 30
 
 Use `raise_on_error=True` when you apply results automatically. This shared discovery mode first requires a successful control request with a declared input, so a general request rejection does not become negative capability results. After a successful control, a confirmed rejection of a tested tool-history combination removes that combination even if it was declared; unavailable probes and untested declarations are preserved. If the control or an operational check fails, discovery raises `CapabilityDiscoveryError` and does not apply changes, even with `apply=True`. The default mode remains best-effort, retains declared tool-history support when its probe is inconclusive, and does not change the target unless you set `apply=True`.
 
+Provider HTTP 400/422 statuses survive LiteLLM's generic error wrapping, so strict checks can distinguish feature rejections from operational failures.
+
+`RoundRobinTarget` normalizes against its own configuration. During each child dispatch, capability reads use the parent's flags in a task-local scope, so detected support can reach the provider without changing independently registered children. Child configurations, identities, and independent sends retain their own settings; the dispatch scope is restored on success, failure, or cancellation.
+
 ## Multi-Modal Targets
 
 Like most of PyRIT, targets can be multi-modal.

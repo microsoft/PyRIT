@@ -5,15 +5,18 @@
 
 import asyncio
 from collections.abc import Iterator
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from openai.types.chat import ChatCompletion, ChatCompletionMessage
+from openai.types.chat.chat_completion import Choice
 
 from pyrit.backend.routes.targets import router
 from pyrit.backend.services import TargetService
-from pyrit.models import TargetCapabilities
+from pyrit.models import Message, TargetCapabilities
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget, TargetConfiguration
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
 from pyrit.registry import TargetRegistry
@@ -128,6 +131,76 @@ async def test_composite_detection_failure_preserves_parent_and_children(
     assert all(child.configuration is original for child, original in zip(children, originals, strict=True))
     assert not service._detecting
     assert not service._detecting_sources
+
+
+async def test_composite_detection_enables_json_dispatch_without_changing_children_async(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, _ = detection_service
+    service._registry.register_class(OpenAIChatTarget)
+    capabilities = OpenAIChatTarget.get_default_configuration().capabilities.model_copy(
+        update={"supports_json_output": False, "supports_json_schema": False}
+    )
+    children = [
+        OpenAIChatTarget(
+            api_key="test-key",
+            endpoint=f"https://example{index}.test",
+            model_name="test-model",
+            custom_configuration=TargetConfiguration(capabilities=capabilities),
+        )
+        for index in range(2)
+    ]
+    for index, child in enumerate(children):
+        service._registry.instances.register(child, name=f"json-child-{index}")
+    parent = RoundRobinTarget(targets=children)
+    service._registry.instances.register(parent, name="json-parent")
+    originals = [child.configuration for child in children]
+    identifiers = [child.get_identifier().hash for child in children]
+    completion = ChatCompletion(
+        id="json-result",
+        created=0,
+        model="test-model",
+        object="chat.completion",
+        choices=[
+            Choice(
+                index=0,
+                finish_reason="stop",
+                message=ChatCompletionMessage(role="assistant", content='{"ok":true}'),
+            )
+        ],
+    )
+    creates = [AsyncMock(return_value=completion) for _ in children]
+
+    async def discover_async(*, target: OpenAIChatTarget, **kwargs: object) -> TargetCapabilities:
+        return target.capabilities.model_copy(update={"supports_json_output": True})
+
+    try:
+        with patch(
+            "pyrit.backend.services.target_service.discover_target_capabilities_async", side_effect=discover_async
+        ):
+            detected = await service.detect_capabilities_async(
+                target_registry_name="json-parent", expected_hash=parent.get_identifier().hash
+            )
+        assert detected.capabilities.supports_json_output
+        with ExitStack() as stack:
+            for child, create in zip(children, creates, strict=True):
+                stack.enter_context(patch.object(child._client.chat.completions, "create", new=create))
+            for _ in children:
+                message = Message.from_prompt(role="user", prompt="Return JSON.")
+                message.get_piece().prompt_metadata["response_format"] = "json"
+                responses = await parent.send_prompt_async(message=message)
+                assert responses[0].get_piece().original_value == '{"ok":true}'
+        for create in creates:
+            create.assert_awaited_once()
+            assert create.call_args.kwargs["response_format"] == {"type": "json_object"}
+        assert parent._counter == 2
+        for child, original, identifier in zip(children, originals, identifiers, strict=True):
+            assert child.configuration is original
+            assert not child.capabilities.supports_json_output
+            assert child.get_identifier().hash == identifier
+    finally:
+        for child in children:
+            await child.cleanup_target_async()
 
 
 async def test_composite_detection_rejects_changes_to_child_configuration(
