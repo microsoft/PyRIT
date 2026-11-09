@@ -389,6 +389,7 @@ export default function ObjectiveHeader({
           {showAutomatedDetails && scoringFailed && (
             <MessageBar intent="error">
               <MessageBarBody>
+                {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- scrollable region needs to be keyboard focusable */}
                 <pre className={styles.errorDetails} tabIndex={0} aria-label="Scorer failure details">
                   {`Scorer ${scoringFailure.scorer.registry_name}: ${scoringFailure.error}`}
                 </pre>
@@ -493,6 +494,7 @@ export default function ObjectiveHeader({
                   disabled={isSaving}
                   placeholder="Enter an objective"
                   aria-label="Attack objective"
+                  // eslint-disable-next-line jsx-a11y/no-autofocus -- focus moves into the editor the user just opened
                   autoFocus
                 />
                 <Button appearance="primary" size="small" className={styles.editorAction} onClick={handleSave} disabled={(!draft.trim() && missingObjective) || isSaving}>

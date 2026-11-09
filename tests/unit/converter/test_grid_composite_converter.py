@@ -3,6 +3,7 @@
 
 import os
 import pathlib
+from io import BytesIO
 
 import pytest
 from PIL import Image
@@ -217,3 +218,48 @@ class TestConvertAsync:
             result = await converter.convert_async(prompt="word " * 200, input_type="text")
         assert os.path.exists(result.output_text)
         assert any("does not fit" in message for message in caplog.messages)
+
+
+def test_fit_tile_composites_transparency_onto_white(innocuous_images):
+    converter = GridCompositeConverter(innocuous_images=innocuous_images, tile_size=(32, 32), random_seed=1)
+    # Fully transparent pixels whose hidden RGB is black must not render as black.
+    transparent = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    tile = converter._fit_tile(transparent)
+    assert tile.mode == "RGB"
+    assert tile.getpixel((16, 16)) == (255, 255, 255)
+
+
+@pytest.mark.parametrize(
+    ("mode", "transparency", "expected_pixels"),
+    [
+        ("RGBA", None, [(255, 255, 255), (255, 127, 127), (255, 0, 0)]),
+        ("LA", None, [(255, 255, 255), (127, 127, 127), (0, 0, 0)]),
+        ("P", bytes([0, 128, 255]), [(255, 255, 255), (127, 255, 127), (0, 0, 255)]),
+        ("P", 0, [(255, 255, 255), (0, 255, 0), (0, 0, 255)]),
+    ],
+)
+def test_fit_tile_preserves_visible_pixels_when_compositing_transparency(
+    *,
+    innocuous_images: list[str],
+    mode: str,
+    transparency: int | bytes | None,
+    expected_pixels: list[tuple[int, int, int]],
+) -> None:
+    image = Image.new(mode, (3, 1))
+    if mode == "P":
+        image.putpalette([255, 0, 0, 0, 255, 0, 0, 0, 255])
+        image.putdata([0, 1, 2])
+        image.info["transparency"] = transparency
+    else:
+        image.putdata([(0, alpha) if mode == "LA" else (255, 0, 0, alpha) for alpha in (0, 128, 255)])
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="PNG")
+    image_bytes.seek(0)
+    converter = GridCompositeConverter(innocuous_images=innocuous_images, tile_size=(3, 1))
+
+    with Image.open(image_bytes) as source:
+        tile = converter._fit_tile(source)
+
+    assert tile.mode == "RGB"
+    assert tile.size == (3, 1)
+    assert [tile.getpixel((x, 0)) for x in range(3)] == expected_pixels
