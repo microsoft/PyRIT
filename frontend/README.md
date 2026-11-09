@@ -34,6 +34,11 @@ further prompts from the GUI.
 
 ## Conversation selection
 
+The converter panel's resize handle supports Left/Right to adjust its width and
+Home/End to move to its minimum/maximum. Keyboard and mouse resizing use the
+available workspace width, and assistive technology reports the visible width.
+Resizing the window or sidebar updates those bounds automatically.
+
 Opening a saved attack with related conversations automatically opens the
 desktop conversation drawer. This default applies once per attack; later send
 refreshes do not override your open/closed choice. Creating, copying, or repeating
