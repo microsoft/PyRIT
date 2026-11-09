@@ -477,13 +477,14 @@ def test_code_execution_is_independent_of_component_layers() -> None:
         import pyrit.models.code_execution as execution_models
         from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxClient
         from pyrit._code_execution import (
-            FakeSandbox, Sandbox, SandboxProbes, check_sandbox_contract_async,
+            FakeSandbox, Sandbox, SandboxProbes, SandboxRegistry, check_sandbox_contract_async,
         )
         from pyrit.models.code_execution import (
             _ProgramExecutionEvent, _ProgramInvocation, _RuntimeProfileName, _SandboxRun,
         )
 
         fake = FakeSandbox()
+        SandboxRegistry.get_registry_singleton().register(fake, name="fake")
         assert isinstance(fake, Sandbox) and isinstance(fake, SandboxClient)
         assert SandboxProbes.python().runtime_profile_name in fake.get_runtime_profile_names()
         assert callable(check_sandbox_contract_async)

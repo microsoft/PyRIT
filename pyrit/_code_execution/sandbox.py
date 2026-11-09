@@ -352,7 +352,8 @@ class Sandbox(Identifiable, ABC):
     A ``call`` sandbox shares nothing between calls, so its calls run concurrently in the caller's task,
     and its adapter cleans up when a call is cancelled.
 
-    Each sandbox should be represented by one ``Sandbox`` object, used from one event loop, in one process.
+    Each sandbox should be represented by one ``Sandbox`` object, used from one event loop, in one process;
+    ``SandboxRegistry`` helps.
     """
 
     DEFAULT_ACQUIRE_TIMEOUT_SECONDS: ClassVar[float] = 300.0

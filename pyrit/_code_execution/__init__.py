@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         SandboxView,
     )
     from pyrit._code_execution.sandbox_contract import SandboxContractError, SandboxProbes, check_sandbox_contract_async
+    from pyrit._code_execution.sandbox_registry import SandboxRegistry, resolve_sandbox
 
 _LAZY_EXPORTS: dict[str, str] = {
     "SandboxClient": "pyrit._code_execution.client",
@@ -62,6 +63,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SandboxContractError": "pyrit._code_execution.sandbox_contract",
     "SandboxProbes": "pyrit._code_execution.sandbox_contract",
     "check_sandbox_contract_async": "pyrit._code_execution.sandbox_contract",
+    "SandboxRegistry": "pyrit._code_execution.sandbox_registry",
+    "resolve_sandbox": "pyrit._code_execution.sandbox_registry",
 }
 
 __all__ = list(_LAZY_EXPORTS)
