@@ -4,10 +4,7 @@
 
 import pytest
 
-from pyrit.models import AtomicAttackIdentifier, ComponentIdentifier
-from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
-from pyrit.models.seeds.seed_objective import SeedObjective
-from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models import AtomicAttackIdentifier, AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
 
 
 def _make_prompt(*, value="test prompt", sequence=0):
@@ -60,7 +57,8 @@ def test_attack_seed_group_consistent_group_id():
     assert None not in group_ids
 
 
-def test_logical_id_ignores_random_prompt_group_id_and_round_trips() -> None:
+@pytest.mark.parametrize("version", ["1.1.0", "1.2.0.dev0", "1.2.0", "1.3.0.dev0"])
+def test_logical_id_ignores_random_prompt_group_id_and_round_trips(version: str) -> None:
     first = AttackSeedGroup(seeds=[_make_objective(value="goal"), _make_prompt(value="context")])
     second = AttackSeedGroup(seeds=[_make_objective(value="goal"), _make_prompt(value="context")])
 
@@ -71,7 +69,10 @@ def test_logical_id_ignores_random_prompt_group_id_and_round_trips() -> None:
         attack_identifier=ComponentIdentifier(class_name="Attack", class_module="tests"),
         seed_group=first,
     )
-    restored = AtomicAttackIdentifier.model_validate(identifier.model_dump(mode="json"))
+    stored = identifier.model_dump(mode="json")
+    for seed_identifier in stored["children"]["seed_identifiers"]:
+        seed_identifier["pyrit_version"] = version
+    restored = AtomicAttackIdentifier.model_validate(stored)
     assert restored.logical_seed_group_id == first.logical_id
 
 

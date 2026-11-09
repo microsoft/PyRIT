@@ -12,13 +12,15 @@ from urllib.parse import urlencode
 
 import pytest
 
+from pyrit.backend.models import (
+    MessagePieceRequest,
+)
 from pyrit.backend.models.attacks import (
     ConversationMessageRequest,
     ConversationPieceRequest,
-    MessagePieceRequest,
     SaveConversationRequest,
 )
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.media_persistence import (
     MediaAccessDeniedError,
     MediaOrigin,
@@ -39,6 +41,7 @@ def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
     return serializer
 
 
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
     ("value", "origin", "resolved_value", "resolved"),
     [
@@ -46,7 +49,7 @@ def _serializer(*, value: str = "/saved/media.bin") -> MagicMock:
         ("http://example.test/media.png", MediaOrigin.REMOTE_URL, "http://example.test/media.png", True),
     ],
 )
-async def test_existing_references_are_not_persisted(
+async def test_existing_references_are_not_persisted_async(
     value: str, origin: MediaOrigin, resolved_value: str, resolved: bool
 ) -> None:
     factory = MagicMock()

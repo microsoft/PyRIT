@@ -37,7 +37,7 @@ from pyrit.registry.registry_metadata import RegistryMetadata
 if TYPE_CHECKING:
     from types import ModuleType
 
-    from pyrit.score.observation.observation_source import ObservationSource
+    from pyrit.score import ObservationSource
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ class SourceRegistry(InstanceHoldingRegistry["ObservationSource[Any]", SourceMet
 
     def _base_type(self) -> type[ObservationSource[Any]]:
         """Return the runtime-checkable ``ObservationSource`` protocol, imported lazily."""
-        from pyrit.score.observation.observation_source import ObservationSource
+        from pyrit.score import ObservationSource
 
         return ObservationSource
 

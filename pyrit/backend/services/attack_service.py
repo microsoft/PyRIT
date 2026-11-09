@@ -26,11 +26,12 @@ from typing import Any, Literal
 
 from pyrit.backend.mappers import (
     attack_result_to_summary_async,
+    fetch_message_scores_async,
     format_last_message_preview,
     pyrit_messages_to_dto_async,
     request_piece_to_pyrit_message_piece,
 )
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     AddMessageResponse,
     AttackConversationsResponse,
@@ -45,14 +46,15 @@ from pyrit.backend.models.attacks import (
     MessagePieceRequest,
     MessageRequest,
     MessageView,
+    PaginationInfo,
     PrependedMessageRequest,
-    SaveConversationRequest,
+    ScoreView,
     TargetResponseStatus,
     UpdateAttackRequest,
     UpdateMainConversationRequest,
     UpdateMainConversationResponse,
 )
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models.attacks import AttackMetadata, SaveConversationRequest
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
 from pyrit.backend.services.chat_scoring_service import get_chat_scoring_service
 from pyrit.backend.services.component_lifecycle import release_component_async
@@ -69,12 +71,14 @@ from pyrit.backend.services.pagination import (
     fingerprint_filters,
     normalize_label_filters,
 )
+from pyrit.backend.services.saved_conversation_read_service import SavedConversationReadService
 from pyrit.backend.services.target_service import get_target_service
 from pyrit.common.utils import to_sha256
 from pyrit.executor.attack import attack_outcome_from_score
 from pyrit.memory import (
     AttackResultKeysetCursor,
     CentralMemory,
+    MemoryInterface,
     data_serializer_factory,
     set_message_piece_sha256_async,
 )
@@ -90,13 +94,13 @@ from pyrit.models import (
     ConversationStats,
     Message,
     MessagePiece,
+    RequestTraceContext,
     TargetIdentifier,
     group_conversation_message_pieces_by_sequence,
 )
 from pyrit.models.component_spec import RegisteredComponentReference, TargetBinding
 from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.models.results.attack_result import AttackScoringInputs
-from pyrit.models.target.request_trace_context import RequestTraceContext
 from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
@@ -134,9 +138,12 @@ class AttackService:
     Uses PyRIT memory (database) as the source of truth via AttackResult.
     """
 
-    def __init__(self, *, message_send_service: MessageSendService | None = None) -> None:
+    def __init__(
+        self, *, message_send_service: MessageSendService | None = None, memory: MemoryInterface | None = None
+    ) -> None:
         """Initialize the attack service."""
-        self._memory = CentralMemory.get_memory_instance()
+        self._memory = memory if memory is not None else CentralMemory.get_memory_instance()
+        self._saved_conversation_reader = SavedConversationReadService(memory=self._memory)
         self._message_send_service = (
             message_send_service if message_send_service is not None else get_message_send_service()
         )
@@ -363,7 +370,67 @@ class AttackService:
         if not results:
             return None
 
+        return await self._summarize_attack_async(ar=results[0])
+
+    async def get_attack_metadata_async(
+        self, *, attack_result_id: str, conversation_id: str | None = None
+    ) -> AttackMetadata | None:
+        """
+        Read Chat metadata with a reference count and independent selected membership.
+
+        The stored SDK result and reference JSON are still materialized by memory.
+        Only the count and selected membership cross the metadata DTO boundary.
+
+        Returns:
+            AttackMetadata | None: Metadata without reference arrays, or None for an absent attack.
+        """
+        results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
+        if not results:
+            return None
         ar = results[0]
+        references = await self._memory.get_attack_conversation_page_async(attack_result_id=attack_result_id, limit=1)
+        if references is None:
+            return None
+        selected_id = conversation_id if conversation_id is not None else ar.conversation_id
+        selected_valid = bool(selected_id) and selected_id == references.main_conversation_id
+        if not selected_valid:
+            selected = await self._memory.get_attack_conversation_page_async(
+                attack_result_id=attack_result_id, conversation_id=selected_id, limit=1
+            )
+            if selected is None:
+                return None
+            selected_valid = bool(selected.conversations)
+        summary = await self._summarize_attack_async(
+            ar=ar.model_copy(update={"related_conversations": set(), "last_response": None})
+        )
+        return AttackMetadata(
+            attack_result_id=summary.attack_result_id,
+            conversation_id=summary.conversation_id,
+            objective=summary.objective,
+            labels=summary.labels,
+            operator=summary.operator,
+            target=summary.target,
+            target_unbound=summary.target_unbound,
+            outcome=summary.outcome,
+            automated_score=summary.automated_score,
+            human_score=summary.human_score,
+            chat_scorer=summary.chat_scorer,
+            chat_scorer_inherited=summary.chat_scorer_inherited,
+            execution_read_only=summary.execution_read_only,
+            manual_continuation=summary.manual_continuation,
+            last_response_message_piece_id=str(ar.last_response.id) if ar.last_response is not None else None,
+            related_conversation_count=references.total_count - int(bool(references.main_conversation_id)),
+            selected_conversation_id=selected_id,
+            selected_conversation_valid=selected_valid,
+        )
+
+    async def _summarize_attack_async(self, *, ar: AttackResult) -> AttackSummary:
+        """
+        Map one loaded result with the shared presentation and scoring policy.
+
+        Returns:
+            AttackSummary: The presentation view of the supplied result.
+        """
         stats_map = await self._memory.get_conversation_stats_async(conversation_ids=[ar.conversation_id])
         stats = stats_map.get(ar.conversation_id, ConversationStats(message_count=0))
         operation_names = await self._get_operation_names_async(results=[ar])
@@ -393,13 +460,17 @@ class AttackService:
         *,
         attack_result_id: str,
         conversation_id: str,
+        limit: int | None = None,
+        cursor: str | None = None,
     ) -> ConversationMessagesResponse | None:
         """
-        Get all messages for a conversation belonging to an attack.
+        Get messages for a main or pruned conversation belonging to an attack.
 
         Args:
             attack_result_id: The AttackResult's primary key (used to verify existence).
             conversation_id: The conversation whose messages to return.
+            limit: Optional message-piece page size. None preserves the existing full-conversation read.
+            cursor: Continuation for an explicitly paged read.
 
         Returns:
             ConversationMessagesResponse if attack found, None otherwise.
@@ -407,6 +478,13 @@ class AttackService:
         Raises:
             ValueError: If the conversation does not belong to the attack.
         """
+        if limit is not None:
+            return await self._saved_conversation_reader.get_messages_async(
+                attack_result_id=attack_result_id, conversation_id=conversation_id, limit=limit, cursor=cursor
+            )
+        if cursor is not None:
+            raise ValueError("A message-page cursor requires a limit.")
+
         # Check attack exists
         results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
@@ -418,26 +496,26 @@ class AttackService:
             raise ValueError(f"Conversation '{conversation_id}' is not part of attack '{attack_result_id}'")
 
         # Get messages for this conversation
-        pyrit_messages = await self._memory.get_conversation_messages_async(conversation_id=conversation_id)
+        pyrit_messages = list(await self._memory.get_conversation_messages_async(conversation_id=conversation_id))
+        scores = await fetch_message_scores_async(pyrit_messages=pyrit_messages, memory=self._memory)
         backend_messages = await pyrit_messages_to_dto_async(
-            list(pyrit_messages),
+            pyrit_messages,
             objective_score_id=ar.last_score.id if ar.last_score else None,
+            memory=self._memory,
+            scores=scores,
         )
-        scoring_result = ar.get_scoring_failure(conversation_id)
-        latest_response = next(
-            (message for message in reversed(pyrit_messages) if message.api_role == "assistant"), None
+        scoring = await get_chat_scoring_service().conversation_scoring_async(
+            attack=ar, conversation_id=conversation_id, messages=pyrit_messages, scores=scores
         )
-        if scoring_result is not None and (
-            latest_response is None
-            or scoring_result.response_id not in {str(piece.id) for piece in latest_response.message_pieces}
-        ):
-            scoring_result = None
 
         return ConversationMessagesResponse(
             conversation_id=conversation_id,
             messages=backend_messages,
             target_response_status=_get_latest_target_response_status(backend_messages),
-            scoring_failure=scoring_result,
+            scoring_failure=scoring.failure,
+            automated_score=ScoreView.from_domain(scoring.score) if scoring.score else None,
+            outcome=scoring.outcome,
+            latest_response_id=(str(scoring.latest_response.message_pieces[0].id) if scoring.latest_response else None),
         )
 
     async def get_saved_conversation_async(self, *, conversation_id: str) -> AddMessageResponse | None:
@@ -466,7 +544,7 @@ class AttackService:
 
     async def create_attack_async(self, *, request: CreateAttackRequest) -> CreateAttackResponse:
         """
-        Create a new attack.
+        Create a new manual attack with an objective independent of its strategy type.
 
         Creates an AttackResult with a new conversation_id.  When
         ``source_conversation_id`` and ``cutoff_index`` are provided the
@@ -505,8 +583,7 @@ class AttackService:
         attack_result = self._new_manual_attack(
             request=request,
             conversation=conversation,
-            objective=request.name or "",
-            attack_name=request.name or "ManualAttack",
+            objective=request.objective or "",
         )
         if request.source_conversation_id is not None:
             source_conversation = await self._memory.get_conversation_metadata_async(
@@ -589,7 +666,6 @@ class AttackService:
         conversation: Conversation,
         objective: str,
         attack_result_id: str | None = None,
-        attack_name: str = "ManualAttack",
     ) -> AttackResult:
         """
         Build manual attack metadata for normal creation and editor saves.
@@ -604,7 +680,7 @@ class AttackService:
             objective=objective,
             atomic_attack_identifier=AtomicAttackIdentifier.build(
                 attack_identifier=AttackIdentifier(
-                    class_name=attack_name,
+                    class_name="ManualAttack",
                     class_module="pyrit.backend",
                     objective_target=TargetIdentifier.from_component_identifier(conversation.target_identifier)
                     if conversation.target_identifier
@@ -619,6 +695,7 @@ class AttackService:
             labels={"source": "gui", **(request.labels or {})},
             metadata={
                 "created_at": now.isoformat(),
+                "objective_is_placeholder": False,
                 "target_unbound": conversation.target_identifier is None,
                 **({"target_registry_name": request.target_registry_name} if request.target_registry_name else {}),
                 **(request.target_binding.to_metadata() if request.target_binding else {}),
@@ -786,7 +863,7 @@ class AttackService:
             attack_result_id = str(request.attack_result_id)
             results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
             if not results:
-                raise ValueError("The destination attack does not exist")
+                raise LookupError("The destination attack does not exist")
             attack = results[0]
             get_chat_scoring_service().require_manual(attack)
             if request.operation_id is not None and request.operation_id != attack.operation_id:
@@ -1133,7 +1210,11 @@ class AttackService:
             "outcome_reason": None,
             "automated_score_id": None,
             "human_score_id": None,
-            "attack_metadata": {AttackResult.SCORING_ERRORS_KEY: {}, **(settings or {})},
+            "attack_metadata": {
+                "objective_is_placeholder": False,
+                AttackResult.SCORING_ERRORS_KEY: {},
+                **(settings or {}),
+            },
         }
 
     async def remove_human_score_async(self, *, attack_result_id: str) -> AttackSummary | None:
@@ -1176,17 +1257,24 @@ class AttackService:
             return await self.get_attack_async(attack_result_id=attack_result_id)
         raise AttackObjectiveConflictError("Scores kept changing. Refresh before removing the human override.")
 
-    async def get_conversations_async(self, *, attack_result_id: str) -> AttackConversationsResponse | None:
+    async def get_conversations_async(
+        self, *, attack_result_id: str, limit: int | None = None, cursor: str | None = None
+    ) -> AttackConversationsResponse | None:
         """
-        Get all conversations belonging to an attack.
+        Get main and pruned conversations belonging to an attack.
 
-        Includes the main conversation and all related conversations from the
-        AttackResult. Each entry is enriched with message count, a preview,
+        Each entry is enriched with message count, a preview,
         and the earliest message timestamp using a single batched query.
 
         Returns:
             AttackConversationsResponse if attack found, None otherwise.
         """
+        if limit is not None:
+            return await self._saved_conversation_reader.list_conversations_async(
+                attack_result_id=attack_result_id, limit=limit, cursor=cursor
+            )
+        if cursor is not None:
+            raise ValueError("A conversation-page cursor requires a limit.")
         results = await self._memory.get_attack_results_async(attack_result_ids=[attack_result_id])
         if not results:
             return None
@@ -1202,9 +1290,6 @@ class AttackService:
         for conv_id in active_conv_ids:
             stats = stats_map.get(conv_id)
             created_at = stats.created_at if stats else None
-            # SQLite returns naive datetimes — normalize to UTC (same pattern as the UTCDateTime column type)
-            if created_at is not None and created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=UTC)
             conversations.append(
                 ConversationSummary(
                     conversation_id=conv_id,

@@ -13,9 +13,8 @@ from typing import TYPE_CHECKING, Any, cast, overload
 
 from treelib.tree import Tree
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults, combine_dict
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.common.utils import combine_dict
 from pyrit.exceptions import (
     ComponentRole,
     InvalidJsonException,
@@ -25,11 +24,9 @@ from pyrit.exceptions import (
 from pyrit.executor.attack.component import (
     ConversationManager,
     PrependedConversationConfig,
-    get_prepended_turn_count,
-)
-from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
-from pyrit.executor.attack.component.conversation_manager import (
+    _AdversarialConversationManager,
     build_conversation_context_string_async,
+    get_prepended_turn_count,
 )
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.executor.attack.component.prepended_history_send_context import (
@@ -60,27 +57,26 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
 from pyrit.score import (
     FloatScaleThresholdScorer,
     NumericRubric,
     Scorer,
+    ScorerPromptValidator,
     SelfAskScaleScorer,
     SelfAskTrueFalseScorer,
+    TrueFalseInverterScorer,
     TrueFalseQuestion,
     TrueFalseScorer,
 )
 from pyrit.score.score_utils import normalize_score_to_float, score_is_true
-from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
-from pyrit.score.true_false.true_false_inverter_scorer import TrueFalseInverterScorer
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
-    from pyrit.models.literals import PromptDataType
+    from pyrit.models import PromptDataType
 
 logger = logging.getLogger(__name__)
 
@@ -880,11 +876,17 @@ class _TreeOfAttacksNode:
         self.objective_score = objective_scores[0]
         logger.debug(f"Node {self.node_id}: Objective score: {normalize_score_to_float(self.objective_score)}")
 
-        # Extract auxiliary scores
+        # Extract auxiliary scores. Key by class name, unless several auxiliary scorers share a
+        # class, in which case their unique names keep them from overwriting each other.
         auxiliary_scores = scoring_results["auxiliary_scores"]
-        for score in auxiliary_scores:
+        class_names = [
+            score.scorer_class_identifier.class_name if score.scorer_class_identifier else "unknown"
+            for score in auxiliary_scores
+        ]
+        for score, class_name in zip(auxiliary_scores, class_names, strict=True):
             scorer_identifier = score.scorer_class_identifier
-            scorer_name = scorer_identifier.class_name if scorer_identifier else "unknown"
+            shared = class_names.count(class_name) > 1
+            scorer_name = scorer_identifier.unique_name if shared and scorer_identifier else class_name
             self.auxiliary_scores[scorer_name] = score
             logger.debug(f"Node {self.node_id}: {scorer_name} score: {normalize_score_to_float(score)}")
 
@@ -1744,10 +1746,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
             if not supported_types:
                 supported_types.append("text")
 
-            scorer_validator = ScorerPromptValidator(
-                supported_data_types=supported_types,
-                is_objective_required=True,
-            )
+            scorer_validator = ScorerPromptValidator(supported_data_types=supported_types)
             default_scorer = FloatScaleThresholdScorer(
                 scorer=SelfAskScaleScorer.from_scale(
                     chat_target=self._adversarial_chat,

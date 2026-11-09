@@ -40,14 +40,21 @@ interface MessageListProps {
   messages: Message[]
   /** Copy this message to the input box of the current conversation */
   onCopyToInput?: (messageIndex: number) => void
+  copyToInputDisabledReason?: string
   onCopyToNewConversation?: (messageIndex: number) => void
   onCopyToNewAttack?: (messageIndex: number) => void
   onUseInTechnique?: (messageIndex: number) => void
   copyConversationDisabled?: boolean
+  copyConversationDisabledReason?: string
   newConversationDisabledReason?: string
   getBranchConversationDisabledReason?: (messageIndex: number) => string | undefined
+  getBranchConversationDescription?: (messageIndex: number) => string | undefined
   /** True while loading a historical attack's messages */
   isLoading?: boolean
+  /** Live Chat follows the latest response; saved evidence keeps the reader's position. */
+  autoScroll?: boolean
+  /** Saved evidence uses one scroll surface with its controls on narrow screens. */
+  savedEvidence?: boolean
   /** Conversation-wide default: render message text as Markdown. */
   globalMarkdown?: boolean
 }
@@ -221,7 +228,7 @@ function ScoreOverflowMenu({ scores, orderedScores, onSelect }: ScoreOverflowMen
             <ScoreOverflowMenuItem
               key={score.id}
               score={score}
-              label={labels[index]}
+              label={labels[index] ?? ''}
               onSelect={onSelect}
             />
           ))}
@@ -436,11 +443,14 @@ function MessageScores({ scores, groupId }: { scores: DisplayScore[]; groupId: s
  */
 export default function MessageList({
   messages, onCopyToInput, onCopyToNewConversation, onCopyToNewAttack, onUseInTechnique, copyConversationDisabled = false,
-  newConversationDisabledReason, getBranchConversationDisabledReason, isLoading, globalMarkdown = false, onEditConversation,
+  copyConversationDisabledReason,
+  newConversationDisabledReason, getBranchConversationDisabledReason, getBranchConversationDescription, copyToInputDisabledReason,
+  isLoading, autoScroll = true, savedEvidence = false, globalMarkdown = false, onEditConversation,
 }: MessageListProps) {
   const styles = useMessageListStyles()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const copyMenuId = useId()
+  const isCopyConversationDisabled = copyConversationDisabled || Boolean(copyConversationDisabledReason)
 
   const handleDownload = async (att: MessageAttachment) => {
     try {
@@ -463,12 +473,12 @@ export default function MessageList({
   }
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    if (autoScroll) messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, autoScroll])
 
   if (isLoading) {
     return (
-      <div className={styles.emptyState} data-testid="loading-state">
+      <div className={mergeClasses(styles.emptyState, savedEvidence && styles.savedEvidenceBody)} data-testid="loading-state">
         <Spinner size="medium" label="Loading conversation..." />
       </div>
     )
@@ -476,7 +486,7 @@ export default function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className={styles.emptyState} data-testid="message-list" onDoubleClick={onEditConversation}>
+      <div className={mergeClasses(styles.emptyState, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list" onDoubleClick={onEditConversation}>
         <Text size={300} style={{ color: tokens.colorNeutralForeground3 }}>
           There are no messages in this conversation yet.
         </Text>
@@ -485,12 +495,12 @@ export default function MessageList({
   }
 
   return (
-    <div className={styles.root} data-testid="message-list" onDoubleClick={(event) => {
+    <div className={mergeClasses(styles.root, savedEvidence && styles.savedEvidenceBody)} data-testid="message-list" onDoubleClick={(event) => {
       if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, audio, video, [role="button"]')) return
       onEditConversation?.()
     }}>
       {messages.map((message, index) => {
-        const branchDisabledReason = newConversationDisabledReason ?? getBranchConversationDisabledReason?.(index)
+        const branchDisabledReason = copyConversationDisabledReason ?? newConversationDisabledReason ?? getBranchConversationDisabledReason?.(index)
         const isUser = message.role === 'user'
         const isSimulated = message.role === 'simulated_assistant' || message.role === 'simulated_tool'
         const timestamp = new Date(message.timestamp).toLocaleTimeString()
@@ -502,7 +512,7 @@ export default function MessageList({
 
         return (
           <div
-            key={index}
+            key={message.sequence == null ? `index:${index}` : `sequence:${message.sequence}`}
             className={mergeClasses(styles.message, isUser && styles.userMessage)}
           >
             <Avatar
@@ -679,23 +689,27 @@ export default function MessageList({
                         >Copy or Branch</Button>
                       </MenuTrigger>
                       <MenuPopover><MenuList>
-                        <MenuItem className={styles.copyMenuItem} onClick={() => onCopyToInput(index)}
+                        <MenuItem className={styles.copyMenuItem} disabled={Boolean(copyToInputDisabledReason)}
+                          onClick={() => { if (!copyToInputDisabledReason) onCopyToInput(index) }}
                           aria-label="Copy to next message" aria-describedby={`${copyMenuId}-${index}-prompt`}
-                          subText={{ id: `${copyMenuId}-${index}-prompt`, children: 'Copy only this message to the prompt box.' }}>
+                          subText={{ id: `${copyMenuId}-${index}-prompt`,
+                            children: copyToInputDisabledReason ?? 'Copy only this message to the prompt box.' }}>
                           Copy to next message
                         </MenuItem>
-                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || copyConversationDisabled || Boolean(branchDisabledReason)}
+                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewConversation || isCopyConversationDisabled || Boolean(branchDisabledReason)}
                           aria-label="Branch conversation" aria-describedby={`${copyMenuId}-${index}-conversation`}
                           subText={{ id: `${copyMenuId}-${index}-conversation`,
-                            children: `Copy history including this turn into the same attack.${branchDisabledReason ? ` ${branchDisabledReason}` : ''}` }}
+                            children: `${getBranchConversationDescription?.(index) ?? 'Copy history including this turn into the same attack.'}${branchDisabledReason ? ` ${branchDisabledReason}` : ''}` }}
                           onClick={() => onCopyToNewConversation?.(index)}>Branch conversation</MenuItem>
-                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || copyConversationDisabled}
+                        <MenuItem className={styles.copyMenuItem} disabled={!onCopyToNewAttack || isCopyConversationDisabled}
                           aria-label="Branch attack" aria-describedby={`${copyMenuId}-${index}-attack`}
-                          subText={{ id: `${copyMenuId}-${index}-attack`, children: 'Copy history including this turn into a new attack (i.e., separate group of conversations).' }}
+                          subText={{ id: `${copyMenuId}-${index}-attack`, children: copyConversationDisabledReason
+                            ?? 'Copy history including this turn into a new attack (i.e., separate group of conversations).' }}
                           onClick={() => onCopyToNewAttack?.(index)}>Branch attack</MenuItem>
-                        {onUseInTechnique && <MenuItem className={styles.copyMenuItem} disabled={copyConversationDisabled}
+                        {onUseInTechnique && <MenuItem className={styles.copyMenuItem} disabled={isCopyConversationDisabled}
                           aria-label="Use in scan" aria-describedby={`${copyMenuId}-${index}-scan`}
-                          subText={{ id: `${copyMenuId}-${index}-scan`, children: 'Apply a PyRIT attack technique after prepending history including this turn.' }}
+                          subText={{ id: `${copyMenuId}-${index}-scan`, children: copyConversationDisabledReason
+                            ?? 'Apply a PyRIT attack technique after prepending history including this turn.' }}
                           onClick={() => onUseInTechnique(index)}>Use in scan</MenuItem>}
                       </MenuList></MenuPopover>
                     </Menu>
@@ -721,6 +735,11 @@ export default function MessageList({
               <div className={styles.messageFooter}>
                 <Text className={styles.timestamp}>{timestamp}</Text>
                 <div className={styles.footerDetails}>
+                  {message.isPartial && (
+                    <Tooltip content="More message pieces for this turn are not loaded." relationship="description">
+                      <Badge appearance="tint" color="warning">Incomplete turn</Badge>
+                    </Tooltip>
+                  )}
                   <Text className={styles.role}>{message.role}</Text>
                 </div>
               </div>

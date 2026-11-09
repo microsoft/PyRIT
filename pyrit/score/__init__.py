@@ -58,7 +58,7 @@ if TYPE_CHECKING:
         ResponseHandler,
     )
     from pyrit.score.scorable import ContentScorable, MessageScorable, Scorable
-    from pyrit.score.scorer import Scorer
+    from pyrit.score.scorer import LegacyScorerHookError, Scorer
     from pyrit.score.scorer_evaluation.human_labeled_dataset import (
         HarmHumanLabeledEntry,
         HumanLabeledDataset,
@@ -85,6 +85,12 @@ if TYPE_CHECKING:
     )
     from pyrit.score.scorer_info import get_scorer_info
     from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
+    from pyrit.score.true_false.assert_policy_scorer import (
+        AssertJudgmentMode,
+        AssertScoringDimension,
+        build_assert_policy_scorer,
+        get_assert_failure_criterion,
+    )
     from pyrit.score.true_false.audio_true_false_scorer import AudioTrueFalseScorer
     from pyrit.score.true_false.decoding_scorer import DecodingScorer
     from pyrit.score.true_false.file_write_scorer import FileWriteScorer
@@ -163,6 +169,10 @@ if TYPE_CHECKING:
     from pyrit.score.true_false.wildguard_scorer import WildGuardScorer, render_wildguard_prompt
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
+    "AssertJudgmentMode": "pyrit.score.true_false.assert_policy_scorer",
+    "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
+    "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",
+    "get_assert_failure_criterion": "pyrit.score.true_false.assert_policy_scorer",
     "ProgramExecutionScorer": "pyrit.score.true_false.program_execution_scorer",
     "ProgramExecutionSource": "pyrit.score.observation.program_execution_source",
     "OutputMatchesScorer": "pyrit.score.true_false.output_matches_scorer",
@@ -224,6 +234,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "LikertScalePaths": "pyrit.score.float_scale.self_ask_likert_scorer",
     "LLAMAGUARD_3_CATEGORY_CODES": "pyrit.score.true_false.llamaguard_parser",
     "LlamaGuardCategory": "pyrit.score.true_false.llamaguard_policy",
+    "LegacyScorerHookError": "pyrit.score.scorer",
     "LlamaGuardMessageRole": "pyrit.score.true_false.llamaguard_scorer",
     "LlamaGuardPolicy": "pyrit.score.true_false.llamaguard_policy",
     "LlamaGuardScorer": "pyrit.score.true_false.llamaguard_scorer",

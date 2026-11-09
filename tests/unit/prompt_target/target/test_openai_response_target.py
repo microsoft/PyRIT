@@ -28,13 +28,13 @@ from unit.mocks import (
     openai_response_json_dict,
 )
 
-from pyrit.exceptions.exception_classes import (
+from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
     RateLimitException,
 )
 from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, PromptSendingAttack
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AttackOutcome,
     JsonResponseConfig,
@@ -1315,6 +1315,32 @@ async def test_execute_call_section_malformed_arguments_tolerant_mode(target: Op
     result = await target._execute_call_section_async(section)
     assert result.invoked is False
     assert result.output == {"error": "malformed_arguments", "function": "echo", "raw_arguments": "{not-json"}
+
+
+@pytest.mark.parametrize("arguments", ["null", "[1, 2]", '"text"'])
+async def test_execute_call_section_non_object_arguments_skip_custom_function_async(
+    target: OpenAIResponseTarget, arguments: str
+) -> None:
+    callback = AsyncMock(return_value={"ok": True})
+    target._custom_functions["lookup"] = callback
+
+    result = await target._execute_call_section_async({"name": "lookup", "arguments": arguments})
+
+    callback.assert_not_awaited()
+    assert result.invoked is False
+    assert result.output == {"error": "malformed_arguments", "function": "lookup", "raw_arguments": arguments}
+
+
+async def test_execute_call_section_non_object_arguments_strict_mode_raises_async(
+    target: OpenAIResponseTarget,
+) -> None:
+    callback = AsyncMock(return_value={"ok": True})
+    target._custom_functions["lookup"] = callback
+    target._fail_on_missing_function = True
+
+    with pytest.raises(ValueError, match="Arguments for function 'lookup' must be a JSON object"):
+        await target._execute_call_section_async({"name": "lookup", "arguments": "null"})
+    callback.assert_not_awaited()
 
 
 async def test_execute_call_section_missing_name_records_no_invocation_async(target: OpenAIResponseTarget) -> None:

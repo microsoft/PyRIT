@@ -7,18 +7,17 @@ import asyncio
 from functools import lru_cache
 from typing import Any
 
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scorers import (
+from pyrit.backend.models import (
     CreateScorerRequest,
+    PaginationInfo,
     ScorerListResponse,
     ScorerTypeEntry,
     ScorerTypeResponse,
-    UnregisteredScorer,
 )
-from pyrit.models import ScorerEvaluationIdentifier, project_behavioral_identity
-from pyrit.models.catalog.scorer import ScorerInstance
+from pyrit.backend.models.scorers import UnregisteredScorer
+from pyrit.models import ScorerEvaluationIdentifier, ScorerIdentifier, project_behavioral_identity
+from pyrit.models.catalog import ScorerInstance
 from pyrit.models.component_spec import RegisteredComponentReference
-from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
 from pyrit.registry import ScorerRegistry
 from pyrit.score import Scorer
@@ -92,7 +91,9 @@ class ScorerService:
 
         Each entry lists only the parameters external callers may supply, each
         described in the form callers send it; types that need a Python object for a
-        required parameter are left out.
+        required parameter are left out. Parameters that name a file on the server,
+        and types that require one, are left out too, so callers cannot choose a
+        server file for a scorer to read.
 
         Returns:
             ScorerTypeResponse: Scorer type metadata for external callers.
@@ -105,13 +106,13 @@ class ScorerService:
                     parameters=[
                         parameter.for_external_catalog()
                         for parameter in metadata.parameters
-                        if parameter.is_external_input
+                        if parameter.is_allowed_external_input()
                     ],
                     is_llm_based=metadata.is_llm_based,
                     description=metadata.class_description or None,
                 )
                 for metadata in self._registry.get_all_registered_class_metadata()
-                if all(parameter.is_external_input for parameter in metadata.parameters if parameter.required)
+                if all(parameter.is_allowed_external_input() for parameter in metadata.parameters if parameter.required)
             ]
             return ScorerTypeResponse(items=items)
 
@@ -123,11 +124,19 @@ class ScorerService:
 
         Returns:
             ScorerListResponse: A page and its pagination metadata.
+
+        Raises:
+            ValueError: If the cursor does not name a registered scorer instance.
         """
 
         def list_instances() -> ScorerListResponse:
             entries = self._registry.instances.get_all_instances()
-            start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), 0)
+            start = next((index + 1 for index, entry in enumerate(entries) if entry.name == cursor), None)
+            if cursor and start is None:
+                # A cursor naming an entry that no longer exists must not silently
+                # restart at the first page, which would serve duplicate rows.
+                raise ValueError("The cursor is not valid for the scorer registry")
+            start = start or 0
             page = entries[start : start + limit]
             has_more = len(entries) > start + limit
             return ScorerListResponse(
@@ -158,10 +167,18 @@ class ScorerService:
 
     async def create_scorer_async(self, *, request: CreateScorerRequest) -> ScorerInstance | UnregisteredScorer:
         """
-        Build and register a scorer through the shared registry resolver.
+        Build a scorer through the shared registry resolver, with optional registration.
+
+        A parameter that names a file on the server is rejected before the scorer is
+        built, so the server never reads a file a caller chose.
 
         Returns:
-            ScorerInstance: The registered scorer and its identifier.
+            ScorerInstance | UnregisteredScorer: A named instance, or an unregistered
+                descriptor when ``register`` is false.
+
+        Raises:
+            ValueError: If the scorer type is unknown, a parameter names a file on the
+                server, or the registry or scorer rejects the parameters.
         """
 
         def create() -> ScorerInstance | UnregisteredScorer:

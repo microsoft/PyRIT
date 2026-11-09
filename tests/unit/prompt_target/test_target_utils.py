@@ -12,10 +12,14 @@ import pytest
 
 from pyrit.exceptions import PyritException, RateLimitException, pyrit_target_retry
 from pyrit.models import MessagePiece
-from pyrit.prompt_target import PromptTarget
+from pyrit.prompt_target import (
+    PromptTarget,
+    limit_requests_per_minute,
+)
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
-    limit_requests_per_minute,
+    validate_frequency_penalty,
+    validate_presence_penalty,
     validate_temperature,
     validate_top_p,
     warn_truncated_response,
@@ -62,6 +66,12 @@ def test_validate_temperature_above_two_raises():
         validate_temperature(2.1)
 
 
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), -float("inf")])
+def test_validate_temperature_non_finite_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="temperature must be between 0 and 2"):
+        validate_temperature(invalid_value)
+
+
 def test_validate_top_p_none():
     validate_top_p(None)
 
@@ -86,6 +96,44 @@ def test_validate_top_p_below_zero_raises():
 def test_validate_top_p_above_one_raises():
     with pytest.raises(PyritException, match="top_p must be between 0 and 1"):
         validate_top_p(1.1)
+
+
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf"), -float("inf")])
+def test_validate_top_p_non_finite_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="top_p must be between 0 and 1"):
+        validate_top_p(invalid_value)
+
+
+def test_validate_presence_penalty_none() -> None:
+    validate_presence_penalty(None)
+
+
+def test_validate_presence_penalty_valid_bounds() -> None:
+    validate_presence_penalty(-2.0)
+    validate_presence_penalty(0.0)
+    validate_presence_penalty(2.0)
+
+
+@pytest.mark.parametrize("invalid_value", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_validate_presence_penalty_invalid_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="presence_penalty must be between -2 and 2"):
+        validate_presence_penalty(invalid_value)
+
+
+def test_validate_frequency_penalty_none() -> None:
+    validate_frequency_penalty(None)
+
+
+def test_validate_frequency_penalty_valid_bounds() -> None:
+    validate_frequency_penalty(-2.0)
+    validate_frequency_penalty(0.0)
+    validate_frequency_penalty(2.0)
+
+
+@pytest.mark.parametrize("invalid_value", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_validate_frequency_penalty_invalid_raises(invalid_value: float) -> None:
+    with pytest.raises(PyritException, match="frequency_penalty must be between -2 and 2"):
+        validate_frequency_penalty(invalid_value)
 
 
 @pytest.mark.parametrize("rpm", [None, 30])

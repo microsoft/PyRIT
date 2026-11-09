@@ -49,8 +49,8 @@ export function catalogQueryFromSearchParams(params: URLSearchParams): DatasetCa
   const sortValue = params.get(SORT_PARAM)
   return {
     search: params.get(SEARCH_PARAM) ?? '',
-    modalities: params.getAll(MODALITY_PARAM),
-    harmCategories: params.getAll(HARM_CATEGORY_PARAM),
+    modalities: [...new Set(params.getAll(MODALITY_PARAM))],
+    harmCategories: [...new Set(params.getAll(HARM_CATEGORY_PARAM))],
     unlabeled: params.get(UNLABELED_PARAM) === 'true',
     sort: sortValue != null && isDatasetSort(sortValue) ? sortValue : DEFAULT_DATASET_SORT,
   }
@@ -60,8 +60,8 @@ export function catalogQueryFromSearchParams(params: URLSearchParams): DatasetCa
 export function catalogQueryToSearchParams(query: DatasetCatalogQuery): URLSearchParams {
   const params = new URLSearchParams()
   if (query.search) params.set(SEARCH_PARAM, query.search)
-  for (const modality of query.modalities) params.append(MODALITY_PARAM, modality)
-  for (const category of query.harmCategories) params.append(HARM_CATEGORY_PARAM, category)
+  for (const modality of new Set(query.modalities)) params.append(MODALITY_PARAM, modality)
+  for (const category of new Set(query.harmCategories)) params.append(HARM_CATEGORY_PARAM, category)
   if (query.unlabeled) params.set(UNLABELED_PARAM, 'true')
   if (query.sort !== DEFAULT_DATASET_SORT) params.set(SORT_PARAM, query.sort)
   return params

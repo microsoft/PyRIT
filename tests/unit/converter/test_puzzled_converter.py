@@ -10,9 +10,9 @@ import regex
 from unit.mocks import MockPromptTarget
 
 from pyrit.common.random_context import configure_random_seed
-from pyrit.converter import PuzzledConverter
+from pyrit.converter import PuzzledConverter, PuzzleType
 from pyrit.converter.puzzled import keyword_masker
-from pyrit.converter.puzzled.puzzle_builders import PuzzleType, crossword_symbol_map
+from pyrit.converter.puzzled.puzzle_builders import crossword_symbol_map
 from pyrit.exceptions import EmptyResponseException
 from pyrit.models import Message, MessagePiece
 
@@ -96,6 +96,13 @@ def test_identifier_canonicalizes_essential_words():
 async def test_unsupported_input_type_raises():
     with pytest.raises(ValueError):
         await PuzzledConverter().convert_async(prompt=_PROMPT, input_type="image_path")
+
+
+async def test_unhandled_puzzle_type_raises_async() -> None:
+    converter = PuzzledConverter(num_to_mask=2, seed=1)
+    with patch.object(converter, "_puzzle_type", "sudoku"):
+        with pytest.raises(AssertionError, match="Expected code to be unreachable, but got: 'sudoku'"):
+            await converter.convert_async(prompt=_PROMPT)
 
 
 @pytest.mark.parametrize(

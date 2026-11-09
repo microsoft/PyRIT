@@ -10,10 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from pyrit.models.identifiers import ScorerEvaluationIdentifier, ScorerIdentifier
-from pyrit.models.parameter import ComponentType
-from pyrit.registry import Registry
-from pyrit.registry.components import ScorerRegistry, SourceMetadata, SourceRegistry
+from pyrit.models import ComponentType, ScorerEvaluationIdentifier, ScorerIdentifier
+from pyrit.registry import Registry, ScorerRegistry, SourceMetadata, SourceRegistry
 from pyrit.score import FileWriteScorer, OtelToolCallScorer
 from pyrit.score.observation import (
     ConversationSource,

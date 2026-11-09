@@ -160,8 +160,8 @@ class ScenarioAttempt:
     attempt_id: str
     total_retries: int
     result_role: AttackResultRole | None
-    attempt_index: int | None
-    child_attack_result_ids: tuple[str, ...]
+    attempt_index: int | None = None
+    child_attack_result_ids: tuple[str, ...] = ()
 
     @property
     def attack_result_id(self) -> str:
@@ -523,7 +523,13 @@ def combine_execution_counts(counts: Iterable[ScenarioProgressCounts]) -> Scenar
 
     return ScenarioProgressCounts(
         completed=completed,
-        planned=sum(value for value in planned if value is not None) if all(v is not None for v in planned) else None,
+        planned=(
+            # The empty group carries no plan at all, so it reports None rather
+            # than a vacuous sum() of 0.
+            sum(value for value in planned if value is not None)
+            if planned and all(v is not None for v in planned)
+            else None
+        ),
         succeeded=succeeded,
         success_percentage=success_percentage(succeeded=succeeded, completed=completed),
         errors=sum(item.errors for item in counts),

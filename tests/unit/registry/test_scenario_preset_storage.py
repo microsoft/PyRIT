@@ -12,10 +12,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION, ScenarioPreset
-from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
+from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest, ScenarioPreset
+from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION
+from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetStorage
 from pyrit.registry.file_document_storage import _release_exclusive_lock, _try_acquire_exclusive_lock
-from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
 
 
 def _make_preset(**overrides: object) -> ScenarioPreset:
@@ -87,6 +87,30 @@ def test_explicit_false_round_trips_as_false(tmp_path: Path) -> None:
 
     assert loaded is not None
     assert loaded.preset.include_baseline is False
+
+
+def test_listed_preset_leaves_scanner_visibility_out_of_the_document(tmp_path: Path) -> None:
+    """Test that the default visibility is not written, so builds predating the flag can still read it."""
+    storage = ScenarioPresetStorage(source=str(tmp_path))
+
+    storage.save_preset(preset=_make_preset(), expected_version=None)
+    loaded = storage.load_preset("nightly")
+
+    assert loaded is not None
+    assert loaded.preset.show_in_scanner is True
+    assert "show_in_scanner" not in json.loads((tmp_path / "nightly.json").read_text(encoding="utf-8"))
+
+
+def test_hidden_preset_round_trips_its_scanner_visibility(tmp_path: Path) -> None:
+    """Test that hiding a preset from the Scanner survives storage."""
+    storage = ScenarioPresetStorage(source=str(tmp_path))
+
+    storage.save_preset(preset=_make_preset(show_in_scanner=False), expected_version=None)
+    loaded = storage.load_preset("nightly")
+
+    assert loaded is not None
+    assert loaded.preset.show_in_scanner is False
+    assert json.loads((tmp_path / "nightly.json").read_text(encoding="utf-8"))["show_in_scanner"] is False
 
 
 def test_version_is_not_stored_inside_the_document(tmp_path: Path) -> None:

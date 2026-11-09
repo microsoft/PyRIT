@@ -8,8 +8,7 @@ import pytest
 from unit.mocks import get_image_message_piece, store_message_async
 
 from pyrit.analytics import ApproximateTextMatching, ExactTextMatching, TextMatching
-from pyrit.memory.central_memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import MatchesObjective, MessagePiece, ScoringExpectation
 from pyrit.score import ContentScorable, MessageScorable, Scorer, SubStringScorer
 

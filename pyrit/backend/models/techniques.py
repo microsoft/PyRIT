@@ -8,7 +8,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from pyrit.backend.models.common import IdentifierStr, PaginationInfo, TextStr
-from pyrit.models import Parameter
+from pyrit.models import ComponentIdentifier, Parameter
 from pyrit.models.request_limits import MAX_ITEMS
 from pyrit.models.technique_edit import TechniqueOverride, TechniqueSettings
 
@@ -24,6 +24,7 @@ class TechniqueInstance(BaseModel):
     tags: list[str] = Field(default_factory=list)
     uses_adversarial: bool
     uses_default_adversarial_target: bool
+    identifier: ComponentIdentifier
     creation_statement: str
 
 
@@ -62,6 +63,7 @@ class TechniqueConfiguration(BaseModel):
     supplied_parameters: list[str]
     read_only: dict[str, str]
     supports_prepended_conversation: bool = False
+    supports_prompt: bool = False
 
 
 class TechniqueEditResponse(BaseModel):

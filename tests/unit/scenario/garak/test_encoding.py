@@ -9,8 +9,7 @@ import pytest
 
 from pyrit.converter import Base64Converter
 from pyrit.executor.attack import PromptSendingAttack
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import CompoundDatasetAttackConfiguration, DatasetAttackConfiguration, DatasetConfiguration
 from pyrit.scenario.garak import Encoding, EncodingTechnique  # type: ignore[ty:unresolved-import]
@@ -138,7 +137,7 @@ class TestEncodingInitialization:
         """Test that initialization raises DatasetConstraintError when datasets are unavailable."""
         from unittest.mock import patch
 
-        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
+        from pyrit.scenario.core import DatasetConstraintError
 
         # Don't mock _resolve_seed_groups_by_dataset_async; let it try to load from empty memory.
         # Disable the provider fallback so memory stays empty and the scenario raises.
@@ -264,6 +263,7 @@ class TestEncodingTechniqueDefault:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.usefixtures("mock_dataset_preparation")
 class TestEncodingAtomicNameUniqueness:
     """Tests that atomic-attack names are unique per converter variant (collision fix)."""
 
@@ -664,7 +664,7 @@ class TestEncodingDatasetConfigurationBuildAttackGroups:
 
     async def test_get_attack_seed_groups_async_raises_when_empty(self):
         """Test that get_attack_seed_groups_async raises DatasetConstraintError when nothing resolves."""
-        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
+        from pyrit.scenario.core import DatasetConstraintError
 
         config = EncodingDatasetConfiguration(dataset_names=["empty_dataset"], auto_fetch=False)
 

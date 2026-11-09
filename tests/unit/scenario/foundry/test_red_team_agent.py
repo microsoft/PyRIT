@@ -14,8 +14,10 @@ from unit.mocks import MockPromptTarget
 from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
+    AsciiSmugglerConverter,
     AtbashConverter,
     Base64Converter,
+    BinaryConverter,
     CaesarConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
@@ -33,19 +35,16 @@ from pyrit.converter import (
     UnicodeSubstitutionConverter,
     UrlConverter,
 )
-from pyrit.converter.binary_converter import BinaryConverter
-from pyrit.converter.token_smuggling.ascii_smuggler_converter import AsciiSmugglerConverter
 from pyrit.executor.attack import (
+    AttackScoringConfig,
+    AttackStrategy,
     CrescendoAttack,
     PromptSendingAttack,
     RedTeamingAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory import SQLiteMemory
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedObjective
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, IncompatibleTechniqueError
@@ -291,6 +290,7 @@ class TestFoundryCompatibilityPolicy:
                 "objective_target": target,
                 "scenario_techniques": [incompatible, FoundryTechnique.ROT13],
                 "incompatible_technique_policy": policy,
+                "dataset_config": DatasetAttackConfiguration(seed_groups=mock_memory_seed_groups),
             }
         )
         with patch.object(
@@ -322,7 +322,11 @@ class TestFoundryCompatibilityPolicy:
             attack_scoring_config=AttackScoringConfig(objective_scorer=mock_objective_scorer),
         )
         scenario.set_params_from_args(
-            args={"objective_target": target, "scenario_techniques": [FoundryTechnique.Crescendo]}
+            args={
+                "objective_target": target,
+                "scenario_techniques": [FoundryTechnique.Crescendo],
+                "dataset_config": DatasetAttackConfiguration(seed_groups=mock_memory_seed_groups),
+            }
         )
         with patch.object(
             scenario,
@@ -351,6 +355,7 @@ class TestFoundryCompatibilityPolicy:
                 "objective_target": MockPromptTarget(),
                 "scenario_techniques": [FoundryTechnique.Base64],
                 "incompatible_technique_policy": "skip",
+                "dataset_config": DatasetAttackConfiguration(seed_groups=mock_memory_seed_groups),
             }
         )
         with (

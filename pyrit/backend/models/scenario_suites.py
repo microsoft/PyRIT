@@ -8,8 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from pyrit.models.catalog.scenario_preset import PresetIssue
-from pyrit.models.catalog.scenario_suite import ScenarioSuite
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.models import PresetIssue, ScenarioSuite
 
 __all__ = [
     "ScenarioSuiteEntryStatus",
@@ -20,7 +20,7 @@ __all__ = [
 
 
 class ScenarioSuiteEntryStatus(BaseModel):
-    """Current deployment-specific status for one stored suite entry."""
+    """Current deployment-specific status for one suite entry."""
 
     entry_id: UUID = Field(..., description="Stable identifier of the suite entry this status describes")
     preset_name: str = Field(..., description="Referenced scenario preset name")
@@ -39,10 +39,23 @@ class ScenarioSuiteEntryStatus(BaseModel):
 
 
 class ScenarioSuiteResponse(BaseModel):
-    """A stored scenario suite, its document version, and current entry statuses."""
+    """A scenario suite, its origin, optional document version, and current entry statuses."""
 
-    suite: ScenarioSuite = Field(..., description="The stored scenario suite definition")
-    version: str = Field(..., description="Opaque version required to update the suite")
+    suite: ScenarioSuite = Field(..., description="The scenario suite definition")
+    origin: Literal["stored", "registered"] = Field(
+        "stored",
+        description=(
+            "Whether a stored document or registering code contributed this suite. A registered suite "
+            "is held in memory by the code that registered it and cannot be updated or deleted here."
+        ),
+    )
+    version: str | None = Field(
+        ...,
+        description=(
+            "Opaque version required to update a stored suite. None for a registered suite, "
+            "which has no document to guard."
+        ),
+    )
     entry_statuses: list[ScenarioSuiteEntryStatus] = Field(
         default_factory=list,
         description="Preset origin, version, and advisory issues in the suite's entry order",
@@ -50,14 +63,14 @@ class ScenarioSuiteResponse(BaseModel):
 
 
 class ScenarioSuiteListResponse(BaseModel):
-    """The configured suite storage source and every readable suite."""
+    """The configured suite storage source and every readable suite from either origin."""
 
     source: str = Field(..., description="Credential-free configured suite source")
-    items: list[ScenarioSuiteResponse] = Field(..., description="Stored suites, sorted by name")
+    items: list[ScenarioSuiteResponse] = Field(..., description="Stored and registered suites, sorted by name")
 
 
 class UpdateScenarioSuiteRequest(BaseModel):
     """Request body for replacing a scenario suite the caller has read."""
 
     suite: ScenarioSuite = Field(..., description="The replacement suite")
-    expected_version: str = Field(..., description="Version returned when the suite being edited was read")
+    expected_version: IdentifierStr = Field(..., description="Version returned when the suite being edited was read")

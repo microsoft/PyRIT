@@ -7,12 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
-    VLSUCategory,
+from pyrit.datasets.seed_datasets.remote import (
     _VLSUMultimodalDataset,
 )
-from pyrit.memory import MemoryInterface
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
+    VLSUCategory,
+)
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import SeedDataset
 
 
@@ -53,6 +54,12 @@ class TestVLSUMultimodalDataset:
         """Test that an empty categories list raises ValueError."""
         with pytest.raises(ValueError, match="`categories` must be a non-empty list"):
             _VLSUMultimodalDataset(categories=[])
+
+    @pytest.mark.parametrize("max_examples", [0, -1])
+    def test_init_with_max_examples_below_one_raises(self, max_examples):
+        """Test that max_examples below 1 raises ValueError instead of still loading one pair."""
+        with pytest.raises(ValueError, match="max_examples must be at least 1"):
+            _VLSUMultimodalDataset(max_examples=max_examples)
 
     def test_init_with_unsafe_grades(self):
         """Test initialization with custom unsafe grades."""

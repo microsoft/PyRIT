@@ -1,9 +1,10 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
 import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
+import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import type { Finding, FindingListItem, Operation, OperationDetail } from '@/types'
 import OperationDetailPage from './OperationDetailPage'
 
@@ -12,7 +13,7 @@ jest.mock('@/services/api', () => ({
     get: jest.fn(), update: jest.fn(), delete: jest.fn(), listFindings: jest.fn(), createFinding: jest.fn(),
     updateFinding: jest.fn(), deleteFinding: jest.fn(),
     listFindingEvidence: jest.fn(), detachFindingEvidence: jest.fn(),
-    getFindingOptions: jest.fn(),
+    getFindingOptions: jest.fn(), exportFindings: jest.fn(),
   },
   attacksApi: { listAttacks: jest.fn() },
   scenariosApi: { listRuns: jest.fn() },
@@ -204,15 +205,18 @@ it('refreshes evidence counts without collapsing the expanded list after detachm
   expect(await screen.findByText('No evidence attached.')).toBeInTheDocument()
 })
 
-it('puts all execution history after the findings without fetching or duplicating activity', async () => {
+it('links both feature histories after the findings without fetching or duplicating activity', async () => {
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
   renderPage()
   const finding = await screen.findByRole('heading', { name: FINDING.title })
-  const link = screen.getByRole('link', { name: 'All execution history' })
+  const link = screen.getByRole('link', { name: 'Attack history' })
   const url = new URL(link.getAttribute('href') ?? '', 'http://localhost')
-  expect(url.pathname).toBe('/history/attacks')
+  expect(url.pathname).toBe('/attack/history')
   expect(url.searchParams.getAll('operation_id')).toEqual([OPERATION.id])
   expect(url.searchParams.has('operation')).toBe(false)
+  const scannerUrl = new URL(screen.getByRole('link', { name: 'Scanner history' }).getAttribute('href') ?? '', 'http://localhost')
+  expect(scannerUrl.pathname).toBe('/scanner/history')
+  expect(scannerUrl.searchParams.getAll('operation_id')).toEqual([OPERATION.id])
   expect(finding.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(screen.queryByText('Human assessments, separate from attack outcomes and scores.')).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Recent attacks' })).not.toBeInTheDocument()
@@ -477,6 +481,42 @@ it('keeps deletion errors visible and prevents duplicate confirmations', async (
   expect(operationsApi.deleteFinding).toHaveBeenCalledTimes(1)
 })
 
+it('opens findings export from the header without changing findings or the dashboard page', async () => {
+  const user = userEvent.setup()
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+  renderPage('/operations/op-1?offset=20')
+  await screen.findByRole('heading', { level: 2, name: FINDING.title })
+  const trigger = screen.getByRole('button', { name: 'Export findings' })
+  await user.click(trigger)
+  const dialog = screen.getByRole('dialog', { name: 'Export findings' })
+  expect(await within(dialog).findByRole('checkbox', { name: FINDING.title })).toBeChecked()
+  expect(operationsApi.listFindings).toHaveBeenCalledWith('op-1', { limit: 100, offset: 0 })
+
+  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  await waitFor(() => expect(trigger).toHaveFocus())
+  expect(screen.getByText('Page 2')).toBeInTheDocument()
+  expect(jest.mocked(operationsApi.listFindings).mock.calls.filter(([, params]) => params.limit === 20))
+    .toEqual([['op-1', { limit: 20, offset: 20 }]])
+  expect(operationsApi.exportFindings).not.toHaveBeenCalled()
+  expect(operationsApi.createFinding).not.toHaveBeenCalled()
+  expect(operationsApi.updateFinding).not.toHaveBeenCalled()
+  expect(operationsApi.deleteFinding).not.toHaveBeenCalled()
+})
+
+it('shows decorative icons on the header actions but not on the finding actions', async () => {
+  jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+  renderPage()
+  const heading = await screen.findByRole('heading', { level: 1, name: OPERATION.name })
+  await screen.findByRole('heading', { level: 2, name: FINDING.title })
+  const header = within(heading.closest('header') as HTMLElement)
+  const withoutIcon = ['Edit', 'Delete', 'Export findings', 'New finding']
+    .filter(name => header.getByRole('button', { name }).querySelector('svg[aria-hidden="true"]') === null)
+  expect(withoutIcon).toEqual([])
+  expect(screen.getByRole('button', { name: `Edit finding: ${FINDING.title}` }).querySelector('svg')).toBeNull()
+  expect(screen.getByRole('button', { name: `Delete finding: ${FINDING.title}` }).querySelector('svg')).toBeNull()
+})
+
 it('pages through findings', async () => {
   const user = userEvent.setup()
   jest.mocked(operationsApi.listFindings).mockResolvedValueOnce({ items: [FINDING], has_more: true, next_offset: 20 })
@@ -486,4 +526,35 @@ it('pages through findings', async () => {
   await screen.findByText(/no findings/i)
   expect(jest.mocked(operationsApi.listFindings).mock.calls.at(-1)).toEqual(['op-1', { limit: 20, offset: 20 }])
   expect(screen.getByText('Page 2')).toBeInTheDocument()
+})
+
+describe('history after changing a finding on the first page', () => {
+  let restoreRequest: () => void
+  beforeAll(() => { restoreRequest = installRouterTestRequest() })
+  afterAll(() => { restoreRequest() })
+
+  it.each(['saving', 'deleting'])('leaves the operation with one Back after %s a finding', async action => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+    const router = createMemoryRouter([
+      { path: '/operations', element: <h1>Operations list</h1> },
+      { path: '/operations/:operationId', element: <OperationDetailPage /> },
+    ], { initialEntries: ['/operations', '/operations/op-1'], initialIndex: 1 })
+    render(<FluentProvider theme={webLightTheme}><RouterProvider router={router} /></FluentProvider>)
+
+    if (action === 'saving') {
+      await user.click(await screen.findByRole('button', { name: 'New finding' }))
+      const dialog = screen.getByRole('dialog')
+      await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), FINDING.title)
+      await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+      expect(await screen.findByText(`Finding saved: ${FINDING.title}`)).toBeInTheDocument()
+    } else {
+      await user.click(await screen.findByRole('button', { name: `Delete finding: ${FINDING.title}` }))
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete finding' }))
+      expect(await screen.findByText(`Finding deleted: ${FINDING.title}`)).toBeInTheDocument()
+    }
+
+    await act(async () => { await router.navigate(-1) })
+    expect(await screen.findByRole('heading', { level: 1, name: 'Operations list' })).toBeInTheDocument()
+  })
 })

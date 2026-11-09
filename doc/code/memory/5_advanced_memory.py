@@ -134,7 +134,8 @@ for result in results:
 # | `identifier_type` | Which identifier column to search — `TARGET`, `CONVERTER`, `ATTACK`, or `SCORER`. |
 # | `property_path` | A JSON path such as `$.class_name`, `$.endpoint`, `$.model_name`, etc. |
 # | `value` | The value to match. |
-# | `partial_match` | If `True`, performs a substring (LIKE) match. |
+# | `value_pattern` | A full case-insensitive LIKE pattern instead of `value`. |
+# | `partial_match` | If `True`, `value` is a case-insensitive literal substring. |
 # | `array_element_path` | For array columns (e.g. converter_identifiers), the JSON path within each element. |
 #
 # The examples below query against data already in memory from Part 1.
@@ -171,6 +172,22 @@ for filter_target_class in filter_target_classes:
 #
 # You don't need an exact match — `partial_match=True` performs a substring search.
 # This is handy when you know part of a class name, endpoint URL, or model name.
+#
+# Ordinary substring filters treat `%`, `_`, `/`, `\`, brackets and `*` literally.
+# For wildcard matching, use `value_pattern` instead of `value` and `partial_match`:
+# `IdentifierFilter(identifier_type=IdentifierType.TARGET, property_path="$.class_name", value_pattern="OpenAI%")`.
+# Patterns match the full supplied pattern: `%` matches any number of characters, `_` matches one,
+# and `/` escapes the next character (`%/_%` finds a literal underscore). Brackets and `*` stay literal.
+# A trailing unpaired `/` or conflicting filters raise `ValueError`. Array-element paths remain exact-only.
+#
+# The same contract applies to attack `objective`/`objective_pattern`, finding `title_query`/`title_pattern`,
+# and scenario `scenario_name`/`scenario_name_pattern` filters. Memory no longer converts snake_case
+# aliases inside a search; callers resolving an alias can explicitly pass
+# `ScenarioResult.normalize_scenario_name("content_harms")`. CLI/registry lookup still uses registry names.
+#
+# Case-insensitive means Unicode lowercasing, not locale-independent full case folding or accent stripping.
+# SQLite uses Python lowercasing for non-ASCII text; SQL Server uses `LOWER` under its database collation.
+# Equivalences such as sharp-s versus `ss`, contextual Greek sigma, and locale-specific casing can differ.
 
 # %%
 # Find all pieces sent to any target whose class_name contains "OpenAI"

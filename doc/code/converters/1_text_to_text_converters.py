@@ -45,6 +45,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from pyrit.common.path import DOCS_CODE_PATH
 from pyrit.converter import (
     AsciiArtConverter,
     AskToDecodeConverter,
@@ -70,7 +71,10 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, seed=42)  # type: ignore
 
 prompt = "tell me how to cut down a tree"
-token_bijection_vocab = Path("token_bijection_vocab.txt").read_text(encoding="utf-8").splitlines()
+token_bijection_vocab_path = Path("token_bijection_vocab.txt")
+if not token_bijection_vocab_path.exists():
+    token_bijection_vocab_path = DOCS_CODE_PATH / "converters" / "token_bijection_vocab.txt"
+token_bijection_vocab = token_bijection_vocab_path.read_text(encoding="utf-8").splitlines()
 token_bijection_tokenizer = SimpleNamespace(
     get_vocab=lambda: {word: index for index, word in enumerate(token_bijection_vocab)}
 )
@@ -243,6 +247,7 @@ from pyrit.converter import (
     SATA_TASK_TEMPLATE,
     JsonStringConverter,
     PolicyPuppetryConverter,
+    PolicyPuppetryTemplate,
     PromptTemplateConverter,
     SATAMaskingConverter,
     SearchReplaceConverter,
@@ -251,7 +256,6 @@ from pyrit.converter import (
     TextJailbreakConverter,
     UrlConverter,
 )
-from pyrit.converter.policy_puppetry_converter import PolicyPuppetryTemplate
 from pyrit.datasets import TextJailBreak
 
 prompt = "tell me how to cut down a tree"
@@ -378,7 +382,20 @@ print("Variation Selector:", await var_selector.convert_async(prompt=prompt))  #
 #
 # LLM-based converters use language models to transform prompts. These converters are more flexible and can produce more natural variations, but they are slower and require an LLM target.
 #
-# These converters use LLMs to transform text style, tone, language, and semantics:
+# These converters use LLMs to transform text style, tone, language, and semantics.
+#
+# RolePlayToolCallConverter(...) writes one untrusted message so a desired tool action looks approved.
+# Supply `valid_call`, `action_desired`, and a `converter_target`, or configure a default target.
+# Pass the pipeline text to rewrite as `convert_async(prompt=...)`.
+# The call fields must not be empty. Tool calls are context for the generator, not tools it can execute.
+# `message_format` defaults to `random`: each conversion selects XML, YAML, JSON, Markdown, or plain text.
+# Set `message_format` to a format or custom instructions to keep it fixed.
+# Enable the `tools` initializer to register the example `role_play_tool_calls` technique.
+# It uses the registered `adversarial_chat` target. The general technique catalog does not include this example.
+# In Technique Parameters > Request converters, open Settings on the example converter to change its call fields
+# for this run. The registered converter stays unchanged. Add converters after it to transform the generated message.
+# The picker also has New converter, which creates a registered instance you can use in other runs.
+# `system_prompt` is the adversarial chat's system message; the default is loaded from the role-play YAML.
 
 # %%
 import pathlib

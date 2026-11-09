@@ -13,14 +13,20 @@ from sqlalchemy import inspect, or_, select, text
 from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Query, Session
 
-from pyrit.common.singleton import Singleton
-from pyrit.converter.base64_converter import Base64Converter
-from pyrit.memory import AzureSQLMemory, EmbeddingDataEntry, PromptMemoryEntry
-from pyrit.memory.memory_interface import AttackResultKeysetCursor, _AttackResultQuery
-from pyrit.memory.memory_models import ScenarioResultEntry
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
+from pyrit.common import Singleton
+from pyrit.converter import Base64Converter
+from pyrit.memory import (
+    AttackResultKeysetCursor,
+    AzureSQLMemory,
+    EmbeddingDataEntry,
+    MemoryInterface,
+    PromptMemoryEntry,
+    set_message_piece_sha256_async,
+)
+from pyrit.memory.memory_interface import MessagePieceKeysetCursor, _AttackResultQuery
+from pyrit.memory.memory_models import ScenarioResultEntry, UTCDateTime
 from pyrit.models import Conversation, MessagePiece
-from pyrit.prompt_target.text_target import TextTarget
+from pyrit.prompt_target import TextTarget
 from unit.mocks import get_azure_sql_memory_async, get_sample_conversation_entries
 
 if TYPE_CHECKING:
@@ -503,7 +509,7 @@ async def test_update_prompt_entries_by_conversation_id(memory_interface: AzureS
     "partial_match, expected_value",
     [
         (False, "testvalue"),
-        (True, "%testvalue%"),
+        (True, "%TestValue%"),
     ],
     ids=["exact_match", "partial_match"],
 )
@@ -517,7 +523,12 @@ def test_get_condition_json_property_match_bind_params(
         partial_match=partial_match,
     )
     # Extract the compiled bind parameters (param names include a random uid suffix)
-    params = condition.compile().params
+    params = condition.compile(dialect=mssql.dialect()).params
+    if partial_match:
+        assert "$.key" in params.values()
+        assert expected_value in params.values()
+        assert "ESCAPE '/'" in str(condition.compile(dialect=mssql.dialect()))
+        return
     pp_params = {k: v for k, v in params.items() if k.startswith("pp_")}
     mv_params = {k: v for k, v in params.items() if k.startswith("mv_")}
     assert len(pp_params) == 1
@@ -595,6 +606,20 @@ def test_get_attack_result_label_condition_empty_labels_dict(memory_interface: A
     assert not any("label_" in k for k in params)
 
 
+def test_get_conversation_stats_types_created_at_as_utc_datetime(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """The raw aggregate is typed with UTCDateTime so its result processor reattaches UTC."""
+    session = MagicMock()
+    session.execute.return_value.fetchall.return_value = []
+
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=["conversation"])
+
+    sql = session.execute.call_args.args[0]
+    assert isinstance(sql.selected_columns.created_at.type, UTCDateTime)
+
+
 def test_get_conversation_stats_uses_one_latest_row_apply(
     uninitialized_memory_interface: AzureSQLMemory,
 ) -> None:
@@ -610,6 +635,46 @@ def test_get_conversation_stats_uses_one_latest_row_apply(
     assert sql.upper().count("SELECT TOP 1") == 1
     assert "OUTER APPLY" in sql.upper()
     assert "p2.converted_value_data_type AS last_data_type" in sql
+
+
+def test_get_conversation_stats_chunks_within_bind_budget(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    """Conversation statistics query chunks parameters within _MAX_BIND_VARS and combines results."""
+    session = MagicMock()
+    session.execute.side_effect = lambda sql, params: MagicMock(
+        fetchall=lambda: [(cid, 3, "preview", "text", "2026-10-16T12:00:00+00:00") for cid in params.values()]
+    )
+
+    max_vars = uninitialized_memory_interface._MAX_BIND_VARS
+    assert max_vars == 2000
+
+    # 1. At the limit: exactly 2,000 IDs -> 1 query, 2,000 parameters
+    at_limit_ids = [f"conv_{i}" for i in range(max_vars)]
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        stats_at_limit = uninitialized_memory_interface._execute_get_conversation_stats(conversation_ids=at_limit_ids)
+    assert len(stats_at_limit) == max_vars
+    assert session.execute.call_count == 1
+    params_at_limit = session.execute.call_args[0][1]
+    assert len(params_at_limit) == max_vars
+    assert len(params_at_limit) <= 2100
+
+    session.reset_mock()
+
+    # 2. Above the limit: 2,101 IDs -> exactly 2 queries (2,000 and 101 parameters)
+    above_limit_ids = [f"conv_{i}" for i in range(2101)]
+    with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
+        stats_above_limit = uninitialized_memory_interface._execute_get_conversation_stats(
+            conversation_ids=above_limit_ids
+        )
+    assert len(stats_above_limit) == 2101
+    assert session.execute.call_count == 2
+    first_call_params = session.execute.call_args_list[0][0][1]
+    second_call_params = session.execute.call_args_list[1][0][1]
+    assert len(first_call_params) == 2000
+    assert len(second_call_params) == 101
+    assert len(first_call_params) <= max_vars
+    assert len(second_call_params) <= max_vars
 
 
 def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
@@ -643,6 +708,29 @@ def test_scenario_history_conditions_bind_or_within_label_and_registry_values(
         )
     )
     assert "scenario_registry_name_1" in combined_statement.compile().params
+
+
+def test_scenario_history_reference_id_binds_pruned_conversation_fallback(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    reference_id = uuid.uuid4()
+    session = MagicMock(spec=Session)
+    session.execute.return_value.all.return_value = []
+    with (
+        patch.object(memory_interface, "_get_session", return_value=session),
+        patch.object(memory_interface, "_uid", return_value="history_reference"),
+    ):
+        result = memory_interface._execute_get_scenario_run_history_page(reference_id=reference_id, limit=1)
+
+    compiled = session.execute.call_args.args[0].compile(dialect=mssql.dialect())
+    sql = " ".join(str(compiled).split())
+    assert result == ([], {}, False)
+    assert 'OPENJSON(JSON_QUERY("AttackResultEntries".pruned_conversation_ids, :pp_history_reference))' in sql
+    assert compiled.params["pp_history_reference"] == "$"
+    assert compiled.params["mv_history_reference_0"] == str(reference_id)
+    assert str(reference_id) not in sql
+    assert "[AttackResultEntries].attribution_parent_id = [ScenarioResultEntries].id" in sql
+    assert "LOWER(value) = :mv_history_reference_0" in sql
 
 
 def test_scenario_history_legacy_label_condition_binds_each_value(
@@ -739,7 +827,7 @@ def test_scenario_progress_cursor_and_order_use_canonical_uuid_order(
     [
         (False, False, "LOWER(JSON_VALUE("),
         (True, False, "JSON_VALUE("),
-        (False, True, "LOWER(JSON_VALUE("),
+        (False, True, "LOWER((SELECT"),
     ],
     ids=["case_insensitive_exact", "case_sensitive_exact", "case_insensitive_partial"],
 )
@@ -756,7 +844,7 @@ def test_get_condition_json_property_match_sql_text(
         partial_match=partial_match,
         case_sensitive=case_sensitive,
     )
-    sql_text = str(condition.compile(compile_kwargs={"literal_binds": False}))
+    sql_text = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": False}))
     assert expected_sql_fragment in sql_text
     # When case_sensitive=False, LOWER must wrap the entire JSON_VALUE(...) call
     if not case_sensitive:
@@ -765,7 +853,7 @@ def test_get_condition_json_property_match_sql_text(
 
 def test_get_condition_json_array_match_all_mode_joins_with_and(memory_interface: AzureSQLMemory):
     """match_mode='all' (default) produces per-element EXISTS clauses joined by AND."""
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     condition = memory_interface._get_condition_json_array_match(
         json_column=AttackResultEntry.atomic_attack_identifier,
@@ -786,7 +874,7 @@ def test_get_condition_json_array_match_any_mode_joins_with_or(memory_interface:
     The outer parens are essential: without them, operator precedence would bind the outer
     ``ISJSON(...) = 1 AND`` tighter than the inner ``OR``, corrupting the predicate.
     """
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     condition = memory_interface._get_condition_json_array_match(
         json_column=AttackResultEntry.atomic_attack_identifier,
@@ -809,7 +897,7 @@ def test_get_condition_json_array_match_any_mode_preserves_empty_absence_overloa
     """match_mode is ignored when array_to_match is empty — always returns the 'no converters' predicate."""
     import re
 
-    from pyrit.memory.memory_models import AttackResultEntry
+    from pyrit.memory import AttackResultEntry
 
     def _normalize(condition) -> str:
         # _uid() generates a random per-call suffix on param names; strip it for equality.
@@ -1167,6 +1255,114 @@ def test_scenario_role_match_condition_uses_binary_collation_and_datalength_guar
     compiled_mssql = str(condition.compile(dialect=mssql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "(result_role COLLATE Latin1_General_100_BIN2) = 'target_facing'" in compiled_mssql
     assert "datalength(result_role) = datalength(N'target_facing')" in compiled_mssql
+
+
+def test_scenario_attack_result_deltas_by_ids_statement_compiles_mssql(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    scenario_id = str(uuid.uuid4())
+    child_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+
+    stmt = memory_interface._build_scenario_attack_result_deltas_by_ids_statement(
+        scenario_result_id=scenario_id,
+        attack_result_ids=child_ids,
+    )
+    compiled = stmt.compile(dialect=mssql.dialect())
+    compiled_str = str(compiled)
+
+    assert "[AttackResultEntries].attribution_parent_id =" in compiled_str
+    assert "[AttackResultEntries].id IN (" in compiled_str
+    assert "LEFT OUTER JOIN [ScoreEntries]" in compiled_str
+    assert "[AttackResultEntries].executed_turns" in compiled_str
+    assert "[AttackResultEntries].outcome_reason" in compiled_str
+
+
+def test_scenario_attack_result_deltas_by_ids_chunks_over_2100_ids_mssql(
+    memory_interface: AzureSQLMemory,
+) -> None:
+    scenario_id = str(uuid.uuid4())
+    # Generate 2,500 distinct IDs - exceeds SQL Server 2,100 bind parameter limit
+    large_id_count = 2500
+    child_ids = [str(uuid.uuid4()) for _ in range(large_id_count)]
+
+    # 1. Statement generator bounds parameters strictly to _MAX_BIND_VARS - 10
+    stmt = memory_interface._build_scenario_attack_result_deltas_by_ids_statement(
+        scenario_result_id=scenario_id,
+        attack_result_ids=child_ids,
+    )
+    compiled = stmt.compile(dialect=mssql.dialect())
+    # Total bind variables (child IDs + attribution_parent_id) must not exceed 2000
+    assert len(compiled.params) <= 2000
+
+    # 2. Execution chunks IDs in batches and executes each statement within limits
+    session = MagicMock()
+    session.execute.return_value.mappings.return_value.all.return_value = []
+    with patch.object(memory_interface, "_get_session", return_value=session):
+        deltas = memory_interface._execute_get_scenario_attack_result_deltas_by_ids(
+            scenario_result_id=scenario_id,
+            attack_result_ids=child_ids,
+        )
+
+    assert deltas == []
+    # 2,500 IDs with chunk size 1990 requires exactly 2 batches
+    assert session.execute.call_count == 2
+    for call in session.execute.call_args_list:
+        chunk_stmt = call.args[0]
+        chunk_compiled = chunk_stmt.compile(dialect=mssql.dialect())
+        assert len(chunk_compiled.params) <= 2000
+
+
+def test_scenario_attack_result_deltas_by_ids_statement_type_hints() -> None:
+    """Test that type annotations on _build_scenario_attack_result_deltas_by_ids_statement evaluate cleanly."""
+    import typing
+
+    from sqlalchemy.sql import Select
+
+    hints = typing.get_type_hints(MemoryInterface._build_scenario_attack_result_deltas_by_ids_statement)
+    assert hints.get("return") is Select
+
+
+def test_hierarchy_roots_compile_native_array_matching_and_bounded_keysets_mssql(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    statement = uninitialized_memory_interface._build_scenario_root_deltas_statement(
+        scenario_result_id=str(uuid.uuid4()),
+        cursor=AttackResultKeysetCursor(timestamp=datetime(2026, 1, 1, tzinfo=UTC), attack_result_id=str(uuid.uuid4())),
+        limit=5,
+    )
+    compiled = statement.compile(dialect=mssql.dialect())
+    sql = str(compiled)
+    assert "OPENJSON" in sql
+    assert "OUTER APPLY" in sql
+    assert "JSON_QUERY" in sql
+    assert "NOT IN" in sql
+    assert "IS NOT NULL" in sql
+    assert "DATALENGTH" in sql
+    assert "Latin1_General_100_BIN2" in sql
+    assert "TOP" in sql
+    assert "LOWER(CAST" in sql.upper()
+    assert len(compiled.params) < 30
+
+
+def test_message_piece_page_compiles_sequence_timestamp_uuid_order_mssql(
+    uninitialized_memory_interface: AzureSQLMemory,
+) -> None:
+    statement = uninitialized_memory_interface._build_conversation_message_page_statement(
+        conversation_id=str(uuid.uuid4()),
+        cursor=MessagePieceKeysetCursor(
+            sequence=-1, timestamp=datetime(2026, 1, 1, tzinfo=UTC), message_piece_id=str(uuid.uuid4())
+        ),
+        limit=3,
+    )
+    compiled = statement.compile(dialect=mssql.dialect())
+    sql = str(compiled)
+    assert "TOP" in sql
+    assert "ORDER BY" in sql
+    assert "sequence ASC" in sql
+    assert "timestamp ASC" in sql
+    assert "LOWER(CAST" in sql.upper()
+    assert -1 in compiled.params.values()
+    assert len(compiled.params) < 15
 
 
 def test_get_metadata_conditions_binds_special_character_keys(

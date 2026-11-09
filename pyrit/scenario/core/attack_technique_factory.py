@@ -32,17 +32,19 @@ from pydantic import BaseModel
 from pyrit.common import REQUIRED_VALUE, get_global_default_values
 from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.executor.attack import PromptSendingAttack
-from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
-from pyrit.executor.attack.core.attack_config import (
+from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
+    AttackParameters,
     AttackScoringConfig,
+    PrependedConversationConfig,
+    PromptSendingAttack,
 )
 from pyrit.models import (
     AttackTechniqueSeedGroup,
     ComponentIdentifier,
     Identifiable,
+    NextMessageSystemPromptPaths,
     PromptDataType,
     SeedGroupRequirements,
     SeedIdentifier,
@@ -54,7 +56,6 @@ from pyrit.models import (
     load_simulated_target_prompt,
     resolve_prompt_source,
 )
-from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
@@ -800,16 +801,27 @@ class AttackTechniqueFactory(Identifiable):
     @property
     def supports_prepended_conversation(self) -> bool:
         """Whether the declared attack and seed contracts permit caller-supplied history."""
-        allowed = (
+        return (
             "prepended_conversation_config" in self._compatibility_helper.accepted_params
-            and not self._requirements.seed_group.objective_only
-            and not (self._seed_technique is not None and self._seed_technique.has_simulated_conversation)
+            and self._supports_seed_input("prepended_conversation")
+        )
+
+    @property
+    def supports_prompt(self) -> bool:
+        """Whether the technique accepts a caller-supplied next message."""
+        return self._supports_seed_input("next_message")
+
+    def _supports_seed_input(self, name: str) -> bool:
+        allowed = not self._requirements.seed_group.objective_only and not (
+            self._seed_technique is not None and self._seed_technique.has_simulated_conversation
         )
         if not allowed:
             return False
+        if self._attack_class.FIXED_PARAMS_TYPE is not None:
+            return any(field.name == name for field in fields(self._attack_class.FIXED_PARAMS_TYPE))
         parameter = inspect.signature(self._attack_class.__init__).parameters.get("params_type")
         if parameter is None:
-            return True
+            return any(field.name == name for field in fields(AttackParameters))
         params_type = self._attack_kwargs.get("params_type")
         if params_type is None:
             found, default = get_global_default_values().get_default_value(
@@ -818,7 +830,7 @@ class AttackTechniqueFactory(Identifiable):
             params_type = default if found else parameter.default
         if not isinstance(params_type, type) or not is_dataclass(params_type):
             return False
-        return any(field.name == "prepended_conversation" for field in fields(params_type))
+        return any(field.name == name for field in fields(params_type))
 
     @_capture_creation
     def with_settings(

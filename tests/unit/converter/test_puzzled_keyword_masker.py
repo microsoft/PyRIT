@@ -45,6 +45,22 @@ class _FakeNLP:
         return self._tokens
 
 
+class _RecordingNLP:
+    """Records the text it is given and tags by exact spelling, the way the real tagger does.
+
+    ``is_alpha`` is derived with ``str.isalpha`` exactly as spaCy derives it, so a word
+    carrying a combining mark reports False here too.
+    """
+
+    def __init__(self, tags: dict[str, str]):
+        self.seen: list[str] = []
+        self._tags = tags
+
+    def __call__(self, text: str) -> list[_FakeToken]:
+        self.seen.append(text)
+        return [_FakeToken(word, self._tags.get(word, "ADV"), is_alpha=word.isalpha()) for word in text.split()]
+
+
 # --- mask count rule -------------------------------------------------------
 
 
@@ -145,6 +161,38 @@ def test_mask_prompt_prefers_pos_tagged_words_over_plain_words():
     with patch.object(keyword_masker, "_get_nlp", lambda: fake):
         result = mask_prompt("please steal the documents now", num_to_mask=2)
     assert {w.text for w in result.masked_words} == {"steal", "documents"}
+
+
+def test_pos_lookup_tags_words_with_combining_marks():
+    # is_alpha comes from str.isalpha, which is False once a combining mark is present, so
+    # the tag the pipeline produced would otherwise be dropped. Built at runtime so an editor
+    # that normalizes the file to NFC cannot silently change the test.
+    nfd = unicodedata.normalize("NFD", "café")
+    fake = _FakeNLP([_FakeToken(nfd, "NOUN", is_alpha=False)])
+    with patch.object(keyword_masker, "_get_nlp", lambda: fake):
+        assert keyword_masker._pos_lookup(nfd) == {keyword_masker._word_key(nfd): "noun"}
+
+
+def test_pos_lookup_normalizes_before_tagging():
+    nfd = unicodedata.normalize("NFD", "café")
+    fake = _RecordingNLP({})
+    with patch.object(keyword_masker, "_get_nlp", lambda: fake):
+        keyword_masker._pos_lookup(nfd)
+    assert fake.seen == [unicodedata.normalize("NFC", nfd)]
+
+
+def test_mask_prompt_selection_is_stable_across_normalization_forms():
+    # The fake tags "café" only in its composed spelling, which is how the real tagger
+    # behaves: it gives the decomposed spelling a different part of speech, and the tier in
+    # _rank_candidates then picks a different word.
+    selections = {}
+    for form in ("NFC", "NFD"):
+        fake = _RecordingNLP({"café": "NOUN"})
+        with patch.object(keyword_masker, "_get_nlp", lambda nlp=fake: nlp):
+            result = mask_prompt(unicodedata.normalize(form, "surprisingly café"), num_to_mask=1)
+        word = result.masked_words[0]
+        selections[form] = (unicodedata.normalize("NFC", word.text), word.clue)
+    assert selections["NFC"] == selections["NFD"] == ("café", "4-letter noun")
 
 
 @_no_spacy

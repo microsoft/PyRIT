@@ -34,15 +34,17 @@ from sqlalchemy.orm import InstrumentedAttribute, sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import ColumnElement, TextClause
 
-from pyrit.auth.azure_auth import AsyncAzureAuth, AzureAuth
-from pyrit.common import default_values
-from pyrit.common.singleton import Singleton
+from pyrit.auth import AzureAuth
+from pyrit.auth.azure_auth import AsyncAzureAuth
+from pyrit.common import Singleton, default_values
+from pyrit.memory.analytics_sql import JsonScalar, text_match, validate_text_search
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
     CustomUUID,
     PromptMemoryEntry,
     ScenarioResultEntry,
+    UTCDateTime,
 )
 from pyrit.memory.memory_session import MemorySession
 from pyrit.memory.storage import AzureBlobStorageIO
@@ -448,7 +450,8 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         *,
         json_column: InstrumentedAttribute[Any],
         property_path: str,
-        value: str,
+        value: str | None = None,
+        value_pattern: str | None = None,
         partial_match: bool = False,
         case_sensitive: bool = False,
     ) -> Any:
@@ -458,32 +461,40 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
             property_path (str): The JSON path for the property to match.
-            value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match. Defaults to False.
+            value (str | None): The string value to match, exactly unless partial_match is True.
+            value_pattern (str | None): A full case-insensitive LIKE pattern instead of value.
+            partial_match (bool): Whether value is a case-insensitive literal substring. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
             Any: A SQLAlchemy condition for the backend-specific JSON query.
+
+        Raises:
+            ValueError: If filters conflict, a pattern is invalid, or an exact value is absent.
         """
+        validate_text_search(value=value, pattern=value_pattern)
+        if partial_match and case_sensitive:
+            raise ValueError("case_sensitive is not reliably supported with partial_match across all backends")
+        if value_pattern is not None and (partial_match or case_sensitive):
+            raise ValueError("Cannot use value_pattern with partial_match or case_sensitive")
+        if partial_match or value_pattern is not None:
+            return text_match(column=JsonScalar(json_column, property_path), value=value, pattern=value_pattern)
+        if value is None:
+            raise ValueError("An exact JSON property match requires value")
         uid = self._uid()
         table_name = json_column.class_.__tablename__
         column_name = json_column.key
         pp_param = f"pp_{uid}"
         mv_param = f"mv_{uid}"
-        operator = "LIKE" if partial_match else "="
         target = value if case_sensitive else value.lower()
-        if partial_match:
-            escaped = target.replace("%", "\\%").replace("_", "\\_")
-            target = f"%{escaped}%"
 
         json_value_expr = f'JSON_VALUE("{table_name}".{column_name}, :{pp_param})'
         if not case_sensitive:
             json_value_expr = f"LOWER({json_value_expr})"
 
-        escape_clause = " ESCAPE '\\'" if partial_match else ""
         return text(
             f"""ISJSON("{table_name}".{column_name}) = 1
-                AND {json_value_expr} {operator} :{mv_param}{escape_clause}"""
+                AND {json_value_expr} = :{mv_param}"""
         ).bindparams(
             **{
                 pp_param: property_path,
@@ -693,57 +704,53 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         if not conversation_ids:
             return {}
 
-        placeholders = ", ".join(f":cid{i}" for i in range(len(conversation_ids)))
-        params = {f"cid{i}": cid for i, cid in enumerate(conversation_ids)}
-
-        sql = text(
-            f"""
-            SELECT
-                aggregate_rows.conversation_id,
-                aggregate_rows.msg_count,
-                latest.last_preview,
-                latest.last_data_type,
-                aggregate_rows.created_at
-            FROM (
-                SELECT
-                    pme.conversation_id,
-                    COUNT(DISTINCT pme.sequence) AS msg_count,
-                    MIN(pme.timestamp) AS created_at
-                FROM "PromptMemoryEntries" pme
-                WHERE pme.conversation_id IN ({placeholders})
-                GROUP BY pme.conversation_id
-            ) AS aggregate_rows
-            OUTER APPLY (
-                SELECT TOP 1
-                    LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
-                    p2.converted_value_data_type AS last_data_type
-                FROM "PromptMemoryEntries" p2
-                WHERE p2.conversation_id = aggregate_rows.conversation_id
-                ORDER BY p2.sequence DESC, p2.id DESC
-            ) AS latest
-            """
-        )
+        batch_size = max(1, self._MAX_BIND_VARS)
+        result: dict[str, ConversationStats] = {}
 
         with closing(self._get_session()) as session:
-            rows = session.execute(sql, params).fetchall()
+            for start in range(0, len(conversation_ids), batch_size):
+                chunk = conversation_ids[start : start + batch_size]
+                placeholders = ", ".join(f":cid{i}" for i in range(len(chunk)))
+                params = {f"cid{i}": cid for i, cid in enumerate(chunk)}
 
-        result: dict[str, ConversationStats] = {}
-        for row in rows:
-            conv_id, msg_count, last_preview, last_data_type, raw_created_at = row
+                sql = text(
+                    f"""
+                    SELECT
+                        aggregate_rows.conversation_id,
+                        aggregate_rows.msg_count,
+                        latest.last_preview,
+                        latest.last_data_type,
+                        aggregate_rows.created_at
+                    FROM (
+                        SELECT
+                            pme.conversation_id,
+                            COUNT(DISTINCT pme.sequence) AS msg_count,
+                            MIN(pme.timestamp) AS created_at
+                        FROM "PromptMemoryEntries" pme
+                        WHERE pme.conversation_id IN ({placeholders})
+                        GROUP BY pme.conversation_id
+                    ) AS aggregate_rows
+                    OUTER APPLY (
+                        SELECT TOP 1
+                            LEFT(p2.converted_value, {ConversationStats.PREVIEW_FETCH_MAX_LEN}) AS last_preview,
+                            p2.converted_value_data_type AS last_data_type
+                        FROM "PromptMemoryEntries" p2
+                        WHERE p2.conversation_id = aggregate_rows.conversation_id
+                        ORDER BY p2.sequence DESC, p2.id DESC
+                    ) AS latest
+                    """
+                ).columns(created_at=UTCDateTime())
 
-            created_at = None
-            if raw_created_at is not None:
-                if isinstance(raw_created_at, str):
-                    created_at = datetime.fromisoformat(raw_created_at)
-                else:
-                    created_at = raw_created_at
+                rows = session.execute(sql, params).fetchall()
 
-            result[conv_id] = ConversationStats(
-                message_count=msg_count,
-                last_message_preview=last_preview,
-                last_message_data_type=last_data_type,
-                created_at=created_at,
-            )
+                for row in rows:
+                    conv_id, msg_count, last_preview, last_data_type, created_at = row
+                    result[conv_id] = ConversationStats(
+                        message_count=msg_count,
+                        last_message_preview=last_preview,
+                        last_message_data_type=last_data_type,
+                        created_at=created_at,
+                    )
 
         return result
 
