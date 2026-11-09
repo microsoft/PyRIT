@@ -14,8 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 from PIL import Image
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.storage import (
+from pyrit.memory import (
     AllowedCategories,
     AzureBlobStorageIO,
     BinaryPathDataTypeSerializer,
@@ -23,6 +22,7 @@ from pyrit.memory.storage import (
     DiskStorageIO,
     ErrorDataTypeSerializer,
     ImagePathDataTypeSerializer,
+    MemoryInterface,
     StorageIO,
     TextDataTypeSerializer,
     data_serializer_factory,
@@ -608,7 +608,7 @@ async def test_save_b64_image_raises_when_results_storage_io_none():
 
 
 async def test_save_formatted_audio_raises_when_results_storage_io_none():
-    from pyrit.memory.storage import data_serializer_factory as factory
+    from pyrit.memory import data_serializer_factory as factory
 
     serializer = factory(category="prompt-memory-entries", data_type="audio_path")
     mock_memory = MagicMock(spec=MemoryInterface)
@@ -631,7 +631,7 @@ async def test_save_formatted_audio_writes_local_wav_via_to_thread(sqlite_instan
     """save_formatted_audio (local-disk path) should produce a readable WAV via _write_wav_sync."""
     import wave
 
-    from pyrit.memory.storage import data_serializer_factory as factory
+    from pyrit.memory import data_serializer_factory as factory
 
     serializer = factory(category="prompt-memory-entries", data_type="audio_path")
     output_path = tmp_path / "out.wav"
@@ -712,7 +712,7 @@ async def test_save_formatted_audio_writes_azure_wav_via_storage_io(sqlite_insta
     import wave
 
     from pyrit.common import path as common_path
-    from pyrit.memory.storage import data_serializer_factory as factory
+    from pyrit.memory import data_serializer_factory as factory
 
     captured: dict[str, bytes] = {}
 
@@ -786,7 +786,7 @@ async def test_get_data_filename_uses_db_data_path_when_results_path_falsy():
 
 async def test_save_formatted_audio_azure_storage_unlinks_local_temp(tmp_path):
     """save_formatted_audio_async cleans up the local temp WAV after writing to Azure storage."""
-    from pyrit.memory.storage import data_serializer_factory as factory
+    from pyrit.memory import data_serializer_factory as factory
 
     serializer = factory(category="prompt-memory-entries", data_type="audio_path")
     mock_memory = MagicMock(spec=MemoryInterface)

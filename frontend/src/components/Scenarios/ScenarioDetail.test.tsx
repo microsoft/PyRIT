@@ -1172,6 +1172,35 @@ describe('ScenarioDetail', () => {
     })
   })
 
+  it('keeps preview actions keyboard accessible without changing the selected techniques or baseline', async () => {
+    const user = userEvent.setup()
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    const baseline = await screen.findByRole('checkbox', { name: 'baseline', exact: true })
+    await user.click(baseline)
+    const launch = screen.getByRole('button', { name: 'Launch scan', exact: true })
+    await user.click(launch)
+    const preview = await screen.findByRole('dialog', { name: 'Run preview' })
+    const cancel = within(preview).getByRole('button', { name: 'Cancel', exact: true })
+    await waitFor(() => expect(cancel).toHaveFocus())
+    await user.tab()
+    expect(within(preview).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await user.tab({ shift: true })
+    expect(cancel).toHaveFocus()
+    await user.keyboard(' ')
+    expect(await screen.findByRole('checkbox', { name: 'default_technique', exact: true })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'baseline', exact: true })).not.toBeChecked()
+    await waitFor(() => expect(launch).toHaveFocus())
+    await user.keyboard('{Enter}')
+    const reopened = await screen.findByRole('dialog', { name: 'Run preview' })
+    await waitFor(() => expect(within(reopened).getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus())
+    await user.tab()
+    expect(within(reopened).getByRole('button', { name: 'Launch scan', exact: true })).toHaveFocus()
+    await user.keyboard(' ')
+    await waitFor(() => expect(mockStartRun).toHaveBeenCalledWith(expect.objectContaining({
+      techniques: ['default_technique'], include_baseline: false,
+    })))
+  })
+
   it('restores focus to Launch scan button when preview dialog is dismissed via Escape', async () => {
     const user = userEvent.setup()
     renderDetail('/scanner/launch/foundry.red_team_agent')
@@ -1283,14 +1312,58 @@ describe('ScenarioDetail', () => {
     expect(within(screen.getByTestId('run-estimate')).getByText('8')).toBeInTheDocument()
 
     await user.selectOptions(screen.getByTestId('scenario-target-select'), 'target-b')
+    expect(within(screen.getByTestId('run-estimate')).getByRole('status')).toHaveTextContent('Updating estimate...')
     await advanceTimers(300)
     await flushRenderedPromises()
 
     const estimate = screen.getByTestId('run-estimate')
     expect(within(estimate).getByText('8')).toBeInTheDocument()
-    expect(within(estimate).getByText('Preview service unavailable')).toBeInTheDocument()
+    expect(within(estimate).getByRole('status')).toHaveTextContent('Showing the last successful estimate.')
+    expect(within(estimate).getByRole('status')).toHaveTextContent('Preview service unavailable')
     expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-b')
     expect(screen.getByTestId('launch-scenario-btn')).not.toBeDisabled()
+  })
+
+  it('keeps the current dataset limit separate from refreshing and stale attack counts', async () => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    const settings: ScenarioDatasetSettings = {
+      sources: [{ name: 'harmbench', max_size: 'all', fetch: 'never', configured_provider: false }],
+      max_per_dataset: 'all', max_total: 5, fetch: 'never', filters: {},
+    }
+    mockGetScenario.mockResolvedValue(makeScenario({ dataset_defaults: settings }))
+    let rejectEstimate: (reason: unknown) => void = () => {}
+    mockEstimateRun
+      .mockResolvedValueOnce({
+        ...makeEstimate(5), status: 'approximate',
+        dataset_defaults: settings, effective_datasets: settings,
+      })
+      .mockReturnValueOnce(new Promise<ScenarioRunSizeEstimateResponse>((_, reject) => {
+        rejectEstimate = reject
+      }))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await flushRenderedPromises()
+    await advanceTimers(300)
+    const estimate = screen.getByTestId('run-estimate')
+    const limit = within(estimate).getByText('Dataset selection limit').closest('dt')?.nextElementSibling
+
+    await setObjectiveLimit(user, '3')
+    await advanceTimers(300)
+    expect(limit).toHaveTextContent('3')
+    expect(within(estimate).getByText('Up to 5')).toBeInTheDocument()
+    expect(within(estimate).getByRole('status')).toHaveTextContent('Updating estimate...')
+
+    rejectEstimate({
+      isAxiosError: true,
+      response: { status: 503, data: { detail: 'Deliberate estimate failure' } },
+    })
+    await flushRenderedPromises()
+    expect(limit).toHaveTextContent('3')
+    expect(within(estimate).getByText('Up to 5')).toBeInTheDocument()
+    expect(within(estimate).getByRole('status')).toHaveTextContent(
+      'Showing the last successful estimate. Deliberate estimate failure',
+    )
+    expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 3')
   })
 
   it('does not request a preview while the custom technique selection is empty', async () => {
@@ -1642,10 +1715,15 @@ describe('ScenarioDetail', () => {
     renderDetail('/scanner/launch/foundry.red_team_agent')
     await screen.findByRole('checkbox', { name: 'crescendo' })
     expect(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0]).toBeDisabled()
+    expect(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0])
+      .toHaveAccessibleDescription(/at most 2.*Clear a selected technique/)
     await user.click(screen.getByRole('checkbox', { name: 'crescendo' }))
     expect(screen.getByRole('checkbox', { name: 'many_shot' })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: 'many_shot' }))
+      .toHaveAccessibleDescription(/at most 2.*Clear a selected technique/)
     expect(screen.getByRole('checkbox', { name: 'baseline' })).toBeEnabled()
     await user.click(screen.getByRole('checkbox', { name: 'default_technique' }))
+    expect(screen.getByRole('checkbox', { name: 'many_shot' })).not.toHaveAttribute('aria-describedby')
     await user.click(screen.getAllByRole('button', { name: 'Select Multi-turn techniques' })[0])
     expect(screen.getByRole('checkbox', { name: 'crescendo' })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: 'many_shot' })).toBeChecked()
@@ -1839,6 +1917,7 @@ describe('ScenarioDetail', () => {
     const checkbox = screen.getByTestId('baseline-checkbox')
     expect(checkbox).toBeDisabled()
     expect(checkbox).not.toBeChecked()
+    expect(checkbox).toHaveAccessibleDescription('This scenario does not support a baseline comparison.')
 
     await confirmRunPreview(user)
     await waitFor(() => expect(mockStartRun).toHaveBeenCalled())

@@ -52,7 +52,7 @@ from pyrit.executor.attack import (
     TreeOfAttacksWithPruningAttack,
     attack_outcome_from_score,
 )
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackEvaluationIdentifier,
@@ -80,8 +80,8 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
+from pyrit.scenario import AttackTechniqueFactory, Scenario
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
@@ -92,10 +92,10 @@ from pyrit.scenario.core import (
     IncompatibleTechniqueError,
     TechniqueRequirements,
 )
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.scenarios.benchmark.adversarial import (
+from pyrit.scenario.scenarios.benchmark import (
     AdversarialBenchmark,
+)
+from pyrit.scenario.scenarios.benchmark.adversarial import (
     _build_benchmark_technique,
     _get_benchmark_adversarial_guidance,
 )

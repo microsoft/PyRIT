@@ -9,15 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedDataset, SeedObjective
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import TargetRegistry
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniqueError
 from pyrit.scenario.airt import Leakage  # type: ignore[ty:unresolved-import]
-from pyrit.scenario.core import BaselineAttackPolicy
-from pyrit.scenario.core._technique_resolution import resolve_technique_factories_for_techniques
+from pyrit.scenario.core import BaselineAttackPolicy, resolve_technique_factories_for_techniques
 from pyrit.scenario.scenarios.airt.leakage import _build_leakage_technique, _leakage_factories
 from pyrit.score import TrueFalseCompositeScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
