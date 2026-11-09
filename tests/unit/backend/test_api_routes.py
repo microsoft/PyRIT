@@ -12,6 +12,7 @@ import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NotRequired, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
@@ -1779,19 +1780,18 @@ class TestVersionRoutes:
 
         assert response.json()["default_operation"] == "op_proposed"
 
-    def test_get_version_with_build_info(self, client: TestClient) -> None:
+    @pytest.mark.parametrize("commit", ["abc123", None])
+    def test_get_version_with_build_info(self, *, client: TestClient, commit: str | None) -> None:
         """Test getting version with build info from Docker."""
+        build_info: version_routes.BuildInfo = {
+            "source": "git" if commit is not None else "pypi",
+            "commit": commit,
+            "modified": False,
+            "display": "1.0.0-test",
+        }
         # Create a temp file to simulate Docker build info
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(
-                {
-                    "source": "git",
-                    "commit": "abc123",
-                    "modified": False,
-                    "display": "1.0.0-test",
-                },
-                f,
-            )
+            json.dump(build_info, f)
             temp_path = f.name
 
         try:
@@ -1806,18 +1806,14 @@ class TestVersionRoutes:
 
                 # Mock open to return our temp file content
                 with patch("builtins.open", create=True) as mock_open:
-                    mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(
-                        {
-                            "source": "git",
-                            "commit": "abc123",
-                            "modified": False,
-                            "display": "1.0.0-test",
-                        }
-                    )
+                    mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(build_info)
 
                     response = client.get("/api/version")
 
             assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            for key, value in build_info.items():
+                assert data[key] == value
             to_thread_mock.assert_any_await(version_routes._load_build_info, mock_path_instance)
         finally:
             os.unlink(temp_path)
@@ -1838,6 +1834,39 @@ class TestVersionRoutes:
         assert "version" in data
         assert data["source"] is None
         assert data["commit"] is None
+
+    def test_build_info_keys_are_not_required(self) -> None:
+        """The BuildInfo contract keeps absent keys distinguishable from nullable values."""
+        assert get_type_hints(version_routes.BuildInfo, include_extras=True) == {
+            "source": NotRequired[str],
+            "commit": NotRequired[str | None],
+            "modified": NotRequired[bool],
+            "display": NotRequired[str],
+        }
+        assert version_routes.BuildInfo.__required_keys__ == frozenset()
+        assert version_routes.BuildInfo.__optional_keys__ == {"source", "commit", "modified", "display"}
+        assert version_routes.BuildInfo() == {}
+
+    def test_get_version_build_info_absent_display_falls_back(self, client: TestClient) -> None:
+        """A build-info file without `display` falls back to the package version."""
+        to_thread_mock = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+        with (
+            patch("pyrit.backend.routes.version.Path") as mock_path_class,
+            patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
+            patch.object(version_routes, "_load_build_info", return_value={"source": "git"}),
+        ):
+            mock_path_instance = MagicMock()
+            mock_path_instance.exists.return_value = True
+            mock_path_class.return_value = mock_path_instance
+
+            response = client.get("/api/version")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["source"] == "git"
+        assert data["commit"] is None
+        assert data["modified"] is None
+        assert data["display"] == data["version"]
 
 
 class TestScoreRoutes:

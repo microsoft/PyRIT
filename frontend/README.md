@@ -140,9 +140,13 @@ keeps the current reading position.
 
 Chat drafts stay in memory while you visit Datasets and return. Text, attachments,
 system prompts, the selected target, and converter setup/results return to their
-original attack and conversation. A loading, missing, or read-only destination
-does not consume the draft. Starting a new attack or leaving the Chat/Datasets
-journey discards the handoff; refreshing the browser does not retain it.
+original attack and conversation, including across sidebar navigation and direct
+conversation switches. Each conversation retains its own draft. A loading,
+missing, or read-only destination does not consume the draft. Importing into a
+new conversation uses the source conversation's setup, not another retained draft.
+Starting a new attack clears retained drafts; refreshing the browser does not
+retain them. Switching conversations does not cancel an in-flight send or let
+its completion clear another conversation's input.
 
 The **Datasets** page shows summaries of datasets already loaded into the backend's
 memory. When memory is empty, **Learn how to load datasets into memory** opens the
@@ -266,6 +270,52 @@ evidence includes 222 pieces, a split scored multimodal turn, overlapping stable
 piece IDs and 121 references. Journeys cover bounded requests, continuation
 retry/restart failures, pending-reader ownership, URL/History context and
 keyboard/touch use. `PYRIT_E2E_HIERARCHY_PORT` overrides the loopback port.
+
+### Isolated Scenario technique browser checks
+
+From `frontend`, run:
+
+```powershell
+$env:PYRIT_PYTHON = uv run --no-sync python -c "import sys; print(sys.executable)"
+npm run test:e2e:scenario-techniques
+```
+
+This builds the current frontend and exercises real preset storage, scenario
+metadata, estimates, launch, attacks, scoring and saved run plans over disposable
+SQLite data. The fixture uses a private home, empty environment-file and
+initializer lists, inline objectives, local encoding converters, a deterministic
+target and `SubStringScorer`. It does not call providers or use a developer's
+configuration. The fixture explicitly registers its three local scenarios instead
+of discovering provider-backed built-ins, and enables local administrator access
+only in that isolated process so preset CRUD follows the real authorization path.
+Configuration paths are pinned before application startup. Preset directories,
+documents and lock sidecars are checked for containment before mutation; each
+journey also checks the backend's database/configuration/preset-source paths.
+`PYRIT_E2E_TECHNIQUES_PORT` overrides its loopback port (18611).
+The containment regressions can also be run from the repository root:
+
+```powershell
+uv run --no-sync pytest tests\unit\backend\test_scenario_techniques_fixture.py -q
+```
+
+Desktop and narrow/touch journeys cover preset selection and editing,
+scenario-relative defaults, aggregate expansion, independent baseline settings,
+keyboard/focus recovery, 44px preview actions for coarse-pointer input, and
+completed execution. Touch measurements wait for the dialog to settle, without
+fixed sleeps. The checks assert retained totals during pending/failed estimates,
+rendered total/status recovery, and the recovered total in Run preview.
+Only loading and error checks
+inject faults: the fixture holds one estimate or returns one deliberate 503,
+then delegates successful estimates to the real service. No browser API
+responses are intercepted. CI runs this as a separate isolated E2E shard.
+
+Screenshots and their source-head, compatibility, viewport, state and fault
+provenance, plus the actual launch request, stored configuration and execution
+plan/results, are attached to the Playwright report. Set
+`PYRIT_TECHNIQUES_SCREENSHOT_DIR` to retain the PNG/JSON pairs separately.
+For exact-head evidence, commit first, then rebuild and rerun from that clean
+head. The provenance records any remaining worktree changes rather than
+attributing uncommitted code to a commit.
 
 ### Isolated Scenario dataset and estimate browser checks
 

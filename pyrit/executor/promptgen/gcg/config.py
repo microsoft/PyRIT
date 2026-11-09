@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -125,7 +125,7 @@ class GCGDataConfig:
         return json.dumps(asdict(self), indent=2)
 
     @classmethod
-    def from_json(cls, payload: str) -> GCGDataConfig:
+    def from_json(cls, payload: str) -> Self:
         """
         Deserialize a config previously produced by ``to_json``.
 
@@ -142,7 +142,7 @@ class GCGDataConfig:
         return cls(**data)
 
     @classmethod
-    def from_json_file(cls, path: str | Path) -> GCGDataConfig:
+    def from_json_file(cls, path: str | Path) -> Self:
         """
         Load a config from a JSON file.
 
@@ -391,7 +391,7 @@ class GCGConfig:
         return json.dumps(asdict(self), indent=2)
 
     @classmethod
-    def from_json(cls, payload: str) -> GCGConfig:
+    def from_json(cls, payload: str) -> Self:
         """
         Deserialize a config previously produced by ``to_json``.
 
@@ -413,7 +413,7 @@ class GCGConfig:
         return cls._from_dict(data)
 
     @classmethod
-    def from_json_file(cls, path: str | Path) -> GCGConfig:
+    def from_json_file(cls, path: str | Path) -> Self:
         """
         Load a config from a JSON file produced by ``to_json_file``.
 
@@ -437,7 +437,7 @@ class GCGConfig:
             f.write(self.to_json())
 
     @classmethod
-    def _from_dict(cls, data: dict[str, Any]) -> GCGConfig:
+    def _from_dict(cls, data: dict[str, Any]) -> Self:
         if "models" not in data or not isinstance(data["models"], list):
             raise ValueError("GCGConfig payload must contain a 'models' list.")
         return cls(
