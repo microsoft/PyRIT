@@ -14,7 +14,7 @@ from pyrit.executor.promptgen.fuzzer import (
     FuzzerShortenConverter,
     FuzzerSimilarConverter,
 )
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, SeedPrompt
 
 
 @pytest.mark.parametrize(
@@ -46,6 +46,31 @@ def test_converter_init_templates_not_null(converter_class, sqlite_instance) -> 
     prompt_target = MockPromptTarget()
     converter = converter_class(converter_target=prompt_target)
     assert converter.system_prompt
+
+
+@pytest.mark.parametrize(
+    "converter_class",
+    [
+        FuzzerExpandConverter,
+        FuzzerShortenConverter,
+        FuzzerRephraseConverter,
+        FuzzerCrossOverConverter,
+        FuzzerSimilarConverter,
+    ],
+)
+def test_identifier_distinguishes_prompt_templates(converter_class, sqlite_instance) -> None:
+    first = converter_class(
+        converter_target=MockPromptTarget(), prompt_template=SeedPrompt(value="Template A {{ prompt }}")
+    )
+    second = converter_class(
+        converter_target=MockPromptTarget(), prompt_template=SeedPrompt(value="Template B {{ prompt }}")
+    )
+
+    assert (
+        first.get_identifier().params["system_prompt_template_hash"]
+        != second.get_identifier().params["system_prompt_template_hash"]
+    )
+    assert first.get_identifier().hash != second.get_identifier().hash
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import hashlib
 import json
 import logging
 import uuid
@@ -14,6 +15,7 @@ from pyrit.exceptions import (
     remove_markdown_json,
 )
 from pyrit.models import (
+    ComponentIdentifier,
     JsonResponseConfig,
     Message,
     MessagePiece,
@@ -62,6 +64,20 @@ class FuzzerConverter(Converter):
 
     def update(self, **kwargs: Any) -> None:
         """Update the converter with new parameters."""
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        """
+        Build the converter identifier with the system prompt and converter target.
+
+        Returns:
+            ComponentIdentifier: The identifier for this converter.
+        """
+        return self._create_identifier(
+            params={
+                "system_prompt_template_hash": hashlib.sha256(self.system_prompt.encode("utf-8")).hexdigest()[:16],
+            },
+            converter_target=self.converter_target.get_identifier(),
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
