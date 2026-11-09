@@ -324,7 +324,7 @@ def test_red_team_snapshot_retains_explicit_null_prompts_without_simulation(
 def test_effective_prompt_defaults_match_execution_without_materializing_settings(
     edit_catalog: AttackTechniqueRegistry, attack_class: type[AttackStrategy]
 ) -> None:
-    from pyrit.executor.attack.component.adversarial_conversation_manager import _AdversarialConversationManager
+    from pyrit.executor.attack.component import _AdversarialConversationManager
 
     source = AttackTechniqueFactory(name="defaults", attack_class=attack_class)
     edit_catalog.register_from_factories([source])
