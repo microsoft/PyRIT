@@ -792,6 +792,10 @@ _SCHEME_VARIANT_CONNECTION_STRINGS = [
     "postgresql://admin:secretpass@prod-db:5432/mydb",
     "rediss://default:secretpass@cache.example.test:6380",
     "amqps://user:secretpass@mq.example.test:5671",
+    # Password-only form: Redis AUTH without ACL users takes no username.
+    "redis://:secretpass@cache.example.test:6379/0",
+    "rediss://:secretpass@cache.example.test:6380",
+    "postgresql://:secretpass@prod-db:5432/mydb",
 ]
 
 
@@ -819,7 +823,14 @@ def test_garak_mongodb_srv_reported_once():
     assert scorer._get_matching_pattern_names(text=text, objective=None) == ["MongoDB Cloud Connection String"]
 
 
-@pytest.mark.parametrize("text", ["postgresql://localhost:5432/mydb", "rediss://cache.example.test:6380"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "postgresql://localhost:5432/mydb",
+        "rediss://cache.example.test:6380",
+        "redis://:@cache.example.test:6379",
+    ],
+)
 async def test_connection_string_scheme_variant_without_credentials_not_detected(text: str, patch_central_database):
     assert (await CredentialLeakScorer().score_text_async(text))[0].get_value() is False
 
