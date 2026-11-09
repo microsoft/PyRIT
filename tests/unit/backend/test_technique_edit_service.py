@@ -568,6 +568,48 @@ def test_user_template_edits_replay_without_freezing_other_defaults(
     assert admitted.override.changes.model_dump() == {field: text}
 
 
+@pytest.mark.parametrize(
+    ("attack_class", "field", "text"),
+    [
+        (RedTeamingAttack, "adversarial_prompt_template", "Retry {{ objective }}: {{ feedback_text }}"),
+        (RedTeamingAttack, "adversarial_prompt_template", None),
+        (CrescendoAttack, "adversarial_system_prompt", None),
+    ],
+)
+def test_prompt_edits_allow_runtime_variables_and_reset_to_builtins(
+    edit_catalog: AttackTechniqueRegistry, attack_class: type[AttackStrategy], field: str, text: str | None
+) -> None:
+    prompt = SeedPrompt(
+        value="Use {{ objective }}",
+        parameters=["objective", "max_turns"] if attack_class is CrescendoAttack else ["objective"],
+    )
+    source = AttackTechniqueFactory(
+        name="custom_prompt",
+        attack_class=attack_class,
+        **{field: prompt},
+    )
+    edit_catalog.register_from_factories([source])
+    configuration = TechniqueEditService.configuration(source.name)
+    admitted = TechniqueEditService.validate(
+        TechniqueOverride(
+            source_name=source.name,
+            source_identity=configuration.source_identity,
+            changes=TechniqueChanges.model_validate({field: text}),
+        )
+    )
+    copied = TechniqueEditService.resolve(TechniqueOverride.model_validate_json(admitted.override.model_dump_json()))
+    effective = copied.get_adversarial_prompt_templates()[field]
+    if text is None:
+        inherited = AttackTechniqueFactory(name="inherited", attack_class=attack_class)
+        assert effective.value == inherited.get_adversarial_prompt_templates()[field].value
+        assert getattr(copied.get_effective_settings(), field) is None
+    else:
+        assert effective.render_template_value(objective="Goal", feedback_text="Continue") == "Retry Goal: Continue"
+        assert effective.parameters == prompt.parameters
+    assert source.get_adversarial_prompt_templates()[field].value == prompt.value
+    assert admitted.override.changes.model_dump() == {field: text}
+
+
 def test_effective_projection_noop_and_original_immutability(edit_catalog: AttackTechniqueRegistry) -> None:
     source = edit_catalog.instances.get("role_play_movie_script")
     assert source is not None
