@@ -272,6 +272,21 @@ class TestAttackRoutes:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         service.assert_not_called()
 
+    def test_legacy_operator_alias_enforces_the_dedicated_limit(self, client: TestClient) -> None:
+        """The legacy label alias accepts the same value length as the dedicated operator param."""
+        response = client.get("/api/attacks", params={"label": f"operator:{'x' * 500}"})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    def test_legacy_operator_alias_allways_same_set_in_any_order(self, client: TestClient) -> None:
+        """An identical operator set in a different order is not a conflict."""
+        response = client.get(
+            "/api/attacks",
+            params=[("operator", "alice"), ("operator", "bob"), ("label", "operator:bob"), ("label", "operator:alice")],
+        )
+        assert (
+            response.status_code != status.HTTP_422_UNPROCESSABLE_ENTITY or "conflict" not in response.json()["detail"]
+        )
+
     def test_create_attack_target_not_found(self, client: TestClient) -> None:
         """Test attack creation with non-existent target."""
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
