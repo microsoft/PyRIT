@@ -15,7 +15,7 @@ from pyrit.backend.services import get_scenario_service
 from pyrit.backend.services.dataset_example_fingerprint import dataset_example_fingerprint
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import MemoryInterface, SeedEntry
-from pyrit.models import Seed, SeedObjective
+from pyrit.models import Seed, SeedObjective, SeedPrompt
 from pyrit.registry import ScenarioRegistry, TargetRegistry
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, Scenario, ScenarioTechnique
 from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -141,6 +141,51 @@ async def test_estimate_and_launch_use_six_examples_until_one_changes(
     stale = await client.post(f"/api/scenarios/catalog/{SCENARIO_NAME}/estimate", json=body)
     assert stale.status_code == 409
     assert stale.json()["detail"].startswith("stale:")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("objective_count", [0, 2])
+async def test_launch_returns_unsupported_instead_of_a_server_error(
+    client: AsyncClient, sqlite_instance: MemoryInterface, objective_count: int
+) -> None:
+    group = uuid4()
+    secret = f"SECRET_ROUTE_{objective_count}_2757"
+    seeds = [
+        SeedObjective(value=f"goal {index}", dataset_name=DATASET, prompt_group_id=group, added_by="test")
+        for index in range(objective_count)
+    ]
+    seeds.append(
+        SeedPrompt(value=secret, dataset_name=DATASET, prompt_group_id=group, sequence=1, role="user", added_by="test")
+    )
+    await _store(sqlite_instance, *seeds)
+    found = await sqlite_instance.get_seed_examples_by_ids_async(dataset_name=DATASET, example_ids=[group])
+    body = {
+        "example_selection": {
+            "examples": [
+                {
+                    "selection_key": NAMED,
+                    "example_id": str(group),
+                    "fingerprint": dataset_example_fingerprint(
+                        selection_key=NAMED, example_id=group, members=found[group]
+                    ),
+                }
+            ]
+        }
+    }
+    estimate = await client.post(f"/api/scenarios/catalog/{SCENARIO_NAME}/estimate", json=body)
+    launch = await client.post(
+        "/api/scenarios/runs",
+        json={**body, "scenario_name": SCENARIO_NAME, "target_name": TARGET_NAME},
+    )
+
+    assert estimate.status_code == 200
+    assert estimate.json()["dataset_size"] == {"kind": "bounded", "value": 1}
+    assert launch.status_code == 400
+    detail = launch.json()["detail"]
+    assert detail.startswith("unsupported:")
+    assert str(group) in detail
+    assert secret not in detail
+    assert _RouteScenario.prepared_counts == []
 
 
 @pytest.mark.usefixtures("patch_central_database")

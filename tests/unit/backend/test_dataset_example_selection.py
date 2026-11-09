@@ -474,6 +474,84 @@ async def test_objective_count_does_not_reject_the_selection(
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("objective_count", [0, 2])
+async def test_launch_build_reports_unsupported_without_hiding_the_example(
+    sqlite_instance: MemoryInterface, objective_count: int
+) -> None:
+    group = uuid4()
+    secret = f"SECRET_PROMPT_{objective_count}_2757"
+    seeds: list[Seed[Any]] = [_objective(f"goal {index}", prompt_group_id=group) for index in range(objective_count)]
+    seeds.append(_prompt(secret, prompt_group_id=group, sequence=1, role="user"))
+    await _store(sqlite_instance, *seeds)
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[group], dataset_name=DATASET)
+    resolved_config = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="test.exact",
+        scenario_class=_ExactScenario,
+        example_selection=selection,
+        memory=sqlite_instance,
+    )
+    scenario = _ExactScenario()
+    scenario.set_params_from_args(args=resolved_config)
+    estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.dataset_size.model_dump() == {"kind": "bounded", "value": 1}
+
+    with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
+        await scenario._dataset_config.get_attack_seed_groups_async()
+
+    error = caught.value
+    assert error.code == "unsupported"
+    assert error.example_id == group
+    assert error.selection_key == NAMED
+    assert str(group) in str(error)
+    assert "objective" in str(error)
+    assert secret not in str(error)
+    assert "input_value" not in str(error)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_launch_build_reports_unsupported_for_multiple_simulated_conversations(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    group = uuid4()
+    secret = "SECRET_SIMULATED_2757"
+    objective = _objective("goal", prompt_group_id=group)
+    conversations = [
+        SeedSimulatedConversation(
+            num_turns=1,
+            adversarial_chat_system_prompt=SeedPrompt(value=secret, parameters=["objective"]),
+            simulated_target_system_prompt=SeedPrompt(value=f"target {index}", parameters=["objective", "num_turns"]),
+            dataset_name=DATASET,
+            prompt_group_id=group,
+            added_by="test",
+        )
+        for index in range(2)
+    ]
+    await _store(sqlite_instance, objective, *conversations)
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[group], dataset_name=DATASET)
+    resolved_config = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="test.exact",
+        scenario_class=_ExactScenario,
+        example_selection=selection,
+        memory=sqlite_instance,
+    )
+    scenario = _ExactScenario()
+    scenario.set_params_from_args(args=resolved_config)
+    estimate = await scenario.get_run_size_estimate_async()
+    stored_members = scenario._dataset_config._selected_examples[0][1]
+    assert estimate.dataset_size.model_dump() == {"kind": "bounded", "value": 1}
+    assert sum(member.seed_type == "simulated_conversation" for member in stored_members) == 2
+
+    with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
+        await scenario._dataset_config.get_attack_seed_groups_async()
+
+    error = caught.value
+    assert error.code == "unsupported"
+    assert error.example_id == group
+    assert "simulated conversation" in str(error)
+    assert secret not in str(error)
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_text_prompt_is_supported_and_not_rendered(sqlite_instance: MemoryInterface) -> None:
     group = uuid4()
     objective = _objective("goal", prompt_group_id=group)

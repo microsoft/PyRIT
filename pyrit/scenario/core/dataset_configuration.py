@@ -1150,7 +1150,7 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
             dict[str, list[AttackSeedGroup]]: The inline label mapped to every group.
 
         Raises:
-            DatasetExampleSelectionError: If a simulated conversation cannot be built from its stored JSON.
+            DatasetExampleSelectionError: If a selected example cannot be built into one group.
             DatasetConstraintError: If the selection is empty.
         """
         del apply_sampling
@@ -1168,8 +1168,57 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
     def _build_attack_group(
         self, *, reference: DatasetExampleReference, members: Sequence[SeedRecord]
     ) -> AttackSeedGroup:
-        seeds = [_seed_from_record(record=member, reference=reference) for member in members]
-        return AttackSeedGroup(seeds=seeds)
+        """
+        Build one attack group when launch asks for it.
+
+        Resolution and estimates do not call this. A group the scenario models cannot
+        construct becomes ``unsupported`` here, with the example id and the reason,
+        instead of an untyped constructor error.
+
+        Returns:
+            AttackSeedGroup: The group for this selected example.
+
+        Raises:
+            DatasetExampleSelectionError: If the stored members cannot be built into one group.
+        """
+        try:
+            seeds = [_seed_from_record(record=member, reference=reference) for member in members]
+            return AttackSeedGroup(seeds=seeds)
+        except DatasetExampleSelectionError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise DatasetExampleSelectionError(
+                code="unsupported",
+                selection_key=reference.selection_key,
+                example_id=reference.example_id,
+                detail=_public_group_build_reason(exc),
+            ) from exc
+
+
+def _public_group_build_reason(exc: BaseException) -> str:
+    """
+    Return a group-construction reason that does not repeat stored seed text.
+
+    Returns:
+        str: The constructor's reason, without seed values or the raw input payload.
+    """
+    messages: list[str] = []
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        for error in errors():
+            message = error.get("msg") if isinstance(error, dict) else None
+            if isinstance(message, str):
+                messages.append(message)
+    if not messages:
+        messages.append(str(exc))
+    cleaned: list[str] = []
+    for message in messages:
+        if message.startswith("Value error, "):
+            message = message[len("Value error, ") :]
+        message = message.split(" Seeds (", 1)[0].strip()
+        if message and message not in cleaned:
+            cleaned.append(message)
+    return "; ".join(cleaned) or "The stored example cannot be built into one attack group."
 
 
 def _seed_from_record(
