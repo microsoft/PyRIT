@@ -3,6 +3,7 @@
 
 """Repeatable setup uses fresh scripts, replacement values, and the same memory."""
 
+import asyncio
 import os
 import uuid
 from collections.abc import Generator, Iterator
@@ -11,8 +12,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from unit.async_utils import wait_for_completion_async, wait_for_event_async
 
-from pyrit._code_execution import FakeSandbox, SandboxRegistry
+from pyrit._code_execution import FakeSandbox, FakeSandboxHook, SandboxExecutionError, SandboxRegistry
 from pyrit.common import get_global_default_values
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
@@ -130,6 +132,64 @@ async def test_apply_closes_registered_sandboxes_before_initializers_run_again()
     assert sandbox.open_sessions == set()
     assert (await sandbox.get_status_async()).closed
     assert SandboxRegistry.get_registry_singleton().get_names() == []
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("mode", ["failed-close", "busy"])
+async def test_apply_retains_live_registries_until_sandbox_cleanup_is_confirmed_async(mode: str) -> None:
+    SandboxRegistry.reset_registry_singleton()
+    registry = SandboxRegistry.get_registry_singleton()
+    initializers = InitializerRegistry.get_registry_singleton()
+    targets = TargetRegistry.get_registry_singleton()
+    memory = CentralMemory.get_memory_instance()
+    sandbox = FakeSandbox()
+    registry.register(sandbox, name="linux")
+    config = ConfigurationLoader(
+        memory_db_type="in_memory", env_files=[], initialization_scripts=[], enable_live_reinitialization=True
+    )
+    prepared = await config.preflight_reinitialization_async(environment_values={"PYRIT_SANDBOX_REINIT": "new"})
+    if mode == "busy":
+        sandbox.gate = asyncio.Event()
+    running = asyncio.create_task(sandbox.execute_async(program="pass", runtime_profile_name="python"))
+    try:
+        await wait_for_event_async(event=sandbox.run_started, tasks=[running])
+        if mode == "failed-close":
+            await wait_for_completion_async(future=running)
+            sandbox.fail_next(hook=FakeSandboxHook.CLOSE, error=SandboxExecutionError("close not confirmed"))
+        with (
+            patch.dict(os.environ, {"PYRIT_SANDBOX_REINIT": "old"}),
+            patch("pyrit.setup.configuration_loader.reinitialize_pyrit_async", new_callable=AsyncMock) as reinitialize,
+        ):
+            timeout = (
+                patch.object(sandbox, "_wait_for_lock_async", new_callable=AsyncMock, return_value=False)
+                if mode == "busy"
+                else nullcontext()
+            )
+            with timeout, pytest.raises(SandboxExecutionError, match="unconfirmed for linux"):
+                await config.apply_prepared_reinitialization_async(prepared=prepared)
+
+            assert SandboxRegistry.get_registry_singleton() is registry
+            assert InitializerRegistry.get_registry_singleton() is initializers
+            assert TargetRegistry.get_registry_singleton() is targets
+            assert CentralMemory.get_memory_instance() is memory
+            assert os.environ["PYRIT_SANDBOX_REINIT"] == "old"
+            assert sandbox.open_sessions
+            reinitialize.assert_not_awaited()
+
+            if sandbox.gate is not None:
+                sandbox.gate.set()
+            await wait_for_completion_async(future=running)
+            await config.apply_prepared_reinitialization_async(prepared=prepared)
+            reinitialize.assert_awaited_once()
+            assert reinitialize.call_args.kwargs["memory"] is memory
+            assert SandboxRegistry.get_registry_singleton() is not registry
+            assert InitializerRegistry.get_registry_singleton() is prepared.initializer_registry
+            assert not sandbox.open_sessions
+    finally:
+        if sandbox.gate is not None:
+            sandbox.gate.set()
+        await wait_for_completion_async(future=running)
+        await sandbox.close_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")

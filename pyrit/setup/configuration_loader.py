@@ -770,6 +770,7 @@ class ConfigurationLoader(YamlLoadable):
 
         Raises:
             RuntimeError: If no live memory instance exists.
+            SandboxExecutionError: If registered sandbox cleanup is unconfirmed; the registries are retained.
         """
         from pyrit._code_execution import SandboxRegistry
         from pyrit.registry import InitializerRegistry

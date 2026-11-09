@@ -10,6 +10,7 @@ import re
 import threading
 from typing import ClassVar
 
+from pyrit._code_execution.client import SandboxExecutionError
 from pyrit._code_execution.sandbox import Sandbox
 from pyrit.registry import DefaultInstanceRegistry
 
@@ -31,6 +32,7 @@ class SandboxRegistry:
         """Initialize an empty registry."""
         self._entries: DefaultInstanceRegistry[Sandbox] = DefaultInstanceRegistry(instance_type=Sandbox)
         self._lock = threading.RLock()
+        self._closing = False
 
     @classmethod
     def get_registry_singleton(cls) -> SandboxRegistry:
@@ -61,13 +63,15 @@ class SandboxRegistry:
             tags (dict[str, str] | list[str] | None): Optional tags for filtering.
 
         Raises:
-            ValueError: If the name is invalid or taken, or the sandbox is already registered.
+            ValueError: If the registry is closing, the name is invalid or taken, or the sandbox is already registered.
         """
         if not self._NAME_PATTERN.fullmatch(name):
             raise ValueError(f"Sandbox name {name!r} must be 1-128 letters, digits, dots, hyphens or underscores.")
         sandbox.get_capabilities()
         identity = sandbox.get_identifier().hash
         with self._lock:
+            if self._closing:
+                raise ValueError("The sandbox registry is closing; no new sandboxes can be registered.")
             if name in self._entries:
                 raise ValueError(f"Another sandbox is already registered as {name!r}.")
             for entry in self._entries.get_all_instances():
@@ -110,9 +114,27 @@ class SandboxRegistry:
             return self._entries.unregister(name)
 
     async def close_all_async(self) -> None:
-        """Close every registered sandbox's session once its running call finishes. This never raises."""
-        sandboxes = [entry.instance for entry in self._entries.get_all_instances()]
-        await asyncio.gather(*(sandbox.close_async() for sandbox in sandboxes))
+        """
+        Close every registered sandbox and confirm cleanup before the registry can be replaced.
+
+        New registrations are refused once closure starts. Failed cleanup remains registered so a
+        later call can retry it.
+
+        Raises:
+            SandboxExecutionError: If any sandbox remains busy or its cleanup is unconfirmed.
+        """
+        with self._lock:
+            self._closing = True
+            entries = self._entries.get_all_instances()
+        await asyncio.gather(*(entry.instance.close_async() for entry in entries))
+        views = await asyncio.gather(*(entry.instance.get_status_async() for entry in entries))
+        pending = [
+            entry.name
+            for entry, view in zip(entries, views, strict=True)
+            if not view.closed or view.busy or view.resetting or view.session_open or view.quarantine_reason
+        ]
+        if pending:
+            raise SandboxExecutionError(f"Sandbox cleanup is unconfirmed for {', '.join(pending)}; retry closure.")
 
 
 def resolve_sandbox(sandbox: Sandbox | str) -> Sandbox:
