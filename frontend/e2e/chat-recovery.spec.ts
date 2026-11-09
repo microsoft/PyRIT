@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import {
   test as base,
   expect,
+  selectChatTarget,
   type APIRequestContext,
   type Page,
   type Request,
@@ -236,11 +237,7 @@ test.describe("Chat processing recovery @seeded", () => {
   test.setTimeout(90_000);
 
   test.beforeEach(async ({ page, localTarget }) => {
-    await page.goto("/");
-    await page.getByTitle("Registry", { exact: true }).click();
-    await page.getByRole("combobox", { name: "Default objective target", exact: true })
-      .selectOption(localTarget.registryName);
-    await page.getByTitle("Technique.execute", { exact: true }).click();
+    await selectChatTarget(page, localTarget.registryName);
   });
 
   test("keeps the drawer closed when a delayed send refresh discovers another conversation", async ({
@@ -303,7 +300,7 @@ test.describe("Chat processing recovery @seeded", () => {
         let releaseMetadata: () => void = () => {};
         const metadataGate = new Promise<void>((resolve) => { releaseMetadata = resolve; });
         let metadataStarted = false;
-        await page.route((url: URL) => url.pathname === `/api/attacks/${attackId}`, async (route: Route) => {
+        await page.route((url: URL) => url.pathname === `/api/attacks/${attackId}/metadata`, async (route: Route) => {
           if (route.request().method() === "GET") {
             metadataStarted = true;
             await metadataGate;
@@ -311,7 +308,7 @@ test.describe("Chat processing recovery @seeded", () => {
           await route.continue();
         });
         try {
-          await page.goto(`/attacks/${attackId}`);
+          await page.goto(`/attack/chat/${attackId}`);
           await expect.poll(() => metadataStarted).toBe(true);
           await expect(page.getByText("Loading conversation...", { exact: true })).toBeVisible();
           const toggle = page.getByTestId("toggle-panel-btn");
@@ -478,7 +475,7 @@ test.describe("Chat processing recovery @seeded", () => {
     expect((await live.json()).state).toBe("sending");
     await expect(page).toHaveURL((url: URL) => url.pathname.includes(accepted.attack_result_id));
     const chatUrl = page.url();
-    await page.getByTitle("Registry", { exact: true }).click();
+    await page.getByRole("button", { name: "Registry", exact: true }).click();
     localTarget.releaseResponse();
     const result = await readMessageSendResult(request, accepted);
     expect(result.messages.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
@@ -808,15 +805,26 @@ test.describe("Chat processing recovery @seeded", () => {
       await expect.poll(() => loadStarted).toBe(true);
       await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
       await expect(page.getByRole("button", { name: "Export conversation", exact: true })).toBeDisabled();
+      await expect(page.getByTestId("chat-input")).toHaveValue("");
       expect(postCount).toBe(0);
     } finally {
       releaseLoad();
     }
     await expect(page.getByTestId("message-list").getByText("Only conversation B history")).toBeVisible();
-    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await expect(page.getByTestId("chat-input")).toBeEnabled();
+    await page.getByTestId("chat-input").fill("Conversation B draft");
+    const [rejectedRequest] = await Promise.all([
+      page.waitForRequest(isMessagePost),
+      page.getByRole("button", { name: "Send message", exact: true }).click(),
+    ]);
+    const rejected: AddMessageRequest = rejectedRequest.postDataJSON();
+    expect(rejected.target_conversation_id).toBe(otherId);
+    expect(rejected.pieces).toEqual([
+      expect.objectContaining({ data_type: "text", original_value: "Conversation B draft" }),
+    ]);
     await expect(page.getByRole("group", { name: "Message send status" })).toContainText("Network error");
     expect(postCount).toBe(1);
-    await expect(page.getByTestId("chat-input")).toHaveValue("Retain this unsent draft");
+    await expect(page.getByTestId("chat-input")).toHaveValue("Conversation B draft");
     const [download] = await Promise.all([
       page.waitForEvent("download"),
       (async () => {
@@ -830,6 +838,8 @@ test.describe("Chat processing recovery @seeded", () => {
     expect(JSON.parse(exported).conversation_id).toBe(otherId);
     expect(exported).toContain("Only conversation B history");
     expect(exported).not.toContain("Only conversation A history");
+    await selectConversation(page, first.attack.conversation_id);
+    await expect(page.getByTestId("chat-input")).toHaveValue("Retain this unsent draft");
   });
 
   test("preserves an image converter while a recovered attachment is serialized for sending", async ({
@@ -872,9 +882,13 @@ test.describe("Chat processing recovery @seeded", () => {
     const otherId = await createConversation(request, attackId);
     await selectConversation(page, otherId);
     await expect(page.getByTestId("chat-input")).toBeEnabled();
-    await page.getByTestId("remove-attachment-0").click();
+    await expect(page.getByTestId("chat-input")).toHaveValue("");
+    await expect(page.getByRole("button", { name: "Remove evidence.png", exact: true })).toHaveCount(0);
     await expect(page.getByTestId("clear-media-conversion-image")).toHaveCount(0);
     await selectConversation(page, first.attack.conversation_id);
+    await expect(page.getByTestId("chat-input")).toHaveValue("Recover this image");
+    await expect(page.getByRole("button", { name: "Remove evidence.png", exact: true })).toBeVisible();
+    await expect(page.getByTestId("clear-media-conversion-image")).toBeVisible();
     await page.getByRole("button", { name: "Copy or Branch", exact: true }).last().click();
     const recover = page.getByRole("menuitem", { name: "Branch conversation", exact: true });
     await expect(recover).toBeEnabled();

@@ -29,7 +29,7 @@ from sqlalchemy.sql.selectable import CTE
 from pyrit.converter import Base64Converter
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.memory import MemoryInterface, SQLiteMemory
+from pyrit.memory import AttackResultEntry, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_sql import (
     JsonArrayEmpty,
     JsonIsArray,
@@ -40,7 +40,7 @@ from pyrit.memory.analytics_sql import (
 )
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsOption
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
-from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry, Base, TargetIdentifierEntry
+from pyrit.memory.memory_models import AttackIdentifierEntry, Base, TargetIdentifierEntry
 from pyrit.memory.query_control import QueryControl
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -59,6 +59,7 @@ from pyrit.models import (
     TargetIdentifier,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
+from test_support.text_search import LITERAL_CASES, PATTERN_CASES, TEXTS
 from unit.mocks import MockPromptTarget, add_legacy_attack_results_async
 
 if TYPE_CHECKING:
@@ -1217,6 +1218,67 @@ async def test_odbc_timeout_is_applied_before_each_cursor_is_created() -> None:
         await engine.dispose()
 
 
+async def test_non_busy_sqlite_error_is_re_raised_with_its_result_code_name_async() -> None:
+    original = sqlite3.OperationalError("database is locked")
+    original.sqlite_errorcode = sqlite3.SQLITE_BUSY_SNAPSHOT
+    original.sqlite_errorname = "SQLITE_BUSY_SNAPSHOT"
+    error = OperationalError("SELECT", {}, original)
+    error.add_note("Existing diagnostic")
+
+    async def operation_async() -> None:
+        raise error
+
+    with pytest.raises(OperationalError) as exc_info:
+        await AttackAnalyticsReader._retry_sqlite_busy_async(operation=operation_async, control=control())
+    assert exc_info.value is error
+    assert exc_info.value.orig is original
+    assert exc_info.value.__notes__ == ["Existing diagnostic", "sqlite result code 517 (SQLITE_BUSY_SNAPSHOT)"]
+
+
+async def test_non_sqlite_operational_error_is_re_raised_without_a_sqlite_note_async() -> None:
+    async def operation_async() -> None:
+        raise OperationalError("SELECT", {}, RuntimeError("driver closed"))
+
+    with pytest.raises(OperationalError, match="driver closed") as exc_info:
+        await AttackAnalyticsReader._retry_sqlite_busy_async(operation=operation_async, control=control())
+    assert not [n for n in getattr(exc_info.value, "__notes__", []) if "sqlite result code" in n]
+
+
+async def test_non_sqlite_session_does_not_add_sqlite_notes_async(sqlite_instance: SQLiteMemory) -> None:
+    original = sqlite3.OperationalError("database is locked")
+    original.sqlite_errorcode = sqlite3.SQLITE_BUSY_SNAPSHOT
+    original.sqlite_errorname = "SQLITE_BUSY_SNAPSHOT"
+    error = OperationalError("SELECT", {}, original)
+    reader = AttackAnalyticsReader(memory=sqlite_instance)
+    with (
+        patch.object(sqlite_instance._get_async_engine().dialect, "name", "mssql"),
+        patch.object(SQLiteConnection, "timeout", property(lambda driver: 0), create=True),
+        patch.object(reader, "_odbc_timeout_async", new_callable=AsyncMock),
+        pytest.raises(OperationalError) as exc_info,
+    ):
+        async with reader._session_async(control=control()):
+            raise error
+    assert exc_info.value is error
+    assert not getattr(error, "__notes__", [])
+
+
+async def test_plain_busy_still_retries_to_success_async() -> None:
+    calls = {"count": 0}
+
+    async def operation_async() -> str:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            original = sqlite3.OperationalError("database is locked")
+            original.sqlite_errorcode = sqlite3.SQLITE_BUSY
+            original.sqlite_errorname = "SQLITE_BUSY"
+            raise OperationalError("SELECT", {}, original)
+        return "ok"
+
+    result = await AttackAnalyticsReader._retry_sqlite_busy_async(operation=operation_async, control=control())
+    assert result == "ok"
+    assert calls["count"] == 2
+
+
 async def test_invalidated_sqlite_connection_preserves_the_original_error(sqlite_instance: SQLiteMemory) -> None:
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     with pytest.raises(OperationalError, match="lost connection"):
@@ -1225,15 +1287,20 @@ async def test_invalidated_sqlite_connection_preserves_the_original_error(sqlite
             raise OperationalError("SELECT", {}, RuntimeError("lost connection"))
 
 
-async def test_database_error_is_not_returned_as_an_empty_report(sqlite_instance: SQLiteMemory) -> None:
+async def test_database_error_is_not_returned_as_an_empty_report_async(sqlite_instance: SQLiteMemory) -> None:
     reader = AttackAnalyticsReader(memory=sqlite_instance)
     with patch.object(
         AttackAnalyticsQueryCompiler,
         "totals",
         return_value=text("SELECT * FROM nonexistent_analytics_table"),
     ):
-        with pytest.raises(OperationalError, match="no such table"):
+        with pytest.raises(OperationalError, match="no such table") as exc_info:
             await reader.report_async(query=AttackAnalyticsQuery(), control=control())
+    original = exc_info.value.orig
+    assert isinstance(original, sqlite3.OperationalError)
+    assert original.sqlite_errorcode == sqlite3.SQLITE_ERROR
+    assert original.sqlite_errorname == "SQLITE_ERROR"
+    assert exc_info.value.__notes__ == ["sqlite result code 1 (SQLITE_ERROR)"]
     assert (await reader.report_async(query=AttackAnalyticsQuery(), control=control())).counts == {}
 
 
@@ -1337,7 +1404,7 @@ def test_mssql_facet_search_treats_brackets_as_literal_text(dimension: str) -> N
     query = AttackAnalyticsFacetQuery(dimension=AttackAnalyticsDimension(name=dimension), search="[a-z]%_\\")
     compiler = AttackAnalyticsQueryCompiler(dialect="mssql", filters=query.filters)
     compiled = compiler.facet(query).compile(dialect=mssql.dialect())
-    assert "%\\[a-z]\\%\\_\\\\%" in compiled.params.values()
+    assert "%/[a-z]/%/_\\%" in compiled.params.values()
 
 
 @pytest.mark.parametrize("dimension", ["operation", "operator", "scenario", "label", "model"])
@@ -1729,6 +1796,44 @@ async def test_literal_brackets_in_facet_search_match_only_literal_text(sqlite_i
         control=control(),
     )
     assert [option.key.value for option in facet.items] == ["[a-z]%_\\"]
+
+
+@pytest.mark.parametrize("dimension", ["label", "targeted_harm_category"])
+@pytest.mark.parametrize("pattern, expected", PATTERN_CASES)
+async def test_facet_pattern_contract_async(
+    *, sqlite_instance: SQLiteMemory, dimension: str, pattern: str, expected: set[str]
+) -> None:
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(index=index, categories=[value], labels={"case": value}) for index, value in enumerate(TEXTS)
+        ],
+    )
+    query = AttackAnalyticsFacetQuery(
+        dimension=AttackAnalyticsDimension(name=dimension, label_key="case" if dimension == "label" else None),
+        search_pattern=pattern,
+    )
+    facets = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert {option.label for option in facets.items} == expected
+
+
+@pytest.mark.parametrize("dimension", ["label", "targeted_harm_category"])
+@pytest.mark.parametrize("value, expected", LITERAL_CASES)
+async def test_facet_literal_contract_async(
+    *, sqlite_instance: SQLiteMemory, dimension: str, value: str | None, expected: set[str]
+) -> None:
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(index=index, categories=[text], labels={"case": text}) for index, text in enumerate(TEXTS)
+        ],
+    )
+    query = AttackAnalyticsFacetQuery(
+        dimension=AttackAnalyticsDimension(name=dimension, label_key="case" if dimension == "label" else None),
+        search=value,
+    )
+    facets = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert {option.label for option in facets.items} == expected
 
 
 @pytest.mark.parametrize("length", [4000, 4001, 4096])

@@ -92,9 +92,8 @@ class OtelToolCallScorer(TrueFalseScorer):
         for score in scores:
             score.scorable = scorable
             score.message_piece_id = self._piece_id_from_scorable(scorable)
-            if not correlation_complete and score.score_value == "false":
-                score.score_value = None
-                score.status = ScoreStatus.UNDETERMINED
+            if not correlation_complete and not score.is_undetermined and score.get_value() is False:
+                score.set_value(None)
                 score.score_rationale = f"{score.score_rationale} {_UNLINKED_REQUESTS_REASON}"
         return scores
 

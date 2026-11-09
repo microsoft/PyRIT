@@ -19,6 +19,7 @@ import { Link, useLocation, useNavigate } from 'react-router'
 
 import {
   formatAttackOutcome,
+  formatAttackSuccess,
   formatDuration,
   formatTimestamp,
   objectivePreview,
@@ -40,6 +41,9 @@ interface AttackExecutionTableProps {
   readonly hierarchy: UseScenarioResultHierarchyResult
   readonly seedObjectives: Map<string, string>
   readonly onOpenDetails: (result: ScenarioProgressResult | ScenarioHierarchyNode, trigger: HTMLElement) => void
+  readonly showTimestamp?: boolean
+  readonly showConversationLink?: boolean
+  readonly booleanOutcome?: boolean
 }
 
 export default function AttackExecutionTable({
@@ -51,8 +55,12 @@ export default function AttackExecutionTable({
   hierarchy,
   seedObjectives,
   onOpenDetails,
+  showTimestamp = true,
+  showConversationLink = false,
+  booleanOutcome = false,
 }: AttackExecutionTableProps) {
   const styles = useAttackExecutionTableStyles()
+  const columnCount = showTimestamp ? 7 : 6
   const savedRelationships = hierarchy.roots.status === 'ready'
   const results: readonly (ScenarioProgressResult | ScenarioHierarchyNode)[] = savedRelationships ? roots : attempts
 
@@ -81,7 +89,7 @@ export default function AttackExecutionTable({
             <TableHeaderCell>Attack outcome</TableHeaderCell>
             <TableHeaderCell>Duration</TableHeaderCell>
             <TableHeaderCell>Retries / error</TableHeaderCell>
-            <TableHeaderCell>Timestamp</TableHeaderCell>
+            {showTimestamp && <TableHeaderCell>Timestamp</TableHeaderCell>}
             <TableHeaderCell>Actions</TableHeaderCell>
           </TableRow>
         </TableHeader>
@@ -102,6 +110,10 @@ export default function AttackExecutionTable({
                 hierarchy={hierarchy}
                 scenarioResultId={scenarioResultId}
                 onOpenDetails={onOpenDetails}
+                showTimestamp={showTimestamp}
+                showConversationLink={showConversationLink}
+                booleanOutcome={booleanOutcome}
+                columnCount={columnCount}
               />
             )
           })}
@@ -121,10 +133,15 @@ interface ResultRowsProps {
   readonly hierarchy: UseScenarioResultHierarchyResult
   readonly scenarioResultId: string
   readonly onOpenDetails: AttackExecutionTableProps['onOpenDetails']
+  readonly showTimestamp: boolean
+  readonly showConversationLink: boolean
+  readonly booleanOutcome: boolean
+  readonly columnCount: number
 }
 
 function ResultRows({
   nodeKey, result, objective, position, depth, ancestors, hierarchy, scenarioResultId, onOpenDetails,
+  showTimestamp, showConversationLink, booleanOutcome, columnCount,
 }: ResultRowsProps) {
   const styles = useAttackExecutionTableStyles()
   const navigate = useNavigate()
@@ -201,7 +218,11 @@ function ResultRows({
           </Badge>
         </TableCell>
         <TableCell>
-          <OutcomeBadge appearance="tint" outcome={result.outcome} label={formatAttackOutcome(result.outcome)} />
+          <OutcomeBadge
+            appearance="tint"
+            outcome={result.outcome}
+            label={booleanOutcome ? formatAttackSuccess(result.outcome) : formatAttackOutcome(result.outcome)}
+          />
         </TableCell>
         <TableCell className={styles.nowrap}>{formatDuration(result.execution_time_ms)}</TableCell>
         <TableCell>
@@ -212,8 +233,11 @@ function ResultRows({
             </Text>
           )}
         </TableCell>
-        <TableCell className={styles.nowrap}>{formatTimestamp(result.timestamp)}</TableCell>
+        {showTimestamp && <TableCell className={styles.nowrap}>{formatTimestamp(result.timestamp)}</TableCell>}
         <TableCell>
+          {showConversationLink && conversationPath && (
+            <Link to={conversationPath} state={location.state}>Conversation</Link>
+          )}
           <Button
             size="small"
             className={styles.touchTarget}
@@ -237,6 +261,10 @@ function ResultRows({
           hierarchy={hierarchy}
           scenarioResultId={scenarioResultId}
           onOpenDetails={onOpenDetails}
+          showTimestamp={showTimestamp}
+          showConversationLink={showConversationLink}
+          booleanOutcome={booleanOutcome}
+          columnCount={columnCount}
         />
       )}
     </>
@@ -252,10 +280,15 @@ interface ChildRowsProps {
   readonly hierarchy: UseScenarioResultHierarchyResult
   readonly scenarioResultId: string
   readonly onOpenDetails: AttackExecutionTableProps['onOpenDetails']
+  readonly showTimestamp: boolean
+  readonly showConversationLink: boolean
+  readonly booleanOutcome: boolean
+  readonly columnCount: number
 }
 
 function ChildRows({
   parentKey, parent, depth, ancestors, state, hierarchy, scenarioResultId, onOpenDetails,
+  showTimestamp, showConversationLink, booleanOutcome, columnCount,
 }: ChildRowsProps) {
   const styles = useAttackExecutionTableStyles()
   const pages = state?.pages ?? []
@@ -277,13 +310,17 @@ function ChildRows({
               hierarchy={hierarchy}
               scenarioResultId={scenarioResultId}
               onOpenDetails={onOpenDetails}
+              showTimestamp={showTimestamp}
+              showConversationLink={showConversationLink}
+              booleanOutcome={booleanOutcome}
+              columnCount={columnCount}
             />
           )
         }
         const id = slot.kind === 'child' ? slot.node.attack_result_id : slot.attackResultId
         return (
           <TableRow key={`${slot.position}:${id}`}>
-            <TableCell colSpan={COLUMN_COUNT}>
+            <TableCell colSpan={columnCount}>
               <div className={styles.resultCell} style={indent(depth)}>
                 <span className={styles.expandSpacer} />
                 <Text className={styles.position}>#{slot.position + 1}</Text>
@@ -297,7 +334,7 @@ function ChildRows({
         )
       })}
       <TableRow>
-        <TableCell colSpan={COLUMN_COUNT}>
+        <TableCell colSpan={columnCount}>
           <div className={styles.footer} style={indent(depth)}>
             {state?.loading && <Text role="status" className={styles.hint}>Loading children...</Text>}
             {!state?.loading && pages.length > 0 && (
@@ -344,7 +381,6 @@ function ChildRows({
 }
 
 const NO_ANCESTORS: ReadonlySet<string> = new Set()
-const COLUMN_COUNT = 7
 const LABEL_OBJECTIVE_LENGTH = 60
 const INDENT_STEP = '1.5rem'
 
@@ -352,7 +388,7 @@ function indent(depth: number): CSSProperties {
   return { paddingInlineStart: `calc(${depth} * ${INDENT_STEP})` }
 }
 
-function resultLabel(result: ScenarioProgressResult, objective: string, position: number | null): string {
+function resultLabel(result: ScenarioProgressResult | ScenarioHierarchyNode, objective: string, position: number | null): string {
   const text = objective.length > LABEL_OBJECTIVE_LENGTH
     ? `${objective.slice(0, LABEL_OBJECTIVE_LENGTH)}...`
     : objective

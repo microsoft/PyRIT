@@ -17,17 +17,26 @@ jest.mock('@/services/api', () => ({
   },
 }))
 
+let mockPendingCreate: ((converterId: string, isCurrentOpening: boolean) => void) | undefined
+
 jest.mock('@/components/Registry/CreateConverterDialog', () => ({
   __esModule: true,
   default: ({
     open,
     onCreated,
+    onClose,
   }: {
     open: boolean
-    onCreated: (converterId: string) => void
-  }) => open
-    ? <button onClick={() => onCreated('new-converter')}>Complete converter creation</button>
-    : null,
+    onCreated: (converterId: string, isCurrentOpening: boolean) => void
+    onClose: () => void
+  }) => {
+    if (!open) return null
+    mockPendingCreate = onCreated
+    return <>
+      <button onClick={() => onCreated('new-converter', true)}>Complete converter creation</button>
+      <button onClick={onClose}>Dismiss converter creation</button>
+    </>
+  },
 }))
 
 const mockedConvertersApi = convertersApi as jest.Mocked<typeof convertersApi>
@@ -136,6 +145,7 @@ function makePreviewResponse(
 describe('ConverterPanel', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockPendingCreate = undefined
     mockedConvertersApi.listConverters.mockResolvedValue({ items: [textConverter] })
   })
 
@@ -364,6 +374,31 @@ describe('ConverterPanel', () => {
 
     expect(await screen.findByTestId('converter-item-new-converter')).toBeInTheDocument()
     expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes a dismissed creation without appending it to a replacement pipeline', async () => {
+    const replacement = makeConverter('replacement', 'Rot13Converter')
+    const created = makeConverter('new-converter', 'CaesarConverter')
+    mockedConvertersApi.listConverters
+      .mockResolvedValueOnce({ items: [replacement] })
+      .mockResolvedValueOnce({ items: [replacement, created] })
+    const user = userEvent.setup()
+    renderPanel({ previewText: 'hello' })
+    await screen.findByTestId('converter-panel-list')
+
+    await user.click(screen.getByRole('combobox', { name: 'Add converter' }))
+    await user.click(screen.getByTestId('create-converter-option'))
+    const completeCreate = mockPendingCreate
+    expect(completeCreate).toBeDefined()
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss converter creation' }))
+    await selectConverter('replacement')
+
+    await act(async () => { completeCreate?.('new-converter', false) })
+
+    await waitFor(() => expect(mockedConvertersApi.listConverters).toHaveBeenCalledTimes(2))
+    expect(screen.getByTestId('converter-item-replacement')).toBeInTheDocument()
+    expect(screen.queryByTestId('converter-item-new-converter')).not.toBeInTheDocument()
   })
 
   it('returns the selected registry ID with the converted value', async () => {

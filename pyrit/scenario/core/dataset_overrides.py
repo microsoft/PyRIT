@@ -6,7 +6,7 @@
 from dataclasses import replace
 from typing import Any
 
-from pyrit.models.scenario_dataset import (
+from pyrit.models import (
     DatasetSelectionMode,
     ScenarioDatasetOptions,
     ScenarioDatasetRequest,

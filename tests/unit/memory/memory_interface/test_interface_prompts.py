@@ -10,16 +10,16 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from unit.mocks import get_mock_target
 
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
-from pyrit.memory import MemoryInterface, PromptMemoryEntry
+from pyrit.executor.attack import PromptSendingAttack
+from pyrit.memory import MemoryInterface, PromptMemoryEntry, set_message_piece_sha256_async
 from pyrit.memory.memory_models import (
     ConverterIdentifierEntry,
     PromptConverterIdentifierEntry,
     TargetIdentifierEntry,
 )
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,
@@ -147,6 +147,29 @@ async def test_add_message_pieces_persists_converter_identifier_graph(sqlite_ins
         (0, converter.hash),
         (1, nested.hash),
     }
+
+
+async def test_add_message_pieces_failure_rolls_back_converter_identifiers(sqlite_instance: MemoryInterface):
+    converter = ConverterIdentifier(
+        class_name="RolledBackConverter",
+        class_module="tests.unit.memory",
+        supported_input_types=["text"],
+        supported_output_types=["text"],
+    )
+    piece = MessagePiece(
+        conversation_id=str(uuid4()),
+        role="user",
+        original_value="Prompt",
+        converter_identifiers=[converter],
+    )
+    duplicate = piece.model_copy(deep=True, update={"sequence": 1})
+
+    with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+        await sqlite_instance.add_message_pieces_to_memory_async(message_pieces=[piece, duplicate])
+
+    assert await sqlite_instance.get_message_pieces_async(conversation_id=piece.conversation_id) == []
+    assert sqlite_instance._query_entries(ConverterIdentifierEntry) == []
+    assert sqlite_instance._query_entries(PromptConverterIdentifierEntry) == []
 
 
 async def test_get_message_pieces_uuid_and_string_ids(sqlite_instance: MemoryInterface):

@@ -10,7 +10,7 @@ import { usePromptEditorStyles } from './PromptEditor.styles'
 import PromptEditor from './PromptEditor'
 import SystemPromptSetup from './SystemPromptSetup'
 import MultiSendSettings from './MultiSendSettings'
-import { PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
+import { attachmentsFromFiles, PIECE_TYPE_TO_DATA_TYPE, withDraftIdentity } from './converterTypes'
 
 const DISABLED_WARNING_HOVER_DELAY_MS = 700
 
@@ -59,7 +59,7 @@ function TargetResolutionBanner({ status, activeTarget, onRetry, onConfigureTarg
     const text = status === 'error'
       ? 'Target verification failed. Sending is disabled; human scores can still be changed by the same operator.'
       : status === 'unavailable'
-        ? 'The target used by this attack is not currently registered. Sending is disabled; human scores can still be changed by the same operator.'
+        ? 'The target used by this attack is unavailable in the GUI. Sending is disabled; human scores can still be changed by the same operator.'
         : "Multiple registered targets have this attack's identity. Remove duplicate registrations, then retry."
     return <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText}
       icon={<WarningRegular fontSize={18} />} text={text} buttonText="Retry" buttonIcon={<ArrowSyncRegular />}
@@ -98,8 +98,11 @@ function getUnsupportedConverterOutputTypes(converterOutputDataTypes: string[], 
 
 export interface ChatInputAreaHandle {
   addAttachment: (attachment: MessageAttachment) => void
+  addFiles: (files: File[]) => void
   setText: (text: string) => void
   restoreDraft: (text: string, attachments: MessageAttachment[], textMetadata?: Record<string, unknown>) => void
+  /** Clear after transferring attachment ownership to a preserved draft. */
+  detachDraft: () => void
   focus: () => void
   getDraftRevision: () => number
   getTextMetadata: () => Record<string, unknown> | undefined
@@ -116,6 +119,7 @@ interface ChatInputAreaProps {
   ) => Promise<ChatSendOutcome>
   conversionRevisionKey?: string
   disabled?: boolean
+  fileDropEnabled?: boolean
   disabledReasons?: string[]
   sendDisabled?: boolean
   sendDisabledReasons?: string[]
@@ -151,7 +155,7 @@ interface ChatInputAreaProps {
 }
 
 const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(function ChatInputArea({
-  onSend, conversionRevisionKey = '', disabled = false, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
+  onSend, conversionRevisionKey = '', disabled = false, fileDropEnabled = true, disabledReasons = [], sendDisabled = false, sendDisabledReasons = [], activeTarget,
   operatorLocked = false, crossTargetLocked = false,
   targetResolutionStatus = 'idle', onRetryTargetResolution, onUseAsTemplate, attackOperator, onConfigureTarget,
   onToggleConverterPanel, isConverterPanelOpen = false, onInputChange, onAttachmentsChange,
@@ -210,6 +214,9 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
     setAttachments(next)
   }
   useImperativeHandle(ref, () => ({
+    addFiles: (files: File[]): void => {
+      if (!disabled) changeAttachments([...attachmentsRef.current, ...attachmentsFromFiles(files)])
+    },
     addAttachment: (attachment: MessageAttachment): void => {
       changeAttachments([...attachmentsRef.current, withDraftIdentity({ ...attachment, draftId: undefined })])
     },
@@ -221,6 +228,11 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       changeText(text)
       textMetadataRef.current = textMetadata
       changeAttachments(draftAttachments.map((attachment) => attachment.draftId ? attachment : withDraftIdentity(attachment)))
+    },
+    detachDraft: (): void => {
+      changeText('')
+      attachmentsRef.current = []
+      setAttachments([])
     },
     focus: (): void => { textareaRef.current?.focus() },
     getDraftRevision: (): number => draftRevisionRef.current,
@@ -295,7 +307,8 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
         <>
         <div className={styles.composerTrigger}>
           <PromptEditor text={input} attachments={attachments} onInputChange={changeText} onAttachmentsChange={changeAttachments}
-            disabled={disabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
+            disabled={disabled} disabledReason={inputDisabledReasons.join(' ')}
+            fileDropEnabled={fileDropEnabled} textareaRef={textareaRef} onKeyDown={handleKeyDown}
             onToggleConverterPanel={onToggleConverterPanel} isConverterPanelOpen={isConverterPanelOpen}
             undoLastSend={undoLastSend}
             convertedValue={convertedValue} onConvertedValueChange={onConvertedValueChange}

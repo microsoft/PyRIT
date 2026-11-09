@@ -18,15 +18,17 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
+from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.routes.scenarios import estimate_scenario_run_size
-from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_service import (
+from pyrit.backend.services import (
     ScenarioService,
-    _metadata_to_registered_scenario,
     get_scenario_service,
 )
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
+from pyrit.backend.services.scenario_service import (
+    _metadata_to_registered_scenario,
+)
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import (
     Parameter,
     ScenarioDatasetSizeCap,
@@ -36,18 +38,19 @@ from pyrit.models import (
     ScenarioRunSizeEstimateRequest,
     ScenarioTechniqueSummary,
 )
-from pyrit.models.catalog.scenario import RegisteredScenario
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.models.catalog import RegisteredScenario
+from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry, TargetRegistry
 from pyrit.scenario import Scenario
 from pyrit.scenario.core import (
+    AttackTechniqueFactory,
     DatasetAttackConfiguration,
     ScenarioTechnique,
     get_default_adversarial_target,
     override_default_adversarial_target,
 )
-from pyrit.scenario.scenarios.airt.scam import Scam
-from pyrit.scenario.scenarios.garak.exploitation import Exploitation
+from pyrit.scenario.scenarios.airt import Scam
+from pyrit.scenario.scenarios.garak import Exploitation
 from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks
 from unit.mocks import MockPromptTarget, make_technique_class
@@ -160,6 +163,23 @@ def test_catalog_lists_only_external_scenario_parameters() -> None:
 
     assert [parameter.name for parameter in summary.supported_parameters] == ["max_concurrency"]
     assert summary.supported_parameter_names == ["dataset_config", "max_concurrency"]
+
+
+def test_catalog_does_not_invent_an_unconfigured_baseline_identity() -> None:
+    summary = _metadata_to_registered_scenario(metadata=_make_scenario_metadata())
+    assert "baseline_identifier" not in summary.model_dump()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_catalog_technique_identity_comes_from_factory_without_constructing_an_attack() -> None:
+    factory = AttackTechniqueFactory(name="identity_preview", attack_class=PromptSendingAttack)
+    with patch.object(PromptSendingAttack, "__init__", side_effect=AssertionError("Must not construct an attack")):
+        techniques = AttackTechniqueRegistry.build_technique_class_from_factories(
+            class_name="IdentityPreview", factories=[factory]
+        )
+        member = techniques.get_all_techniques()[0]
+        assert member.identifier == factory.get_identifier()
+        assert _EstimateTechnique.PROMPT_SENDING.identifier is None
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -1762,7 +1782,7 @@ class TestScenarioServiceGetScenario:
                 scenario_name="test.scenario",
                 request=ScenarioRunSizeEstimateRequest(dataset_names=["harmbench"], **limit_args),
             )
-        from pyrit.models.scenario_dataset import ScenarioDatasetOptions
+        from pyrit.models import ScenarioDatasetOptions
         from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 
         mapped = service._registry.create_and_estimate_async.await_args.kwargs["dataset_overrides"]

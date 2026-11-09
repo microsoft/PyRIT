@@ -317,7 +317,7 @@ function canonicalTimestamp(value: string): string {
   if (!match || !Number.isFinite(milliseconds)) {
     throw new Error('Last updated bounds must be ISO 8601 timestamps with Z or an explicit time-zone offset.')
   }
-  const [, year, month, day, hour, minute, second = '0', fraction = '', offset] = match
+  const [, year, month, day, hour, minute, second = '0', fraction = '', offset = 'Z'] = match
   const calendar = new Date(`${year}-${month}-${day}T00:00:00Z`)
   if (Number(year) < 1 || calendar.getUTCMonth() + 1 !== Number(month) ||
     calendar.getUTCDate() !== Number(day) || Number(hour) > 23 || Number(minute) > 59 ||

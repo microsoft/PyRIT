@@ -21,7 +21,7 @@ from pyrit.memory import AzureBlobStorageIO, CentralMemory, data_serializer_fact
 from pyrit.models import MEDIA_PATH_DATA_TYPES
 
 if TYPE_CHECKING:
-    from pyrit.backend.models.attacks import MessagePieceRequest
+    from pyrit.backend.models import MessagePieceRequest
     from pyrit.models import PromptDataType
 
 

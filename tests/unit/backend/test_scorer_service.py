@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.backend.models.scorers import CreateScorerRequest
+from pyrit.backend.models import CreateScorerRequest
 from pyrit.backend.services.chat_scoring_service import ChatScoringService
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
@@ -26,18 +26,17 @@ from pyrit.models import (
 )
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.prompt_target import TextTarget
-from pyrit.registry import ScorerRegistry, TargetRegistry
-from pyrit.registry.instance_registry import DefaultInstanceRegistry
+from pyrit.registry import DefaultInstanceRegistry, ScorerRegistry, TargetRegistry
 from pyrit.score import (
     ManualScorer,
     MessageToolCallScorer,
+    ObjectiveScorerMetrics,
+    ObservationSource,
     OtelToolCallScorer,
+    Scorer,
     SubStringScorer,
     TrueFalseInverterScorer,
 )
-from pyrit.score.observation.observation_source import ObservationSource
-from pyrit.score.scorer import Scorer
-from pyrit.score.scorer_evaluation.scorer_metrics import ObjectiveScorerMetrics
 
 
 class _ServiceScorer(Scorer):
@@ -476,3 +475,15 @@ async def test_decision_scorer_builds_through_the_api_with_its_bundled_question(
 
     assert created.scorer_registry_name == "decision"
     assert ScorerRegistry.get_registry_singleton().instances.get("decision") is not None
+
+
+async def test_decision_scorer_unknown_parameter_does_not_list_its_question_path(chat_target: str) -> None:
+    with pytest.raises(ValueError, match="Unknown parameter 'nope' for 'DecisionScorer'") as error:
+        await ScorerService().create_scorer_async(
+            request=CreateScorerRequest(
+                name="decision", type="DecisionScorer", params={"chat_target": chat_target, "nope": 1}
+            )
+        )
+
+    assert "'chat_target'" in str(error.value)
+    assert "decision_question_path" not in str(error.value)

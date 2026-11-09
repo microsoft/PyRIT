@@ -6,9 +6,10 @@ Datasets a scenario needs in order to build its attacks.
 
 Some scenarios assemble their attack population from datasets used as ingredients
 (templates, registries, partial keys). Those datasets are not the population a user
-selects or limits: they are always read in full, without source caps, sampling, or
-filters. ``ScenarioRequiredData`` declares them apart from ``dataset_config``, which then
-only describes and limits the assembled attack groups.
+selects or limits: every row that remains after filtering is read, without source caps or
+sampling. Filters narrow the input rows; they don't limit the assembled attacks.
+``ScenarioRequiredData`` declares them apart from ``dataset_config``, which then only describes
+and limits the assembled attack groups.
 
 Preparation reuses ``DatasetConfiguration``, so required data is fetched, stored, and
 refreshed with the same guarantees as any dataset source. Reads never fetch.
@@ -31,6 +32,7 @@ from pyrit.scenario.core.dataset_configuration import (
     DatasetConstraintError,
     DatasetSource,
     ResolvedDataset,
+    prepare_configurations_async,
 )
 
 if TYPE_CHECKING:
@@ -40,16 +42,7 @@ if TYPE_CHECKING:
 
 
 class _RequiredDatasetConfiguration(DatasetConfiguration):
-    """An uncapped, unfiltered configuration used only to prepare and read required data."""
-
-    # Validates the scenario's full assembly against refresh candidates before any write.
-    _refresh_validator: Callable[[], Awaitable[None]] | None = None
-
-    async def _validate_candidate_population_async(self) -> None:
-        """Validate the required data, then the scenario's full assembly, against the candidates."""
-        await super()._validate_candidate_population_async()
-        if self._refresh_validator is not None:
-            await self._refresh_validator()
+    """An uncapped, unsampled configuration used only to prepare and read required data."""
 
     async def read_async(self) -> dict[str, list[Seed[Any]]]:
         """
@@ -136,26 +129,31 @@ class ScenarioRequiredData:
         """The ``get_seeds`` filters applied when reading."""
         return self._configuration.filters
 
-    def set_refresh_validator(self, validator: Callable[[], Awaitable[None]] | None) -> None:
-        """
-        Run this callback against refresh candidates before any required dataset is replaced.
-
-        The scenario passes its full unsampled assembly, so a refresh that would fail validation
-        leaves the stored required datasets unchanged and earlier runs can still resume.
-
-        Args:
-            validator (Callable[[], Awaitable[None]] | None): The async check, or None to clear it.
-        """
-        self._configuration._refresh_validator = validator
-
-    async def prepare_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
+    async def prepare_async(
+        self,
+        *,
+        fetch: DatasetFetchPolicy | None = None,
+        population: DatasetConfiguration | None = None,
+        validate_assembly: Callable[[], Awaitable[object]] | None = None,
+    ) -> None:
         """
         Load or refresh the required datasets, like ``DatasetConfiguration.prepare_async``.
 
+        With a population configuration, both are fetched first and validated together before
+        anything is written: a refresh of either half is checked against the other half's
+        candidates, so a rejected refresh leaves every stored dataset unchanged.
+
         Args:
             fetch (DatasetFetchPolicy | None): Optional policy for this operation only.
+            population (DatasetConfiguration | None): The scenario's population configuration to prepare
+                in the same batch.
+            validate_assembly (Callable[[], Awaitable[object]] | None): The scenario's full unsampled
+                assembly, run against the candidates whenever a dataset is refreshed.
         """
-        await self._configuration.prepare_async(fetch=fetch)
+        configurations = [self._configuration, *([population] if population is not None else [])]
+        await prepare_configurations_async(
+            configurations=configurations, fetch=fetch, validate_assembly=validate_assembly
+        )
 
     async def load_async(self) -> dict[str, list[Seed[Any]]]:
         """
@@ -176,8 +174,8 @@ class ScenarioRequiredData:
         """
         Take the fetch edits for required sources out of a dataset request.
 
-        The request's global fetch policy and filters stay on the returned request; the scenario
-        applies the resulting population settings to the required data.
+        The request's global fetch policy reaches required sources without their own policy and
+        also stays on the returned request for the population, as do its filters.
 
         Args:
             request (ScenarioDatasetRequest): The requested dataset edits.
@@ -189,12 +187,14 @@ class ScenarioRequiredData:
             request left for the population configuration.
 
         Raises:
-            DatasetConstraintError: If the request deselects, caps, or reorders required datasets.
+            DatasetConstraintError: If the request deselects, caps, or reorders required datasets, or
+                leaves out every population dataset.
         """
         if not options.supports_overrides and request != ScenarioDatasetRequest():
             raise DatasetConstraintError("This scenario does not support dataset overrides.")
+        required = self if request.fetch is None else self.with_sources(sources=self.sources, fetch=request.fetch)
         if request.sources is None:
-            return self, request
+            return required, request
         names = self.dataset_names
         requested = [source.name for source in request.sources]
         fixed = [*names, *population_names]
@@ -208,7 +208,13 @@ class ScenarioRequiredData:
         if capped:
             raise DatasetConstraintError(f"Required datasets are read in full and can't be capped: {capped}.")
         remaining = [source for source in request.sources if source.name not in names]
-        edited = self._with_source_fetch(
+        # A request can't hold an empty source list, and dropping it would silently restore the defaults.
+        if not remaining and population_names:
+            raise DatasetConstraintError(
+                "Select at least one population dataset besides the required ones "
+                f"(defaults: {', '.join(population_names)})."
+            )
+        edited = required._with_source_fetch(
             {source.name: source.fetch for source in required_inputs if source.fetch is not None}
         )
         return edited, request.model_copy(update={"sources": remaining or None})

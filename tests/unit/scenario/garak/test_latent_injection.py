@@ -15,14 +15,10 @@ from pyrit.converter import SearchReplaceConverter
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import AttackSeedGroup, Seed, SeedDataset, SeedObjective, SeedPrompt
-from pyrit.scenario.core.dataset_configuration import (
-    DatasetAttackConfiguration,
-    DatasetConstraintError,
-    DatasetSource,
-    ResolvedDataset,
-)
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, ResolvedDataset
+from pyrit.scenario.core import DatasetConstraintError
 from pyrit.scenario.core.required_data import _RequiredDatasetConfiguration
-from pyrit.scenario.scenarios.garak.latent_injection import (
+from pyrit.scenario.scenarios.garak import (
     LatentInjection,
     LatentInjectionDatasetConfiguration,
     LatentInjectionTechnique,

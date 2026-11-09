@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.setup.initializers.preload_scenario_metadata import PreloadScenarioMetadata
+from pyrit.setup.initializers import PreloadScenarioMetadata
 
 
 class TestPreloadScenarioMetadata:

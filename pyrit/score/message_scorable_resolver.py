@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pyrit.common import print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.models import (
     ContentEntryScorable,
     ContentScorable,
