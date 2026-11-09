@@ -33,6 +33,11 @@ from pyrit.score import PathTraversalOutputScorer
         "IIS config: ../../web.config",
         "IIS config backslashes: ..\\..\\web.config",
         "IIS config encoded dot: ../../web%2econfig",
+        "Null byte suffix: ../../../etc/passwd\x00.png",
+        "Encoded null byte suffix: ../../../etc/passwd%00.png",
+        "Double-encoded null byte suffix: ../../../etc/passwd%2500.jpg",
+        "Encoded null byte after dotfile: ../../.env%00.txt",
+        "Encoded null byte in request: ..%2f..%2fetc%2fpasswd%00.png",
     ],
 )
 async def test_path_traversal_detected(text: str, patch_central_database):
