@@ -87,9 +87,9 @@ out, the score is undetermined, so an infrastructure problem is never counted as
 response's own text never runs. The check's program and output are stored as an observation linked to the
 score.
 
-The check reads the sandbox as it is when it runs. So it runs again on every call rather than reusing a
-stored verdict, and isolation is the caller's job, since a later attempt could otherwise score true on an
-earlier attempt's effect: run one attempt at a time per sandbox (`max_concurrency=1`), turn off automatic
+The check reads the sandbox as it is when it runs. Stored verdicts are never reused, including through
+inverter, composite or fallback scorers. Isolation is the caller's job, since a later attempt could score
+true on an earlier attempt's effect: run one attempt at a time per sandbox (`max_concurrency=1`), turn off automatic
 retries of failed attempts (`max_attempts_on_failure=0`), and reset the sandbox between attempts. It needs a
 sandbox whose state persists.
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -33,15 +33,25 @@ from pyrit.models import (
     ProgramExecutionObservationPayload,
     ProgramExecutionScorable,
     ProgramResult,
+    Score,
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.score import SandboxCheckScorer
+from pyrit.score import (
+    SandboxCheckScorer,
+    SubStringScorer,
+    TrueFalseCompositeScorer,
+    TrueFalseFallbackScorer,
+    TrueFalseInverterScorer,
+    TrueFalseScoreAggregator,
+    TrueFalseScorer,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from pyrit.memory import SQLiteMemory
+    from pyrit.models import ComponentIdentifier, Scorable, ScorableUnion
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -60,6 +70,39 @@ class _Guest:
 
     def _handle(self, run: FakeRun) -> ProcessResult:
         return ProcessResult(exit_code=0, stdout="present\n" if self.flag else "absent\n")
+
+
+class _UndeterminedScorer(TrueFalseScorer):
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier()
+
+    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
+        return [
+            Score(
+                score_value=None,
+                status=ScoreStatus.UNDETERMINED,
+                score_type="true_false",
+                score_rationale="No primary verdict.",
+                scorer_class_identifier=self.get_identifier(),
+                scorable=cast("ScorableUnion", scorable),
+            )
+        ]
+
+
+def _wrapped_check(*, check: SandboxCheckScorer, wrapper: str) -> TrueFalseScorer:
+    if wrapper == "inverter":
+        return TrueFalseInverterScorer(scorer=check)
+    if wrapper == "composite":
+        return TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[check])
+    if wrapper == "fallback-primary":
+        return TrueFalseFallbackScorer(scorer=check, fallback_scorer=SubStringScorer(substring="created"))
+    if wrapper == "fallback-secondary":
+        return TrueFalseFallbackScorer(scorer=_UndeterminedScorer(), fallback_scorer=check)
+    if wrapper == "nested":
+        return TrueFalseInverterScorer(
+            scorer=TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[check])
+        )
+    raise ValueError(f"Unknown wrapper: {wrapper}")
 
 
 @pytest.fixture
@@ -155,6 +198,54 @@ async def test_a_stored_verdict_is_never_reused_async(sqlite_instance: SQLiteMem
     response = await _response_async(sqlite_instance)
     first = await scorer.score_async(scorable=response)
     assert await scorer.find_matching_scores_async(scores=first, scorable=response) == []
+
+
+@pytest.mark.parametrize("wrapper", ["inverter", "composite", "fallback-primary", "fallback-secondary", "nested"])
+@pytest.mark.parametrize("reset", [False, True], ids=["mutation", "reset"])
+async def test_wrappers_never_reuse_a_stored_sandbox_verdict_async(
+    *, sqlite_instance: SQLiteMemory, wrapper: str, reset: bool
+) -> None:
+    guest = _Guest()
+    guest.flag = True
+    check = SandboxCheckScorer(sandbox=guest.sandbox, check_program=_CHECK, condition=_CONDITION)
+    scorer = _wrapped_check(check=check, wrapper=wrapper)
+    response = await _response_async(sqlite_instance)
+    (first,) = await scorer.score_async(scorable=response)
+    if reset:
+        await guest.sandbox.reset_async()
+    guest.flag = False
+    (persisted,) = await sqlite_instance.get_scores_async(score_ids=[str(first.id)])
+    legacy = persisted.model_copy(deep=True)
+    legacy._snapshot_participation = None
+
+    for candidate in (first, persisted, legacy):
+        assert await scorer.find_matching_scores_async(scores=[candidate], scorable=response) == []
+    assert len(guest.sandbox.runs) == 1
+    (second,) = await scorer.score_async(scorable=response)
+    assert second.get_value() is not first.get_value()
+    assert len(guest.sandbox.runs) == 2
+    (saved_second,) = await sqlite_instance.get_scores_async(score_ids=[str(second.id)])
+    assert saved_second.status is ScoreStatus.COMPLETE
+    assert saved_second.get_value() is second.get_value()
+    assert saved_second.score_category == second.score_category
+    assert "Check program:" in saved_second.score_rationale
+    assert saved_second.observation_ids == second.observation_ids
+    (observation,) = await sqlite_instance.get_observations_async(observation_ids=second.observation_ids)
+    assert isinstance(observation.payload, ProgramExecutionObservationPayload)
+    assert observation.payload.events[0].stdout.strip() == "absent"
+
+
+async def test_an_unused_sandbox_fallback_keeps_the_primary_match_async(sqlite_instance: SQLiteMemory) -> None:
+    guest = _Guest()
+    check = SandboxCheckScorer(sandbox=guest.sandbox, check_program=_CHECK, condition=_CONDITION)
+    scorer = TrueFalseFallbackScorer(scorer=SubStringScorer(substring="created"), fallback_scorer=check)
+    response = await _response_async(sqlite_instance)
+    (first,) = await scorer.score_async(scorable=response)
+    (persisted,) = await sqlite_instance.get_scores_async(score_ids=[str(first.id)])
+    guest.flag = True
+
+    assert await scorer.find_matching_scores_async(scores=[persisted], scorable=response) == [persisted]
+    assert guest.sandbox.runs == []
 
 
 @pytest.mark.parametrize("limit", ["timed_out", "resource_limit_exceeded"])

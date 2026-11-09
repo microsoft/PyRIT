@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         ScoringExpectation,
     )
     from pyrit.score.observation.execution import _ObservationEvidence
+    from pyrit.score.scorer import SnapshotParticipation
 
 
 class SandboxCheckScorer(TrueFalseScorer):
@@ -126,6 +127,23 @@ class SandboxCheckScorer(TrueFalseScorer):
             },
             children={"source": self._source.get_identifier()},
         )
+
+    async def _filter_matching_scores_by_snapshot_async(
+        self,
+        *,
+        scores: Sequence[Score],
+        scorable: Scorable,
+        expectation: ScoringExpectation | None,
+        used_observation_ids: dict[str, set[str]],
+        participation_by_score: dict[str, SnapshotParticipation | None],
+    ) -> list[Score]:
+        """
+        Reject stored verdicts when a wrapper checks this participating leaf's freshness.
+
+        Returns:
+            list[Score]: Always empty.
+        """
+        return []
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
         if not isinstance(scorable, (MessageScorable, ContentScorable, ContentEntryScorable)):
