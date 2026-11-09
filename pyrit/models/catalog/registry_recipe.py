@@ -8,26 +8,12 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, PlainSerializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_TEXT_LENGTH
 
 _Identifier = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
 _TechniqueTag = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
-
-
-def _escape_invalid_text(value: str) -> str:
-    """
-    Escape characters that can't be written as UTF-8, such as bytes from a file name that isn't UTF-8.
-
-    Returns:
-        str: The text, safe to send in a JSON response.
-    """
-    return value.encode("utf-8", "backslashreplace").decode("utf-8")
-
-
-# The model keeps the text it was given, so a name still matches the entry it names; only JSON output is escaped.
-_DisplayText = Annotated[str, PlainSerializer(_escape_invalid_text, return_type=str, when_used="json")]
 
 
 class RegistryRecipeKind(str, Enum):
@@ -44,11 +30,29 @@ class _RegistryRecipe(BaseModel):
 
     CURRENT_SCHEMA_VERSION: ClassVar[int] = 1
 
-    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False, frozen=True)
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
-    schema_version: int = Field(
-        CURRENT_SCHEMA_VERSION, ge=1, le=CURRENT_SCHEMA_VERSION, description="Shape of this document"
-    )
+    # A literal 1 rather than CURRENT_SCHEMA_VERSION: a document saved without this field is a version 1
+    # document and must keep reading as one after the constant is bumped, or a migration would skip it.
+    schema_version: int = Field(1, ge=1, description="Shape of this document")
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: int) -> int:
+        """
+        Reject a document saved by a newer PyRIT than this one.
+
+        Returns:
+            int: The schema version.
+
+        Raises:
+            ValueError: If the document's format is newer than this PyRIT reads.
+        """
+        if value > cls.CURRENT_SCHEMA_VERSION:
+            raise ValueError(
+                f"Format version {value} is newer than this PyRIT reads (up to {cls.CURRENT_SCHEMA_VERSION})"
+            )
+        return value
 
 
 class ComponentRecipe(_RegistryRecipe):
@@ -103,17 +107,32 @@ class SavedEntryRef(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: RegistryRecipeKind
-    name: _DisplayText
+    name: str
 
 
 class StoredRecipe(BaseModel):
     """A saved recipe and the version of the document it was read from."""
 
-    model_config = ConfigDict(frozen=True)
-
     ref: SavedEntryRef
     recipe: ComponentRecipe | TechniqueRecipe
     version: str = Field(..., description="Opaque version of the document this recipe was read from")
+
+    @model_validator(mode="after")
+    def _validate_recipe_kind(self) -> StoredRecipe:
+        """
+        Reject a technique recipe filed under another registry, or another registry's recipe filed as a technique.
+
+        Returns:
+            StoredRecipe: The stored recipe.
+
+        Raises:
+            ValueError: If the recipe's type doesn't match the registry it's filed under.
+        """
+        expects_technique = self.ref.kind is RegistryRecipeKind.TECHNIQUES
+        if expects_technique != isinstance(self.recipe, TechniqueRecipe):
+            expected = TechniqueRecipe if expects_technique else ComponentRecipe
+            raise ValueError(f"A saved {self.ref.kind.value} entry needs a {expected.__name__}")
+        return self
 
 
 class RestoreFailureReason(str, Enum):
@@ -140,9 +159,9 @@ class RestoreFailure(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: RegistryRecipeKind
-    name: _DisplayText | None = Field(None, description="Entry name; None when the whole folder couldn't be read")
+    name: str | None = Field(None, description="Entry name; None when the whole folder couldn't be read")
     reason: RestoreFailureReason
-    message: _DisplayText = Field(..., description="Why, in words safe to show users")
+    message: str = Field(..., description="Why, in words safe to show users")
     version: str | None = Field(None, description="Version of the stored document, when it could be read")
     dependency: SavedEntryRef | None = Field(None, description="The entry this one needed that is missing or failed")
 
@@ -153,5 +172,5 @@ class IgnoredRecipeFile(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: RegistryRecipeKind
-    file_name: _DisplayText
-    message: _DisplayText
+    file_name: str
+    message: str

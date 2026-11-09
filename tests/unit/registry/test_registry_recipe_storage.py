@@ -10,19 +10,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from azure.storage.blob import ContainerClient
+from pydantic import ValidationError
 
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.models.catalog import (
     ComponentRecipe,
-    IgnoredRecipeFile,
     RegistryRecipeKind,
-    RestoreFailure,
     RestoreFailureReason,
     SavedEntryRef,
+    StoredRecipe,
     TechniqueRecipe,
 )
-from pyrit.registry.file_document_storage import _read_regular_file
-from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, _read_regular_file
+from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RegistryRecipeStorage
 
 _TARGET = {
     "schema_version": 1,
@@ -73,41 +73,29 @@ class TestRegistryRecipeStorageSource:
         assert list(listing.recipes) == ["formal"]
 
 
-class TestRestoreReportText:
-    def test_text_that_is_not_utf8_is_escaped_when_sent_as_json(self) -> None:
-        ignored = IgnoredRecipeFile(
-            kind=RegistryRecipeKind.TARGETS, file_name="bad\udcffname.json", message="bad\udcffname"
-        )
-        failure = RestoreFailure(
-            kind=RegistryRecipeKind.TARGETS,
-            name="x\udcff",
-            reason=RestoreFailureReason.MISSING_DEPENDENCY,
-            message="got \udcff",
-            dependency=SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800"),
-        )
+class TestRecipeModels:
+    def test_a_document_without_a_schema_version_is_version_one(self) -> None:
+        document = {key: value for key, value in _TARGET.items() if key != "schema_version"}
 
-        sent_ignored, sent_failure = json.loads(
-            json.dumps([ignored.model_dump(mode="json"), failure.model_dump(mode="json")], ensure_ascii=False).encode(
-                "utf-8"
-            )
-        )
+        with patch.object(ComponentRecipe, "CURRENT_SCHEMA_VERSION", 2):
+            assert ComponentRecipe.model_validate(document).schema_version == 1
 
-        assert (sent_ignored["file_name"], sent_ignored["message"]) == ("bad\\udcffname.json", "bad\\udcffname")
-        assert (sent_failure["name"], sent_failure["message"]) == ("x\\udcff", "got \\udcff")
-        assert sent_failure["dependency"]["name"] == "ghost\\ud800"
-        assert json.loads(failure.model_dump_json())["dependency"]["name"] == "ghost\\ud800"
+    def test_rejects_a_schema_version_newer_than_the_model_reads(self) -> None:
+        with pytest.raises(ValidationError, match="newer than this PyRIT reads"):
+            ComponentRecipe.model_validate({**_TARGET, "schema_version": 2})
 
-    def test_names_keep_the_text_they_were_given(self) -> None:
-        ref = SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800")
-
-        assert ref.name == "ghost\ud800"
-        assert ref == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800")
-        assert ref != SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\\ud800")
-
-    def test_valid_text_is_kept_as_written(self) -> None:
-        ref = SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="caf\u00e9 \uff10\uff0e\uff15 \U0001f600")
-
-        assert ref.model_dump(mode="json")["name"] == "caf\u00e9 \uff10\uff0e\uff15 \U0001f600"
+    @pytest.mark.parametrize(
+        ("kind", "recipe"),
+        [
+            (RegistryRecipeKind.TECHNIQUES, ComponentRecipe.model_validate(_TARGET)),
+            (RegistryRecipeKind.TARGETS, TechniqueRecipe.model_validate({"type": "RedTeamingAttack"})),
+        ],
+    )
+    def test_a_stored_recipe_must_match_its_registry(
+        self, kind: RegistryRecipeKind, recipe: ComponentRecipe | TechniqueRecipe
+    ) -> None:
+        with pytest.raises(ValidationError, match="entry needs a"):
+            StoredRecipe(ref=SavedEntryRef(kind=kind, name="mismatched"), recipe=recipe, version="v1")
 
 
 class TestRegistryRecipeStorageListing:
@@ -190,9 +178,9 @@ class TestRegistryRecipeStorageListing:
         listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
 
         (ignored,) = listing.ignored
-        assert ignored.file_name == os.fsdecode(b"bad\xffname.json")
-        sent = json.loads(json.dumps(ignored.model_dump(mode="json"), ensure_ascii=False).encode("utf-8"))
-        assert sent["file_name"] == "bad\\udcffname.json"
+        assert ignored.file_name == "bad\\udcffname.json"
+        assert "bad\\udcffname" in ignored.message
+        assert json.loads(ignored.model_dump_json())["file_name"] == "bad\\udcffname.json"
 
     def test_reports_unreadable_and_ignored_files(self, tmp_path: Path) -> None:
         folder = tmp_path / "scorers"
@@ -214,6 +202,78 @@ class TestRegistryRecipeStorageListing:
             "Permission denied",
         )
         assert failure.version is None
+        assert isinstance(listing.causes["locked"], PermissionError)
         (ignored,) = listing.ignored
         assert (ignored.kind, ignored.file_name) == (RegistryRecipeKind.SCORERS, "Bad-Name.json")
         assert "Bad-Name" in ignored.message
+
+    def test_accepts_a_byte_order_mark(self, tmp_path: Path) -> None:
+        _write(tmp_path / "targets", "from_notepad", b"\xef\xbb\xbf" + json.dumps(_TARGET).encode("utf-8"))
+
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        assert list(listing.recipes) == ["from_notepad"]
+
+    @pytest.mark.parametrize(
+        "document",
+        [
+            '{"class_module": "m", "class_name": "C", "params": {"text": "bad \\udcff"}}',
+            '{"class_module": "m", "class_name": "C", "params": {"bad \\ud800": 1}}',
+        ],
+        ids=["value", "key"],
+    )
+    def test_reports_an_unpaired_surrogate_as_invalid(self, tmp_path: Path, document: str) -> None:
+        _write(tmp_path / "targets", "odd_text", document)
+
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        (failure,) = listing.failures
+        assert (failure.name, failure.reason) == ("odd_text", RestoreFailureReason.INVALID_RECIPE)
+        assert "unpaired surrogate" in failure.message
+
+    def test_keeps_text_that_is_valid_unicode(self, tmp_path: Path) -> None:
+        document = {**_TARGET, "params": {"greeting": "caf\u00e9 \U0001f600"}}
+        _write(tmp_path / "targets", "friendly", json.dumps(document))
+
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        assert listing.recipes["friendly"].recipe.params["greeting"] == "caf\u00e9 \U0001f600"
+
+    def test_checks_a_technique_against_the_technique_format_version(self, tmp_path: Path) -> None:
+        _write(tmp_path / "techniques", "next_format", json.dumps({"schema_version": 2, "type": "RedTeamingAttack"}))
+        _write(tmp_path / "targets", "next_format", json.dumps({**_TARGET, "schema_version": 2}))
+
+        with patch.object(TechniqueRecipe, "CURRENT_SCHEMA_VERSION", 2):
+            techniques = RegistryRecipeStorage(kind=RegistryRecipeKind.TECHNIQUES, source=str(tmp_path)).list_recipes()
+            targets = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        assert list(techniques.recipes) == ["next_format"]
+        assert targets.failures[0].reason is RestoreFailureReason.NEWER_SCHEMA_VERSION
+
+    def test_shortens_what_a_validation_error_repeats(self, tmp_path: Path) -> None:
+        long_key = "k" * 10_000
+        many_keys = {f"unknown_{index:03d}_{'x' * 40}": True for index in range(100)}
+        _write(tmp_path / "targets", "long_key", json.dumps({**_TARGET, long_key: True}))
+        _write(tmp_path / "targets", "many_keys", json.dumps({**_TARGET, **many_keys}))
+
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        messages = {failure.name: failure.message for failure in listing.failures}
+        assert "k" * 61 + "..." in messages["long_key"]
+        assert "k" * 65 not in messages["long_key"]
+        assert len(messages["many_keys"]) == MAX_FAILURE_MESSAGE_LENGTH
+        assert messages["many_keys"].endswith("...")
+
+    def test_a_listing_cannot_be_changed_by_its_reader(self, tmp_path: Path) -> None:
+        _write(tmp_path / "targets", "contoso_gpt4o", json.dumps(_TARGET))
+
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        with pytest.raises(TypeError):
+            listing.recipes["other"] = listing.recipes["contoso_gpt4o"]  # type: ignore[index]
+
+    def test_raises_when_the_folder_cannot_be_listed(self, tmp_path: Path) -> None:
+        (tmp_path / "targets").write_text("a file where the folder should be")
+
+        with pytest.raises(DocumentStorageUnavailableError):
+            RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
