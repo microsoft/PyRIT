@@ -357,6 +357,48 @@ async def test_get_attack_results_by_conversation_id(sqlite_instance: MemoryInte
     assert retrieved_results[0].conversation_id == "conv_1"
 
 
+async def test_get_attack_results_breaks_timestamp_ties_by_the_greater_id(sqlite_instance: MemoryInterface):
+    """Legacy duplicate rows sharing a timestamp keep one deterministic winner.
+
+    The paginated SQL anti-join keeps the greater id on equal timestamps, so
+    the post-fetch Python dedup must apply the same rule or the unpaginated
+    detail view and the paginated list disagree on which attack owns the
+    conversation.
+    """
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    tied = datetime(2026, 1, 1, tzinfo=UTC)
+    low = str(UUID(int=1))
+    high = str(UUID(int=2))
+    conversation_id = "conv_tie"
+
+    await sqlite_instance.add_attack_results_to_memory_async(
+        attack_results=[
+            AttackResult(
+                attack_result_id=low,
+                conversation_id=conversation_id,
+                objective="older id",
+                outcome=AttackOutcome.FAILURE,
+                timestamp=tied,
+            ),
+            AttackResult(
+                attack_result_id=high,
+                conversation_id=conversation_id,
+                objective="newer id",
+                outcome=AttackOutcome.SUCCESS,
+                timestamp=tied,
+            ),
+        ]
+    )
+
+    retrieved_results = await sqlite_instance.get_attack_results_async(conversation_id=conversation_id)
+
+    assert len(retrieved_results) == 1
+    assert retrieved_results[0].attack_result_id == high
+    assert retrieved_results[0].outcome == AttackOutcome.SUCCESS
+
+
 async def test_get_attack_results_by_objective(sqlite_instance: MemoryInterface):
     """Test retrieving attack results by objective substring."""
     # Create and add attack results
