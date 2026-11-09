@@ -29,7 +29,7 @@ from sqlalchemy.sql.selectable import CTE
 from pyrit.converter import Base64Converter
 from pyrit.exceptions.analytics_exception import AnalyticsDataException, AnalyticsTimeoutException
 from pyrit.executor.attack import AttackConverterConfig, PromptSendingAttack
-from pyrit.memory import MemoryInterface, SQLiteMemory
+from pyrit.memory import AttackResultEntry, MemoryInterface, SQLiteMemory
 from pyrit.memory.analytics_sql import (
     JsonArrayEmpty,
     JsonIsArray,
@@ -40,7 +40,7 @@ from pyrit.memory.analytics_sql import (
 )
 from pyrit.memory.attack_analytics import AttackAnalyticsReader, RawAnalyticsOption
 from pyrit.memory.attack_analytics_query import AttackAnalyticsQueryCompiler
-from pyrit.memory.memory_models import AttackIdentifierEntry, AttackResultEntry, Base, TargetIdentifierEntry
+from pyrit.memory.memory_models import AttackIdentifierEntry, Base, TargetIdentifierEntry
 from pyrit.memory.query_control import QueryControl
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -59,6 +59,7 @@ from pyrit.models import (
     TargetIdentifier,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
+from test_support.text_search import LITERAL_CASES, PATTERN_CASES, TEXTS
 from unit.mocks import MockPromptTarget, add_legacy_attack_results_async
 
 if TYPE_CHECKING:
@@ -1403,7 +1404,7 @@ def test_mssql_facet_search_treats_brackets_as_literal_text(dimension: str) -> N
     query = AttackAnalyticsFacetQuery(dimension=AttackAnalyticsDimension(name=dimension), search="[a-z]%_\\")
     compiler = AttackAnalyticsQueryCompiler(dialect="mssql", filters=query.filters)
     compiled = compiler.facet(query).compile(dialect=mssql.dialect())
-    assert "%\\[a-z]\\%\\_\\\\%" in compiled.params.values()
+    assert "%/[a-z]/%/_\\%" in compiled.params.values()
 
 
 @pytest.mark.parametrize("dimension", ["operation", "operator", "scenario", "label", "model"])
@@ -1795,6 +1796,44 @@ async def test_literal_brackets_in_facet_search_match_only_literal_text(sqlite_i
         control=control(),
     )
     assert [option.key.value for option in facet.items] == ["[a-z]%_\\"]
+
+
+@pytest.mark.parametrize("dimension", ["label", "targeted_harm_category"])
+@pytest.mark.parametrize("pattern, expected", PATTERN_CASES)
+async def test_facet_pattern_contract_async(
+    *, sqlite_instance: SQLiteMemory, dimension: str, pattern: str, expected: set[str]
+) -> None:
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(index=index, categories=[value], labels={"case": value}) for index, value in enumerate(TEXTS)
+        ],
+    )
+    query = AttackAnalyticsFacetQuery(
+        dimension=AttackAnalyticsDimension(name=dimension, label_key="case" if dimension == "label" else None),
+        search_pattern=pattern,
+    )
+    facets = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert {option.label for option in facets.items} == expected
+
+
+@pytest.mark.parametrize("dimension", ["label", "targeted_harm_category"])
+@pytest.mark.parametrize("value, expected", LITERAL_CASES)
+async def test_facet_literal_contract_async(
+    *, sqlite_instance: SQLiteMemory, dimension: str, value: str | None, expected: set[str]
+) -> None:
+    await add_legacy_attack_results_async(
+        sqlite_instance,
+        attack_results=[
+            make_result(index=index, categories=[text], labels={"case": text}) for index, text in enumerate(TEXTS)
+        ],
+    )
+    query = AttackAnalyticsFacetQuery(
+        dimension=AttackAnalyticsDimension(name=dimension, label_key="case" if dimension == "label" else None),
+        search=value,
+    )
+    facets = await AttackAnalyticsReader(memory=sqlite_instance).facets_async(query=query, control=control())
+    assert {option.label for option in facets.items} == expected
 
 
 @pytest.mark.parametrize("length", [4000, 4001, 4096])

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.scenario.scenarios.adaptive.selectors import (
+from pyrit.scenario.scenarios.adaptive import (
     EpsilonGreedyTechniqueSelector,
     TechniqueSelector,
 )

@@ -34,7 +34,7 @@ from pyrit.backend.models.common import (
     PaginationInfo,
     TextStr,
 )
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import print_deprecation_message
 from pyrit.models import (
     AttackOutcome,
     AttackResult,

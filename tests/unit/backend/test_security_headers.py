@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from pyrit.backend.middleware.security_headers import SecurityHeadersMiddleware
+from pyrit.backend.middleware import SecurityHeadersMiddleware
 
 
 def _build_client(*, dev_mode: bool) -> TestClient:

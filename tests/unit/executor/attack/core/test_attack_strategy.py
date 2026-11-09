@@ -8,21 +8,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.exceptions.retry_collector import RetryCollector, get_retry_collector
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
-from pyrit.executor.attack.core.attack_parameters import AttackParameters
-from pyrit.executor.attack.core.attack_strategy import (
+from pyrit.exceptions import RetryCollector, get_retry_collector
+from pyrit.executor.attack import (
+    AttackAdversarialConfig,
     AttackContext,
+    AttackParameters,
+    AttackScoringConfig,
     AttackStrategy,
-    _DefaultAttackStrategyEventHandler,
-    _ObjectiveTargetConversationLifecycle,
+    ConversationSession,
+    MultiTurnAttackContext,
+    TAPAttackContext,
     attack_outcome_from_score,
 )
-from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import ConversationSession, MultiTurnAttackContext
-from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackContext
+from pyrit.executor.attack.core.attack_strategy import (
+    _DefaultAttackStrategyEventHandler,
+    _ObjectiveTargetConversationLifecycle,
+)
 from pyrit.executor.core import StrategyEvent, StrategyEventData
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.memory import CentralMemory
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
+    AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
     AttackResultRole,
@@ -30,15 +36,11 @@ from pyrit.models import (
     ConversationReference,
     ConversationType,
     Message,
+    RetryEvent,
     Score,
     ScoreStatus,
     SeedPrompt,
 )
-from pyrit.models.identifiers import (
-    AtomicAttackEvaluationIdentifier,
-    AtomicAttackIdentifier,
-)
-from pyrit.models.retry_event import RetryEvent
 from pyrit.prompt_target import PromptTarget
 
 

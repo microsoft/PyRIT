@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from pyrit.datasets.seed_datasets.remote import (
+    _HarmBenchMultimodalDataset,
+)
 from pyrit.datasets.seed_datasets.remote.harmbench_multimodal_dataset import (
     SemanticCategory,
-    _HarmBenchMultimodalDataset,
 )
 from pyrit.memory import MemoryInterface
 from pyrit.models import SeedDataset

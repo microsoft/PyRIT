@@ -12,8 +12,7 @@ from fastapi import FastAPI
 
 from pyrit.backend.main import app, lifespan
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
-from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.configuration_loader import ConfigurationLoader
+from pyrit.setup import ConfigurationLoader, initialize_pyrit_async
 
 
 async def _initialize_offline_async(self: ConfigurationLoader, *, raise_on_initializer_error: bool = True) -> None:

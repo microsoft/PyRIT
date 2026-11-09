@@ -15,7 +15,7 @@ stable (sorted) order, and the removed wire aliases (``score_id``,
 import uuid
 from datetime import UTC, datetime
 
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AttackSummary,
     ConversationMessagesResponse,
     MessagePieceView,

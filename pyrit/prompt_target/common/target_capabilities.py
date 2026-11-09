@@ -7,8 +7,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import NoReturn, cast
 
-from pyrit.models.literals import PromptDataType
-from pyrit.models.target.target_capabilities import CapabilityName, TargetCapabilities
+from pyrit.models import CapabilityName, PromptDataType, TargetCapabilities
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES
 
 __all__ = [

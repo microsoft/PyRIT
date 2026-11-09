@@ -1,6 +1,7 @@
 import { renderHook, waitFor } from '@testing-library/react'
 
 import { targetsApi } from '@/services/api'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetInfo, TargetInstance } from '@/types'
 
 import { useAttackTargetResolution } from './useAttackTargetResolution'
@@ -21,14 +22,14 @@ jest.mock('@/services/targetRegistry', () => ({
 
 const createdTarget: TargetInstance = {
   target_registry_name: 'target',
-  identifier: { class_name: 'TextTarget', hash: 'target-hash' },
+  identifier: { class_name: 'OpenAIChatTarget', hash: 'target-hash' },
 }
 const replacementTarget: TargetInstance = {
   target_registry_name: 'target',
-  identifier: { class_name: 'TextTarget', hash: 'target-hash' },
+  identifier: { class_name: 'OpenAIChatTarget', hash: 'target-hash' },
 }
 const targetInfo: TargetInfo = {
-  target_type: 'TextTarget',
+  target_type: 'OpenAIChatTarget',
   target_registry_name: 'target',
   identifier_hash: 'target-hash',
 }
@@ -38,6 +39,42 @@ describe('useAttackTargetResolution', () => {
     jest.clearAllMocks()
     mockRuntimeGeneration = 'generation-1'
     jest.mocked(targetsApi.getTarget).mockResolvedValue(replacementTarget)
+  })
+
+  it('keeps a saved TextTarget chat unavailable without looking up or rebuilding its target', () => {
+    const { result } = renderHook(() => useAttackTargetResolution({
+      attackId: 'saved', attackLoadSequence: 1,
+      attackTarget: { ...targetInfo, target_type: 'TextTarget' },
+      attackTargetSource: 'persisted',
+    }))
+    expect(result.current.resolutionStatus).toBe('unavailable')
+    expect(result.current.activeTarget).toBeNull()
+    expect(targetsApi.getTarget).not.toHaveBeenCalled()
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled()
+    expect(listRegisteredTargets).not.toHaveBeenCalled()
+  })
+
+  it('does not activate a TextTarget returned by a named lookup', async () => {
+    jest.mocked(targetsApi.getTarget).mockResolvedValue({
+      ...replacementTarget, identifier: { ...replacementTarget.identifier, class_name: 'TextTarget' },
+    })
+    const { result } = renderHook(() => useAttackTargetResolution({
+      attackId: 'saved', attackLoadSequence: 1,
+      attackTarget: targetInfo, attackTargetSource: 'persisted',
+    }))
+    await waitFor(() => expect(result.current.resolutionStatus).toBe('unavailable'))
+    expect(result.current.activeTarget).toBeNull()
+  })
+
+  it('does not activate an SDK-only created target', () => {
+    const { result } = renderHook(() => useAttackTargetResolution({
+      attackId: 'created', attackLoadSequence: 1,
+      attackTarget: targetInfo, attackTargetSource: 'created',
+      createdTarget: { ...createdTarget, identifier: { ...createdTarget.identifier, class_name: 'TextTarget' } },
+      createdTargetGeneration: 'generation-1',
+    }))
+    expect(result.current.resolutionStatus).toBe('unavailable')
+    expect(result.current.activeTarget).toBeNull()
   })
 
   it('reconstructs a saved temperature without selecting the registered default', async () => {
