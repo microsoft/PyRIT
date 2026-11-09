@@ -101,6 +101,8 @@ export interface ChatInputAreaHandle {
   addFiles: (files: File[]) => void
   setText: (text: string) => void
   restoreDraft: (text: string, attachments: MessageAttachment[], textMetadata?: Record<string, unknown>) => void
+  /** Clear after transferring attachment ownership to a preserved draft. */
+  detachDraft: () => void
   focus: () => void
   getDraftRevision: () => number
   getTextMetadata: () => Record<string, unknown> | undefined
@@ -226,6 +228,11 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       changeText(text)
       textMetadataRef.current = textMetadata
       changeAttachments(draftAttachments.map((attachment) => attachment.draftId ? attachment : withDraftIdentity(attachment)))
+    },
+    detachDraft: (): void => {
+      changeText('')
+      attachmentsRef.current = []
+      setAttachments([])
     },
     focus: (): void => { textareaRef.current?.focus() },
     getDraftRevision: (): number => draftRevisionRef.current,

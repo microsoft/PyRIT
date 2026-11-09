@@ -280,10 +280,9 @@ export function SeedExampleBrowserView({
         targetConvId = effectiveConversationId ?? null
       } else if (destination === 'new_conversation') {
         targetAttackId = effectiveAttackId ?? null
-        targetConvId = null
+        targetConvId = effectiveConversationId ?? null
       }
       const preserved = draftHandoff.getPreservedDraft(targetAttackId, targetConvId)
-        ?? (destination === 'new_conversation' && effectiveAttackId ? draftHandoff.getPreservedDraft(effectiveAttackId) : null)
       return Boolean(preserved && draftHandoff.isDraftDirty(preserved.draft))
     },
     [draftHandoff, effectiveAttackId, effectiveConversationId],
@@ -316,8 +315,10 @@ export function SeedExampleBrowserView({
       }
       if (importRequestRef.current !== requestId) return
       const targetAttackId = destination === 'new_attack' ? null : effectiveAttackId
-      const preserved = draftHandoff.getPreservedDraft(targetAttackId, targetConversationId)
-        ?? (destination === 'new_conversation' && effectiveAttackId ? draftHandoff.getPreservedDraft(effectiveAttackId) : null)
+      const preserved = draftHandoff.getPreservedDraft(
+        targetAttackId,
+        destination === 'new_conversation' ? effectiveConversationId : targetConversationId,
+      )
       const setup = preserved
         ? {
             ...preserved.draft, text: '', attachments: [], textMetadata: undefined,

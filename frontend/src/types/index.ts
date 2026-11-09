@@ -175,6 +175,7 @@ export interface ChatDraftHandoffContextValue {
   preserveDraft: (
     state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>,
     expectedSequence?: number,
+    retainedImportId?: string,
   ) => void
   clearPreservedDraft: (
     expectedSequence?: number,

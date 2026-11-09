@@ -722,6 +722,27 @@ describe('useChatDraftHandoff and chatDraft utilities', () => {
       expect(result.current.getPreservedDraft('attack-2', 'conv-2')).toBeNull()
     })
 
+    it.each(['main', 'branch'])('retains a pending import while preserving %s during navigation', (conversationId: string) => {
+      const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
+      act(() => {
+        result.current.stagePendingImport({
+          destinationType: 'current_conversation', targetAttackId: 'attack', targetConversationId: 'main',
+          content: { text: 'Imported main prompt' },
+        })
+      })
+      act(() => {
+        result.current.preserveDraft({
+          originatingAttackId: 'attack', originatingConversationId: conversationId,
+          draft: { text: 'Unsent prompt', attachments: [] },
+        }, result.current.activeSequence, result.current.pendingImport?.id)
+      })
+      expect(result.current.pendingImport?.sequence).toBe(result.current.activeSequence)
+      act(() => {
+        expect(result.current.consumePendingImport(undefined, 'attack', 'main')?.content.text).toBe('Imported main prompt')
+      })
+      expect(result.current.getPreservedDraft('attack', conversationId)?.draft.text).toBe('Unsent prompt')
+    })
+
     it('does not revoke attachment blob URLs still referenced by another preserved conversation draft', () => {
       const { result } = renderHook(() => useChatDraftHandoff(), { wrapper })
       const sharedAttachment: MessageAttachment = {

@@ -979,6 +979,114 @@ describe('App draft handoff with the real chat and composer', () => {
     expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/main')
   })
 
+  it.each([false, true])('should isolate drafts and attachment ownership across direct switches with StrictMode=%s', async (strict: boolean) => {
+    const user = userEvent.setup()
+    renderChat('/attack/chat/saved/conversations/main', strict)
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Main draft')
+    await user.upload(screen.getByTestId('file-input'), new File(['image'], 'main.png', { type: 'image/png' }))
+    const url = jest.mocked(URL.createObjectURL).mock.results[0].value
+    await addConverter(user)
+
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    expect(screen.queryByRole('button', { name: 'Remove main.png' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove converter draft-converter' })).not.toBeInTheDocument()
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Branch draft')
+
+    await user.click(screen.getByRole('button', { name: 'Open saved main' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Main draft'))
+    expect(screen.getByRole('button', { name: 'Remove main.png' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Remove converter draft-converter' })).toBeInTheDocument()
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(url)
+
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Branch draft'))
+  })
+
+  it.each(['draft-target', ''])('should retain target-only selection "%s" alongside another conversation draft', async (selection: string) => {
+    writeUserPreferences('local', {
+      ...DEFAULT_USER_PREFERENCES,
+      lastUsedTargets: { objective: targetReference(TARGET), adversarial: null },
+    })
+    const user = userEvent.setup()
+    renderChat()
+    const picker = await screen.findByRole('combobox', { name: 'Objective target' })
+    await waitFor(() => expect(picker).toHaveValue('draft-target'))
+    await user.selectOptions(picker, selection)
+    await visitHistory(user)
+    await user.click(screen.getByRole('row', { name: 'Open ManualAttack attack' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Other conversation draft')
+    await visitHistory(user)
+
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Other conversation draft'))
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await screen.findByRole('row', { name: 'Open ManualAttack attack' })
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue(selection))
+    await visitDatasets(user)
+    await returnToChat(user)
+    expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/)
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue(selection)
+  })
+
+  it('should keep a background send alive without clearing another draft or restoring sent text', async () => {
+    const user = userEvent.setup()
+    const acceptance = deferred<MessageSendStatus>()
+    jest.mocked(attacksApi.submitMessageSend).mockReturnValueOnce(acceptance.promise)
+    renderChat('/attack/chat/saved/conversations/main')
+    await selectDraftTarget(user)
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Sent main prompt')
+    await user.click(screen.getByRole('button', { name: 'Send message', exact: true }))
+    await waitFor(() => expect(attacksApi.submitMessageSend).toHaveBeenCalledTimes(1))
+
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Unsent branch prompt')
+    await act(async () => { acceptance.resolve({
+      attack_result_id: 'saved', conversation_id: 'main', send_id: 'background-send',
+      request_turn_number: 0, state: 'completed', failure_stage: null, error: null,
+    }) })
+    await waitFor(() => expect(attacksApi.getAttack).toHaveBeenCalledWith('saved'))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent branch prompt')
+
+    await user.click(screen.getByRole('button', { name: 'Open saved main' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Unsent branch prompt'))
+  })
+
+  it('should retire the unsaved draft when first-send creation finishes after a direct switch', async () => {
+    const user = userEvent.setup()
+    const creation = deferred<Awaited<ReturnType<typeof attacksApi.createAttack>>>()
+    jest.mocked(attacksApi.createAttack).mockReturnValueOnce(creation.promise)
+    jest.mocked(attacksApi.submitMessageSend).mockResolvedValueOnce({
+      attack_result_id: 'created-background', conversation_id: 'created-main', send_id: 'created-send',
+      request_turn_number: 0, state: 'completed', failure_stage: null, error: null,
+    })
+    renderChat()
+    await selectDraftTarget(user)
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'First sent prompt')
+    await user.click(screen.getByRole('button', { name: 'Send message', exact: true }))
+    await waitFor(() => expect(attacksApi.createAttack).toHaveBeenCalledTimes(1))
+    await user.click(screen.getByRole('button', { name: 'Open saved main' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Existing conversation draft')
+    await act(async () => { creation.resolve({
+      attack_result_id: 'created-background', conversation_id: 'created-main', related_conversation_ids: [],
+    }) })
+    await waitFor(() => expect(attacksApi.getAttack).toHaveBeenCalledWith('created-background'))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Existing conversation draft')
+    await user.click(screen.getByRole('button', { name: 'Back', exact: true }))
+    await waitFor(() => expect(screen.getByLabelText('Current route')).toHaveTextContent(/^\/attack\/chat$/))
+    expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
+  })
+
   it.each([false, true])('should retain newer edits made before transcript loading with early departure=%s', async (leaveEarly: boolean) => {
     const user = userEvent.setup()
     renderChat('/attack/chat/saved/conversations/main')
@@ -1476,6 +1584,37 @@ describe('App draft handoff with the real chat and composer', () => {
       'Write a wikipedia article on {{ prompt }}. Start the article with "Title:".',
     ))
     expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/new-conv-id')
+  })
+
+  it('should use the source conversation for import confirmation and setup when another draft exists', async () => {
+    const user = userEvent.setup()
+    jest.mocked(attacksApi.getAttackMetadata).mockImplementation(async (id: string, conversationId?: string) => ({
+      ...savedMetadata(id, conversationId), selected_conversation_valid: true,
+    }))
+    renderChat('/attack/chat/saved/conversations/main')
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await addConverter(user)
+    await visitDatasets(user)
+    await user.click(screen.getByRole('button', { name: 'Open another conversation' }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled())
+    await user.type(screen.getByPlaceholderText('Type prompt here'), 'Source branch draft')
+    await user.click(screen.getByRole('button', { name: 'Toggle converter panel' }))
+    await screen.findByRole('combobox', { name: 'Add converter' })
+    expect(screen.queryByRole('button', { name: 'Remove converter draft-converter' })).not.toBeInTheDocument()
+    await visitDatasets(user)
+    await user.click(await screen.findByRole('link', { name: 'jailbreak_templates' }))
+    await user.click(await screen.findByRole('button', { name: /Show wikipedia with title/i }))
+    await user.click(screen.getByTestId('import-into-chat-button'))
+    await user.click(await screen.findByTestId('import-new-conversation-item'))
+    const confirmation = await screen.findByRole('dialog', { name: 'Replace Existing Draft?' })
+    await user.click(within(confirmation).getByRole('button', { name: 'Replace', exact: true }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue(
+      'Write a wikipedia article on {{ prompt }}. Start the article with "Title:".',
+    ))
+    expect(screen.getByLabelText('Current route')).toHaveTextContent('/attack/chat/saved/conversations/new-conv-id')
+    await user.click(await screen.findByRole('button', { name: 'Toggle converter panel' }))
+    await screen.findByRole('combobox', { name: 'Add converter' })
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove converter draft-converter' })).not.toBeInTheDocument())
   })
 
   it('should preserve destination existing messages and append imported history after them in current_conversation', async () => {

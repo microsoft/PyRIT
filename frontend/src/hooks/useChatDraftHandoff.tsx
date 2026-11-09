@@ -91,6 +91,7 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
   const preserveDraft = useCallback((
     state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>,
     expectedSequence?: number,
+    retainedImportId?: string,
   ) => {
     // Parent effects are cleaned up before the active composer's unmount.
     if (!mountedRef.current) {
@@ -112,10 +113,18 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
       ...otherDraftsAttachments(preservedDraftsRef.current, key),
       ...allImportAttachments(pendingImportRef.current),
     ])
+    const sequence = advanceSequence()
+    const pending = pendingImportRef.current
+    // A navigation snapshot must not supersede the import it is carrying to its destination.
+    if (pending && pending.id === retainedImportId) {
+      const retainedImport = { ...pending, sequence }
+      pendingImportRef.current = retainedImport
+      setPendingImport(retainedImport)
+    }
     const nextState: ChatDraftContextState = {
       ...state,
       savedAt: Date.now(),
-      sequence: advanceSequence(),
+      sequence,
     }
     preservedDraftsRef.current.set(key, nextState)
     preservedDraftRef.current = nextState

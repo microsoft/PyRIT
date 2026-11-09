@@ -6,6 +6,7 @@ import { createMemoryRouter, MemoryRouter, RouterProvider, Route, Routes, useLoc
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
+import { ChatDraftProvider } from "@/hooks/useChatDraftHandoff";
 import * as runtimeHooks from "@/hooks/useRuntime";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "@/utils/userPreferences";
 import {
@@ -1199,6 +1200,8 @@ describe("ChatWindow Integration", () => {
         onAttackChange={onAttackChange}
       /></TestWrapper>);
       await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+      expect(screen.getByRole("textbox")).toHaveValue("");
+      await user.type(screen.getByRole("textbox"), "Draft to send");
       await user.click(screen.getByRole("button", { name: /send message/i }));
       await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
       mockedAttacksApi.getMessages.mockResolvedValue(reply);
@@ -6757,7 +6760,7 @@ describe("ChatWindow Integration", () => {
       });
       const selected = jest.fn();
       function BranchHarness() {
-        const [conversation, setConversation] = useState(options.selectedPipeline ? "other" : "first-source");
+        const [conversation, setConversation] = useState("first-source");
         return <>
           <button onClick={() => setConversation("other")}>Switch conversation</button>
           <button onClick={() => setConversation("first-source")}>Open saved conversation</button>
@@ -6767,12 +6770,18 @@ describe("ChatWindow Integration", () => {
             onSelectConversation={(id: string) => { selected(id); setConversation(id); }} />
         </>;
       }
-      render(<TestWrapper><BranchHarness /></TestWrapper>);
+      const savedSource = stored.get("first-source");
+      if (options.selectedPipeline) stored.set("first-source", empty("first-source"));
+      render(<TestWrapper><ChatDraftProvider><BranchHarness /></ChatDraftProvider></TestWrapper>);
       if (options.selectedPipeline) {
         await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toBeEnabled());
         await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
         await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
         await user.click(await screen.findByRole("option", { name: /^first/ }));
+        await user.click(screen.getByRole("button", { name: "Switch conversation" }));
+        await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toBeEnabled());
+        if (!savedSource) throw new Error("Missing source conversation");
+        stored.set("first-source", savedSource);
         await user.click(screen.getByRole("button", { name: "Open saved conversation" }));
       }
       if (options.sent !== false) await waitFor(() => expect(
