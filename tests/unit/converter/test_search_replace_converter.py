@@ -106,3 +106,36 @@ async def test_search_replace_empty_string_replacement():
     converter = SearchReplaceConverter(pattern="bad_", replace="")
     result = await converter.convert_async(prompt="bad_word bad_code", input_type="text")
     assert result.output_text == "word code"
+
+
+@pytest.mark.parametrize(
+    ("pattern", "invalid_replace"),
+    [
+        (r"hello", r"C:\Users\admin"),
+        (r"hello", r"C:\users\admin"),
+        (r"hello", r"\1"),
+        (r"hello", r"\g<foo>"),
+        (r"hello", ["valid", r"C:\Users\admin"]),
+        (r"(a)", r"\2"),
+        (r"(?P<bar>a)", r"\g<foo>"),
+    ],
+)
+def test_search_replace_invalid_replacement_template(pattern: str, invalid_replace: str | list[str]):
+    with pytest.raises(ValueError, match="Invalid regex replacement template in replace"):
+        SearchReplaceConverter(pattern=pattern, replace=invalid_replace)
+
+
+@pytest.mark.parametrize(
+    ("pattern", "replace", "prompt", "expected"),
+    [
+        (r"([a-z]+)", r"<\1>", "hello world", "<hello> <world>"),
+        (r"(?P<word>[a-z]+)", r"[\g<word>]", "test", "[test]"),
+    ],
+)
+async def test_search_replace_valid_group_backreferences_async(
+    *, pattern: str, replace: str, prompt: str, expected: str
+) -> None:
+    converter = SearchReplaceConverter(pattern=pattern, replace=replace)
+    result = await converter.convert_async(prompt=prompt)
+    assert result.output_text == expected
+    assert result.output_type == "text"
