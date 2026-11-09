@@ -31,12 +31,12 @@ from pydantic import ValidationError
 
 from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.registry.instance_registry import DefaultInstanceRegistry
+from pyrit.registry.instance_registry import DefaultInstanceRegistry, SavedEntryUnavailableError
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from typing import Protocol
 
     from pyrit.models import Parameter
@@ -132,6 +132,38 @@ class AttackTechniqueMetadata(RegistryMetadata):
     """Shared metadata type for the inherited, empty technique class catalog."""
 
 
+class TechniqueSelectorConflictError(ValueError):
+    """A technique's name or tag conflicts with the name or a tag of a registered technique."""
+
+
+class TechniqueSelectionUnavailableError(Exception):
+    """
+    A launch picks techniques by all, default, or a tag while a saved technique couldn't be restored.
+
+    A broken technique's tags may be unknown, so a broad selection could quietly leave it out. Naming the
+    techniques still works.
+    """
+
+    def __init__(self, *, names: Sequence[str]) -> None:
+        """
+        Initialize the error.
+
+        Args:
+            names (Sequence[str]): The saved techniques that couldn't be restored, or none when their folder
+                couldn't be listed.
+        """
+        if names:
+            listed = ", ".join(f"'{name}'" for name in names)
+            subject = f"Saved technique{'s' if len(names) > 1 else ''} {listed} couldn't be restored"
+        else:
+            subject = "The saved techniques couldn't be listed"
+        super().__init__(
+            f"{subject}, so a launch has to name its techniques. Choosing them by all, default, or a tag "
+            "is refused until that's fixed."
+        )
+        self.names = tuple(names)
+
+
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
     """Factory storage with an atomic runtime-admission path."""
 
@@ -140,27 +172,38 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         Check selector collisions while holding the same lock as registration.
 
         Raises:
-            ValueError: If the name or a tag conflicts with an existing selector.
+            SavedEntryUnavailableError: If the name, in any letter case, is held for a saved technique
+                that couldn't be restored.
+            TechniqueSelectorConflictError: If the name or a tag conflicts with an existing selector.
+            ValueError: If the factory doesn't fit the scenarios it would join.
         """
         from pyrit.registry.components.scenario_registry import ScenarioRegistry
 
         # Discover builders before taking the instance lock; discovery has its own catalog lock.
         ScenarioRegistry.get_registry_singleton().get_class_names()
         with self._lock:
+            held = {entry.name.casefold(): entry for entry in self.get_unavailable_entries() if entry.name is not None}
+            if (held_entry := held.get(factory.name.casefold())) is not None:
+                raise SavedEntryUnavailableError(entry=held_entry, name=factory.name)
             entries = self.get_all_instances()
-            names = {entry.name.casefold(): entry.name for entry in entries}
+            # A held name still counts as taken, so no tag can claim it while its saved technique is broken.
+            names = {entry.name.casefold(): entry.name for entry in entries} | {
+                folded: entry.name for folded, entry in held.items() if entry.name is not None
+            }
             tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
             folded_name = factory.name.casefold()
             if folded_name in names:
-                raise ValueError(f"Technique '{factory.name}' already exists (names are case-insensitive)")
+                raise TechniqueSelectorConflictError(
+                    f"Technique '{factory.name}' already exists (names are case-insensitive)"
+                )
             if folded_name in tags:
-                raise ValueError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
+                raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
             for tag in factory.technique_tags:
                 folded = tag.casefold()
                 if folded in names or folded == folded_name:
-                    raise ValueError(f"Tag '{tag}' conflicts with a technique name")
+                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
                 if folded in tags and tags[folded] != tag:
-                    raise ValueError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
+                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
             _validate_generated_member_collisions(
                 class_name="ScenarioTechnique",
                 factories=[factory],

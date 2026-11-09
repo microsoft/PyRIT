@@ -23,6 +23,7 @@ from pyrit.backend.models.targets import (
 )
 from pyrit.backend.services import get_target_service
 from pyrit.models.catalog import TargetInstance
+from pyrit.registry import SavedEntryUnavailableError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -132,6 +133,8 @@ async def create_target(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+    except SavedEntryUnavailableError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

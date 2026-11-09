@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import logging
 import os
 from collections.abc import Callable, Generator
 from contextlib import ExitStack
@@ -32,7 +33,7 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
 from pyrit.models.catalog import RegistryRecipeKind, RestoreFailure, RestoreFailureReason, RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import ConverterRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, SavedEntryUnavailableError, TargetRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.scenario import Scenario
 from pyrit.setup import ConfigurationLoader
@@ -1115,26 +1116,30 @@ async def test_apply_restores_an_entry_that_uses_a_startup_target_async(
     assert converter._converter_target is startup_chat
 
 
-async def test_startup_with_an_unrestorable_entry_is_not_ready_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+async def test_startup_with_an_unrestorable_entry_is_ready_and_holds_its_name_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     recipes = tmp_path / "recipes"
     _save_recipe(recipes, kind="targets", name="broken", document={"class_module": "nowhere", "class_name": "Nope"})
 
-    await _start_with_recipes_async(runtime, recipes=recipes)
+    with caplog.at_level(logging.WARNING, logger="pyrit.backend.services.runtime_lifecycle"):
+        await _start_with_recipes_async(runtime, recipes=recipes)
 
-    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
-    assert "1 problem" in runtime.message
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
         health = await client.get("/api/health")
         status = await client.get("/api/config/runtime")
-    assert health.json()["ready"] is False
+    assert health.json()["ready"] is True
     assert status.json()["version"] == runtime.version
-    assert runtime.version is not None
     (failure,) = status.json()["restore_failures"]
     assert (failure["kind"], failure["name"], failure["reason"]) == ("targets", "broken", "unknown_class")
     assert failure["version"]
+    assert "1 saved registry entry couldn't be restored" in caplog.text
+    with pytest.raises(SavedEntryUnavailableError, match="'Nope' is not a registered target class"):
+        TargetRegistry.get_registry_singleton().instances.get("broken")
 
 
-async def test_status_reports_a_reference_name_that_is_not_valid_text_async(
+async def test_status_reports_a_recipe_whose_text_is_not_valid_unicode_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     recipes = tmp_path / "recipes"
@@ -1155,7 +1160,7 @@ async def test_status_reports_a_reference_name_that_is_not_valid_text_async(
         status = await client.get("/api/config/runtime")
     assert status.status_code == 200
     (failure,) = status.json()["restore_failures"]
-    assert (failure["reason"], failure["dependency"]["name"]) == ("missing_dependency", "missing\\udcff")
+    assert (failure["name"], failure["reason"]) == ("pool", "invalid_recipe")
 
 
 async def test_status_lists_a_file_name_that_is_not_valid_text_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
@@ -1351,7 +1356,7 @@ async def test_fixing_the_file_and_restarting_reaches_ready_async(runtime: Runti
     assert runtime.status()["restore_failures"] == []
 
 
-async def test_apply_with_an_unrestorable_entry_keeps_the_new_version_async(
+async def test_apply_with_an_unrestorable_entry_becomes_ready_with_the_new_version_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     recipes = tmp_path / "recipes"
@@ -1362,11 +1367,10 @@ async def test_apply_with_an_unrestorable_entry_keeps_the_new_version_async(
     await apply_async(runtime)
 
     _, current_version = await runtime.source.read_with_version_async()
-    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
     assert runtime.version == current_version
     assert runtime.status()["restore_failures"][0]["reason"] == "unknown_class"
     config.apply_prepared_reinitialization_async.assert_awaited_once()
-    assert runtime.begin_apply(version=current_version)["outcome"] == "restart-required"
 
 
 async def test_restore_cancellation_propagates_from_startup_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
