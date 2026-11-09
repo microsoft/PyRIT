@@ -273,6 +273,11 @@ class ScenarioConfigurationResolver:
                         "Exact example selection cannot be combined with dataset sources, filters, limits, or fetch."
                     ),
                 )
+            if not scenario_class.SUPPORTS_EXACT_EXAMPLE_SELECTION:
+                raise DatasetExampleSelectionError(
+                    code="unsupported",
+                    detail="This scenario does not support an exact example selection.",
+                )
             if not scenario_accepts_dataset_config(scenario_class):
                 raise DatasetExampleSelectionError(
                     code="unsupported",

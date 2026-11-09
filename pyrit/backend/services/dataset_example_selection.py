@@ -61,9 +61,22 @@ def scenario_accepts_dataset_config(scenario_class: type[Scenario]) -> bool:
     Return whether a scenario declares ``dataset_config``.
 
     Returns:
-        bool: True when exact examples can replace the scenario population.
+        bool: True when the scenario still accepts a dataset configuration argument.
     """
     return any(parameter.name == "dataset_config" for parameter in scenario_class.supported_parameters())
+
+
+def scenario_supports_exact_example_selection(scenario_class: type[Scenario]) -> bool:
+    """
+    Return whether launch can run this scenario on exact inline groups.
+
+    Declaring ``dataset_config`` is not enough. Scenarios that read named datasets or a
+    private configuration set ``SUPPORTS_EXACT_EXAMPLE_SELECTION`` to false.
+
+    Returns:
+        bool: True when an exact selection can replace the population.
+    """
+    return scenario_class.SUPPORTS_EXACT_EXAMPLE_SELECTION and scenario_accepts_dataset_config(scenario_class)
 
 
 async def resolve_dataset_example_selection_async(

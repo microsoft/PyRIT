@@ -74,6 +74,8 @@ from pyrit.models import (
     AttackResult,
     AttackResultMetadata,
     ComponentIdentifier,
+    DatasetExampleSelection,
+    DatasetExampleSelectionError,
     ScenarioActiveConversation,
     ScenarioAttackResultDelta,
     ScenarioHierarchyNode,
@@ -972,6 +974,7 @@ class ScenarioRunService:
                 declared=scenario_class.supported_parameters(),
                 owner=request.scenario_name,
             )
+        example_selection = await self._example_selection_for_run_async(request=request)
         await self._run_initializers_async(request=request)
         declared_names = {parameter.name for parameter in scenario_class.supported_parameters()}
         if "objective_target" in declared_names and not request.target_name:
@@ -992,7 +995,7 @@ class ScenarioRunService:
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
-                example_selection=request.example_selection,
+                example_selection=example_selection,
                 include_baseline=request.include_baseline,
                 max_concurrency=request.max_concurrency
                 if "max_concurrency" in declared_names or "max_concurrency" in request.model_fields_set
@@ -1011,6 +1014,33 @@ class ScenarioRunService:
                 ),
             )
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
+
+    async def _example_selection_for_run_async(self, *, request: RunScenarioRequest) -> DatasetExampleSelection | None:
+        """
+        Use the caller's selection for a new run and the saved selection on resume.
+
+        Older runs have no saved launch body. The run API still accepts the caller's
+        original configuration for those. A saved body wins, including when the caller
+        omits the field, and a different supplied selection is rejected.
+
+        Returns:
+            DatasetExampleSelection | None: The selection to resolve.
+
+        Raises:
+            DatasetExampleSelectionError: If a resume request supplies a different selection.
+        """
+        if request.scenario_result_id is None:
+            return request.example_selection
+        stored = await self._memory.get_scenario_result_header_async(scenario_result_id=request.scenario_result_id)
+        if stored is None or _LAUNCH_REQUEST_METADATA_KEY not in stored.metadata:
+            return request.example_selection
+        saved = await asyncio.to_thread(self._restore_launch_request, stored=stored)
+        if "example_selection" in request.model_fields_set and request.example_selection != saved.example_selection:
+            raise DatasetExampleSelectionError(
+                code="conflicting_mode",
+                detail="Resume must keep the saved exact example selection.",
+            )
+        return saved.example_selection
 
     @staticmethod
     def _validate_initial_metadata(*, initial_metadata: Mapping[str, Any] | None) -> dict[str, Any]:

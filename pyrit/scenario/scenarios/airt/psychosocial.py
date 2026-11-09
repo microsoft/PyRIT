@@ -380,6 +380,7 @@ class Psychosocial(Scenario):
     """
 
     VERSION: int = 6
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
     SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @classmethod

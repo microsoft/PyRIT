@@ -26,6 +26,7 @@ limit. Inline configurations never touch memory.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import random
@@ -1155,15 +1156,27 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
         """
         del apply_sampling
         self.validate_configuration()
-        groups = [
-            self._build_attack_group(reference=reference, members=members)
-            for reference, members in self._selected_examples
-        ]
+        groups = await asyncio.to_thread(self._build_selected_groups)
         if not groups:
             raise DatasetConstraintError("Resolved attack-group dataset is empty (datasets: <inline>).")
         flattened = [seed for group in groups for seed in group.seeds]
         self.validate(ResolvedDataset(seeds=flattened, source_kind=self.source_kind, dataset_names=()))
         return {INLINE_DATASET_NAME: groups}
+
+    def _build_selected_groups(self) -> list[AttackSeedGroup]:
+        """
+        Build every selected group off the event loop, in request order.
+
+        Returns:
+            list[AttackSeedGroup]: One group per selected example.
+
+        Raises:
+            DatasetExampleSelectionError: If a stored example cannot be built into one group.
+        """
+        return [
+            self._build_attack_group(reference=reference, members=members)
+            for reference, members in self._selected_examples
+        ]
 
     def _build_attack_group(
         self, *, reference: DatasetExampleReference, members: Sequence[SeedRecord]
@@ -1233,8 +1246,16 @@ def _seed_from_record(
         Seed: The seed model for one stored record.
 
     Raises:
-        DatasetExampleSelectionError: If a simulated conversation cannot be built.
+        DatasetExampleSelectionError: If a non-objective seed has conditions, or a simulated
+            conversation cannot be built.
     """
+    if record.seed_type != "objective" and record.conditions not in (None, []):
+        raise DatasetExampleSelectionError(
+            code="unsupported",
+            selection_key=reference.selection_key,
+            example_id=reference.example_id,
+            detail="Only objective seeds can have persisted conditions.",
+        )
     common: dict[str, Any] = {
         "id": record.id,
         "origin": record.origin,

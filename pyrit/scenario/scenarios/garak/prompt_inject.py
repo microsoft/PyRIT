@@ -226,6 +226,7 @@ class PromptInject(Scenario):
     """
 
     VERSION: int = 3
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
     DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, per_dataset_limit=False)
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
     DEFAULT_GOAL_TEXTS: ClassVar[tuple[str, str, str]] = _DEFAULT_GOAL_TEXTS

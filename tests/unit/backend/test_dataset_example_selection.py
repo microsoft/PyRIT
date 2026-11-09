@@ -4,6 +4,7 @@
 """Exact dataset example selection: fingerprint, resolver, estimate, and launch persistence."""
 
 import json
+import threading
 from collections.abc import Sequence
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,7 +15,10 @@ from pydantic import ValidationError
 
 from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.dataset_example_fingerprint import dataset_example_fingerprint
-from pyrit.backend.services.dataset_example_selection import resolve_dataset_example_selection_async
+from pyrit.backend.services.dataset_example_selection import (
+    resolve_dataset_example_selection_async,
+    scenario_supports_exact_example_selection,
+)
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_run_service import (
     _LAUNCH_REQUEST_FIELDS,
@@ -48,7 +52,7 @@ from pyrit.scenario import (
     ScenarioTechnique,
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.scenarios.garak import ApiKey
+from pyrit.scenario.scenarios.garak import ApiKey, Exploitation, SystemPromptExtraction
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
 
@@ -432,6 +436,26 @@ async def test_load_route_rejects_exact_selection_before_memory(sqlite_instance:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("scenario_class", [SystemPromptExtraction, Exploitation])
+async def test_named_only_scenarios_reject_exact_selection_before_resolution(scenario_class: type[Scenario]) -> None:
+    assert scenario_supports_exact_example_selection(scenario_class) is False
+    with (
+        patch(
+            "pyrit.backend.services.scenario_configuration_resolver.resolve_dataset_example_selection_async",
+            new_callable=AsyncMock,
+        ) as read,
+        pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught,
+    ):
+        await ScenarioConfigurationResolver.resolve_configuration_async(
+            scenario_name="test.exact",
+            scenario_class=scenario_class,
+            example_selection=DatasetExampleSelection(examples=[_reference()]),
+        )
+    assert caught.value.code == "unsupported"
+    read.assert_not_called()
+
+
+@pytest.mark.usefixtures("patch_central_database")
 async def test_scenario_without_dataset_config_is_unsupported() -> None:
     with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
         await ScenarioConfigurationResolver.resolve_configuration_async(
@@ -640,8 +664,8 @@ async def test_exact_selection_keeps_scorer_staleness_check(sqlite_instance: Mem
         registry.instances.register(scorer, name="custom")
         reference = RegisteredComponentReference(registry_name="custom", identifier_hash=scorer.get_identifier().hash)
         resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
-            scenario_name="garak.api_key",
-            scenario_class=ApiKey,
+            scenario_name="test.exact",
+            scenario_class=_ExactScenario,
             example_selection=selection,
             memory=sqlite_instance,
         )
@@ -742,3 +766,148 @@ async def test_sampling_stays_off_and_legacy_files_wait_until_launch(sqlite_inst
     assert isinstance(config, ExactExampleDatasetConfiguration)
     with pytest.raises(DatasetExampleSelectionError, match="unsupported"):
         await config.get_attack_seed_groups_async(apply_sampling=True)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_resume_resolves_the_saved_selection_and_rejects_a_different_one(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    group = uuid4()
+    objective = _objective("goal", prompt_group_id=group)
+    prompt = _prompt("body", prompt_group_id=group, sequence=1, role="user")
+    await _store(sqlite_instance, objective, prompt)
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[group], dataset_name=DATASET)
+    other = selection.model_copy(
+        update={
+            "examples": [
+                selection.examples[0].model_copy(update={"fingerprint": "cd" * 32}),
+            ]
+        }
+    )
+    result_id = str(uuid4())
+    saved = RunScenarioRequest(
+        scenario_name="test.exact",
+        target_name="target",
+        example_selection=selection,
+        include_baseline=True,
+        max_concurrency=1,
+        max_retries=0,
+    ).model_dump(mode="json", include=set(_LAUNCH_REQUEST_FIELDS))
+    stored = MagicMock()
+    stored.id = result_id
+    stored.metadata = {_LAUNCH_REQUEST_METADATA_KEY: saved}
+    stored.scenario_identifier = MagicMock(techniques=["direct"], datasets=[], params={})
+    stored.labels = {}
+    stored.operation_id = None
+    registry = MagicMock(spec=ScenarioRegistry)
+    registry.get_class.return_value = _ExactScenario
+    service = ScenarioRunService()
+    with (
+        patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
+        patch.object(service._memory, "get_scenario_result_header_async", new=AsyncMock(return_value=stored)),
+    ):
+        with pytest.raises(DatasetExampleSelectionError, match="conflicting_mode") as caught:
+            await service._example_selection_for_run_async(
+                request=RunScenarioRequest(
+                    scenario_name="test.exact",
+                    target_name="target",
+                    scenario_result_id=result_id,
+                    example_selection=other,
+                )
+            )
+        assert caught.value.code == "conflicting_mode"
+        resumed = await service._example_selection_for_run_async(
+            request=RunScenarioRequest(scenario_name="test.exact", target_name="target", scenario_result_id=result_id)
+        )
+    assert resumed == selection
+
+    await _mutate(sqlite_instance, prompt.id, role="assistant")
+    with pytest.raises(DatasetExampleSelectionError, match="stale") as stale:
+        await ScenarioConfigurationResolver.resolve_configuration_async(
+            scenario_name="test.exact",
+            scenario_class=_ExactScenario,
+            example_selection=resumed,
+            memory=sqlite_instance,
+        )
+    assert stale.value.code == "stale"
+    assert stale.value.example_id == group
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_resume_without_a_saved_launch_keeps_the_caller_selection(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    seed = _objective("goal")
+    await _store(sqlite_instance, seed)
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[seed.id], dataset_name=DATASET)
+    stored = MagicMock()
+    stored.metadata = {}
+    service = ScenarioRunService()
+    with patch.object(service._memory, "get_scenario_result_header_async", new=AsyncMock(return_value=stored)):
+        resumed = await service._example_selection_for_run_async(
+            request=RunScenarioRequest(
+                scenario_name="test.exact",
+                target_name="target",
+                scenario_result_id=str(uuid4()),
+                example_selection=selection,
+            )
+        )
+    assert resumed == selection
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_non_objective_conditions_are_unsupported(sqlite_instance: MemoryInterface) -> None:
+    group = uuid4()
+    objective = _objective("goal", prompt_group_id=group)
+    prompt = _prompt("body", prompt_group_id=group, sequence=1, role="user")
+    await _store(sqlite_instance, objective, prompt)
+    await _mutate(
+        sqlite_instance,
+        prompt.id,
+        conditions=[AnswerMatches(correct_answer="yes").model_dump(mode="json")],
+    )
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[group], dataset_name=DATASET)
+    resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="test.exact",
+        scenario_class=_ExactScenario,
+        example_selection=selection,
+        memory=sqlite_instance,
+    )
+    scenario = _ExactScenario()
+    scenario.set_params_from_args(args=resolved)
+    estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.dataset_size.model_dump()["value"] == 1
+    with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
+        await scenario._dataset_config.get_attack_seed_groups_async()
+    assert caught.value.code == "unsupported"
+    assert caught.value.example_id == group
+    assert "conditions" in str(caught.value)
+    assert "body" not in str(caught.value)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_group_construction_preserves_order_off_the_event_loop(sqlite_instance: MemoryInterface) -> None:
+    first, second = _objective("first"), _objective("second")
+    await _store(sqlite_instance, first, second)
+    selection = await _selection(
+        sqlite_instance, selection_key=NAMED, example_ids=[second.id, first.id], dataset_name=DATASET
+    )
+    resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="test.exact",
+        scenario_class=_ExactScenario,
+        example_selection=selection,
+        memory=sqlite_instance,
+    )
+    config = resolved["dataset_config"]
+    loop_thread = threading.get_ident()
+    seen: dict[str, int] = {}
+    original = ExactExampleDatasetConfiguration._build_selected_groups
+
+    def wrapped(self: ExactExampleDatasetConfiguration) -> list:
+        seen["thread"] = threading.get_ident()
+        return original(self)
+
+    with patch.object(ExactExampleDatasetConfiguration, "_build_selected_groups", wrapped):
+        groups = await config.get_attack_seed_groups_async()
+    assert seen["thread"] != loop_thread
+    assert [group.objective.value for group in groups] == ["second", "first"]

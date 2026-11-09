@@ -326,6 +326,7 @@ class LatentInjection(Scenario):
     """Apply each selected separator to the same sample of document injections."""
 
     VERSION: int = 2
+    SUPPORTS_EXACT_EXAMPLE_SELECTION = False
     DATASET_OPTIONS = ScenarioDatasetOptions(mode=DatasetSelectionMode.FIXED, per_dataset_limit=False)
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Forbidden
     SEPARATORS: ClassVar[dict[str, tuple[str, str]]] = {

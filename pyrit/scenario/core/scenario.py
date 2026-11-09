@@ -693,6 +693,10 @@ class Scenario(ABC):
 
     USES_DATASET_SIZE_LIMIT: ClassVar[bool] = True
 
+    #: False when initialization reads named datasets or a private configuration instead of
+    #: the attack groups on ``dataset_config``.
+    SUPPORTS_EXACT_EXAMPLE_SELECTION: ClassVar[bool] = True
+
     @final
     async def get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
         """
