@@ -5,9 +5,9 @@
 
 import pytest
 
-from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION, ScenarioPreset
+from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest, ScenarioPreset
+from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS
-from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
 
 
 def test_init_defaults_every_optional_field_to_none() -> None:

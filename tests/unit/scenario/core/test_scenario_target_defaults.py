@@ -9,10 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.executor.attack import RedTeamingAttack
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.executor.attack import AttackScoringConfig, RedTeamingAttack
+from pyrit.prompt_target import PromptTarget, TargetCapabilities
 from pyrit.registry import TargetRegistry
 from pyrit.scenario.core import (
     AttackTechniqueFactory,
@@ -21,7 +19,7 @@ from pyrit.scenario.core import (
     override_default_adversarial_target,
     scenario_target_defaults,
 )
-from pyrit.scenario.scenarios.airt.scam import Scam
+from pyrit.scenario.scenarios.airt import Scam
 from pyrit.score import TrueFalseScorer
 
 

@@ -23,7 +23,7 @@ from pyrit.models import (
     SeedDataset,
 )
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechniqueFactory,

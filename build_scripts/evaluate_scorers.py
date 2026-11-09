@@ -6,6 +6,8 @@ Manual script for evaluating multiple scorers against human-labeled datasets.
 
 This is a long-running process that should be run occasionally to benchmark
 scorer performance. Results are saved to the scorer_evals directory and checked in.
+Blocked judge requests produce undetermined scores. Metrics exclude responses
+without a determined final verdict in every trial, and the script reports coverage.
 
 Usage:
     python -m build_scripts.evaluate_scorers
@@ -22,7 +24,7 @@ import time
 from tqdm import tqdm
 
 from pyrit.common.path import SCORER_EVALS_PATH
-from pyrit.exceptions.exception_context import ComponentRole, execution_context
+from pyrit.exceptions import ComponentRole, execution_context
 from pyrit.registry import ScorerRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
@@ -39,12 +41,18 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
     4. Run evaluate_async() on each scorer
     5. Save results to scorer_evals directory
 
+    Blocked judgments are undetermined rather than fatal. Other evaluation errors,
+    including no determined results, cause failure after the remaining scorers run.
+
     Args:
         tags: Optional list of tags to filter which scorers to evaluate.
             When provided, only scorers matching any of the tags are evaluated.
             When None, all scorers are evaluated.
         max_concurrency: Maximum number of concurrent scoring requests per scorer.
             Defaults to 5.
+
+    Raises:
+        RuntimeError: If any scorer evaluation fails or returns no metrics.
     """
     print("Initializing PyRIT...")
     target_init = TargetInitializer()
@@ -83,15 +91,19 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
         else enumerate(scorer_names, 1)
     )
 
+    failed_scorers: list[str] = []
     # Evaluate each scorer
     for i, scorer_name in scorer_iterator:
-        scorer = registry.instances.get(scorer_name)
         print(f"\n[{i}/{len(scorer_names)}] Evaluating {scorer_name}...")
         print("  Status: Starting evaluation (this may take several minutes)...")
 
         start_time = time.time()
 
         try:
+            scorer = registry.instances.get(scorer_name)
+            if scorer is None:
+                raise ValueError(f"Scorer '{scorer_name}' is no longer registered.")
+            scorer = scorer.with_scorer_block_policy(raise_if_scorer_blocks=False)
             print("  Status: Running evaluations...")
             with execution_context(
                 component_role=ComponentRole.OBJECTIVE_SCORER,
@@ -102,14 +114,30 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
                     max_concurrency=max_concurrency,
                 )
 
+            if results is None:
+                raise ValueError("Evaluation returned no metrics; check the configured datasets.")
+
             elapsed_time = time.time() - start_time
 
-            print("  ✓ Evaluation complete and saved!")
+            print("  ✓ Evaluation complete (new or cached metrics).")
             print(f"    Elapsed time: {elapsed_time:.1f}s")
-            if results:
-                print(f"    Dataset: {results.dataset_name}")
+            print(f"    Dataset: {results.dataset_name}")
+            if results.num_input_responses is None:
+                print(f"    Coverage: unknown; {results.num_responses} evaluated, input/excluded counts unavailable.")
+            else:
+                excluded = results.num_input_responses - results.num_responses
+                print(
+                    f"    Coverage: {results.num_responses}/{results.num_input_responses} responses evaluated; "
+                    f"{excluded} excluded."
+                )
+                if excluded:
+                    print(
+                        "    WARNING: Partial coverage; responses without a determined final verdict "
+                        "in every trial were excluded from all metric calculations."
+                    )
 
         except Exception as e:
+            failed_scorers.append(scorer_name)
             elapsed_time = time.time() - start_time
             print(f"  ✗ Error evaluating {scorer_name} after {elapsed_time:.1f}s: {e}")
             print("    Continuing with next scorer...\n")
@@ -118,9 +146,12 @@ async def evaluate_scorers(tags: list[str] | None = None, max_concurrency: int =
             traceback.print_exc()
             continue
 
+    if failed_scorers:
+        raise RuntimeError(f"Evaluation failed for {len(failed_scorers)} scorer(s): {', '.join(failed_scorers)}")
+
     print("=" * 60)
-    print("Evaluation complete!")
-    print(f"Results saved to: {SCORER_EVALS_PATH}")
+    print("Evaluation complete (new or cached metrics).")
+    print(f"Results location: {SCORER_EVALS_PATH}")
     print("=" * 60)
 
 

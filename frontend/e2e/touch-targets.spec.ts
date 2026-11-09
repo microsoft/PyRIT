@@ -1,10 +1,10 @@
 import { expect, test, selectChatTarget, type Locator, type Page } from "./_fixtures";
-import { fulfillMessageSend, makeAddMessageResponse } from "./_attacks";
+import { fulfillMessageSend, makeAddMessageResponse, makeAttackMetadata } from "./_attacks";
 import { READY_RUNTIME, READY_RUNTIME_STATUS } from "./_runtime";
 import { mockVersion } from "./_compatibility";
 import { makeTarget } from "./_targets";
 import { TOUR_STEPS } from "../src/components/Tour/tourSteps";
-import type { ConversationMessagesResponse } from "../src/types";
+import type { AttackSummary, ConversationMessagesResponse } from "@/types";
 
 const TOUR_STEP_COUNT = TOUR_STEPS.length;
 
@@ -305,37 +305,43 @@ async function installTouchTargetMocks(page: Page): Promise<void> {
       );
       return;
     }
-    if (apiPath === "/attacks/mobile-attack-001") {
+    if (apiPath === "/attacks/mobile-attack-001" || apiPath === "/attacks/mobile-attack-001/metadata") {
+      const attack: AttackSummary = {
+        attack_result_id: "mobile-attack-001",
+        attack_type: "PromptSendingAttack",
+        conversation_id: "mobile-conversation-001",
+        related_conversation_ids: [],
+        converters: [],
+        message_count: MESSAGES.length,
+        objective:
+          "Deterministic long objective that does not fit on a single line of the mobile objective header and must be truncated with a disclosure toggle.",
+        labels: {
+          operator: "mobile_operator",
+          operation: "touch_targets",
+        },
+        target: {
+          target_type: "RoundRobinTarget",
+          endpoint: null,
+          model_name: "mobile-router",
+          identifier_hash: "mobile-round-robin-hash",
+        },
+        human_score: {
+          id: "mobile-human-score",
+          message_piece_id: "mobile-assistant-piece",
+          scorer_type: "ManualScorer",
+          score_type: "true_false",
+          score_value: "True",
+          score_rationale: "A human confirmed success.",
+          timestamp: "2026-07-22T13:10:02.000Z",
+        },
+        automated_score: MESSAGES[1].message_pieces[0].scores[1],
+        created_at: "2026-07-22T13:10:00.000Z",
+        updated_at: "2026-07-22T13:10:01.000Z",
+      };
       await route.fulfill(
-        jsonResponse({
-          attack_result_id: "mobile-attack-001",
-          attack_type: "PromptSendingAttack",
-          conversation_id: "mobile-conversation-001",
-          related_conversation_ids: [],
-          objective:
-            "Deterministic long objective that does not fit on a single line of the mobile objective header and must be truncated with a disclosure toggle.",
-          labels: {
-            operator: "mobile_operator",
-            operation: "touch_targets",
-          },
-          target: {
-            target_type: "RoundRobinTarget",
-            endpoint: null,
-            model_name: "mobile-router",
-            identifier_hash: "mobile-round-robin-hash",
-          },
-          human_score: {
-            id: "mobile-human-score",
-            message_piece_id: "mobile-assistant-piece",
-            scorer_type: "ManualScorer",
-            score_type: "true_false",
-            score_value: "True",
-            score_rationale: "A human confirmed success.",
-            timestamp: "2026-07-22T13:10:02.000Z",
-          },
-          automated_score: MESSAGES[1].message_pieces[0].scores[1],
-          updated_at: "2026-07-22T13:10:01.000Z",
-        })
+        jsonResponse(apiPath.endsWith("/metadata")
+          ? makeAttackMetadata(attack, new URL(request.url()).searchParams.get("conversation_id") ?? undefined)
+          : attack)
       );
       return;
     }
@@ -585,16 +591,14 @@ test.describe("Mobile touch targets", () => {
 
     await page.goto("/attack/history");
     await expect(
-      page.getByTestId("open-attack-home-attack-001")
+      page.getByTestId("attack-row-home-attack-001")
     ).toBeVisible();
 
     await expect(page.getByTestId("refresh-btn")).toHaveCount(0);
     await expectMinimumTouchTargets(
       page.locator(
         [
-          '[data-testid="attack-type-filter"]',
           '[data-testid="outcome-filter"]',
-          '[data-testid="converter-filter"]',
           '[data-testid="operator-filter"]',
           '[data-testid="operation-filter"]',
           '[data-testid="label-filter"]',
@@ -605,9 +609,13 @@ test.describe("Mobile touch targets", () => {
       page.getByRole("button", { name: "Open", exact: true })
     );
 
-    const openAttack = page.getByTestId("open-attack-home-attack-001");
+    const historyRow = page.getByTestId("attack-row-home-attack-001");
+    const openAttack = historyRow.getByRole("button", { name: /^Open attack:/ });
     await openAttack.scrollIntoViewIfNeeded();
     await expectMinimumTouchTarget(openAttack);
+    const targetDetails = historyRow.getByRole("button", { name: /^Identity for / });
+    await targetDetails.scrollIntoViewIfNeeded();
+    await expectMinimumTouchTarget(targetDetails);
     await expectMinimumTouchTarget(page.getByTestId("prev-page-btn"));
     await expectMinimumTouchTarget(page.getByTestId("next-page-btn"));
     await expectNoDocumentOverflow(page);

@@ -5,8 +5,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.registry import TargetRegistry
 
 _adversarial_target_override: ContextVar[PromptTarget | None] = ContextVar("adversarial_target_override", default=None)

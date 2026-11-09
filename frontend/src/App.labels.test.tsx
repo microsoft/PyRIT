@@ -55,6 +55,7 @@ jest.mock('@/services/api', () => ({
   attacksApi: {
     listAttacks: jest.fn(),
     getAttack: jest.fn(),
+    getAttackMetadata: jest.fn(),
     getMessages: jest.fn(),
     getConversations: jest.fn(),
     updateAttack: jest.fn(),
@@ -64,6 +65,7 @@ jest.mock('@/services/api', () => ({
   },
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   scenariosApi: {
+    readiness: jest.fn().mockResolvedValue({ bindings: [], issues: [] }),
     listCatalog: jest.fn(),
     listRuns: jest.fn(),
     getScenario: jest.fn(),
@@ -148,6 +150,9 @@ async function chooseExisting(user: ReturnType<typeof userEvent.setup>, operatio
 
 async function launchScenario(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective Target' }), 'test_target')
+  const review = screen.queryByRole('button', { name: 'I have reviewed the refreshed selections' })
+  if (review) await user.click(review)
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
   await user.click(screen.getByRole('button', { name: 'Launch scan' }))
   const dialog = await screen.findByRole('dialog')
   await user.click(within(dialog).getByRole('button', { name: 'Launch scan' }))
@@ -431,13 +436,13 @@ describe('Shared new run labels', () => {
         }],
       }],
     })
-    jest.mocked(attacksApi.getAttack).mockResolvedValue({
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue({
       attack_result_id: 'old_attack', conversation_id: 'old_conversation',
-      attack_type: 'PromptSendingAttack', outcome: 'undetermined', labels: { team: 'original_team' },
-      objective: '', converters: [], message_count: 0, related_conversation_ids: [],
-      operator: 'original_user', operation: 'original_op',
+      outcome: 'undetermined', labels: { team: 'original_team' }, objective: '',
+      operator: 'original_user', execution_read_only: false,
+      last_response_message_piece_id: 'response_piece', related_conversation_count: 0,
+      selected_conversation_id: 'old_conversation', selected_conversation_valid: true,
       target: { target_type: 'OpenAIChatTarget', target_registry_name: 'test_target', identifier_hash: 'test_hash' },
-      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
     })
     renderApp('/attack/chat/old_attack')
     expect(await screen.findByTestId('operator-locked-banner')).toBeInTheDocument()
@@ -568,7 +573,7 @@ describe('Shared new run labels', () => {
       renderApp()
       await screen.findByDisplayValue('config_user')
       await user.selectOptions(screen.getByRole('combobox', { name: 'Objective Target' }), 'test_target')
-      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
 
       jest.mocked(versionApi.getVersion).mockReturnValue(new Promise((resolve) => { resolveVersion = resolve }))
       await pollGeneration('gen-2')

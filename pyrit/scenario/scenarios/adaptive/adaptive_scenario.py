@@ -156,7 +156,7 @@ class AdaptiveScenario(Scenario):
         # Local import: ``techniques`` imports ``pyrit.scenario.core``,
         # which transitively re-imports this module, so a top-level import
         # would form a cycle during ``pyrit.scenario`` package initialization.
-        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.registry import AttackTechniqueRegistry
         from pyrit.setup.initializers.techniques import build_technique_factories
 
         catalog = {factory.name: factory for factory in build_technique_factories()}

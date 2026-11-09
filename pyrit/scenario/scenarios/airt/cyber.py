@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from pyrit.common import apply_defaults
 from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario import Scenario

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar, assert_never,
 
 from pyrit.common.attack_result_scope import attack_result_id_scope
 from pyrit.common.logger import logger
-from pyrit.exceptions.retry_collector import (
+from pyrit.exceptions import (
     get_retry_collector,
 )
 from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
@@ -30,7 +30,7 @@ from pyrit.executor.core import (
     StrategyEventData,
     StrategyEventHandler,
 )
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.memory import CentralMemory
 from pyrit.models import (
     AtomicAttackIdentifier,
     AttackIdentifier,
@@ -52,8 +52,8 @@ from pyrit.models import (
     TargetIdentifier,
     UndeterminedScoreError,
 )
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
-from pyrit.score.observation.lifecycle import AttemptObserver
+from pyrit.prompt_target import TargetRequirements
+from pyrit.score import AttemptObserver
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Collection, Generator
@@ -73,8 +73,7 @@ if TYPE_CHECKING:
     from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
     from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
     from pyrit.message_normalizer import MessageListNormalizer
-    from pyrit.prompt_target import PromptTarget
-    from pyrit.prompt_target.common.target_capabilities import CapabilityName
+    from pyrit.prompt_target import CapabilityName, PromptTarget
     from pyrit.score import Scorer
 
 AttackStrategyContextT = TypeVar("AttackStrategyContextT", bound="AttackContext[Any]")
@@ -784,7 +783,7 @@ class AttackStrategy(Strategy[AttackStrategyContextT, AttackStrategyResultT], Id
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="AttackStrategy")
 

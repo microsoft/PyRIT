@@ -26,7 +26,7 @@
 # If you don't want to explicitly set up PyRIT, but do have a configuration you would like to persist, use `~/.pyrit/.pyrit_conf`. See the [PyRIT Configuration Guide](../../getting_started/pyrit_conf.md) for more details. Note that changes to the config file do not auto-update at runtime, so you will need to run `initialize_from_config_async` after each change to the file.
 # %%
 # You can specify your own path for the config file using config_path
-from pyrit.setup.configuration_loader import initialize_from_config_async
+from pyrit.setup import initialize_from_config_async
 
 await initialize_from_config_async()  # type: ignore
 
@@ -162,7 +162,7 @@ from pyrit.executor.attack import (
     PromptSendingAttack,
 )
 from pyrit.output import output_attack_async
-from pyrit.prompt_normalizer.converter_configuration import (
+from pyrit.prompt_normalizer import (
     ConverterConfiguration,
 )
 from pyrit.registry import ScorerRegistry, TargetRegistry

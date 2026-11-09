@@ -20,8 +20,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.registry.registry import ParamBagRegistry, Registry, SupportsParamBag, _get_metadata_value, _matches_filters
-from pyrit.registry.registry_metadata import RegistryMetadata
+from pyrit.registry import ParamBagRegistry, Registry, RegistryMetadata
+from pyrit.registry.registry import SupportsParamBag, _get_metadata_value, _matches_filters
 
 
 class SampleWidget:

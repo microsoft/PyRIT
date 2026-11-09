@@ -6,10 +6,9 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, final
 
+from pyrit.common import AuthMode, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.attack_result_scope import get_current_attack_result_id
-from pyrit.common.auth_mode import AuthMode
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import (
@@ -81,7 +80,8 @@ class PromptTarget(Identifiable):
     # ``supported_auth_modes`` lists the auth modes the create-target API accepts
     # for this type. Base default is api-key only; targets that can authenticate
     # via an ambient Azure identity (e.g. OpenAI, Azure ML, Azure Blob Storage,
-    # Prompt Shield) override this to add ``"identity"``.
+    # Prompt Shield) override this to add ``"identity"``, and OpenAI targets also
+    # add ``"none"`` for OpenAI-compatible servers that need no key.
     supported_auth_modes: ClassVar[tuple[AuthMode, ...]] = ("api_key",)
 
     # Targets that upload files from the machine running PyRIT name the constructor parameter that
@@ -122,7 +122,7 @@ class PromptTarget(Identifiable):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="PromptTarget")
 
@@ -142,6 +142,23 @@ class PromptTarget(Identifiable):
             dict[str, object]: Additional constructor parameters.
         """
         return {}
+
+    @classmethod
+    def _validate_auth_mode(cls, auth_mode: AuthMode | None) -> None:
+        """
+        Reject an authentication mode this target type does not support.
+
+        Args:
+            auth_mode (AuthMode | None): Authentication mode selected by the caller, or None for the default.
+
+        Raises:
+            ValueError: If ``auth_mode`` is set and is not one of ``supported_auth_modes``.
+        """
+        if auth_mode is not None and auth_mode not in cls.supported_auth_modes:
+            raise ValueError(
+                f"{cls.__name__} does not support auth_mode={auth_mode!r}. "
+                f"Use one of: {', '.join(cls.supported_auth_modes)}."
+            )
 
     def __init__(
         self,

@@ -14,8 +14,10 @@ from unit.mocks import MockPromptTarget
 from pyrit.converter import (
     AnsiAttackConverter,
     AsciiArtConverter,
+    AsciiSmugglerConverter,
     AtbashConverter,
     Base64Converter,
+    BinaryConverter,
     CaesarConverter,
     CharacterSpaceConverter,
     CharSwapConverter,
@@ -33,19 +35,16 @@ from pyrit.converter import (
     UnicodeSubstitutionConverter,
     UrlConverter,
 )
-from pyrit.converter.binary_converter import BinaryConverter
-from pyrit.converter.token_smuggling.ascii_smuggler_converter import AsciiSmugglerConverter
 from pyrit.executor.attack import (
+    AttackScoringConfig,
+    AttackStrategy,
     CrescendoAttack,
     PromptSendingAttack,
     RedTeamingAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.executor.attack.core.attack_strategy import AttackStrategy
 from pyrit.memory import SQLiteMemory
-from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
+from pyrit.models import AttackSeedGroup, ComponentIdentifier, DatasetFetchPolicy, SeedObjective
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.scenario import AtomicAttack, DatasetAttackConfiguration, IncompatibleTechniqueError

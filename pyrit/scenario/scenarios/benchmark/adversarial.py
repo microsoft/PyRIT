@@ -22,8 +22,8 @@ from pyrit.models import (
     AttackResult,
     BoundedDatasetSize,
     ObjectiveTargetEvaluationIdentifier,
+    Parameter,
     ScenarioDatasetSizeEstimate,
-    ScenarioResult,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateCondition,
@@ -34,7 +34,6 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
-from pyrit.models.parameter import Parameter
 from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness, ScenarioRoleBinding
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
@@ -56,7 +55,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+    from pyrit.score import TrueFalseScorer
 
 
 logger = logging.getLogger(__name__)
@@ -744,26 +743,21 @@ class AdversarialBenchmark(Scenario):
 
         return resolved
 
-    async def run_async(self) -> ScenarioResult:
+    async def _prepare_run_async(self) -> None:
         """
-        Persist compatible cached results into this run, then execute uncached objectives.
+        Persist compatible cached results into this run before executing uncached objectives.
 
         Cached results are copied with new result IDs and attributed to the new
         scenario result. This keeps database-backed status, API responses, and
         later artifact exports complete without moving results away from their
         original runs.
-
-        Returns:
-            ScenarioResult: The persisted scenario result containing cached and
-            newly executed objective results.
         """
         try:
-            (await self._persist_precomputed_cached_results_async())
+            await self._persist_precomputed_cached_results_async()
         except Exception as error:
             if self._scenario_result_id:
-                (await self._mark_scenario_failed_async(scenario_result_id=self._scenario_result_id, error=error))
+                await self._mark_scenario_failed_async(scenario_result_id=self._scenario_result_id, error=error)
             raise
-        return await super().run_async()
 
     async def _apply_reusable_cached_results_async(self, *, atomic_attacks: list[AtomicAttack]) -> None:
         """

@@ -21,11 +21,11 @@ from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models import (
     ScenarioDatasetOptions,
     ScenarioDatasetSettings,
+    ScenarioIdentifier,
     ScenarioRunSizeEstimate,
     ScenarioTechniqueSummary,
     class_name_to_snake_case,
 )
-from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -34,10 +34,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from types import ModuleType
 
-    from pyrit.models import Parameter
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier, Parameter
+    from pyrit.scenario import ScenarioTechnique
     from pyrit.scenario.core import Scenario
-    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 
 @dataclass(frozen=True)

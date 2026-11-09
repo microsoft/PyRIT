@@ -25,7 +25,7 @@ from azure.storage.blob import ContainerSasPermissions, generate_container_sas
 from azure.storage.blob.aio import BlobServiceClient
 
 from pyrit.backend.mappers._preview import format_last_message_preview
-from pyrit.backend.models.attacks import (
+from pyrit.backend.models import (
     AddMessageRequest,
     AttackSummary,
     MessagePieceRequest,
@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.memory import MemoryInterface
-    from pyrit.models.conversation_stats import ConversationStats
+    from pyrit.models import ConversationStats
     from pyrit.models.results.attack_result import AttackScoringInputs
 
 # ============================================================================
@@ -215,6 +215,8 @@ def _normalize_summary_objective(ar: AttackResult) -> str:
     Returns:
         The summary objective, with legacy manual placeholders converted to an empty string.
     """
+    if ar.metadata.get("objective_is_placeholder") is False:
+        return ar.objective
     identifier = ar.get_attack_strategy_identifier()
     is_manual_attack = identifier is not None and identifier.class_name == "ManualAttack"
     has_placeholder_metadata = ar.metadata.get("objective_is_placeholder") is True

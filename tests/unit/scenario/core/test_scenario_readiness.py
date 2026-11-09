@@ -14,12 +14,16 @@ from pyrit.converter import StringJoinConverter, TranslationConverter
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import HistorySquashNormalizer
-from pyrit.models import SeedPrompt
+from pyrit.models import ScenarioResult, SeedPrompt
 from pyrit.models.catalog import RunScenarioRequest, ScenarioRunSizeEstimateRequest
 from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import CapabilityName, TargetCapabilities, TargetConfiguration, TargetRequirements
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry, TargetRegistry
-from pyrit.scenario.core import AttackTechniqueFactory, override_default_adversarial_target
+from pyrit.scenario.core import (
+    AttackTechniqueFactory,
+    get_default_adversarial_target,
+    override_default_adversarial_target,
+)
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.technique_requirements import TechniqueRequirements
@@ -169,6 +173,33 @@ class TestScenarioReadiness:
         with override_default_adversarial_target(replacement):
             assert scenario.get_readiness().ready
         assert scenario._resolved_adversarial_target is selected
+
+    async def test_preparation_and_execution_keep_frozen_role_under_run_guard_async(self) -> None:
+        scenario = configured_execute(technique="red_teaming")
+        selected, replacement = MockPromptTarget(id="selected"), MockPromptTarget(id="replacement")
+        with override_default_adversarial_target(selected):
+            await scenario.initialize_async()
+        stored = (await CentralMemory.get_memory_instance().get_scenario_results_async())[0]
+
+        async def prepare_async() -> None:
+            assert scenario._scenario_result_id in Scenario._active_runs
+            assert get_default_adversarial_target() is selected
+
+        async def execute_async() -> ScenarioResult:
+            assert scenario._scenario_result_id in Scenario._active_runs
+            assert get_default_adversarial_target() is selected
+            return stored
+
+        with (
+            override_default_adversarial_target(replacement),
+            patch.object(scenario, "_prepare_run_async", side_effect=prepare_async) as prepare,
+            patch.object(scenario, "_execute_scenario_async", side_effect=execute_async) as execute,
+        ):
+            assert await scenario.run_async() is stored
+            assert get_default_adversarial_target() is replacement
+        prepare.assert_awaited_once()
+        execute.assert_awaited_once()
+        assert scenario._scenario_result_id not in Scenario._active_runs
 
     def test_explicit_reconfiguration_rebinds_lazy_scoring(self) -> None:
         scenario = configured_execute(deterministic=False)

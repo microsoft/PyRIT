@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.models import JSONValue, Parameter, ScorerIdentifier
-from pyrit.models.catalog.scorer import ScorerInstance
+from pyrit.models.catalog import ScorerInstance
 
 
 class ScorerTypeEntry(BaseModel):

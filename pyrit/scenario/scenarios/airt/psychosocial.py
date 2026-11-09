@@ -35,28 +35,31 @@ from pyrit.executor.attack import (
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetSelectionMode,
+    Parameter,
+    ScenarioDatasetOptions,
     ScenarioDatasetSizeEstimate,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     SeedPrompt,
 )
-from pyrit.models.parameter import Parameter
-from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
 from pyrit.models.scenario_readiness import ScenarioReadiness, ScenarioRoleBinding
-from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+    get_default_adversarial_target,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
 )
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack
 from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import (
     TechniqueRequirements,

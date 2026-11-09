@@ -24,28 +24,32 @@ from pyrit.memory import CentralMemory
 from pyrit.models import (
     AttackSeedGroup,
     ComponentIdentifier,
+    ScenarioDatasetRequest,
     ScenarioRunSizeEstimateStatus,
     SeedObjective,
     SeedPrompt,
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.dataset_limit import ResolvedDatasetLimit
-from pyrit.models.scenario_dataset import ScenarioDatasetRequest
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import TargetRegistry
-from pyrit.scenario import IncompatibleTechniqueError
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import (
+from pyrit.scenario import (
+    AttackTechnique,
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
+    IncompatibleTechniqueError,
+    Scenario,
 )
-from pyrit.scenario.core.scenario import Scenario
-from pyrit.scenario.scenarios.airt.psychosocial import (
-    _SUB_HARMS,
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
+from pyrit.scenario.scenarios.airt import (
     Psychosocial,
     PsychosocialTechnique,
+)
+from pyrit.scenario.scenarios.airt.psychosocial import (
+    _SUB_HARMS,
     _converter_for_technique,
 )
 from pyrit.score import TrueFalseScorer

@@ -22,6 +22,16 @@ available to assistive technology while the help is closed. Required markers,
 validation errors, input-format guidance, and unavailable-estimate reasons
 stay visible.
 
+## GUI targets
+
+`TextTarget` is an SDK demonstration and manual-workflow target that writes to
+the Python host's text stream without returning a response. It remains available
+in the SDK and REST API, but is excluded from GUI creation, registries, and target
+choices, including converter, technique, and round-robin references. Registered
+round-robin targets containing a `TextTarget` are excluded as well.
+Saved history remains readable, but chats bound to a `TextTarget` cannot send
+further prompts from the GUI.
+
 ## Conversation selection
 
 Opening a saved attack with related conversations automatically opens the
@@ -89,13 +99,49 @@ reported without replacing the previous field value.
 Blocked chat file drags show the existing disabled-input reason only during the
 drag. Converter file fields retain the first file and report ignored extras.
 
+## Saved Scenario conversation evidence
+
+Saved Scenario results reuse Chat's read-only viewer. Initial Chat metadata
+reports a server reference count and validates the selected conversation without
+downloading complete reference arrays. The conversation selector initially loads
+50 main/pruned references, and the viewer requests 100 **message
+pieces**, not turns, from only the selected conversation. **Load more
+conversations** and **Load more message pieces** follow separate server cursors.
+Reference totals come from the server; selecting a conversation outside the
+loaded reference page does not replace it with the main conversation.
+
+Split multimodal turns stay together as pieces arrive, retaining their order,
+original/converted media and saved scores. **Incomplete turn** describes an
+unfinished turn, while the paging footer describes the whole loaded transcript.
+Continuation failures keep the loaded evidence available with **Retry** or
+**Restart** controls. A restart begins a new bounded read rather than reusing a
+stale cursor. **End of saved transcript** means the server has no further pieces;
+it does not infer a final target-response status. The reference and transcript
+status regions announce pending page loads, including retries and restarts.
+
+Load the complete transcript before continuing manually, copying/branching,
+exporting, or assessing/attaching its evidence. Adding or removing a human score
+refreshes scores on the loaded pieces without discarding evidence, pagination,
+or completeness. Existing live/manual Chat reads, drafts and send/edit/recovery
+workflows are unchanged, and manual conversation-list refreshes retain keyed
+rows and keyboard focus. Selected conversation URLs, return-to-scan links and
+the originating History filters survive paging and reloads.
+On narrow screens, the saved viewer scrolls as one surface so loaded evidence
+and continuation controls remain reachable without squeezing the transcript.
+Selecting another saved conversation starts at its beginning; continuation
+keeps the current reading position.
+
 ## Dataset catalog
 
 Chat drafts stay in memory while you visit Datasets and return. Text, attachments,
 system prompts, the selected target, and converter setup/results return to their
-original attack and conversation. A loading, missing, or read-only destination
-does not consume the draft. Starting a new attack or leaving the Chat/Datasets
-journey discards the handoff; refreshing the browser does not retain it.
+original attack and conversation, including across sidebar navigation and direct
+conversation switches. Each conversation retains its own draft. A loading,
+missing, or read-only destination does not consume the draft. Importing into a
+new conversation uses the source conversation's setup, not another retained draft.
+Starting a new attack clears retained drafts; refreshing the browser does not
+retain them. Switching conversations does not cancel an in-flight send or let
+its completion clear another conversation's input.
 
 The **Datasets** page shows summaries of datasets already loaded into the backend's
 memory. When memory is empty, **Learn how to load datasets into memory** opens the
@@ -132,6 +178,14 @@ configuration and environment files are not replaced by background reads. Succes
 checks show no status message; failed checks show the error text. Active scan and
 chat progress keep their faster polling. Runtime initialization and dataset loading
 remain explicit actions.
+
+## Saved scenario parameters
+
+Parameters from a preset or saved run that have no field when its launch form
+opens are carried unchanged and shown read-only in the run preview. They remain
+read-only in that open form if a runtime refresh adds a field; reopen the
+configuration to edit them against the refreshed catalog. Editable parameters
+removed by a refresh are not submitted, and other drafts are preserved.
 
 ## Resuming a scenario run
 
@@ -195,6 +249,66 @@ Set `PYRIT_ANALYTICS_SCREENSHOT_DIR` to an artifact directory to also capture th
 verified overview in light/dark, a heatmap drill-down, and narrow controls/report views.
 The browser checks do not mock analytics APIs. They do not repeat the separate
 100,000-result backend performance workload.
+
+### Isolated Scenario evidence browser checks
+
+From `frontend`, use the existing hierarchy fixture:
+
+```powershell
+$env:PYRIT_PYTHON = uv run --no-sync python -c "import sys; print(sys.executable)"
+npm run test:e2e:scenario-hierarchy
+```
+
+It builds the current frontend and serves real application routes over private,
+disposable SQLite data without providers or user configuration. Its saved
+evidence includes 222 pieces, a split scored multimodal turn, overlapping stable
+piece IDs and 121 references. Journeys cover bounded requests, continuation
+retry/restart failures, pending-reader ownership, URL/History context and
+keyboard/touch use. `PYRIT_E2E_HIERARCHY_PORT` overrides the loopback port.
+
+### Isolated Scenario dataset and estimate browser checks
+
+From `frontend`, run:
+
+```powershell
+$env:PYRIT_PYTHON = uv run --no-sync python -c "import sys; print(sys.executable)"
+npm run test:e2e:scenario-datasets
+```
+
+The desktop and narrow projects use real configuration, preset, estimate, and
+launch handlers over disposable SQLite data. Three local datasets have 8, 6, and
+3 examples, with fixed seed/group IDs and reproducible sampling. A harmless local
+target and scorer complete the launch without paid model calls. The fixture uses
+private configuration and explicitly enables local
+administrator access on its loopback server so the real preset-write routes can
+be exercised. It never uses a shared database or user credentials.
+Startup pins both imported default-configuration paths and explicitly configures
+the preset registry's private source. Before every preset save or delete, a guard
+checks the actual storage source, document, and lock paths. The report retains
+these containment checks alongside the real estimate responses.
+Preset names distinguish the viewport, repetition, and retry so test attempts
+cannot collide with presets saved by earlier attempts.
+`PYRIT_E2E_DATASETS_PORT` overrides the default port, 18612.
+
+The journeys cover keyboard preset creation, scenario and target selection,
+dataset search and limit editing, saved-preset reloads, estimates without a
+target, target-required launch, inherited and per-source caps, and the persisted
+launch configuration. Configured budgets
+remain approximate, not selected population counts. An unlimited configuration
+is genuinely unavailable before initialization; the production benchmark's
+cached-results policy supplies the tested conditional range. Exact counts are
+checked only on the initialized run plan.
+An additional real-handler launch removes the combined cap and verifies source
+overrides and the inherited per-dataset cap against locally delivered objectives.
+
+Loading and error evidence uses explicitly labeled, one-shot backend holds and
+failures. Dataset checking has a visible status outside the table's responsive
+columns, including while cached metadata is refreshed. Successful requests still
+use the real handlers, and guards reject dataset preparation during estimates or
+any provider lookup. Screenshots and JSON estimate/launch evidence are attached
+to the Playwright report for both
+viewports. The dedicated CI projects share the existing report merge and failure
+gate; the normal E2E configuration excludes this fixture-only spec.
 
 ## Development
 

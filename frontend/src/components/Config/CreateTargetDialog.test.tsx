@@ -200,7 +200,7 @@ const TARGET_TYPES: TargetTypeListResponse = {
         },
         ...OPENAI_COMMON_PARAMETERS,
       ],
-      supported_auth_modes: ["api_key", "identity"],
+      supported_auth_modes: ["api_key", "identity", "none"],
       description: "Facilitates multimodal (image and text) input and text output generation.",
     },
     {
@@ -272,6 +272,12 @@ const TARGET_TYPES: TargetTypeListResponse = {
       parameters: [],
       supported_auth_modes: ["api_key"],
       description: "A prompt target that distributes requests across multiple inner targets using weighted round-robin selection.",
+    },
+    {
+      target_type: "TextTarget",
+      parameters: [],
+      supported_auth_modes: [],
+      description: "Writes prompts to a local text stream.",
     },
     {
       target_type: "HTTPTarget",
@@ -346,6 +352,7 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   OpenAIVideoTarget: "OpenAI video",
   RoundRobinTarget: "Weighted round robin",
   HTTPTarget: "HTTPTarget",
+  TextTarget: "TextTarget",
   AzureBlobStorageTarget: "AzureBlobStorageTarget",
 };
 
@@ -559,7 +566,7 @@ describe("CreateTargetDialog", () => {
 
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(11);
-    for (const entry of TARGET_TYPES.items.filter((item) => item.target_type !== "PlaywrightTarget")) {
+    for (const entry of TARGET_TYPES.items.filter((item) => !["PlaywrightTarget", "TextTarget"].includes(item.target_type))) {
       const option = screen.getByRole("option", {
         name: new RegExp(`Implementation: ${entry.target_type}`),
       });
@@ -597,6 +604,49 @@ describe("CreateTargetDialog", () => {
     expect(selectedDetails).toHaveTextContent("RoundRobinTarget");
     expect(selectedDetails).toHaveTextContent("weighted round-robin selection");
     expect(selectedDetails).toHaveTextContent("Supported authentication: API key");
+  });
+
+  it("should not offer the SDK-only TextTarget", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await openTargetTypePicker();
+
+    expect(screen.queryByRole("option", { name: /Implementation: TextTarget/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Writes prompts to a local text stream.")).not.toBeInTheDocument();
+  });
+
+  it("should still describe other credential-free target types", async () => {
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [...TARGET_TYPES.items, {
+        target_type: "CredentialFreeTarget",
+        parameters: [],
+        supported_auth_modes: [],
+        description: "A credential-free endpoint.",
+      }],
+    });
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await openTargetTypePicker();
+    const option = screen.getByRole("option", { name: /Implementation: CredentialFreeTarget/ });
+    expect(option).toHaveTextContent("No authentication required");
+    expect(option).not.toHaveTextContent("API key");
+  });
+
+  it("should not offer SDK-only inner targets in a round-robin target", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} existingTargets={[
+          makeTarget({ target_registry_name: "demo", target_type: "TextTarget" }),
+          makeTarget({ target_registry_name: "endpoint", target_type: "OpenAIChatTarget" }),
+        ]} />
+      </TestWrapper>
+    );
+    await selectTargetType("RoundRobinTarget");
+    expect(screen.queryByRole("option", { name: /demo/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /endpoint/ })).toBeInTheDocument();
   });
 
   it("should keep the selected target displayed after focus moves to another field", async () => {
@@ -1914,6 +1964,91 @@ describe("CreateTargetDialog", () => {
       expect(call.auth_mode).toBe("identity");
       expect(call.params).not.toHaveProperty("api_key");
     });
+  });
+
+  it("should submit no-key auth without an API key", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "local_chat",
+      target_type: "OpenAIChatTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+
+    expect(screen.getByRole("region", { name: /selected target details/i })).toHaveTextContent(
+      "Supported authentication: API key or Microsoft Entra ID or No key",
+    );
+    await user.type(
+      screen.getByPlaceholderText("https://your-resource.openai.azure.com/"),
+      "http://localhost:11434/v1",
+    );
+    await user.type(screen.getByPlaceholderText("API key (stored in memory only)"), "sk-typed-before-switch");
+    await user.click(screen.getByRole("radio", { name: /No key/ }));
+
+    expect(screen.queryByPlaceholderText("API key (stored in memory only)")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "http://localhost:11434/v1",
+        },
+        auth_mode: "none",
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should offer no-key auth only for target types that support it", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("AzureMLChatTarget");
+
+    expect(screen.getByRole("radio", { name: /Identity-based/ })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /No key/ })).not.toBeInTheDocument();
+  });
+
+  it("should return to API key auth when the next target type has no no-key option", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    await user.click(screen.getByRole("radio", { name: /No key/ }));
+    await selectTargetType("AzureMLChatTarget");
+
+    expect(screen.getByRole("radio", { name: /API Key/ })).toBeChecked();
+    expect(screen.getByPlaceholderText("API key (stored in memory only)")).toBeInTheDocument();
+  });
+
+  it("should offer no-key auth for OpenAI targets when type metadata fails to load", async () => {
+    mockedTargetsApi.listTargetTypes.mockRejectedValueOnce(new Error("registry unavailable"));
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(await screen.findByText(/Target details could not be loaded/)).toBeInTheDocument();
+    await selectTargetType("OpenAIChatTarget");
+
+    expect(screen.getByRole("radio", { name: /No key/ })).toBeInTheDocument();
   });
 
   it("should warn the user when identity is selected for a non-Azure OpenAI endpoint", async () => {

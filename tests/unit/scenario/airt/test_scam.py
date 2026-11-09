@@ -14,11 +14,11 @@ from pyrit.models import (
     AdversarialPrompts,
     AttackSeedGroup,
     ComponentIdentifier,
+    DatasetFetchPolicy,
     SeedDataset,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.scenario_dataset import DatasetFetchPolicy
 from pyrit.prompt_target import (
     CapabilityName,
     OpenAIChatTarget,
@@ -30,7 +30,7 @@ from pyrit.prompt_target import (
 from pyrit.scenario import DatasetAttackConfiguration, DatasetConfiguration, IncompatibleTechniqueError
 from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.scenarios.airt.scam import Scam, ScamTechnique
+from pyrit.scenario.scenarios.airt import Scam, ScamTechnique
 from pyrit.score import SubStringScorer, TrueFalseCompositeScorer
 from tests.unit.mocks import MockPromptTarget
 
@@ -373,7 +373,7 @@ class TestScamInitialization:
         self, mock_objective_target, mock_objective_scorer
     ):
         """Test that initialization raises DatasetConstraintError when datasets are not available in memory."""
-        from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
+        from pyrit.scenario.core import DatasetConstraintError
 
         # Don't mock _resolve_seed_groups, let it try to load from empty memory
         scenario = Scam(objective_scorer=mock_objective_scorer)

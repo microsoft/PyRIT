@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "./_fixtures";
+import { makeAttackMetadata } from "./_attacks";
 import { mockVersion } from "./_compatibility";
 
 import { READY_RUNTIME } from "./_runtime";
-import type { ScenarioHierarchyProjection } from "../src/types";
+import type { AttackSummary, ScenarioHierarchyProjection } from "@/types";
 
 const RUN_ID = "123e4567-e89b-12d3-a456-426614174000";
 const ACTIVE_RUN_ID = "123e4567-e89b-12d3-a456-426614174001";
@@ -312,6 +313,10 @@ async function mockScenarioAPIs(
     });
   });
 
+  await page.route(new RegExp(`/api/scenarios/catalog/${SCENARIO_NAME.replace(".", "\\.")}/readiness$`), async (route) => {
+    await route.fulfill({ json: { bindings: [], issues: [] } });
+  });
+
   await page.route(new RegExp(`/api/scenarios/catalog/${SCENARIO_NAME.replace(".", "\\.")}/estimate$`), async (route) => {
     const request = route.request().postDataJSON() as Record<string, unknown>;
     estimateRequests.push(request);
@@ -490,23 +495,28 @@ async function mockScenarioAPIs(
     });
   });
 
-  await page.route(new RegExp(`/api/attacks/${ATTACK_ID}(?:\\?|$)`), async (route) => {
+  await page.route(new RegExp(`/api/attacks/${ATTACK_ID}(?:/metadata)?(?:\\?|$)`), async (route) => {
+    const attack: AttackSummary = {
+      attack_result_id: ATTACK_ID,
+      conversation_id: "conversation-1",
+      attack_type: "SingleTurnAttack",
+      objective: "",
+      target: runSummary.target,
+      converters: [],
+      outcome: "success",
+      message_count: 0,
+      related_conversation_ids: [],
+      labels: {},
+      created_at: runSummary.created_at,
+      updated_at: runSummary.updated_at,
+    };
+    const url = new URL(route.request().url());
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({
-        attack_result_id: ATTACK_ID,
-        conversation_id: "conversation-1",
-        attack_type: "SingleTurnAttack",
-        target: runSummary.target,
-        converters: [],
-        outcome: "success",
-        message_count: 0,
-        related_conversation_ids: [],
-        labels: {},
-        created_at: runSummary.created_at,
-        updated_at: runSummary.updated_at,
-      }),
+      body: JSON.stringify(url.pathname.endsWith("/metadata")
+        ? makeAttackMetadata(attack, url.searchParams.get("conversation_id") ?? undefined)
+        : attack),
     });
   });
 

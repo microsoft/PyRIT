@@ -19,36 +19,29 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.analytics import PairedOutcomeStatistics, compute_paired_outcome_statistics
-from pyrit.backend.models.attacks import ConversationMessagesResponse
-from pyrit.backend.models.common import MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr, ProblemDetail
-from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
-from pyrit.backend.models.scenarios import (
+from pyrit.backend.models import (
+    ConversationMessagesResponse,
     ListRegisteredScenariosResponse,
+    ProblemDetail,
     ScenarioRunListResponse,
 )
+from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr
+from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
+from pyrit.backend.services import get_scenario_run_service, get_scenario_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_run_service import (
-    ScenarioRunConflictError,
-    ScenarioRunNotFoundError,
-    get_scenario_run_service,
-)
-from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.models import (
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
     ScenarioQueueSnapshot,
     ScenarioResult,
     ScenarioRunProgress,
-    ScenarioRunState,
-)
-from pyrit.models.catalog import (
-    RegisteredScenario,
-    RunScenarioRequest,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
-    ScenarioRunSummary,
+    ScenarioRunState,
 )
+from pyrit.models.catalog import RegisteredScenario, RunScenarioRequest, ScenarioRunSummary
 from pyrit.models.scenario_readiness import ScenarioReadiness
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
@@ -607,8 +600,8 @@ async def get_scenario_run_results(scenario_result_id: IdentifierStr) -> Scenari
 async def get_paired_outcomes_async(
     *,
     scenario_result_id: IdentifierStr,
-    baseline_group_id: IdentifierStr = Query(..., description="Saved baseline atomic group ID"),
-    attack_group_id: IdentifierStr = Query(..., description="Saved attack atomic group ID"),
+    baseline_group_id: str = Query(..., max_length=MAX_IDENTIFIER_LENGTH, description="Saved baseline atomic group ID"),
+    attack_group_id: str = Query(..., max_length=MAX_IDENTIFIER_LENGTH, description="Saved attack atomic group ID"),
 ) -> PairedOutcomeStatistics:
     """
     Compare explicitly selected groups using the SDK's effective outcome semantics.

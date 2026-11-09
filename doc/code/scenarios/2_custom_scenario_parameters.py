@@ -53,7 +53,7 @@
 # %%
 from pyrit.scenario.scenarios.airt.scam import Scam
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers.techniques import TechniqueInitializer
+from pyrit.setup.initializers import TechniqueInitializer
 
 await initialize_pyrit_async(memory_db_type="InMemory")  # type: ignore [top-level-await]
 await TechniqueInitializer().initialize_async()  # type: ignore [top-level-await]
@@ -160,7 +160,7 @@ for p in example_declarations:
 # CLI uses is callable programmatically:
 
 # %%
-from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.backend.services import get_scenario_service
 from pyrit.cli._output import print_scenario_list
 
 # Show scam (declares a parameter) and red_team_agent (none), so the
