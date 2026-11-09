@@ -84,6 +84,9 @@ class TestRecipeModels:
         with pytest.raises(ValidationError, match="newer than this PyRIT reads"):
             ComponentRecipe.model_validate({**_TARGET, "schema_version": 2})
 
+    def test_every_restore_failure_reason_has_an_explanation(self) -> None:
+        assert all(reason.explanation for reason in RestoreFailureReason)
+
     @pytest.mark.parametrize(
         ("kind", "recipe"),
         [

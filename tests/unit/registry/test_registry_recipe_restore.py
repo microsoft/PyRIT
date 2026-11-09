@@ -25,7 +25,14 @@ from pyrit.models.catalog import (
     TechniqueRecipe,
 )
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
-from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    AttackRegistry,
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    SavedEntryUnavailableError,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RegistryRecipeStorage
 
@@ -382,7 +389,7 @@ class TestRestoreFailures:
 
         (failure,) = report.failures
         assert failure.reason is RestoreFailureReason.UNSUPPORTED_CLASS
-        assert "uploader" not in TargetRegistry.get_registry_singleton().instances
+        assert "uploader" not in TargetRegistry.get_registry_singleton().instances.get_names()
 
     @pytest.mark.parametrize("auth_mode", [[], {}, ["identity"]])
     def test_reports_malformed_values_without_stopping_the_restore(self, tmp_path: Path, auth_mode: object) -> None:
@@ -624,7 +631,7 @@ class TestRestoreFailures:
         (failure,) = report.failures
         assert failure.reason is RestoreFailureReason.UNSUPPORTED_CLASS
         assert "wordswap_path" in failure.message
-        assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances
+        assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances.get_names()
 
     def test_lets_a_target_set_the_path_parameters_its_class_allows_callers(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
@@ -670,7 +677,7 @@ class TestRestoreFailures:
         (failure,) = report.failures
         assert failure.reason is RestoreFailureReason.UNSUPPORTED_CLASS
         assert "wordswap_path" in failure.message
-        assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances
+        assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances.get_names()
 
     def test_reports_a_name_taken_at_startup_and_fails_its_dependents(self, tmp_path: Path) -> None:
         startup_target = OpenAIChatTarget(
@@ -685,7 +692,9 @@ class TestRestoreFailures:
         failures = _failures_by_name(report.failures)
         assert failures["contoso_gpt4o"].reason is RestoreFailureReason.NAME_CLASH
         assert failures["pool"].reason is RestoreFailureReason.FAILED_DEPENDENCY
-        assert TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o") is startup_target
+        # The saved entry holds its name, so the startup target doesn't quietly stand in for it.
+        with pytest.raises(SavedEntryUnavailableError, match="already exists"):
+            TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o")
 
     def test_reports_a_technique_name_that_matches_a_tag_in_another_case(self, tmp_path: Path) -> None:
         without_converters = {key: value for key, value in _TECHNIQUE.items() if key != "request_converters"}
@@ -711,16 +720,49 @@ class TestRestoreFailures:
         with caplog.at_level("WARNING", logger="pyrit.registry.registry_recipe_restore"):
             report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
-        (failure,) = report.failures
-        assert (failure.kind, failure.name, failure.reason) == (
+        unbuilt, folder = report.failures
+        assert (folder.kind, folder.name, folder.reason) == (
             RegistryRecipeKind.CONVERTERS,
             None,
             RestoreFailureReason.UNREADABLE_STORAGE,
         )
-        assert str(tmp_path) not in failure.message
+        assert (unbuilt.name, unbuilt.reason) == ("contoso_gpt4o", RestoreFailureReason.UNREADABLE_STORAGE)
+        assert unbuilt.message == "Not restored, because the saved converters couldn't be listed."
+        assert str(tmp_path) not in folder.message
         assert str(tmp_path / "converters") in caplog.text
         assert report.restored == []
-        assert "contoso_gpt4o" not in TargetRegistry.get_registry_singleton().instances
+        assert TargetRegistry.get_registry_singleton().instances.get_names() == []
+
+    @pytest.mark.parametrize(
+        ("kind", "document", "registry"),
+        [
+            (RegistryRecipeKind.TARGETS, {**_IDENTITY_TARGET, "class_name": "NoSuchTarget"}, TargetRegistry),
+            (RegistryRecipeKind.TECHNIQUES, {"type": "NoSuchAttack"}, AttackTechniqueRegistry),
+        ],
+    )
+    def test_holds_the_name_of_an_entry_that_failed(
+        self, tmp_path: Path, kind: RegistryRecipeKind, document: dict[str, Any], registry: Any
+    ) -> None:
+        _save(tmp_path, kind, "broken", document)
+
+        RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        with pytest.raises(SavedEntryUnavailableError, match="'broken' couldn't be restored: 'NoSuch"):
+            registry.get_registry_singleton().instances.get("broken")
+
+    def test_a_folder_that_cannot_be_listed_holds_every_unregistered_name_of_its_kind(self, tmp_path: Path) -> None:
+        startup_target = OpenAIChatTarget(
+            endpoint="https://startup.openai.azure.com/openai/v1", model_name="gpt-4o", auth_mode="identity"
+        )
+        instances = TargetRegistry.get_registry_singleton().instances
+        instances.register(startup_target, name="startup_chat")
+        (tmp_path / "targets").write_text("a file where the folder should be")
+
+        RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        assert instances.get("startup_chat") is startup_target
+        with pytest.raises(SavedEntryUnavailableError, match="'adversarial_chat' may be a saved target"):
+            instances.get("adversarial_chat")
 
     def test_raises_a_listing_bug_instead_of_blaming_storage(self, tmp_path: Path) -> None:
         with patch.object(RegistryRecipeStorage, "list_recipes", side_effect=KeyError("bug")):

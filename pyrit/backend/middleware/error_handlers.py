@@ -11,9 +11,11 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from pyrit.backend.middleware.auth import has_admin_access
 from pyrit.backend.middleware.request_size import RequestTooLargeError, request_too_large_response
 from pyrit.backend.models import FieldError, ProblemDetail
 from pyrit.exceptions.analytics_exception import AnalyticsException
+from pyrit.registry import SavedEntryUnavailableError, TechniqueSelectionUnavailableError
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 logger = logging.getLogger(__name__)
@@ -203,6 +205,35 @@ def register_error_handlers(app: FastAPI) -> None:
             content=problem.model_dump(exclude_none=True),
         )
 
+    @app.exception_handler(SavedEntryUnavailableError)
+    async def saved_entry_unavailable_handler(  # pyrit-async-suffix-exempt
+        request: Request,
+        exc: SavedEntryUnavailableError,
+    ) -> JSONResponse:
+        """
+        Handle a name held for a saved entry that couldn't be restored as 409 Conflict.
+
+        Administrators get the full message; anyone else gets a fixed explanation of the reason,
+        since the message can quote a server setting.
+
+        Returns:
+            JSONResponse: RFC 7807 problem detail response with 409 status.
+        """
+        return _conflict(request=request, detail=exc.describe(with_details=_shows_details(request)))
+
+    @app.exception_handler(TechniqueSelectionUnavailableError)
+    async def technique_selection_unavailable_handler(  # pyrit-async-suffix-exempt
+        request: Request,
+        exc: TechniqueSelectionUnavailableError,
+    ) -> JSONResponse:
+        """
+        Handle a broad technique selection made while a saved technique couldn't be restored as 409 Conflict.
+
+        Returns:
+            JSONResponse: RFC 7807 problem detail response with 409 status.
+        """
+        return _conflict(request=request, detail=str(exc))
+
     @app.exception_handler(NotImplementedError)
     async def not_implemented_handler(  # pyrit-async-suffix-exempt
         request: Request,
@@ -257,3 +288,33 @@ def register_error_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=problem.model_dump(exclude_none=True),
         )
+
+
+def _conflict(*, request: Request, detail: str) -> JSONResponse:
+    """
+    Build a 409 Conflict problem response.
+
+    Returns:
+        JSONResponse: RFC 7807 problem detail response with 409 status.
+    """
+    problem = ProblemDetail(
+        type="/errors/conflict",
+        title="Conflict",
+        status=status.HTTP_409_CONFLICT,
+        detail=detail,
+        instance=str(request.url.path),
+    )
+    return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=problem.model_dump(exclude_none=True))
+
+
+def _shows_details(request: Request) -> bool:
+    """
+    Return whether the caller may see a restore failure's full message, which can quote a server setting.
+
+    Returns:
+        bool: True for an administrator; False otherwise, including when no authentication policy is set.
+    """
+    try:
+        return has_admin_access(request)
+    except RuntimeError:
+        return False

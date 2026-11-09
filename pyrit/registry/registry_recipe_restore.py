@@ -24,6 +24,7 @@ from pyrit.models.catalog import (
     TechniqueRecipe,
 )
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
+from pyrit.registry.instance_registry import UnavailableEntry
 from pyrit.registry.registry_recipe_storage import (
     MAX_FAILURE_MESSAGE_LENGTH,
     RecipeListing,
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from pyrit.models import Parameter
+    from pyrit.registry.instance_registry import InstanceRegistry
     from pyrit.registry.registry import InstanceHoldingRegistry, Registry
     from pyrit.registry.registry_metadata import RegistryMetadata
 
@@ -147,9 +149,12 @@ class RegistryRecipeRestorer:
         can need the running event loop. Call it when the registries hold only startup entries, as they
         do at startup and after an apply resets them; an entry restored earlier would otherwise clash
         with itself by name. If any registry's folder can't be read, nothing is built, since entries
-        in the other folders may name entries in the unread one.
+        in the other folders may name entries in the unread one, and each entry left unbuilt is a failure.
 
-        Each failure is logged once, with the error behind it, if any, and URL credentials removed.
+        Each failure is logged once, with the error behind it, if any, and URL credentials removed. Then
+        the name of each entry that failed is held in its registry, so looking it up or taking it fails
+        with the reason instead of finding nothing or something else. A folder that couldn't be listed
+        holds every name of its kind that isn't registered.
 
         Args:
             saved (SavedRecipes | None): What ``read`` returned. Defaults to reading now.
@@ -168,6 +173,16 @@ class RegistryRecipeRestorer:
                     causes[(failure.kind, failure.name)] = cause
         ignored = [file for listing in listings for file in listing.ignored]
         if saved.failures:
+            unread = " and ".join(failure.kind.value for failure in saved.failures)
+            failures.extend(
+                self._failure(
+                    stored=recipe,
+                    reason=RestoreFailureReason.UNREADABLE_STORAGE,
+                    message=f"Not restored, because the saved {unread} couldn't be listed.",
+                )
+                for listing in listings
+                for recipe in listing.recipes.values()
+            )
             report = RegistryRestoreReport(failures=self._sorted(failures), ignored=ignored)
         else:
             stored = {recipe.ref: recipe for listing in listings for recipe in listing.recipes.values()}
@@ -175,7 +190,34 @@ class RegistryRecipeRestorer:
             restored = self._build_in_order(planned=planned, failures=failures, causes=causes)
             report = RegistryRestoreReport(restored=restored, failures=self._sorted(failures), ignored=ignored)
         self._log_failures(failures=report.failures, causes=causes)
+        self._hold_failed_names(failures=report.failures)
         return report
+
+    def _hold_failed_names(self, *, failures: Sequence[RestoreFailure]) -> None:
+        """
+        Hold the name of each entry that couldn't be restored, so using or taking it fails with the reason.
+
+        A folder that couldn't be listed holds every unregistered name of its kind, since any of them could
+        be a saved entry in it.
+        """
+        for failure in failures:
+            entry = UnavailableEntry(
+                kind=self._singular(failure.kind), name=failure.name, reason=failure.reason, message=failure.message
+            )
+            self._get_instances(failure.kind).mark_unavailable(entry)
+
+    def _get_instances(self, kind: RegistryRecipeKind) -> InstanceRegistry[Any]:
+        """
+        Get the instances of the registry that holds saved entries of a kind.
+
+        Returns:
+            InstanceRegistry[Any]: The registry's instances.
+        """
+        if kind is RegistryRecipeKind.TECHNIQUES:
+            from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+
+            return AttackTechniqueRegistry.get_registry_singleton().instances
+        return self._get_registry(kind).instances
 
     def _log_failures(self, *, failures: Sequence[RestoreFailure], causes: Mapping[_FailureKey, BaseException]) -> None:
         """Log each failure once, with the error behind it, if any, and URL credentials removed."""
