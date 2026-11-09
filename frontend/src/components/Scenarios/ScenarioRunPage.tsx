@@ -210,6 +210,14 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     })
   }
 
+  const closeObjective = (): void => {
+    setObjective(null)
+    requestAnimationFrame(() => {
+      const trigger = objectiveTrigger.current
+      if (trigger?.isConnected) trigger.focus()
+    })
+  }
+
   const openAttemptDetails = (
     attempt: ScenarioProgressResult | ScenarioHierarchyNode,
     trigger: HTMLElement,
@@ -588,7 +596,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
           </DialogBody>
         </DialogSurface>
       </Dialog>
-      <ObjectiveDetailsDialog objective={objective} onClose={() => { setObjective(null) }}
+      <ObjectiveDetailsDialog objective={objective} onClose={closeObjective}
         attempts={objective ? attemptsBySeed.get(objective.id) ?? [] : []}
         onOpenAttempt={openDetails} scenarioResultId={scenarioResultId} />
     </main>

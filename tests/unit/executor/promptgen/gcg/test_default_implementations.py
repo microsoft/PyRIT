@@ -37,12 +37,12 @@ gcg_attack_mod = pytest.importorskip(
 import pyrit.executor.promptgen.gcg as gcg_pkg  # noqa: E402
 from pyrit.executor.promptgen.gcg import (  # noqa: E402
     CrossEntropyLoss,
+    GCGAlgorithmConfig,  # noqa: E402
     LengthPreservingFilter,
     LiteralStringInit,
     StandardGCGSampling,
 )
 from pyrit.executor.promptgen.gcg import default_implementations as defaults_module  # noqa: E402
-from pyrit.executor.promptgen.gcg.config import GCGAlgorithmConfig  # noqa: E402
 
 AttackPrompt = attack_manager_mod.AttackPrompt
 MultiPromptAttack = attack_manager_mod.MultiPromptAttack

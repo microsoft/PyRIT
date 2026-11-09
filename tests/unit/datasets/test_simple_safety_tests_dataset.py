@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.simple_safety_tests_dataset import _SimpleSafetyTestsDataset
+from pyrit.datasets.seed_datasets.remote import _SimpleSafetyTestsDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 

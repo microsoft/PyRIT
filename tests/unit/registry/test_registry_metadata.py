@@ -3,8 +3,8 @@
 
 from dataclasses import dataclass, field
 
+from pyrit.registry import RegistryMetadata
 from pyrit.registry.registry import _matches_filters
-from pyrit.registry.registry_metadata import RegistryMetadata
 
 
 @dataclass(frozen=True)

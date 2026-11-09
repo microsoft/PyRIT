@@ -1084,13 +1084,94 @@ async def test_run_evaluation_deduplicates_csv_paths_async(*, tmp_path: Path, pa
     assert metrics.dataset_version == "1.0_1.0"
 
 
+@pytest.mark.parametrize("extend_enum", [False, True], ids=["current-enum", "extended-enum"])
+def test_run_evaluation_dispatch_type_exhaustiveness(tmp_path: Path, *, extend_enum: bool) -> None:
+    source_file = inspect.getsourcefile(ScorerEvaluator)
+    assert source_file is not None
+    source = Path(source_file).read_text(encoding="utf-8")
+    enum_source = inspect.getsource(RegistryUpdateBehavior)
+    if extend_enum:
+        enum_source += '\n    FUTURE = "future"\n'
+    enum_import = "from pyrit.score.scorer_evaluation.metrics_type import MetricsType, RegistryUpdateBehavior"
+    assert source.count(enum_import) == 1
+    probe = tmp_path / "registry_dispatch.py"
+    probe.write_text(
+        source.replace(
+            enum_import,
+            "from enum import Enum\nfrom pyrit.score.scorer_evaluation.metrics_type import MetricsType\n" + enum_source,
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ty",
+            "check",
+            "--project",
+            str(Path(__file__).resolve().parents[3]),
+            "--python-version",
+            "3.11",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=TEST_WATCHDOG_SECONDS,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == (1 if extend_enum else 0), output
+    if extend_enum:
+        assert output.count("error[") == 1, output
+        assert "type-assertion-failure" in output, output
+        assert "assert_never(update_registry_behavior)" in output, output
+        assert "RegistryUpdateBehavior.FUTURE" in output, output
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "update_registry_behavior, checks_existing, writes_registry",
+    [
+        (RegistryUpdateBehavior.SKIP_IF_EXISTS, True, True),
+        (RegistryUpdateBehavior.ALWAYS_UPDATE, False, True),
+        (RegistryUpdateBehavior.NEVER_UPDATE, False, False),
+        ("never_update", False, True),
+    ],
+    ids=["skip-if-exists", "always-update", "never-update", "out-of-enum-fallback"],
+)
+async def test_run_evaluation_registry_update_behavior_async(
+    *, tmp_path: Path, update_registry_behavior: RegistryUpdateBehavior, checks_existing: bool, writes_registry: bool
+) -> None:
+    await asyncio.to_thread(
+        (tmp_path / "a.csv").write_text,
+        "# dataset_version=1.0\nassistant_response,objective,human_score\nmarker,Synthetic objective,1\n",
+        encoding="utf-8",
+    )
+    evaluator = ObjectiveScorerEvaluator(scorer=SubStringScorer(substring="marker"))
+
+    with (
+        patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH", tmp_path),
+        patch.object(evaluator, "_should_skip_evaluation", return_value=(False, None)) as should_skip,
+        patch.object(evaluator, "_write_metrics_to_registry") as write_metrics,
+    ):
+        metrics = await evaluator.run_evaluation_async(
+            dataset_files=ScorerEvalDatasetFiles(human_labeled_datasets_files=["a.csv"], result_file="unused.jsonl"),
+            num_scorer_trials=1,
+            update_registry_behavior=update_registry_behavior,
+        )
+
+    assert isinstance(metrics, ObjectiveScorerMetrics)
+    assert should_skip.called is checks_existing
+    assert write_metrics.called is writes_registry
+
+
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.HumanLabeledDataset.from_csv")
 @patch("pyrit.score.scorer_evaluation.scorer_evaluator.SCORER_EVALS_PATH")
 async def test_run_evaluation_async_combines_dataset_versions_with_duplicates(
     mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
 ):
     """Test that run_evaluation_async concatenates all dataset versions including duplicates."""
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     # Create mock CSV files
     csv1 = tmp_path / "harm" / "file1.csv"
@@ -1164,7 +1245,7 @@ async def test_run_evaluation_async_combines_mixed_dataset_versions(
     mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
 ):
     """Test that run_evaluation_async concatenates mixed dataset versions in sorted file order."""
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     # Create mock CSV files (named to control sort order)
     csv1 = tmp_path / "harm" / "a_file.csv"
@@ -1232,7 +1313,7 @@ async def test_run_evaluation_async_raises_on_mismatched_harm_definition_version
     mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
 ):
     """Test that run_evaluation_async raises error when harm_definition_versions differ."""
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     csv1 = tmp_path / "harm" / "file1.csv"
     csv2 = tmp_path / "harm" / "file2.csv"
@@ -1285,7 +1366,7 @@ async def test_run_evaluation_async_raises_when_harm_csv_missing_harm_definition
     mock_evals_path, mock_from_csv, mock_harm_scorer, tmp_path
 ):
     """Test that run_evaluation_async raises when harm CSVs have no harm_definition header."""
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     csv1 = tmp_path / "harm" / "file1.csv"
     (tmp_path / "harm").mkdir(parents=True)

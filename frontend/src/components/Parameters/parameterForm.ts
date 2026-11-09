@@ -216,6 +216,9 @@ function coerceToken(raw: string, typeName: string, paramName: string): CoerceRe
     if (!Number.isInteger(parsed)) {
       return { ok: false, error: `${paramName} must be an integer.` }
     }
+    if (!Number.isSafeInteger(parsed)) {
+      return { ok: false, error: `${paramName} must be a safe integer.` }
+    }
     return { ok: true, value: parsed }
   }
   if (typeName === 'float') {

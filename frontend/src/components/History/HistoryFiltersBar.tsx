@@ -3,10 +3,8 @@ import {
   Button,
   Tooltip,
   Option,
-  OptionGroup,
   Combobox,
   Switch,
-  mergeClasses,
 } from '@fluentui/react-components'
 import { useActiveDescendantContext } from '@fluentui/react-aria'
 import type { ActiveDescendantImperativeRef } from '@fluentui/react-aria'
@@ -57,23 +55,11 @@ function LabelActiveDescendantBridge({
   return null
 }
 
-const NO_CONVERTERS_SENTINEL = '__no_converters__'
-
 const OUTCOME_LABELS: Record<string, string> = {
   success: 'Success',
   failure: 'Failure',
   error: 'Error',
   undetermined: 'Undetermined',
-}
-
-// Fluent's multiselect Combobox doesn't auto-populate its input from selectedOptions;
-// we have to drive the displayed text via `value` ourselves. This format is only
-// shown when the popover is closed — while it's open we show the user's typed
-// search text so typing-to-search actually works.
-function formatMultiSelectValue(selected: string[]): string {
-  if (selected.length === 0) return ''
-  if (selected.length === 1) return selected[0] ?? ''
-  return `${selected[0] ?? ''} (+${selected.length - 1})`
 }
 
 /** History's choices are plain strings, shown as they are. */
@@ -84,8 +70,6 @@ function toFilterOptions(values: string[]): FilterOption[] {
 interface HistoryFiltersBarProps {
   filters: HistoryFilters
   onFiltersChange: (filters: HistoryFilters) => void
-  attackTypeOptions: string[]
-  converterOptions: string[]
   operatorOptions: string[]
   operationOptions: FilterOption[]
   otherLabelOptions: string[]
@@ -94,8 +78,6 @@ interface HistoryFiltersBarProps {
 export default function HistoryFiltersBar({
   filters,
   onFiltersChange,
-  attackTypeOptions,
-  converterOptions,
   operatorOptions,
   operationOptions,
   otherLabelOptions,
@@ -103,11 +85,7 @@ export default function HistoryFiltersBar({
   const styles = useAttackHistoryStyles()
 
   const {
-    attackTypes: attackTypeFilters,
     outcome: outcomeFilter,
-    converter: converterFilter,
-    converterMatchMode,
-    hasConverters,
     includeScenarioAttacks,
     operator: operatorFilters,
     operationId: operationFilters,
@@ -120,44 +98,12 @@ export default function HistoryFiltersBar({
   }
 
   const hasActiveFilters =
-    attackTypeFilters.length > 0 ||
     outcomeFilter ||
-    converterFilter.length > 0 ||
-    hasConverters !== undefined ||
     !includeScenarioAttacks ||
     operatorFilters.length > 0 ||
     operationFilters.length > 0 ||
     otherLabelFilters.length > 0
 
-  // Converter Combobox selectedOptions includes the sentinel when hasConverters=false.
-  const converterSelectedOptions = hasConverters === false
-    ? [NO_CONVERTERS_SENTINEL]
-    : converterFilter
-
-  const handleConverterSelect = (selected: string[]) => {
-    const hasSentinel = selected.includes(NO_CONVERTERS_SENTINEL)
-    const realConverters = selected.filter((s) => s !== NO_CONVERTERS_SENTINEL)
-    const sentinelWasActive = hasConverters === false
-    const sentinelJustAdded = hasSentinel && !sentinelWasActive
-
-    if (sentinelJustAdded || (hasSentinel && realConverters.length === 0)) {
-      // User just toggled the sentinel on (or it's alone) → clear real converters
-      onFiltersChange({ ...filters, converter: [], hasConverters: false })
-    } else {
-      // Any real converter toggled (sentinel was active or not) → drop sentinel
-      onFiltersChange({ ...filters, converter: realConverters, hasConverters: undefined })
-    }
-  }
-
-  const showMatchModeToggle = converterFilter.length >= 2 && hasConverters !== false
-
-  // Searchable state for the converter Combobox (custom because of the
-  // "(No converters)" sentinel OptionGroup).
-  const [converterOpen, setConverterOpen] = useState(false)
-  const [converterSearch, setConverterSearch] = useState('')
-  const converterMatchesSearch = (c: string) =>
-    !converterSearch || c.toLowerCase().includes(converterSearch.toLowerCase())
-  const filteredConverterOptions = converterOptions.filter(converterMatchesSearch)
   const filteredLabelOptions = otherLabelOptions.filter(
     l => !labelSearchText || l.toLowerCase().includes(labelSearchText.toLowerCase()),
   )
@@ -320,88 +266,6 @@ export default function HistoryFiltersBar({
             </Virtualizer>
           </div>
         </Combobox>
-        <SearchableMultiCombobox
-          className={styles.filterDropdown}
-          placeholder="All attack types"
-          selectedOptions={attackTypeFilters}
-          options={toFilterOptions(attackTypeOptions)}
-          onSelect={(selected) => setFilter('attackTypes', selected)}
-          testId="attack-type-filter"
-        />
-        <Combobox
-          className={styles.filterDropdown}
-          placeholder="All converters"
-          multiselect
-          freeform
-          open={converterOpen}
-          onOpenChange={(_e, data) => {
-            setConverterOpen(data.open)
-            setConverterSearch('')
-          }}
-          selectedOptions={converterSelectedOptions}
-          value={
-            converterOpen
-              ? converterSearch
-              : hasConverters === false
-                ? '(No converters)'
-                : formatMultiSelectValue(converterFilter)
-          }
-          onChange={(e) => setConverterSearch((e.target as HTMLInputElement).value)}
-          onOptionSelect={(_e, data) => {
-            handleConverterSelect(data.selectedOptions)
-            setConverterSearch('')
-          }}
-          data-testid="converter-filter"
-        >
-          <OptionGroup label="Special">
-            <Option value={NO_CONVERTERS_SENTINEL} text="(No converters)">(No converters)</Option>
-          </OptionGroup>
-          <OptionGroup label="Converters">
-            {filteredConverterOptions.map((c) => (
-              <Option key={c} value={c}>{c}</Option>
-            ))}
-          </OptionGroup>
-        </Combobox>
-        {showMatchModeToggle && (
-          <Tooltip
-            content={
-              converterMatchMode === 'all'
-                ? 'Attack must use ALL selected converters'
-                : 'Attack must use ANY of the selected converters'
-            }
-            relationship="label"
-          >
-            <span className={styles.matchModeToggle}>
-              <span className={styles.matchModeLabel}>Converters:</span>
-              <span
-                className={mergeClasses(
-                  styles.matchModeLabel,
-                  converterMatchMode === 'any' && styles.matchModeLabelActive,
-                )}
-                data-testid="converter-match-mode-label-any"
-              >
-                ANY
-              </span>
-              <Switch
-                checked={converterMatchMode === 'all'}
-                onChange={(_e, data) =>
-                  setFilter('converterMatchMode', data.checked ? 'all' : 'any')
-                }
-                aria-label={`Match ${converterMatchMode === 'all' ? 'all' : 'any'} selected converters`}
-                data-testid="converter-match-mode-toggle"
-              />
-              <span
-                className={mergeClasses(
-                  styles.matchModeLabel,
-                  converterMatchMode === 'all' && styles.matchModeLabelActive,
-                )}
-                data-testid="converter-match-mode-label-all"
-              >
-                ALL
-              </span>
-            </span>
-          </Tooltip>
-        )}
       </div>
       <div className={styles.secondaryFilterRow} data-testid="scanner-attack-filter-row">
         <Switch

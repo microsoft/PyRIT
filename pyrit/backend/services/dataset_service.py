@@ -17,10 +17,12 @@ from uuid import UUID
 
 from pyrit.backend.mappers import format_last_message_preview
 from pyrit.backend.mappers.attack_mappers import resolve_client_media_url_async
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.datasets import (
+from pyrit.backend.models import (
     DatasetInfo,
     DatasetListResponse,
+    PaginationInfo,
+)
+from pyrit.backend.models.datasets import (
     SeedExampleDetailResponse,
     SeedExampleListResponse,
     SeedExampleSummary,
