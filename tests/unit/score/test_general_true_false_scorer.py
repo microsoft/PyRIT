@@ -133,6 +133,24 @@ def test_true_false_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch
     assert result is None
 
 
+def test_identifier_distinguishes_output_keys(patch_central_database):
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    default = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target, system_prompt_format_string="This is a system prompt."
+    )
+    custom = SelfAskGeneralTrueFalseScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="This is a system prompt.",
+        score_value_output_key="verdict",
+    )
+
+    assert default.get_identifier().params["score_value_output_key"] == "score_value"
+    assert custom.get_identifier().params["score_value_output_key"] == "verdict"
+    assert default.get_identifier().hash != custom.get_identifier().hash
+
+
 def test_true_false_get_scorer_metrics_returns_metrics_when_eval_hash_is_set(patch_central_database):
     """Test that TrueFalseScorer.get_scorer_metrics returns metrics when eval_hash is set."""
     from unittest.mock import patch as _patch

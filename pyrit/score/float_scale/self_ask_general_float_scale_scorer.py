@@ -133,6 +133,13 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
             minimum_value=scale.minimum_value,
             maximum_value=scale.maximum_value,
         )
+        self._output_keys = {
+            "score_value_output_key": score_value_output_key,
+            "rationale_output_key": rationale_output_key,
+            "description_output_key": description_output_key,
+            "metadata_output_key": metadata_output_key,
+            "category_output_key": category_output_key,
+        }
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -147,6 +154,7 @@ class SelfAskGeneralFloatScaleScorer(MessageFloatScaleScorer):
                 "user_prompt_template": self._prompt_format_string,
                 "scale": self._scale.model_dump(),
                 "response_json_schema": self._response_handler.json_response_config.json_schema,
+                **self._output_keys,
             },
             prompt_target=self._prompt_target.get_identifier(),
         )

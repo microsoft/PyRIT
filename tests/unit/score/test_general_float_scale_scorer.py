@@ -157,6 +157,25 @@ async def test_general_float_scorer_omits_schema_when_not_provided(
     assert message_piece.prompt_metadata.get("response_format") == "json"
 
 
+def test_identifier_distinguishes_output_keys(patch_central_database):
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+
+    default = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target, system_prompt_format_string="This is a system prompt.", scale=DEFAULT_RANGE
+    )
+    custom = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="This is a system prompt.",
+        scale=DEFAULT_RANGE,
+        score_value_output_key="verdict",
+    )
+
+    assert default.get_identifier().params["score_value_output_key"] == "score_value"
+    assert custom.get_identifier().params["score_value_output_key"] == "verdict"
+    assert default.get_identifier().hash != custom.get_identifier().hash
+
+
 async def test_general_float_scorer_score_async_handles_custom_keys(patch_central_database):
     chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")

@@ -132,6 +132,13 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
         )
         # Keep score-domain validation in the parser callback so invalid semantic values retry.
         self._response_handler = TrueFalseResponseHandler(response_handler=wire_format_handler)
+        self._output_keys = {
+            "score_value_output_key": score_value_output_key,
+            "rationale_output_key": rationale_output_key,
+            "description_output_key": description_output_key,
+            "metadata_output_key": metadata_output_key,
+            "category_output_key": category_output_key,
+        }
 
     def _build_identifier(self) -> ComponentIdentifier:
         """
@@ -145,6 +152,7 @@ class SelfAskGeneralTrueFalseScorer(MessageTrueFalseScorer):
                 "system_prompt_template": self._system_prompt_format_string,
                 "user_prompt_template": self._prompt_format_string,
                 "response_json_schema": self._response_handler.json_response_config.json_schema,
+                **self._output_keys,
             },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
             prompt_target=self._prompt_target.get_identifier(),
