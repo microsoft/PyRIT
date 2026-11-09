@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.converter import ConverterResult
-from pyrit.converter.unicode_confusable_converter import (
+from pyrit.converter import (
+    ConverterResult,
     UnicodeConfusableConverter,
 )
 
@@ -67,6 +67,21 @@ async def test_confusables_converter_convert_async(confusables_converter) -> Non
     output = await confusables_converter.convert_async(prompt="lorem ipsum dolor sit amet", input_type="text")
     assert output.output_text == "ïỎ𐒴ḕ𝗠 ïṗṡ𝘶𝗠 𝑫ỎïỎ𐒴 ṡï𝚝 ḁ𝗠ḕ𝚝"
     assert output.output_type == "text"
+
+
+async def test_cyrillic_homoglyph_converter_convert_async() -> None:
+    converter = UnicodeConfusableConverter(source_package="cyrillic_homoglyph")
+    output = await converter.convert_async(prompt="aceopxy ACEOPXY Copy example 3.14!", input_type="text")
+    assert output.output_text == (
+        "\u0430\u0441\u0435\u043e\u0440\u0445\u0443 \u0410\u0421\u0415\u041e\u0420\u0425\u0423 "
+        "\u0421\u043e\u0440\u0443 \u0435\u0445\u0430m\u0440l\u0435 3.14!"
+    )
+    assert output.output_type == "text"
+
+
+def test_invalid_source_package_raises() -> None:
+    with pytest.raises(ValueError, match="Invalid source package"):
+        UnicodeConfusableConverter(source_package="unknown")
 
 
 async def test_input_not_supported(homoglyphs_converter):

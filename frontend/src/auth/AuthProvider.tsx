@@ -50,7 +50,7 @@ interface AuthProviderProps {
 }
 
 /**
- * True for root-relative paths ("/history") that are safe to restore after a
+ * True for root-relative paths ("/attack/history") that are safe to restore after a
  * login redirect. Rejects protocol-relative ("//evil.com") and backslash
  * variants ("/\evil.com", which browsers coerce to "//"), since a tampered MSAL
  * state value could otherwise become an open redirect to an external origin. The
@@ -91,7 +91,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           instance.setActiveAccount(redirectResult.account)
         } else if (!instance.getActiveAccount()) {
           const accounts = instance.getAllAccounts()
-          if (accounts.length > 0) instance.setActiveAccount(accounts[0])
+          if (accounts.length > 0 && accounts[0]) instance.setActiveAccount(accounts[0])
         }
 
         const requestedPath = typeof redirectResult?.state === 'string' ? redirectResult.state : null

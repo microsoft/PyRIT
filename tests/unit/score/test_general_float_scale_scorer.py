@@ -10,8 +10,10 @@ from unit.mocks import get_mock_target_identifier
 
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import NumericRange, NumericRubric
-from pyrit.score.float_scale.self_ask_general_float_scale_scorer import (
+from pyrit.score import (
+    NumericRange,
+    NumericRubric,
+    ScorerPromptValidator,
     SelfAskGeneralFloatScaleScorer,
 )
 
@@ -53,6 +55,28 @@ async def test_general_float_scorer_score_async(patch_central_database, general_
     assert abs(float(score[0].score_value) - 0.75) < 1e-6
     assert "This is the rationale." in score[0].score_rationale
     assert "This is the description." in score[0].score_value_description
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_general_float_scorer_fixed_rubric_without_objective_async(
+    general_float_scorer_response: Message,
+) -> None:
+    chat_target = MagicMock(spec=PromptTarget)
+    chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
+    chat_target.send_prompt_async = AsyncMock(return_value=[general_float_scorer_response])
+    scorer = SelfAskGeneralFloatScaleScorer(
+        chat_target=chat_target,
+        system_prompt_format_string="Rate the response quality.",
+        scale=DEFAULT_RANGE,
+        validator=ScorerPromptValidator(supported_data_types=["text"]),
+    )
+    [score] = await scorer.score_text_async(text="test prompt")
+
+    assert score.get_value() == 0.75
+    assert score.score_category == ["test_category"]
+    assert score.objective is None
+    assert scorer.get_condition_types() == frozenset()
+    chat_target.send_prompt_async.assert_awaited_once()
 
 
 async def test_general_float_scorer_score_async_with_prompt_f_string(
@@ -252,7 +276,7 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
     """Test that get_scorer_metrics returns None when eval_hash is None."""
     from unittest.mock import patch as _patch
 
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")
@@ -279,7 +303,7 @@ def test_get_scorer_metrics_returns_none_when_eval_hash_is_none(patch_central_da
 def test_get_scorer_metrics_uses_configured_result_file(patch_central_database, tmp_path):
     from unittest.mock import patch as _patch
 
-    from pyrit.score.scorer_evaluation.scorer_evaluator import ScorerEvalDatasetFiles
+    from pyrit.score import ScorerEvalDatasetFiles
 
     chat_target = MagicMock(spec=PromptTarget)
     chat_target.get_identifier.return_value = get_mock_target_identifier("MockChatTarget")

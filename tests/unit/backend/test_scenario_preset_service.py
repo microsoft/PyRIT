@@ -10,15 +10,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.backend.services import scenario_preset_service as preset_service_module
-from pyrit.backend.services.scenario_preset_service import (
+from pyrit.backend.services import (
     ScenarioPresetService,
     get_scenario_preset_service,
 )
-from pyrit.models import Parameter
-from pyrit.models.catalog import PresetIssue, RegisteredScenario, ScenarioPreset
-from pyrit.models.catalog.scenario import ScenarioRunSizeComponent, ScenarioRunSizeEstimate
-from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
+from pyrit.backend.services import scenario_preset_service as preset_service_module
+from pyrit.models import (
+    DatasetSourceInput,
+    Parameter,
+    PresetIssue,
+    ScenarioDatasetRequest,
+    ScenarioPreset,
+    ScenarioRunSizeComponent,
+    ScenarioRunSizeEstimate,
+)
+from pyrit.models.catalog import RegisteredScenario
 from pyrit.registry import (
     ScenarioPresetConflictError,
     ScenarioPresetNameRegisteredError,

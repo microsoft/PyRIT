@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from pyrit.backend.routes.targets import router
-from pyrit.backend.services.target_service import TargetService
+from pyrit.backend.services import TargetService
 from pyrit.models import TargetCapabilities
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget, TargetConfiguration
 from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError

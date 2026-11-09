@@ -12,12 +12,13 @@ from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 import sqlalchemy as sa
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, make_scenario_identifier, make_scenario_result
 
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.datasets import SeedDatasetProvider
-from pyrit.executor.attack import AttackStrategy, PromptSendingAttack, RedTeamingAttack
-from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.exceptions import ScenarioRunInProgressException
+from pyrit.executor.attack import AttackExecutorResult, AttackStrategy, PromptSendingAttack, RedTeamingAttack
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
@@ -38,6 +39,8 @@ from pyrit.models import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario import (
+    AttackTechnique,
+    AttackTechniqueFactory,
     DatasetAttackConfiguration,
     DatasetConfiguration,
     DatasetFetchPolicy,
@@ -49,12 +52,15 @@ from pyrit.scenario import (
     TechniqueRequirements,
 )
 from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atomic_attack, build_matrix_atomic_attacks
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.score import Scorer, SubStringScorer, TrueFalseCompositeScorer, TrueFalseScoreAggregator
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
+from pyrit.score import (
+    Scorer,
+    SubStringScorer,
+    TrueFalseAggregatorFunc,
+    TrueFalseCompositeScorer,
+    TrueFalseScoreAggregator,
+)
 
 # Reusable test scorer identifier
 _TEST_SCORER_ID = ComponentIdentifier(
@@ -113,6 +119,35 @@ def create_mock_run_async(attack_results, *, atomic_attack=None):
         return AttackExecutorResult(completed_results=attack_results, incomplete_objectives=[])
 
     return AsyncMock(side_effect=mock_run_async)
+
+
+def _make_mock_atomic_attacks(count: int = 6):
+    """Create a list of mock AtomicAttack instances and matching AttackResults for testing."""
+    attacks = []
+    results = []
+    mock_attack = MagicMock()
+    mock_attack.get_objective_target.return_value = MagicMock()
+    mock_attack.get_attack_scoring_config.return_value = MagicMock()
+    for i in range(count):
+        run = MagicMock(spec=AtomicAttack)
+        run.group_kind = ScenarioRunPlanGroupKind.ATTACK
+        run.seed_group_adaptations = {}
+        run.atomic_attack_name = f"attack_run_{i}"
+        run.display_group = f"attack_run_{i}"
+        run._attack = mock_attack
+        run._scenario_result_id = None
+        run.set_scenario_result_id = MagicMock(side_effect=lambda sid, r=run: setattr(r, "_scenario_result_id", sid))
+        type(run).objectives = PropertyMock(return_value=[f"objective{i}"])
+        attacks.append(run)
+        results.append(
+            AttackResult(
+                conversation_id=f"conv-{i}",
+                objective=f"objective{i}",
+                outcome=AttackOutcome.SUCCESS,
+                executed_turns=1,
+            )
+        )
+    return attacks, results
 
 
 @pytest.fixture
@@ -884,7 +919,7 @@ class TestScenarioInitialization2:
 
     def test_scenario_base_target_requirements_is_empty(self):
         """Base Scenario declares an empty TargetRequirements so it accepts any target by default."""
-        from pyrit.prompt_target.common.target_requirements import TargetRequirements
+        from pyrit.prompt_target import TargetRequirements
 
         assert isinstance(Scenario.TARGET_REQUIREMENTS, TargetRequirements)
         assert Scenario.TARGET_REQUIREMENTS.required == frozenset()
@@ -1673,7 +1708,7 @@ class TestScenarioBaselineUniformObjectives:
         mock_objective_target,
     ):
         from pyrit.models import SeedGroup, SeedObjective
-        from pyrit.scenario.core.attack_technique import AttackTechnique
+        from pyrit.scenario import AttackTechnique
 
         seed_groups = [SeedGroup(seeds=[SeedObjective(value=f"obj{i}")]) for i in range(10)]
         config = DatasetAttackConfiguration(seed_groups=seed_groups, max_dataset_size=3)
@@ -1742,7 +1777,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
 
     class _StrategyScenario(ConcreteScenarioWithTrueFalseScorer):
         async def _build_atomic_attacks_async(self, *, context):
-            from pyrit.scenario.core.attack_technique import AttackTechnique
+            from pyrit.scenario import AttackTechnique
 
             attacks = []
             if context.include_baseline:
@@ -1765,7 +1800,7 @@ class TestScenarioResumeDeterministicUnderMaxDatasetSize:
 
     class _PerObjectiveScenario(ConcreteScenarioWithTrueFalseScorer):
         async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
-            from pyrit.scenario.core.attack_technique import AttackTechnique
+            from pyrit.scenario import AttackTechnique
 
             attacks: list[AtomicAttack] = []
             if context.include_baseline:
@@ -2601,3 +2636,313 @@ class TestScenarioParallelExecution:
 
         for run in mock_atomic_attacks:
             run.run_async.assert_called_once_with(executor=ANY, return_partial_on_failure=True, operation_id=None)
+
+    async def test_concurrent_run_async_rejects_second_execution_before_target_work(
+        self, sqlite_instance: MemoryInterface, mock_objective_target
+    ):
+        """Two concurrent run_async calls on the same initialized scenario reject the second before target work."""
+        Scenario._clear_active_runs()
+        attacks, sample_results = _make_mock_atomic_attacks(count=6)
+
+        target_calls = 0
+        in_flight = 0
+        peak_concurrency = 0
+        target_lock = asyncio.Lock()
+
+        def make_run_async(idx):
+            async def run_async(*, executor, **kwargs):
+                nonlocal target_calls, in_flight, peak_concurrency
+                semaphore = executor._get_semaphore()
+                async with semaphore:
+                    async with target_lock:
+                        target_calls += 1
+                        in_flight += 1
+                        peak_concurrency = max(peak_concurrency, in_flight)
+                    await asyncio.sleep(0.01)
+                    async with target_lock:
+                        in_flight -= 1
+
+                _stamp_scenario_linkage(
+                    attack_results=[sample_results[idx]],
+                    atomic_attack=attacks[idx],
+                )
+                await save_attack_results_to_memory_async([sample_results[idx]])
+                return AttackExecutorResult(
+                    completed_results=[sample_results[idx]],
+                    incomplete_objectives=[],
+                )
+
+            return AsyncMock(side_effect=run_async)
+
+        for i, attack in enumerate(attacks):
+            attack.run_async = make_run_async(i)
+
+        scenario = ConcreteScenario(
+            name="Test Concurrent Scenario",
+            version=1,
+            atomic_attacks_to_return=attacks,
+        )
+        scenario.set_params_from_args(
+            args={
+                "objective_target": mock_objective_target,
+                "max_concurrency": 2,
+            }
+        )
+        await scenario.initialize_async()
+        run_id = scenario._scenario_result_id
+
+        # Invoke two concurrent run_async calls on the same initialized scenario instance
+        results = await asyncio.gather(scenario.run_async(), scenario.run_async(), return_exceptions=True)
+
+        succeeded = [r for r in results if isinstance(r, ScenarioResult)]
+        rejected = [r for r in results if isinstance(r, ScenarioRunInProgressException)]
+
+        assert len(succeeded) == 1, f"Expected 1 succeeded run, got {len(succeeded)}"
+        assert len(rejected) == 1, f"Expected 1 rejected run, got {len(rejected)}"
+        assert isinstance(rejected[0], RuntimeError)
+        assert rejected[0].status_code == 409
+        assert f"execution is already in progress for run '{run_id}'" in str(rejected[0])
+
+        # Exact expected metrics from Issue #3748:
+        assert peak_concurrency <= 2, f"Peak concurrency {peak_concurrency} exceeded max_concurrency 2"
+        assert target_calls == 6, f"Expected exactly 6 target calls, got {target_calls}"
+        assert len(succeeded[0].attack_results) == 6
+
+        # Check SQLite persistence
+        db_results = await sqlite_instance.get_attack_results_async(result_selection=AttackResultSelection.ALL_RESULTS)
+        assert len(db_results) == 6, f"Expected 6 persisted attack results, got {len(db_results)}"
+
+        db_scenarios = await sqlite_instance.get_scenario_results_async(scenario_result_ids=[run_id])
+        assert len(db_scenarios) == 1
+        assert db_scenarios[0].number_tries == 1
+        assert db_scenarios[0].scenario_run_state == ScenarioRunState.COMPLETED
+
+    async def test_concurrent_run_async_on_different_instances_same_run_id_rejects_second(
+        self, sqlite_instance: MemoryInterface, mock_objective_target
+    ):
+        """Two concurrent run_async calls on different Scenario instances sharing a run_id reject the second."""
+        Scenario._clear_active_runs()
+        attacks, sample_results = _make_mock_atomic_attacks(count=3)
+
+        for i, attack in enumerate(attacks):
+            attack.run_async = create_mock_run_async([sample_results[i]], atomic_attack=attack)
+
+        scenario1 = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=attacks,
+        )
+        scenario1.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
+        await scenario1.initialize_async()
+        run_id = scenario1._scenario_result_id
+
+        scenario2 = ConcreteScenario(
+            name="Test Scenario",
+            version=1,
+            atomic_attacks_to_return=attacks,
+            scenario_result_id=run_id,
+        )
+        scenario2.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
+        await scenario2.initialize_async()
+
+        results = await asyncio.gather(scenario1.run_async(), scenario2.run_async(), return_exceptions=True)
+        succeeded = [r for r in results if isinstance(r, ScenarioResult)]
+        rejected = [r for r in results if isinstance(r, ScenarioRunInProgressException)]
+
+        assert len(succeeded) == 1
+        assert len(rejected) == 1
+        assert isinstance(rejected[0], RuntimeError)
+        assert rejected[0].status_code == 409
+        assert f"execution is already in progress for run '{run_id}'" in str(rejected[0])
+
+    async def test_cancellation_cleans_up_guard_and_allows_legitimate_resume(
+        self, sqlite_instance: MemoryInterface, mock_objective_target
+    ):
+        """Cancellation releases the same-run guard and marks CANCELLED; subsequent run_async resumes cleanly."""
+        Scenario._clear_active_runs()
+        attacks, sample_results = _make_mock_atomic_attacks(count=6)
+
+        two_completed = asyncio.Event()
+        completed_count = 0
+        pause_event = asyncio.Event()
+
+        def make_cancellable_run_async(idx):
+            async def run_async(*, executor, **kwargs):
+                nonlocal completed_count
+                if idx < 2:
+                    _stamp_scenario_linkage(attack_results=[sample_results[idx]], atomic_attack=attacks[idx])
+                    await save_attack_results_to_memory_async([sample_results[idx]])
+                    completed_count += 1
+                    if completed_count == 2:
+                        two_completed.set()
+                    return AttackExecutorResult(completed_results=[sample_results[idx]], incomplete_objectives=[])
+                await pause_event.wait()
+                _stamp_scenario_linkage(attack_results=[sample_results[idx]], atomic_attack=attacks[idx])
+                await save_attack_results_to_memory_async([sample_results[idx]])
+                return AttackExecutorResult(completed_results=[sample_results[idx]], incomplete_objectives=[])
+
+            return AsyncMock(side_effect=run_async)
+
+        for i, attack in enumerate(attacks):
+            attack.run_async = make_cancellable_run_async(i)
+
+        scenario = ConcreteScenario(
+            name="Cancellable Scenario",
+            version=1,
+            atomic_attacks_to_return=attacks,
+        )
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
+        await scenario.initialize_async()
+        run_id = scenario._scenario_result_id
+
+        task = asyncio.create_task(scenario.run_async())
+        await asyncio.wait_for(two_completed.wait(), timeout=TEST_WATCHDOG_SECONDS)
+
+        # Cancel the active run while in progress
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Verify guard was released after worker cleanup
+        assert run_id not in Scenario._active_runs
+
+        # Verify state in SQLite is CANCELLED and 2 results saved
+        stored = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[run_id]))[0]
+        assert stored.scenario_run_state == ScenarioRunState.CANCELLED
+        assert stored.number_tries == 1
+
+        partial_attack_results = await sqlite_instance.get_attack_results_async(
+            result_selection=AttackResultSelection.ALL_RESULTS
+        )
+        assert len(partial_attack_results) == 2
+
+        # Legitimate later resume on the same scenario instance
+        pause_event.set()
+        resume_result = await scenario.run_async()
+
+        assert resume_result.scenario_run_state == ScenarioRunState.COMPLETED
+        assert run_id not in Scenario._active_runs
+
+        # Stored in SQLite: all 6 attack results, number_tries is 2
+        final_stored = (await sqlite_instance.get_scenario_results_async(scenario_result_ids=[run_id]))[0]
+        assert final_stored.scenario_run_state == ScenarioRunState.COMPLETED
+        assert final_stored.number_tries == 2
+
+        final_attack_results = await sqlite_instance.get_attack_results_async(
+            result_selection=AttackResultSelection.ALL_RESULTS
+        )
+        assert len(final_attack_results) == 6
+
+    async def test_concurrent_run_async_distinct_scenarios_run_in_parallel(
+        self, sqlite_instance: MemoryInterface, mock_objective_target
+    ):
+        """Two different scenarios with distinct run_ids run concurrently without blocking each other.
+
+        Uses an event-based rendezvous barrier so both scenarios must actively enter
+        execution in parallel before either can complete, strictly verifying that
+        unrelated scenarios are never serialized.
+        """
+        Scenario._clear_active_runs()
+        attacks1, sample_results1 = _make_mock_atomic_attacks(count=2)
+        attacks2, sample_results2 = _make_mock_atomic_attacks(count=2)
+
+        entered1 = asyncio.Event()
+        entered2 = asyncio.Event()
+
+        base_run_1 = create_mock_run_async([sample_results1[0]], atomic_attack=attacks1[0])
+        base_run_2 = create_mock_run_async([sample_results2[0]], atomic_attack=attacks2[0])
+
+        async def run_with_rendezvous(
+            entered_this: asyncio.Event,
+            entered_other: asyncio.Event,
+            base_run: Any,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            entered_this.set()
+            # Both scenarios must enter their attack execution before either can proceed
+            await asyncio.wait_for(entered_other.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            return await base_run(*args, **kwargs)
+
+        async def attack1_run(*args: Any, **kwargs: Any) -> Any:
+            return await run_with_rendezvous(entered1, entered2, base_run_1, *args, **kwargs)
+
+        async def attack2_run(*args: Any, **kwargs: Any) -> Any:
+            return await run_with_rendezvous(entered2, entered1, base_run_2, *args, **kwargs)
+
+        attacks1[0].run_async = AsyncMock(side_effect=attack1_run)
+        attacks1[1].run_async = create_mock_run_async([sample_results1[1]], atomic_attack=attacks1[1])
+
+        attacks2[0].run_async = AsyncMock(side_effect=attack2_run)
+        attacks2[1].run_async = create_mock_run_async([sample_results2[1]], atomic_attack=attacks2[1])
+
+        scenario1 = ConcreteScenario(name="Distinct Scenario 1", version=1, atomic_attacks_to_return=attacks1)
+        scenario1.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
+        await scenario1.initialize_async()
+
+        scenario2 = ConcreteScenario(name="Distinct Scenario 2", version=1, atomic_attacks_to_return=attacks2)
+        scenario2.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
+        await scenario2.initialize_async()
+
+        task1 = asyncio.create_task(scenario1.run_async())
+        task2 = asyncio.create_task(scenario2.run_async())
+
+        try:
+            res1, res2 = await asyncio.wait_for(asyncio.gather(task1, task2), timeout=TEST_WATCHDOG_SECONDS)
+        except BaseException:
+            task1.cancel()
+            task2.cancel()
+            await asyncio.gather(task1, task2, return_exceptions=True)
+            raise
+
+        assert isinstance(res1, ScenarioResult)
+        assert isinstance(res2, ScenarioResult)
+        assert res1.id != res2.id
+
+    async def test_cancellation_state_persistence_failure_logs_and_propagates(
+        self, sqlite_instance: MemoryInterface, mock_objective_target
+    ):
+        """When persisting CANCELLED state in memory raises, the error is logged and CancelledError propagates."""
+        Scenario._clear_active_runs()
+        attacks, sample_results = _make_mock_atomic_attacks(count=1)
+
+        async def cancel_run(*args, **kwargs):
+            raise asyncio.CancelledError
+
+        attacks[0].run_async = AsyncMock(side_effect=cancel_run)
+
+        scenario = ConcreteScenario(name="Cancel Fail Scenario", version=1, atomic_attacks_to_return=attacks)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
+
+        orig_update = sqlite_instance.update_scenario_run_state_async
+
+        async def mock_update(*, scenario_run_state, **kwargs):
+            if scenario_run_state == ScenarioRunState.CANCELLED:
+                raise RuntimeError("DB disconnected")
+            return await orig_update(scenario_run_state=scenario_run_state, **kwargs)
+
+        with patch.object(sqlite_instance, "update_scenario_run_state_async", side_effect=mock_update):
+            with pytest.raises(asyncio.CancelledError):
+                await scenario.run_async()
+
+        assert scenario._scenario_result_id not in Scenario._active_runs
+
+    async def test_run_async_raises_runtime_error_when_loop_completes_without_result(
+        self, sqlite_instance: MemoryInterface, mock_objective_target
+    ):
+        """When retry loop does not produce a result, raises RuntimeError."""
+        Scenario._clear_active_runs()
+        attacks, _ = _make_mock_atomic_attacks(count=1)
+
+        scenario = ConcreteScenario(name="No Result Scenario", version=1, atomic_attacks_to_return=attacks)
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target})
+        await scenario.initialize_async()
+
+        # Force empty retry range
+        scenario._max_retries = -1
+
+        with pytest.raises(RuntimeError, match="completed unexpectedly without result"):
+            await scenario.run_async()
+
+        assert scenario._scenario_result_id not in Scenario._active_runs

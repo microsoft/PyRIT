@@ -6,11 +6,13 @@
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation, useNavigate } from "react-router";
+import { MemoryRouter, parsePath, useLocation, useNavigate } from "react-router";
 import App from "./App";
 
 import { attacksApi, operationsApi, targetsApi } from "./services/api";
+import { deferred } from "./test-utils/deferred";
 import { makeTarget } from "./test-utils/targetFixtures";
+import type { AttackMetadata } from "./types";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "./utils/userPreferences";
 import { DEFAULT_ANALYTICS_VIEW, analyticsViewToHash } from "./utils/attackAnalytics";
 
@@ -25,7 +27,9 @@ jest.mock("./hooks/useTargetRegistry", () => ({
       targets,
       loading: false,
       error: null,
+      isEmpty: false,
       refresh: jest.fn(),
+      synchronizeTargets: setTargets,
       rememberTarget: (target: import("./types").TargetInstance) => {
         setTargets((current) => [
           ...current.filter((item) => item.target_registry_name !== target.target_registry_name),
@@ -79,6 +83,7 @@ jest.mock("./services/api", () => ({
   },
   attacksApi: {
     getAttack: jest.fn(),
+    getAttackMetadata: jest.fn(),
     listAttacks: jest.fn(),
     createAttack: jest.fn(),
     deleteAttack: jest.fn(),
@@ -109,7 +114,7 @@ jest.mock("./services/api", () => ({
 
 const mockedVersionApi = jest.requireMock("./services/api").versionApi;
 
-const mockGetAttack = attacksApi.getAttack as jest.Mock;
+const mockGetAttack = attacksApi.getAttackMetadata as jest.Mock;
 const mockGetOperation = operationsApi.get as jest.Mock;
 const mockListTargets = targetsApi.listTargets as jest.Mock;
 const mockGetTarget = targetsApi.getTarget as jest.Mock;
@@ -133,6 +138,7 @@ jest.mock("./components/Layout/MainLayout", () => {
     labels,
     onLabelsChange,
     operatorReadOnly,
+    featureNavigation,
   }: {
     children: React.ReactNode;
     currentView: string;
@@ -140,7 +146,9 @@ jest.mock("./components/Layout/MainLayout", () => {
     labels: Record<string, string>;
     onLabelsChange: (labels: Record<string, string>) => void;
     operatorReadOnly: boolean;
+    featureNavigation?: React.ReactNode;
   }) => {
+    const navigate = useNavigate();
     return (
       <div data-testid="main-layout" data-current-view={currentView}>
         <span data-testid="global-labels-json">{JSON.stringify(labels)}</span>
@@ -163,7 +171,7 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("chat")} data-testid="nav-chat">
           Chat
         </button>
-        <button onClick={() => onNavigate("history")} data-testid="nav-history">
+        <button onClick={() => navigate("/attack/history")} data-testid="nav-history">
           History
         </button>
         <button onClick={() => onNavigate("analytics")}>Analytics</button>
@@ -173,6 +181,7 @@ jest.mock("./components/Layout/MainLayout", () => {
         <button onClick={() => onNavigate("datasets")} data-testid="nav-datasets">
           Datasets
         </button>
+        {featureNavigation}
         {children}
       </div>
     );
@@ -188,7 +197,6 @@ jest.mock("./components/Chat/ChatWindow", () => {
   const { useLocation } = jest.requireActual("react-router") as typeof import("react-router");
   const { useChatDraftHandoff } = jest.requireActual("./hooks/useChatDraftHandoff") as typeof import("./hooks/useChatDraftHandoff");
   const MockChatWindow = ({
-    onNewAttack,
     activeTarget,
     draftContext,
     attackResultId,
@@ -201,12 +209,15 @@ jest.mock("./components/Chat/ChatWindow", () => {
     onRetryTargetResolution,
     onConversationCreated,
     onSelectConversation,
+    onNewAttack,
     labels,
     scenarioResultId,
     isLoadingAttack,
+    executionReadOnly,
+    relatedConversationCount,
+    lastResponseMessagePieceId,
   }: {
-    onNewAttack: () => void;
-    activeTarget: unknown;
+    activeTarget: import("./types").TargetInstance | null;
     draftContext?: Pick<import("./types").ChatDraftContextState, "originatingAttackId" | "originatingConversationId">;
     attackResultId: string | null;
     conversationId: string | null;
@@ -218,12 +229,17 @@ jest.mock("./components/Chat/ChatWindow", () => {
     onRetryTargetResolution?: () => void;
     onConversationCreated: (attackResultId: string, conversationId: string) => void;
     onSelectConversation: (convId: string) => void;
+    onNewAttack: () => void;
     labels: Record<string, string>;
     scenarioResultId?: string | null;
     isLoadingAttack?: boolean;
+    executionReadOnly?: boolean;
+    relatedConversationCount?: number;
+    lastResponseMessagePieceId?: string | null;
   }) => {
     const location = useLocation();
     const draftHandoff = useChatDraftHandoff();
+    const composerSequenceRef = useRef(draftHandoff.activeSequence);
     const [composerText, setComposerText] = useState(() => draftHandoff.preservedDraft?.draft?.text ?? "none");
     const activeTextRef = useRef(composerText);
     useLayoutEffect(() => {
@@ -258,6 +274,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
     }, [attackResultId, activeConversationId, conversationId, location.pathname, location.search, location.hash]);
 
     useEffect(() => {
+      const composerSequence = composerSequenceRef.current;
       return () => {
         if (activeTextRef.current && activeTextRef.current !== "none") {
           preserveDraftRef.current({
@@ -265,7 +282,7 @@ jest.mock("./components/Chat/ChatWindow", () => {
             originatingConversationId: routeRef.current.convId,
             originatingPath: routeRef.current.path,
             draft: { text: activeTextRef.current, attachments: [] },
-          });
+          }, composerSequence);
         }
       };
     }, []);
@@ -295,8 +312,9 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="active-conversation-id">{activeConversationId ?? "none"}</span>
         <span data-testid="has-target">{activeTarget ? "yes" : "no"}</span>
         <span data-testid="active-target-name">
-          {(activeTarget as { target_registry_name?: string } | null)?.target_registry_name ?? "none"}
+          {activeTarget?.target_registry_name ?? "none"}
         </span>
+        <output aria-label="Active target multi-turn">{String(activeTarget?.capabilities?.supports_multi_turn)}</output>
         <span data-testid="attack-target-hash">{attackTarget?.identifier_hash ?? "none"}</span>
         <span data-testid="objective">{objective ?? ""}</span>
         <span data-testid="outcome">{outcome ?? "none"}</span>
@@ -304,7 +322,12 @@ jest.mock("./components/Chat/ChatWindow", () => {
         <span data-testid="labels-operator">{labels.operator ?? ""}</span>
         <span data-testid="labels-json">{JSON.stringify(labels)}</span>
         <span data-testid="scenario-result-id">{scenarioResultId ?? "none"}</span>
-        <span data-testid="route-location">{`${location.pathname}${location.search}`}</span>
+        <span data-testid="execution-read-only">{String(executionReadOnly)}</span>
+        <span data-testid="related-conversation-count">{relatedConversationCount}</span>
+        <span data-testid="last-response-id">{lastResponseMessagePieceId ?? "none"}</span>
+        <span data-testid="route-location" data-navigation-state={JSON.stringify(location.state)}>
+          {`${location.pathname}${location.search}`}
+        </span>
         <button onClick={onNewAttack} data-testid="new-attack">
           New Attack
         </button>
@@ -338,19 +361,19 @@ jest.mock("./components/Chat/ChatWindow", () => {
 
 jest.mock("./components/Config/TargetConfig", () => {
   const { makeTarget } = jest.requireActual("@/test-utils/targetFixtures") as typeof import("@/test-utils/targetFixtures");
+  const { useUserPreferences } = jest.requireActual("@/hooks/useUserPreferences") as typeof import("@/hooks/useUserPreferences");
   const MockTargetConfig = ({
-    defaultObjectiveTarget,
     defaultAdversarialTarget,
-    onSetDefaultObjectiveTarget,
     onSetDefaultAdversarialTarget,
     detection,
+    onTargetsLoaded,
   }: React.ComponentProps<typeof import("./components/Config/TargetConfig").default>) => {
+    const { preferences, rememberUse } = useUserPreferences();
     return (
       <div data-testid="target-config">
         <span data-testid="active-target-name">
-          {defaultObjectiveTarget?.target_registry_name ?? "none"}
+          {preferences.lastUsedTargets?.objective?.registryName ?? "none"}
         </span>
-        <output aria-label="Objective multi-turn">{String(defaultObjectiveTarget?.capabilities?.supports_multi_turn)}</output>
         <output aria-label="Adversarial target">{defaultAdversarialTarget?.target_registry_name ?? "none"}</output>
         <output aria-label="Detection results">{JSON.stringify(detection.results)}</output>
         <button onClick={() => {
@@ -362,22 +385,25 @@ jest.mock("./components/Config/TargetConfig", () => {
               supported_input_modalities: ["text"], supported_output_modalities: ["text"],
             },
           });
-          onSetDefaultObjectiveTarget(target);
+          onTargetsLoaded?.([target]);
+          rememberUse({ objective: { registryName: target.target_registry_name, identifierHash: target.identifier.hash } });
           onSetDefaultAdversarialTarget(target);
-        }}>Set detection defaults</button>
-        <button disabled={!defaultObjectiveTarget || detection.running} onClick={() => {
-          if (defaultObjectiveTarget) void detection.start([
-            defaultObjectiveTarget, makeTarget({ target_registry_name: "second_target" }),
+        }}>Set detection targets</button>
+        <button disabled={!defaultAdversarialTarget || detection.running} onClick={() => {
+          if (defaultAdversarialTarget) void detection.start([
+            defaultAdversarialTarget, makeTarget({ target_registry_name: "second_target" }),
           ]);
         }}>Detect capabilities</button>
         <button
-          onClick={() =>
-            onSetDefaultObjectiveTarget(makeTarget({
+          onClick={() => {
+            const target = makeTarget({
               target_registry_name: "test_target",
               target_type: "OpenAIChatTarget",
               identifier_hash: "test-target-hash",
-            }))
-          }
+            });
+            onTargetsLoaded?.([target]);
+            rememberUse({ objective: { registryName: target.target_registry_name, identifierHash: target.identifier.hash } });
+          }}
           data-testid="set-target"
         >
           Set Target
@@ -469,17 +495,19 @@ jest.mock("./components/History/AttackHistory", () => {
 
 jest.mock("./components/Home/Home", () => {
   const MockHome = ({
-    activeTarget,
     onNavigate,
+    onNewAttack,
     onOpenAttack,
   }: {
-    activeTarget: unknown;
     onNavigate: (view: string) => void;
+    onNewAttack: () => void;
     onOpenAttack: (attackResultId: string) => void;
   }) => {
     return (
       <div data-testid="home-view">
-        <span data-testid="home-has-target">{activeTarget ? "yes" : "no"}</span>
+        <button onClick={onNewAttack} data-testid="home-new-attack">
+          New attack
+        </button>
         <button onClick={() => onNavigate("registry")} data-testid="home-go-config">
           Go to registry
         </button>
@@ -678,8 +706,9 @@ function RouterProbe() {
 
   return (
     <>
-      <output aria-label="Current URL">{location.pathname}</output>
+      <output aria-label="Current URL">{location.pathname}{location.search}{location.hash}</output>
       <button type="button" onClick={() => navigate(-1)}>Back</button>
+      <button type="button" onClick={() => navigate(1)}>Forward</button>
     </>
   );
 }
@@ -687,9 +716,11 @@ function RouterProbe() {
 describe("App", () => {
   // App reads the active view from the URL, so every render needs a router.
   // initialPath lets a test deep-link straight to a view.
-  function renderApp(initialPath = "/") {
+  function renderApp(initialPath: string = "/", navigationState?: Record<string, unknown>) {
     return render(
-      <MemoryRouter initialEntries={[initialPath]}>
+      <MemoryRouter initialEntries={navigationState === undefined
+        ? [initialPath]
+        : [{ ...parsePath(initialPath), state: navigationState }]}>
         <App />
       </MemoryRouter>
     );
@@ -708,7 +739,7 @@ describe("App", () => {
     window.localStorage.clear();
   });
 
-  it("continues detection after leaving Targets and keeps results and defaults when returning", async () => {
+  it("continues detection after leaving Targets and keeps results and remembered targets when returning", async () => {
     const user = userEvent.setup();
     let finishFirst!: (target: import("./types").TargetInstance) => void;
     let finishSecond!: (target: import("./types").TargetInstance) => void;
@@ -718,7 +749,7 @@ describe("App", () => {
       .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
       .mockImplementationOnce(() => new Promise((resolve) => { finishSecond = resolve; }));
     renderApp("/registry/targets");
-    await user.click(screen.getByRole("button", { name: "Set detection defaults" }));
+    await user.click(screen.getByRole("button", { name: "Set detection targets" }));
     expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("test_target");
     await user.click(screen.getByRole("button", { name: "Detect capabilities" }));
     expect(detect).toHaveBeenCalledTimes(1);
@@ -731,12 +762,14 @@ describe("App", () => {
     expect(detect).toHaveBeenCalledTimes(2);
     await act(async () => finishSecond(detect.mock.calls[1][0]));
     await user.click(screen.getByTestId("nav-config"));
-    expect(screen.getByLabelText("Objective multi-turn")).toHaveTextContent("false");
     expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("none");
     const results = JSON.parse(screen.getByLabelText("Detection results").textContent!);
     expect(results.test_target.state).toBe("Saved");
     expect(results.second_target.state).toBe("Saved");
     expect(detect).toHaveBeenCalledTimes(2);
+    await user.click(screen.getByTestId("nav-chat"));
+    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(screen.getByLabelText("Active target multi-turn")).toHaveTextContent("false");
   });
 
   it("opens Analytics and restores its fragment after inspecting a saved attack", async () => {
@@ -860,7 +893,7 @@ describe("App", () => {
   it("redirects legacy /targets to the target registry without adding a history entry", async () => {
     const user = userEvent.setup();
     render(
-      <MemoryRouter initialEntries={["/chat", "/targets"]}>
+      <MemoryRouter initialEntries={["/attack/chat", "/targets"]}>
         <App />
         <RouterProbe />
       </MemoryRouter>
@@ -876,7 +909,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Back", exact: true }));
 
     expect(await screen.findByTestId("chat-window")).toBeInTheDocument();
-    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/chat$/);
+    expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/attack\/chat$/);
   });
 
   it("renders presets and suites together as a registry section", () => {
@@ -912,7 +945,7 @@ describe("App", () => {
   });
 
   it("renders transient suite execution progress under the scanner", () => {
-    renderApp("/scanner/suites/executions/execution-1");
+    renderApp("/scanner/history/suites/executions/execution-1");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
@@ -933,7 +966,7 @@ describe("App", () => {
       created_at: "2026-10-20T18:00:00Z",
     });
 
-    renderApp("/scanner");
+    renderApp("/scanner/launch");
 
     const catalog = screen.getByTestId("scenario-catalog");
     await waitFor(() => {
@@ -993,15 +1026,15 @@ describe("App", () => {
     expect(screen.getByTestId("configuration")).toBeInTheDocument();
   });
 
-  it("renders the attack history tab when deep-linked to /history/attacks", () => {
-    renderApp("/history/attacks");
+  it("renders the attack history tab when deep-linked to /attack/history", () => {
+    renderApp("/attack/history");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "history"
+      "chat"
     );
-    expect(screen.getByRole("heading", { level: 1, name: "History" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Attacks" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { level: 1, name: "Attacks" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
   });
 
@@ -1041,7 +1074,7 @@ describe("App", () => {
   });
 
   it("renders the scenario catalog when deep-linked to /scanner", () => {
-    renderApp("/scanner");
+    renderApp("/scanner/launch");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
@@ -1051,7 +1084,7 @@ describe("App", () => {
   });
 
   it("renders the scenario detail view and marks the sidebar current when deep-linked to /scanner/:name", () => {
-    renderApp("/scanner/foundry.red_team_agent");
+    renderApp("/scanner/launch/foundry.red_team_agent");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
@@ -1060,60 +1093,37 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-detail")).toBeInTheDocument();
   });
 
-  it("renders the scanner run dashboard and keeps History current when deep-linked to /scanner-history/:id", () => {
-    renderApp("/scanner-history/sr-123");
+  it("renders the scanner run dashboard and keeps History current when deep-linked to /scanner/history/:id", () => {
+    renderApp("/scanner/history/sr-123");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "history"
+      "scenarios"
     );
     expect(screen.getByTestId("scenario-run-page")).toBeInTheDocument();
   });
 
   it("renders the scanner run dashboard for a direct attack detail link", () => {
-    renderApp("/scanner-history/sr-123/attack-456");
+    renderApp("/scanner/history/sr-123/attack-456");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "history"
+      "scenarios"
     );
     expect(screen.getByTestId("scenario-run-page")).toHaveAttribute(
       "data-location",
-      "/scanner-history/sr-123/attack-456"
-    );
-  });
-
-  it("redirects legacy scenario-history links to scanner-history", async () => {
-    renderApp("/scenario-history/sr-123");
-
-    expect(await screen.findByTestId("scenario-run-page")).toHaveAttribute(
-      "data-location",
-      "/scanner-history/sr-123"
-    );
-  });
-
-  it("redirects the legacy scanner history page and preserves its filters", async () => {
-    renderApp("/scenario-history?operator=alice");
-
-    expect(await screen.findByTestId("main-layout")).toHaveAttribute(
-      "data-current-view",
-      "history"
-    );
-    expect(screen.getByTestId("scenario-history")).toBeInTheDocument();
-    expect(screen.getByTestId("scenario-history")).toHaveAttribute(
-      "data-location",
-      "/history/scanner?operator=alice"
+      "/scanner/history/sr-123/attack-456"
     );
   });
 
   it("renders scanner history in its URL-backed history tab", () => {
-    renderApp("/history/scanner?operator=alice");
+    renderApp("/scanner/history?operator=alice");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "history"
+      "scenarios"
     );
-    expect(screen.getByRole("tab", { name: "Scanner" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("scenario-history")).toBeInTheDocument();
   });
 
@@ -1129,65 +1139,23 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
   });
 
-  it("carries the selected operation ID across history tabs", async () => {
-    const operationId = "6f1b2c3d-0000-4000-8000-000000000001";
-    renderApp(`/history/attacks?operation_id=${operationId}&outcome=success`);
-    fireEvent.click(screen.getByRole("tab", { name: "Scanner" }));
-    const scanner = await screen.findByTestId("scenario-history");
-    const url = new URL(scanner.getAttribute("data-location") ?? "", "http://localhost");
-    expect(url.pathname).toBe("/history/scanner");
-    expect(url.searchParams.getAll("operation_id")).toEqual([operationId]);
-    expect(url.searchParams.has("outcome")).toBe(false);
-    fireEvent.click(screen.getByRole("tab", { name: "Attacks" }));
-    const filters = JSON.parse((await screen.findByTestId("history-filters")).textContent ?? "{}");
-    expect(filters.operationId).toEqual([operationId]);
-    expect(filters.outcome).toBe("success");
-  });
-
-  it("switches between history tabs", async () => {
-    renderApp("/history/attacks");
-
-    fireEvent.click(screen.getByRole("tab", { name: "Scanner" }));
-
-    expect(await screen.findByTestId("scenario-history")).toHaveAttribute(
-      "data-location",
-      "/history/scanner"
-    );
-  });
-
-  it("clears the remembered operation while preserving each tab's other filters", async () => {
-    function HistoryNavigation() {
-      const navigate = useNavigate();
-      return <button onClick={() => navigate("/history/attacks?outcome=success")}>Clear operation via URL</button>;
-    }
-    render(
-      <MemoryRouter initialEntries={["/history/scanner?operation_id=old&operator=alice"]}>
-        <HistoryNavigation />
-        <App />
-      </MemoryRouter>,
-    );
-    await screen.findByTestId("scenario-history");
-    fireEvent.click(screen.getByRole("button", { name: "Clear operation via URL" }));
-    await screen.findByTestId("attack-history");
-    fireEvent.click(screen.getByRole("tab", { name: "Scanner" }));
-    const scanner = await screen.findByTestId("scenario-history");
-    const url = new URL(scanner.getAttribute("data-location") ?? "", "http://localhost");
-    expect(url.searchParams.has("operation_id")).toBe(false);
-    expect(url.searchParams.get("operator")).toBe("alice");
-    fireEvent.click(screen.getByRole("tab", { name: "Attacks" }));
-    expect(await screen.findByTestId("history-filters")).toHaveTextContent("success");
-    expect(screen.getByTestId("history-filters")).not.toHaveTextContent("alice");
+  it("keeps scanner launch and history in the same feature and restores its filters", async () => {
+    renderApp("/scanner/history?operator=alice");
+    fireEvent.click(screen.getByRole("tab", { name: "Launch" }));
+    expect(await screen.findByTestId("scenario-catalog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
+    expect(await screen.findByTestId("scenario-history")).toHaveAttribute("data-location", "/scanner/history?operator=alice");
   });
 
   it("passes the active target and labels to the scenario detail view", () => {
-    renderApp("/scanner/foundry.red_team_agent");
+    renderApp("/scanner/launch/foundry.red_team_agent");
 
     expect(screen.getByTestId("scenario-detail-has-target")).toHaveTextContent("no");
     expect(screen.getByTestId("scenario-detail-labels-json")).toHaveTextContent("operator");
   });
 
   it("navigates from scenario detail to the registry when it requests it", () => {
-    renderApp("/scanner/foundry.red_team_agent");
+    renderApp("/scanner/launch/foundry.red_team_agent");
 
     fireEvent.click(screen.getByTestId("scenario-detail-go-config"));
 
@@ -1198,14 +1166,52 @@ describe("App", () => {
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
-  it("redirects an unknown path back to home", () => {
-    renderApp("/does-not-exist");
-
-    expect(screen.getByTestId("main-layout")).toHaveAttribute(
-      "data-current-view",
-      "home"
+  it.each([
+    "/does-not-exist?from=link#details",
+    "/registry/does-not-exist",
+    "/scanner/does-not-exist",
+  ])("shows an explicit fallback without replacing %s", async (path: string) => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
     );
-    expect(screen.getByTestId("home-view")).toBeInTheDocument();
+
+    expect(await screen.findByRole("heading", { name: "Page not found", level: 1 })).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL").textContent).toBe(path);
+    expect(screen.queryByTestId("home-view")).not.toBeInTheDocument();
+    const home = screen.getByRole("link", { name: "Home", exact: true });
+    expect(home).toHaveAttribute("href", "/");
+    await user.click(home);
+    expect(await screen.findByTestId("home-view")).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL").textContent).toBe("/");
+    await user.click(screen.getByRole("button", { name: "Back", exact: true }));
+    expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Current URL").textContent).toBe(path);
+  });
+
+  it("keeps the last dataset view when an unknown dataset URL is visited", async () => {
+    const user = userEvent.setup();
+    const state = { catalogPath: "/datasets?filter=harmful", cursors: ["cur-1"] };
+    render(
+      <MemoryRouter initialEntries={[
+        { pathname: "/datasets", search: "?filter=harmful", state },
+        "/datasets/does-not-exist",
+      ]} initialIndex={0}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
+    );
+    expect(await screen.findByTestId("dataset-catalog")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Forward", exact: true }));
+    await screen.findByRole("heading", { name: "Page not found" });
+    await user.click(screen.getByRole("link", { name: "Home", exact: true }));
+    await screen.findByTestId("home-view");
+    await user.click(screen.getByRole("button", { name: "Datasets", exact: true }));
+    expect(await screen.findByTestId("dataset-location")).toHaveTextContent("/datasets?filter=harmful");
+    expect(screen.getByTestId("dataset-state")).toHaveTextContent(JSON.stringify(state));
   });
 
   it("switches to chat view", () => {
@@ -1276,7 +1282,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "branch-target-hash",
       },
     });
@@ -1285,7 +1291,7 @@ describe("App", () => {
       pagination: { limit: 200, has_more: false, next_cursor: null },
     });
 
-    renderApp("/attacks/ar-source");
+    renderApp("/attack/chat/ar-source");
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("branch-target")
     );
@@ -1304,11 +1310,11 @@ describe("App", () => {
     fireEvent.click(screen.getByTestId("set-conversation"));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-123");
 
-    fireEvent.click(screen.getByTestId("new-attack"));
+    fireEvent.click(screen.getByRole("button", { name: "New attack", exact: true }));
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("none");
   });
 
-  it("sets an active target from the registry and passes it to chat", () => {
+  it("uses a remembered target when starting the next chat", () => {
     renderApp();
 
     // Switch to chat and confirm no target initially
@@ -1331,13 +1337,13 @@ describe("App", () => {
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
-      "history"
+      "chat"
     );
     expect(screen.getByTestId("attack-history")).toBeInTheDocument();
   });
 
   it("navigates from empty history to the registry when no target is active", () => {
-    renderApp("/history/attacks");
+    renderApp("/attack/history");
 
     expect(screen.getByTestId("history-has-target")).toHaveTextContent("no");
     fireEvent.click(screen.getByTestId("history-configure-target"));
@@ -1405,6 +1411,20 @@ describe("App", () => {
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
   });
 
+  it("returns to the unsent draft through navigation but resets it through Home New attack", async () => {
+    const user = userEvent.setup();
+    renderApp("/attack/chat");
+    await user.click(await screen.findByTestId("preserve-draft"));
+    await user.click(screen.getByTestId("nav-home"));
+    await screen.findByTestId("home-view");
+    await user.click(screen.getByTestId("nav-chat"));
+    expect(await screen.findByTestId("preserved-draft-text")).toHaveTextContent("preserved prompt draft");
+    await user.click(screen.getByTestId("nav-home"));
+    await user.click(await screen.findByTestId("home-new-attack"));
+    expect(await screen.findByTestId("preserved-draft-text")).toHaveTextContent("none");
+    expect(screen.getByTestId("attack-result-id")).toHaveTextContent("none");
+  });
+
   it("shows the not-found UX when an attack returns 404", async () => {
     mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status: 404, data: {} } });
     renderApp();
@@ -1422,19 +1442,63 @@ describe("App", () => {
 
   it.each([404, 503])("distinguishes evidence-origin attack load status %s", async (status: number) => {
     mockGetAttack.mockRejectedValue({ isAxiosError: true, response: { status, data: {} } });
-    renderApp("/attacks/owner/conversations/source?findingEvidenceId=123e4567-e89b-12d3-a456-426614174000");
+    renderApp("/attack/chat/owner/conversations/source?findingEvidenceId=123e4567-e89b-12d3-a456-426614174000");
     expect(await screen.findByText(status === 404 ? "Evidence unavailable" : "Could not load attack")).toBeInTheDocument();
     expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
   });
 
-  it("never redirects a missing evidence conversation to the attack main conversation", async () => {
+  it.each(["/attack/chat", "/attacks"])(
+    "never redirects a missing evidence conversation to the attack main conversation from %s",
+    async (routePrefix: string) => {
+      mockGetAttack.mockResolvedValue({
+        attack_result_id: "owner", conversation_id: "main", related_conversation_ids: [],
+        labels: {}, objective: "", outcome: "undetermined",
+        related_conversation_count: 0, selected_conversation_id: "source", selected_conversation_valid: false,
+      });
+      renderApp(`${routePrefix}/owner/conversations/source?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&findingEvidenceId=123e4567-e89b-12d3-a456-426614174000`);
+      expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
+      expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    { attackId: "legacy-attack", conversationId: undefined },
+    { attackId: "legacy/attack", conversationId: "source/conversation" },
+  ])("redirects legacy attack links and preserves encoded IDs, URL state, and history", async ({ attackId, conversationId }) => {
+    const scenarioResultId = "123e4567-e89b-12d3-a456-426614174000";
+    const suffix = conversationId ? `/conversations/${encodeURIComponent(conversationId)}` : "";
+    const queryAndHash = `?scenarioResultId=${scenarioResultId}&tab=messages#evidence`;
+    const legacyUrl = `/attacks/${encodeURIComponent(attackId)}${suffix}${queryAndHash}`;
+    const canonicalUrl = `/attack/chat/${encodeURIComponent(attackId)}${suffix}${queryAndHash}`;
     mockGetAttack.mockResolvedValue({
-      attack_result_id: "owner", conversation_id: "main", related_conversation_ids: [],
-      labels: {}, objective: "", outcome: "undetermined",
+      attack_result_id: attackId,
+      conversation_id: "main-conversation",
+      related_conversation_count: conversationId ? 1 : 0,
+      selected_conversation_id: conversationId ?? "main-conversation",
+      selected_conversation_valid: true,
+      labels: {},
+      objective: "",
+      outcome: "undetermined",
     });
-    renderApp("/attacks/owner/conversations/source?findingEvidenceId=123e4567-e89b-12d3-a456-426614174000");
-    expect(await screen.findByText("Evidence unavailable")).toBeInTheDocument();
-    expect(screen.queryByTestId("chat-window")).not.toBeInTheDocument();
+
+    render(
+      <MemoryRouter initialEntries={["/attack/history", legacyUrl]}>
+        <App />
+        <RouterProbe />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith(
+      ...(conversationId ? [attackId, conversationId] : [attackId]),
+    ));
+    await waitFor(() => expect(screen.getByLabelText("Current URL")).toHaveTextContent(canonicalUrl));
+    expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
+    if (conversationId) {
+      expect(screen.getByTestId("active-conversation-id")).toHaveTextContent(conversationId);
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(screen.getByLabelText("Current URL")).toHaveTextContent("/attack/history"));
   });
 
   it("shows the error UX (not not-found) when an attack load fails with a non-404", async () => {
@@ -1502,6 +1566,37 @@ describe("App", () => {
     );
     expect(screen.getByTestId("conversation-id")).toHaveTextContent("attack-conv-2");
     expect(screen.getByTestId("draft-conversation-id")).toHaveTextContent("attack-conv-2");
+  });
+
+  it("reloads the previous attack when returning before another metadata request finishes", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<AttackMetadata>();
+    const metadata: AttackMetadata = {
+      attack_result_id: "ar-attack-1", conversation_id: "first-main", objective: "", labels: {},
+      execution_read_only: true, related_conversation_count: 0, last_response_message_piece_id: null,
+      selected_conversation_id: "first-main", selected_conversation_valid: true,
+    };
+    mockGetAttack.mockImplementation((id: string) => (
+      id === "ar-attack-2" ? pending.promise : Promise.resolve(metadata)
+    ));
+    function DirectAttackNavigation() {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate("/attacks/ar-attack-2")}>Open next attack directly</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/attacks/ar-attack-1"]}>
+        <App /><RouterProbe /><DirectAttackNavigation />
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main"));
+    await user.click(screen.getByRole("button", { name: "Open next attack directly" }));
+    await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-attack-2"));
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("none");
+    await user.click(screen.getByRole("button", { name: "Back", exact: true }));
+    await waitFor(() => expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main"));
+    expect(mockGetAttack.mock.calls.filter((call: unknown[]) => call[0] === "ar-attack-1")).toHaveLength(2);
+    await act(async () => { pending.resolve({ ...metadata, attack_result_id: "ar-attack-2", conversation_id: "other-main" }); });
+    expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("first-main");
   });
 
   it("merges default labels from backend version API", async () => {
@@ -1603,7 +1698,7 @@ describe("App", () => {
   it("keeps sends locked until navigation to a created attack commits", async () => {
     const user = userEvent.setup();
     render(
-      <MemoryRouter initialEntries={["/chat"]}>
+      <MemoryRouter initialEntries={["/attack/chat"]}>
         <Suspense fallback={<div>Loading route</div>}>
           <App />
         </Suspense>
@@ -1614,14 +1709,14 @@ describe("App", () => {
     mockCreatedAttackRender = new Promise<void>((resolve) => { finishRender = resolve; });
     await user.click(screen.getByRole("button", { name: "Set Conv" }));
 
-    expect(screen.getByTestId("route-location")).toHaveTextContent("/chat");
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/attack/chat");
     expect(screen.getByRole("button", { name: "Set Conv" })).toBeDisabled();
 
     await act(async () => {
       mockCreatedAttackRender = null;
       finishRender();
     });
-    expect(screen.getByTestId("route-location").textContent).toBe("/attacks/ar-123/conversations/conv-123");
+    expect(screen.getByTestId("route-location").textContent).toBe("/attack/chat/ar-123/conversations/conv-123");
     expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-123");
     expect(screen.getByRole("button", { name: "Set Conv" })).toBeEnabled();
     expect(mockGetAttack).not.toHaveBeenCalled();
@@ -1654,7 +1749,7 @@ describe("App", () => {
     // The component re-renders with the new conversation ID
   });
 
-  it("hydrates attack state when deep-linked to /attacks/:attackId", async () => {
+  it("hydrates attack state when deep-linked to /attack/chat/:attackId", async () => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
@@ -1663,7 +1758,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
     });
-    renderApp("/attacks/ar-1");
+    renderApp("/attack/chat/ar-1");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "chat");
     await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-1"));
@@ -1684,7 +1779,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
     });
-    renderApp("/attacks/ar-1");
+    renderApp("/attack/chat/ar-1");
 
     await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("ar-1"));
     await waitFor(() =>
@@ -1702,20 +1797,20 @@ describe("App", () => {
       related_conversation_ids: [],
     });
 
-    renderApp(`/attacks/ar-1?scenarioResultId=${scenarioResultId}`);
+    renderApp(`/attack/chat/ar-1?scenarioResultId=${scenarioResultId}`);
 
     await waitFor(() =>
       expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId)
     );
     expect(screen.getByTestId("route-location")).toHaveTextContent(
-      `/attacks/ar-1?scenarioResultId=${scenarioResultId}`
+      `/attack/chat/ar-1?scenarioResultId=${scenarioResultId}`
     );
   });
 
   it.each([
-    "/attacks/ar-1?scenarioResultId=run-1",
-    "/attacks/ar-1?scenarioResultId=https%3A%2F%2Fevil.example",
-    "/attacks/ar-1?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&scenarioResultId=123e4567-e89b-12d3-a456-426614174000",
+    "/attack/chat/ar-1?scenarioResultId=run-1",
+    "/attack/chat/ar-1?scenarioResultId=https%3A%2F%2Fevil.example",
+    "/attack/chat/ar-1?scenarioResultId=123e4567-e89b-12d3-a456-426614174000&scenarioResultId=123e4567-e89b-12d3-a456-426614174000",
   ])("ignores unsafe or ambiguous scenario provenance on %s", async (path: string) => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",
@@ -1740,20 +1835,25 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: ["conv-456"],
     });
-    renderApp(`/attacks/ar-1?scenarioResultId=${scenarioResultId}`);
+    const returnContext = { suiteExecutionId: "suite-1", suiteName: "Saved suite" };
+    renderApp(`/attack/chat/ar-1?scenarioResultId=${scenarioResultId}`, returnContext);
     await waitFor(() =>
       expect(screen.getByTestId("conversation-id")).toHaveTextContent("conv-main")
     );
 
     fireEvent.click(screen.getByTestId("select-conversation"));
     expect(screen.getByTestId("route-location")).toHaveTextContent(
-      `/attacks/ar-1/conversations/conv-456?scenarioResultId=${scenarioResultId}`
+      `/attack/chat/ar-1/conversations/conv-456?scenarioResultId=${scenarioResultId}`
     );
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
+    expect(screen.getByTestId("route-location"))
+      .toHaveAttribute("data-navigation-state", JSON.stringify(returnContext));
 
-    fireEvent.click(screen.getByTestId("new-attack"));
-    expect(screen.getByTestId("route-location")).toHaveTextContent("/chat");
+    fireEvent.click(screen.getByRole("button", { name: "New attack", exact: true }));
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/attack/chat");
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent("none");
+    expect(JSON.parse(screen.getByTestId("route-location").getAttribute("data-navigation-state") ?? "null"))
+      .toEqual({ newAttackRequestId: expect.any(String) });
   });
 
   it("uses the conversation from a deep link when it belongs to the attack", async () => {
@@ -1761,20 +1861,22 @@ describe("App", () => {
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       labels: {},
-      related_conversation_ids: ["conv-related"],
-      related_conversations: [
-        {
-          conversation_id: "conv-related",
-          conversation_type: "pruned",
-          description: "Previous main conversation",
-        },
-      ],
+      related_conversation_count: 700,
+      selected_conversation_id: "conv-related",
+      selected_conversation_valid: true,
+      execution_read_only: true,
+      last_response_message_piece_id: "last-response",
     });
-    renderApp("/attacks/ar-1/conversations/conv-related");
+    renderApp("/attack/chat/ar-1/conversations/conv-related");
 
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-related")
     );
+    expect(mockGetAttack).toHaveBeenCalledWith("ar-1", "conv-related");
+    expect(screen.getByTestId("related-conversation-count")).toHaveTextContent("700");
+    expect(screen.getByTestId("execution-read-only")).toHaveTextContent("true");
+    expect(screen.getByTestId("last-response-id")).toHaveTextContent("last-response");
+    expect(attacksApi.getAttack).not.toHaveBeenCalled();
   });
 
   it("falls back to the main conversation when the deep-linked conversation is unknown", async () => {
@@ -1782,9 +1884,11 @@ describe("App", () => {
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       labels: {},
-      related_conversation_ids: ["conv-related"],
+      related_conversation_count: 1,
+      selected_conversation_id: "bogus",
+      selected_conversation_valid: false,
     });
-    renderApp("/attacks/ar-1/conversations/bogus");
+    renderApp("/attack/chat/ar-1/conversations/bogus");
 
     // The unknown conversation segment is stripped and we fall back to main.
     await waitFor(() =>
@@ -1792,25 +1896,22 @@ describe("App", () => {
     );
   });
 
-  it("does not activate a preparation conversation from a deep link", async () => {
+  it.each(["preparation", "adversarial"])("does not activate a %s conversation from a deep link", async (kind: string) => {
     mockGetAttack.mockResolvedValue({
       attack_result_id: "ar-1",
       conversation_id: "conv-main",
       labels: {},
-      related_conversation_ids: ["conv-preparation"],
-      related_conversations: [
-        {
-          conversation_id: "conv-preparation",
-          conversation_type: "preparation",
-          description: "Simulated preparation",
-        },
-      ],
+      related_conversation_count: 0,
+      selected_conversation_id: `conv-${kind}`,
+      selected_conversation_valid: false,
     });
-    renderApp("/attacks/ar-1/conversations/conv-preparation");
+    renderApp(`/attack/chat/ar-1/conversations/conv-${kind}`);
 
     await waitFor(() =>
       expect(screen.getByTestId("active-conversation-id")).toHaveTextContent("conv-main")
     );
+    expect(mockGetAttack).toHaveBeenCalledWith("ar-1", `conv-${kind}`);
+    expect(attacksApi.getAttack).not.toHaveBeenCalled();
   });
 
   it("retains validated provenance while canonicalizing an unknown conversation route", async () => {
@@ -1820,29 +1921,37 @@ describe("App", () => {
       conversation_id: "conv-main",
       labels: {},
       related_conversation_ids: [],
+      related_conversation_count: 0,
+      selected_conversation_id: "bogus",
+      selected_conversation_valid: false,
     });
-    renderApp(`/attacks/ar-1/conversations/bogus?scenarioResultId=${scenarioResultId}`);
+    const returnContext = { fromScenarioHistory: true, scenarioHistorySearch: "?status=COMPLETED" };
+    renderApp(`/attack/chat/ar-1/conversations/bogus?scenarioResultId=${scenarioResultId}`, returnContext);
 
     await waitFor(() =>
       expect(screen.getByTestId("route-location")).toHaveTextContent(
-        `/attacks/ar-1?scenarioResultId=${scenarioResultId}`
+        `/attack/chat/ar-1?scenarioResultId=${scenarioResultId}`
       )
     );
     expect(screen.getByTestId("scenario-result-id")).toHaveTextContent(scenarioResultId);
+    expect(screen.getByTestId("route-location"))
+      .toHaveAttribute("data-navigation-state", JSON.stringify(returnContext));
   });
 
   it("hydrates history filters from the URL query string", () => {
-    renderApp("/history?outcome=success&attackType=PromptSendingAttack");
+    renderApp("/attack/history?outcome=success&operator=alice&attackType=PromptSendingAttack&converter=Base64Converter");
 
     const filters = JSON.parse(
       screen.getByTestId("history-filters").textContent ?? "{}"
     );
     expect(filters.outcome).toBe("success");
-    expect(filters.attackTypes).toEqual(["PromptSendingAttack"]);
+    expect(filters.operator).toEqual(["alice"]);
+    expect(filters).not.toHaveProperty("attackTypes");
+    expect(filters).not.toHaveProperty("converter");
   });
 
   it("writes filter changes into the URL", () => {
-    renderApp("/history/attacks");
+    renderApp("/attack/history");
 
     expect(
       JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
@@ -1856,18 +1965,18 @@ describe("App", () => {
     ).toBe("success");
   });
 
-  it("restores history filters when returning via the nav button", () => {
-    renderApp("/history?outcome=success");
+  it("restores history filters when returning via the feature tab", () => {
+    renderApp("/attack/history?outcome=success");
 
     expect(
       JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
     ).toBe("success");
 
-    // Leave history for another view, then come back via the nav button.
     fireEvent.click(screen.getByTestId("nav-config"));
     expect(screen.getByTestId("target-config")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("nav-history"));
+    fireEvent.click(screen.getByTestId("nav-chat"));
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
     expect(
       JSON.parse(screen.getByTestId("history-filters").textContent ?? "{}").outcome
     ).toBe("success");
@@ -1910,7 +2019,7 @@ describe("App", () => {
         pagination: { limit: 200, has_more: false, next_cursor: null },
       });
 
-    renderApp("/attacks/ar-direct");
+    renderApp("/attack/chat/ar-direct");
 
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("exact-target")
@@ -1931,14 +2040,14 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "persisted-alias",
         identifier_hash: "persisted-alias-hash",
       },
     });
     mockGetTarget.mockResolvedValue(exactTarget);
 
-    renderApp("/attacks/ar-named");
+    renderApp("/attack/chat/ar-named");
 
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("persisted-alias")
@@ -1963,7 +2072,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "reused-alias",
         identifier_hash: "original-hash",
       },
@@ -1974,7 +2083,7 @@ describe("App", () => {
       pagination: { limit: 200, has_more: false, next_cursor: null },
     });
 
-    renderApp("/attacks/ar-reused-alias");
+    renderApp("/attack/chat/ar-reused-alias");
 
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("renamed-target")
@@ -1994,7 +2103,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "removed-alias",
         identifier_hash: "original-hash",
       },
@@ -2004,7 +2113,7 @@ describe("App", () => {
       pagination: { limit: 200, has_more: false, next_cursor: null },
     });
 
-    renderApp("/attacks/ar-removed-alias");
+    renderApp("/attack/chat/ar-removed-alias");
 
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("renamed-target")
@@ -2024,7 +2133,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "catalog",
         identifier_hash: "catalog-target-hash",
       },
@@ -2035,7 +2144,7 @@ describe("App", () => {
       pagination: { limit: 200, has_more: false, next_cursor: null },
     });
 
-    renderApp("/attacks/ar-catalog-alias");
+    renderApp("/attack/chat/ar-catalog-alias");
 
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("catalog")
@@ -2055,7 +2164,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "persisted-alias",
         identifier_hash: "persisted-alias-hash",
       },
@@ -2065,7 +2174,7 @@ describe("App", () => {
       .mockResolvedValueOnce(exactTarget);
     const user = userEvent.setup();
 
-    renderApp("/attacks/ar-named-error");
+    renderApp("/attack/chat/ar-named-error");
 
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
@@ -2089,7 +2198,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "pagination-hash",
       },
     });
@@ -2103,7 +2212,7 @@ describe("App", () => {
         pagination: { limit: 200, has_more: true, next_cursor: "same-cursor" },
       });
 
-    renderApp("/attacks/ar-stalled-pagination");
+    renderApp("/attack/chat/ar-stalled-pagination");
 
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
@@ -2122,7 +2231,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "remount-hash",
       },
     });
@@ -2131,13 +2240,13 @@ describe("App", () => {
       pagination: { limit: 200, has_more: false, next_cursor: null },
     });
 
-    const firstRender = renderApp("/attacks/ar-remount");
+    const firstRender = renderApp("/attack/chat/ar-remount");
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("remounted-target")
     );
     firstRender.unmount();
 
-    renderApp("/attacks/ar-remount");
+    renderApp("/attack/chat/ar-remount");
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("remounted-target")
     );
@@ -2155,7 +2264,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "removed-hash",
       },
     });
@@ -2169,13 +2278,13 @@ describe("App", () => {
         pagination: { limit: 200, has_more: false, next_cursor: null },
       });
 
-    const firstRender = renderApp("/attacks/ar-removed");
+    const firstRender = renderApp("/attack/chat/ar-removed");
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("removed-target")
     );
     firstRender.unmount();
 
-    renderApp("/attacks/ar-removed");
+    renderApp("/attack/chat/ar-removed");
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("unavailable")
     );
@@ -2195,7 +2304,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "revisited-hash",
       },
     };
@@ -2217,7 +2326,7 @@ describe("App", () => {
         })
       );
     const user = userEvent.setup();
-    renderApp("/attacks/ar-attack-1");
+    renderApp("/attack/chat/ar-attack-1");
 
     await waitFor(() =>
       expect(screen.getByTestId("active-target-name")).toHaveTextContent("revisited-target")
@@ -2271,7 +2380,7 @@ describe("App", () => {
       pagination: { limit: 200, has_more: false, next_cursor: null },
     });
 
-    renderApp("/attacks/ar-near");
+    renderApp("/attack/chat/ar-near");
 
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("unavailable")
@@ -2286,7 +2395,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "duplicate-hash",
       },
     });
@@ -2304,7 +2413,7 @@ describe("App", () => {
       pagination: { limit: 200, has_more: false, next_cursor: null },
     });
 
-    renderApp("/attacks/ar-ambiguous");
+    renderApp("/attack/chat/ar-ambiguous");
 
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("ambiguous")
@@ -2327,7 +2436,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "other-target-hash",
       },
     });
@@ -2343,7 +2452,7 @@ describe("App", () => {
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("resolved")
     );
     expect(screen.getByTestId("active-target-name")).toHaveTextContent("history-target");
-    await user.click(screen.getByTestId("new-attack"));
+    await user.click(screen.getByRole("button", { name: "New attack", exact: true }));
     expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
     await user.click(screen.getByTestId("nav-config"));
     expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
@@ -2431,7 +2540,7 @@ describe("App", () => {
         labels: {},
         related_conversation_ids: [],
         target: {
-          target_type: "TextTarget",
+          target_type: "OpenAIChatTarget",
           identifier_hash: "retry-hash",
         },
       });
@@ -2442,7 +2551,7 @@ describe("App", () => {
           pagination: { limit: 200, has_more: false, next_cursor: null },
         });
       const user = userEvent.setup();
-      renderApp("/attacks/ar-retry");
+      renderApp("/attack/chat/ar-retry");
 
       await waitFor(() =>
         expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("error")
@@ -2466,7 +2575,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: `${attackId}-hash`,
       },
     }));
@@ -2486,7 +2595,7 @@ describe("App", () => {
         pagination: { limit: 200, has_more: false, next_cursor: null },
       });
     const user = userEvent.setup();
-    renderApp("/history/attacks");
+    renderApp("/attack/history");
 
     await user.click(screen.getByTestId("open-attack"));
     await waitFor(() =>
@@ -2522,7 +2631,7 @@ describe("App", () => {
       target: null,
     });
 
-    renderApp("/attacks/ar-legacy");
+    renderApp("/attack/chat/ar-legacy");
 
     await waitFor(() =>
       expect(screen.getByTestId("target-resolution-status")).toHaveTextContent("legacy")
@@ -2533,7 +2642,7 @@ describe("App", () => {
 
   it("preserves unsaved chat draft across navigation to datasets and back", async () => {
     const user = userEvent.setup();
-    renderApp("/chat");
+    renderApp("/attack/chat");
 
     await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
     expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("none");
@@ -2565,10 +2674,10 @@ describe("App", () => {
     });
 
     const user = userEvent.setup();
-    renderApp("/attacks/ar-nav-1/conversations/conv-nav-1");
+    renderApp("/attack/chat/ar-nav-1/conversations/conv-nav-1");
 
     await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
-    expect(screen.getByTestId("route-location")).toHaveTextContent("/attacks/ar-nav-1/conversations/conv-nav-1");
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/attack/chat/ar-nav-1/conversations/conv-nav-1");
 
     // Preserve draft from persisted attack conversation
     await user.click(screen.getByTestId("preserve-draft"));
@@ -2587,7 +2696,7 @@ describe("App", () => {
     // Navigate back to Chat - should return to originating attack conversation
     await user.click(screen.getByTestId("nav-chat"));
     await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
-    expect(screen.getByTestId("route-location")).toHaveTextContent("/attacks/ar-nav-1/conversations/conv-nav-1");
+    expect(screen.getByTestId("route-location")).toHaveTextContent("/attack/chat/ar-nav-1/conversations/conv-nav-1");
 
     // Navigate back to Datasets - should restore exact filtered location and state
     await user.click(screen.getByTestId("nav-datasets"));
@@ -2598,7 +2707,7 @@ describe("App", () => {
 
   it("clearing draft text stays cleared after another round trip to datasets", async () => {
     const user = userEvent.setup();
-    renderApp("/chat");
+    renderApp("/attack/chat");
 
     await waitFor(() => expect(screen.getByTestId("chat-window")).toBeInTheDocument());
     expect(screen.getByTestId("preserved-draft-text")).toHaveTextContent("none");

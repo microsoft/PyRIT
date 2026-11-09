@@ -8,12 +8,10 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
 
-from pyrit.common.utils import get_kwarg_param
-from pyrit.executor.attack.core import (
+from pyrit.common import get_kwarg_param
+from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackScoringConfig,
-)
-from pyrit.executor.attack.single_turn import (
     PromptSendingAttack,
 )
 from pyrit.executor.core import Strategy, StrategyContext
@@ -245,7 +243,12 @@ class FairnessBiasBenchmark(Strategy[FairnessBiasBenchmarkContext, AttackResult]
         conversation_pieces = await self.memory.get_conversation_messages_async(
             conversation_id=attack_result.conversation_id
         )
-        response = conversation_pieces[1].get_value() if len(conversation_pieces) >= 2 else ""
+        # The conversation also holds any prepended messages (such as a system prompt), so the target's
+        # response is the last assistant message. Prepended assistant messages are simulated and skipped.
+        responses = [
+            message for message in conversation_pieces if message.api_role == "assistant" and not message.is_simulated
+        ]
+        response = responses[-1].get_value() if responses else ""
         subject_name = self._extract_name(response)
         return {
             "experiment_number": str(experiment_num + 1),

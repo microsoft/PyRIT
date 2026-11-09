@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
 
 import {
@@ -19,6 +19,7 @@ import {
 import CreateConverterDialog from '@/components/Registry/CreateConverterDialog'
 import SelectConverterInput from '@/components/Converters/SelectConverterInput'
 import ConverterCard from '@/components/Converters/ConverterCard'
+import SaveConverterDialog from '@/components/Converters/SaveConverterDialog'
 import { useRuntime } from '@/hooks/useRuntime'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -169,12 +170,24 @@ export default function ConverterPanel({
   const [activeTab, setActiveTab] = useState('text')
   const {
     inputs, workingInputs, pipelines, stageResults, results, errors, isConverting,
-    addConverter, setPipeline, retainConverters,
+    addConverter, setPipeline, replaceTemporaryConverter, retainConverters,
   } = controller
   const isBatch = selectedMessageCount !== undefined && selectedMessageCount > 1
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [saving, setSaving] = useState<{
+    stage: ConverterPipelineStage
+    pieceType: string
+    converterType: string
+    source: SourceInstanceSpec
+    generation: string
+  } | null>(null)
+  const currentGeneration = useRef<string | null>(generation)
+  useLayoutEffect(() => {
+    currentGeneration.current = generation
+    return () => { currentGeneration.current = null }
+  }, [generation])
   const [settings, setSettings] = useState<{
     stageId: string
     pieceType: string
@@ -184,6 +197,7 @@ export default function ConverterPanel({
   if (settingsGeneration !== generation) {
     setSettingsGeneration(generation)
     setSettings(null)
+    setSaving(null)
   }
   const discardTemporarySettings = controller.discardTemporarySettings
   useEffect(() => () => discardTemporarySettings?.(), [discardTemporarySettings])
@@ -281,7 +295,7 @@ export default function ConverterPanel({
   // Offer converters that accept whatever the pipeline currently emits, so a
   // chain can legally continue past a converter that changes the data type.
   const lastSelectedConverter = selectedConverters[selectedConverters.length - 1]
-  const nextInputType = lastSelectedConverter?.identifier.supported_output_types?.[0] ?? activeDataType
+  const nextInputType: string = lastSelectedConverter?.identifier.supported_output_types?.[0] ?? activeDataType ?? ''
 
   const filteredConverters = converters.filter((converter: ConverterInstance) => {
     const supported = converter.identifier.supported_input_types ?? []
@@ -318,7 +332,9 @@ export default function ConverterPanel({
     setPipeline(effectiveActiveTab, (stages: ConverterPipelineStage[]) => {
       const nextPipeline = [...stages]
       const [movedConverter] = nextPipeline.splice(sourceIndex, 1)
-      nextPipeline.splice(targetIndex, 0, movedConverter)
+      if (movedConverter) {
+        nextPipeline.splice(targetIndex, 0, movedConverter)
+      }
       return nextPipeline
     })
   }, [setPipeline, effectiveActiveTab, selectedStages.length])
@@ -508,6 +524,13 @@ export default function ConverterPanel({
                     onReset={() => setPipeline(effectiveActiveTab, (stages) => stages.map((stage) =>
                       stage.id === converter.stageId ? { id: stage.id, converterId: stage.converterId } : stage,
                     ))}
+                    onSave={() => {
+                      const stage = selectedStages[index]
+                      if (stage?.temporary) setSaving({
+                        stage, pieceType: effectiveActiveTab, converterType: converter.identifier.class_name,
+                        source: stage.temporary, generation,
+                      })
+                    }}
                   >
                     {!isBatch && activeInputs.map((input: ConverterInputPiece) => {
                       const stage = stageResults[input.id]?.find(
@@ -568,8 +591,8 @@ export default function ConverterPanel({
                       />
                       <ValuePreview
                         label="Converted message"
-                        dataType={results[input.id].converted_value_data_type}
-                        value={results[input.id].converted_value}
+                        dataType={results[input.id]?.converted_value_data_type ?? 'text'}
+                        value={results[input.id]?.converted_value}
                         emptyText="This conversion returned an empty value."
                         testId="converter-final-result"
                       />
@@ -590,8 +613,15 @@ export default function ConverterPanel({
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
         onCreated={(converterId: string, isCurrentOpening: boolean) => {
-          if (isCurrentOpening) setCreateDialogOpen(false)
-          void loadConverters(converterId, effectiveActiveTab)
+          if (isCurrentOpening) {
+            setCreateDialogOpen(false)
+            void loadConverters(converterId, effectiveActiveTab)
+            return
+          }
+          // A dismissed creation may still finish on the server. Refresh the
+          // registry so the converter is available, but do not mutate the
+          // pipeline the user chose after dismissing the dialog.
+          void loadConverters()
         }}
       />
       {settings && <CreateConverterDialog
@@ -604,6 +634,19 @@ export default function ConverterPanel({
             stage.id === settings.stageId ? { ...stage, temporary: spec, identifier } : stage,
           ))
           setSettings(null)
+        }}
+      />}
+      {saving && <SaveConverterDialog
+        converterType={saving.converterType} source={saving.source}
+        onClose={() => setSaving(null)}
+        onSaved={(converter: ConverterInstance, isCurrentOpening: boolean) => {
+          if (currentGeneration.current !== saving.generation) return
+          setConverters((current: ConverterInstance[]) => [
+            ...current.filter((entry: ConverterInstance) => entry.converter_id !== converter.converter_id), converter,
+          ])
+          if (!isCurrentOpening) return
+          replaceTemporaryConverter(saving.pieceType, saving.stage.id, saving.source, converter)
+          setSaving(null)
         }}
       />}
     </div>

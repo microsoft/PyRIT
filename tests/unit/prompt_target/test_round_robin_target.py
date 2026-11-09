@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+
 import pytest
 from unit.mocks import MockPromptTarget
 
@@ -198,7 +199,7 @@ def test_init_rejects_mismatched_modalities():
 
 @pytest.mark.usefixtures("patch_central_database")
 def test_init_rejects_mismatched_policy():
-    from pyrit.prompt_target.common.target_capabilities import (
+    from pyrit.prompt_target import (
         CapabilityHandlingPolicy,
         CapabilityName,
         UnsupportedCapabilityBehavior,
@@ -553,3 +554,386 @@ def test_init_uses_model_name_fallback_for_underlying_model():
 
     # Both resolve to "gpt-4o" — should not raise
     _validate_behavioral_consistency([t1, t2])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_init_rejects_mismatched_normalizer_templates():
+    from pyrit.message_normalizer import JsonSchemaNormalizer
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
+
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    t1 = MockPromptTarget()
+    t2 = MockPromptTarget()
+    t1._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(schema_instructions_template="[WRAPPER_A]\n{schema_json}")
+        },
+    )
+    t2._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(schema_instructions_template="[WRAPPER_B]\n{schema_json}")
+        },
+    )
+
+    with pytest.raises(ValueError, match="identical configurations"):
+        RoundRobinTarget(targets=[t1, t2])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_init_accepts_identical_custom_normalizer_templates():
+    from pyrit.message_normalizer import JsonSchemaNormalizer
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
+
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    template = "[CUSTOM_SCHEMA]\n{schema_json}"
+    t1 = MockPromptTarget()
+    t2 = MockPromptTarget()
+    t1._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(schema_instructions_template=template)},
+    )
+    t2._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={CapabilityName.JSON_SCHEMA: JsonSchemaNormalizer(schema_instructions_template=template)},
+    )
+
+    rr = RoundRobinTarget(targets=[t1, t2])
+    assert rr.configuration.as_identifier_params() == t1.configuration.as_identifier_params()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_init_rejects_custom_identifiable_normalizers_with_mismatched_params():
+    from pyrit.message_normalizer import MessageListNormalizer
+    from pyrit.models import ComponentIdentifier, Identifiable
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
+
+    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    t1 = MockPromptTarget()
+    t2 = MockPromptTarget()
+    t1._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={CapabilityName.JSON_SCHEMA: CustomPrefixNormalizer(prefix="[A]")},
+    )
+    t2._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={CapabilityName.JSON_SCHEMA: CustomPrefixNormalizer(prefix="[B]")},
+    )
+
+    with pytest.raises(ValueError, match="identical configurations"):
+        RoundRobinTarget(targets=[t1, t2])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_init_accepts_custom_identifiable_normalizers_with_matching_params():
+    from pyrit.message_normalizer import MessageListNormalizer
+    from pyrit.models import ComponentIdentifier, Identifiable
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
+
+    class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    t1 = MockPromptTarget()
+    t2 = MockPromptTarget()
+    t1._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={CapabilityName.JSON_SCHEMA: CustomPrefixNormalizer(prefix="[MATCH]")},
+    )
+    t2._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={CapabilityName.JSON_SCHEMA: CustomPrefixNormalizer(prefix="[MATCH]")},
+    )
+
+    rr = RoundRobinTarget(targets=[t1, t2])
+    assert rr.configuration.as_identifier_params() == t1.configuration.as_identifier_params()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_init_rejects_delegating_normalizers_with_mismatched_child_params():
+    from pyrit.message_normalizer import MessageListNormalizer
+    from pyrit.models import ComponentIdentifier, Identifiable
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
+
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
+            self.normalizer = normalizer
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(
+                self,
+                children={"normalizer": self.normalizer.get_identifier()},
+            )
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return await self.normalizer.normalize_async(messages)
+
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    t1 = MockPromptTarget()
+    t2 = MockPromptTarget()
+    t1._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: CustomWrapperNormalizer(CustomPrefixNormalizer(prefix="[A]"))
+        },
+    )
+    t2._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: CustomWrapperNormalizer(CustomPrefixNormalizer(prefix="[B]"))
+        },
+    )
+
+    with pytest.raises(ValueError, match="identical configurations"):
+        RoundRobinTarget(targets=[t1, t2])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_init_accepts_delegating_normalizers_with_matching_child_params():
+    from pyrit.message_normalizer import MessageListNormalizer
+    from pyrit.models import ComponentIdentifier, Identifiable
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
+
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
+            self.normalizer = normalizer
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(
+                self,
+                children={"normalizer": self.normalizer.get_identifier()},
+            )
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return await self.normalizer.normalize_async(messages)
+
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    t1 = MockPromptTarget()
+    t2 = MockPromptTarget()
+    t1._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: CustomWrapperNormalizer(CustomPrefixNormalizer(prefix="[MATCH]"))
+        },
+    )
+    t2._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: CustomWrapperNormalizer(CustomPrefixNormalizer(prefix="[MATCH]"))
+        },
+    )
+
+    rr = RoundRobinTarget(targets=[t1, t2])
+    assert rr.configuration.as_identifier_params() == t1.configuration.as_identifier_params()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_init_rejects_multi_level_delegating_normalizers_with_mismatched_leaf_params():
+    from pyrit.message_normalizer import MessageListNormalizer
+    from pyrit.models import ComponentIdentifier, Identifiable
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
+
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
+            self.normalizer = normalizer
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(
+                self,
+                children={"normalizer": self.normalizer.get_identifier()},
+            )
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return await self.normalizer.normalize_async(messages)
+
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    t1 = MockPromptTarget()
+    t2 = MockPromptTarget()
+    t1._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: CustomWrapperNormalizer(
+                CustomWrapperNormalizer(CustomPrefixNormalizer(prefix="[A]"))
+            )
+        },
+    )
+    t2._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: CustomWrapperNormalizer(
+                CustomWrapperNormalizer(CustomPrefixNormalizer(prefix="[B]"))
+            )
+        },
+    )
+
+    with pytest.raises(ValueError, match="identical configurations"):
+        RoundRobinTarget(targets=[t1, t2])
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_init_accepts_multi_level_delegating_normalizers_with_matching_leaf_params():
+    from pyrit.message_normalizer import MessageListNormalizer
+    from pyrit.models import ComponentIdentifier, Identifiable
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
+
+    class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
+        pass
+
+    class CustomPrefixNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, prefix: str):
+            self._prefix = prefix
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(self, params={"prefix": self._prefix})
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return messages
+
+    class CustomWrapperNormalizer(_IdentifiableListNormalizer):
+        def __init__(self, normalizer: _IdentifiableListNormalizer):
+            self.normalizer = normalizer
+
+        def _build_identifier(self) -> ComponentIdentifier:
+            return ComponentIdentifier.of(
+                self,
+                children={"normalizer": self.normalizer.get_identifier()},
+            )
+
+        async def normalize_async(self, messages: list[Message]) -> list[Message]:
+            return await self.normalizer.normalize_async(messages)
+
+    caps = TargetCapabilities(
+        supports_multi_turn=True,
+        supports_editable_history=True,
+        supports_json_schema=False,
+    )
+    policy = CapabilityHandlingPolicy(behaviors={CapabilityName.JSON_SCHEMA: UnsupportedCapabilityBehavior.ADAPT})
+    t1 = MockPromptTarget()
+    t2 = MockPromptTarget()
+    t1._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: CustomWrapperNormalizer(
+                CustomWrapperNormalizer(CustomPrefixNormalizer(prefix="[MATCH]"))
+            )
+        },
+    )
+    t2._configuration = TargetConfiguration(
+        capabilities=caps,
+        policy=policy,
+        normalizer_overrides={
+            CapabilityName.JSON_SCHEMA: CustomWrapperNormalizer(
+                CustomWrapperNormalizer(CustomPrefixNormalizer(prefix="[MATCH]"))
+            )
+        },
+    )
+
+    rr = RoundRobinTarget(targets=[t1, t2])
+    assert rr.configuration.as_identifier_params() == t1.configuration.as_identifier_params()
