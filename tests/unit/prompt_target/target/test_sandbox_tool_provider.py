@@ -397,3 +397,39 @@ async def test_a_refused_call_ends_the_turn_without_an_invocation_async() -> Non
     stop = ToolLoopStop.from_metadata(metadata=final.prompt_metadata)
     assert final.response_error == "processing" and stop is not None
     assert stop.reason is ToolLoopStopReason.TOOL_INFRASTRUCTURE_ERROR
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "file_result",
+    [{}, {"data": None}, {"data": "%%%"}, {"data": "\u00e9"}],
+    ids=["missing-data", "wrong-type", "invalid-base64", "non-ascii-base64"],
+)
+async def test_malformed_read_output_ends_the_turn_after_an_invocation_async(
+    file_result: dict[str, object],
+) -> None:
+    sandbox = FakeSandbox(handler=lambda run: ProcessResult(exit_code=0, stdout=json.dumps(file_result)))
+    target = _target(SandboxToolProvider(sandbox=sandbox))
+    calls = _function_call("call_read", "read_file", {"path": "ok.txt"})
+    calls.output.extend(_function_call("call_skipped", "write_file", {"path": "after.txt", "content": "no"}).output)
+    try:
+        with patch.object(
+            target._async_client.responses, "create", new_callable=AsyncMock, side_effect=[calls]
+        ) as create:
+            responses = await target.send_prompt_async(
+                message=MessagePiece(role="user", original_value="read then write").to_message()
+            )
+        create.assert_awaited_once()
+        assert len(sandbox.runs) == 1
+        assert _tool_outputs(responses) == [
+            ({"error": "tool_infrastructure_error", "message": "The tool's infrastructure failed."}, True),
+            ({"error": "tool_not_executed", "message": "An earlier tool call failed."}, False),
+        ]
+        final = responses[-1].get_piece()
+        assert final.response_error == "processing"
+        assert ToolLoopStop.from_metadata(metadata=final.prompt_metadata) == ToolLoopStop(
+            reason=ToolLoopStopReason.TOOL_INFRASTRUCTURE_ERROR
+        )
+        target.validate_tool_history(responses)
+    finally:
+        await sandbox.close_async()

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import re
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -431,7 +430,7 @@ class _ReadFileTool(_FileTool):
             return result
         try:
             data = base64.b64decode(result["data"], validate=True)
-        except (KeyError, TypeError, binascii.Error) as error:
+        except (KeyError, TypeError, ValueError) as error:
             raise ToolInfrastructureError("read_file reported a malformed result.") from error
         return {
             "path": values.path,

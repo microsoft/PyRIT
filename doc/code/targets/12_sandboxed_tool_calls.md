@@ -32,7 +32,7 @@ The model sees ordinary tools in its own API:
 | Tool | What it does |
 |------|--------------|
 | `run_<runtime>` | Runs a program once, such as `run_python` or `run_powershell`, with optional arguments, standard input and timeout |
-| `write_file`, `read_file`, `list_dir` | Work with files, in sandboxes whose files persist between calls |
+| `write_file`, `read_file`, `list_dir` | Work with files in an `environment` sandbox whose `file_runtime_profile_name` names a Python 3 runtime |
 
 Results are JSON. `run_<runtime>` returns the exit code, the output of each stream (cut at
 `max_output_chars`, and marked when cut), whether the program timed out, and how long it took. A program
