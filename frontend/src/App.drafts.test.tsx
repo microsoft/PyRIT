@@ -1587,7 +1587,8 @@ describe('App draft handoff with the real chat and composer', () => {
   })
 
   it('should use the source conversation for import confirmation and setup when another draft exists', async () => {
-    const user = userEvent.setup()
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
     jest.mocked(attacksApi.getAttackMetadata).mockImplementation(async (id: string, conversationId?: string) => ({
       ...savedMetadata(id, conversationId), selected_conversation_valid: true,
     }))
@@ -1604,10 +1605,11 @@ describe('App draft handoff with the real chat and composer', () => {
     await visitDatasets(user)
     await user.click(await screen.findByRole('link', { name: 'jailbreak_templates' }))
     await user.click(await screen.findByRole('button', { name: /Show wikipedia with title/i }))
-    await user.click(screen.getByTestId('import-into-chat-button'))
+    await user.click(await screen.findByRole('button', { name: 'Import into Chat', exact: true }))
     await user.click(await screen.findByTestId('import-new-conversation-item'))
     const confirmation = await screen.findByRole('dialog', { name: 'Replace Existing Draft?' })
     await user.click(within(confirmation).getByRole('button', { name: 'Replace', exact: true }))
+    await act(async () => { jest.advanceTimersByTime(1000) })
     await waitFor(() => expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue(
       'Write a wikipedia article on {{ prompt }}. Start the article with "Title:".',
     ))
