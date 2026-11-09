@@ -142,11 +142,13 @@ describe('TargetTable', () => {
       expect(screen.getByRole('checkbox', { name: `Select ${target.target_registry_name}` })).toBeChecked()
     }
     expect(screen.getByRole('button', { name: 'Begin capability detection' })).toBeEnabled()
+    expect(screen.getByText('Checks may incur provider charges.')).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Select all' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Select none' })).not.toBeInTheDocument()
     expect(detectCapabilities).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('checkbox', { name: 'Select all shown targets' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Checks may incur provider charges.')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Auto-detect capabilities' })).toBeEnabled()
     expect(detectCapabilities).not.toHaveBeenCalled()
   })

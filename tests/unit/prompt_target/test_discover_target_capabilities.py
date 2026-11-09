@@ -704,6 +704,89 @@ class TestToolCallHistoryDiscovery:
     def _target() -> OpenAIChatTarget:
         return OpenAIChatTarget(model_name="unknown", endpoint="https://example.invalid", api_key="not-a-key")
 
+    @pytest.mark.parametrize("status_code", [None, 400, 422])
+    @pytest.mark.parametrize("include_text", [False, True])
+    @pytest.mark.parametrize("explicit_modalities", [False, True])
+    async def test_strict_rejection_removes_tested_declarations_async(
+        self, *, status_code: int | None, include_text: bool, explicit_modalities: bool
+    ) -> None:
+        target = self._target()
+        modalities: set[frozenset[PromptDataType]] = (
+            {frozenset({"text", "function_call"})} if include_text else self.MODALITIES
+        )
+        untested: frozenset[frozenset[PromptDataType]] = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        target.apply_capabilities(
+            capabilities=TargetCapabilities(input_modalities=untested | modalities, supports_streaming_audio=True)
+        )
+        request = httpx.Request("POST", "https://example.invalid")
+        error = (
+            ValueError("unsupported history")
+            if status_code is None
+            else httpx.HTTPStatusError(
+                "unsupported history",
+                request=request,
+                response=httpx.Response(status_code=status_code, request=request),
+            )
+        )
+        with patch.object(
+            target,
+            "_send_prompt_to_target_async",
+            new_callable=AsyncMock,
+            side_effect=[_ok_response(), error, _ok_response()],
+        ) as send:
+            result = await discover_target_capabilities_async(
+                target=target,
+                capabilities=[],
+                test_modalities=modalities if explicit_modalities else None,
+                test_assets={"image_path": "missing-probe.png"},
+                raise_on_error=True,
+                retries=0,
+                apply=True,
+            )
+        assert send.await_count == (2 if explicit_modalities else 3)
+        assert result.input_modalities == untested
+        assert target.capabilities == result
+        assert result.supports_streaming_audio
+
+    async def test_strict_operational_tool_error_does_not_apply_async(self) -> None:
+        target = self._target()
+        target.apply_capabilities(
+            capabilities=TargetCapabilities(input_modalities=frozenset({frozenset({"text"})} | self.MODALITIES))
+        )
+        original = target.configuration
+        with patch.object(
+            target,
+            "_send_prompt_to_target_async",
+            new_callable=AsyncMock,
+            side_effect=[_ok_response(), ConnectionError("offline")],
+        ):
+            with pytest.raises(CapabilityDiscoveryError):
+                await discover_target_capabilities_async(
+                    target=target,
+                    capabilities=[],
+                    test_modalities=self.MODALITIES,
+                    raise_on_error=True,
+                    retries=0,
+                    apply=True,
+                )
+        assert target.configuration is original
+
+    async def test_strict_unavailable_adapter_retains_declarations_async(self) -> None:
+        declared = frozenset({frozenset({"text"})} | self.MODALITIES)
+        target = _RealValidationTarget(
+            custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(input_modalities=declared))
+        )
+        with patch.object(
+            target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=_ok_response()
+        ) as send:
+            result = await discover_target_capabilities_async(
+                target=target, capabilities=[], test_modalities=self.MODALITIES, raise_on_error=True, retries=0
+            )
+        assert result.input_modalities == declared
+        send.assert_awaited_once()
+
     async def test_probes_real_chat_payload_and_applies_only_when_requested(self) -> None:
         target = self._target()
         original = target.configuration

@@ -837,13 +837,16 @@ async def _discover_input_modalities_async(
         if tool_modalities:
             for include_text in sorted({"text" in combo for combo in tool_modalities}):
                 combinations = {combo for combo in tool_modalities if ("text" in combo) == include_text}
-                if _supports_tool_history_probe(target) and await _probe_tool_calls_async(
+                can_probe = _supports_tool_history_probe(target)
+                if can_probe and await _probe_tool_calls_async(
                     target=target, timeout_s=per_probe_timeout_s, retries=retries, include_text=include_text
                 ):
                     queried.update(combinations)
-                else:
+                elif not can_probe or not _RAISE_ON_PROBE_ERROR.get():
                     logger.info("Tool history support was not confirmed; retaining declared tool modalities.")
                     queried.update(declared_tools & combinations)
+                else:
+                    logger.info("Tool history was rejected; excluding tested tool modalities.")
         for combination in test_modalities:
             if combination & {"function_call", "function_call_output", "tool_call"}:
                 logger.debug("Tool artifacts are checked by the tool-call history probe, not file-asset probes.")
@@ -1049,15 +1052,14 @@ async def _discover_target_capabilities_async(
     # Editable history is only meaningful if multi-turn probing/declaration
     # also resolved to True.
     resolved_editable_history = declared.supports_editable_history and resolved_multi_turn
-    if test_modalities is None:
+    if test_modalities is None and not _RAISE_ON_PROBE_ERROR.get():
         # Mirror the boolean fallback: combinations the probe could not confirm
         # fall back to the target's declared support rather than being silently
         # dropped (e.g. on transient network failure).
         resolved_input_modalities = frozenset(queried_modalities | declared.input_modalities)
     else:
-        resolved_input_modalities = frozenset(
-            queried_modalities | (declared.input_modalities - frozenset(test_modalities))
-        )
+        probed_modalities = declared.input_modalities if test_modalities is None else frozenset(test_modalities)
+        resolved_input_modalities = frozenset(queried_modalities | (declared.input_modalities - probed_modalities))
 
     resolved = TargetCapabilities(
         supports_multi_turn=resolved_multi_turn,

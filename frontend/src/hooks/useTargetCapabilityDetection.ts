@@ -12,6 +12,7 @@ interface DetectionResult {
 export interface TargetCapabilityDetection {
   running: boolean
   results: Record<string, DetectionResult>
+  detectedTargets: Record<string, TargetInstance>
   start: (targets: TargetInstance[]) => Promise<void>
 }
 
@@ -26,7 +27,8 @@ export function useTargetCapabilityDetection({
     generation: string
     running: boolean
     results: Record<string, DetectionResult>
-  }>({ generation, running: false, results: {} })
+    detectedTargets: Record<string, TargetInstance>
+  }>({ generation, running: false, results: {}, detectedTargets: {} })
   const active = useRef({ valid: true, running: false })
   const callback = useRef(onTargetDetected)
   useEffect(() => { callback.current = onTargetDetected }, [onTargetDetected])
@@ -36,17 +38,18 @@ export function useTargetCapabilityDetection({
     return () => { lifetime.valid = false }
   }, [generation])
 
-  const current = state.generation === generation ? state : { running: false, results: {} }
+  const current = state.generation === generation ? state : { running: false, results: {}, detectedTargets: {} }
   const start = async (targets: TargetInstance[]): Promise<void> => {
     const lifetime = active.current
     if (lifetime.running || targets.length === 0) return
     lifetime.running = true
     const batch = [...targets]
-    setState({
+    setState((previous) => ({
       generation,
       running: true,
       results: Object.fromEntries(batch.map((target) => [target.target_registry_name, { state: 'Waiting' }])),
-    })
+      detectedTargets: previous.generation === generation ? previous.detectedTargets : {},
+    }))
     try {
       for (const target of batch) {
         if (!lifetime.valid) break
@@ -60,6 +63,7 @@ export function useTargetCapabilityDetection({
           callback.current?.(updated, target)
           setState((previous) => ({
             ...previous, results: { ...previous.results, [name]: { state: 'Saved', target: updated } },
+            detectedTargets: { ...previous.detectedTargets, [name]: updated },
           }))
         } catch (error: unknown) {
           if (!lifetime.valid) break

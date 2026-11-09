@@ -411,9 +411,12 @@ export default function TargetTable({
             {detecting ? 'Detecting capabilities...' : selecting ? 'Begin capability detection' : 'Auto-detect capabilities'}
           </Button>
           {selectionVisible && (
-            <Button className={styles.rowAction} disabled={detecting} onClick={() => setSelecting(false)}>
-              Cancel
-            </Button>
+            <>
+              <Button className={styles.rowAction} disabled={detecting} onClick={() => setSelecting(false)}>
+                Cancel
+              </Button>
+              <Text size={200}>Checks may incur provider charges.</Text>
+            </>
           )}
         </div>
       </div>

@@ -30,13 +30,13 @@ interface TargetConfigProps {
 
 function mergeDetectedTargets(
   targets: TargetInstance[],
-  detection: TargetCapabilityDetection,
-  loadedResults: TargetCapabilityDetection['results'],
+  detectedTargets: TargetCapabilityDetection['detectedTargets'],
+  loadedDetectedTargets: TargetCapabilityDetection['detectedTargets'],
 ): TargetInstance[] {
   return targets.map((target) => {
-    const result = detection.results[target.target_registry_name]
-    const updated = result !== loadedResults[target.target_registry_name] ? result?.target : undefined
-    return updated && sameTarget(updated, target) ? updated : target
+    const updated = detectedTargets[target.target_registry_name]
+    return updated && updated !== loadedDetectedTargets[target.target_registry_name] && sameTarget(updated, target)
+      ? updated : target
   })
 }
 
@@ -50,9 +50,9 @@ export default function TargetConfig({
   const styles = useTargetConfigStyles()
   const [loaded, setLoaded] = useState<{
     targets: TargetInstance[]
-    results: TargetCapabilityDetection['results']
-  }>({ targets: [], results: detection.results })
-  const targets = mergeDetectedTargets(loaded.targets, detection, loaded.results)
+    detectedTargets: TargetCapabilityDetection['detectedTargets']
+  }>({ targets: [], detectedTargets: detection.detectedTargets })
+  const targets = mergeDetectedTargets(loaded.targets, detection.detectedTargets, loaded.detectedTargets)
   const [hasShownTargets, setHasShownTargets] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -74,12 +74,12 @@ export default function TargetConfig({
 
     const attempt = async (n: number): Promise<void> => {
       try {
-        const resultsBeforeFetch = detectionRef.current.results
+        const detectedBeforeFetch = detectionRef.current.detectedTargets
         const registered = await listRegisteredTargets()
         if (cancelled) return
         const currentDetection = detectionRef.current
-        const items = mergeDetectedTargets(registered, currentDetection, resultsBeforeFetch)
-        setLoaded({ targets: items, results: currentDetection.results })
+        const items = mergeDetectedTargets(registered, currentDetection.detectedTargets, detectedBeforeFetch)
+        setLoaded({ targets: items, detectedTargets: currentDetection.detectedTargets })
         if (items.length > 0) setHasShownTargets(true)
         setError(null)
         setLoading(false)
