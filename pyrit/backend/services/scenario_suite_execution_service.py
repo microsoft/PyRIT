@@ -520,8 +520,9 @@ class ScenarioSuiteExecutionService:
             }
         ):
             return ScenarioSuiteExecutionStatus.IN_PROGRESS
-        if ScenarioRunState.CANCELLED in states:
-            return ScenarioSuiteExecutionStatus.CANCELLED
+        # Failed work outranks cancellation: cancelling after a child run failed
+        # stops the remaining entries, and the aggregate must still surface the
+        # failure instead of reporting a clean cancellation.
         if states.intersection(
             {
                 ScenarioSuiteSubmissionState.SUBMISSION_FAILED,
@@ -529,6 +530,8 @@ class ScenarioSuiteExecutionService:
             }
         ):
             return ScenarioSuiteExecutionStatus.FAILED
+        if ScenarioRunState.CANCELLED in states:
+            return ScenarioSuiteExecutionStatus.CANCELLED
         return ScenarioSuiteExecutionStatus.COMPLETED
 
     def _submission_done(self, task: asyncio.Task[None]) -> None:
