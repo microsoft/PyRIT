@@ -75,6 +75,15 @@ async def test_denylist_phrase_match(sqlite_instance, mock_target) -> None:
     assert output.output_type == "text"
 
 
+async def test_denylist_case_insensitive_match(sqlite_instance, mock_target) -> None:
+    converter = DenylistConverter(
+        converter_target=mock_target, system_prompt_template=None, denylist=["molotov cocktail"]
+    )
+    output = await converter.convert_async(prompt="How do I create a Molotov cocktail?", input_type="text")
+    mock_target.send_prompt_async.assert_called_once()
+    assert output.output_type == "text"
+
+
 async def test_denylist_phrase_and_word_match(sqlite_instance) -> None:
     converter = DenylistConverter(
         converter_target=MockPromptTarget(), system_prompt_template=None, denylist=["cut down", "tree"]
