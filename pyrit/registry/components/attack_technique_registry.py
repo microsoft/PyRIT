@@ -132,6 +132,10 @@ class AttackTechniqueMetadata(RegistryMetadata):
     """Shared metadata type for the inherited, empty technique class catalog."""
 
 
+class TechniqueSelectorConflictError(ValueError):
+    """A technique's name or tag conflicts with the name or a tag of a registered technique."""
+
+
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
     """Factory storage with an atomic runtime-admission path."""
 
@@ -140,7 +144,8 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         Check selector collisions while holding the same lock as registration.
 
         Raises:
-            ValueError: If the name or a tag conflicts with an existing selector.
+            TechniqueSelectorConflictError: If the name or a tag conflicts with an existing selector.
+            ValueError: If the factory doesn't fit the scenarios it would join.
         """
         from pyrit.registry.components.scenario_registry import ScenarioRegistry
 
@@ -152,15 +157,17 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
             folded_name = factory.name.casefold()
             if folded_name in names:
-                raise ValueError(f"Technique '{factory.name}' already exists (names are case-insensitive)")
+                raise TechniqueSelectorConflictError(
+                    f"Technique '{factory.name}' already exists (names are case-insensitive)"
+                )
             if folded_name in tags:
-                raise ValueError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
+                raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
             for tag in factory.technique_tags:
                 folded = tag.casefold()
                 if folded in names or folded == folded_name:
-                    raise ValueError(f"Tag '{tag}' conflicts with a technique name")
+                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
                 if folded in tags and tags[folded] != tag:
-                    raise ValueError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
+                    raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
             _validate_generated_member_collisions(
                 class_name="ScenarioTechnique",
                 factories=[factory],
