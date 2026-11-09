@@ -273,6 +273,23 @@ class TestAttackRoutes:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         service.assert_not_called()
 
+    def test_create_attack_half_branch_spec_is_a_bad_request(self, client: TestClient) -> None:
+        """A half provided branching spec answers 400 like the conversation endpoint, not 404."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.create_attack_async = AsyncMock(
+                side_effect=ValueError("Both source_conversation_id and cutoff_index must be provided together")
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/attacks",
+                json={"source_conversation_id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"},
+            )
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "must be provided together" in response.json()["detail"]
+
     def test_create_attack_target_not_found(self, client: TestClient) -> None:
         """Test attack creation with non-existent target."""
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
