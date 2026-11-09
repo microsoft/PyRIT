@@ -142,6 +142,7 @@ class TestScorerSourceReference:
         source = OtelTraceSource(trace_client=InMemoryTraceClient())
         scorer = scorer_registry.create_instance("OtelToolCallScorer", source=source)
         assert isinstance(scorer, OtelToolCallScorer)
+        assert scorer._source is source
         assert scorer.get_identifier().children["source"].hash == source.get_identifier().hash
 
 
