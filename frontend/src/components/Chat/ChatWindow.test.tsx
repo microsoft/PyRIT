@@ -2935,6 +2935,38 @@ describe("ChatWindow Integration", () => {
     expect(mockedConvertersApi.previewConversion).not.toHaveBeenCalled();
   });
 
+  it("disables both editor Save actions until a failed attachment upload recovers", async () => {
+    const user = userEvent.setup();
+    jest.mocked(mediaApi.upload).mockRejectedValueOnce(new Error("Upload unavailable"));
+    const target = makeTarget({
+      capabilities: buildCapabilities({
+        supports_editable_history: true, supports_multi_message_pieces: true,
+        supported_input_modalities: ["text", "image_path"],
+      }),
+    });
+    const router = createMemoryRouter([{ path: "/", element: <ChatWindow {...defaultProps} activeTarget={target} /> }]);
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+      <RouterProvider router={router} />
+    </UserPreferencesProvider></FluentProvider>);
+    await user.upload(screen.getByTestId("file-input"), new File(["image"], "retry.png", { type: "image/png" }));
+    await screen.findByText(/Upload failed for retry.png: Upload unavailable/);
+    await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
+    await screen.findByTestId("conversation-editor");
+    const toolbarSave = screen.getByRole("button", { name: "Save to new attack", exact: true });
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    expect(toolbarSave).toBeDisabled();
+    await user.hover(toolbarSave);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Retry or remove attachments whose uploads failed.");
+    expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Retry upload" }));
+    await waitFor(() => expect(toolbarSave).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    await waitFor(() => expect(screen.queryByTestId("conversation-editor")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
+    expect(await screen.findByRole("button", { name: "Save to new attack", exact: true })).toBeEnabled();
+  });
+
   it("keeps an empty original prompt with a manually authored converted value across editor Save", async () => {
     const user = userEvent.setup();
     mockedAttacksApi.saveConversation.mockResolvedValue({

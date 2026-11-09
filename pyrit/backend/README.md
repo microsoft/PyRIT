@@ -362,6 +362,10 @@ uploads are refreshed from the draft's retained File before reuse. Local preview
 browser object URLs while uploads and target responses are pending. Uploading alone
 does not create an attack or call a target. Refreshing the same bytes preserves the
 upload reference so retries keep the same conversation-save idempotency key.
+A shared directory lock coordinates lease reads, renewals, and expiry cleanup across
+backend workers, so cleanup cannot delete a reference that has just been renewed.
+Mounted composer and editor controls observe shared refresh failures and retries;
+failed uploads disable both editor Save actions until retried or removed.
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
 API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,

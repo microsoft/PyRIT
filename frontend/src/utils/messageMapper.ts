@@ -14,7 +14,12 @@ import { mediaApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 
 // File identity survives draft copies and handoffs without retaining discarded files.
-const ATTACHMENT_UPLOADS = new WeakMap<File, { promise: Promise<AttachmentUploadOutcome>; expiresAt: number }>()
+const ATTACHMENT_UPLOADS = new WeakMap<File, {
+  promise: Promise<AttachmentUploadOutcome>
+  expiresAt: number
+  outcome?: AttachmentUploadOutcome
+}>()
+const ATTACHMENT_UPLOAD_LISTENERS = new WeakMap<File, Set<(outcome: AttachmentUploadOutcome | undefined) => void>>()
 // Refresh before the backend's 24-hour staging lease expires.
 const ATTACHMENT_REUSE_MS = 23 * 60 * 60 * 1000
 
@@ -36,7 +41,29 @@ export function startAttachmentUpload(file: File, retry = false): Promise<Attach
     }
   })()
   ATTACHMENT_UPLOADS.set(file, { promise: upload, expiresAt: Date.now() + ATTACHMENT_REUSE_MS })
+  for (const listener of ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? []) listener(undefined)
+  void upload.then((outcome: AttachmentUploadOutcome) => {
+    const current = ATTACHMENT_UPLOADS.get(file)
+    if (current?.promise !== upload) return
+    current.outcome = outcome
+    for (const listener of ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? []) listener(outcome)
+  })
   return upload
+}
+
+/** Observe replacements and their outcomes, not just the first upload promise. */
+export function subscribeAttachmentUpload(
+  file: File, listener: (outcome: AttachmentUploadOutcome | undefined) => void,
+): () => void {
+  const listeners = ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? new Set()
+  listeners.add(listener)
+  ATTACHMENT_UPLOAD_LISTENERS.set(file, listeners)
+  void startAttachmentUpload(file)
+  listener(ATTACHMENT_UPLOADS.get(file)?.outcome)
+  return () => {
+    listeners.delete(listener)
+    if (!listeners.size) ATTACHMENT_UPLOAD_LISTENERS.delete(file)
+  }
 }
 
 export async function uploadedFileValue(file: File): Promise<string> {

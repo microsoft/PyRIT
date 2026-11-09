@@ -5,17 +5,125 @@
 
 import asyncio
 import os
+import subprocess
+import sys
+import textwrap
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
+from filelock import FileLock, Timeout
 
 from pyrit.backend.services.media_persistence import MediaOrigin, persist_media_value_async
 from pyrit.backend.services.staged_media import StagedMediaStore, staged_media_store
 from pyrit.memory import DataTypeSerializer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
+
+
+@pytest.mark.parametrize("operation", ["write", "read", "cleanup"])
+def test_stores_share_the_lock_across_processes(tmp_path: Path, operation: str) -> None:
+    store = StagedMediaStore(tmp_path)
+    value = store._write(b"shared bytes")
+    path = tmp_path / f"{value}.upload"
+    if operation == "cleanup":
+        expired_time = time.time() - store.RETENTION_SECONDS
+        os.utime(path, (expired_time, expired_time))
+    marker = tmp_path / "lock-attempt"
+    script = textwrap.dedent("""
+        import sys
+        from pathlib import Path
+        from unittest.mock import patch
+        from uuid import UUID
+        from filelock import FileLock
+        from pyrit.backend.services.staged_media import StagedMediaStore
+        root, operation, token = sys.argv[1:]
+        directory = Path(root)
+        acquire = FileLock.acquire
+        def observed_acquire(self, *args, **kwargs):
+            marker = directory / "lock-attempt.tmp"
+            marker.write_text(str(self.lock_file))
+            marker.replace(directory / "lock-attempt")
+            return acquire(self, *args, **kwargs)
+        with patch.object(FileLock, "acquire", observed_acquire):
+            store = StagedMediaStore(directory)
+            if operation == "write":
+                assert store._write(b"shared bytes") == UUID(token)
+            elif operation == "read":
+                assert store._read(UUID(token)) == b"shared bytes"
+            else:
+                store._cleanup_expired()
+    """)
+    process: subprocess.Popen[str] | None = None
+    try:
+        with FileLock(tmp_path / ".staging.lock"):
+            process = subprocess.Popen(
+                [sys.executable, "-c", script, str(tmp_path), operation, str(value)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            deadline = time.monotonic() + TEST_WATCHDOG_SECONDS
+            while not marker.exists():
+                if process.poll() is not None:
+                    stdout, stderr = process.communicate()
+                    pytest.fail(f"Store did not acquire the shared lock: {stdout} {stderr}")
+                if time.monotonic() >= deadline:
+                    pytest.fail("Store did not attempt the shared lock before the watchdog expired")
+                time.sleep(0.01)
+            assert Path(marker.read_text()) == tmp_path / ".staging.lock"
+        stdout, stderr = process.communicate(timeout=TEST_WATCHDOG_SECONDS)
+        assert process.returncode == 0, f"{stdout} {stderr}"
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.communicate(timeout=TEST_WATCHDOG_SECONDS)
+    if operation == "cleanup":
+        assert not path.exists()
+    else:
+        assert path.read_bytes() == b"shared bytes"
+
+
+async def test_staging_mutations_hold_the_shared_directory_lock_async(tmp_path: Path) -> None:
+    store = StagedMediaStore(tmp_path)
+    original_replace = Path.replace
+    original_stat = Path.stat
+    original_unlink = Path.unlink
+    checked: set[str] = set()
+
+    def assert_locked(operation: str) -> None:
+        with pytest.raises(Timeout):
+            FileLock(tmp_path / ".staging.lock").acquire(timeout=0)
+        checked.add(operation)
+
+    def replace_locked(path: Path, target: str | Path) -> Path:
+        if path.suffix == ".upload":
+            assert_locked("replace")
+        return original_replace(path, target)
+
+    def stat_locked(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if path.suffix == ".upload":
+            assert_locked("stat")
+        return original_stat(path, follow_symlinks=follow_symlinks)
+
+    def unlink_locked(path: Path, *, missing_ok: bool = False) -> None:
+        if path.suffix == ".upload":
+            assert_locked("unlink")
+        original_unlink(path, missing_ok=missing_ok)
+
+    with patch.object(Path, "replace", replace_locked):
+        value = await store.stage_async(b"same draft")
+    path = tmp_path / f"{value.removeprefix(store.PREFIX)}.upload"
+    with patch.object(Path, "stat", stat_locked):
+        assert await StagedMediaStore(tmp_path).read_async(value) == b"same draft"
+    expired_time = time.time() - store.RETENTION_SECONDS
+    os.utime(path, (expired_time, expired_time))
+    with patch.object(Path, "stat", stat_locked), patch.object(Path, "unlink", unlink_locked):
+        await StagedMediaStore(tmp_path).cleanup_expired_async()
+    assert checked == {"replace", "stat", "unlink"}
+    assert not path.exists()
+    assert await store.stage_async(b"same draft") == value
+    assert await store.read_async(value) == b"same draft"
 
 
 async def test_abandoned_uploads_expire_across_store_restarts_async(tmp_path: Path) -> None:
@@ -61,7 +169,9 @@ async def test_refresh_keeps_reference_stable_for_save_idempotency_async(tmp_pat
     assert len(list(tmp_path.glob("*.upload"))) == 1
 
 
-@pytest.mark.parametrize("value", ["pyrit-upload:../../secret", "pyrit-upload:invalid", str(uuid4())])
+@pytest.mark.parametrize(
+    "value", ["pyrit-upload:../../secret", "pyrit-upload:invalid", "122e8b99-d73e-47b9-a737-12c58fde5479"]
+)
 async def test_upload_references_cannot_name_arbitrary_files_async(tmp_path: Path, value: str) -> None:
     with pytest.raises(ValueError, match="Invalid attachment upload"):
         await StagedMediaStore(tmp_path).read_async(value)

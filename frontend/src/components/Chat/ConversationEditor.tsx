@@ -167,6 +167,7 @@ interface ConversationEditorProps {
   onSave?: (destination: SaveConversationRequest['destination']) => void
   onExit?: () => Promise<boolean>
   onDiscard?: (navigatingAway?: boolean) => void
+  onUploadErrorChange?: (reason: string | undefined) => void
   saveDestination?: SaveConversationRequest['destination']
   saveLabel?: string
   initialConverters?: ChatConverterSnapshot
@@ -184,7 +185,7 @@ export interface ConversationEditorHandle {
 export default function ConversationEditor({
   controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit, onDiscard,
   saveDestination: directSaveDestination, saveLabel = 'Save conversation',
-  initialConverters, blockNavigation = true,
+  initialConverters, blockNavigation = true, onUploadErrorChange,
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -197,6 +198,10 @@ export default function ConversationEditor({
     message.pieces.filter((piece: ConversationDraftPiece) => piece.file).map(draftAttachment)), [messages])
   const uploads = useAttachmentUploads(attachments)
   const uploadError = uploads.errors.length ? 'Retry or remove attachments whose uploads failed.' : undefined
+  useEffect(() => {
+    onUploadErrorChange?.(uploadError)
+    return () => { onUploadErrorChange?.(undefined) }
+  }, [onUploadErrorChange, uploadError])
   const target = draft?.target
   const shouldBlock = useCallback(() => {
     if (blockNavigation === false) return false

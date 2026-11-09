@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from filelock import FileLock
+
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 
 logger = logging.getLogger(__name__)
@@ -66,41 +68,46 @@ class StagedMediaStore:
 
     def _write(self, data: bytes) -> UUID:
         self._directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # Refreshes must keep the reference stable for message-save idempotency.
-        token = uuid5(NAMESPACE_URL, f"pyrit-upload:{hashlib.sha256(data).hexdigest()}")
-        path = self._directory / f"{uuid4()}.upload"
-        stream = path.open("xb")
-        try:
-            with stream:
-                stream.write(data)
-            path.replace(self._directory / f"{token}.upload")
-        finally:
-            path.unlink(missing_ok=True)
+        with FileLock(self._directory / ".staging.lock"):
+            # Refreshes must keep the reference stable for message-save idempotency.
+            token = uuid5(NAMESPACE_URL, f"pyrit-upload:{hashlib.sha256(data).hexdigest()}")
+            path = self._directory / f"{uuid4()}.upload"
+            stream = path.open("xb")
+            try:
+                with stream:
+                    stream.write(data)
+                path.replace(self._directory / f"{token}.upload")
+            finally:
+                path.unlink(missing_ok=True)
         return token
 
     def _read(self, token: UUID) -> bytes:
         path = self._directory / f"{token}.upload"
         try:
-            if path.is_symlink() or path.stat().st_mtime + self.RETENTION_SECONDS <= time.time():
-                raise ValueError("Attachment upload expired. Retry the upload before saving or sending.")
-            return path.read_bytes()
+            with FileLock(self._directory / ".staging.lock"):
+                if path.is_symlink() or path.stat().st_mtime + self.RETENTION_SECONDS <= time.time():
+                    raise ValueError("Attachment upload expired. Retry the upload before saving or sending.")
+                return path.read_bytes()
         except FileNotFoundError as exc:
             raise ValueError("Attachment upload expired. Retry the upload before saving or sending.") from exc
 
     def _cleanup_expired(self) -> None:
-        cutoff = time.time() - self.RETENTION_SECONDS
-        for path in self._directory.glob("*.upload"):
-            try:
-                if path.name != f"{UUID(path.stem)}.upload" or path.is_symlink():
+        if not self._directory.exists():
+            return
+        with FileLock(self._directory / ".staging.lock"):
+            cutoff = time.time() - self.RETENTION_SECONDS
+            for path in self._directory.glob("*.upload"):
+                try:
+                    if path.name != f"{UUID(path.stem)}.upload" or path.is_symlink():
+                        continue
+                    if path.stat().st_mtime <= cutoff:
+                        path.unlink(missing_ok=True)
+                except FileNotFoundError:
                     continue
-                if path.stat().st_mtime <= cutoff:
-                    path.unlink(missing_ok=True)
-            except FileNotFoundError:
-                continue
-            except ValueError:
-                continue
-            except OSError:
-                logger.exception("Could not delete expired attachment upload %s.", path.name)
+                except ValueError:
+                    continue
+                except OSError:
+                    logger.exception("Could not delete expired attachment upload %s.", path.name)
 
 
 staged_media_store = StagedMediaStore(CONFIGURATION_DIRECTORY_PATH / "media-uploads")
