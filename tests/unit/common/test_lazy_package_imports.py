@@ -196,6 +196,12 @@ _LAZY_IMPORT_SPOT_CHECKS = [
         "pyrit.score.observation.otel_trace_source",
         "pyrit.score.observation.otel_span_exporter",
     ),
+    (
+        "pyrit.setup.initializers",
+        "ScorerInitializerTags",
+        "pyrit.setup.initializers.scorers",
+        "pyrit.setup.initializers.tools",
+    ),
 ]
 
 
