@@ -230,7 +230,7 @@ function ScoreOverflowMenu({ scores, orderedScores, onSelect }: ScoreOverflowMen
             <ScoreOverflowMenuItem
               key={score.id}
               score={score}
-              label={labels[index]}
+              label={labels[index] ?? ''}
               onSelect={onSelect}
             />
           ))}

@@ -22,6 +22,7 @@ from pyrit.models import (
     AttackResult,
     BoundedDatasetSize,
     ObjectiveTargetEvaluationIdentifier,
+    Parameter,
     ScenarioDatasetSizeEstimate,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
@@ -33,7 +34,6 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
-from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+    from pyrit.score import TrueFalseScorer
 
 
 logger = logging.getLogger(__name__)

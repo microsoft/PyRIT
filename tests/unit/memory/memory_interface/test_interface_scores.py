@@ -448,3 +448,41 @@ async def test_get_scores_by_scorer_identifier_filter(
         ],
     )
     assert len(results) == 0
+
+
+async def test_get_scores_by_score_category_matches_array_membership(
+    sqlite_instance: MemoryInterface,
+    sample_conversation_entries: Sequence[PromptMemoryEntry],
+):
+    prompt_id = sample_conversation_entries[0].id
+    sqlite_instance._insert_entries(entries=sample_conversation_entries)
+
+    def _make_score(*, value: str, categories: list[str]) -> Score:
+        return Score(
+            score_value=value,
+            score_value_description="",
+            score_type="float_scale",
+            score_category=categories,
+            score_rationale="",
+            score_metadata={},
+            scorer_class_identifier=_test_scorer_id(),
+            message_piece_id=prompt_id,
+        )
+
+    await sqlite_instance.add_scores_to_memory_async(
+        scores=[
+            _make_score(value="0.1", categories=["harm"]),
+            _make_score(value="0.2", categories=["bias", "harm"]),
+            _make_score(value="0.3", categories=["harmful"]),
+            _make_score(value="0.4", categories=[]),
+        ]
+    )
+
+    results = await sqlite_instance.get_scores_async(score_category="harm")
+    assert sorted(score.score_value for score in results) == ["0.1", "0.2"]
+
+    results = await sqlite_instance.get_scores_async(score_category="bias")
+    assert [score.score_value for score in results] == ["0.2"]
+
+    results = await sqlite_instance.get_scores_async(score_category="har")
+    assert results == []

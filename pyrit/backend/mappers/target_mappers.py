@@ -14,10 +14,9 @@ composite ``inner_targets`` (full instances, not bare identifiers), and a curate
 
 from typing import Any
 
-from pyrit.models import TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.models import CapabilityName, TargetIdentifier
+from pyrit.models.catalog import TargetInstance
 from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
 
 # Capability flag names that should never be surfaced as identifier-level params:
 # they are sourced from `target_obj.capabilities` instead.

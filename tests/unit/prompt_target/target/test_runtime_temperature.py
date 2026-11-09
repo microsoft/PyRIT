@@ -43,10 +43,10 @@ from pyrit.prompt_target import (
     OpenAIVideoTarget,
     RealtimeTarget,
     RoundRobinTarget,
+    TargetConfiguration,
     get_known_capabilities,
 )
 from pyrit.prompt_target.common import utils as target_utils
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.openai.openai_target import _OpenAIModelSampling
 from pyrit.score import SelfAskTrueFalseScorer
 

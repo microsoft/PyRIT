@@ -60,7 +60,7 @@ function TargetResolutionBanner({ status, activeTarget, onRetry, onConfigureTarg
     const text = status === 'error'
       ? 'Target verification failed. Sending is disabled; human scores can still be changed by the same operator.'
       : status === 'unavailable'
-        ? 'The target used by this attack is not currently registered. Sending is disabled; human scores can still be changed by the same operator.'
+        ? 'The target used by this attack is unavailable in the GUI. Sending is disabled; human scores can still be changed by the same operator.'
         : "Multiple registered targets have this attack's identity. Remove duplicate registrations, then retry."
     return <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText}
       icon={<WarningRegular fontSize={18} />} text={text} buttonText="Retry" buttonIcon={<ArrowSyncRegular />}
@@ -102,6 +102,8 @@ export interface ChatInputAreaHandle {
   addFiles: (files: File[]) => void
   setText: (text: string) => void
   restoreDraft: (text: string, attachments: MessageAttachment[], textMetadata?: Record<string, unknown>) => void
+  /** Clear after transferring attachment ownership to a preserved draft. */
+  detachDraft: () => void
   focus: () => void
   getDraftRevision: () => number
   getTextMetadata: () => Record<string, unknown> | undefined
@@ -229,6 +231,11 @@ const ChatInputArea = forwardRef<ChatInputAreaHandle, ChatInputAreaProps>(functi
       changeText(text)
       textMetadataRef.current = textMetadata
       changeAttachments(draftAttachments.map((attachment) => attachment.draftId ? attachment : withDraftIdentity(attachment)))
+    },
+    detachDraft: (): void => {
+      changeText('')
+      attachmentsRef.current = []
+      setAttachments([])
     },
     focus: (): void => { textareaRef.current?.focus() },
     getDraftRevision: (): number => draftRevisionRef.current,

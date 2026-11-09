@@ -10,8 +10,8 @@ import pytest
 from openai.types.chat import ChatCompletion
 from unit.mocks import MockPromptTarget, get_sample_conversations, openai_chat_response_json_dict
 
-from pyrit.executor.attack.core.attack_strategy import AttackStrategy
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.executor.attack import AttackStrategy
+from pyrit.memory import MemoryInterface
 from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     ChatMessageRole,
@@ -24,14 +24,17 @@ from pyrit.models import (
     RequestGenerationInfo,
     flatten_to_message_pieces,
 )
-from pyrit.prompt_target import AzureBlobStorageTarget, AzureMLChatTarget, OpenAIChatTarget, PromptShieldTarget
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.prompt_target import (
+    AzureBlobStorageTarget,
+    AzureMLChatTarget,
     CapabilityHandlingPolicy,
     CapabilityName,
+    OpenAIChatTarget,
+    PromptShieldTarget,
     TargetCapabilities,
+    TargetConfiguration,
     UnsupportedCapabilityBehavior,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 @pytest.fixture
@@ -912,7 +915,7 @@ def test_identifier_is_deterministic_across_instances():
 def test_identifier_same_when_normalizer_overrides_differ():
     from pyrit.message_normalizer import GenericSystemSquashNormalizer, MessageListNormalizer
     from pyrit.models import Message
-    from pyrit.prompt_target.common.target_capabilities import CapabilityName
+    from pyrit.prompt_target import CapabilityName
 
     class _CustomSystemSquash(MessageListNormalizer[Message]):
         async def normalize_async(self, messages):  # pragma: no cover - not exercised

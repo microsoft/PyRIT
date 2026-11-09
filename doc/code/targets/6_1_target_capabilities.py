@@ -152,7 +152,7 @@ print("OpenAIChatTarget satisfies CHAT_TARGET_REQUIREMENTS")
 # To check a single capability, call `target.configuration.ensure_can_handle(capability=...)` directly.
 
 # %%
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName
 
 target.configuration.ensure_can_handle(capability=CapabilityName.MULTI_TURN)
 print("Multi-turn check passed")
@@ -166,8 +166,7 @@ print("Multi-turn check passed")
 # default.
 
 # %%
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 
 restricted_config = TargetConfiguration(
     capabilities=TargetCapabilities(
@@ -206,7 +205,7 @@ except ValueError as exc:
 # `TargetRequirements.validate`.
 
 # %%
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
     UnsupportedCapabilityBehavior,
 )

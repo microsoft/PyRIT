@@ -70,7 +70,7 @@ import { useScenarioDetailStyles } from './ScenarioDetail.styles'
 import ScenarioEstimateSection from './ScenarioEstimateSection'
 import ScenarioRunPreviewDialog from './ScenarioRunPreviewDialog'
 import ScenarioTechniqueSection from './ScenarioTechniqueSection'
-import { scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
+import { datasetTotalLimit, scenarioDatasetDefaults, scenarioDatasetOptions } from './datasetPresentation'
 import { formatCarriedParameterPreview } from './scenarioLaunchPresentation'
 import { normalizeScenarioMarkdown } from './scenarioMarkdown'
 import { carriedPresetScenarioParams, seedPresetTechniques, untouchedPresetScenarioParams } from './scenarioPresetSeed'
@@ -142,7 +142,7 @@ export default function ScenarioDetail(props: ScenarioDetailProps) {
   const { scenarioName: encodedScenarioName } = useParams<{ scenarioName: string }>()
   const [searchParams] = useSearchParams()
   const conversationIds = searchParams.getAll('prepended_conversation_id')
-  const initialConversationId = conversationIds.length === 1 ? conversationIds[0].trim() : ''
+  const initialConversationId = conversationIds.length === 1 ? (conversationIds[0]?.trim() ?? '') : ''
   const presetName = searchParams.get(PRESET_QUERY_PARAM)?.trim() ?? ''
   if (presetName && props.sourceRunId) return <ScenarioDetailStateFrame>
     <MessageBar intent="error"><MessageBarBody>Choose a saved run or a preset, not both.</MessageBarBody></MessageBar>
@@ -695,8 +695,9 @@ function ScenarioLaunchForm({
     ],
     [isBaselineForbidden, supportsBaseline, supportsTechniques, techniqueOptions],
   )
+  const datasetSelectionLimit = datasetTotalLimit(datasetEdits, datasetDefaults)
   const datasetSizeLabel = !datasetOptions.total_limit ? 'Not applicable'
-    : effectiveDatasets.max_total === 'all' ? 'No total limit' : String(effectiveDatasets.max_total)
+    : datasetSelectionLimit === 'all' ? 'No total limit' : String(datasetSelectionLimit)
 
   const handleTechniqueChange = (technique: SelectableTechnique, checked: boolean): void => {
     if (technique.isBaseline) {
@@ -750,7 +751,7 @@ function ScenarioLaunchForm({
     <div key={parameter.name} className={styles.dynamicParameters}>
       <ParameterField
         parameter={parameter}
-        value={scenarioParamValues[parameter.name]}
+        value={scenarioParamValues[parameter.name] ?? ''}
         disabled={submitting || loadingConversation}
         onChange={updateScenarioParam}
         testIdPrefix="scenario-param"

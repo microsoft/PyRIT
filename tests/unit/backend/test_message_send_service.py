@@ -19,13 +19,8 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from pyrit.backend.mappers import request_piece_to_pyrit_message_piece
-from pyrit.backend.mappers.attack_mappers import pyrit_messages_to_dto_async
-from pyrit.backend.models.attacks import (
-    AddMessageRequest,
-    ConverterConfigurationRequest,
-    MessagePieceRequest,
-)
+from pyrit.backend.mappers import pyrit_messages_to_dto_async, request_piece_to_pyrit_message_piece
+from pyrit.backend.models import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
 from pyrit.backend.models.message_sends import (
     MessageSendFailureStage,
     MessageSendRequest,
@@ -33,7 +28,7 @@ from pyrit.backend.models.message_sends import (
     MessageSendStatus,
     RequestConverterMode,
 )
-from pyrit.backend.services.converter_service import ConverterService
+from pyrit.backend.services import ConverterService, TargetService
 from pyrit.backend.services.manual_send_scheduler import (
     ManualSendConflictError,
     ManualSendQueueFullError,
@@ -45,7 +40,6 @@ from pyrit.backend.services.message_send_service import (
     MessageSendService,
     resolve_applied_converter_identifiers,
 )
-from pyrit.backend.services.target_service import TargetService
 from pyrit.common.attack_result_scope import get_current_attack_result_id
 from pyrit.common.utils import to_sha256
 from pyrit.converter import Base64Converter, Converter, ConverterResult
@@ -64,12 +58,11 @@ from pyrit.models import (
     Message,
     MessagePiece,
     PromptDataType,
+    TargetCapabilities,
 )
 from pyrit.models.component_spec import TargetBinding
-from pyrit.models.target.target_capabilities import TargetCapabilities
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import CapabilityName, TargetConfiguration
 from unit.async_utils import (
     TEST_WATCHDOG_SECONDS,
     settle_tasks_async,

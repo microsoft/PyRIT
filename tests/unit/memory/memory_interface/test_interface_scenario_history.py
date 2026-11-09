@@ -16,9 +16,9 @@ from sqlalchemy.orm import Session
 from unit.mocks import get_mock_target_identifier, make_scenario_result, run_memory_session_async
 
 from pyrit.common.utils import to_sha256
-from pyrit.memory import MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
+from pyrit.memory import AttackResultEntry, MemoryInterface, ScenarioHistoryKeysetCursor, SQLiteMemory
 from pyrit.memory._scenario_history import _ScenarioHistoryQueries
-from pyrit.memory.memory_models import AttackResultEntry, ConversationEntry, ScenarioResultEntry
+from pyrit.memory.memory_models import ConversationEntry, ScenarioResultEntry
 from pyrit.models import (
     SCENARIO_CONVERSATIONS_METADATA_KEY,
     SCENARIO_RUN_PLAN_METADATA_KEY,

@@ -17,7 +17,7 @@ from pyrit.models import (
     RequestGenerationInfo,
     TargetCapabilities,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import TargetConfiguration
 
 
 class _GenerationTarget(MockPromptTarget):

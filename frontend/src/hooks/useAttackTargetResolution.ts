@@ -14,6 +14,7 @@ import {
   targetIdentifierHash,
 } from '@/utils/targetIdentity'
 import type { TargetHashResolution } from '@/utils/targetIdentity'
+import { isGuiTarget, isGuiTargetType } from '@/utils/targetVisibility'
 
 interface RegistryResolution {
   attackId: string | null
@@ -55,6 +56,7 @@ async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashRes
       params: { temperature: target.binding.temperature },
       effective_hash: target.binding.effective_hash,
     })
+    if (!isGuiTarget(source)) return { status: 'unavailable' }
     return {
       status: 'resolved',
       target: {
@@ -70,7 +72,9 @@ async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashRes
         typeof namedTarget?.identifier?.hash === 'string'
         && targetIdentifierHash(namedTarget) === target.identifier_hash
       ) {
-        return { status: 'resolved' as const, target: namedTarget }
+        return isGuiTarget(namedTarget)
+          ? { status: 'resolved' as const, target: namedTarget }
+          : { status: 'unavailable' }
       }
     } catch (error) {
       if (toApiError(error).status !== 404) throw error
@@ -102,7 +106,7 @@ export function useAttackTargetResolution({
   const [resolutionAttempt, setResolutionAttempt] = useState(0)
 
   useEffect(() => {
-    if (!ready || !attackId || !hasCompleteIdentifier(attackTarget)) return
+    if (!ready || !attackId || !hasCompleteIdentifier(attackTarget) || !isGuiTargetType(attackTarget.target_type)) return
     if (useCreatedTarget) return
 
     let cancelled = false
@@ -137,9 +141,10 @@ export function useAttackTargetResolution({
   const getResolutionStatus = (): AttackTargetResolutionStatus => {
     if (!attackId) return 'idle'
     if (targetUnbound && !attackTarget) return 'unbound'
+    if (attackTarget && !isGuiTargetType(attackTarget.target_type)) return 'unavailable'
     if (!hasCompleteIdentifier(attackTarget)) return 'legacy'
     if (useCreatedTarget) {
-      return createdTarget && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
+      return createdTarget && isGuiTarget(createdTarget) && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
         ? 'resolved'
         : 'unavailable'
     }

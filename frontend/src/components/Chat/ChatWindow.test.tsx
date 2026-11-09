@@ -6,6 +6,7 @@ import { createMemoryRouter, MemoryRouter, RouterProvider, Route, Routes, useLoc
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
+import { ChatDraftProvider } from "@/hooks/useChatDraftHandoff";
 import * as runtimeHooks from "@/hooks/useRuntime";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "@/utils/userPreferences";
 import {
@@ -1210,6 +1211,8 @@ describe("ChatWindow Integration", () => {
         onAttackChange={onAttackChange}
       /></TestWrapper>);
       await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+      expect(screen.getByRole("textbox")).toHaveValue("");
+      await user.type(screen.getByRole("textbox"), "Draft to send");
       await user.click(screen.getByRole("button", { name: /send message/i }));
       await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
       mockedAttacksApi.getMessages.mockResolvedValue(reply);
@@ -4308,6 +4311,40 @@ describe("ChatWindow Integration", () => {
     expect(screen.getByRole("textbox", { name: "Temperature" })).toHaveValue("");
   });
 
+  it("preserves generation-only drafts per conversation without leaking settings on navigation", async () => {
+    const user = userEvent.setup();
+    const target = { ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }) };
+    mockedMapper.backendMessagesToFrontend.mockReturnValue([]);
+    mockedAttacksApi.getMessages.mockImplementation(async (_attackId, conversationId) => ({
+      conversation_id: conversationId, messages: [], target_response_status: null,
+    }));
+    const renderChat = (conversationId: string) => (
+      <TestWrapper><ChatDraftProvider><ChatWindow {...defaultProps}
+        activeTarget={target} availableTargets={[target]}
+        attackResultId="generation-drafts" conversationId="conv-a"
+        activeConversationId={conversationId}
+      /></ChatDraftProvider></TestWrapper>
+    );
+    const rendered = render(renderChat("conv-a"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Adjust temperature/ })).toBeEnabled());
+    await chooseTemperature(user, "0");
+
+    rendered.rerender(renderChat("conv-b"));
+    await waitFor(() => expect(mockedAttacksApi.getMessages).toHaveBeenCalledWith("generation-drafts", "conv-b"));
+    const temperatureButton = screen.getByRole("button", { name: /^Adjust temperature/ });
+    await waitFor(() => expect(temperatureButton).toBeEnabled());
+    await user.click(temperatureButton);
+    expect(screen.getByRole("textbox", { name: "Temperature" })).toHaveValue("");
+    await user.click(temperatureButton);
+    await chooseTemperature(user, "1");
+
+    rendered.rerender(renderChat("conv-a"));
+    expect(await screen.findByRole("button", { name: "Adjust temperature: 0" })).toBeEnabled();
+    rendered.rerender(renderChat("conv-b"));
+    expect(await screen.findByRole("button", { name: "Adjust temperature: 1" })).toBeEnabled();
+    expect(mockedAttacksApi.submitMessageSend).not.toHaveBeenCalled();
+  });
+
   it("blocks an invalid explicit generation value without preparing or submitting the message", async () => {
     const user = userEvent.setup();
     const target = {
@@ -5077,11 +5114,11 @@ describe("ChatWindow Integration", () => {
       conversationId: "conv-a",
       activeConversationId: "conv-a",
     };
-    const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+    const rendered = render(<TestWrapper><ChatDraftProvider><ChatWindow {...props} /></ChatDraftProvider></TestWrapper>);
     expect(await screen.findByText("Only conversation A history")).toBeInTheDocument();
     await user.type(screen.getByRole("textbox"), "Unsent draft");
 
-    rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="conv-b" /></TestWrapper>);
+    rendered.rerender(<TestWrapper><ChatDraftProvider><ChatWindow {...props} activeConversationId="conv-b" /></ChatDraftProvider></TestWrapper>);
     await waitFor(() => {
       expect(mockedAttacksApi.getMessages).toHaveBeenCalledWith(props.attackResultId, "conv-b");
     });
@@ -5091,22 +5128,26 @@ describe("ChatWindow Integration", () => {
     await user.click(sendButton);
     await user.keyboard("{Enter}");
     expect(mockSendResult).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox")).toHaveValue("Unsent draft");
+    expect(screen.getByRole("textbox")).toHaveValue("");
 
     await act(async () => {
       resolveSecondHistory(secondHistory);
     });
     expect(await screen.findByText("Only conversation B history")).toBeInTheDocument();
     expect(screen.queryByText("Only conversation A history")).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox"), "Conversation B draft");
     await user.click(sendButton);
     await waitFor(() => {
       expect(mockSendResult).toHaveBeenCalledWith(
         props.attackResultId,
-        expect.objectContaining({ target_conversation_id: "conv-b" }),
+        expect.objectContaining({
+          target_conversation_id: "conv-b",
+          pieces: [expect.objectContaining({ original_value: "Conversation B draft" })],
+        }),
       );
       expect(screen.getByRole("button", { name: /export conversation/i })).toBeEnabled();
     });
-    expect(screen.getByRole("textbox")).toHaveValue("Unsent draft");
+    expect(screen.getByRole("textbox")).toHaveValue("Conversation B draft");
     expect(screen.queryByText("Only conversation A history")).not.toBeInTheDocument();
 
     jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
@@ -5131,6 +5172,9 @@ describe("ChatWindow Integration", () => {
     expect(JSON.parse(exportedText).conversation_id).toBe("conv-b");
     expect(exportedText).toContain("Only conversation B history");
     expect(exportedText).not.toContain("Only conversation A history");
+    mockedAttacksApi.getMessages.mockResolvedValueOnce(firstHistory);
+    rendered.rerender(<TestWrapper><ChatDraftProvider><ChatWindow {...props} /></ChatDraftProvider></TestWrapper>);
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Unsent draft"));
   });
 
   it.each(["original", "new"])(
@@ -5343,11 +5387,11 @@ describe("ChatWindow Integration", () => {
 
     rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="conv-other" /></TestWrapper>);
     await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
-    await user.click(screen.getByTestId("remove-attachment-0"));
-    await waitFor(() => {
-      expect(screen.queryByTestId("clear-media-conversion-image")).not.toBeInTheDocument();
-    });
+    expect(screen.queryByRole("button", { name: "Remove evidence.png" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("clear-media-conversion-image")).not.toBeInTheDocument();
     rendered.rerender(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+    expect(screen.queryByRole("button", { name: "Remove evidence.png" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("clear-media-conversion-image")).not.toBeInTheDocument();
     const recover = await findRecoveryAction(user);
     deferFileReads = true;
     await user.click(recover);
@@ -6948,7 +6992,7 @@ describe("ChatWindow Integration", () => {
       });
       const selected = jest.fn();
       function BranchHarness() {
-        const [conversation, setConversation] = useState(options.selectedPipeline ? "other" : "first-source");
+        const [conversation, setConversation] = useState("first-source");
         return <>
           <button onClick={() => setConversation("other")}>Switch conversation</button>
           <button onClick={() => setConversation("first-source")}>Open saved conversation</button>
@@ -6958,12 +7002,18 @@ describe("ChatWindow Integration", () => {
             onSelectConversation={(id: string) => { selected(id); setConversation(id); }} />
         </>;
       }
-      render(<TestWrapper><BranchHarness /></TestWrapper>);
+      const savedSource = stored.get("first-source");
+      if (options.selectedPipeline) stored.set("first-source", empty("first-source"));
+      render(<TestWrapper><ChatDraftProvider><BranchHarness /></ChatDraftProvider></TestWrapper>);
       if (options.selectedPipeline) {
         await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toBeEnabled());
         await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
         await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
         await user.click(await screen.findByRole("option", { name: /^first/ }));
+        await user.click(screen.getByRole("button", { name: "Switch conversation" }));
+        await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toBeEnabled());
+        if (!savedSource) throw new Error("Missing source conversation");
+        stored.set("first-source", savedSource);
         await user.click(screen.getByRole("button", { name: "Open saved conversation" }));
       }
       if (options.sent !== false) await waitFor(() => expect(

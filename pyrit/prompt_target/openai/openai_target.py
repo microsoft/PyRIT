@@ -25,7 +25,7 @@ from pydantic import TypeAdapter
 
 from pyrit.auth import resolve_openai_auth
 from pyrit.common import default_values
-from pyrit.exceptions.exception_classes import (
+from pyrit.exceptions import (
     RateLimitException,
     handle_bad_request_exception,
 )

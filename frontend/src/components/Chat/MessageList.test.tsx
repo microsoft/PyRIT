@@ -1493,6 +1493,51 @@ describe("MessageList", () => {
       ]);
     });
 
+    it("renders JSON responses with large integers without rounding", () => {
+      const messages: Message[] = [
+        {
+          role: "assistant",
+          content: '{"id":9007199254740993}',
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      render(
+        <TestWrapper>
+          <MessageList messages={messages} />
+        </TestWrapper>
+      );
+      const block = screen.getByTestId("message-json-0");
+      expect(block.tagName).toBe("PRE");
+      expect(block.textContent).toBe('{\n  "id": 9007199254740993\n}');
+    });
+
+    it.each([
+      '{"literal":"\\u005fPYRIT_NUM_i_0_0__","id":42}',
+      '{"\\u005fPYRIT_NUM_i_0_0__":42,"id":7}',
+    ])("preserves escaped marker strings and keys in JSON responses: %s", (content: string) => {
+      const random = jest.spyOn(Math, "random").mockReturnValueOnce(0.5).mockReturnValue(0.25);
+      const now = jest.spyOn(Date, "now").mockReturnValue(0);
+      try {
+        const message: Message = {
+          role: "assistant",
+          content,
+          timestamp: "2026-11-04T00:00:00Z",
+        };
+        render(
+          <TestWrapper>
+            <MessageList messages={[message]} />
+          </TestWrapper>
+        );
+        expect(screen.getByTestId("message-json-0").textContent).toBe(
+          JSON.stringify(JSON.parse(content), null, 2)
+        );
+        expect(message.content).toBe(content);
+      } finally {
+        random.mockRestore();
+        now.mockRestore();
+      }
+    });
+
     it("does not reformat plain text assistant content", () => {
       const messages: Message[] = [
         {

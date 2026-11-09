@@ -18,12 +18,19 @@ from unit.mocks import MockPromptTarget
 
 from pyrit.models import Message, MessagePiece, PromptDataType, RequestTraceContext
 from pyrit.prompt_target import (
+    CapabilityHandlingPolicy,
+    CapabilityName,
     FunctionTool,
     LiteLLMChatTarget,
     MCPToolProvider,
     OpenAIChatTarget,
     OpenAIResponseTarget,
+    PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
     TargetTraceConfig,
+    UnsupportedCapabilityBehavior,
+    discover_target_capabilities_async,
 )
 from pyrit.prompt_target.common.discover_target_capabilities import (
     _CAPABILITY_PROBES,
@@ -32,16 +39,7 @@ from pyrit.prompt_target.common.discover_target_capabilities import (
     _discover_capability_flags_async,
     _discover_input_modalities_async,
     _permissive_configuration,
-    discover_target_capabilities_async,
 )
-from pyrit.prompt_target.common.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import (
-    CapabilityHandlingPolicy,
-    CapabilityName,
-    TargetCapabilities,
-    UnsupportedCapabilityBehavior,
-)
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 class _RealValidationTarget(PromptTarget):
@@ -225,11 +223,11 @@ class TestDiscoverTargetCapabilitiesAsync:
         We simulate that by removing SYSTEM_PROMPT from the registry and
         configuring the target with ``ADAPT`` for it but no native support.
         """
-        from pyrit.prompt_target.common import discover_target_capabilities as qtc
-        from pyrit.prompt_target.common.target_capabilities import (
+        from pyrit.prompt_target import (
             CapabilityHandlingPolicy,
             UnsupportedCapabilityBehavior,
         )
+        from pyrit.prompt_target.common import discover_target_capabilities as qtc
 
         patched_probes = {k: v for k, v in qtc._CAPABILITY_PROBES.items() if k is not CapabilityName.SYSTEM_PROMPT}
         monkeypatch.setattr(qtc, "_CAPABILITY_PROBES", patched_probes)

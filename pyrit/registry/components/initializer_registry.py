@@ -39,8 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import ModuleType
 
-    from pyrit.models import Parameter
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier, Parameter
     from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
