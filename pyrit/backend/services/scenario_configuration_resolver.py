@@ -9,17 +9,14 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness
 from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
-from pyrit.scenario.core import resolve_technique_tokens
-from pyrit.scenario.core.scenario_target_defaults import (
-    override_default_adversarial_target,
-    validate_default_adversarial_target,
-)
+from pyrit.scenario.core import override_default_adversarial_target, resolve_technique_tokens
+from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
-    from pyrit.models import ScenarioDatasetRequest
-    from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSizeEstimateRequest
+    from pyrit.models import ScenarioDatasetRequest, ScenarioRunSizeEstimateRequest
+    from pyrit.models.catalog import RunScenarioRequest
     from pyrit.models.component_spec import RegisteredComponentReference
     from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget

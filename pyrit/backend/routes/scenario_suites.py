@@ -19,9 +19,13 @@ from pyrit.backend.models import (
 from pyrit.backend.models.common import IdentifierStr
 from pyrit.backend.services import get_scenario_suite_execution_service, get_scenario_suite_service
 from pyrit.backend.services.scenario_suite_execution_service import ScenarioSuiteExecutionCapacityError
-from pyrit.models import LaunchScenarioSuiteRequest, ScenarioSuite, ScenarioSuiteExecutionSummary
+from pyrit.models import (
+    LaunchScenarioSuiteRequest,
+    ScenarioSuite,
+    ScenarioSuiteExecutionSummary,
+    ScenarioSuiteReadinessRequest,
+)
 from pyrit.models.scenario_readiness import ScenarioReadiness
-from pyrit.models.scenario_suite_execution import ScenarioSuiteReadinessRequest
 from pyrit.registry import (
     ScenarioSuiteConflictError,
     ScenarioSuiteExecutionNotFoundError,

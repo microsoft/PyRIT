@@ -51,7 +51,7 @@
 # scorers):
 
 # %%
-from pyrit.scenario.scenarios.airt.scam import Scam
+from pyrit.scenario.scenarios.airt import Scam
 from pyrit.setup import initialize_pyrit_async
 from pyrit.setup.initializers import TechniqueInitializer
 

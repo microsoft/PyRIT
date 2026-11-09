@@ -34,8 +34,8 @@ from pyrit.registry import (
 )
 
 if TYPE_CHECKING:
+    from pyrit.models import ScenarioSuiteReadinessRequest
     from pyrit.models.catalog import ScenarioRunSummary, ScenarioSuiteRegistryEntry
-    from pyrit.models.scenario_suite_execution import ScenarioSuiteReadinessRequest
 
 logger = logging.getLogger(__name__)
 

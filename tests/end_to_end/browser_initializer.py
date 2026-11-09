@@ -9,8 +9,15 @@ from uuid import UUID
 from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.memory import AttackResultEntry, CentralMemory
-from pyrit.models import AttackResult, Message, MessagePiece, SeedObjective
-from pyrit.models.catalog import ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
+from pyrit.models import (
+    AttackResult,
+    Message,
+    MessagePiece,
+    ScenarioPreset,
+    ScenarioSuite,
+    ScenarioSuiteEntry,
+    SeedObjective,
+)
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import ScenarioPresetRegistry, ScenarioRegistry, ScenarioSuiteRegistry, TargetRegistry
 from pyrit.scenario.core import (

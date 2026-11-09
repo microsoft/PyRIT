@@ -124,7 +124,7 @@
 
 # %%
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.scenario.scenarios.foundry.red_team_agent import FoundryTechnique, RedTeamAgent
+from pyrit.scenario.scenarios.foundry import FoundryTechnique, RedTeamAgent
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from pyrit.setup.initializers import LoadDefaultDatasets, TechniqueInitializer
 
