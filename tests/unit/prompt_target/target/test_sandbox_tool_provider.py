@@ -25,18 +25,27 @@ from pyrit._code_execution import (
     SandboxRegistry,
     SandboxStateKind,
 )
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import (
+    AttackOutcome,
     Message,
     MessagePiece,
+    ScoreStatus,
+    ScoringExpectation,
+    ToolCallRequirement,
     ToolExecutionMetadata,
     ToolLoopStop,
     ToolLoopStopReason,
+    ToolsCalled,
 )
-from pyrit.prompt_target import OpenAIResponseTarget, SandboxToolProvider, Tool, ToolInfrastructureError
+from pyrit.prompt_target import OpenAIResponseTarget, SandboxToolProvider, Tool, ToolInfrastructureError, ToolInputError
+from pyrit.score import MessageToolCallScorer
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from pyrit.memory import SQLiteMemory
 
 
 @pytest.fixture
@@ -153,8 +162,9 @@ async def test_input_the_sandbox_rejects_reaches_the_model_async() -> None:
     fake = FakeSandbox()
     fake.fail_next(hook=FakeSandboxHook.EXECUTE, error=SandboxInputError("request too large for the host"))
     tools = await _tools_async(SandboxToolProvider(sandbox=fake))
-    result = await _call_async(tools["run_python"], program="print(1)")
-    assert result == {"error": "SandboxInputError", "message": "request too large for the host"}
+    with pytest.raises(ToolInputError, match="request too large for the host"):
+        await _call_async(tools["run_python"], program="print(1)")
+    assert fake.runs == []
 
 
 async def test_a_sandbox_failure_is_an_infrastructure_error_async() -> None:
@@ -287,6 +297,75 @@ def _tool_outputs(messages: list[Message]) -> list[tuple[dict[str, Any], bool]]:
             assert execution is not None
             outputs.append((json.loads(json.loads(piece.original_value)["output"]), execution.invoked))
     return outputs
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    ("name", "arguments", "stdout"),
+    [
+        ("run_python", {"program": "raise ValueError('bad input')"}, ""),
+        ("write_file", {"path": "ok.txt", "content": "ok"}, '{"error": "PermissionError", "message": "read only"}'),
+        ("read_file", {"path": "ok.txt"}, '{"error": "FileNotFoundError", "message": "missing"}'),
+        ("list_dir", {}, '{"error": "NotADirectoryError", "message": "not a directory"}'),
+    ],
+)
+@pytest.mark.parametrize("rejected", [True, False])
+async def test_adapter_rejection_is_not_scored_as_execution_async(
+    *,
+    name: str,
+    arguments: dict[str, object],
+    stdout: str,
+    rejected: bool,
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    sandbox = FakeSandbox(handler=lambda run: ProcessResult(exit_code=3 if name == "run_python" else 0, stdout=stdout))
+    if rejected:
+        sandbox.fail_next(hook=FakeSandboxHook.EXECUTE, error=SandboxInputError("request rejected by adapter"))
+    target = _target(SandboxToolProvider(sandbox=sandbox))
+    attack = PromptSendingAttack(
+        objective_target=target,
+        attack_scoring_config=AttackScoringConfig(objective_scorer=MessageToolCallScorer()),
+        max_attempts_on_failure=0,
+    )
+    expectation = ScoringExpectation(conditions=(ToolsCalled(tools=(ToolCallRequirement(name=name),)),))
+    replies = [_function_call("call_1", name, arguments), _text("done")]
+    try:
+        with patch.object(
+            target._async_client.responses, "create", new_callable=AsyncMock, side_effect=replies
+        ) as create:
+            result = await attack.execute_async(objective="use the sandbox tool", expectation=expectation)
+        assert create.await_count == 2
+        assert result.last_response is not None
+        pieces = await sqlite_instance.get_message_pieces_async(conversation_id=result.last_response.conversation_id)
+        outputs = [piece for piece in pieces if piece.original_value_data_type == "function_call_output"]
+        assert len(outputs) == 1
+        assert ToolExecutionMetadata.from_metadata(metadata=outputs[0].prompt_metadata) == ToolExecutionMetadata(
+            invoked=not rejected
+        )
+        assert len(sandbox.runs) == (0 if rejected else 1)
+        output = json.loads(json.loads(outputs[0].original_value)["output"])
+        assert result.automated_score is not None
+        if rejected:
+            assert output == {"error": "tool_input_error", "function": name, "message": "request rejected by adapter"}
+            assert result.outcome is AttackOutcome.UNDETERMINED
+            assert result.automated_score.status is ScoreStatus.UNDETERMINED
+            assert result.automated_score.score_value is None
+        else:
+            assert result.outcome is AttackOutcome.SUCCESS
+            assert result.automated_score.get_value() is True
+            if name == "run_python":
+                assert output["exit_code"] == 3
+            else:
+                assert output["error"] in {"PermissionError", "FileNotFoundError", "NotADirectoryError"}
+        stored = await sqlite_instance.get_scores_async(score_ids=[str(result.automated_score.id)])
+        assert len(stored) == 1
+        assert stored[0].status is result.automated_score.status
+        assert stored[0].score_value == result.automated_score.score_value
+        assert stored[0].scored_expectation == expectation
+        assert stored[0].score_rationale == result.automated_score.score_rationale
+        assert stored[0].score_metadata == result.automated_score.score_metadata
+    finally:
+        await sandbox.close_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")

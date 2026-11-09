@@ -39,8 +39,11 @@ Results are JSON. `run_<runtime>` returns the exit code, the output of each stre
 that fails is an ordinary result the model can read and fix.
 
 Arguments are checked against the sandbox's limits before anything runs, so a call rejected there goes back to
-the model as an error, with the reason, and is never recorded as invoked. When the sandbox itself fails, the
-tool raises `ToolInfrastructureError`, and `OpenAIResponseTarget` ends the turn with an error response
+the model as an error, with the reason, and is never recorded as invoked. If an adapter rejects a validated
+request before execution, the tool raises `ToolInputError`; the target returns its reason with `invoked=False`
+and lets the model correct the call. Executed programs that report an error still count as invoked.
+When the sandbox itself fails, the tool raises `ToolInfrastructureError`, and `OpenAIResponseTarget`
+ends the turn with an error response
 instead of asking the model to fix a problem that isn't its own. Every call the model made still gets a
 result, so the conversation's history stays valid; the model is told only that the tool's infrastructure
 failed, while the error response, which is never replayed to the model, keeps the details. Its `ToolLoopStop`
