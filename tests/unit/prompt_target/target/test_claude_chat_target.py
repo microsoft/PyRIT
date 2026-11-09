@@ -105,6 +105,27 @@ class TestClaudeChatTarget:
         assert target.get_identifier().params["headers"] == {"X-Route": "test"}
         assert "private" not in str(target.get_identifier())
 
+    @pytest.mark.parametrize("header", ["Ocp-Apim-Subscription-Key", "oCp-ApIm-SuBsCrIpTiOn-KeY"])
+    async def test_gateway_key_is_not_persisted_async(
+        self, *, claude_sdk: Any, sqlite_instance: Any, header: str
+    ) -> None:
+        from pyrit.prompt_normalizer import PromptNormalizer
+
+        target = ClaudeChatTarget(
+            model_name="claude-sonnet-4-6", headers={header: "private-gateway-key", "X-Route": "gateway"}
+        )
+        claude_sdk.acompletion.return_value = _mock_response()
+        await PromptNormalizer().send_prompt_async(
+            target=target, message=_user_message(), conversation_id="gateway-credentials"
+        )
+        assert claude_sdk.acompletion.call_args.kwargs["extra_headers"][header] == "private-gateway-key"
+        identifiers = await sqlite_instance.get_target_identifiers_async(
+            identifier_hashes=[target.get_identifier().hash]
+        )
+        assert len(identifiers) == 1
+        assert identifiers[0].params["headers"] == {"X-Route": "gateway"}
+        assert "private-gateway-key" not in str(identifiers[0])
+
     def test_discovery_and_forwarded_constructor(self, claude_sdk: Any) -> None:
         registry = TargetRegistry()
         assert registry.get_class("ClaudeChatTarget") is ClaudeChatTarget

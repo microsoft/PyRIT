@@ -15,6 +15,10 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
 
+class ToolInfrastructureError(Exception):
+    """Raised by ``Tool.execute_async`` for infrastructure failure with a possibly unknown execution outcome."""
+
+
 class Tool(ABC):
     """A tool that a target can advertise and execute."""
 

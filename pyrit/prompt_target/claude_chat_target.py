@@ -21,7 +21,15 @@ class ClaudeChatTarget(LiteLLMChatTarget):
     """Use Claude through LiteLLM's native Anthropic Messages adapter."""
 
     _CREDENTIAL_HEADERS = frozenset(
-        {"authorization", "proxy-authorization", "x-api-key", "api-key", "cookie", "set-cookie"}
+        {
+            "authorization",
+            "proxy-authorization",
+            "x-api-key",
+            "api-key",
+            "ocp-apim-subscription-key",
+            "cookie",
+            "set-cookie",
+        }
     )
     _JSON_OUTPUT_TOOL_NAME = "pyrit_claude_json_output"
 
@@ -88,7 +96,7 @@ class ClaudeChatTarget(LiteLLMChatTarget):
         super()._validate_tool_definitions(tools)
         names = {tool.name for tool in tools} | {
             definition.get("function", {}).get("name")
-            for definition in (self._extra_body_parameters or {}).get("tools", [])
+            for definition in (self._extra_body_parameters or {}).get("tools") or []
         }
         if self._JSON_OUTPUT_TOOL_NAME in names:
             raise ValueError(f"Tool name {self._JSON_OUTPUT_TOOL_NAME!r} is reserved for Claude JSON output.")

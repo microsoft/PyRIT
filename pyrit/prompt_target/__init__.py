@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.common.tool_provider import (
         FunctionTool,
         Tool,
+        ToolInfrastructureError,
         ToolProvider,
         collect_tools_async,
         tool,
@@ -124,6 +125,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "TargetConfiguration": "pyrit.prompt_target.common.target_configuration",
     "TargetRequirements": "pyrit.prompt_target.common.target_requirements",
     "Tool": "pyrit.prompt_target.common.tool_provider",
+    "ToolInfrastructureError": "pyrit.prompt_target.common.tool_provider",
     "ToolProvider": "pyrit.prompt_target.common.tool_provider",
     "UnsupportedCapabilityBehavior": "pyrit.prompt_target.common.target_capabilities",
     "TextTarget": "pyrit.prompt_target.text_target",

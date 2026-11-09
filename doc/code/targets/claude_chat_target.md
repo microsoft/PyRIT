@@ -90,6 +90,13 @@ stop execution with an explicit processing-error response. Calls beyond the
 round budget receive unexecuted error results and a terminal processing error.
 Continuation failures retain completed calls/results plus an error response;
 the entire send is not retried, so completed side effects are not repeated.
+Tools can raise `ToolInfrastructureError` (exported from `pyrit.prompt_target`)
+when their own infrastructure fails or the execution outcome is unknown.
+This stops the turn without another model request. The failing call receives
+an error result marked as invoked; remaining calls receive uninvoked error
+results, followed by a terminal processing-error response. Earlier successful
+results remain in history. Ordinary tool/argument errors still go back to
+the model so it can recover.
 Cancellation propagates and scoped provider resources are closed.
 
 Targets return all interaction messages; `PromptNormalizer` persists them in

@@ -54,7 +54,13 @@ from pyrit.prompt_target.common.target_capabilities import (
 from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.target_trace_config import TargetTraceConfig, request_trace_headers
 from pyrit.prompt_target.common.tool_call_history import TOOL_CALL_INPUT_MODALITIES, parse_function_call
-from pyrit.prompt_target.common.tool_provider import Tool, ToolProvider, _ScopedToolProvider, collect_tools_async
+from pyrit.prompt_target.common.tool_provider import (
+    Tool,
+    ToolInfrastructureError,
+    ToolProvider,
+    _ScopedToolProvider,
+    collect_tools_async,
+)
 from pyrit.prompt_target.common.utils import (
     build_empty_truncated_response,
     limit_requests_per_minute,
@@ -471,7 +477,7 @@ class LiteLLMChatTarget(PromptTarget):
     def _validate_tool_definitions(self, tools: Sequence[Tool]) -> None:
         declared = {
             definition.get("function", {}).get("name")
-            for definition in (self._extra_body_parameters or {}).get("tools", [])
+            for definition in (self._extra_body_parameters or {}).get("tools") or []
         }
         conflicts = {tool.name for tool in tools} & declared
         if conflicts:
@@ -525,14 +531,29 @@ class LiteLLMChatTarget(PromptTarget):
             seen_ids.update(ids)
             working.extend(result)
             exhausted = rounds >= self._max_tool_rounds
-            for call in calls:
-                output = (
-                    self._tool_result(
-                        request=request, call=call, output={"error": "max_tool_rounds_exhausted"}, invoked=False
+            for index, call in enumerate(calls):
+                try:
+                    output = (
+                        self._tool_result(
+                            request=request, call=call, output={"error": "max_tool_rounds_exhausted"}, invoked=False
+                        )
+                        if exhausted
+                        else await self._execute_tool_async(request=request, call=call, registered=registered)
                     )
-                    if exhausted
-                    else await self._execute_tool_async(request=request, call=call, registered=registered)
-                )
+                except ToolInfrastructureError as exc:
+                    for offset, pending_call in enumerate(calls[index:]):
+                        responses.append(
+                            self._tool_result(
+                                request=request,
+                                call=pending_call,
+                                output={"error": "tool_infrastructure_error"},
+                                invoked=offset == 0,
+                            )
+                        )
+                    responses.append(
+                        self._tool_loop_error(request=request, detail=f"Tool infrastructure failed: {exc}")
+                    )
+                    return responses
                 responses.append(output)
                 working.append(output)
             if exhausted:
@@ -567,6 +588,8 @@ class LiteLLMChatTarget(PromptTarget):
             # Validate serialization here so a completed side effect is never lost or repeated.
             if not isinstance(output, str):
                 output = json.dumps(output, allow_nan=False)
+        except ToolInfrastructureError:
+            raise
         except Exception as exc:
             logger.exception("Tool call %s failed.", call.id)
             output = json.dumps({"error": type(exc).__name__, "message": str(exc)})

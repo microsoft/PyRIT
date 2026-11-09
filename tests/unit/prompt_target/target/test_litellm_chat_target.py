@@ -41,12 +41,14 @@ from pyrit.models import (
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import (
+    ClaudeChatTarget,
     FunctionTool,
     LiteLLMChatTarget,
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
     TargetTraceConfig,
+    ToolInfrastructureError,
     tool,
 )
 from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
@@ -194,6 +196,30 @@ def weather_tool() -> tuple[FunctionTool, list[str]]:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestLiteLLMToolLoop:
+    @pytest.mark.parametrize("target_class", [LiteLLMChatTarget, ClaudeChatTarget])
+    @pytest.mark.parametrize("executable", [False, True])
+    async def test_null_passthrough_tools_are_omitted_async(
+        self,
+        *,
+        litellm_stub: Any,
+        weather_tool: tuple[FunctionTool, list[str]],
+        target_class: type[LiteLLMChatTarget],
+        executable: bool,
+    ) -> None:
+        target = target_class(
+            model_name="anthropic/claude-sonnet-4-6",
+            tools=[weather_tool[0]] if executable else None,
+            extra_body_parameters={"tools": None},
+        )
+        litellm_stub.acompletion.return_value = _mock_response()
+        await target.send_prompt_async(message=_user_message())
+        body = litellm_stub.acompletion.call_args.kwargs
+        if executable:
+            assert body["tools"][0]["function"]["name"] == "weather_async"
+        else:
+            assert "tools" not in body
+        assert weather_tool[1] == []
+
     async def test_duplicate_registrations_fail_before_sending_async(
         self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
     ) -> None:
@@ -429,6 +455,65 @@ class TestLiteLLMToolLoop:
             assert "Tool failed." in replies[1].get_value()
             assert ToolExecutionMetadata.from_metadata(metadata=replies[1].get_piece().prompt_metadata).invoked is True
         assert events == ["open", "close"]
+
+    @pytest.mark.parametrize("target_class", [LiteLLMChatTarget, ClaudeChatTarget])
+    @pytest.mark.parametrize("failure_index", [0, 1, 2])
+    async def test_infrastructure_failure_ends_round_with_complete_persisted_history_async(
+        self,
+        *,
+        litellm_stub: Any,
+        sqlite_instance: SQLiteMemory,
+        target_class: type[LiteLLMChatTarget],
+        failure_index: int,
+    ) -> None:
+        executions: list[int] = []
+        events: list[str] = []
+
+        @tool
+        async def unstable_async(*, index: int) -> str:
+            executions.append(index)
+            if index == failure_index:
+                raise ToolInfrastructureError("Sandbox unavailable; execution outcome unknown.")
+            return f"completed {index}"
+
+        class Provider:
+            identifier = {"provider": "isolated-test"}
+
+            @asynccontextmanager
+            async def execution_scope_async(self) -> AsyncGenerator[None, None]:
+                events.append("open")
+                try:
+                    yield
+                finally:
+                    events.append("close")
+
+            async def get_tools_async(self) -> list[FunctionTool]:
+                return [unstable_async]
+
+        target = target_class(model_name="anthropic/claude-sonnet-4-6", tool_providers=[Provider()])
+        litellm_stub.acompletion.side_effect = [
+            _tool_response(calls=[(str(index), "unstable_async", json.dumps({"index": index})) for index in range(3)]),
+            _mock_response("Another model request must not occur."),
+        ]
+        reply = await PromptNormalizer().send_prompt_async(
+            target=target, message=_user_message(), conversation_id="infrastructure-failure"
+        )
+        assert reply.get_piece().response_error == "processing"
+        assert "infrastructure" in reply.get_value().lower()
+        assert litellm_stub.acompletion.await_count == 1
+        assert executions == list(range(failure_index + 1))
+        assert events == ["open", "close"]
+        history = await sqlite_instance.get_conversation_messages_async(conversation_id="infrastructure-failure")
+        assert [message.api_role for message in history] == ["user", "assistant", "tool", "tool", "tool", "assistant"]
+        outputs = history[2:5]
+        assert [json.loads(message.get_value())["call_id"] for message in outputs] == ["0", "1", "2"]
+        assert [
+            ToolExecutionMetadata.from_metadata(metadata=message.get_piece().prompt_metadata).invoked
+            for message in outputs
+        ] == [index <= failure_index for index in range(3)]
+        for message in outputs[failure_index:]:
+            assert json.loads(json.loads(message.get_value())["output"]) == {"error": "tool_infrastructure_error"}
+        target.validate_tool_history(history)
 
     async def test_execution_opt_out_advertises_but_returns_calls_async(
         self, *, litellm_stub: Any, weather_tool: tuple[FunctionTool, list[str]]
