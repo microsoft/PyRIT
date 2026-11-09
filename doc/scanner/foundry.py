@@ -114,7 +114,9 @@ await output_scenario_async(scenario_result)
 # | `multi_turn` | `RedTeamingAttack` follows the tester instructions for exactly `max_turns` turns. The stored user prompt, if any, opens the conversation. The tester gets no judge feedback. | Adversarial prompts (`include_adversarial_prompt=True`) |
 #
 # Both techniques run by default. Groups without a technique's input are skipped, or rejected
-# when `incompatible_technique_policy` is `raise`. The scenario parameters are:
+# when `incompatible_technique_policy` is `raise`. `multi_turn` also requires native conversation
+# support on the target so every target turn reaches the judges; single-turn targets skip it
+# under the default policy, or reject it under `raise`. The scenario parameters are:
 #
 # - `max_turns`: target turns in each multi-turn conversation. Defaults to 6, as in ASSERT.
 # - `judgment_mode`: `category_validated` (the default) also records a judgment for each relevant

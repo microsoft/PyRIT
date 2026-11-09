@@ -28,6 +28,7 @@ from pyrit.models import (
     ScenarioRunSizeEstimateStatus,
     SeedGroupRequirements,
 )
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
@@ -536,6 +537,9 @@ class AssertPolicy(Scenario):
                 attack_class=RedTeamingAttack,
                 description=AssertTechnique.MultiTurn.description,
                 technique_tags=["multi_turn"],
+                requirements=TechniqueRequirements(
+                    objective_target=TargetRequirements(native_required=frozenset({CapabilityName.MULTI_TURN}))
+                ),
                 attack_kwargs={"max_turns": self.params["max_turns"], "score_last_turn_only": True},
                 adversarial_chat=self._adversarial_chat,
                 use_score_as_feedback=False,

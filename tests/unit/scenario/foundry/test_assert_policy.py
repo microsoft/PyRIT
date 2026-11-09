@@ -356,6 +356,38 @@ async def test_multi_turn_runs_every_turn_and_judges_once_without_feedback_async
     ("error", "reason"),
     [("blocked", "target_input_refused"), ("processing", "target_error")],
 )
+async def test_multi_turn_keeps_earlier_target_errors_without_stored_system_prompt_async(
+    harness: _Harness, error: PromptResponseError, reason: str
+) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1, target_owns_instructions=True))
+    scenario = await harness.initialize_async(
+        harness.scenario(), scenario_techniques=[AssertTechnique.MultiTurn], max_turns=2, **_datasets("assert_a")
+    )
+    replies = iter([(error, "Target error."), ("none", _SAFE_REPLY)])
+
+    async def target_async(*, normalized_conversation: list[Message]) -> list[Message]:
+        harness.target_requests.append(normalized_conversation)
+        reply_error, value = next(replies)
+        return _reply(normalized_conversation[-1], value=value, error=reply_error)
+
+    with harness.patched(), patch.object(harness.objective, "_send_prompt_to_target_async", side_effect=target_async):
+        result = await scenario.run_async()
+
+    (attack_result,) = next(iter(result.attack_results.values()))
+    assert attack_result.executed_turns == 2
+    assert len(harness.target_requests) == 2
+    assert attack_result.outcome == AttackOutcome.UNDETERMINED
+    assert harness.judge_systems == []
+    scores = await _scores_for_async(attack_result)
+    assert len(scores) == 2
+    assert all(score.is_undetermined for score in scores)
+    assert all(score.score_metadata == {"assert_scoring_skipped": reason} for score in scores)
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [("blocked", "target_input_refused"), ("processing", "target_error")],
+)
 async def test_blocked_or_errored_target_reply_is_not_judged_async(
     harness: _Harness, error: PromptResponseError, reason: str
 ) -> None:
@@ -606,18 +638,57 @@ async def test_baseline_sends_only_the_objective_with_the_group_judges_async(har
     assert result.display_group_map[baseline_name] == "baseline"
 
 
-async def test_incompatible_target_skips_only_that_technique_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
-    with patch(
-        "pyrit.scenario.scenarios.foundry.assert_policy.check_target_compatibility",
-        side_effect=lambda **kwargs: kwargs["technique_name"] == "single_turn",
-    ) as check:
-        scenario = await harness.initialize_async(
-            harness.scenario(), incompatible_technique_policy="skip", **_datasets("assert_a")
-        )
+@pytest.mark.parametrize("target_owns_instructions", [False, True])
+async def test_single_turn_target_skips_only_multi_turn_async(
+    harness: _Harness, target_owns_instructions: bool
+) -> None:
+    await _store_async(
+        name="assert_a", result=_result(group_count=1, target_owns_instructions=target_owns_instructions)
+    )
+    harness.objective.apply_capabilities(
+        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
+    )
+    scenario = await harness.initialize_async(
+        harness.scenario(), incompatible_technique_policy="skip", **_datasets("assert_a")
+    )
     assert {attack.technique_name for attack in scenario._atomic_attacks} == {"single_turn"}
-    assert {call.kwargs["technique_name"] for call in check.call_args_list} == {"single_turn", "multi_turn"}
-    assert {call.kwargs["target"] for call in check.call_args_list} == {harness.objective}
+    with harness.patched():
+        await scenario.run_async()
+    assert len(harness.target_requests) == 1
+    assert harness.adversarial_requests == []
+    assert len(harness.judge_systems) == 2
+
+
+async def test_single_turn_target_rejects_multi_turn_under_raise_policy_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1, target_owns_instructions=True))
+    harness.objective.apply_capabilities(
+        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
+    )
+    with pytest.raises(IncompatibleTechniqueError, match="natively support 'supports_multi_turn'"):
+        await harness.initialize_async(
+            harness.scenario(),
+            scenario_techniques=[AssertTechnique.MultiTurn],
+            incompatible_technique_policy="raise",
+            **_datasets("assert_a"),
+        )
+    assert harness.target_requests == harness.adversarial_requests == harness.judge_systems == []
+
+
+@pytest.mark.parametrize("include_baseline", [False, True])
+async def test_single_turn_target_cannot_run_only_multi_turn_async(harness: _Harness, include_baseline: bool) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1, target_owns_instructions=True))
+    harness.objective.apply_capabilities(
+        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
+    )
+    with pytest.raises(IncompatibleTechniqueError, match="no usable selected techniques"):
+        await harness.initialize_async(
+            harness.scenario(),
+            scenario_techniques=[AssertTechnique.MultiTurn],
+            incompatible_technique_policy="skip",
+            include_baseline=include_baseline,
+            **_datasets("assert_a"),
+        )
+    assert harness.target_requests == harness.adversarial_requests == harness.judge_systems == []
 
 
 async def test_judge_wrapper_anchors_scores_on_the_scored_evidence_async(
