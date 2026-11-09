@@ -22,3 +22,4 @@ class MediaUploadResponse(BaseModel):
     """Expiring upload reference that a later message can reuse."""
 
     value: str
+    expires_at: float = Field(description="Conservative upload expiration as a UTC Unix timestamp in seconds.")

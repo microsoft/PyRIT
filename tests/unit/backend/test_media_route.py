@@ -250,6 +250,8 @@ async def test_upload_stages_readable_bytes_reused_by_messages_async(
     )
     assert response.status_code == 201
     value = response.json()["value"]
+    expires_at = response.json()["expires_at"]
+    assert time.time() < expires_at <= time.time() + staged_media_store.RETENTION_SECONDS
     assert value.startswith(staged_media_store.PREFIX)
     assert await staged_media_store.read_async(value) == content
     assert client.get("/api/media", params={"path": value}).status_code == 403
@@ -265,6 +267,19 @@ async def test_upload_stages_readable_bytes_reused_by_messages_async(
     created_paths.clear()
     await persist_message_pieces_async(pieces=[piece], persisted_paths=created_paths)
     assert created_paths == []
+
+
+def test_upload_reports_shared_staging_quota_without_losing_existing_uploads(client: TestClient) -> None:
+    upload = {"data_type": "binary_path", "content": "YQ=="}
+    with patch.object(staged_media_store, "MAX_STAGED_BYTES", 1):
+        first = client.post("/api/media/uploads", json=upload)
+        assert first.status_code == 201
+        rejected = client.post("/api/media/uploads", json={**upload, "content": "Yg=="})
+        assert rejected.status_code == 507
+        assert "staging is full" in rejected.json()["detail"]
+        renewed = client.post("/api/media/uploads", json=upload)
+        assert renewed.status_code == 201
+        assert renewed.json()["value"] == first.json()["value"]
 
 
 @pytest.mark.usefixtures("patch_central_database")

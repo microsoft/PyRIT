@@ -61,6 +61,8 @@ export interface MediaUploadRequest {
 
 export interface MediaUploadResponse {
   value: string
+  /** UTC Unix timestamp in seconds; absent on older backends. */
+  expires_at?: number
 }
 
 export type AttachmentUploadOutcome =

@@ -17,12 +17,17 @@ from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 logger = logging.getLogger(__name__)
 
 
+class StagingQuotaExceededError(ValueError):
+    """The shared staging directory has no capacity for another upload."""
+
+
 class StagedMediaStore:
     """Keep uploaded bytes for one day, including across backend restarts."""
 
     PREFIX = "pyrit-upload:"
     RETENTION_SECONDS = 24 * 60 * 60
     CLEANUP_INTERVAL_SECONDS = 60
+    MAX_STAGED_BYTES = 1024 * 1024 * 1024
 
     def __init__(self, directory: Path) -> None:
         """Use a private staging directory outside permanent results storage."""
@@ -71,12 +76,18 @@ class StagedMediaStore:
         with FileLock(self._directory / ".staging.lock"):
             # Refreshes must keep the reference stable for message-save idempotency.
             token = uuid5(NAMESPACE_URL, f"pyrit-upload:{hashlib.sha256(data).hexdigest()}")
+            self._cleanup_expired_files()
+            destination = self._directory / f"{token}.upload"
+            used = sum(path.stat().st_size for path in self._directory.glob("*.upload") if not path.is_symlink())
+            replaced = destination.stat().st_size if destination.exists() and not destination.is_symlink() else 0
+            if used - replaced + len(data) > self.MAX_STAGED_BYTES:
+                raise StagingQuotaExceededError("Attachment staging is full. Retry after unused uploads expire.")
             path = self._directory / f"{uuid4()}.upload"
             stream = path.open("xb")
             try:
                 with stream:
                     stream.write(data)
-                path.replace(self._directory / f"{token}.upload")
+                path.replace(destination)
             finally:
                 path.unlink(missing_ok=True)
         return token
@@ -95,19 +106,22 @@ class StagedMediaStore:
         if not self._directory.exists():
             return
         with FileLock(self._directory / ".staging.lock"):
-            cutoff = time.time() - self.RETENTION_SECONDS
-            for path in self._directory.glob("*.upload"):
-                try:
-                    if path.name != f"{UUID(path.stem)}.upload" or path.is_symlink():
-                        continue
-                    if path.stat().st_mtime <= cutoff:
-                        path.unlink(missing_ok=True)
-                except FileNotFoundError:
+            self._cleanup_expired_files()
+
+    def _cleanup_expired_files(self) -> None:
+        cutoff = time.time() - self.RETENTION_SECONDS
+        for path in self._directory.glob("*.upload"):
+            try:
+                if path.name != f"{UUID(path.stem)}.upload" or path.is_symlink():
                     continue
-                except ValueError:
-                    continue
-                except OSError:
-                    logger.exception("Could not delete expired attachment upload %s.", path.name)
+                if path.stat().st_mtime <= cutoff:
+                    path.unlink(missing_ok=True)
+            except FileNotFoundError:
+                continue
+            except ValueError:
+                continue
+            except OSError:
+                logger.exception("Could not delete expired attachment upload %s.", path.name)
 
 
 staged_media_store = StagedMediaStore(CONFIGURATION_DIRECTORY_PATH / "media-uploads")

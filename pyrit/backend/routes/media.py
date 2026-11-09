@@ -21,6 +21,7 @@ import base64
 import binascii
 import logging
 import mimetypes
+import time
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -30,7 +31,7 @@ from pyrit.backend.services.media_persistence import (
     MediaAccessDeniedError,
     validate_local_media_path_async,
 )
-from pyrit.backend.services.staged_media import staged_media_store
+from pyrit.backend.services.staged_media import StagingQuotaExceededError, staged_media_store
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,12 @@ async def upload_media_async(body: MediaUploadRequest) -> MediaUploadResponse:
     except (binascii.Error, ValueError) as exc:
         raise HTTPException(status_code=400, detail="File content must be valid base64.") from exc
 
-    return MediaUploadResponse(value=await staged_media_store.stage_async(data))
+    expires_at = time.time() + staged_media_store.RETENTION_SECONDS
+    try:
+        value = await staged_media_store.stage_async(data)
+    except StagingQuotaExceededError as exc:
+        raise HTTPException(status_code=507, detail=str(exc)) from exc
+    return MediaUploadResponse(value=value, expires_at=expires_at)
 
 
 @router.get("/media")

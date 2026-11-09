@@ -17,9 +17,38 @@ import pytest
 from filelock import FileLock, Timeout
 
 from pyrit.backend.services.media_persistence import MediaOrigin, persist_media_value_async
-from pyrit.backend.services.staged_media import StagedMediaStore, staged_media_store
+from pyrit.backend.services.staged_media import StagedMediaStore, StagingQuotaExceededError, staged_media_store
 from pyrit.memory import DataTypeSerializer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
+
+
+async def test_quota_preserves_renewals_and_reclaims_expired_bytes_async(tmp_path: Path) -> None:
+    store = StagedMediaStore(tmp_path)
+    with patch.object(StagedMediaStore, "MAX_STAGED_BYTES", 5):
+        first = await store.stage_async(b"first")
+        with pytest.raises(StagingQuotaExceededError, match="staging is full"):
+            await StagedMediaStore(tmp_path).stage_async(b"next")
+        assert await store.stage_async(b"first") == first
+        assert await store.read_async(first) == b"first"
+        assert len(list(tmp_path.glob("*.upload"))) == 1
+        path = tmp_path / f"{first.removeprefix(store.PREFIX)}.upload"
+        expired_time = time.time() - store.RETENTION_SECONDS
+        os.utime(path, (expired_time, expired_time))
+        second = await store.stage_async(b"next")
+        assert await store.read_async(second) == b"next"
+        assert not path.exists()
+
+
+async def test_quota_serializes_concurrent_stores_before_writing_async(tmp_path: Path) -> None:
+    with patch.object(StagedMediaStore, "MAX_STAGED_BYTES", 5):
+        results = await asyncio.gather(
+            StagedMediaStore(tmp_path).stage_async(b"first"),
+            StagedMediaStore(tmp_path).stage_async(b"other"),
+            return_exceptions=True,
+        )
+    assert sum(isinstance(result, str) for result in results) == 1
+    assert sum(isinstance(result, StagingQuotaExceededError) for result in results) == 1
+    assert sum(path.stat().st_size for path in tmp_path.glob("*.upload")) == 5
 
 
 @pytest.mark.parametrize("operation", ["write", "read", "cleanup"])

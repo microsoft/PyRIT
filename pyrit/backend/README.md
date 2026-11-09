@@ -348,24 +348,18 @@ Stop these test-owned servers after the run.
 
 ### Request Limits
 
-Chat attachments start uploading when they are attached, while the composer stays editable.
-`POST /api/media/uploads` accepts `data_type` (`image_path`, `audio_path`, `video_path`, or
-`binary_path`), raw base64 `content`, and `mime_type`. It returns **201** with an opaque
-`pyrit-upload:` reference that later message requests reuse as `original_value`. Uploads
-are staged locally under the configuration directory's `media-uploads` folder, not in
-permanent local or Azure results storage. They expire after 24 hours; a startup and
-minute-by-minute sweep removes expired files, including uploads abandoned before a
-restart. Only media used in a message or conversion is copied to results storage.
-The composer and conversation editor share uploads; Send and Save await pending uploads
-without retransmitting their bytes. Failed uploads can be retried or removed, and old
-uploads are refreshed from the draft's retained File before reuse. Local previews use
-browser object URLs while uploads and target responses are pending. Uploading alone
-does not create an attack or call a target. Refreshing the same bytes preserves the
-upload reference so retries keep the same conversation-save idempotency key.
-A shared directory lock coordinates lease reads, renewals, and expiry cleanup across
-backend workers, so cleanup cannot delete a reference that has just been renewed.
-Mounted composer and editor controls observe shared refresh failures and retries;
-failed uploads disable both editor Save actions until retried or removed.
+Attachments upload in the background while editing remains available, with up to three
+uploads at a time. Send and Save reuse completed uploads; failures expose Retry and
+removal controls. Unused uploads expire after 24 hours, including across restarts.
+Only media used in a message or conversion enters permanent results storage.
+
+`POST /api/media/uploads` accepts `data_type`, base64 `content`, and `mime_type`.
+It returns **201** with an opaque `value` and `expires_at` (UTC Unix seconds).
+Retained drafts refresh uploads one hour before that expiration without changing their
+references. Older backends without `expires_at` use a 23-hour refresh interval.
+The shared local staging directory has a **1 GiB** quota; uploads exceeding it receive
+**507** and can be retried after unused uploads expire. Expired bytes are reclaimed
+before admitting new uploads. Renewing existing bytes does not consume extra quota.
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
 API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,

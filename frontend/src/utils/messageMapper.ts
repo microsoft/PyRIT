@@ -20,32 +20,58 @@ const ATTACHMENT_UPLOADS = new WeakMap<File, {
   outcome?: AttachmentUploadOutcome
 }>()
 const ATTACHMENT_UPLOAD_LISTENERS = new WeakMap<File, Set<(outcome: AttachmentUploadOutcome | undefined) => void>>()
-// Refresh before the backend's 24-hour staging lease expires.
-const ATTACHMENT_REUSE_MS = 23 * 60 * 60 * 1000
+// Leave a one-hour buffer before the server's staging lease expires.
+const ATTACHMENT_REFRESH_BUFFER_MS = 60 * 60 * 1000
+const LEGACY_ATTACHMENT_REUSE_MS = 23 * 60 * 60 * 1000
+const MAX_ACTIVE_UPLOADS = 3
+let activeUploads = 0
+const pendingUploads: Array<() => void> = []
+
+function queueAttachmentUpload(task: () => Promise<AttachmentUploadOutcome>): Promise<AttachmentUploadOutcome> {
+  return new Promise((resolve, reject) => {
+    const start = (): void => {
+      activeUploads += 1
+      void task().then(resolve, reject).finally(() => {
+        activeUploads -= 1
+        pendingUploads.shift()?.()
+      })
+    }
+    if (activeUploads < MAX_ACTIVE_UPLOADS) start()
+    else pendingUploads.push(start)
+  })
+}
 
 /** Start once on attachment; message preparation awaits this same upload. */
 export function startAttachmentUpload(file: File, retry = false): Promise<AttachmentUploadOutcome> {
   const existing = ATTACHMENT_UPLOADS.get(file)
   if (existing && !retry && existing.expiresAt > Date.now()) return existing.promise
-  const upload = (async (): Promise<AttachmentUploadOutcome> => {
+  let expiresAt = Number.POSITIVE_INFINITY
+  const upload = queueAttachmentUpload(async (): Promise<AttachmentUploadOutcome> => {
     try {
       const response = await mediaApi.upload({
         data_type: mimeTypeToDataType(file.type),
         content: await fileToBase64(file),
         mime_type: file.type || 'application/octet-stream',
       })
+      if (response.expires_at !== undefined && !Number.isFinite(response.expires_at)) {
+        throw new Error('The upload returned an invalid staging expiration.')
+      }
+      expiresAt = response.expires_at === undefined
+        ? Date.now() + LEGACY_ATTACHMENT_REUSE_MS
+        : response.expires_at * 1000 - ATTACHMENT_REFRESH_BUFFER_MS
       return { status: 'uploaded', value: response.value }
     } catch (error: unknown) {
       // Background failures are values so they can be shown before Send is clicked.
       return { status: 'failed', detail: toApiError(error).detail }
     }
-  })()
-  ATTACHMENT_UPLOADS.set(file, { promise: upload, expiresAt: Date.now() + ATTACHMENT_REUSE_MS })
+  })
+  ATTACHMENT_UPLOADS.set(file, { promise: upload, expiresAt: Number.POSITIVE_INFINITY })
   for (const listener of ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? []) listener(undefined)
   void upload.then((outcome: AttachmentUploadOutcome) => {
     const current = ATTACHMENT_UPLOADS.get(file)
     if (current?.promise !== upload) return
     current.outcome = outcome
+    current.expiresAt = expiresAt
     for (const listener of ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? []) listener(outcome)
   })
   return upload
