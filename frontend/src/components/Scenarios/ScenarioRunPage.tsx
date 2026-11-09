@@ -72,6 +72,14 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     return groups
   }, [state.results])
 
+  const closeObjective = (): void => {
+    setObjective(null)
+    requestAnimationFrame(() => {
+      const trigger = objectiveTrigger.current
+      if (trigger?.isConnected) trigger.focus()
+    })
+  }
+
   const backLinkElement = <Link to={backLink.path} className={styles.backLink}><ArrowLeftRegular /> {backLink.label}</Link>
 
   if (!state.run || !state.summary) return (
@@ -144,7 +152,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
         conversationState={location.state}
         onClose={attackDetails.close}
       />
-      <ObjectiveDetailsDialog objective={objective} onClose={() => { setObjective(null) }}
+      <ObjectiveDetailsDialog objective={objective} onClose={closeObjective}
         attempts={objective ? attemptsBySeed.get(objective.id) ?? [] : []}
         onOpenAttempt={openObjectiveAttempt} scenarioResultId={scenarioResultId} />
     </main>

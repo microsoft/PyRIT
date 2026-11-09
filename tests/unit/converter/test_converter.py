@@ -30,6 +30,7 @@ from pyrit.converter import (
     DiacriticConverter,
     EmojiConverter,
     FlipConverter,
+    IndexSelectionStrategy,
     LeetspeakConverter,
     LLMGenericTextConverter,
     MaliciousQuestionGeneratorConverter,
@@ -53,7 +54,6 @@ from pyrit.converter import (
     VariationConverter,
     VigenereConverter,
 )
-from pyrit.converter.text_selection_strategy import IndexSelectionStrategy
 from pyrit.executor.promptgen.fuzzer import FuzzerConverter
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import PromptDataType, SeedPrompt
@@ -782,7 +782,7 @@ async def test_character_space_converter_punctuation() -> None:
     converter = CharacterSpaceConverter()
     output = await converter.convert_async(prompt="Hello, world! How's everything?", input_type="text")
     assert output.output_type == "text"
-    assert output.output_text == "H e l l o    w o r l d    H o w  s   e v e r y t h i n g "
+    assert output.output_text == "H e l l o   w o r l d   H o w s   e v e r y t h i n g"
 
 
 async def test_url_converter() -> None:

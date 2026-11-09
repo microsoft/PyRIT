@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from pyrit.models import Message, MessagePiece, RequestTraceContext
-from pyrit.prompt_target.http_target.httpx_api_target import HTTPXAPITarget
+from pyrit.prompt_target import HTTPXAPITarget
 
 
 @patch("httpx.AsyncClient.request")

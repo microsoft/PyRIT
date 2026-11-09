@@ -19,13 +19,14 @@ from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackParameters,
     AttackScoringConfig,
+    ConversationManager,
     ConversationSession,
     ConversationState,
     MultiTurnAttackContext,
+    PrependedConversationConfig,
     RedTeamingAttack,
     RTASystemPromptPaths,
 )
-from pyrit.executor.attack.component import ConversationManager, PrependedConversationConfig
 from pyrit.executor.attack.core.attack_config import DEFAULT_ADVERSARIAL_FIRST_MESSAGE
 from pyrit.executor.attack.core.attack_preparation import (
     AttackPreparationFailure,
@@ -46,9 +47,7 @@ from pyrit.models import (
     SeedPrompt,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import OpenAIResponseTarget, PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.score import MessageScorer, TrueFalseScorer
 
 
@@ -343,7 +342,7 @@ class TestRedTeamingAttackInitialization:
         missing_capability: str,
     ):
         """Adversarial chat must natively support MULTI_TURN and SYSTEM_PROMPT."""
-        from pyrit.prompt_target.common.target_capabilities import CapabilityName
+        from pyrit.prompt_target import CapabilityName
 
         mock_adversarial_chat.configuration.includes.side_effect = lambda *, capability: (
             capability != CapabilityName(missing_capability)
@@ -798,7 +797,7 @@ class TestSetupPhase:
 
         # Mock that simulates initialize_context_async merging labels
         async def mock_initialize(*, context, memory_labels=None, **kwargs):
-            from pyrit.common.utils import combine_dict
+            from pyrit.common import combine_dict
 
             context.memory_labels = combine_dict(existing_dict=memory_labels, new_dict=context.memory_labels)
             return ConversationState(turn_count=0)

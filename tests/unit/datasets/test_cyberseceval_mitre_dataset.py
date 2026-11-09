@@ -9,7 +9,7 @@ import pytest
 
 from pyrit.common.utils import to_sha256
 from pyrit.datasets import SeedDatasetProvider
-from pyrit.datasets.seed_datasets.remote.cyberseceval_mitre_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     CyberSecEvalMitreCategory,
     _CyberSecEvalMitreDataset,
 )

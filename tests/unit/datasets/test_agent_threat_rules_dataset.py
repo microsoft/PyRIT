@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     ATRCategory,
     ATRDetectionField,
     ATRVariationType,
