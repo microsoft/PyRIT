@@ -555,8 +555,9 @@ async def test_tool_rounds_stop_at_the_limit_with_every_call_answered_async(
     )
 
 
+@pytest.mark.parametrize("max_tool_rounds", [1, 2])
 async def test_tool_round_limit_counts_parallel_responses_and_answers_every_pending_call_async(
-    patch_central_database: None,
+    *, patch_central_database: None, max_tool_rounds: int
 ) -> None:
     executed: list[str] = []
 
@@ -569,24 +570,26 @@ async def test_tool_round_limit_counts_parallel_responses_and_answers_every_pend
         endpoint="https://mock.azure.com",
         api_key="k",
         tools=[FunctionTool(function=lookup_async)],
-        max_tool_rounds=1,
+        max_tool_rounds=max_tool_rounds,
     )
-    first = create_mock_function_call_response("call_a", "lookup_async", {"key": "a"})
-    first.output.extend(create_mock_function_call_response("call_b", "lookup_async", {"key": "b"}).output)
-    exhausted = create_mock_function_call_response("call_c", "lookup_async", {"key": "c"})
-    exhausted.output.extend(create_mock_function_call_response("call_d", "lookup_async", {"key": "d"}).output)
+    call_pairs = (("a", "b"), ("c", "d"), ("e", "f"))
+    responses: list[MagicMock] = []
+    for first_key, second_key in call_pairs:
+        response = create_mock_function_call_response(f"call_{first_key}", "lookup_async", {"key": first_key})
+        response.output.extend(
+            create_mock_function_call_response(f"call_{second_key}", "lookup_async", {"key": second_key}).output
+        )
+        responses.append(response)
     with patch.object(
-        target._async_client.responses, "create", new_callable=AsyncMock, side_effect=[first, exhausted]
+        target._async_client.responses, "create", new_callable=AsyncMock, side_effect=responses
     ) as create:
         result = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
 
-    assert create.await_count == 2
-    assert executed == ["a", "b"]
-    assert _call_outputs(result) == [
-        ("call_a", "a", True),
-        ("call_b", "b", True),
-        ("call_c", {"error": "max_tool_rounds_exhausted"}, False),
-        ("call_d", {"error": "max_tool_rounds_exhausted"}, False),
+    assert create.await_count == max_tool_rounds + 1
+    allowed_keys = [key for pair in call_pairs[:max_tool_rounds] for key in pair]
+    assert executed == allowed_keys
+    assert _call_outputs(result) == [(f"call_{key}", key, True) for key in allowed_keys] + [
+        (f"call_{key}", {"error": "max_tool_rounds_exhausted"}, False) for key in call_pairs[max_tool_rounds]
     ]
     final = result[-1].get_piece()
     assert final.original_value_data_type == "error" and final.response_error == "processing"
