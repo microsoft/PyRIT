@@ -7,9 +7,8 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   for (const name of ["objective_scorer_chat", "adversarial_chat", "registry_local_objective"]) {
     const existing = await request.get(`/api/targets/${name}`, { headers });
     if (existing.status() === 404) {
-      const created = await request.post("/api/targets", { headers, data: name === "registry_local_objective"
-        ? { name, type: "TextTarget", params: {} }
-        : { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
+      const created = await request.post("/api/targets", { headers, data:
+        { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
           endpoint: "http://127.0.0.1:9/v1", model_name: "local-test", api_key: "local-test-only",
         } } });
       expect(created.ok(), await created.text()).toBe(true);

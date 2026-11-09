@@ -24,8 +24,7 @@ from pyrit.executor.attack import (
     TAPAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.models import AttackIdentifier
-from pyrit.models.parameter import ComponentType
+from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, Registry, RegistryMetadata, TargetRegistry
 from pyrit.score import SubStringScorer

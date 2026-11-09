@@ -6,12 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pyrit.message_normalizer import GenericSystemSquashNormalizer, HistorySquashNormalizer, MessageListNormalizer
-from pyrit.models import Message, MessagePiece
-from pyrit.models.literals import ChatMessageRole
-from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.models import ChatMessageRole, Message, MessagePiece
+from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
     CapabilityName,
+    ConversationNormalizationPipeline,
     TargetCapabilities,
     UnsupportedCapabilityBehavior,
 )

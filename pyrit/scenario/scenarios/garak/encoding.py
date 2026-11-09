@@ -14,28 +14,28 @@ from pyrit.converter import (
     Base64Converter,
     Base2048Converter,
     BinAsciiConverter,
+    BrailleConverter,
     Converter,
+    EcojiConverter,
     LeetspeakConverter,
     MorseConverter,
+    NatoConverter,
     ROT13Converter,
     ZalgoConverter,
 )
-from pyrit.converter.braille_converter import BrailleConverter
-from pyrit.converter.ecoji_converter import EcojiConverter
-from pyrit.converter.nato_converter import NatoConverter
-from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
-from pyrit.executor.attack.single_turn.prompt_sending import PromptSendingAttack
+from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
 from pyrit.models import (
     AttackSeedGroup,
     BoundedDatasetSize,
+    DatasetSelectionMode,
+    ScenarioDatasetOptions,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     Seed,
     SeedObjective,
     SeedPrompt,
 )
-from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
-from pyrit.prompt_normalizer.converter_configuration import ConverterConfiguration
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
@@ -47,8 +47,7 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import build_baseline_atom
 from pyrit.scenario.core.scenario import Scenario
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.score import TrueFalseScorer
-from pyrit.score.true_false.decoding_scorer import DecodingScorer
+from pyrit.score import DecodingScorer, TrueFalseScorer
 
 
 class EncodingDatasetConfiguration(DatasetAttackConfiguration):

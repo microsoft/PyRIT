@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from tenacity import RetryCallState
 
 from pyrit.exceptions.exception_context import get_execution_context
-from pyrit.models.retry_event import RetryEvent
+from pyrit.models import RetryEvent
 
 
 @dataclass

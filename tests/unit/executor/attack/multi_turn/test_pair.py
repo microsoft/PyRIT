@@ -21,10 +21,10 @@ from pyrit.executor.attack import (
     AttackParameters,
     AttackScoringConfig,
     PAIRAttack,
+    TAPAttackContext,
     TreeOfAttacksWithPruningAttack,
 )
 from pyrit.executor.attack.multi_turn.tree_of_attacks import (
-    TAPAttackContext,
     TAPAttackScoringConfig,
 )
 from pyrit.models import ComponentIdentifier

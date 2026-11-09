@@ -7,11 +7,18 @@ import asyncio
 import json
 import threading
 from asyncio import Task
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unit.async_utils import TEST_WATCHDOG_SECONDS, drain_tasks_async, wait_for_event_async
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
+    get_defined_tasks,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 
 from pyrit.models import (
     Message,
@@ -20,6 +27,8 @@ from pyrit.models import (
 from pyrit.prompt_target import HuggingFaceChatTarget
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from concurrent.futures import Future
     from types import CoroutineType
 
 
@@ -192,6 +201,328 @@ async def test_hf_initialization_with_necessary_files(patch_central_database, mo
         assert args[1] == ["config.json", "tokenizer.json"]
     finally:
         HuggingFaceChatTarget.enable_cache()
+
+
+@pytest.fixture
+def uncached_model() -> Iterator[None]:
+    """Give each test its own model mock instead of the class-level cache shared across tests."""
+    HuggingFaceChatTarget.disable_cache()
+    try:
+        yield
+    finally:
+        HuggingFaceChatTarget.enable_cache()
+
+
+@pytest.fixture
+def fresh_model_cache() -> Iterator[None]:
+    with (
+        patch.object(HuggingFaceChatTarget, "_cache_enabled", True),
+        patch.object(HuggingFaceChatTarget, "_cached_model", None),
+        patch.object(HuggingFaceChatTarget, "_cached_tokenizer", None),
+        patch.object(HuggingFaceChatTarget, "_cached_model_id", None),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def generation_executor() -> Iterator[ThreadPoolExecutor]:
+    with (
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-huggingface") as executor,
+        patch.object(HuggingFaceChatTarget, "_generation_executor", executor),
+    ):
+        yield executor
+
+
+@pytest.fixture
+def generation_submissions(
+    generation_executor: ThreadPoolExecutor,
+) -> Iterator[tuple[list[Future[Any]], asyncio.Event]]:
+    submissions: list[Future[Any]] = []
+    submitted = asyncio.Event()
+    submit = generation_executor.submit
+
+    def observe_submission(operation: Callable[..., Any], *args: Any, **kwargs: Any) -> Future[Any]:
+        future = submit(operation, *args, **kwargs)
+        submissions.append(future)
+        submitted.set()
+        return future
+
+    with patch.object(generation_executor, "submit", side_effect=observe_submission):
+        yield submissions, submitted
+
+
+def _user_message(text: str) -> Message:
+    piece = MessagePiece(role="user", original_value=text, converted_value=text, converted_value_data_type="text")
+    return Message(message_pieces=[piece])
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_generate_keeps_event_loop_schedulable() -> None:
+    """Generation must run off the event loop so other tasks keep running while the model works."""
+    hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await hf_chat.load_model_and_tokenizer_async()
+
+    loop = asyncio.get_running_loop()
+    loop_thread_id = threading.get_ident()
+    generate_started = asyncio.Event()
+    generate_release = threading.Event()
+
+    def _blocking_generate(**kwargs: Any) -> list[list[int]]:
+        if threading.get_ident() == loop_thread_id:
+            raise AssertionError("generate() ran on the event loop thread")
+        loop.call_soon_threadsafe(generate_started.set)
+        # Only a task on the event loop releases this, so it is set only while the loop keeps running.
+        assert generate_release.wait(timeout=TEST_WATCHDOG_SECONDS)
+        return [[101, 102, 103]]
+
+    hf_chat.model.generate.side_effect = _blocking_generate
+    send_task = asyncio.ensure_future(hf_chat.send_prompt_async(message=_user_message("Hello")))
+    try:
+        await wait_for_event_async(event=generate_started, tasks=[send_task])
+        probe_result = await asyncio.wait_for(asyncio.sleep(0, result="probe-completed"), timeout=TEST_WATCHDOG_SECONDS)
+        assert probe_result == "probe-completed"
+        assert not send_task.done()
+    finally:
+        generate_release.set()
+        await drain_tasks_async(send_task)
+
+    response = send_task.result()
+    assert response[0].message_pieces[0].original_value == "Assistant's response"
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "fresh_model_cache")
+async def test_concurrent_sends_generate_one_at_a_time(
+    generation_submissions: tuple[list[Future[Any]], asyncio.Event],
+) -> None:
+    """Moving generation to worker threads must not let two calls run the shared model at once."""
+    hf_chat = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await hf_chat.load_model_and_tokenizer_async()
+    second_target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await second_target.load_model_and_tokenizer_async()
+    assert second_target.model is hf_chat.model
+
+    loop = asyncio.get_running_loop()
+    active = 0
+    max_active = 0
+    counter_lock = threading.Lock()
+    first_started = asyncio.Event()
+    release_first = threading.Event()
+    submissions, submitted = generation_submissions
+
+    def _tracking_generate(**kwargs: Any) -> list[list[int]]:
+        nonlocal active, max_active
+        with counter_lock:
+            active += 1
+            max_active = max(max_active, active)
+            is_first = hf_chat.model.generate.call_count == 1
+        if is_first:
+            loop.call_soon_threadsafe(first_started.set)
+            assert release_first.wait(timeout=TEST_WATCHDOG_SECONDS)
+        with counter_lock:
+            active -= 1
+        return [[101, 102, 103]]
+
+    hf_chat.model.generate.side_effect = _tracking_generate
+    sends = [asyncio.ensure_future(hf_chat.send_prompt_async(message=_user_message("Hello")))]
+    try:
+        await wait_for_event_async(event=first_started, tasks=sends)
+        submitted.clear()
+        sends.append(asyncio.ensure_future(second_target.send_prompt_async(message=_user_message("Hello again"))))
+        await wait_for_event_async(event=submitted, tasks=sends)
+        assert len(submissions) == 2
+        assert not submissions[1].running()
+        assert not submissions[1].done()
+    finally:
+        release_first.set()
+        await drain_tasks_async(*sends)
+
+    assert [task.result()[0].message_pieces[0].original_value for task in sends] == ["Assistant's response"] * 2
+    assert hf_chat.model.generate.call_count == 2
+    assert max_active == 1
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_cancelled_queued_send_never_generates(
+    generation_submissions: tuple[list[Future[Any]], asyncio.Event],
+) -> None:
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await target.load_model_and_tokenizer_async()
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    release = threading.Event()
+    submissions, submitted = generation_submissions
+
+    def blocking_generate(**kwargs: Any) -> list[list[int]]:
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(timeout=TEST_WATCHDOG_SECONDS)
+        return [[101, 102, 103]]
+
+    target.model.generate.side_effect = blocking_generate
+    sends = [asyncio.ensure_future(target.send_prompt_async(message=_user_message("A")))]
+    try:
+        await wait_for_event_async(event=started, tasks=sends)
+        submitted.clear()
+        sends.append(asyncio.ensure_future(target.send_prompt_async(message=_user_message("B"))))
+        await wait_for_event_async(event=submitted, tasks=sends)
+        assert len(submissions) == 2
+        assert not submissions[1].running()
+        sends[1].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await wait_for_completion_async(future=sends[1])
+        assert submissions[1].cancelled()
+        assert target.model.generate.call_count == 1
+        submitted.clear()
+        sends.append(asyncio.ensure_future(target.send_prompt_async(message=_user_message("C"))))
+        await wait_for_event_async(event=submitted, tasks=[sends[0], sends[2]])
+    finally:
+        release.set()
+        await drain_tasks_async(*sends)
+
+    assert sends[0].result()[0].get_piece().original_value == "Assistant's response"
+    assert sends[2].result()[0].get_piece().original_value == "Assistant's response"
+    assert target.model.generate.call_count == 2
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+@pytest.mark.parametrize("worker_fails", [False, True])
+@pytest.mark.parametrize("cancel_twice", [False, True])
+async def test_cancelled_active_send_drains_generation(
+    *,
+    generation_submissions: tuple[list[Future[Any]], asyncio.Event],
+    worker_fails: bool,
+    cancel_twice: bool,
+) -> None:
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await target.load_model_and_tokenizer_async()
+    loop = asyncio.get_running_loop()
+    started = asyncio.Event()
+    cancel_attempted = asyncio.Event()
+    release = threading.Event()
+    failure = RuntimeError("generation failed during cancellation")
+    submissions, _ = generation_submissions
+
+    def blocking_generate(**kwargs: Any) -> list[list[int]]:
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(timeout=TEST_WATCHDOG_SECONDS)
+        if worker_fails:
+            raise failure
+        return [[101, 102, 103]]
+
+    target.model.generate.side_effect = blocking_generate
+    send = asyncio.ensure_future(target.send_prompt_async(message=_user_message("Hello")))
+    try:
+        await wait_for_event_async(event=started, tasks=[send])
+        cancel = submissions[0].cancel
+
+        def observe_cancel() -> bool:
+            cancel_attempted.set()
+            return cancel()
+
+        with patch.object(submissions[0], "cancel", side_effect=observe_cancel):
+            send.cancel("stop generation")
+            await wait_for_event_async(event=cancel_attempted, tasks=[send])
+            assert not send.done()
+            assert not submissions[0].done()
+            if cancel_twice:
+                send.cancel("stop again")
+                await asyncio.sleep(0)
+                assert not send.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError, match="stop generation") as error:
+                await wait_for_completion_async(future=send)
+            assert error.value.__cause__ is (failure if worker_fails else None)
+            assert submissions[0].done()
+            assert not submissions[0].cancelled()
+    finally:
+        release.set()
+        await drain_tasks_async(send)
+
+    target.model.generate.side_effect = None
+    target.model.generate.return_value = [[101, 102, 103]]
+    response = await target.send_prompt_async(message=_user_message("After cancellation"))
+    assert response[0].get_piece().original_value == "Assistant's response"
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_model_device_safeguard_runs_before_generation_off_loop() -> None:
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await target.load_model_and_tokenizer_async()
+    loop_thread_id = threading.get_ident()
+    operations: list[str] = []
+
+    def place_model(device: str) -> None:
+        assert device == target.device
+        assert threading.get_ident() != loop_thread_id
+        operations.append("to")
+
+    def generate(**kwargs: Any) -> list[list[int]]:
+        assert threading.get_ident() != loop_thread_id
+        operations.append("generate")
+        return [[101, 102, 103]]
+
+    target.model.to.side_effect = place_model
+    target.model.generate.side_effect = generate
+    response = await target.send_prompt_async(message=_user_message("Hello"))
+    assert response[0].get_piece().original_value == "Assistant's response"
+    assert operations == ["to", "generate"]
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+async def test_generation_does_not_occupy_default_executor(
+    generation_submissions: tuple[list[Future[Any]], asyncio.Event],
+) -> None:
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await target.load_model_and_tokenizer_async()
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+    started = asyncio.Event()
+    release = threading.Event()
+    submissions, submitted = generation_submissions
+
+    def blocking_generate(**kwargs: Any) -> list[list[int]]:
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(timeout=TEST_WATCHDOG_SECONDS)
+        return [[101, 102, 103]]
+
+    target.model.generate.side_effect = blocking_generate
+    sends = [asyncio.ensure_future(target.send_prompt_async(message=_user_message("A")))]
+    probe: asyncio.Task[str] | None = None
+    try:
+        await wait_for_event_async(event=started, tasks=sends)
+        submitted.clear()
+        sends.append(asyncio.ensure_future(target.send_prompt_async(message=_user_message("B"))))
+        await wait_for_event_async(event=submitted, tasks=sends)
+        assert len(submissions) == 2
+        probe = asyncio.ensure_future(asyncio.to_thread(lambda: "default executor available"))
+        assert await wait_for_completion_async(future=probe) == "default executor available"
+        assert not sends[0].done()
+        assert not sends[1].done()
+    finally:
+        release.set()
+        await drain_tasks_async(*sends, *get_defined_tasks(probe))
+    assert all(send.result()[0].get_piece().original_value == "Assistant's response" for send in sends)
+
+
+@pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")
+@pytest.mark.usefixtures("patch_central_database", "uncached_model")
+@pytest.mark.parametrize("failure_phase", ["to", "generate"])
+async def test_generation_worker_failure_allows_next_send(failure_phase: str) -> None:
+    target = HuggingFaceChatTarget(model_id="test_model", use_cuda=False)
+    await target.load_model_and_tokenizer_async()
+    failure = RuntimeError(f"{failure_phase} failed")
+    getattr(target.model, failure_phase).side_effect = [failure, [[101, 102, 103]]]
+
+    with pytest.raises(RuntimeError, match=f"{failure_phase} failed") as error:
+        await target.send_prompt_async(message=_user_message("Hello"))
+    assert error.value is failure
+    response = await target.send_prompt_async(message=_user_message("Try again"))
+    assert response[0].get_piece().original_value == "Assistant's response"
 
 
 @pytest.mark.skipif(not is_torch_installed(), reason="torch is not installed")

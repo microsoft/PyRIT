@@ -15,8 +15,11 @@ the method that actually needs it).
 
 import subprocess
 import sys
+from unittest.mock import patch
 
 import pytest
+
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 
 
 def _check_forbidden_imports(*, import_statement: str, forbidden: list[str]) -> list[str]:
@@ -35,12 +38,22 @@ def _check_forbidden_imports(*, import_statement: str, forbidden: list[str]) -> 
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=TEST_WATCHDOG_SECONDS,
     )
     if result.returncode != 0:
         pytest.fail(f"Subprocess crashed: {result.stderr}")
     output = result.stdout.strip()
     return output.split(",") if output else []
+
+
+def test_forbidden_import_helper_uses_correctness_watchdog() -> None:
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    with patch("subprocess.run", return_value=completed) as run:
+        assert _check_forbidden_imports(import_statement="import sys", forbidden=["torch"]) == []
+
+    assert run.call_args.kwargs["timeout"] == TEST_WATCHDOG_SECONDS
+    assert run.call_args.kwargs["capture_output"] is True
+    assert run.call_args.kwargs["text"] is True
 
 
 # Heavy modules that should never be loaded during CLI arg parsing.
