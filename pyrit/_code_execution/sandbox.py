@@ -534,6 +534,10 @@ class Sandbox(Identifiable, ABC):
         except BaseException:
             self._resetting = False
             raise
+        if self._closed:
+            self._resetting = False
+            self._unlock()
+            raise SandboxUnavailableError("The sandbox was closed while the reset waited.")
         task = self._spawn(self._reset_locked_async(expected_revision=expected_revision))
         await self._await_owned_async(task)
 

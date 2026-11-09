@@ -743,3 +743,19 @@ async def test_identifier_holds_static_configuration_only_async() -> None:
     await _run_async(fake)
     assert fake.open_sessions
     assert fake._build_identifier().hash == FakeSandbox()._build_identifier().hash
+
+
+async def test_a_reset_waiting_when_the_sandbox_closes_does_not_run_async() -> None:
+    fake = FakeSandbox()
+    fake.gate = asyncio.Event()
+    running = asyncio.create_task(_run_async(fake))
+    await _wait_until_async(lambda: len(fake.runs) == 1)
+    reset = asyncio.create_task(fake.reset_async())
+    await asyncio.sleep(0.01)
+    closing = asyncio.create_task(fake.close_async())
+    await asyncio.sleep(0.01)
+    fake.gate.set()
+    _, reset_outcome, _ = await _finish_async(running, reset, closing)
+    assert isinstance(reset_outcome, SandboxUnavailableError)
+    assert fake.reset_count == 0 and fake.open_sessions == set()
+    assert not (await fake.get_status_async()).resetting
