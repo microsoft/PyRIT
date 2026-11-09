@@ -10,7 +10,7 @@ import re
 import threading
 from typing import ClassVar
 
-from pyrit._code_execution.client import SandboxExecutionError
+from pyrit._code_execution.client import SandboxBusyError, SandboxExecutionError
 from pyrit._code_execution.sandbox import Sandbox
 from pyrit.registry import DefaultInstanceRegistry
 
@@ -127,14 +127,32 @@ class SandboxRegistry:
             self._closing = True
             entries = self._entries.get_all_instances()
         await asyncio.gather(*(entry.instance.close_async() for entry in entries))
-        views = await asyncio.gather(*(entry.instance.get_status_async() for entry in entries))
-        pending = [
-            entry.name
-            for entry, view in zip(entries, views, strict=True)
-            if not view.closed or view.busy or view.resetting or view.session_open or view.quarantine_reason
-        ]
+        confirmations = await asyncio.gather(
+            *(self._cleanup_confirmed_async(sandbox=entry.instance) for entry in entries)
+        )
+        pending = [entry.name for entry, confirmed in zip(entries, confirmations, strict=True) if not confirmed]
         if pending:
             raise SandboxExecutionError(f"Sandbox cleanup is unconfirmed for {', '.join(pending)}; retry closure.")
+
+    async def _cleanup_confirmed_async(self, *, sandbox: Sandbox) -> bool:
+        """
+        Retry closes that a successful reset can retain without quarantine.
+
+        Args:
+            sandbox (Sandbox): The sandbox whose terminal cleanup is being checked.
+
+        Returns:
+            bool: Whether terminal cleanup is confirmed.
+        """
+        view = await sandbox.get_status_async()
+        if not view.closed or view.busy or view.resetting or view.session_open or view.quarantine_reason:
+            return False
+        try:
+            await sandbox.release_async()
+        except SandboxBusyError:
+            return False
+        view = await sandbox.get_status_async()
+        return view.closed and not (view.busy or view.resetting or view.session_open or view.quarantine_reason)
 
 
 def resolve_sandbox(sandbox: Sandbox | str) -> Sandbox:

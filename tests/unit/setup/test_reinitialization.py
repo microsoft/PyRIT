@@ -193,6 +193,74 @@ async def test_apply_retains_live_registries_until_sandbox_cleanup_is_confirmed_
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("failed_closes", [1, 2])
+async def test_apply_settled_reset_requires_retained_cleanup_async(failed_closes: int) -> None:
+    SandboxRegistry.reset_registry_singleton()
+    registry = SandboxRegistry.get_registry_singleton()
+    initializers = InitializerRegistry.get_registry_singleton()
+    sandbox = FakeSandbox()
+    registry.register(sandbox, name="linux")
+    config = ConfigurationLoader(
+        memory_db_type="in_memory", env_files=[], initialization_scripts=[], enable_live_reinitialization=True
+    )
+    prepared = await config.preflight_reinitialization_async(environment_values={})
+    await sandbox.execute_async(program="pass", runtime_profile_name="python")
+    sandbox.fail_next(
+        hook=FakeSandboxHook.CLOSE, error=SandboxExecutionError("close not confirmed"), times=failed_closes
+    )
+    entered, finish = asyncio.Event(), asyncio.Event()
+    original_reset = sandbox._reset_async
+    original_wait = sandbox._wait_for_lock_async
+    timed_out = False
+
+    async def reset_hook_async(*, expected_revision: str | None) -> None:
+        entered.set()
+        await finish.wait()
+        await original_reset(expected_revision=expected_revision)
+
+    with patch.object(sandbox, "_reset_async", new_callable=AsyncMock, side_effect=reset_hook_async):
+        resetting = asyncio.create_task(sandbox.reset_async())
+
+        async def timeout_then_settle_async(*, timeout_seconds: float) -> bool:
+            nonlocal timed_out
+            if not timed_out:
+                timed_out = True
+                finish.set()
+                # Deliver an expired close wait after the previously running reset has settled.
+                await wait_for_completion_async(future=resetting)
+                return False
+            return await original_wait(timeout_seconds=timeout_seconds)
+
+        try:
+            await wait_for_event_async(event=entered, tasks=[resetting])
+            with (
+                patch.object(
+                    sandbox, "_wait_for_lock_async", new_callable=AsyncMock, side_effect=timeout_then_settle_async
+                ),
+                patch("pyrit.setup.configuration_loader.reinitialize_pyrit_async", new_callable=AsyncMock) as replace,
+            ):
+                if failed_closes == 2:
+                    with pytest.raises(SandboxExecutionError, match="unconfirmed for linux"):
+                        await config.apply_prepared_reinitialization_async(prepared=prepared)
+                    assert SandboxRegistry.get_registry_singleton() is registry
+                    assert InitializerRegistry.get_registry_singleton() is initializers
+                    assert sandbox.open_sessions
+                    assert (await sandbox.get_status_async()).quarantine_reason
+                    replace.assert_not_awaited()
+                else:
+                    await config.apply_prepared_reinitialization_async(prepared=prepared)
+                    assert SandboxRegistry.get_registry_singleton() is not registry
+                    assert not sandbox.open_sessions
+                    replace.assert_awaited_once()
+        finally:
+            finish.set()
+            await wait_for_completion_async(future=resetting)
+            await sandbox.release_async()
+            await sandbox.close_async()
+    assert not sandbox.open_sessions
+
+
+@pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("source", ["script", "configured"])
 async def test_apply_reconstructs_initializers_after_environment_change(tmp_path: Path, source: str) -> None:
     script = tmp_path / "capture.py"
