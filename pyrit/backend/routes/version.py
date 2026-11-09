@@ -21,10 +21,10 @@ router = APIRouter(prefix="/api/version", tags=["version"])
 
 
 class BuildInfo(TypedDict):
-    """Keys read from the optional Docker build-info file; each may be absent."""
+    """Optional Docker build-info keys; commit may also be explicitly null."""
 
     source: NotRequired[str]
-    commit: NotRequired[str]
+    commit: NotRequired[str | None]
     modified: NotRequired[bool]
     display: NotRequired[str]
 

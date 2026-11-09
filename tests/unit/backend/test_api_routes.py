@@ -12,6 +12,7 @@ import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NotRequired, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
@@ -1779,19 +1780,18 @@ class TestVersionRoutes:
 
         assert response.json()["default_operation"] == "op_proposed"
 
-    def test_get_version_with_build_info(self, client: TestClient) -> None:
+    @pytest.mark.parametrize("commit", ["abc123", None])
+    def test_get_version_with_build_info(self, *, client: TestClient, commit: str | None) -> None:
         """Test getting version with build info from Docker."""
+        build_info: version_routes.BuildInfo = {
+            "source": "git" if commit is not None else "pypi",
+            "commit": commit,
+            "modified": False,
+            "display": "1.0.0-test",
+        }
         # Create a temp file to simulate Docker build info
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(
-                {
-                    "source": "git",
-                    "commit": "abc123",
-                    "modified": False,
-                    "display": "1.0.0-test",
-                },
-                f,
-            )
+            json.dump(build_info, f)
             temp_path = f.name
 
         try:
@@ -1806,18 +1806,14 @@ class TestVersionRoutes:
 
                 # Mock open to return our temp file content
                 with patch("builtins.open", create=True) as mock_open:
-                    mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(
-                        {
-                            "source": "git",
-                            "commit": "abc123",
-                            "modified": False,
-                            "display": "1.0.0-test",
-                        }
-                    )
+                    mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(build_info)
 
                     response = client.get("/api/version")
 
             assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            for key, value in build_info.items():
+                assert data[key] == value
             to_thread_mock.assert_any_await(version_routes._load_build_info, mock_path_instance)
         finally:
             os.unlink(temp_path)
@@ -1841,7 +1837,14 @@ class TestVersionRoutes:
 
     def test_build_info_keys_are_not_required(self) -> None:
         """The BuildInfo contract keeps absent keys distinguishable from nullable values."""
-        assert set(version_routes.BuildInfo.__annotations__) == {"source", "commit", "modified", "display"}
+        assert get_type_hints(version_routes.BuildInfo, include_extras=True) == {
+            "source": NotRequired[str],
+            "commit": NotRequired[str | None],
+            "modified": NotRequired[bool],
+            "display": NotRequired[str],
+        }
+        assert version_routes.BuildInfo.__required_keys__ == frozenset()
+        assert version_routes.BuildInfo.__optional_keys__ == {"source", "commit", "modified", "display"}
         assert version_routes.BuildInfo() == {}
 
     def test_get_version_build_info_absent_display_falls_back(self, client: TestClient) -> None:
