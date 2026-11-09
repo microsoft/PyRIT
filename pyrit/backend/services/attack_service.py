@@ -573,6 +573,11 @@ class AttackService:
             registry_name=request.target_registry_name, binding=request.target_binding
         )
         copied: Sequence[MessagePiece] = []
+        # The two branching fields form one spec; the conversation endpoint
+        # rejects a half provided pair, and a silent fallthrough here would
+        # create an unbranched attack while the caller believes it branched.
+        if (request.source_conversation_id is None) != (request.cutoff_index is None):
+            raise ValueError("Both source_conversation_id and cutoff_index must be provided together")
         if request.source_conversation_id is not None and request.cutoff_index is not None:
             conversation, copied = await self._prepare_conversation_up_to_async(
                 source_conversation_id=request.source_conversation_id,

@@ -90,17 +90,20 @@ function TemperatureControl({ value, onChange, target, disabled }: GenerationSet
           </Button>
         </PopoverTrigger>
       </Tooltip>
-      <PopoverSurface className={styles.surface} role="dialog" aria-label="Temperature">
-        <div className={styles.content} onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+      <PopoverSurface className={styles.surface} role="dialog" aria-label="Temperature"
+        onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
           if (event.key === 'Escape') {
             event.stopPropagation()
             cancel()
           }
         }}>
+        <div className={styles.content}>
           <HelpField label="Temperature" validationState={error ? 'error' : 'none'} validationMessage={error}
             hint="Blank uses target default."
             help={`${rangeDescription} Configured default: ${defaultValue ?? 'not specified; provider default unknown'}. Applies to subsequent sends until changed; target defaults and earlier messages are unchanged.`}>
-            <Input autoFocus type="text" inputMode="decimal" value={input ?? ''} placeholder="Default" disabled={!editable}
+            <Input type="text" inputMode="decimal" value={input ?? ''} placeholder="Default" disabled={!editable}
+              // eslint-disable-next-line jsx-a11y/no-autofocus -- focus moves into the editor the user just opened
+              autoFocus
               onChange={(_event: ChangeEvent<HTMLInputElement>, data: InputOnChangeData) => {
                 const next = data.value.trim() ? data.value : undefined
                 changeTemperature(next)

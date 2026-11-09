@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode, type Ref } from 'react'
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
 
 import {
   Button, Checkbox, Dialog, DialogActions, DialogBody, DialogContent, DialogSurface, DialogTitle,
@@ -188,6 +188,7 @@ export default function ConversationEditor({
   initialConverters, blockNavigation = true, onUploadErrorChange,
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
+  const resizeBoundaryRef = useRef<HTMLDivElement>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [convertersOpen, setConvertersOpen] = useState(false)
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
@@ -271,10 +272,11 @@ export default function ConversationEditor({
     ?? uploadError ?? validationError ?? targetError
     ?? (directSaveDestination === 'same_attack' ? sameAttackDisabledReason : newAttackDisabledReason)
   return (
-    <div className={styles.root} data-testid="conversation-editor">
+    <div ref={resizeBoundaryRef} className={styles.root} data-testid="conversation-editor">
       {convertersOpen && <div className={styles.converterPane}>
         <ConverterPanel controller={converters} selectedMessageCount={selected.size}
-          onClose={() => setConvertersOpen(false)} onApply={controller.applyConversions} />
+          onClose={() => setConvertersOpen(false)} onApply={controller.applyConversions}
+          resizeBoundaryRef={resizeBoundaryRef} />
       </div>}
       <div className={styles.content}>
       <div className={styles.thread}>
@@ -369,6 +371,7 @@ export default function ConversationEditor({
         <Button className={styles.button} disabled={saving} onClick={cancel}>Cancel</Button>
         <Tooltip content={saveDisabledReason ?? 'Save a new conversation without changing the original sent history.'}
           relationship="description">
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled */}
         <span tabIndex={saveDisabledReason ? 0 : undefined} aria-label={saveDisabledReason ?? undefined}>
         <Button className={styles.button} appearance="primary"
           disabled={saving || converters.isConverting || Boolean(uploadError) || Boolean(validationError)
