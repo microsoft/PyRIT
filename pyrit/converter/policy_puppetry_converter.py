@@ -3,6 +3,7 @@
 
 import enum
 import functools
+import hashlib
 import pathlib
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
@@ -100,7 +101,12 @@ class PolicyPuppetryConverter(Converter):
         Returns:
             ComponentIdentifier: The identifier for this converter.
         """
-        return self._create_identifier(params={"template": self._prompt_template.name})
+        return self._create_identifier(
+            params={
+                "template": self._prompt_template.name,
+                "template_hash": hashlib.sha256(str(self._prompt_template.value).encode("utf-8")).hexdigest()[:16],
+            }
+        )
 
     async def convert_async(self, *, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
         """
