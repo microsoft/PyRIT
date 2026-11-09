@@ -5,12 +5,14 @@ from unittest.mock import patch
 
 import pytest
 
+from pyrit.datasets.seed_datasets.remote import (
+    DecodingTrustToxicitySubset,
+    _DecodingTrustToxicityDataset,
+)
 from pyrit.datasets.seed_datasets.remote.decoding_trust_toxicity_dataset import (
     _NONTOXIC_URL,
     _PERSPECTIVE_SCORE_KEYS,
     _TOXIC_URL,
-    DecodingTrustToxicitySubset,
-    _DecodingTrustToxicityDataset,
 )
 from pyrit.models import SeedDataset, SeedPrompt
 

@@ -6,8 +6,9 @@
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest
-from pyrit.models.catalog.scenario import DATASET_FILTERS, RunScenarioRequest, ScenarioRunSizeEstimateRequest
+from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest, ScenarioRunSizeEstimateRequest
+from pyrit.models.catalog import RunScenarioRequest
+from pyrit.models.catalog.scenario import DATASET_FILTERS
 
 
 @pytest.mark.parametrize("model", [RunScenarioRequest, ScenarioRunSizeEstimateRequest])
@@ -191,7 +192,7 @@ class TestExposedDatasetFilters:
         import typing
         from collections.abc import Sequence
 
-        from pyrit.memory.memory_interface import MemoryInterface
+        from pyrit.memory import MemoryInterface
 
         hints = typing.get_type_hints(MemoryInterface.get_seeds_async)
 

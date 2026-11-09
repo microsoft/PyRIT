@@ -4,8 +4,7 @@
 import pytest
 
 from pyrit.message_normalizer import ConversationContextNormalizer
-from pyrit.models import Message, MessagePiece
-from pyrit.models.literals import ChatMessageRole, PromptDataType
+from pyrit.models import ChatMessageRole, Message, MessagePiece, PromptDataType
 
 
 def _make_message(role: ChatMessageRole, content: str) -> Message:

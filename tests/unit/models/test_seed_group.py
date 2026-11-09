@@ -7,10 +7,11 @@ import uuid
 
 import pytest
 
-from pyrit.models import MessagePiece, RequestTraceContext
-from pyrit.models.seeds import (
+from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
+    MessagePiece,
+    RequestTraceContext,
     SeedGroup,
     SeedObjective,
     SeedPrompt,

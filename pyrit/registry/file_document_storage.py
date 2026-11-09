@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
 
 from pyrit.common.azure_storage import has_sas_signature, is_azure_blob_uri, redact_url_credentials
-from pyrit.models.identifiers.class_name_utils import validate_registry_name
+from pyrit.models import validate_registry_name
 
 if TYPE_CHECKING:
     from collections.abc import Generator

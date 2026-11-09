@@ -11,8 +11,13 @@ from unit.mocks import get_mock_target_identifier
 from pyrit.exceptions import InvalidJsonException
 from pyrit.models import Message, MessagePiece
 from pyrit.prompt_target import PromptTarget
-from pyrit.score import InsecureCodeScorer, NumericRange, NumericRubric, SelfAskScaleScorer
-from pyrit.score.float_scale.self_ask_general_float_scale_scorer import SelfAskGeneralFloatScaleScorer
+from pyrit.score import (
+    InsecureCodeScorer,
+    NumericRange,
+    NumericRubric,
+    SelfAskGeneralFloatScaleScorer,
+    SelfAskScaleScorer,
+)
 
 
 def _scale_scorer(chat_target):

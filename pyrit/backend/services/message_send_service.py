@@ -18,7 +18,7 @@ from functools import lru_cache, partial
 from typing import Any
 
 from pyrit.backend.mappers import request_to_pyrit_message
-from pyrit.backend.models.attacks import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
+from pyrit.backend.models import AddMessageRequest, ConverterConfigurationRequest, MessagePieceRequest
 from pyrit.backend.models.message_sends import (
     MessageSendConversation,
     MessageSendFailureStage,
@@ -44,8 +44,8 @@ from pyrit.backend.services.manual_send_scheduler import (
 )
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.target_service import get_target_service
+from pyrit.common import print_deprecation_message
 from pyrit.common.attack_result_scope import attack_result_id_scope
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, data_serializer_factory
 from pyrit.models import (
     AtomicAttackIdentifier,

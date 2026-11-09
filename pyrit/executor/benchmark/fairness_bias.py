@@ -8,12 +8,10 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, cast, overload
 
-from pyrit.common.utils import get_kwarg_param
-from pyrit.executor.attack.core import (
+from pyrit.common import get_kwarg_param
+from pyrit.executor.attack import (
     AttackConverterConfig,
     AttackScoringConfig,
-)
-from pyrit.executor.attack.single_turn import (
     PromptSendingAttack,
 )
 from pyrit.executor.core import Strategy, StrategyContext

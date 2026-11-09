@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from pyrit.datasets.seed_datasets.remote.transphobia_awareness_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     _TransphobiaAwarenessDataset,
 )
 from pyrit.models import SeedDataset
