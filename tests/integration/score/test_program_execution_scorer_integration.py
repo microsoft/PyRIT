@@ -268,8 +268,11 @@ async def test_missing_image_is_undetermined_async(
 
 async def test_cancelling_real_execution_cleans_up_async(docker_sandbox: DockerSandboxClient) -> None:
     scorer = ProgramExecutionScorer(source=ProgramExecutionSource(sandbox=docker_sandbox))
+    longer_runs = docker_sandbox.get_capabilities().model_copy(
+        update={"default_timeout_seconds": 30.0, "max_timeout_seconds": 30.0}
+    )
     with (
-        patch.object(docker_sandbox, "_timeout_seconds", 30),
+        patch.object(docker_sandbox, "_capabilities", longer_runs),
         patch.object(docker_sandbox, "_run_arguments", wraps=docker_sandbox._run_arguments) as arguments,
     ):
         task = asyncio.create_task(

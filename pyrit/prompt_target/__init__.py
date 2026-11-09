@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     )
     from pyrit.prompt_target.common.prompt_target import PromptTarget
     from pyrit.prompt_target.common.realtime_audio import ServerVadConfig
+    from pyrit.prompt_target.common.sandbox_tool_provider import SandboxToolProvider
     from pyrit.prompt_target.common.target_capabilities import (
         CapabilityHandlingPolicy,
         CapabilityName,
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.common.tool_provider import (
         FunctionTool,
         Tool,
+        ToolInfrastructureError,
         ToolProvider,
         collect_tools_async,
         tool,
@@ -118,10 +120,12 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "RealtimeTarget": "pyrit.prompt_target.openai.openai_realtime_target",
     "ServerVadConfig": "pyrit.prompt_target.common.realtime_audio",
     "RoundRobinTarget": "pyrit.prompt_target.round_robin_target",
+    "SandboxToolProvider": "pyrit.prompt_target.common.sandbox_tool_provider",
     "TargetCapabilities": "pyrit.prompt_target.common.target_capabilities",
     "TargetConfiguration": "pyrit.prompt_target.common.target_configuration",
     "TargetRequirements": "pyrit.prompt_target.common.target_requirements",
     "Tool": "pyrit.prompt_target.common.tool_provider",
+    "ToolInfrastructureError": "pyrit.prompt_target.common.tool_provider",
     "ToolProvider": "pyrit.prompt_target.common.tool_provider",
     "UnsupportedCapabilityBehavior": "pyrit.prompt_target.common.target_capabilities",
     "TextTarget": "pyrit.prompt_target.text_target",

@@ -16,9 +16,10 @@ import pytest
 from openai.types.responses import ResponseOutputText
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece
+from pyrit.models import Message, MessagePiece, ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import OpenAIResponseTarget
+from pyrit.prompt_target import FunctionTool, OpenAIResponseTarget, ToolInfrastructureError
+from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
 
 
 @pytest.fixture
@@ -454,3 +455,145 @@ async def test_no_duplicate_messages_in_conversation(response_target, patch_cent
 
         # If we got here, no duplicates were detected
         assert len(call_history) == 2
+
+
+def _call_outputs(messages: list[Message]) -> list[tuple[str, Any, bool]]:
+    outputs = []
+    for message in messages:
+        piece = message.get_piece()
+        if piece.original_value_data_type == "function_call_output":
+            payload = json.loads(piece.original_value)
+            execution = ToolExecutionMetadata.from_metadata(metadata=piece.prompt_metadata)
+            assert execution is not None
+            output = payload["output"]
+            outputs.append(
+                (payload["call_id"], json.loads(output) if output.startswith("{") else output, execution.invoked)
+            )
+    return outputs
+
+
+@pytest.mark.parametrize("max_tool_rounds", [-1, True, 1.5])
+def test_max_tool_rounds_must_be_a_nonnegative_integer(patch_central_database, max_tool_rounds: Any) -> None:
+    with pytest.raises(ValueError, match="max_tool_rounds"):
+        OpenAIResponseTarget(
+            model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", max_tool_rounds=max_tool_rounds
+        )
+
+
+def test_identifier_records_max_tool_rounds_only_with_local_tools(patch_central_database) -> None:
+    async def noop(*, value: str) -> str:
+        return value
+
+    plain = OpenAIResponseTarget(model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k")
+    with_tools = OpenAIResponseTarget(
+        model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", tools=[FunctionTool(function=noop)]
+    )
+    assert "max_tool_rounds" not in plain.get_identifier().params
+    assert with_tools.get_identifier().params["max_tool_rounds"] == 10
+
+
+@pytest.mark.parametrize("max_tool_rounds", [0, 2])
+async def test_tool_rounds_stop_at_the_limit_with_every_call_answered_async(
+    patch_central_database, max_tool_rounds: int
+) -> None:
+    executed: list[str] = []
+
+    async def lookup(*, key: str) -> str:
+        executed.append(key)
+        return key
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="k",
+        tools=[FunctionTool(function=lookup)],
+        max_tool_rounds=max_tool_rounds,
+    )
+    responses = [create_mock_function_call_response(f"call_{i}", "lookup", {"key": str(i)}) for i in range(5)]
+    with patch.object(
+        target._async_client.responses, "create", new_callable=AsyncMock, side_effect=responses
+    ) as create:
+        result = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
+
+    assert create.await_count == max_tool_rounds + 1
+    assert executed == [str(i) for i in range(max_tool_rounds)]
+    outputs = _call_outputs(result)
+    assert [call_id for call_id, _, _ in outputs] == [f"call_{i}" for i in range(max_tool_rounds + 1)]
+    assert outputs[-1][1:] == ({"error": "max_tool_rounds_exhausted"}, False)
+    final = result[-1].get_piece()
+    assert final.original_value_data_type == "error" and final.response_error == "processing"
+    assert f"max_tool_rounds={max_tool_rounds}" in final.original_value
+    assert ToolLoopStop.from_metadata(metadata=final.prompt_metadata) == ToolLoopStop(
+        reason=ToolLoopStopReason.MAX_TOOL_ROUNDS_EXHAUSTED
+    )
+
+
+async def test_tool_infrastructure_error_ends_the_turn_with_every_call_answered_async(patch_central_database) -> None:
+    executed: list[str] = []
+
+    async def lookup(*, key: str) -> str:
+        executed.append(key)
+        if key == "broken":
+            raise ToolInfrastructureError("the sandbox is unreachable")
+        return key
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", tools=[FunctionTool(function=lookup)]
+    )
+    round_one = create_mock_function_call_response("call_ok", "lookup", {"key": "ok"})
+    for call_id, key in (("call_broken", "broken"), ("call_skipped", "skipped")):
+        round_one.output.extend(create_mock_function_call_response(call_id, "lookup", {"key": key}).output)
+    with patch.object(
+        target._async_client.responses, "create", new_callable=AsyncMock, side_effect=[round_one]
+    ) as create:
+        result = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
+
+    create.assert_awaited_once()
+    assert executed == ["ok", "broken"]
+    assert _call_outputs(result) == [
+        ("call_ok", "ok", True),
+        ("call_broken", {"error": "tool_infrastructure_error", "message": "the sandbox is unreachable"}, True),
+        ("call_skipped", {"error": "tool_not_executed", "message": "An earlier tool call failed."}, False),
+    ]
+    final = result[-1].get_piece()
+    assert final.response_error == "processing" and "the sandbox is unreachable" in final.original_value
+    target.validate_tool_history(result)
+    assert filter_non_replayable_messages(messages=result) == result[:-1]
+
+
+async def test_a_failed_follow_up_request_keeps_the_evidence_of_tools_that_ran_async(patch_central_database) -> None:
+    executed: list[str] = []
+
+    async def lookup(*, key: str) -> str:
+        executed.append(key)
+        return key
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", tools=[FunctionTool(function=lookup)]
+    )
+    replies = [create_mock_function_call_response("call_1", "lookup", {"key": "a"}), RuntimeError("model unavailable")]
+    with patch.object(target._async_client.responses, "create", new_callable=AsyncMock, side_effect=replies):
+        result = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
+
+    assert executed == ["a"]
+    assert _call_outputs(result) == [("call_1", "a", True)]
+    final = result[-1].get_piece()
+    assert final.response_error == "processing" and "model unavailable" in final.original_value
+    stop = ToolLoopStop.from_metadata(metadata=final.prompt_metadata)
+    assert stop is not None and stop.reason is ToolLoopStopReason.CONTINUATION_FAILED
+
+
+async def test_a_failed_first_request_still_raises_async(patch_central_database) -> None:
+    async def lookup(*, key: str) -> str:
+        return key
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", tools=[FunctionTool(function=lookup)]
+    )
+    with (
+        patch.object(
+            target._async_client.responses, "create", new_callable=AsyncMock, side_effect=RuntimeError("down")
+        ),
+        pytest.raises(Exception, match="down"),
+    ):
+        await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())

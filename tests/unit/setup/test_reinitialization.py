@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pyrit._code_execution import FakeSandbox, SandboxRegistry
 from pyrit.common import get_global_default_values
 from pyrit.common.random_context import configure_random_seed, get_configured_random_seed
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
@@ -111,6 +112,23 @@ async def test_preflight_uses_isolated_registry_without_changing_live_state() ->
     assert prepared.initializer_registry is not live_registry
     assert InitializerRegistry.get_registry_singleton() is live_registry
     assert prepared.script_initializer_types == ()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_apply_closes_registered_sandboxes_before_initializers_run_again() -> None:
+    sandbox = FakeSandbox()
+    SandboxRegistry.get_registry_singleton().register(sandbox, name="linux")
+    await sandbox.execute_async(program="print(1)", runtime_profile_name="python")
+    config = ConfigurationLoader(
+        memory_db_type="in_memory", env_files=[], initialization_scripts=[], enable_live_reinitialization=True
+    )
+
+    prepared = await config.preflight_reinitialization_async(environment_values={})
+    await config.apply_prepared_reinitialization_async(prepared=prepared)
+
+    assert sandbox.open_sessions == set()
+    assert (await sandbox.get_status_async()).closed
+    assert SandboxRegistry.get_registry_singleton().get_names() == []
 
 
 @pytest.mark.usefixtures("patch_central_database")

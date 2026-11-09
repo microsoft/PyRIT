@@ -262,6 +262,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   persists it. Outbound request metadata is separate from chat role, so missing trace
   links remain detectable on tool and assistant continuations.
 - Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
+- A target that runs tools itself bounds its tool loop. When a tool raises `ToolInfrastructureError`,
+  such as a `SandboxToolProvider` tool whose sandbox failed, the target answers every pending call and
+  ends the turn with an error response whose metadata says why (`ToolLoopStop`), rather than asking
+  the model to fix infrastructure. `OpenAIResponseTarget` does this today.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
 - **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
 
@@ -304,6 +308,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   evidence; a sandbox that cannot run it is an acquisition error, so the verdict is undetermined
   rather than false.
   Each scoring call runs afresh; an observation identifies the run and supports explicit replay.
+- `SandboxCheckScorer` runs a fixed check program in the stateful sandbox where a model's tool calls
+  ran, and scores the judged response by what the check finds. It never runs the response's text, and
+  never reuses a stored verdict, because the sandbox can change. The caller owns isolation between
+  attempts, for example by resetting the sandbox.
 - Observation lifecycle is optional. A scorer that implements `AttemptObserver`, whether it is a
   root scorer or wrapped inside one, is asked by the attack to start observing after setup, once
   its attempt ID is allocated and before anything is sent, and to stop when the attempt ends. A
@@ -382,15 +390,24 @@ The below talks about responsibilities of most modules in the PyRIT library
 
 ## Code Execution (Experimental)
 
-**Responsibility**: Connect to caller-configured execution backends and return typed invocation results.
+**Responsibility**: Connect to caller-configured execution backends, run programs in them by the same
+rules whatever the backend, and return typed invocation results.
 
-- The client API is private and experimental in `pyrit._code_execution`; it may change without a deprecation cycle.
+- The API is private and experimental in `pyrit._code_execution`; it may change without a deprecation cycle.
 - Targets, converters, dataset generators, and scorers can inject the same `SandboxClient` contract
   from `pyrit._code_execution`. Execution inputs and results are private types in `pyrit.models.code_execution`.
 - `runtime_profile_name` selects a client-owned configuration by name, not by supplying an image or command.
   Clients advertise the available names through `get_runtime_profile_names()`.
+- `Sandbox` is the base class for backends. An adapter translates a few hooks into its infrastructure's
+  API; the base class owns the rules: validation against declared limits, one shared session per
+  `environment` sandbox (state persists, callers take turns), retries only when nothing ran, renewal,
+  idle close, cancellation, reset, quarantine and evidence. A `call` sandbox keeps nothing between calls.
+  `SandboxRegistry` names sandboxes so every caller shares one `Sandbox` object per sandbox.
+- A sandbox may keep state between calls, so a program can see what earlier calls left. Runs are
+  reproducible only in a `call` sandbox, such as the Docker example.
 - PyRIT does not own environments. The one-image Docker example is the only exception:
   `DockerSandboxClient` manages disposable containers; callers supply the daemon and pinned image.
+- `SandboxToolProvider` (in targets) and `SandboxCheckScorer` (in scorers) build on `Sandbox`.
 - **Does not own**: interpreting results, scoring criteria, message or seed creation, memory
   persistence, or infrastructure setup. Those remain with the consumer or caller.
 

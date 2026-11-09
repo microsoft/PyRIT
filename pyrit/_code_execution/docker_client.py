@@ -20,14 +20,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 from pyrit._code_execution.client import SandboxExecutionError
+from pyrit._code_execution.sandbox import (
+    ProcessResult,
+    RuntimeProfile,
+    Sandbox,
+    SandboxCapabilities,
+    SandboxStateKind,
+)
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.models import ComponentIdentifier
-from pyrit.models.code_execution import _ProgramExecutionEvent, _SandboxRun
+from pyrit.models.code_execution import _ProgramInvocation
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Mapping
 
-    from pyrit.models.code_execution import _ProgramInvocation, _RuntimeProfileName
+    from pyrit.models.code_execution import _RuntimeProfileName
 
 logger = logging.getLogger(__name__)
 
@@ -142,10 +149,11 @@ class _InvocationResult:
     timed_out: bool = False
 
 
-class DockerSandboxClient:
+class DockerSandboxClient(Sandbox):
     """
     Run each invocation in a disposable container on a caller-provided Docker daemon.
 
+    This is the example ``Sandbox`` adapter: a ``call`` sandbox, where nothing persists between calls.
     Profiles require pre-pulled, pinned images with no declared volumes. The daemon must support
     cgroup memory, swap, CPU, and process limits; unsupported backends are rejected before execution.
     Containers have no network or privileges, run as an unprivileged user, and have memory, CPU,
@@ -163,6 +171,12 @@ class DockerSandboxClient:
 
     _READ_CHUNK_BYTES = 1 << 16
     _CONTROL_TIMEOUT_SECONDS = 30.0
+    # The program and its input travel through files and pipes; its arguments go on a command line.
+    _MAX_INPUT_BYTES = 64 << 20
+    _MAX_ARGUMENTS_BYTES = 16_384
+    # Backend checks, a stalled client and container removal each take up to the control timeout.
+    _EXECUTE_GRACE_SECONDS = 180.0
+    _BACKEND_CHECK_SECONDS = 60.0
 
     def __init__(
         self,
@@ -200,6 +214,7 @@ class DockerSandboxClient:
             raise ValueError("timeout_seconds, cpus, pids_limit and max_output_bytes must be positive.")
         if not re.fullmatch(r"[1-9][0-9]*[bkmg]?", memory):
             raise ValueError(f"Memory limit {memory!r} must look like 256m or 1g.")
+        super().__init__()
         self._profiles = dict(profiles)
         self._docker = docker_executable
         self._timeout_seconds = timeout_seconds
@@ -208,8 +223,10 @@ class DockerSandboxClient:
         self._pids_limit = pids_limit
         self._max_output_bytes = max_output_bytes
         self._temp_root = Path(tempfile.gettempdir())
+        self._backend_checked_at: dict[str, float] = {}
+        self.get_capabilities()
 
-    def get_identifier(self) -> ComponentIdentifier:
+    def _build_identifier(self) -> ComponentIdentifier:
         """
         Return the profiles and limits.
 
@@ -236,42 +253,58 @@ class DockerSandboxClient:
             },
         )
 
-    def get_runtime_profile_names(self) -> frozenset[_RuntimeProfileName]:
+    def _get_capabilities(self) -> SandboxCapabilities:
         """
-        Return the configured runtime profile names.
+        Describe the configured runtimes and limits of a sandbox that keeps nothing between calls.
 
         Returns:
-            frozenset[_RuntimeProfileName]: Names that select the configured runtimes.
+            SandboxCapabilities: One runtime per profile; the configured timeout is the default and the limit.
         """
-        return frozenset(self._profiles)
+        return SandboxCapabilities(
+            runtime_profiles=tuple(RuntimeProfile(name=name) for name in sorted(self._profiles)),
+            state_kind=SandboxStateKind.CALL,
+            description="a disposable Docker container with no network",
+            max_input_bytes=self._MAX_INPUT_BYTES,
+            max_arguments_bytes=self._MAX_ARGUMENTS_BYTES,
+            max_output_bytes=self._max_output_bytes,
+            max_timeout_seconds=self._timeout_seconds,
+            default_timeout_seconds=self._timeout_seconds,
+        )
 
-    async def execute_async(
-        self, *, program: str, runtime_profile_name: _RuntimeProfileName, invocations: tuple[_ProgramInvocation, ...]
-    ) -> _SandboxRun:
+    async def _execute_async(
+        self,
+        *,
+        session_id: str | None,
+        runtime_profile_name: str,
+        program: str,
+        arguments: tuple[str, ...],
+        stdin: str | None,
+        timeout_seconds: float,
+    ) -> ProcessResult:
         """
-        Run each invocation in a fresh container, in order.
+        Run the program once in a fresh container, then remove the container and the program file.
 
         Args:
+            session_id (str | None): Unused; this sandbox has no sessions.
+            runtime_profile_name (str): A key from ``profiles``; it selects a trusted image and command.
             program (str): The program text, written to a read-only file in the container.
-            runtime_profile_name (_RuntimeProfileName): A key from ``profiles``, also returned by
-                ``get_runtime_profile_names``. The key selects a trusted image and command.
-            invocations (tuple[_ProgramInvocation, ...]): The arguments and input of each run.
+            arguments (tuple[str, ...]): The program's command-line arguments.
+            stdin (str | None): The program's standard input, if any.
+            timeout_seconds (float): The time limit of the run.
 
         Returns:
-            _SandboxRun: One event per invocation that ran. If the sandbox fails after some
-            invocations ran, the run holds those events and the reason it stopped.
+            ProcessResult: What the run did. If the container could not be removed, cleanup is unconfirmed.
 
         Raises:
-            ValueError: If the runtime profile is not configured or there are no invocations.
             SandboxExecutionError: If the backend cannot enforce the limits, the image declares
-                volumes, or no invocation could be run.
+                volumes, or the container could not be run.
         """
-        profile = self._profiles.get(runtime_profile_name)
-        if profile is None:
-            raise ValueError(f"Runtime profile name {runtime_profile_name!r} is not configured.")
-        if not invocations:
-            raise ValueError("At least one program invocation is required.")
-        await self._validate_backend_async(profile=profile)
+        del session_id
+        profile = self._profiles[runtime_profile_name]
+        checked_at = self._backend_checked_at.get(profile.image)
+        if checked_at is None or time.monotonic() - checked_at >= self._BACKEND_CHECK_SECONDS:
+            await self._validate_backend_async(profile=profile)
+            self._backend_checked_at[profile.image] = time.monotonic()
         workspace_dir = self._temp_root / f"pyrit-program-{uuid.uuid4().hex}"
         program_dir = workspace_dir / "program"
         program_path = program_dir / profile.program_filename
@@ -281,27 +314,12 @@ class DockerSandboxClient:
                     self._write_program, workspace_dir=workspace_dir, program_path=program_path, program=program
                 )
             )
-            events: list[_ProgramExecutionEvent] = []
-            for index, invocation in enumerate(invocations):
-                try:
-                    event, cleanup_warning = await self._run_invocation_async(
-                        invocation_index=index,
-                        runtime_profile_name=runtime_profile_name,
-                        profile=profile,
-                        program_dir=program_dir,
-                        invocation=invocation,
-                    )
-                except SandboxExecutionError as error:
-                    if not events:
-                        raise
-                    return _SandboxRun(events=tuple(events), reasons=(f"sandbox error at invocation {index}: {error}",))
-                events.append(event)
-                if cleanup_warning is not None:
-                    # The environment may still be running, so no further invocation starts beside it.
-                    remaining = len(invocations) - len(events)
-                    reasons = (f"stopped after invocation {index}: {cleanup_warning}",) if remaining else ()
-                    return _SandboxRun(events=tuple(events), reasons=reasons, warnings=(cleanup_warning,))
-            return _SandboxRun(events=tuple(events))
+            return await self._run_invocation_async(
+                profile=profile,
+                program_dir=program_dir,
+                invocation=_ProgramInvocation(arguments=arguments, stdin=stdin),
+                timeout_seconds=timeout_seconds,
+            )
         finally:
             await _finish_work_async(
                 asyncio.to_thread(self._remove_workspace, workspace_dir=workspace_dir, program_path=program_path)
@@ -358,18 +376,17 @@ class DockerSandboxClient:
     async def _run_invocation_async(
         self,
         *,
-        invocation_index: int,
-        runtime_profile_name: _RuntimeProfileName,
         profile: DockerRuntimeProfile,
         program_dir: Path,
         invocation: _ProgramInvocation,
-    ) -> tuple[_ProgramExecutionEvent, str | None]:
+        timeout_seconds: float,
+    ) -> ProcessResult:
         """
         Run one invocation in a new container and remove the container afterwards.
 
         Returns:
-            tuple[_ProgramExecutionEvent, str | None]: What the invocation did, and a warning when
-            the container could not be removed.
+            ProcessResult: What the invocation did; cleanup is unconfirmed, with a warning, when the
+            container could not be removed.
 
         Raises:
             SandboxExecutionError: If Docker cannot start or inspect the container, or the
@@ -381,7 +398,7 @@ class DockerSandboxClient:
             name=name, profile=profile, program_dir=program_dir, resolved_command=resolved_command
         )
         started = time.monotonic()
-        deadline = started + self._timeout_seconds
+        deadline = started + timeout_seconds
         startup = asyncio.create_task(self._start_client_async(argv=argv))
         cleanup_warning: str | None = None
         try:
@@ -397,9 +414,7 @@ class DockerSandboxClient:
         finally:
             cleanup_warning = await _finish_work_async(self._cleanup_invocation_async(startup=startup, name=name))
         output, container = result.output, result.container
-        event = _ProgramExecutionEvent(
-            invocation_index=invocation_index,
-            runtime_profile_name=runtime_profile_name,
+        return ProcessResult(
             runtime_image_digest=profile.image_digest,
             resolved_command=resolved_command,
             exit_code=None if (result.timed_out or container.oom_killed) else container.exit_code,
@@ -410,8 +425,9 @@ class DockerSandboxClient:
             timed_out=result.timed_out,
             resource_limit_exceeded=container.oom_killed and not result.timed_out,
             duration_ms=duration_ms,
+            warnings=(cleanup_warning,) if cleanup_warning is not None else (),
+            cleanup_confirmed=cleanup_warning is None,
         )
-        return event, cleanup_warning
 
     async def _start_client_async(self, *, argv: list[str]) -> asyncio.subprocess.Process:
         """
