@@ -102,6 +102,29 @@ def test_seed_prompts_without_metadata_convert_to_messages() -> None:
     assert [message.get_piece().prompt_metadata for message in group.user_messages] == [{}, {}]
 
 
+def test_derived_message_metadata_is_independent_of_seed_metadata() -> None:
+    """Mutating a derived message's nested metadata must not change the source seed."""
+    group = SeedGroup(
+        seeds=[
+            SeedPrompt(value="Earlier request", role="user", sequence=0, metadata={"nested": {"labels": ["initial"]}}),
+            SeedPrompt(value="Next request", role="user", sequence=1, metadata={"nested": {"labels": ["next"]}}),
+        ]
+    )
+
+    history = group.prepended_conversation
+    assert history is not None
+    history[0].get_piece().prompt_metadata["nested"]["labels"].append("history")
+    next_message = group.next_message
+    assert next_message is not None
+    next_message.get_piece().prompt_metadata["nested"]["labels"].append("next-turn")
+
+    assert group.seeds[0].metadata == {"nested": {"labels": ["initial"]}}
+    assert group.seeds[1].metadata == {"nested": {"labels": ["next"]}}
+    later_history = group.prepended_conversation
+    assert later_history is not None
+    assert later_history[0].get_piece().prompt_metadata["nested"] == {"labels": ["initial"]}
+
+
 class TestSeedGroupInit:
     """Tests for SeedGroup initialization."""
 

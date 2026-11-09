@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
+from copy import deepcopy
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -460,7 +461,7 @@ class SeedGroup(BaseModel):
                     original_value_data_type=prompt.data_type or "text",
                     conversation_id=str(prompt.prompt_group_id),
                     sequence=sequence,
-                    prompt_metadata=prompt.metadata or {},
+                    prompt_metadata=deepcopy(prompt.metadata) if prompt.metadata else {},
                 )
                 if is_history or piece.api_role in {"assistant", "tool"}:
                     piece.set_simulated_role()
