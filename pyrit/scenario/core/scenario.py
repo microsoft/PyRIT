@@ -986,9 +986,9 @@ class Scenario(ABC):
         """
         Return the datasets this scenario reads in full to build its attacks, if any.
 
-        Required data is prepared and refreshed like ``dataset_config`` sources but never
-        capped, sampled, or filtered. ``dataset_config`` then only selects and limits the
-        attack population. Override this when a scenario assembles its population from
+        Required data is prepared and refreshed like ``dataset_config`` sources, and every row
+        that remains after filtering is read, without sampling or size caps. ``dataset_config``
+        then only selects and limits the attack population. Override this when a scenario assembles its population from
         ingredient datasets such as templates or registries.
 
         Returns:

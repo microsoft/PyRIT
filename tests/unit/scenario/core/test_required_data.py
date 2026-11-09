@@ -503,3 +503,57 @@ async def test_a_dataset_named_by_both_required_data_and_population_is_rejected_
     required_provider.fetch_dataset_async.assert_not_awaited()
     population_provider.fetch_dataset_async.assert_not_awaited()
     assert await sqlite_instance.get_seeds_async(dataset_name="shared") == []
+
+
+def _assembled(count: int) -> dict[str, list[AttackSeedGroup]]:
+    return {"assembled": [AttackSeedGroup(seeds=[SeedObjective(value=f"objective-{index}")]) for index in range(count)]}
+
+
+def test_source_free_limiter_validates_and_limits_assembled_groups() -> None:
+    seen: list[int] = []
+    config = DatasetAttackConfiguration(max_total=1, validators=[lambda resolved: seen.append(len(resolved.seeds))])
+
+    selected = config.select_assembled_groups(groups_by_population=_assembled(4))
+
+    assert seen == [4]
+    assert sum(len(groups) for groups in selected.values()) == 1
+
+
+@pytest.mark.parametrize(
+    ("config", "error"),
+    [
+        (DatasetAttackConfiguration(sources=[DatasetSource(name="records")]), "can't be combined"),
+        # A compound has no root sources even when a child names one, so its root must reject it outright.
+        (
+            CompoundDatasetAttackConfiguration(
+                configurations=[DatasetAttackConfiguration(sources=[DatasetSource(name="records")], max_total=1)]
+            ),
+            "compound configuration",
+        ),
+        (
+            CompoundDatasetAttackConfiguration(configurations=[DatasetAttackConfiguration(max_total=1)]),
+            "compound configuration",
+        ),
+    ],
+)
+def test_limiters_whose_rules_cannot_apply_to_assembled_groups_fail_clearly(
+    *, config: DatasetAttackConfiguration, error: str
+) -> None:
+    with pytest.raises(DatasetConstraintError, match=error):
+        config.select_assembled_groups(groups_by_population=_assembled(4))
+
+
+def test_compound_limiter_never_skips_its_children_rules() -> None:
+    seen: list[int] = []
+    child = DatasetAttackConfiguration(
+        sources=[DatasetSource(name="records")],
+        max_total=1,
+        validators=[lambda resolved: seen.append(len(resolved.seeds))],
+    )
+
+    with pytest.raises(DatasetConstraintError, match="compound configuration"):
+        CompoundDatasetAttackConfiguration(configurations=[child]).select_assembled_groups(
+            groups_by_population=_assembled(4)
+        )
+
+    assert seen == []

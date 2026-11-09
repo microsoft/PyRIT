@@ -1286,6 +1286,24 @@ class CompoundDatasetAttackConfiguration(DatasetAttackConfiguration):
             ]
         )
 
+    def select_assembled_groups(
+        self, *, groups_by_population: dict[str, list[AttackSeedGroup]], apply_sampling: bool = True
+    ) -> dict[str, list[AttackSeedGroup]]:
+        """
+        Reject assembled populations: a compound's validators and limits live on its children.
+
+        Args:
+            groups_by_population (dict[str, list[AttackSeedGroup]]): Assembled groups keyed by population.
+            apply_sampling (bool): Unused; the selection is always rejected.
+
+        Raises:
+            DatasetConstraintError: Always, since the children's rules can't apply to assembled groups.
+        """
+        raise DatasetConstraintError(
+            "Assembled populations can't be limited by a compound configuration, because its children's "
+            "validators and limits would be skipped. Use a single DatasetAttackConfiguration without sources."
+        )
+
     @property
     def dataset_names(self) -> list[str]:
         """

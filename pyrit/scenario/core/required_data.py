@@ -6,9 +6,10 @@ Datasets a scenario needs in order to build its attacks.
 
 Some scenarios assemble their attack population from datasets used as ingredients
 (templates, registries, partial keys). Those datasets are not the population a user
-selects or limits: they are always read in full, without source caps, sampling, or
-filters. ``ScenarioRequiredData`` declares them apart from ``dataset_config``, which then
-only describes and limits the assembled attack groups.
+selects or limits: every row that remains after filtering is read, without source caps or
+sampling. Filters narrow the input rows; they don't limit the assembled attacks.
+``ScenarioRequiredData`` declares them apart from ``dataset_config``, which then only describes
+and limits the assembled attack groups.
 
 Preparation reuses ``DatasetConfiguration``, so required data is fetched, stored, and
 refreshed with the same guarantees as any dataset source. Reads never fetch.
@@ -41,7 +42,7 @@ if TYPE_CHECKING:
 
 
 class _RequiredDatasetConfiguration(DatasetConfiguration):
-    """An uncapped, unfiltered configuration used only to prepare and read required data."""
+    """An uncapped, unsampled configuration used only to prepare and read required data."""
 
     async def read_async(self) -> dict[str, list[Seed[Any]]]:
         """
