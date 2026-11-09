@@ -8,17 +8,20 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from end_to_end.test_scenarios import SCENARIO_MAX_TOTAL
 from unit.mocks import MockPromptTarget
 
 from pyrit.converter import SearchReplaceConverter
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import AttackSeedGroup, Seed, SeedObjective, SeedPrompt
-from pyrit.scenario.core.dataset_configuration import (
+from pyrit.scenario import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     ResolvedDataset,
 )
-from pyrit.scenario.scenarios.garak.latent_injection import (
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
+from pyrit.scenario.scenarios.garak import (
     LatentInjection,
     LatentInjectionDatasetConfiguration,
     LatentInjectionTechnique,
@@ -87,6 +90,16 @@ def _ids(scenario: LatentInjection) -> dict[str, list[str]]:
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestLatentDefaults:
+    @pytest.mark.usefixtures("mock_garak_dataset_fetch")
+    async def test_e2e_limit_preserves_every_family_trigger_pair_async(self) -> None:
+        cap = SCENARIO_MAX_TOTAL["garak.latent_injection"]
+        config = _config(max_total=cap)
+        await config.prepare_async()
+        groups = await config.get_attack_seed_groups_async()
+        assert len(groups) == cap
+        assert len(config.coverage_keys) == cap
+        assert {config._coverage_key(group) for group in groups} == set(config.coverage_keys)
+
     @pytest.mark.usefixtures("mock_garak_dataset_fetch")
     @pytest.mark.parametrize(
         ("kwargs", "expected_cap"),

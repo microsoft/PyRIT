@@ -49,6 +49,9 @@ class IntTokenizer:
     def decode(self, token_ids: torch.Tensor, **_: Any) -> str:
         return " ".join(str(int(t)) for t in token_ids)
 
+    def get_vocab(self) -> dict[str, int]:
+        return {str(i): i for i in range(VOCAB_SIZE)}
+
 
 class _Prompt:
     def __init__(self, *, target_ids: list[int], control_len: int) -> None:
@@ -125,6 +128,7 @@ class TrajectoryWorker:
         self.barrier = barrier
         self.events = events
         self.tokenizer = IntTokenizer()
+        self._vocabulary_identities: dict[int, str] = {}
         self.model = SimpleNamespace(device=torch.device("cpu"), name_or_path=f"stub-model-{worker_id}")
         self.results: queue.SimpleQueue[Any] = queue.SimpleQueue()
 

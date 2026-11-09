@@ -43,9 +43,9 @@ def validate_temperature(temperature: float | None) -> None:
         temperature: The temperature value to validate (0-2 inclusive).
 
     Raises:
-        PyritException: If temperature is not between 0 and 2 (inclusive).
+        PyritException: If temperature is NaN or not between 0 and 2 (inclusive).
     """
-    if temperature is not None and (temperature < 0 or temperature > 2):
+    if temperature is not None and not 0 <= temperature <= 2:
         raise PyritException(message="temperature must be between 0 and 2 (inclusive).")
 
 
@@ -57,10 +57,38 @@ def validate_top_p(top_p: float | None) -> None:
         top_p: The top_p value to validate (0-1 inclusive).
 
     Raises:
-        PyritException: If top_p is not between 0 and 1 (inclusive).
+        PyritException: If top_p is NaN or not between 0 and 1 (inclusive).
     """
-    if top_p is not None and (top_p < 0 or top_p > 1):
+    if top_p is not None and not 0 <= top_p <= 1:
         raise PyritException(message="top_p must be between 0 and 1 (inclusive).")
+
+
+def validate_presence_penalty(presence_penalty: float | None) -> None:
+    """
+    Validate an optional presence penalty is finite and within [-2, 2].
+
+    Args:
+        presence_penalty (float | None): The presence penalty to validate, or None to leave it unset.
+
+    Raises:
+        PyritException: If the value is non-finite or outside [-2, 2].
+    """
+    if presence_penalty is not None and not -2 <= presence_penalty <= 2:
+        raise PyritException(message="presence_penalty must be between -2 and 2 (inclusive).")
+
+
+def validate_frequency_penalty(frequency_penalty: float | None) -> None:
+    """
+    Validate an optional frequency penalty is finite and within [-2, 2].
+
+    Args:
+        frequency_penalty (float | None): The frequency penalty to validate, or None to leave it unset.
+
+    Raises:
+        PyritException: If the value is non-finite or outside [-2, 2].
+    """
+    if frequency_penalty is not None and not -2 <= frequency_penalty <= 2:
+        raise PyritException(message="frequency_penalty must be between -2 and 2 (inclusive).")
 
 
 def limit_requests_per_minute(

@@ -16,6 +16,8 @@ import type { FindingCreate, FindingListItem, FindingListResponse, Operation } f
 import { useFindingEvidenceDialogStyles } from './FindingEvidenceDialog.styles'
 
 const PAGE_SIZE = 20
+// The findings list API rejects longer title searches.
+const MAX_TITLE_SEARCH_LENGTH = 1000
 
 interface FindingEvidenceDialogProps {
   attackResultId: string
@@ -60,10 +62,12 @@ export default function FindingEvidenceDialog({
   const newFindingRef = useRef<HTMLButtonElement>(null)
   const wasOpen = useRef(false)
   const wasCreating = useRef(false)
-  // Each opening starts without a previous selection or result.
+  // Each opening starts without a previous selection or result, and back at the
+  // first page of an unfiltered finding list, so a later opening never resumes
+  // the previous opening's pagination or search.
   if (open !== shownOpen) {
     setShownOpen(open)
-    if (open) { setPicked(null); setNotice(null); setAttachError('') }
+    if (open) { setPicked(null); setNotice(null); setAttachError(''); setOffset(0); setTitle('') }
   }
   // Evidence can come from any attack; the user picks whose findings to link, defaulting to the attack's own Operation.
   const operation = chosen?.key === viewKey ? chosen.operation
@@ -77,7 +81,7 @@ export default function FindingEvidenceDialog({
   }
 
   useEffect(() => {
-    if (!attackResultId) return
+    if (!open || !attackResultId) return
     let ignore = false
     const resolve = async (): Promise<void> => {
       try {
@@ -92,7 +96,7 @@ export default function FindingEvidenceDialog({
     }
     void resolve()
     return () => { ignore = true }
-  }, [attackResultId, defaultOperationId, viewKey])
+  }, [open, attackResultId, defaultOperationId, viewKey])
 
   useEffect(() => {
     if (!open) return
@@ -205,7 +209,7 @@ export default function FindingEvidenceDialog({
                 }}>New finding</Button>
             </div>
             <Field label="Search findings by title">
-              <Input value={title} disabled={submitting} onChange={(_, data) => {
+              <Input value={title} disabled={submitting} maxLength={MAX_TITLE_SEARCH_LENGTH} onChange={(_, data) => {
                 setTitle(data.value); setOffset(0); setSelection(null); setNotice(null); setAttachError('')
               }} />
             </Field>

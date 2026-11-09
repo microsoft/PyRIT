@@ -3,11 +3,48 @@ import { makeTarget } from '@/test-utils/targetFixtures'
 
 import { buildMessagePieces } from './messageMapper'
 import {
+  attachmentDraft, draftAttachment,
   draftConverterInputs, draftDataTypes, draftMessageToComposer, draftMessageToInput, editorTargetDisabledReason,
-  historyReplayDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft,
+  canBranchFirstPrompt, historyReplayDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft,
 } from './conversationDraft'
 
 describe('conversation drafts', () => {
+  it.each([
+    { roles: ['user', 'assistant'], index: 0, multiTurn: false, system: false, allowed: true },
+    { roles: ['user', 'assistant'], index: 0, multiTurn: true, system: false, allowed: true },
+    { roles: ['user', 'assistant'], index: 1, multiTurn: false, system: false, allowed: false },
+    { roles: ['user', 'assistant', 'user'], index: 2, multiTurn: true, system: false, allowed: false },
+    { roles: ['system', 'developer', 'user'], index: 2, multiTurn: true, system: true, allowed: true },
+    { roles: ['system', 'user'], index: 1, multiTurn: false, system: true, allowed: false },
+    { roles: ['system', 'user'], index: 1, multiTurn: true, system: false, allowed: false },
+    { roles: ['simulated_assistant', 'user'], index: 1, multiTurn: true, system: true, allowed: false },
+    { roles: ['tool', 'user'], index: 1, multiTurn: true, system: true, allowed: false },
+    { roles: [], index: 0, multiTurn: false, system: false, allowed: false },
+  ])('allows first-prompt branching=$allowed for $roles at $index', ({ roles, index, multiTurn, system, allowed }) => {
+    const target = makeTarget({
+      target_registry_name: 'http', capabilities: {
+        supports_multi_turn: multiTurn, supports_editable_history: false, supports_system_prompt: system,
+      },
+    })
+    expect(canBranchFirstPrompt(target, roles.map((role: string) => ({ role })), index)).toBe(allowed)
+  })
+
+  it('keeps normal history branching for targets with effective replay support', () => {
+    const target = makeTarget({ target_registry_name: 'restorable', supports_history_replay: true })
+    expect(canBranchFirstPrompt(target, [{ role: 'user' }], 0)).toBe(false)
+  })
+
+  it('restores the first prompt for an adapted single-turn target', () => {
+    const target = makeTarget({
+      target_registry_name: 'adapted', supports_history_replay: true,
+      capabilities: { supports_multi_turn: false, supports_editable_history: false },
+    })
+    const messages = [{ role: 'user' }, { role: 'assistant' }]
+    expect(canBranchFirstPrompt(target, messages, 0)).toBe(true)
+    expect(canBranchFirstPrompt(target, messages, 1)).toBe(false)
+    expect(canBranchFirstPrompt(target, [...messages, { role: 'user' }], 2)).toBe(false)
+  })
+
   it('returns original text and media with separate conversions and remapped converter stages', () => {
     const stage = { id: 'stage', converterId: 'base64' }
     const snapshot: ChatConverterSnapshot = {
@@ -147,6 +184,16 @@ describe('conversation drafts', () => {
       data_type: 'text', original_value: 'Change the background',
       prompt_metadata: { video_id: 'existing-video', custom: 'preserved' },
     }])
+  })
+
+  it('keeps attachment metadata when a composer attachment moves back into the editor', () => {
+    const metadata = { video_id: 'existing-video' }
+    const piece = attachmentDraft({
+      type: 'video', name: 'clip.mp4', url: '/api/media?path=clip.mp4', mimeType: 'video/mp4',
+      sourceValue: '/results/clip.mp4', sourceDataType: 'video_path', metadata,
+    })
+    expect(piece.prompt_metadata).toEqual(metadata)
+    expect(draftAttachment(piece).metadata).toEqual(metadata)
   })
 
   it('moves text and media to the composer without losing converted content or local files', () => {

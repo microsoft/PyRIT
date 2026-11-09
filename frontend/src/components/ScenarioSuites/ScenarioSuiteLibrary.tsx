@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   Badge,
@@ -20,15 +20,27 @@ import {
   TableRow,
   Text,
 } from '@fluentui/react-components'
-import { AddRegular, ArrowSyncRegular, DeleteRegular, EditRegular } from '@fluentui/react-icons'
+import {
+  AddRegular,
+  DeleteRegular,
+  EditRegular,
+} from '@fluentui/react-icons'
 import { Link, useNavigate } from 'react-router'
 
 import { scenarioSuitesApi } from '@/services/api'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { toApiError } from '@/services/errors'
 import type { ScenarioSuiteResponse } from '@/types'
 
 import { useScenarioSuiteLibraryStyles } from './ScenarioSuiteLibrary.styles'
 import { NEW_SUITE_ROUTE, suiteEditorRoutePath } from './suiteRoutes'
+
+const DEFINED_IN_CODE_HINT = 'Defined in code, so it cannot be edited or deleted here.'
+
+interface ScenarioSuiteLibraryProps {
+  /** Changes when presets change elsewhere on the page, so entry statuses are re-read. */
+  presetsRevision: number
+}
 
 function issueCount(item: ScenarioSuiteResponse): number {
   return item.entry_statuses.reduce(
@@ -37,7 +49,8 @@ function issueCount(item: ScenarioSuiteResponse): number {
   )
 }
 
-export default function ScenarioSuiteLibrary() {
+/** Lists the saved scenario suites. Suites launch from the Scanner, not from here. */
+export default function ScenarioSuiteLibrary({ presetsRevision }: ScenarioSuiteLibraryProps) {
   const styles = useScenarioSuiteLibraryStyles()
   const navigate = useNavigate()
   const [items, setItems] = useState<ScenarioSuiteResponse[]>([])
@@ -48,24 +61,29 @@ export default function ScenarioSuiteLibrary() {
   const [pendingDelete, setPendingDelete] = useState<ScenarioSuiteResponse | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [generation, setGeneration] = useState(0)
+  const pending = useRef(false)
+  const mutationEpoch = useRef(0)
 
   useEffect(() => {
     const controller = new AbortController()
     let cancelled = false
+    pending.current = true
+    const epoch = mutationEpoch.current
 
     const loadSuites = async (): Promise<void> => {
       try {
         const response = await scenarioSuitesApi.list(controller.signal)
-        if (cancelled) return
+        if (cancelled || epoch !== mutationEpoch.current) return
         setItems(response.items)
         setSource(response.source)
         setError(null)
       } catch (err: unknown) {
-        if (cancelled || controller.signal.aborted) return
+        if (cancelled || controller.signal.aborted || epoch !== mutationEpoch.current) return
         setError(toApiError(err).detail)
       } finally {
         if (!cancelled) {
           setLoading(false)
+          pending.current = false
         }
       }
     }
@@ -74,20 +92,21 @@ export default function ScenarioSuiteLibrary() {
     return () => {
       cancelled = true
       controller.abort()
+      pending.current = false
     }
-  }, [generation])
+  }, [generation, presetsRevision])
 
   const refresh = useCallback((): void => {
-    setLoading(true)
-    setError(null)
     setGeneration((current) => current + 1)
   }, [])
+  useAutoRefresh(() => { if (!pending.current) refresh() }, !loading && !deleting)
 
   const handleDelete = async (): Promise<void> => {
     if (!pendingDelete) {
       return
     }
     setDeleting(true)
+    mutationEpoch.current++
     setActionError(null)
     try {
       await scenarioSuitesApi.remove(pendingDelete.suite.name)
@@ -108,8 +127,8 @@ export default function ScenarioSuiteLibrary() {
     >
       <div className={styles.header}>
         <div className={styles.headerText}>
-          <Text id="scenario-suite-library-title" as="h1" size={600} weight="semibold">
-            Suites
+          <Text id="scenario-suite-library-title" as="h2" size={500} weight="semibold">
+            Scenario suites
           </Text>
           <Text size={300} className={styles.subtitle}>
             Ordered collections of reusable scenario preset definitions.
@@ -124,15 +143,6 @@ export default function ScenarioSuiteLibrary() {
             data-testid="new-suite-btn"
           >
             New suite
-          </Button>
-          <Button
-            className={styles.touchTarget}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            disabled={loading}
-          >
-            Refresh
           </Button>
         </div>
       </div>
@@ -149,26 +159,13 @@ export default function ScenarioSuiteLibrary() {
         </MessageBar>
       )}
 
+      {error && <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
       {loading ? (
         <div className={styles.centeredState}>
           <Spinner label="Loading suites..." />
         </div>
-      ) : error ? (
-        <div className={styles.centeredState} data-testid="suite-error-state">
-          <MessageBar intent="error">
-            <MessageBarBody>{error}</MessageBarBody>
-          </MessageBar>
-          <Button
-            className={styles.touchTarget}
-            appearance="primary"
-            icon={<ArrowSyncRegular />}
-            onClick={refresh}
-            data-testid="retry-suites-btn"
-          >
-            Retry
-          </Button>
-        </div>
-      ) : items.length === 0 ? (
+      ) : error && items.length === 0 ? null
+      : items.length === 0 ? (
         <div className={styles.centeredState} data-testid="suite-empty-state">
           <Text size={400}>No suites saved yet</Text>
           <Text size={200}>Create one to keep an ordered set of scenario presets together.</Text>
@@ -188,40 +185,48 @@ export default function ScenarioSuiteLibrary() {
             <TableBody>
               {items.map((item) => {
                 const issues = issueCount(item)
+                const editable = item.origin === 'stored'
                 return (
                   <TableRow key={item.suite.name} data-testid={`suite-row-${item.suite.name}`}>
                     <TableCell className={styles.nameCell}>
-                      <div className={styles.titleRow}>
-                        <Link to={suiteEditorRoutePath(item.suite.name)}>
-                          <Text weight="semibold">{item.suite.name}</Text>
-                        </Link>
+                      <div className={styles.nameContent}>
+                        <div className={styles.titleRow}>
+                          <Link to={suiteEditorRoutePath(item.suite.name)}>
+                            <Text weight="semibold">{item.suite.name}</Text>
+                          </Link>
+                          {issues > 0 && (
+                            <Badge appearance="tint" color="warning">
+                              Needs attention
+                            </Badge>
+                          )}
+                          {!editable && (
+                            <Badge appearance="tint" color="informative">
+                              Defined in code
+                            </Badge>
+                          )}
+                        </div>
+                        {item.suite.description && (
+                          <Text size={200} className={styles.meta}>
+                            {item.suite.description}
+                          </Text>
+                        )}
                         {issues > 0 && (
-                          <Badge appearance="tint" color="warning">
-                            Needs attention
-                          </Badge>
+                          <ul
+                            className={styles.issueList}
+                            data-testid={`suite-issues-${item.suite.name}`}
+                          >
+                            {item.entry_statuses.flatMap((entryStatus, entryIndex) => (
+                              entryStatus.issues.map((issue) => (
+                                <li key={`${entryStatus.entry_id}:${issue.field}:${issue.message}`}>
+                                  <Text size={200}>
+                                    Entry {entryIndex + 1} ({entryStatus.preset_name}): {issue.message}
+                                  </Text>
+                                </li>
+                              ))
+                            ))}
+                          </ul>
                         )}
                       </div>
-                      {item.suite.description && (
-                        <Text size={200} className={styles.meta}>
-                          {item.suite.description}
-                        </Text>
-                      )}
-                      {issues > 0 && (
-                        <ul
-                          className={styles.issueList}
-                          data-testid={`suite-issues-${item.suite.name}`}
-                        >
-                          {item.entry_statuses.flatMap((entryStatus, entryIndex) => (
-                            entryStatus.issues.map((issue) => (
-                              <li key={`${entryStatus.entry_id}:${issue.field}:${issue.message}`}>
-                                <Text size={200}>
-                                  Entry {entryIndex + 1} ({entryStatus.preset_name}): {issue.message}
-                                </Text>
-                              </li>
-                            ))
-                          ))}
-                        </ul>
-                      )}
                     </TableCell>
                     <TableCell>
                       <Text>
@@ -229,7 +234,9 @@ export default function ScenarioSuiteLibrary() {
                       </Text>
                     </TableCell>
                     <TableCell data-testid={`suite-status-${item.suite.name}`}>
-                      {issues === 0
+                      {item.suite.entries.length === 0
+                        ? <Text>Empty suite</Text>
+                        : issues === 0
                         ? <Text>No advisory issues</Text>
                         : <Text>{issues} advisory issue{issues === 1 ? '' : 's'}</Text>}
                     </TableCell>
@@ -247,12 +254,14 @@ export default function ScenarioSuiteLibrary() {
                           onClick={() => navigate(suiteEditorRoutePath(item.suite.name))}
                           data-testid={`edit-suite-${item.suite.name}`}
                         >
-                          Edit
+                          {editable ? 'Edit' : 'View'}
                         </Button>
                         <Button
                           className={styles.touchTarget}
                           appearance="subtle"
                           icon={<DeleteRegular />}
+                          disabled={!editable}
+                          title={editable ? undefined : DEFINED_IN_CODE_HINT}
                           onClick={() => {
                             setActionError(null)
                             setPendingDelete(item)

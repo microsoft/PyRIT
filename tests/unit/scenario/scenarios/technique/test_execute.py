@@ -16,9 +16,17 @@ from unit.mocks import MockPromptTarget
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.converter import Base64Converter
 from pyrit.exceptions import ScenarioPartialFailureException
-from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
-from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
-from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttack, SequentialAttackResult
+from pyrit.executor.attack import (
+    AttackConverterConfig,
+    AttackScoringConfig,
+    ChunkedRequestAttack,
+    PrependedConversationConfig,
+    PromptSendingAttack,
+    RedTeamingAttack,
+    SequenceCompletionPolicy,
+    SequentialAttack,
+    SequentialAttackResult,
+)
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
@@ -44,9 +52,10 @@ from pyrit.scenario import (
     IncompatibleTechniqueError,
     TechniqueRequirements,
 )
-from pyrit.scenario.core.scenario_target_defaults import override_default_adversarial_target
+from pyrit.scenario.core import override_default_adversarial_target
 from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
-from pyrit.scenario.scenarios.technique.execute import Execute, _build_execute_technique
+from pyrit.scenario.scenarios.technique import Execute
+from pyrit.scenario.scenarios.technique.execute import _build_execute_technique
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from pyrit.setup.initializers.techniques import build_technique_factories
 
@@ -121,6 +130,60 @@ async def _save_history_async(
 
 @pytest.mark.usefixtures("patch_central_database", "catalog")
 class TestExecute:
+    async def test_fixed_attack_parameter_contract_rejects_separate_prompt_async(self, scorer: MagicMock) -> None:
+        factory = AttackTechniqueFactory(name="chunked", attack_class=ChunkedRequestAttack)
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        target = MockPromptTarget()
+        assert not factory.supports_prompt
+        assert factory.supports_prepended_conversation
+        attack = ChunkedRequestAttack(objective_target=target)
+        assert attack.params_type is ChunkedRequestAttack.FIXED_PARAMS_TYPE
+        scenario = _scenario(scorer=scorer, target=target, scenario_techniques=["chunked"], prompt="Keep this text.")
+        with pytest.raises(IncompatibleTechniqueError, match="cannot send a separate prompt"):
+            await scenario.initialize_async()
+        assert target.prompt_sent == []
+
+    @pytest.mark.parametrize("name", ["many_shot", "skeleton_key", "role_play_movie_script"])
+    async def test_incompatible_separate_prompt_is_rejected_before_preparation_async(
+        self, scorer: MagicMock, name: str
+    ) -> None:
+        scenario = _scenario(scorer=scorer, scenario_techniques=[name], prompt="Product specification: Atlas.")
+        factory = AttackTechniqueRegistry.get_registry_singleton().get_factories()[name]
+        assert not factory.supports_prompt
+        with pytest.raises(IncompatibleTechniqueError, match="cannot send a separate prompt"):
+            await scenario.initialize_async()
+
+    async def test_message_input_is_converted_without_replacing_the_scoring_objective_async(self) -> None:
+        scorer = SubStringScorer(substring="not in the response")
+        target = MockPromptTarget()
+        factory = AttackTechniqueFactory(
+            name="convert_message",
+            attack_class=PromptSendingAttack,
+            attack_kwargs={
+                "attack_converter_config": AttackConverterConfig(
+                    request_converters=ConverterConfiguration.from_converters(converters=[Base64Converter()])
+                )
+            },
+        )
+        AttackTechniqueRegistry.get_registry_singleton().register_from_factories([factory])
+        prompt = "Product specification: Atlas supports calendar import."
+        objective = "Publish the report to the shared workspace."
+        scenario = _scenario(
+            scorer=scorer,
+            target=target,
+            scenario_techniques=["convert_message"],
+            objective=objective,
+            prompt=prompt,
+            retries_on_objective_failure=1,
+        )
+        with patch.object(scorer, "score_async", wraps=scorer.score_async) as score:
+            await scenario.initialize_async()
+            await scenario.run_async()
+
+        assert target.prompt_sent == [base64.b64encode(prompt.encode()).decode()] * 2
+        assert score.call_count == 2
+        assert all(call.kwargs["expectation"].objective == objective for call in score.call_args_list)
+
     @pytest.mark.parametrize("adapt_history", [False, True])
     async def test_factory_receives_the_prepared_inline_group_without_dataset_reads_async(
         self, *, scorer: MagicMock, adapt_history: bool
@@ -348,7 +411,7 @@ class TestExecute:
         assert counts.attempts == 5
         assert counts.overall.errors == 1
         assert counts.overall.retries == 4
-        from pyrit.backend.services.scenario_run_service import ScenarioRunService
+        from pyrit.backend.services import ScenarioRunService
 
         service = ScenarioRunService()
         try:
@@ -389,7 +452,7 @@ class TestExecute:
             await resumed.initialize_async()
 
     async def test_three_attempts_count_as_two_retries_across_surfaces_async(self, scorer: MagicMock) -> None:
-        from pyrit.backend.services.scenario_run_service import ScenarioRunService
+        from pyrit.backend.services import ScenarioRunService
         from pyrit.output._derivation import scenario_overview
 
         target = MockPromptTarget()
@@ -503,8 +566,8 @@ class TestExecute:
         assert len(scenario._atomic_attacks) == 2
 
     async def test_catalog_exposes_technique_count_constraint_async(self, scorer: MagicMock) -> None:
-        from pyrit.backend.services.scenario_service import ScenarioService
-        from pyrit.models.catalog.scenario import ScenarioRunSizeEstimateRequest
+        from pyrit.backend.services import ScenarioService
+        from pyrit.models import ScenarioRunSizeEstimateRequest
 
         with patch.object(Execute, "_get_default_objective_scorer", return_value=scorer):
             service = ScenarioService()
@@ -523,7 +586,7 @@ class TestExecute:
                 estimate = await service.estimate_scenario_run_size_async(
                     scenario_name="technique.execute",
                     request=ScenarioRunSizeEstimateRequest(
-                        techniques=["default"], include_baseline=True, scenario_params={"objective": "Test"}
+                        techniques=["red_teaming"], include_baseline=True, scenario_params={"objective": "Test"}
                     ),
                 )
                 assert estimate.total_attack_count == 2
@@ -892,8 +955,8 @@ class TestExecute:
 
     @pytest.mark.parametrize("retries", [0, 2])
     async def test_gui_resume_restores_only_declared_parameters_async(self, *, scorer: MagicMock, retries: int) -> None:
-        from pyrit.backend.services.scenario_run_service import ScenarioRunService
-        from pyrit.models.catalog.scenario import RunScenarioRequest
+        from pyrit.backend.services import ScenarioRunService
+        from pyrit.models.catalog import RunScenarioRequest
 
         target = MockPromptTarget()
         TargetRegistry.get_registry_singleton().instances.register(target, name="unit_objective")
@@ -1064,7 +1127,7 @@ class TestExecute:
             plan_scenario_ids=[scenario._scenario_result_id],
         )
         assert aggregates[scenario._scenario_result_id].error_attempts == 1
-        from pyrit.backend.services.scenario_run_service import ScenarioRunService
+        from pyrit.backend.services import ScenarioRunService
 
         service = ScenarioRunService()
         try:
@@ -1181,7 +1244,7 @@ class TestExecute:
     async def test_existing_compound_identity_is_unchanged_without_packaged_children_async(
         self, scorer: MagicMock
     ) -> None:
-        from pyrit.executor.attack.compound import SequentialChildAttack
+        from pyrit.executor.attack import SequentialChildAttack
 
         scenario = _scenario(scorer=scorer)
         await scenario.initialize_async()

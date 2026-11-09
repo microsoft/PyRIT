@@ -22,8 +22,10 @@ from sqlalchemy.sql.elements import BindParameter
 from sqlalchemy.sql.functions import FunctionElement
 from sqlalchemy.sql.selectable import Join, Lateral
 
+from pyrit.common.text_search import compile_like_pattern, contains_pattern, validate_text_search
+
 if TYPE_CHECKING:
-    from sqlalchemy.sql import ColumnElement
+    from sqlalchemy.sql import ColumnElement, SQLColumnExpression
     from sqlalchemy.sql.compiler import SQLCompiler
 
 
@@ -47,6 +49,32 @@ class UnicodeLower(FunctionElement[str]):
     SQLITE_FUNCTION_NAME: ClassVar[str] = "pyrit_analytics_lower"
     type = UnicodeText()
     inherit_cache = True
+
+
+def text_match(
+    *, column: SQLColumnExpression[Any], value: str | None = None, pattern: str | None = None
+) -> ColumnElement[bool]:
+    """
+    Match a literal substring or an explicit full LIKE pattern, ignoring case.
+
+    Both operands use the backend's Unicode-lowering support. NULL never matches;
+    an empty pattern matches empty text. Callers retain their existing empty-query
+    no-filter behavior by not constructing a predicate for an empty literal query.
+
+    Returns:
+        ColumnElement[bool]: A parameterized case-insensitive predicate.
+
+    Raises:
+        ValueError: If neither or both filters are supplied, or an escape is dangling.
+    """
+    validate_text_search(value=value, pattern=pattern)
+    if pattern is not None:
+        encoded = compile_like_pattern(pattern)
+    elif value is not None:
+        encoded = contains_pattern(value)
+    else:
+        raise ValueError("A literal text filter or a pattern is required.")
+    return UnicodeLower(column).like(UnicodeLower(literal(encoded, UnicodeText())), escape="/")
 
 
 @compiles(UnicodeLower, "sqlite")
@@ -186,6 +214,20 @@ class JsonArrayItems(FunctionElement[str]):
     shape and member types must still be checked by the caller: objects can also
     be expanded, and JSON null members are different from an empty array.
     """
+
+    type = UnicodeText()
+    inherit_cache = True
+
+
+class JsonArrayValue(FunctionElement[str]):
+    """A saved array at a JSON path, or an empty array for a missing or non-array value."""
+
+    type = UnicodeText()
+    inherit_cache = True
+
+
+class UuidHex(FunctionElement[str]):
+    """Normalize UUID string forms for comparison with a stored ID, without casting malformed references."""
 
     type = UnicodeText()
     inherit_cache = True
@@ -362,6 +404,59 @@ def _mssql_json_items(element: JsonArrayItems, compiler: Any, **kwargs: Any) -> 
         str: A table-valued expression to be joined with OUTER APPLY.
     """
     return f"OPENJSON({', '.join(_arguments(element, compiler, **kwargs))})"
+
+
+@compiles(JsonArrayValue, "sqlite")
+def _sqlite_json_array_value(element: JsonArrayValue, compiler: Any, **kwargs: Any) -> str:
+    """
+    Check the saved property's shape before expanding it.
+
+    Returns:
+        str: A JSON array expression safe for JSON1 expansion.
+    """
+    document, path = _arguments(element, compiler, **kwargs)
+    return f"CASE WHEN json_type({document}, {path}) = 'array' THEN json_extract({document}, {path}) ELSE '[]' END"
+
+
+@compiles(JsonArrayValue, "mssql")
+def _mssql_json_array_value(element: JsonArrayValue, compiler: Any, **kwargs: Any) -> str:
+    """
+    Keep only saved JSON arrays without truncating their contents.
+
+    Returns:
+        str: A JSON array expression safe for OPENJSON expansion.
+    """
+    document, path = _arguments(element, compiler, **kwargs)
+    value = f"JSON_QUERY({document}, {path})"
+    normalized = _mssql_without_json_whitespace(value)
+    return f"CASE WHEN LEFT({normalized}, 1) = N'[' THEN {value} ELSE N'[]' END"
+
+
+@compiles(UuidHex, "sqlite")
+def _sqlite_uuid_hex(element: UuidHex, compiler: Any, **kwargs: Any) -> str:
+    """
+    Match Python's case-insensitive UUID normalization without interpreting invalid text as an ID.
+
+    Returns:
+        str: Lowercase UUID hex for canonical, undashed, braced, or URN string forms.
+    """
+    value = _arguments(element, compiler, **kwargs)[0]
+    return f"replace(trim(replace(replace(lower({value}), 'urn:', ''), 'uuid:', ''), '{{}}'), '-', '')"
+
+
+@compiles(UuidHex, "mssql")
+def _mssql_uuid_hex(element: UuidHex, compiler: Any, **kwargs: Any) -> str:
+    """
+    Normalize reference strings without SQL Server's truncating uniqueidentifier conversion.
+
+    Exact UTF-16 width and binary collation also prevent trailing spaces or Unicode folding from matching an ID.
+
+    Returns:
+        str: The same UUID-comparison expression as SQLite and the Python reader.
+    """
+    value = _arguments(element, compiler, **kwargs)[0]
+    normalized = f"replace(trim(N'{{}}' FROM replace(replace(lower({value}), N'urn:', N''), N'uuid:', N'')), N'-', N'')"
+    return f"CASE WHEN DATALENGTH({normalized}) = 64 THEN {normalized} COLLATE Latin1_General_100_BIN2 END"
 
 
 @compiles(JsonArrayEmpty, "sqlite")

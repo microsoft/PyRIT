@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import DATASETS_PATH, JAILBREAK_TEMPLATES_PATH
 from pyrit.executor.attack.core.attack_config import AttackConverterConfig, AttackScoringConfig
 from pyrit.executor.attack.core.attack_parameters import AttackParameters
@@ -44,6 +44,8 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
     to demonstrate successful jailbreaking attempts. This method leverages the model's ability to learn from
     examples to bypass safety measures.
     """
+
+    FIXED_PARAMS_TYPE = ManyShotJailbreakParameters
 
     @apply_defaults
     def __init__(
@@ -85,7 +87,6 @@ class ManyShotJailbreakAttack(PromptSendingAttack):
             attack_scoring_config=attack_scoring_config,
             prompt_normalizer=prompt_normalizer,
             max_attempts_on_failure=max_attempts_on_failure,
-            params_type=ManyShotJailbreakParameters,
         )
 
         # Template for the faux dialogue to be prepended

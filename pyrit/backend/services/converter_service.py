@@ -29,8 +29,8 @@ from typing import Any
 import aiofiles
 import aiofiles.os
 
-from pyrit.backend.mappers.converter_mappers import converter_object_to_instance
-from pyrit.backend.models.converters import (
+from pyrit.backend.mappers import converter_object_to_instance
+from pyrit.backend.models import (
     ConverterInstance,
     ConverterInstanceListResponse,
     ConverterPreviewRequest,
@@ -39,6 +39,8 @@ from pyrit.backend.models.converters import (
     ConverterTypeResponse,
     CreateConverterRequest,
     PreviewStep,
+)
+from pyrit.backend.models.converters import (
     UnregisteredConverter,
 )
 from pyrit.backend.services.component_lifecycle import construct_component_async
@@ -49,9 +51,9 @@ from pyrit.backend.services.media_persistence import (
 )
 from pyrit.common.azure_storage import is_azure_blob_uri
 from pyrit.memory import data_serializer_factory
-from pyrit.models import ConverterIdentifier, MessagePiece, PromptDataType
+from pyrit.models import ConverterIdentifier, MessagePiece, Parameter, PromptDataType
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
-from pyrit.registry.components import ConverterRegistry
+from pyrit.registry import ConverterRegistry
 from pyrit.registry.registry import Reconstructable
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
@@ -71,16 +73,17 @@ class ConverterService:
         self._registry = ConverterRegistry.get_registry_singleton()
         self._upload_directory = TemporaryDirectory(prefix="pyrit-registry-uploads-")
         self._upload_path = Path(self._upload_directory.name).resolve()
+        self._artifact_lock = asyncio.Lock()
         self._provenance_key = secrets.token_bytes(32)
 
     def _build_instance_from_object(self, *, converter_id: str, converter_obj: Any) -> ConverterInstance:
         """
         Build a ConverterInstance from a registry object.
 
-        Uses the converter's identifier to extract all relevant metadata.
+        Project identity and editable source settings without changing the converter.
 
         Returns:
-            ConverterInstance with metadata derived from the object's identifier.
+            ConverterInstance with identity, catalog metadata, and source-specific defaults.
         """
         metadata = self._registry.get_registered_class_metadata(converter_obj.__class__.__name__)
         description = metadata.class_description or None if metadata else None
@@ -92,8 +95,20 @@ class ConverterService:
         )
         if isinstance(converter_obj, Reconstructable):
             try:
-                self._registry.get_reconstruction_parameters(converter_obj)
+                inputs = self._registry.get_reconstruction_parameters(converter_obj)
                 result.reconstructable = True
+                from pyrit.registry.resolution import project_parameter_value
+
+                for parameter in metadata.parameters if metadata else []:
+                    if not parameter.is_external_input or parameter.sensitive:
+                        continue
+                    try:
+                        value = project_parameter_value(
+                            parameter=parameter, value=inputs.get(parameter.name, parameter.default)
+                        )
+                    except (ValueError, TypeError):
+                        continue
+                    result.parameters.append(parameter.for_external_catalog().model_copy(update={"default": value}))
             except ValueError as exc:
                 result.reconstruction_error = str(exc)
         return result
@@ -184,13 +199,21 @@ class ConverterService:
         Returns:
             bool: True when an instance was removed, otherwise False.
         """
-        entry = self._registry.instances.get_entry(converter_id)
-        if entry is None:
-            return False
+        async with self._artifact_lock:
+            entry = self._registry.instances.get_entry(converter_id)
+            if entry is None:
+                return False
 
-        owned_paths = self._get_owned_artifact_paths(entry.metadata)
-        await self._remove_owned_artifacts_async(paths=owned_paths)
-        return self._registry.instances.unregister(converter_id, expected_entry=entry) is not None
+            owned_paths = self._get_owned_artifact_paths(entry.metadata)
+            shared_paths = {
+                path
+                for other in self._registry.instances.get_all_instances()
+                if other is not entry
+                for path in self._get_owned_artifact_paths(other.metadata)
+            }
+            owned_paths = [path for path in owned_paths if path not in shared_paths]
+            await self._remove_owned_artifacts_async(paths=owned_paths)
+            return self._registry.instances.unregister(converter_id, expected_entry=entry) is not None
 
     async def create_converter_async(
         self, *, request: CreateConverterRequest
@@ -229,6 +252,8 @@ class ConverterService:
             converter_type=request.type,
             params=request.source.params if request.source else request.params,
         )
+        # Every upload parameter holds a stored upload or an accepted blob URL.
+        upload_names = frozenset(self._upload_params(converter_type=request.type))
         try:
             # Uploads may have yielded to another request that took the name.
             if request.register:
@@ -237,31 +262,53 @@ class ConverterService:
                 self._registry.instances.validate_name_available(request.name)
             converter_obj = (
                 await construct_component_async(
-                    self._registry.recreate_instance, source=source, params=params, external_input=True
+                    self._registry.recreate_instance,
+                    source=source,
+                    params=params,
+                    external_input=True,
+                    allowed_path_params=upload_names,
                 )
                 if source is not None
                 else await construct_component_async(
-                    self._registry.create_instance_from_external_input, request.type, params=params
+                    self._registry.create_instance_from_external_input,
+                    request.type,
+                    params=params,
+                    allowed_path_params=upload_names,
                 )
             )
+            if (
+                request.source
+                and request.source.effective_hash
+                and (converter_obj.get_identifier().hash != request.source.effective_hash)
+            ):
+                raise ValueError("Temporary converter configuration has changed")
             if not request.register:
-                if (
-                    request.source
-                    and request.source.effective_hash
-                    and (converter_obj.get_identifier().hash != request.source.effective_hash)
-                ):
-                    raise ValueError("Temporary converter configuration has changed")
                 return UnregisteredConverter(
                     identifier=ConverterIdentifier.from_component_identifier(converter_obj.get_identifier())
                 )
             if request.name is None:
                 raise ValueError("name is required when register=true")
             converter = self._build_instance_from_object(converter_id=request.name, converter_obj=converter_obj)
-            self._registry.instances.register(
-                converter_obj,
-                name=request.name,
-                metadata={_OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in owned_paths]},
-            )
+            # Do not inherit files while deletion is already removing them.
+            async with self._artifact_lock:
+                inherited_paths: list[Path] = []
+                if request.source:
+                    self._registry.resolve_source(
+                        name=request.source.source_name, identifier_hash=request.source.source_hash
+                    )
+                    inherited_paths = [
+                        path
+                        for entry in self._registry.instances.get_all_instances()
+                        if entry.instance is source
+                        for path in self._get_owned_artifact_paths(entry.metadata)
+                    ]
+                self._registry.instances.register(
+                    converter_obj,
+                    name=request.name,
+                    metadata={
+                        _OWNED_ARTIFACT_PATHS_KEY: [str(path) for path in dict.fromkeys(owned_paths + inherited_paths)]
+                    },
+                )
         except (Exception, asyncio.CancelledError):
             if request.register:
                 await self._remove_owned_artifacts_async(paths=owned_paths)
@@ -311,12 +358,17 @@ class ConverterService:
                 if spec.source_name != converter_id:
                     raise ValueError("A converter specification must match its pipeline source")
                 source = self._registry.resolve_source(name=spec.source_name, identifier_hash=spec.source_hash)
+                converter_type = type(source).__name__
                 params, paths = await self._persist_data_uri_params_async(
-                    converter_type=type(source).__name__, params=spec.params
+                    converter_type=converter_type, params=spec.params
                 )
                 owned_paths.extend(paths)
                 obj = await construct_component_async(
-                    self._registry.recreate_instance, source=source, params=params, external_input=True
+                    self._registry.recreate_instance,
+                    source=source,
+                    params=params,
+                    external_input=True,
+                    allowed_path_params=frozenset(self._upload_params(converter_type=converter_type)),
                 )
                 if spec.effective_hash and obj.get_identifier().hash != spec.effective_hash:
                     raise ValueError("Temporary converter configuration has changed")
@@ -385,6 +437,25 @@ class ConverterService:
     # Private Helper Methods
     # ========================================================================
 
+    def _upload_params(self, *, converter_type: str) -> dict[str, Parameter]:
+        """
+        Return the converter's ``Path`` and ``Path | str`` parameters, which callers send as uploads.
+
+        Args:
+            converter_type (str): The registered converter class name.
+
+        Returns:
+            dict[str, Parameter]: The upload parameters by name.
+        """
+        metadata = self._registry.get_registered_class_metadata(converter_type)
+        if metadata is None:
+            return {}
+        return {
+            parameter.name: parameter
+            for parameter in metadata.parameters
+            if parameter.is_path or parameter.is_path_or_str
+        }
+
     async def _persist_data_uri_params_async(
         self,
         *,
@@ -424,16 +495,7 @@ class ConverterService:
             ValueError: If a ``Path`` value is not a valid data URI, or an Azure Blob URL
                 is outside the results container's media subdirectories.
         """
-        metadata = self._registry.get_registered_class_metadata(converter_type)
-        path_params = (
-            {
-                parameter.name: parameter
-                for parameter in metadata.parameters
-                if parameter.is_path or parameter.is_path_or_str
-            }
-            if metadata
-            else {}
-        )
+        path_params = self._upload_params(converter_type=converter_type)
 
         result = dict(params)
         owned_paths: list[Path] = []

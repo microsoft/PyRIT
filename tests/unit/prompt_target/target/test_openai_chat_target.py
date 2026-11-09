@@ -22,21 +22,21 @@ from unit.mocks import (
     openai_chat_response_json_dict,
 )
 
-from pyrit.exceptions.exception_classes import (
+from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
     RateLimitException,
 )
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import MemoryInterface
 from pyrit.models import JsonResponseConfig, Message, MessagePiece, flatten_to_message_pieces
 from pyrit.prompt_target import (
     OpenAIChatAudioConfig,
     OpenAIChatTarget,
     OpenAIResponseTarget,
     PromptTarget,
+    TargetCapabilities,
+    TargetConfiguration,
 )
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 def fake_construct_response_from_request(request, response_text_pieces):
@@ -981,6 +981,47 @@ def test_invalid_temperature_raises(patch_central_database):
             api_key="test",
             temperature=2.1,
         )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("presence_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_invalid_presence_penalty_raises(presence_penalty: float) -> None:
+    """Test that invalid presence_penalty values raise PyritException."""
+    with pytest.raises(PyritException, match="presence_penalty must be between -2 and 2"):
+        OpenAIChatTarget(
+            model_name="gpt-4",
+            endpoint="https://test.com",
+            api_key="test",
+            presence_penalty=presence_penalty,
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("frequency_penalty", [-2.1, 2.1, float("nan"), float("inf"), -float("inf")])
+def test_invalid_frequency_penalty_raises(frequency_penalty: float) -> None:
+    """Test that invalid frequency_penalty values raise PyritException."""
+    with pytest.raises(PyritException, match="frequency_penalty must be between -2 and 2"):
+        OpenAIChatTarget(
+            model_name="gpt-4",
+            endpoint="https://test.com",
+            api_key="test",
+            frequency_penalty=frequency_penalty,
+        )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("parameter", ["presence_penalty", "frequency_penalty"])
+@pytest.mark.parametrize("value", [None, -2.0, 0.0, 2.0])
+def test_valid_generation_penalties_preserve_identifier(*, parameter: str, value: float | None) -> None:
+    target = OpenAIChatTarget(
+        model_name="gpt-4",
+        endpoint="https://test.com",
+        api_key="test",
+        presence_penalty=value if parameter == "presence_penalty" else None,
+        frequency_penalty=value if parameter == "frequency_penalty" else None,
+    )
+
+    assert target.get_identifier().params.get(parameter) == value
 
 
 def test_invalid_top_p_raises(patch_central_database):

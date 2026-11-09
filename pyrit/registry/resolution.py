@@ -22,7 +22,9 @@ responsibilities:
   ``Parameter.coerce_value`` and resolving registry-reference parameters by name
   from the owning domain's registry. Defaults are left to the constructor.
   Callers building from external input (REST, CLI) select the external path,
-  which accepts only parameters with ``Parameter.is_external_input``.
+  which accepts only parameters with ``Parameter.is_external_input`` and rejects
+  parameters that can name a server file or folder unless the caller has made
+  them safe.
 - **Resolve from a declared list** (``resolve_declared_params``): the sibling for
   a component that declares an explicit ``list[Parameter]`` (e.g. a scenario's
   ``supported_parameters()``). It has no references, coerces every supplied
@@ -49,19 +51,19 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, Union, get_args, get
 
 from pydantic import JsonValue, ValidationError
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, _RequiredValueSentinel
+from pyrit.common import REQUIRED_VALUE
+from pyrit.common.apply_defaults import _RequiredValueSentinel
 from pyrit.common.brick_contract import get_constructor_owners
-from pyrit.models import StructuredParameterValue
-from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
+from pyrit.models import ComponentType, Parameter, RegistryReference, StructuredParameterValue
 
 # Re-exported so ``from pyrit.registry.resolution import display_choices`` keeps working;
 # the single implementation now lives in ``pyrit.models.parameter``.
-from pyrit.models.parameter import display_choices as display_choices
+from pyrit.models import display_choices as display_choices
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier
 
 # Constructor parameters that never describe a settable build input.
 _SKIPPED_PARAM_NAMES: frozenset[str] = frozenset({"self", "args", "kwargs"})
@@ -177,7 +179,7 @@ def _json_input_type(annotation: TypeAnnotation) -> TypeAnnotation:
         result = str
     elif origin in (list, Collection, Sequence) and len(get_args(unwrapped)) == 1:
         element_type = get_args(unwrapped)[0]
-        result = list[element_type]
+        result = types.GenericAlias(list, element_type)
     else:
         return annotation
 
@@ -274,8 +276,8 @@ def _parameters_from_signature(
             registry references keyed by constructor parameter name.
         sensitive_parameter_names (frozenset[str]): Identifier-declared names
             whose values must be obscured in user interfaces.
-        multiline_parameter_names (frozenset[str]): Identifier-declared names
-            whose values require multiline controls.
+        multiline_parameter_names (frozenset[str]): Identifier- or component-declared
+            names whose values require multiline controls.
         identity_conflicting_parameter_names (frozenset[str]): Identifier-declared
             names that must be omitted for identity-based authentication.
 
@@ -304,18 +306,19 @@ def _parameters_from_signature(
             continue
 
         param_type = None if param.annotation is inspect.Parameter.empty else param.annotation
-        parameters.append(
-            Parameter(
-                name=name,
-                description=descriptions.get(name, ""),
-                default=_default_for(param),
-                param_type=param_type,
-                variants=_structured_variant_parameters(param_type),
-                sensitive=name in sensitive_parameter_names,
-                multiline=name in multiline_parameter_names,
-                identity_conflicting=name in identity_conflicting_parameter_names,
-            )
+        parameter = Parameter(
+            name=name,
+            description=descriptions.get(name, ""),
+            default=_default_for(param),
+            param_type=param_type,
+            variants=_structured_variant_parameters(param_type),
+            sensitive=name in sensitive_parameter_names,
+            multiline=name in multiline_parameter_names,
+            identity_conflicting=name in identity_conflicting_parameter_names,
         )
+        if parameter.is_seed_prompt:
+            parameter = parameter.model_copy(update={"multiline": True})
+        parameters.append(parameter)
     return parameters
 
 
@@ -334,6 +337,10 @@ def derive_parameters(
     explicitly declares that its ``**kwargs`` are forwarded, the next constructor
     in MRO order is merged. Child declarations take precedence over same-named
     base declarations.
+
+    A component can declare ``MULTILINE_PARAMETER_NAMES`` as a ``frozenset[str]``
+    of constructor parameters whose controls must preserve line breaks. These
+    names supplement the identifier's shared multiline names for that component only.
 
     A non-required reference parameter declared by ``seam_base_type`` is a
     construction seam, not a build input of every subclass: the base accepts it so
@@ -366,6 +373,7 @@ def derive_parameters(
     multiline_parameter_names = (
         identifier_type.get_multiline_parameter_names() if identifier_type is not None else frozenset[str]()
     )
+    multiline_parameter_names |= getattr(cls, "MULTILINE_PARAMETER_NAMES", frozenset[str]())
     identity_conflicting_parameter_names = (
         identifier_type.get_identity_conflicting_parameter_names() if identifier_type is not None else frozenset[str]()
     )
@@ -621,6 +629,7 @@ def resolve_constructor_args(
     external_input: bool = False,
     strict_json: bool = False,
     seam_base_type: type | None = None,
+    allowed_path_params: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """
     Resolve a flat argument dict into constructor-ready keyword arguments.
@@ -648,6 +657,9 @@ def resolve_constructor_args(
             contracts; ordinary CLI and Python resolution remain unchanged.
         seam_base_type (type | None): The domain base type whose non-required
             declared references are construction seams (see ``derive_parameters``).
+        allowed_path_params (frozenset[str]): External-input parameters that can name a
+            server file or folder but that the caller has made safe, such as an uploaded
+            file the backend stored itself. Defaults to none.
 
     Returns:
         dict[str, Any]: Arguments ready to pass to ``cls(**resolved)``.
@@ -655,14 +667,20 @@ def resolve_constructor_args(
     Raises:
         ValueError: If an argument is not a declared parameter, a registry
             reference cannot be resolved, a simple value cannot be coerced, or
-            external input sets a parameter that is not an external input.
+            external input sets a parameter that is not an external input or that
+            names a server file or folder without being allowed.
     """
     by_name = {
         param.name: param
         for param in derive_parameters(cls=cls, identifier_type=identifier_type, seam_base_type=seam_base_type)
     }
     if external_input:
-        reject_non_external_params(params=raw_args, declared=list(by_name.values()), owner=cls.__name__)
+        reject_non_external_params(
+            params=raw_args,
+            declared=list(by_name.values()),
+            owner=cls.__name__,
+            allowed_path_params=allowed_path_params,
+        )
 
     resolved: dict[str, Any] = {}
     for name, value in raw_args.items():
@@ -697,7 +715,8 @@ def resolve_constructor_args(
         elif param.variants is not None:
             resolved[name] = _resolve_structured_input(parameter=param, value=value)
         elif (
-            param.choices
+            param.is_seed_prompt
+            or param.choices
             or (isinstance(value, str) and param.is_string_coercible)
             or (isinstance(value_type, type) and issubclass(value_type, Enum))
         ):
@@ -711,33 +730,51 @@ def resolve_constructor_args(
     return resolved
 
 
-def reject_non_external_params(*, params: Mapping[str, Any], declared: Sequence[Parameter], owner: str) -> None:
+def reject_non_external_params(
+    *,
+    params: Mapping[str, Any],
+    declared: Sequence[Parameter],
+    owner: str,
+    allowed_path_params: frozenset[str] = frozenset(),
+) -> None:
     """
     Reject external input that is not an explicitly supported external input.
 
     Every name must be declared and have ``Parameter.is_external_input``, and registry
-    references must be given by name. Values are otherwise left to the component.
+    references must be given by name. A parameter that can name a server file or
+    folder is rejected unless it is in ``allowed_path_params``. Values are otherwise
+    left to the component.
 
     Args:
         params (Mapping[str, Any]): The parameter values supplied by an external caller.
         declared (Sequence[Parameter]): The parameters the component declares.
         owner (str): The owning class or scenario name, for error messages.
+        allowed_path_params (frozenset[str]): Parameters that can name a server file or
+            folder but that the caller has made safe. Defaults to none.
 
     Raises:
-        ValueError: If ``params`` sets an undeclared parameter or one that is not an external
-            input, or gives a registry reference as anything but a name.
+        ValueError: If ``params`` sets an undeclared parameter, one that is not an external
+            input, or one that names a server file or folder without being allowed, or
+            gives a registry reference as anything but a name.
     """
     declared_by_name = {parameter.name: parameter for parameter in declared}
+    settable_names = {
+        name
+        for name, parameter in declared_by_name.items()
+        if parameter.is_allowed_external_input(allowed_path_params=allowed_path_params)
+    }
     for name, value in params.items():
         parameter = declared_by_name.get(name)
         if parameter is None:
-            external_names = sorted(
-                known for known, candidate in declared_by_name.items() if candidate.is_external_input
-            )
-            raise ValueError(f"Unknown parameter '{name}' for '{owner}'. Valid parameters: {external_names}")
+            raise ValueError(f"Unknown parameter '{name}' for '{owner}'. Valid parameters: {sorted(settable_names)}")
         if not parameter.is_external_input:
             raise ValueError(
                 f"Parameter '{name}' of '{owner}' cannot be set through the API; pass it from Python instead."
+            )
+        if name not in settable_names:
+            raise ValueError(
+                f"Parameter '{name}' of '{owner}' names a server file or folder and cannot be set through the API; "
+                "pass it from Python or an initializer instead."
             )
         if parameter.reference is not None:
             _require_reference_names(value=value, owner=owner, name=name)

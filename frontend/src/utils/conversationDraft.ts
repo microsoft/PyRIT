@@ -39,6 +39,17 @@ export function editorTargetDisabledReason(
   return undefined
 }
 
+export function canBranchFirstPrompt(
+  target: TargetInstance, messages: ReadonlyArray<{ readonly role: string }>, index: number,
+): boolean {
+  const history = messages.slice(0, index)
+  return messages[index]?.role === 'user'
+    && history.every((message: { readonly role: string }) => message.role === 'system' || message.role === 'developer')
+    && !historyReplayDisabledReason(target, history)
+    && (target.capabilities?.supports_multi_turn === false
+      || Boolean(historyReplayDisabledReason(target, messages.slice(0, index + 1))))
+}
+
 export function unansweredToolCallId(messages: ConversationDraftMessage[], messageId: string): string | undefined {
   const responses = new Set<string>()
   const calls: string[] = []
@@ -216,9 +227,12 @@ export function draftMessageToComposer(
   const applied: ChatConverterSnapshot['applied'] = {}
   for (const piece of message.pieces) {
     const id = piece === textPieces[0] ? 'text' : piece.draftId
-    if (snapshot.workingInputs[piece.draftId] !== undefined) workingInputs[id] = snapshot.workingInputs[piece.draftId]
-    if (snapshot.stageResults[piece.draftId]) stageResults[id] = snapshot.stageResults[piece.draftId]
-    if (snapshot.errors[piece.draftId]) errors[id] = snapshot.errors[piece.draftId]
+    const workingInput = snapshot.workingInputs[piece.draftId]
+    if (workingInput !== undefined) workingInputs[id] = workingInput
+    const stageResult = snapshot.stageResults[piece.draftId]
+    if (stageResult !== undefined) stageResults[id] = stageResult
+    const err = snapshot.errors[piece.draftId]
+    if (err !== undefined) errors[id] = err
     const previous = snapshot.applied[piece.draftId]
     const convertedType = piece.converted_value_data_type ?? piece.data_type
     if (piece.converted_value !== undefined && (piece.converted_value !== piece.original_value
@@ -249,6 +263,7 @@ export function attachmentDraft(attachment: MessageAttachment): ConversationDraf
     previewUrl: attachment.url,
     filename: attachment.name,
     file: attachment.file,
+    prompt_metadata: attachment.metadata,
   }
 }
 

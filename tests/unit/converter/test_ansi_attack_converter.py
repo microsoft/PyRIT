@@ -5,8 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.converter import ConverterResult
-from pyrit.converter.ansi_escape.ansi_attack_converter import AnsiAttackConverter
+from pyrit.converter import AnsiAttackConverter, ConverterResult
 
 
 async def test_convert_async_default_settings():

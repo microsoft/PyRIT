@@ -30,16 +30,16 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
 )
-from pyrit.prompt_target import CapabilityName, PromptTarget
+from pyrit.prompt_target import CapabilityName, PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.prompt_target.common import target_requirements as target_requirements_module
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.score import (
     FloatScaleScorer,
     FloatScaleThresholdScorer,
     JsonSchemaResponseHandler,
+    LegacyScorerHookError,
     MessageFloatScaleScorer,
     MessageScorable,
+    MessageScorableResolver,
     MessageScorer,
     MessageTrueFalseScorer,
     Scorer,
@@ -51,7 +51,6 @@ from pyrit.score import (
     TrueFalseScorer,
 )
 from pyrit.score.llm_scoring import _run_llm_scoring_async
-from pyrit.score.message_scorable_resolver import MessageScorableResolver
 from pyrit.score.message_scorer import extract_objective_from_previous_turn_async
 from pyrit.score.observation.target_judge import JudgmentRequest
 
@@ -2308,7 +2307,7 @@ class TestLegacyDirectScorerSubclass:
         with (
             patch.object(legacy_class, "CONDITION_TYPE", AnswerMatches),
             pytest.warns(DeprecationWarning, match="_score_async"),
-            pytest.raises(RuntimeError, match="matched typed conditions"),
+            pytest.raises(LegacyScorerHookError, match="matched typed conditions"),
         ):
             await scorer.score_async(scorable=ContentScorable(value="Paris"), expectation=expectation)
         assert scorer.scored_messages == []
@@ -2740,7 +2739,7 @@ class TestFloatScaleScorerEmptyResults:
     @pytest.fixture
     def float_scale_scorer_returns_empty(self, no_valid_pieces_validator):
         """Create a FloatScaleScorer whose _score_piece_async returns an empty list."""
-        from pyrit.score.float_scale.float_scale_scorer import MessageFloatScaleScorer
+        from pyrit.score import MessageFloatScaleScorer
 
         class _TestFloatScaleScorer(MessageFloatScaleScorer):
             def __init__(self, *, validator):

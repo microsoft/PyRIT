@@ -4,15 +4,14 @@
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, assert_never
 
 from pyrit.auth import (
     get_azure_token_provider,
     get_default_azure_scope,
     is_azure_openai_endpoint,
 )
-from pyrit.common import default_values, net_utility
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import default_values, net_utility, print_deprecation_message
 from pyrit.models import (
     ComponentIdentifier,
     Message,
@@ -104,11 +103,13 @@ class PromptShieldTarget(PromptTarget):
                 this target instance. Defaults to None.
 
         Raises:
-            ValueError: If the endpoint value is not provided, if identity auth is requested
+            ValueError: If ``auth_mode`` is not one of ``supported_auth_modes``, if the endpoint
+                value is not provided, if identity auth is requested
                 alongside an explicit ``api_key``, if identity auth is requested for an endpoint
                 that is not a recognized Azure Content Safety endpoint, or if no API key is
                 available for an endpoint that is not a recognized Azure Content Safety endpoint.
         """
+        self._validate_auth_mode(auth_mode)
         endpoint_value = default_values.get_required_value(
             env_var_name=self.ENDPOINT_URI_ENVIRONMENT_VARIABLE, passed_value=endpoint
         )
@@ -291,24 +292,29 @@ class PromptShieldTarget(PromptTarget):
                 return {"userPrompt": input_str, "documents": []}
             case "documents":
                 return {"userPrompt": "", "documents": [input_str]}
-            case _:
-                # This can also be accomplished using regex, but Python is flexible.
-                user_prompt = ""
-                documents: list[str] = []
-                split_input = input_str.split("<document>")
+            case None:
+                pass
+            case unknown_field:
+                if TYPE_CHECKING:
+                    assert_never(unknown_field)
 
-                for element in split_input:
-                    contents = element.split("</document>")
+        # This can also be accomplished using regex, but Python is flexible.
+        user_prompt = ""
+        documents: list[str] = []
+        split_input = input_str.split("<document>")
 
-                    if len(contents) == 1:
-                        user_prompt += contents[0]
-                    else:
-                        # Text before the closing tag is the document; any text after it
-                        # belongs to the user prompt and must not be silently dropped.
-                        documents.append(contents[0])
-                        user_prompt += contents[1]
+        for element in split_input:
+            contents = element.split("</document>")
 
-                return {"userPrompt": user_prompt, "documents": documents if documents else []}
+            if len(contents) == 1:
+                user_prompt += contents[0]
+            else:
+                # Text before the closing tag is the document; any text after it
+                # belongs to the user prompt and must not be silently dropped.
+                documents.append(contents[0])
+                user_prompt += contents[1]
+
+        return {"userPrompt": user_prompt, "documents": documents if documents else []}
 
     def _add_auth_param_to_headers(self, headers: dict[str, str]) -> None:
         """

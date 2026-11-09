@@ -5,6 +5,7 @@ import asyncio
 import json
 import pathlib
 import uuid
+from typing import assert_never
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
@@ -16,8 +17,7 @@ from pyrit.converter.puzzled.puzzle_builders import (
     build_word_search,
     crossword_symbol_map,
 )
-from pyrit.exceptions import EmptyResponseException
-from pyrit.exceptions.exceptions_helpers import remove_markdown_json
+from pyrit.exceptions import EmptyResponseException, remove_markdown_json
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptDataType, SeedPrompt
 from pyrit.prompt_target import CHAT_TARGET_REQUIREMENTS, PromptTarget
 
@@ -197,8 +197,10 @@ class PuzzledConverter(Converter):
             puzzle_body = build_word_search(words, rng)
         elif puzzle_type is PuzzleType.ANAGRAM:
             puzzle_body = build_anagram(words, rng)
-        else:
+        elif puzzle_type is PuzzleType.CROSSWORD:
             puzzle_body = build_crossword(words)
+        else:
+            assert_never(puzzle_type)
 
         semantics = await self._semantic_clues_async(words)
         clues = "\n".join(self._clue_line(masked, semantics) for masked in mask_result.masked_words)

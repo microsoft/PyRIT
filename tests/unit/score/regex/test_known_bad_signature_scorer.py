@@ -3,8 +3,7 @@
 
 import pytest
 
-from pyrit.score import KnownBadSignatureScorer
-from pyrit.score.true_false.regex.regex_scorer import RegexScorer
+from pyrit.score import KnownBadSignatureScorer, RegexScorer
 
 _EICAR = r"X5O!P%@AP[4\PZX54(P^)7CC)7}$" + "EICAR-STANDARD-ANTIVIRUS-TEST-FILE" + "!$H+H*"
 _GTUBE = "XJS*C4JDBQADN1.NSBN3*2IDNEN*" + "GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL" + "*C.34X"

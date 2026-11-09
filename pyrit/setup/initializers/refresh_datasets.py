@@ -16,8 +16,7 @@ from datetime import UTC, datetime, timedelta
 
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import SeedDataset
-from pyrit.models.parameter import Parameter
+from pyrit.models import Parameter, SeedDataset
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)

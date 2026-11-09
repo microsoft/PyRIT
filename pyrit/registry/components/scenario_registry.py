@@ -21,11 +21,11 @@ from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models import (
     ScenarioDatasetOptions,
     ScenarioDatasetSettings,
+    ScenarioIdentifier,
     ScenarioRunSizeEstimate,
     ScenarioTechniqueSummary,
     class_name_to_snake_case,
 )
-from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -34,10 +34,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from types import ModuleType
 
-    from pyrit.models import Parameter
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier, Parameter
+    from pyrit.scenario import ScenarioTechnique
     from pyrit.scenario.core import Scenario
-    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 
 @dataclass(frozen=True)
@@ -49,6 +48,7 @@ class ScenarioMetadata(RegistryMetadata):
     """
 
     scenario_version: int = field(kw_only=True, default=1)
+    supports_objective_scorer: bool = field(kw_only=True, default=False)
 
     # The default technique name (e.g., "single_turn")
     default_technique: str = field(kw_only=True)
@@ -69,6 +69,7 @@ class ScenarioMetadata(RegistryMetadata):
 
     # Descriptions and tags for each available concrete technique.
     technique_summaries: tuple[ScenarioTechniqueSummary, ...] = field(kw_only=True, default=())
+    default_objective_scorer_identifier: ComponentIdentifier | None = field(kw_only=True, default=None)
 
     # Aggregate techniques that combine multiple attack approaches.
     aggregate_techniques: tuple[str, ...] = field(kw_only=True)
@@ -221,6 +222,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 name=technique.value,
                 description=technique.description,
                 tags=sorted(technique.tags),
+                identifier=technique.identifier,
             )
             for technique in technique_class.get_all_techniques()
         )
@@ -240,12 +242,14 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             class_description=description,
             registry_name=name,
             scenario_version=instance._version,
+            supports_objective_scorer=self.supports_objective_scorer(cls),
             default_technique=default_technique_value,
             default_techniques=default_techniques,
             description_markdown=description_markdown,
             all_techniques=all_techniques,
             technique_class=technique_class,
             technique_summaries=technique_summaries,
+            default_objective_scorer_identifier=instance._objective_scorer_identifier,
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,
@@ -264,6 +268,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         name: str,
         scenario_params: dict[str, Any] | None = None,
         target_is_configured: bool = False,
+        constructor_kwargs: dict[str, Any] | None = None,
         **estimate_kwargs: Any,
     ) -> ScenarioRunSizeEstimate:
         """
@@ -273,6 +278,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             name: Registered scenario name.
             scenario_params: Scenario-declared parameter values.
             target_is_configured: Whether the estimate has a concrete objective target.
+            constructor_kwargs: Explicit constructor inputs, such as a custom objective scorer.
             **estimate_kwargs: Common resolved values such as techniques, dataset
                 configuration, baseline choice, and an optional objective target.
 
@@ -280,7 +286,10 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             ScenarioRunSizeEstimate: Structured configured-run estimate.
         """
         scenario = await run_legacy_sync_async(
-            self._create_and_configure, name, params={**(scenario_params or {}), **estimate_kwargs}
+            self._create_and_configure,
+            name,
+            params={**(scenario_params or {}), **estimate_kwargs},
+            constructor_kwargs=constructor_kwargs,
         )
         scenario.set_scenario_registry_name(scenario_registry_name=name)
         return await scenario.get_run_size_estimate_async(target_is_configured=target_is_configured)
@@ -292,6 +301,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
         scenario_params: dict[str, Any] | None = None,
         scenario_result_id: str | None = None,
         initial_metadata: Mapping[str, Any] | None = None,
+        constructor_kwargs: dict[str, Any] | None = None,
         **initialize_kwargs: Any,
     ) -> Scenario:
         """
@@ -325,13 +335,14 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 or ``None`` to start a fresh run.
             initial_metadata (Mapping[str, Any] | None): Caller-owned metadata to
                 persist atomically when a fresh scenario result is created.
+            constructor_kwargs (dict[str, Any] | None): Explicit constructor inputs for this run.
             **initialize_kwargs (Any): Common run-resolved parameters merged into the
                 param bag (notably ``objective_target``).
 
         Returns:
             Scenario: The fully initialized scenario, ready for ``run_async``.
         """
-        constructor_kwargs: dict[str, Any] = {}
+        constructor_kwargs = dict(constructor_kwargs or {})
         if scenario_result_id:
             constructor_kwargs["scenario_result_id"] = scenario_result_id
 
@@ -344,3 +355,15 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             scenario.set_initial_metadata(metadata=initial_metadata)
         await scenario.initialize_async()
         return scenario
+
+    @staticmethod
+    def supports_objective_scorer(scenario_class: type[Scenario]) -> bool:
+        """
+        Check whether the constructor explicitly accepts an objective scorer.
+
+        Returns:
+            bool: Whether a scorer override can be passed to the constructor.
+        """
+        import inspect
+
+        return "objective_scorer" in inspect.signature(scenario_class.__init__).parameters

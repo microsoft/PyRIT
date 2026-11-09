@@ -1,11 +1,14 @@
 import { buildParametersFromForm, getInitialFormValues } from '@/components/Parameters/parameterForm'
 import {
+  buildScenarioConfig,
   dynamicScenarioParameters,
   initialScenarioConfigState,
   uniqueTechniqueOptions,
+  type BuildScenarioConfigResult,
   type ScenarioConfigFields,
   type ScenarioConfigFormState,
 } from '@/components/Scenarios/scenarioConfigForm'
+import { untouchedPresetScenarioParams } from '@/components/Scenarios/scenarioPresetSeed'
 import type { RegisteredScenario, ScenarioPreset } from '@/types'
 import { validateRegistryName } from '@/utils/registryName'
 
@@ -70,10 +73,45 @@ export function presetToConfigState(
   }
 }
 
+/** Preserve unchanged stored values before parsing edits for either preview or save. */
+export function buildPresetScenarioConfig(
+  scenario: RegisteredScenario,
+  state: ScenarioConfigFormState,
+  previous: ScenarioPreset | null,
+): BuildScenarioConfigResult {
+  const parameters = dynamicScenarioParameters(scenario)
+  const untouched = untouchedPresetScenarioParams(
+    previous?.scenario_params,
+    parameters,
+    state.scenarioParamValues,
+  )
+  const result = buildScenarioConfig({
+    techniques: state.techniques,
+    dynamicParameters: parameters.filter(
+      (parameter) => !Object.prototype.hasOwnProperty.call(untouched, parameter.name),
+    ),
+    scenarioParamValues: state.scenarioParamValues,
+    datasets: state.datasets,
+    includeBaseline: state.includeBaseline,
+  })
+  if (!result.ok || Object.keys(untouched).length === 0) {
+    return result
+  }
+  return {
+    ok: true,
+    config: {
+      ...result.config,
+      scenario_params: { ...result.config.scenario_params, ...untouched },
+    },
+  }
+}
+
 interface PresetIdentity {
   name: string
   scenarioName: string
   description: string
+  /** Whether the Scanner lists the preset as an entry of its own. */
+  showInScanner: boolean
 }
 
 interface PresetWriteContext {
@@ -128,11 +166,10 @@ function presetScenarioParams(
   defaults: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const stored = previous?.scenario_params ?? {}
-  const edited = Object.entries(config.scenario_params ?? {}).filter(
-    ([name, value]) => (
+  const edited = Object.entries(config.scenario_params ?? {})
+    .filter(([name, value]) => (
       Object.prototype.hasOwnProperty.call(stored, name) || !matchesDefault(value, defaults[name])
-    ),
-  )
+    ))
   const merged = {
     ...Object.fromEntries(edited),
     ...uneditableScenarioParams(scenario, previous),
@@ -145,7 +182,7 @@ function presetScenarioParams(
  * operator left at the scenario's default unset so the preset keeps tracking them.
  */
 export function configToPreset(
-  { name, scenarioName, description }: PresetIdentity,
+  { name, scenarioName, description, showInScanner }: PresetIdentity,
   config: ScenarioConfigFields,
   context: PresetWriteContext,
 ): ScenarioPreset {
@@ -156,6 +193,10 @@ export function configToPreset(
   const trimmedDescription = description.trim()
   if (trimmedDescription.length > 0) {
     preset.description = trimmedDescription
+  }
+  // Listed is the default, so only a hidden preset writes the field, as the server stores it.
+  if (!showInScanner) {
+    preset.show_in_scanner = false
   }
   // The server stamps `author` once, at create. Editing rebuilds the document from
   // form state, so without carrying it forward every edit would erase it.

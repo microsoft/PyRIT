@@ -19,6 +19,8 @@ from pyrit.output.attack_result.pretty import PrettyAttackResultMemoryPrinter
 from pyrit.output.conversation.json import JsonConversationMemoryPrinter, JsonConversationPrinter
 from pyrit.output.conversation.pretty import PrettyConversationMemoryPrinter
 from pyrit.output.conversation.source import MemoryConversationSource
+from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
+from pyrit.output.finding_report.report import FindingReport
 from pyrit.output.scenario_result.html import HtmlScenarioReportPrinter
 from pyrit.output.scenario_result.json import (
     ConversationEntry,
@@ -74,7 +76,14 @@ async def output_attack_async(
         blurred_dir (str | PathLike | None): For "markdown" output, directory to write
             blurred copies into. Defaults to None (sibling of the original). Ignored
             when ``format != "markdown"``.
+
+    Raises:
+        ValueError: If ``format`` is not a supported value.
     """
+    if format not in ("pretty", "markdown"):
+        raise ValueError(
+            f"Unsupported format for attack results: {format!r}. Only 'pretty' and 'markdown' are available."
+        )
     if format == "markdown":
         printer = MarkdownAttackResultMemoryPrinter(
             sink=sink or get_default_sink(),
@@ -155,11 +164,18 @@ async def output_scenario_attacks_async(
         limit (int | None): Maximum number of attacks to show. Defaults to None.
         format (OutputFormat): Output format — "pretty" or "json". Defaults to "pretty".
         sink (Sink | None): Output sink. Defaults to StdoutSink.
+
+    Raises:
+        ValueError: If ``format`` is not a supported value.
     """
     if format == "json":
         json_printer = JsonScenarioResultMemoryPrinter(sink=sink or StdoutSink())
         await json_printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit)
         return
+    if format != "pretty":
+        raise ValueError(
+            f"Unsupported format for scenario attacks: {format!r}. Only 'pretty' and 'json' are available."
+        )
     resolved_sink = sink or get_default_sink(StdoutSink)
     printer = PrettyScenarioResultMemoryPrinter(sink=resolved_sink)
     await printer.write_async(result, view="attacks", attack_result_ids=attack_result_ids, limit=limit)
@@ -417,3 +433,27 @@ async def output_score_async(
 
     printer = PrettyScorePrinter(sink=sink or get_default_sink(StdoutSink))
     await printer.write_async(scores)
+
+
+async def output_finding_report_async(
+    report: FindingReport,
+    *,
+    format: OutputFormat = "markdown",  # noqa: A002
+    sink: Sink | None = None,
+) -> None:
+    """
+    Print a report of an Operation's findings in the specified format.
+
+    Args:
+        report (FindingReport): The findings to print.
+        format (OutputFormat): Output format. Only "markdown" is supported, so it is the default.
+        sink (Sink | None): Output sink. Defaults to IPythonMarkdownSink in notebooks, StdoutSink otherwise.
+
+    Raises:
+        ValueError: If ``format`` is not "markdown".
+    """
+    if format != "markdown":
+        raise ValueError(f"Unsupported format for finding reports: {format!r}. Only 'markdown' is available.")
+
+    printer = MarkdownFindingReportPrinter(sink=sink or get_default_sink())
+    await printer.write_async(report)

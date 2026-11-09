@@ -111,7 +111,7 @@ class JsonScorerMemoryPrinter(JsonScorerPrinter):
             Any: The metrics dataclass, or None if not found.
         """
         from pyrit.models import ScorerEvaluationIdentifier
-        from pyrit.score.scorer_evaluation.scorer_metrics_io import (
+        from pyrit.score import (
             find_objective_metrics_by_eval_hash,
         )
 

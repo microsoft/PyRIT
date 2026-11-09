@@ -98,6 +98,7 @@ def technique_to_instance(*, name: str, factory: AttackTechniqueFactory) -> Tech
         tags=factory.technique_tags,
         uses_adversarial=factory.uses_adversarial,
         uses_default_adversarial_target=factory.uses_default_adversarial_target,
+        identifier=factory.get_identifier(),
         creation_statement=_format_creation_calls(factory),
     )
 
@@ -151,4 +152,5 @@ def technique_to_configuration(
         supplied_parameters=list(factory.get_effective_settings().attack_kwargs),
         read_only=readonly,
         supports_prepended_conversation=factory.supports_prepended_conversation,
+        supports_prompt=factory.supports_prompt,
     )

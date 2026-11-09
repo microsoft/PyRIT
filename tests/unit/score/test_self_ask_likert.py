@@ -10,7 +10,7 @@ import yaml
 from pydantic import ValidationError
 from unit.mocks import MockPromptTarget, get_mock_target_identifier, store_message_async
 
-from pyrit.exceptions.exception_classes import InvalidJsonException
+from pyrit.exceptions import InvalidJsonException
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece, MessageScorable, Score, ScoringExpectation, SeedPrompt
 from pyrit.prompt_target import PromptTarget

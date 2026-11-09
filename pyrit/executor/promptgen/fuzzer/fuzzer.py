@@ -14,12 +14,11 @@ import numpy as np
 from colorama import Fore, Style
 from pydantic import Field
 
+from pyrit.common import combine_dict, get_kwarg_param, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.common.text_helper import escape_control_characters
-from pyrit.common.utils import combine_dict, get_kwarg_param
 from pyrit.exceptions import MissingPromptPlaceholderException, pyrit_placeholder_retry
-from pyrit.executor.core.config import (
+from pyrit.executor.core import (
     StrategyConverterConfig,
 )
 from pyrit.executor.promptgen.core.prompt_generator_strategy import (
@@ -1263,8 +1262,10 @@ class FuzzerGenerator(
         if num_queries == 0:
             return
 
-        # Calculate reward (normalized by number of prompts tested)
-        reward = jailbreak_count / (len(context.prompts) * 1)
+        # The reward must stay a rate in [0, 1]: jailbreak_count counts flattened
+        # scores, and score_batch_async may yield several scores per response, so
+        # the denominator is the actual number of scored queries passed in.
+        reward = jailbreak_count / num_queries
 
         # Use MCTS explorer to update rewards
         self._mcts_explorer.update_rewards(
