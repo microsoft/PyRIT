@@ -1181,6 +1181,10 @@ class MemoryInterface(abc.ABC):
         """
         Read findings of one operation together with all of their sub-findings, at any depth.
 
+        Membership, parents, and paths come from one transaction that holds the operation's finding lock,
+        which every finding change takes, so a concurrent change lands wholly before or after this read and
+        every path step is in the result.
+
         IDs that are not in the operation are omitted.
 
         Returns:
@@ -1188,11 +1192,15 @@ class MemoryInterface(abc.ABC):
         """
         if not finding_ids:
             return []
-        async with await self.get_session_async() as session:
+        async with await self.get_session_async() as session, session.begin():
+            if not await lock_finding_tree_async(session, operation_id=operation_id):
+                return []
             levels = await get_subtree_levels_async(session, operation_id=operation_id, root_ids=finding_ids)
-        return await self.get_findings_by_ids_async(
-            operation_id=operation_id, finding_ids=[finding_id for level in levels for finding_id in level]
-        )
+            return await self._read_findings_by_ids_async(
+                session=session,
+                operation_id=operation_id,
+                finding_ids=[finding_id for level in levels for finding_id in level],
+            )
 
     async def get_finding_child_counts_async(self, *, finding_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
         """
@@ -1227,23 +1235,34 @@ class MemoryInterface(abc.ABC):
         """
         if not finding_ids:
             return []
+        async with await self.get_session_async() as session:
+            return await self._read_findings_by_ids_async(
+                session=session, operation_id=operation_id, finding_ids=finding_ids
+            )
+
+    async def _read_findings_by_ids_async(
+        self, *, session: AsyncSession, operation_id: uuid.UUID, finding_ids: Sequence[uuid.UUID]
+    ) -> list[Finding]:
+        """
+        Read selected findings of one operation within the caller's session, in dashboard order.
+
+        Returns:
+            list[Finding]: The selected findings that are in the operation.
+        """
         requested = set(finding_ids)
         # The operation filter takes one of the statement's binds.
         chunk_size = max(1, self._MAX_BIND_VARS - 1)
-        async with await self.get_session_async() as session:
-            ordered_ids = await session.scalars(
-                select(FindingEntry.id)
-                .where(FindingEntry.operation_id == operation_id)
-                .order_by(*self._finding_order())
+        ordered_ids = await session.scalars(
+            select(FindingEntry.id).where(FindingEntry.operation_id == operation_id).order_by(*self._finding_order())
+        )
+        selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
+        findings: dict[uuid.UUID, Finding] = {}
+        for start in range(0, len(selected_ids), chunk_size):
+            statement = select(FindingEntry).where(
+                FindingEntry.id.in_(selected_ids[start : start + chunk_size]),
+                FindingEntry.operation_id == operation_id,
             )
-            selected_ids = [finding_id for finding_id in ordered_ids if finding_id in requested]
-            findings: dict[uuid.UUID, Finding] = {}
-            for start in range(0, len(selected_ids), chunk_size):
-                statement = select(FindingEntry).where(
-                    FindingEntry.id.in_(selected_ids[start : start + chunk_size]),
-                    FindingEntry.operation_id == operation_id,
-                )
-                findings.update({entry.id: entry.get_finding() for entry in await session.scalars(statement)})
+            findings.update({entry.id: entry.get_finding() for entry in await session.scalars(statement)})
         return [findings[finding_id] for finding_id in selected_ids if finding_id in findings]
 
     async def get_finding_async(self, *, operation_id: uuid.UUID, finding_id: uuid.UUID) -> Finding | None:

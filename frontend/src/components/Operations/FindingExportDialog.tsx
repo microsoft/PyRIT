@@ -13,7 +13,7 @@ import { downloadFile } from '@/utils/downloadFile'
 import { findingExportFilename } from '@/utils/findingExportFilename'
 import { findingChildren, findingDescendantIds, flattenFindingTree } from '@/utils/findingTree'
 
-import { useFindingExportDialogStyles } from './FindingExportDialog.styles'
+import { findingIndent, useFindingExportDialogStyles } from './FindingExportDialog.styles'
 import FindingSeverityBadge from './FindingSeverityBadge'
 import { MAX_EXPORT_FINDINGS } from './findingExportLimits'
 
@@ -220,39 +220,37 @@ export default function FindingExportDialog({ operation }: FindingExportDialogPr
       )
     }
     if (findings.length === 0) return <Text>This operation has no findings to export.</Text>
-    const renderRows = (rows: readonly FindingListItem[], parentTitle?: string): React.ReactNode => (
-      <ul className={parentTitle === undefined ? styles.list : styles.subList}>
-        {rows.map(finding => {
-          const createdId = `${rowId}-${finding.id}-created`
-          const includedId = `${rowId}-${finding.id}-included`
-          const isImplied = implied.has(finding.id)
-          const subFindings = children.get(finding.id) ?? []
-          return (
-            <li key={finding.id}>
-              <div className={styles.row}>
+    const titles = new Map(findings.map(finding => [finding.id, finding.title]))
+    // One flat list in tree order: nesting elements per level would recurse once per level of a deep decomposition.
+    return (
+      <>
+        <Checkbox label="Select all" checked={selectAllChecked} disabled={exporting}
+          onChange={() => { setSelected(allSelected ? NO_SELECTION : new Set(roots.map(finding => finding.id))) }} />
+        <ul className={styles.list}>
+          {flattenFindingTree(findings).map(({ finding, depth }) => {
+            const createdId = `${rowId}-${finding.id}-created`
+            const relationId = `${rowId}-${finding.id}-relation`
+            const isImplied = implied.has(finding.id)
+            const parentTitle = depth > 0 && finding.parent_finding_id ? titles.get(finding.parent_finding_id) : undefined
+            return (
+              <li key={finding.id} className={styles.row} style={findingIndent(depth)}>
                 <Checkbox className={styles.checkbox} label={{ children: finding.title, className: styles.label }}
-                  aria-describedby={isImplied ? `${includedId} ${createdId}` : createdId}
+                  aria-describedby={parentTitle === undefined ? createdId : `${relationId} ${createdId}`}
                   checked={selected.has(finding.id) || isImplied} disabled={exporting || isImplied}
                   onChange={(_, data) => { toggle(finding.id, data.checked === true) }} />
                 <FindingSeverityBadge finding={finding} />
-                {isImplied && <span id={includedId} className={styles.visuallyHidden}>Included with “{parentTitle}”</span>}
+                {parentTitle !== undefined && <span id={relationId} className={styles.visuallyHidden}>
+                  {isImplied ? 'Included with' : 'Sub-finding of'} “{parentTitle}”
+                </span>}
                 <Text size={200} className={styles.created}>
                   <time id={createdId} dateTime={finding.created_at}>
                     {new Date(finding.created_at).toLocaleString()}
                   </time>
                 </Text>
-              </div>
-              {subFindings.length > 0 && renderRows(subFindings, finding.title)}
-            </li>
-          )
-        })}
-      </ul>
-    )
-    return (
-      <>
-        <Checkbox label="Select all" checked={selectAllChecked} disabled={exporting}
-          onChange={() => { setSelected(allSelected ? NO_SELECTION : new Set(roots.map(finding => finding.id))) }} />
-        {renderRows(roots)}
+              </li>
+            )
+          })}
+        </ul>
       </>
     )
   }

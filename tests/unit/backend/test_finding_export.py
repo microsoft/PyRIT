@@ -13,10 +13,13 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
+import sqlalchemy as sa
 from docx import Document
 from docx.table import Table
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
+import pyrit.memory.memory_interface as memory_interface
 from pyrit.backend.main import app
 from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
@@ -27,7 +30,8 @@ from pyrit.backend.models.operations import (
 from pyrit.backend.services import finding_export
 from pyrit.backend.services.finding_export import _render_docx
 from pyrit.backend.services.operation_service import OperationService
-from pyrit.memory import SQLiteMemory
+from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.memory.memory_models import FindingEntry
 from pyrit.models import (
     AttackOutcome,
     AttackResult,
@@ -473,7 +477,7 @@ async def test_export_accepts_an_origin_with_or_without_trailing_slash(
 @pytest.mark.parametrize(
     ("export_format", "failing"),
     [
-        ("docx", "get_findings_by_ids_async"),
+        ("docx", "get_finding_subtrees_async"),
         ("markdown", "get_finding_evidence_for_findings_async"),
         ("markdown", "get_attack_results_async"),
         ("docx", "_render_docx"),
@@ -571,17 +575,25 @@ async def test_report_matches_the_dashboard_listing_order(sqlite_instance: SQLit
     assert [finding.title for finding in report.findings] == [finding.title for finding in dashboard]
 
 
-async def test_report_reads_findings_and_evidence_in_one_service_call(
+async def test_report_reads_findings_once_and_attaches_evidence_to_them(
     named_findings_async: tuple[Operation, dict[str, Finding]],
 ) -> None:
     operation, named = named_findings_async
     selected = [named["Low finding"].id, named["Critical finding"].id]
-    batched_read = OperationService.get_findings_with_evidence_async
+    subtree_read = OperationService.get_finding_subtrees_async
+    evidence_read = OperationService.get_evidence_for_findings_async
 
     with (
+        patch.object(OperationService, "get_finding_subtrees_async", autospec=True, side_effect=subtree_read) as tree,
         patch.object(
-            OperationService, "get_findings_with_evidence_async", autospec=True, side_effect=batched_read
-        ) as batched,
+            OperationService, "get_evidence_for_findings_async", autospec=True, side_effect=evidence_read
+        ) as with_evidence,
+        patch.object(
+            OperationService,
+            "get_findings_with_evidence_async",
+            autospec=True,
+            side_effect=AssertionError("findings read again"),
+        ) as reread,
         patch.object(
             OperationService, "list_findings_async", autospec=True, side_effect=AssertionError("paged findings read")
         ) as findings_page,
@@ -594,9 +606,14 @@ async def test_report_reads_findings_and_evidence_in_one_service_call(
     ):
         report = await _report_async(operation_id=operation.id, finding_ids=selected)
 
-    batched.assert_awaited_once()
-    # Selected findings are read with their sub-findings, in the dashboard's order.
-    assert batched.await_args is not None and batched.await_args.kwargs["finding_ids"] == selected[::-1]
+    tree.assert_awaited_once()
+    assert tree.await_args is not None and tree.await_args.kwargs["finding_ids"] == selected
+    with_evidence.assert_awaited_once()
+    # Evidence is attached to the findings of that one read, in the dashboard's order, without reading them again.
+    included = await subtree_read(OperationService(), operation_id=operation.id, finding_ids=selected)
+    assert with_evidence.await_args is not None and with_evidence.await_args.kwargs["findings"] == included
+    assert [finding.id for finding in included] == selected[::-1]
+    reread.assert_not_called()
     findings_page.assert_not_called()
     evidence_page.assert_not_called()
     assert [finding.title for finding in report.findings] == ["Critical finding", "Low finding"]
@@ -1170,3 +1187,87 @@ async def test_export_counts_sub_findings_toward_the_limit(
     assert beyond.status_code == 422
     assert "counting sub-findings" in beyond.json()["detail"]
     assert "content-disposition" not in beyond.headers
+
+
+def _paths_use_rendered_sub_findings(entry: FindingReportEntry) -> bool:
+    numbers = {child.number for child in entry.children}
+    return all(step.number in numbers for path in entry.paths for step in path.steps)
+
+
+@pytest.mark.parametrize("change_at", ["subtree-read", "evidence-read"])
+async def test_export_reads_one_consistent_tree_while_findings_change(tmp_path: Path, change_at: str) -> None:
+    db_path = tmp_path / "export-race.db"
+    # A second connection needs a real file, and SQLiteMemory(...) would return the fixture's singleton.
+    memory = SQLiteMemory.__new__(SQLiteMemory)
+    with patch.object(memory, "cleanup"):
+        memory.__init__(db_path=db_path, silent=True)
+    other_writer = sa.create_engine(f"sqlite:///{db_path}", connect_args={"timeout": 0.2})
+    try:
+        operation = await memory.add_operation_async(Operation(name="Racing export"))
+        parent = await _add_finding_async(memory=memory, operation=operation, title="Parent")
+        step = await _add_finding_async(memory=memory, operation=operation, title="Step", parent_finding_id=parent.id)
+        first_path = DecompositionPath(name="First", steps=(step.id,))
+        await memory.replace_finding_paths_async(operation_id=operation.id, finding_id=parent.id, paths=(first_path,))
+        added = uuid4()
+        second_path = DecompositionPath(name="Second", steps=(added,))
+
+        def add_sub_finding_and_path() -> bool:
+            """Another operator adds a sub-finding and a path through it, as one change."""
+            try:
+                with other_writer.begin() as connection:
+                    connection.execute(
+                        sa.insert(FindingEntry.__table__).values(
+                            id=added,
+                            operation_id=operation.id,
+                            title="Added",
+                            description="",
+                            severity="moderate",
+                            created_at=datetime.now(UTC),
+                            parent_finding_id=parent.id,
+                            demonstrated=True,
+                        )
+                    )
+                    connection.execute(
+                        sa.update(FindingEntry.__table__)
+                        .where(FindingEntry.__table__.c.id == parent.id)
+                        .values(paths=[path.model_dump(mode="json") for path in (first_path, second_path)])
+                    )
+                return True
+            except OperationalError:
+                return False
+
+        if change_at == "subtree-read":
+            read_levels = memory_interface.get_subtree_levels_async
+
+            async def read_levels_then_change(*args: object, **kwargs: object) -> list[list[UUID]]:
+                levels = await read_levels(*args, **kwargs)
+                add_sub_finding_and_path()
+                return levels
+
+            hook = patch.object(memory_interface, "get_subtree_levels_async", read_levels_then_change)
+        else:
+            read_evidence = memory.get_finding_evidence_for_findings_async
+
+            async def change_then_read_evidence(**kwargs: object) -> object:
+                add_sub_finding_and_path()
+                return await read_evidence(**kwargs)
+
+            hook = patch.object(memory, "get_finding_evidence_for_findings_async", change_then_read_evidence)
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory), hook:
+            report = await _report_async(operation_id=operation.id, finding_ids=[parent.id])
+        (entry,) = report.findings
+        assert _paths_use_rendered_sub_findings(entry)
+
+        # The change was serialized with the export, not lost: once applied, the next export shows it.
+        if not await memory.get_finding_async(operation_id=operation.id, finding_id=added):
+            assert add_sub_finding_and_path()
+        with patch.object(CentralMemory, "get_memory_instance", return_value=memory):
+            (later,) = (await _report_async(operation_id=operation.id, finding_ids=[parent.id])).findings
+        assert [child.title for child in later.children] == ["Step", "Added"]
+        assert [(path.name, [step.title for step in path.steps]) for path in later.paths] == [
+            ("First", ["Step"]),
+            ("Second", ["Added"]),
+        ]
+    finally:
+        other_writer.dispose()
+        await memory.dispose_engine_async()

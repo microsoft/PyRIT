@@ -130,14 +130,13 @@ def _export_filename(*, operation_id: UUID, extension: str, now: datetime) -> st
 async def _build_report_async(*, operation_id: UUID, request: FindingExportRequest) -> FindingReport:
     service = OperationService()
     operation = await service.get_async(operation_id)
+    # One snapshot of the selected trees: every path step is among these findings, so they are not read again.
     included = await service.get_finding_subtrees_async(operation_id=operation_id, finding_ids=request.finding_ids)
     if len(included) > MAX_EXPORT_FINDINGS:
         raise FindingExportTooLargeError(
             f"Select at most {MAX_EXPORT_FINDINGS:,} findings to download at once, counting sub-findings."
         )
-    selected = await service.get_findings_with_evidence_async(
-        operation_id=operation_id, finding_ids=[finding.id for finding in included]
-    )
+    selected = await service.get_evidence_for_findings_async(findings=included)
     findings = {finding.id: finding for finding, _ in selected}
     evidence = {
         finding.id: tuple(

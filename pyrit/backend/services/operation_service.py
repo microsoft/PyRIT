@@ -396,7 +396,21 @@ class OperationService:
         missing = next((finding_id for finding_id in finding_ids if finding_id not in found), None)
         if missing is not None:
             raise FindingNotFoundError(f"Finding '{missing}' not found in operation '{operation_id}'.")
-        evidence = await memory.get_finding_evidence_for_findings_async(
+        return await self.get_evidence_for_findings_async(findings=findings)
+
+    async def get_evidence_for_findings_async(
+        self, *, findings: Sequence[Finding]
+    ) -> list[tuple[Finding, list[FindingEvidenceItem]]]:
+        """
+        Pair findings that were already read with all their evidence, as the evidence page shows it.
+
+        The findings are kept as given, not read again, so a tree read in one snapshot stays consistent.
+
+        Returns:
+            list[tuple[Finding, list[FindingEvidenceItem]]]: Each finding in input order with its evidence, newest
+                evidence first.
+        """
+        evidence = await CentralMemory.get_memory_instance().get_finding_evidence_for_findings_async(
             finding_ids=[finding.id for finding in findings]
         )
         resolved = await self._resolve_evidence_async(

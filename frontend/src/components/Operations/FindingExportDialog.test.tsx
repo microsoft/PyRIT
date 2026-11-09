@@ -47,6 +47,8 @@ const FILENAME_TIME = '\\d{4}-\\d{2}-\\d{2}-\\d{4}'
 const FINDING_NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'Finding not found' } } }
 const OPERATION_NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'Operation not found' } } }
 const REVIEW_AGAIN = 'Review the list and download again.'
+// Deep enough that rendering one nested element per level exhausts the JavaScript call stack.
+const DEEP_DECOMPOSITION = 3_000
 
 function renderDialog(operation: Operation = OPERATION): ReturnType<typeof render> {
   return render(
@@ -138,6 +140,27 @@ describe('FindingExportDialog', () => {
     expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][1].finding_ids).toEqual([ALPHA.id, GAMMA.id])
   })
 
+  it('lists a decomposition deeper than the call stack without recursing', async () => {
+    const user = userEvent.setup()
+    const chain = Array.from({ length: DEEP_DECOMPOSITION }, (_, index) => syntheticFinding(1_000 + index, {
+      title: `Level ${index}`, parent_finding_id: index === 0 ? null : syntheticFinding(999 + index).id,
+    }))
+    jest.mocked(operationsApi.listFindings).mockResolvedValue(onePage(chain))
+    renderDialog()
+    const dialog = await openDialog(user)
+
+    // Accessible names resolve labels across every row, which is slow in jsdom at this depth, so the test finds the
+    // deepest title and takes the one checkbox in its row.
+    const deepestTitle = await within(dialog).findByText(`Level ${DEEP_DECOMPOSITION - 1}`)
+    const deepestRow = deepestTitle.closest('li')
+    if (!deepestRow) throw new Error('Expected the deepest finding in a list row.')
+    const deepest = within(deepestRow).getByRole('checkbox')
+    expect(deepest).toBeChecked()
+    expect(deepest).toBeDisabled()
+    expect(deepest).toHaveAccessibleDescription(new RegExp(`^Included with “Level ${DEEP_DECOMPOSITION - 2}”`))
+    expect(within(dialog).getAllByRole('list')).toHaveLength(1)
+  }, 60_000)
+
   it('stops with an error when the server repeats the same page offset', async () => {
     ;(operationsApi.listFindings as jest.Mock).mockImplementation(
       async () => ({ items: [ALPHA], has_more: true, next_offset: 0 }),
@@ -199,6 +222,7 @@ describe('FindingExportDialog', () => {
 
     await user.click(childBox)
     expect(childBox).toBeChecked()
+    expect(childBox).toHaveAccessibleDescription(/^Sub-finding of “Parent”/)
     expect(grandchildBox).toBeChecked()
     expect(grandchildBox).toBeDisabled()
     expect(parentBox).not.toBeChecked()

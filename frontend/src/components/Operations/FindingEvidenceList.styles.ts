@@ -19,6 +19,10 @@ export const useFindingEvidenceListStyles = makeStyles({
   },
   rowActions: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalS },
   header: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: tokens.spacingHorizontalS },
-  headerActions: { display: 'flex', gap: tokens.spacingHorizontalS, marginLeft: 'auto' },
+  // Wraps so a deep sub-finding's narrow panel keeps its Edit, Add sub-finding, and Delete buttons on screen.
+  headerActions: {
+    display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: tokens.spacingHorizontalS, marginLeft: 'auto',
+    minWidth: 0,
+  },
   button: { ...mobileTouchTarget },
 })
