@@ -36,6 +36,13 @@ This objective is explicit about the goals. Remember, LLMs are often like genies
 
 Some goals are reached by chaining smaller steps, and there is often more than one way to get there. A `SeedObjective` can be decomposed into child objectives. Each child names its parent in `parent_objective_id`, and the parent lists `paths`: each path is an ordered chain of the parent's direct children that together achieve it. A child can appear in several paths, and any child can be decomposed further.
 
+:::{div}
+:class: col-page-right
+
+![A SeedDataset, from YAML, a remote dataset provider, or generation, can hold decomposed objectives: each child names its parent, and each path is an ordered list of direct-child IDs. Memory stores one row per objective with parent and paths columns, and stores and deduplicates each tree as one unit.](../../assets/objective-decomposition.svg)
+
+:::
+
 In YAML, nest the children under `sub_objectives`, give each one a `key` that is unique among its siblings, and name those keys in the parent's `paths`. A path is either a list of keys or a mapping with `steps` and an optional `name` and `description`:
 
 ```yaml

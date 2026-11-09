@@ -6,8 +6,7 @@ from typing import Any
 
 import pytest
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import (
     DecompositionPath,
     SeedDataset,
