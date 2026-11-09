@@ -229,8 +229,21 @@ class ScorerEvaluator(abc.ABC):
             harm_definition_version=combined_harm_definition_version,
         )
 
+        match update_registry_behavior:
+            case RegistryUpdateBehavior.SKIP_IF_EXISTS:
+                reuse_existing_metrics, write_to_registry = True, True
+            case RegistryUpdateBehavior.ALWAYS_UPDATE:
+                reuse_existing_metrics, write_to_registry = False, True
+            case RegistryUpdateBehavior.NEVER_UPDATE:
+                reuse_existing_metrics, write_to_registry = False, False
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(update_registry_behavior)
+                # Preserve the historical runtime fallback for values outside the declared enum.
+                reuse_existing_metrics, write_to_registry = False, True
+
         # Check for existing metrics only in SKIP_IF_EXISTS mode
-        if update_registry_behavior == RegistryUpdateBehavior.SKIP_IF_EXISTS:
+        if reuse_existing_metrics:
             should_skip, existing_metrics = self._should_skip_evaluation(
                 dataset_version=combined_version,
                 harm_definition_version=combined_harm_definition_version,
@@ -253,7 +266,7 @@ class ScorerEvaluator(abc.ABC):
         )
 
         # Write to registry unless in NEVER_UPDATE mode
-        if update_registry_behavior != RegistryUpdateBehavior.NEVER_UPDATE:
+        if write_to_registry:
             self._write_metrics_to_registry(
                 metrics=metrics,
                 result_file_path=SCORER_EVALS_PATH / dataset_files.result_file,

@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, GlobalDefaultValues
+from pyrit.common import REQUIRED_VALUE
+from pyrit.common.apply_defaults import GlobalDefaultValues
 from pyrit.converter import Base64Converter, ROT13Converter
 from pyrit.executor.attack import (
     AttackConverterConfig,

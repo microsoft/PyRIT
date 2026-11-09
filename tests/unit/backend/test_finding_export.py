@@ -18,7 +18,7 @@ from docx.table import Table
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
     EvidenceAvailability,
     FindingEvidenceItem,

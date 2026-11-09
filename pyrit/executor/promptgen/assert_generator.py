@@ -48,8 +48,7 @@ from pyrit.models import (
     WebSearchMode,
 )
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
-from pyrit.prompt_target import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

@@ -42,13 +42,13 @@ from pyrit.models import (
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import (
     FunctionTool,
+    LiteLLMChatTarget,
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
     TargetTraceConfig,
     tool,
 )
-from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
 
 # ---------------------------------------------------------------------------
