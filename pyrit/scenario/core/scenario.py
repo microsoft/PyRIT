@@ -22,8 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, final
 
 from tqdm.auto import tqdm
 
-from pyrit.common import default_values, get_global_default_values
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import default_values, get_global_default_values, print_deprecation_message
 from pyrit.common.utils import to_sha256
 from pyrit.exceptions import ScenarioPartialFailureException, ScenarioRunInProgressException
 from pyrit.exceptions.exceptions_helpers import summarize_exception
