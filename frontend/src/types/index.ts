@@ -889,6 +889,8 @@ export interface AttackAnalyticsFacetQuery {
   readonly dimension: AttackAnalyticsDimension
   readonly filters?: AttackAnalyticsFilters
   readonly search?: string
+  /** Full LIKE pattern instead of literal search (% and _, / escaping). */
+  readonly search_pattern?: string
   readonly offset?: number
   readonly limit?: number
 }
@@ -1499,6 +1501,8 @@ export interface SeedExampleListParams {
   limit?: number
   cursor?: string
   search?: string
+  /** Full LIKE pattern instead of literal search (% and _, / escaping). */
+  value_pattern?: string
   modality?: readonly string[]
   seed_type?: readonly SeedType[]
   harm_category?: readonly string[]

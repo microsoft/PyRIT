@@ -1490,6 +1490,21 @@ describe("api service", () => {
       expect(apiClient.get).not.toHaveBeenCalled();
     });
 
+    it.each(["", "100%", "%/_%", "a//b"])("forwards a seed pattern unchanged: %s", async (pattern: string) => {
+      (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: { items: [] } });
+      await datasetsApi.listSeedExamples({ selection_key: "dataset:unnamed", value_pattern: pattern });
+      expect((apiClient.get as jest.Mock).mock.calls[0][1].params).toEqual({
+        selection_key: "dataset:unnamed", value_pattern: pattern,
+      });
+    });
+
+    it("rejects a literal/pattern conflict even when the literal search is empty", async () => {
+      await expect(datasetsApi.listSeedExamples({
+        selection_key: "dataset:unnamed", search: "", value_pattern: "%",
+      })).rejects.toThrow(/either/);
+      expect(apiClient.get).not.toHaveBeenCalled();
+    });
+
     it("reads one example with the dataset key and an encoded id", async () => {
       const detail = { example_id: "example/1", members: [] };
       (apiClient.get as jest.Mock).mockResolvedValueOnce({ data: detail });
