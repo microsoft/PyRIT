@@ -210,3 +210,34 @@ def test_build_tree_includes_only_decomposed_objectives() -> None:
     tree = build_objective_decomposition_tree([parent, child, standalone])
 
     assert tree.node_ids == (parent.id, child.id)
+
+
+def test_build_tree_from_subtree_root_keeps_its_parent_link() -> None:
+    subtree_root = SeedObjective(value="middle", parent_objective_id=uuid.uuid4())
+    leaf = SeedObjective(value="leaf", parent_objective_id=subtree_root.id)
+    subtree_root.paths = (DecompositionPath(steps=(leaf.id,)),)
+
+    tree = build_objective_decomposition_tree([subtree_root, leaf], root_id=subtree_root.id)
+
+    assert list(tree.walk(subtree_root.id)) == [(subtree_root.id, 0), (leaf.id, 1)]
+    assert tree.get_node(subtree_root.id).parent_id is None
+    assert subtree_root.parent_objective_id is not None
+
+
+def test_build_tree_from_leaf_root_is_a_single_node() -> None:
+    leaf = SeedObjective(value="leaf", parent_objective_id=uuid.uuid4())
+
+    assert build_objective_decomposition_tree([leaf], root_id=leaf.id).node_ids == (leaf.id,)
+
+
+def test_build_tree_rejects_unknown_root() -> None:
+    with pytest.raises(ValueError, match="not among the objectives"):
+        build_objective_decomposition_tree([SeedObjective(value="other")], root_id=uuid.uuid4())
+
+
+def test_build_tree_with_root_still_rejects_other_missing_parents() -> None:
+    subtree_root = SeedObjective(value="middle", parent_objective_id=uuid.uuid4())
+    orphan = SeedObjective(value="orphan", parent_objective_id=uuid.uuid4())
+
+    with pytest.raises(ValueError, match="is missing"):
+        build_objective_decomposition_tree([subtree_root, orphan], root_id=subtree_root.id)

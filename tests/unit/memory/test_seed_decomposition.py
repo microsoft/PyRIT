@@ -53,6 +53,22 @@ def _root(dataset: SeedDataset) -> SeedObjective:
     return next(objective for objective in dataset.objectives if objective.value == ROOT_VALUE)
 
 
+def _direct_tree(*, grouped: bool) -> list[SeedObjective]:
+    def objective(value: str, parent: SeedObjective | None = None) -> SeedObjective:
+        return SeedObjective(
+            value=value,
+            dataset_name=DATASET,
+            parent_objective_id=parent.id if parent else None,
+            prompt_group_id=uuid.uuid4() if grouped else None,
+        )
+
+    root = objective(ROOT_VALUE)
+    first = objective("Recon", root)
+    second = objective("Pull records", root)
+    root.paths = (DecompositionPath(name="only", steps=(first.id, second.id)),)
+    return [root, first, second]
+
+
 async def _add(memory: MemoryInterface, dataset: SeedDataset) -> None:
     await memory.add_seed_datasets_to_memory_async(datasets=[dataset], added_by="tester")
 
@@ -87,9 +103,52 @@ class TestSeedDecompositionStorage:
         subtree = await sqlite_instance.get_seed_decomposition_async(objective_id=phish.id)
 
         assert [objective.value for objective in subtree] == ["Phish an admin", "Write a lure"]
+        tree = build_objective_decomposition_tree(subtree, root_id=phish.id)
+        values = {objective.id: objective.value for objective in subtree}
+        assert [(values[node_id], depth) for node_id, depth in tree.walk(phish.id)] == [
+            ("Phish an admin", 0),
+            ("Write a lure", 1),
+        ]
+        assert subtree[0].parent_objective_id == _root(dataset).id
 
     async def test_get_seed_decomposition_unknown_id_is_empty_async(self, sqlite_instance: MemoryInterface) -> None:
         assert await sqlite_instance.get_seed_decomposition_async(objective_id=uuid.uuid4()) == []
+
+    async def test_tree_spanning_datasets_is_rejected_async(self, sqlite_instance: MemoryInterface) -> None:
+        dataset = _decomposed_dataset()
+        child = next(objective for objective in dataset.objectives if objective.value == "Pull customer records")
+        child.dataset_name = "other"
+
+        with pytest.raises(ValueError, match="one dataset"):
+            await _add(sqlite_instance, dataset)
+
+        assert await sqlite_instance.get_seeds_async(dataset_name=DATASET) == []
+        assert await sqlite_instance.get_seeds_async(dataset_name="other") == []
+
+    async def test_tree_prompt_in_another_dataset_is_rejected_async(self, sqlite_instance: MemoryInterface) -> None:
+        dataset = _decomposed_dataset()
+        prompt = next(seed for seed in dataset.seeds if isinstance(seed, SeedPrompt))
+        prompt.dataset_name = "other"
+
+        with pytest.raises(ValueError, match="one dataset"):
+            await _add(sqlite_instance, dataset)
+
+        assert await sqlite_instance.get_seeds_async(dataset_name=DATASET) == []
+
+    @pytest.mark.parametrize(("stored_grouped", "incoming_grouped"), [(True, False), (False, True)])
+    async def test_reloaded_tree_takes_stored_group_ids_async(
+        self, sqlite_instance: MemoryInterface, stored_grouped: bool, incoming_grouped: bool
+    ) -> None:
+        stored = _direct_tree(grouped=stored_grouped)
+        await sqlite_instance.add_seeds_to_memory_async(seeds=stored, added_by="tester")
+        incoming = _direct_tree(grouped=incoming_grouped)
+
+        await sqlite_instance.add_seeds_to_memory_async(seeds=incoming, added_by="tester")
+
+        rows = {seed.id: seed for seed in await sqlite_instance.get_seeds_async(dataset_name=DATASET)}
+        assert len(rows) == len(stored)
+        assert [seed.id for seed in incoming] == [seed.id for seed in stored]
+        assert [seed.prompt_group_id for seed in incoming] == [rows[seed.id].prompt_group_id for seed in incoming]
 
     async def test_reloading_same_tree_does_not_duplicate_and_remaps_ids_async(
         self, sqlite_instance: MemoryInterface

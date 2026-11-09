@@ -57,7 +57,8 @@ def split_decomposition_units(seeds: Sequence[Seed[Any]]) -> tuple[list[Decompos
         tuple[list[DecompositionUnit], list[Seed]]: One unit per tree, and every other seed.
 
     Raises:
-        ValueError: If a tree is incomplete or invalid, or a prompt group spans two trees.
+        ValueError: If a tree is incomplete or invalid, a prompt group spans two trees, or a tree's
+            seeds are not all in its root's dataset.
     """
     tree = build_objective_decomposition_tree(seed for seed in seeds if isinstance(seed, SeedObjective))
     if not tree.node_ids:
@@ -81,7 +82,29 @@ def split_decomposition_units(seeds: Sequence[Seed[Any]]) -> tuple[list[Decompos
             members[group_root[seed.prompt_group_id]].append(seed)
         else:
             independent.append(seed)
-    return [DecompositionUnit(root_id=root_id, seeds=tuple(unit)) for root_id, unit in members.items()], independent
+    units = [DecompositionUnit(root_id=root_id, seeds=tuple(unit)) for root_id, unit in members.items()]
+    for unit in units:
+        _require_one_dataset(unit)
+    return units, independent
+
+
+def _require_one_dataset(unit: DecompositionUnit) -> None:
+    """
+    Require every seed of a unit to be in its root's dataset.
+
+    Stored trees are matched by the root's dataset, so a member in another dataset could otherwise
+    be matched to, and replaced by, a stored row from a different dataset.
+
+    Raises:
+        ValueError: If a seed's dataset differs from the root's.
+    """
+    dataset = unit.root.dataset_name or None
+    others = sorted({seed.dataset_name or "<none>" for seed in unit.seeds if (seed.dataset_name or None) != dataset})
+    if others:
+        raise ValueError(
+            f"Decomposition tree {unit.root_id} must be stored in one dataset; its root is in "
+            f"{dataset or '<none>'} but other seeds are in {', '.join(others)}."
+        )
 
 
 def canonicalize_decomposition(
@@ -119,29 +142,6 @@ def canonicalize_decomposition(
     return _dumps(form), ordered
 
 
-def pair_decomposition_identities(*, source: Sequence[Seed[Any]], target: Sequence[Seed[Any]]) -> DecompositionIdentity:
-    """
-    Map each identifier of one unit to the matching identifier of an equivalent unit.
-
-    Args:
-        source (Sequence[Seed]): A unit's seeds in canonical order.
-        target (Sequence[Seed]): An equivalent unit's seeds in the same canonical order.
-
-    Returns:
-        DecompositionIdentity: The target identifiers for each source identifier.
-    """
-    identity = DecompositionIdentity(seed_ids={}, group_ids={}, path_ids={})
-    for source_seed, target_seed in zip(source, target, strict=True):
-        if source_seed.id is not None and target_seed.id is not None:
-            identity.seed_ids[source_seed.id] = target_seed.id
-        if source_seed.prompt_group_id is not None and target_seed.prompt_group_id is not None:
-            identity.group_ids[source_seed.prompt_group_id] = target_seed.prompt_group_id
-        if isinstance(source_seed, SeedObjective) and isinstance(target_seed, SeedObjective):
-            for source_path, target_path in zip(source_seed.paths, target_seed.paths, strict=True):
-                identity.path_ids[source_path.id] = target_path.id
-    return identity
-
-
 def fresh_decomposition_identities(seeds: Sequence[Seed[Any]]) -> DecompositionIdentity:
     """
     Give every seed and prompt group of a unit a new identifier, keeping path IDs.
@@ -175,7 +175,7 @@ def apply_decomposition_identity(*, seeds: Sequence[Seed[Any]], identity: Decomp
 
 def assign_decomposition_identity(*, target: Seed[Any], source: Seed[Any]) -> None:
     """
-    Give a caller's seed the identifiers of its stored copy.
+    Give a caller's seed the identifiers of its stored copy, including absent group IDs.
 
     Args:
         target (Seed): The caller's seed, updated in place.

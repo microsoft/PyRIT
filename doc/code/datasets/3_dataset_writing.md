@@ -67,9 +67,9 @@ seeds:
       - {name: Phishing, steps: [recon, phish, exfil]}
 ```
 
-Loading the dataset flattens this into seven objectives with their parent links and paths. Dataset defaults apply to every child, and a child can share a `prompt_group_alias` with prompts like any other seed. `SeedDataset.get_decomposition_tree()` walks the result, and `CentralMemory.get_instance().get_seed_decomposition_async(objective_id=...)` reads a stored objective with everything beneath it.
+Loading the dataset flattens this into seven objectives with their parent links and paths. Dataset defaults apply to every child, and a child can share a `prompt_group_alias` with prompts like any other seed. `SeedDataset.get_decomposition_tree()` walks the result. `CentralMemory.get_instance().get_seed_decomposition_async(objective_id=...)` reads a stored objective with everything beneath it; pass the same ID as `root_id` to `build_objective_decomposition_tree` to walk a subtree that starts below the root.
 
-Memory stores and deduplicates each tree as one unit: reloading the same tree reuses the stored rows, while the same objective text standalone or in a different tree stays separate. A tree must therefore be added whole, with every parent present.
+Memory stores and deduplicates each tree as one unit: reloading the same tree reuses the stored rows and their IDs, while the same objective text standalone or in a different tree stays separate. A tree must therefore be added whole, with every parent present, and all of its objectives and grouped prompts in one dataset.
 
 ## Design LLMs for Single Tasks
 
