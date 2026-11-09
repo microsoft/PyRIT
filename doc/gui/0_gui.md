@@ -265,14 +265,21 @@ together.
 A finding can be broken into sub-findings, at any depth, to record a
 decomposition such as a multi-step attack. Use **Add sub-finding** on a
 finding, and expand **Sub-findings** to see them, oldest first in the order
-they were added. Each finding keeps its own
-severity, and turning off **Demonstrated** marks a step that was attempted but
-not achieved. **Edit paths** records the ordered ways a finding's direct
-sub-findings demonstrate it, for example *recon → obtain credentials → pull
-records* and *recon → pivot → pull records*. A path shows as **Complete** when
-every step was demonstrated and **Partial** otherwise. Deleting a finding also
-deletes its sub-findings; a sub-finding that a path uses can't be deleted until
+they were added. Each finding keeps its own severity, and turning off
+**Demonstrated** marks a step that was attempted but not achieved. **Edit
+paths** records the ordered ways a finding's direct sub-findings demonstrate
+it, for example *recon → obtain credentials → pull records* and *recon →
+phish an admin → pull records*. A path shows as **Complete** when every step
+was demonstrated and **Partial** otherwise. Deleting a finding also deletes its
+sub-findings; a sub-finding that a path uses can't be deleted or moved until
 you remove it from that path.
+
+:::{div}
+:class: col-page-right
+
+![A finding with four sub-findings, numbered 1.1 to 1.4 in the order they were added; 1.2 Obtain creds was not demonstrated. Two paths order the direct sub-findings: Credential theft is partial because of 1.2, and Phishing is complete. Memory stores one row per finding with parent, demonstrated, and paths columns; deleting a finding deletes its sub-findings, and a path step can't be deleted or moved. Markdown and Word exports number and nest the sub-findings and mark each path complete or partial.](../assets/finding-decomposition.svg)
+
+:::
 
 **Export findings** on the operation page downloads the findings you select as
 one Word or Markdown document to paste into a report. Selecting a finding
