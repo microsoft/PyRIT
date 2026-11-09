@@ -20,7 +20,7 @@ import queue
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -44,6 +44,8 @@ from pyrit.executor.promptgen.gcg.attack.gcg.gcg_attack import (  # noqa: E402
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+pytestmark = pytest.mark.run_only_if_all_tests
 
 # One row per checkpoint in the README matrix. None of these need a Hugging Face token.
 _CHECKPOINTS = [
@@ -175,6 +177,63 @@ def test_in_process_worker_preserves_valid_results(
     assert in_process_worker.operations == [operation]
 
 
+def _run_progressive_steps(attack: ProgressiveMultiPromptAttack) -> str:
+    expected_phases = [(goal_count, 1) for goal_count in range(1, len(attack.goals) + 1)]
+    expected_phases.extend((len(attack.goals), worker_count) for worker_count in range(2, len(attack.workers) + 1))
+    phases: list[tuple[int, int]] = []
+    real_run = GCGMultiPromptAttack.run
+
+    def run_one_step(inner_attack: GCGMultiPromptAttack, **kwargs: Any) -> tuple[str, float, int]:
+        kwargs.update(n_steps=1, stop_on_success=False)
+        result = real_run(inner_attack, **kwargs)
+        assert result[2] == 1, "Each progressive phase must complete one optimization step"
+        phases.append((len(inner_attack.goals), len(inner_attack.workers)))
+        return result
+
+    with patch.object(GCGMultiPromptAttack, "run", autospec=True, side_effect=run_one_step):
+        control, steps = attack.run(
+            n_steps=len(expected_phases),
+            batch_size=8,
+            topk=16,
+            anneal=False,
+            test_steps=1,
+            stop_on_success=False,
+            verbose=False,
+        )
+    assert phases == expected_phases
+    assert steps == len(expected_phases)
+    return control
+
+
+@pytest.mark.parametrize("num_workers", [1, 3])
+@pytest.mark.parametrize("jailbroken", [False, True])
+def test_progressive_steps_optimize_every_phase(*, num_workers: int, jailbroken: bool) -> None:
+    workers = [
+        MagicMock(spec=ModelWorker, model=SimpleNamespace(device="cpu"), tokenizer=None) for _ in range(num_workers)
+    ]
+    prompts = MagicMock(spec=GCGPromptManager)
+    prompts.control_str = _CONTROL_INIT
+    attack = ProgressiveMultiPromptAttack(
+        goals=_GOALS,
+        targets=_TARGETS,
+        workers=workers,
+        control_init=_CONTROL_INIT,
+        logfile=None,
+        managers={"PM": MagicMock(spec=GCGPromptManager, return_value=prompts), "MPA": GCGMultiPromptAttack},
+    )
+    with (
+        patch.object(GCGMultiPromptAttack, "step", return_value=("updated control", 1.0)) as step,
+        patch.object(GCGMultiPromptAttack, "_all_training_prompts_jailbroken", return_value=jailbroken) as success,
+    ):
+        assert _run_progressive_steps(attack) == "updated control"
+    assert step.call_count == len(_GOALS) + num_workers - 1
+    success.assert_not_called()
+    assert attack.last_schedule_state is not None
+    assert attack.last_schedule_state.goals_admitted == len(_GOALS)
+    assert attack.last_schedule_state.workers_admitted == num_workers
+    assert attack.last_schedule_state.steps_completed == step.call_count
+
+
 def _run_attack(
     *, checkpoints: list[str], test_checkpoints: list[str], logfile: Path
 ) -> tuple[list[_InProcessWorker], list[_InProcessWorker], str]:
@@ -213,10 +272,7 @@ def _run_attack(
         logfile=str(logfile),
         managers={"AP": GCGAttackPrompt, "PM": GCGPromptManager, "MPA": GCGMultiPromptAttack},
     )
-    # A random model never refuses, so stop_on_success would skip the early phases.
-    control, _ = attack.run(
-        n_steps=1, batch_size=8, topk=16, anneal=False, test_steps=1, stop_on_success=False, verbose=False
-    )
+    control = _run_progressive_steps(attack)
     return workers, test_workers, control
 
 

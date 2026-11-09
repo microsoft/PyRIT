@@ -63,7 +63,9 @@ and tokenizer kind are expected to work if they pass the checks above.
 loads each checkpoint's real tokenizer and config, checks the goal, control, and
 target slices, and loads workers through `get_workers` with a tiny randomly
 initialized float16 model of the same architecture and vocabulary. It then runs
-one step of each progressive phase. A mixed run trains two Qwen2.5 sizes that
+one optimization step of each progressive phase and checks the admitted goals,
+models, and completed step count. A single-model run takes two steps. A mixed run
+trains two Qwen2.5 sizes that
 share a gradient group alongside a DeepSeek distill that does not, with a
 held-out TinyLlama model. These runs cover template rendering, slicing,
 gradients, candidate filtering, and scoring, not attack success on the full
@@ -71,6 +73,9 @@ model. Worker gradients and losses must be finite, and every gradient row must
 have a finite, nonzero norm before normalization. The Gemma, Llama 3.2, and
 Mistral 7B/Nemo rows use unsloth's ungated mirrors, so no Hugging Face token is
 needed.
+
+Set `RUN_ALL_TESTS=true` to opt into these integration tests. Without that opt-in,
+the integration test runner skips them without downloading tokenizers or configs.
 
 ### Running on Azure ML
 
