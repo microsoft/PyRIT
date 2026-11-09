@@ -1458,7 +1458,9 @@ class ScoreEntry(Base):
     scorer_identifier_hash: Mapped[str | None] = mapped_column(
         String(64), ForeignKey(f"{ScorerIdentifierEntry.__tablename__}.hash"), nullable=True
     )
-    prompt_request_response_id = mapped_column(CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"))
+    prompt_request_response_id = mapped_column(
+        CustomUUID, ForeignKey(f"{PromptMemoryEntry.__tablename__}.id"), index=True
+    )
     timestamp = mapped_column(UTCDateTime, nullable=False)
     # The full, versioned expectation this score was judged against (objective + conditions).
     # Supersedes the legacy ``objective`` column.

@@ -237,6 +237,26 @@ def test_scenario_progress_migration_adds_composite_index():
             engine.dispose()
 
 
+def test_score_piece_index_migration_round_trips():
+    """The head indexes scores by message piece, and downgrading one step drops only that index."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = os.path.join(temp_dir, "score-piece-index.db")
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as connection:
+                config = _config_for(connection)
+                command.upgrade(config, "head")
+                indexes = {
+                    index["name"]: index["column_names"] for index in inspect(connection).get_indexes("ScoreEntries")
+                }
+                assert indexes["ix_ScoreEntries_prompt_request_response_id"] == ["prompt_request_response_id"]
+                command.downgrade(config, "d6de1045cca4")
+                indexes = {index["name"] for index in inspect(connection).get_indexes("ScoreEntries")}
+                assert "ix_ScoreEntries_prompt_request_response_id" not in indexes
+        finally:
+            engine.dispose()
+
+
 def test_attack_result_score_migration_backfills_automated_score() -> None:
     """The legacy last score becomes the automated score and human score starts empty."""
     with tempfile.TemporaryDirectory() as temp_dir:
