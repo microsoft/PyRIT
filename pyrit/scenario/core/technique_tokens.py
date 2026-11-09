@@ -21,13 +21,17 @@ what pushed the second caller into writing its own weaker check.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Generic, Literal, NamedTuple, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyrit.converter import Converter
-    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
+    from pyrit.registry import InstanceRegistry
+    from pyrit.scenario import ScenarioTechnique
+
+
+TechniqueT = TypeVar("TechniqueT", bound="ScenarioTechnique")
 
 CONVERTER_MODIFIER_PREFIX = "converter."
 
@@ -81,10 +85,10 @@ class TechniqueTokenIssue:
 
 
 @dataclass(frozen=True)
-class TechniqueTokenResolution:
+class TechniqueTokenResolution(Generic[TechniqueT]):
     """Everything a set of technique tokens resolved to, plus what did not resolve."""
 
-    techniques: list[Any] = field(default_factory=list)
+    techniques: list[TechniqueT] = field(default_factory=list)
     technique_converters: dict[str, list[Converter]] = field(default_factory=dict)
     issues: list[TechniqueTokenIssue] = field(default_factory=list)
 
@@ -92,9 +96,9 @@ class TechniqueTokenResolution:
 def resolve_technique_tokens(
     *,
     tokens: Sequence[str],
-    technique_class: type[ScenarioTechnique],
+    technique_class: type[TechniqueT],
     scenario_name: str,
-) -> TechniqueTokenResolution:
+) -> TechniqueTokenResolution[TechniqueT]:
     """
     Resolve technique tokens into technique members and their additive converters.
 
@@ -111,8 +115,8 @@ def resolve_technique_tokens(
         TechniqueTokenResolution: Resolved technique members, converters keyed by
         concrete technique name, and the references that did not resolve.
     """
-    resolution = TechniqueTokenResolution()
-    converter_instances: Any = None
+    resolution: TechniqueTokenResolution[TechniqueT] = TechniqueTokenResolution()
+    converter_instances: InstanceRegistry[Converter] | None = None
 
     for token in tokens:
         base_name, modifiers = parse_technique_token(token)

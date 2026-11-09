@@ -79,6 +79,7 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "websockets>=14.0",
     "wcwidth>=0.2.14",
+    "filelock>=4.2.1",
 ]
 
 [dependency-groups]
@@ -198,6 +199,8 @@ filterwarnings = [
     # Ordinary callers must use async memory; compatibility tests capture the warnings.
     "error:MemoryInterface\\.:DeprecationWarning",
     "error:MessageScorableResolver\\.resolve:DeprecationWarning",
+    # True/false verdicts are set through Score.set_value; compatibility tests capture the warning.
+    "error:Assigning Score\\.score_value:DeprecationWarning",
 ]
 
 [tool.ty]
