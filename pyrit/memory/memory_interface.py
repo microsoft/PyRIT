@@ -77,7 +77,6 @@ from pyrit.memory._seed_decomposition import (
     assign_decomposition_identity,
     canonicalize_decomposition,
     fresh_decomposition_identities,
-    pair_decomposition_identities,
     split_decomposition_units,
 )
 from pyrit.memory.analytics_sql import (
@@ -5348,20 +5347,22 @@ class MemoryInterface(abc.ABC):
         Store one decomposition tree unless an equivalent tree is already stored.
 
         An equivalent stored tree has the same content, structure, and paths in the same dataset;
-        the caller's seeds then take its identifiers. A new tree whose seed or group IDs are
-        already stored is copied with new identifiers so it cannot alter the stored rows.
+        each caller seed then takes its stored counterpart's identifiers, including group IDs the
+        caller left unset. A new tree whose seed or group IDs are already stored is copied with new
+        identifiers so it cannot alter the stored rows.
         """
         canonical, ordered = canonicalize_decomposition(unit=unit, member_key=self._seed_group_member_key)
         stored = self._find_stored_decomposition(root=unit.root, canonical=canonical)
         if stored is not None:
-            identity = pair_decomposition_identities(source=ordered, target=stored)
-        elif self._decomposition_identifiers_are_stored(seeds=unit.seeds):
+            for target, source in zip(ordered, stored, strict=True):
+                assign_decomposition_identity(target=target, source=source)
+            return
+        if self._decomposition_identifiers_are_stored(seeds=unit.seeds):
             identity = fresh_decomposition_identities(unit.seeds)
         else:
             identity = DecompositionIdentity(seed_ids={}, group_ids={}, path_ids={})
         copies = apply_decomposition_identity(seeds=unit.seeds, identity=identity)
-        if stored is None:
-            self._insert_entries(entries=[SeedEntry(entry=seed) for seed in copies])
+        self._insert_entries(entries=[SeedEntry(entry=seed) for seed in copies])
         for target, source in zip(unit.seeds, copies, strict=True):
             assign_decomposition_identity(target=target, source=source)
 
@@ -11019,7 +11020,8 @@ class MemoryInterface(abc.ABC):
         """
         Retrieve a stored objective and every objective decomposed beneath it.
 
-        Use ``build_objective_decomposition_tree`` on the result to walk the children and paths.
+        Use ``build_objective_decomposition_tree(result, root_id=objective_id)`` to walk the children
+        and paths; the returned objective keeps its stored parent link even when it is not a root.
         Prompts grouped with these objectives can be read with ``get_seeds_async(prompt_group_ids=...)``.
 
         Args:

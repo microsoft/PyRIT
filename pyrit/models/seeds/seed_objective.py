@@ -78,25 +78,36 @@ class SeedObjective(Seed[Literal["text"]]):
         return self
 
 
-def build_objective_decomposition_tree(objectives: Iterable[SeedObjective]) -> DecompositionTree:
+def build_objective_decomposition_tree(
+    objectives: Iterable[SeedObjective], *, root_id: uuid.UUID | None = None
+) -> DecompositionTree:
     """
     Build the decomposition trees of objectives that have a parent, paths, or children.
 
     Args:
         objectives (Iterable[SeedObjective]): Objectives that include every member of each tree.
+        root_id (uuid.UUID | None): An objective to treat as a tree root even though its own parent
+            is not supplied, such as the starting objective of a stored subtree. Its parent link is
+            not changed. Defaults to None, which requires every parent to be supplied.
 
     Returns:
         DecompositionTree: The validated trees.
 
     Raises:
-        ValueError: If a parent is missing, an objective appears twice, the parents form a cycle, or
-            a path step is not a direct child of the path's owner.
+        ValueError: If a parent is missing, an objective appears twice, the parents form a cycle, a
+            path step is not a direct child of the path's owner, or ``root_id`` is not supplied.
     """
     objectives = list(objectives)
+    if root_id is not None and all(objective.id != root_id for objective in objectives):
+        raise ValueError(f"Subtree root {root_id} is not among the objectives.")
     parent_ids = {objective.parent_objective_id for objective in objectives if objective.parent_objective_id}
-    nodes = [
-        node
-        for node in (objective.decomposition_node for objective in objectives)
-        if node is not None and (node.is_member or node.id in parent_ids)
-    ]
+    nodes = []
+    for objective in objectives:
+        node = objective.decomposition_node
+        if node is None:
+            continue
+        if node.id == root_id:
+            nodes.append(DecompositionNode(id=node.id, paths=node.paths))
+        elif node.is_member or node.id in parent_ids:
+            nodes.append(node)
     return DecompositionTree(nodes)
