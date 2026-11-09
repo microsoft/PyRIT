@@ -41,12 +41,14 @@ Results are JSON. `run_<runtime>` returns the exit code, the output of each stre
 `max_output_chars`, and marked when cut), whether the program timed out, and how long it took. A program
 that fails is an ordinary result the model can read and fix.
 
-Arguments are checked against the sandbox's limits before anything runs, so a rejected call goes back to the
-model as an error, with the reason, and is never recorded as invoked. When the sandbox itself fails, the
+Arguments are checked against the sandbox's limits before anything runs, so a call rejected there goes back to
+the model as an error, with the reason, and is never recorded as invoked. When the sandbox itself fails, the
 tool raises `ToolInfrastructureError`, and `OpenAIResponseTarget` ends the turn with an error response
 instead of asking the model to fix a problem that isn't its own. Every call the model made still gets a
-result, so the conversation's history stays valid, and the error response's `ToolLoopStop` metadata says why
-the turn ended. `max_tool_rounds` bounds how many responses with tool calls one send runs; it defaults to 10.
+result, so the conversation's history stays valid; the model is told only that the tool's infrastructure
+failed, while the error response, which is never replayed to the model, keeps the details. Its `ToolLoopStop`
+metadata says why the turn ended. `max_tool_rounds` bounds how many responses with tool calls one send runs;
+it defaults to 10.
 
 When a script is done with its sandboxes, close them so no session is left open:
 
@@ -54,7 +56,8 @@ When a script is done with its sandboxes, close them so no session is left open:
 await SandboxRegistry.get_registry_singleton().close_all_async()
 ```
 
-`close_async` is final. To end a session and keep using the sandbox, use `release_async`.
+`close_async` is final. To end a session and keep using the sandbox, use `release_async`, which can also
+retry a close that couldn't be confirmed, even after `close_async`.
 
 ## Check what the code did
 
@@ -82,8 +85,10 @@ response's own text never runs. The check's program and output are stored as an 
 score.
 
 The check reads the sandbox as it is when it runs. So it runs again on every call rather than reusing a
-stored verdict, and isolation is the caller's job: reset the sandbox between attempts, and don't share one
-sandbox across attempts that run at the same time. It needs a sandbox whose state persists.
+stored verdict, and isolation is the caller's job, since a later attempt could otherwise score true on an
+earlier attempt's effect: run one attempt at a time per sandbox (`max_concurrency=1`), turn off automatic
+retries of failed attempts (`max_attempts_on_failure=0`), and reset the sandbox between attempts. It needs a
+sandbox whose state persists.
 
 The check runs as the same account as the model's code, so it must not trust anything the model could have
 written. For example, run Python checks in isolated mode, so a module the model saved in the working
@@ -161,8 +166,8 @@ sandbox, it also:
   limit could cut a call short;
 - lets one call at a time use the sandbox, first come first served, and waits up to five minutes for a turn;
 - keeps a call running, and the sandbox held, when its caller gives up, so nothing runs beside it;
-- quarantines the sandbox when it can't confirm a session closed or a reset finished, until
-  `release_async`, which retries the close, or `reset_async`;
+- quarantines the sandbox when it can't confirm that a session closed, that a run's processes stopped, or
+  that a reset finished, until `release_async`, which retries the close, or `reset_async`;
 - resets only after the running call finishes, closing the session first, and records the outcome.
 
 A `call` sandbox's calls run in their callers' tasks, so the adapter cleans up when a caller gives up.

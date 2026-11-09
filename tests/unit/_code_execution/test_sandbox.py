@@ -631,13 +631,19 @@ async def test_close_waits_for_the_running_call_and_is_final_async() -> None:
     assert fake.reset_count == 0 and fake.open_sessions == set()
 
 
-async def test_close_never_raises_async() -> None:
+async def test_close_never_raises_and_an_unconfirmed_close_can_still_be_retried_async() -> None:
     fake = FakeSandbox()
     await _run_async(fake)
-    fake.fail_next(hook=FakeSandboxHook.CLOSE, error=RuntimeError("unreachable"))
+    fake.fail_next(hook=FakeSandboxHook.CLOSE, error=RuntimeError("unreachable"), times=3)
     await fake.close_async()
     await fake.close_async()
     assert (await fake.get_status_async()).condition is SandboxCondition.QUARANTINED
+    assert fake.open_sessions == {"fake-session-1"}
+    await fake.release_async()
+    assert (await fake.get_status_async()).condition is SandboxCondition.READY
+    assert fake.open_sessions == set() and fake.closed_sessions == ["fake-session-1"]
+    with pytest.raises(SandboxUnavailableError, match="closed"):
+        await _run_async(fake)
 
 
 async def test_close_gives_up_waiting_for_a_call_that_holds_the_sandbox_too_long_async() -> None:
@@ -736,13 +742,6 @@ async def test_unconfirmed_cleanup_stops_further_runs_async() -> None:
         await _run_async(fake)
     await fake.release_async()
     assert fake.closed_sessions == ["fake-session-1"]
-
-
-async def test_identifier_holds_static_configuration_only_async() -> None:
-    fake = FakeSandbox()
-    await _run_async(fake)
-    assert fake.open_sessions
-    assert fake._build_identifier().hash == FakeSandbox()._build_identifier().hash
 
 
 async def test_a_reset_waiting_when_the_sandbox_closes_does_not_run_async() -> None:

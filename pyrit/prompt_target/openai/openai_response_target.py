@@ -790,18 +790,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 conversation=working_conversation, json_config=json_config, web_search_config=web_search_config
             )
 
-            try:
-                result = await self._send_model_request_async(body=body, request=message)
-            except Exception as error:
-                if not responses_to_return:
-                    raise
-                # Tools already ran in this send, so keep their evidence instead of losing it with the error.
-                detail = f"The model request after tool calls failed: {error}"
-                stop = ToolLoopStopReason.CONTINUATION_FAILED
-                responses_to_return.append(
-                    self._tool_loop_error(request_piece=message_piece, detail=detail, reason=stop)
-                )
-                return responses_to_return
+            result = await self._send_model_request_async(body=body, request=message)
             if not self._execute_tools:
                 return [result]
 
@@ -865,8 +854,11 @@ class OpenAIResponseTarget(OpenAITarget):
                 result = await self._execute_call_section_async(section)
             except ToolInfrastructureError as error:
                 logger.error("Tool %r could not run; ending the turn: %s", section.get("name"), error)
+                # The model sees this result again on later turns, so it gets no infrastructure details;
+                # they stay in the error response, which history replay skips.
                 failed = _ToolDispatchResult(
-                    output={"error": "tool_infrastructure_error", "message": str(error)}, invoked=error.invoked
+                    output={"error": "tool_infrastructure_error", "message": "The tool's infrastructure failed."},
+                    invoked=error.invoked,
                 )
                 messages.append(
                     self._make_tool_message(result=failed, section=section, reference_piece=reference_piece)

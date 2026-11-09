@@ -5,7 +5,8 @@
 A contract-test kit for ``Sandbox`` adapters.
 
 Run ``check_sandbox_contract_async`` against a live sandbox, from your adapter's own tests, to check the
-rules PyRIT relies on: declared limits, error mapping, state, status, reset, and closing twice.
+rules PyRIT relies on: declared limits, error mapping, state, status, reset, closing twice, and a
+static identifier.
 """
 
 from __future__ import annotations
@@ -126,7 +127,12 @@ async def check_sandbox_contract_async(
 
 async def _check_all_async(*, sandbox: Sandbox, probes: SandboxProbes, timeout_probe_seconds: float) -> None:
     capabilities = sandbox.get_capabilities()
+    identity = sandbox._build_identifier().hash
     await _check_round_trip_async(sandbox=sandbox, probes=probes)
+    _require(
+        sandbox._build_identifier().hash == identity,
+        "An identifier must hold static configuration only; it changed once the sandbox was used.",
+    )
     await _check_arguments_and_input_async(sandbox=sandbox, probes=probes)
     await _check_status_async(sandbox=sandbox)
     if capabilities.state_kind is SandboxStateKind.ENVIRONMENT:
@@ -276,7 +282,8 @@ async def _check_timeout_async(*, sandbox: Sandbox, probes: SandboxProbes, timeo
     _require(event.timed_out and event.exit_code is None, "A run past its timeout must be marked timed out.")
     _require(elapsed < timeout + 20, f"A run with a {timeout:g} s timeout took {elapsed:.0f} s to come back.")
     if sandbox.get_capabilities().state_kind is SandboxStateKind.ENVIRONMENT:
-        await asyncio.sleep(3)
+        # The probe writes its marker one second after its timeout; give a stray run one more second.
+        await asyncio.sleep(max(timeout + 2 - elapsed, 0.5))
         _require(
             await _read_marker_async(sandbox=sandbox, probes=probes, name=name) == "",
             "A run past its timeout must be stopped, not left running.",

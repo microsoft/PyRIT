@@ -50,9 +50,10 @@ class SandboxCheckScorer(TrueFalseScorer):
     never false. The check's program and output are stored as an observation linked to the score.
 
     The verdict reflects the sandbox when the check runs, so every call runs the check again; stored
-    verdicts are never reused. Callers own isolation: reset the sandbox between attempts, and don't share
-    one sandbox across concurrent attempts. The check runs as the same account as the model's code, so it
-    must not trust files the model could have written.
+    verdicts are never reused. Callers own isolation, since a later attempt could otherwise score true on
+    an earlier attempt's effect: run one attempt at a time per sandbox, without automatic retries of failed
+    attempts, and reset the sandbox between attempts. The check runs as the same account as the model's
+    code, so it must not trust files the model could have written.
 
     Experimental: it is built on ``pyrit._code_execution``, which may change without a deprecation cycle.
     """

@@ -48,9 +48,9 @@ class SandboxClient(Protocol):
     Connect to a caller-configured backend that runs code in isolation.
 
     A sandbox may keep state between calls: files a program writes can still be there for the
-    next call, until the sandbox is reset. ``Sandbox.get_capabilities`` says which kind a
-    sandbox is. The client requests execution and cleanup, and waits for cleanup before a
-    cancelled call returns. It does not set up the backend service or build images.
+    next call, until the sandbox is reset. Clients built on the ``Sandbox`` base class report
+    which kind they are in their capabilities. The client requests execution and cleanup, and does
+    not leave a cancelled call's work behind. It does not set up the backend service or build images.
     A runtime profile is a trusted name the client maps to its own configuration; the program
     cannot choose an image or a command. The caller supplies the running backend and trusted
     runtimes, and decides how to use the returned results.

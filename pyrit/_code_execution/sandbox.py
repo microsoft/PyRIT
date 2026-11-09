@@ -491,14 +491,14 @@ class Sandbox(Identifiable, ABC):
         """
         End the session if no call is running, and clear a quarantine. The sandbox's state is kept.
 
-        A quarantine from an unconfirmed close is cleared only if closing that session again succeeds.
-        Once started, the release runs to the end even if the caller gives up. A closed sandbox has
-        nothing to release.
+        A quarantine from an unconfirmed close is cleared only if closing that session again succeeds,
+        which also works after ``close_async``. Release never opens a session. Once started, it runs to
+        the end even if the caller gives up.
 
         Raises:
             SandboxBusyError: If a call or reset holds the sandbox.
         """
-        if self.get_capabilities().state_kind is SandboxStateKind.CALL or self._closed:
+        if self.get_capabilities().state_kind is SandboxStateKind.CALL:
             return
         if not await self._try_lock_async():
             raise SandboxBusyError("A call or reset holds the sandbox; release it after that finishes.")
@@ -937,9 +937,11 @@ class Sandbox(Identifiable, ABC):
             self._unlock()
 
     async def _close_locked_async(self) -> None:
-        """End the session for good while holding the lock, then release the lock."""
+        """End the session, and any session whose close was unconfirmed, while holding the lock, then release it."""
         try:
             await self._discard_session_async()
+            if await self._retry_quarantined_close_async():
+                self._quarantine_reason = None
         finally:
             self._lock.release()
 

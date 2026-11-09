@@ -116,6 +116,7 @@ async def test_preflight_uses_isolated_registry_without_changing_live_state() ->
 
 @pytest.mark.usefixtures("patch_central_database")
 async def test_apply_closes_registered_sandboxes_before_initializers_run_again() -> None:
+    SandboxRegistry.reset_registry_singleton()
     sandbox = FakeSandbox()
     SandboxRegistry.get_registry_singleton().register(sandbox, name="linux")
     await sandbox.execute_async(program="print(1)", runtime_profile_name="python")

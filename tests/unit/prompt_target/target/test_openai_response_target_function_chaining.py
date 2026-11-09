@@ -552,7 +552,7 @@ async def test_tool_infrastructure_error_ends_the_turn_with_every_call_answered_
     assert executed == ["ok", "broken"]
     assert _call_outputs(result) == [
         ("call_ok", "ok", True),
-        ("call_broken", {"error": "tool_infrastructure_error", "message": "the sandbox is unreachable"}, True),
+        ("call_broken", {"error": "tool_infrastructure_error", "message": "The tool's infrastructure failed."}, True),
         ("call_skipped", {"error": "tool_not_executed", "message": "An earlier tool call failed."}, False),
     ]
     final = result[-1].get_piece()
@@ -561,39 +561,20 @@ async def test_tool_infrastructure_error_ends_the_turn_with_every_call_answered_
     assert filter_non_replayable_messages(messages=result) == result[:-1]
 
 
-async def test_a_failed_follow_up_request_keeps_the_evidence_of_tools_that_ran_async(patch_central_database) -> None:
-    executed: list[str] = []
-
-    async def lookup(*, key: str) -> str:
-        executed.append(key)
-        return key
-
-    target = OpenAIResponseTarget(
-        model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", tools=[FunctionTool(function=lookup)]
-    )
-    replies = [create_mock_function_call_response("call_1", "lookup", {"key": "a"}), RuntimeError("model unavailable")]
-    with patch.object(target._async_client.responses, "create", new_callable=AsyncMock, side_effect=replies):
-        result = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
-
-    assert executed == ["a"]
-    assert _call_outputs(result) == [("call_1", "a", True)]
-    final = result[-1].get_piece()
-    assert final.response_error == "processing" and "model unavailable" in final.original_value
-    stop = ToolLoopStop.from_metadata(metadata=final.prompt_metadata)
-    assert stop is not None and stop.reason is ToolLoopStopReason.CONTINUATION_FAILED
-
-
-async def test_a_failed_first_request_still_raises_async(patch_central_database) -> None:
+@pytest.mark.parametrize("failing_request", [0, 1], ids=["first", "after-a-tool-round"])
+async def test_a_failed_model_request_raises_for_the_caller_to_retry_async(
+    patch_central_database, failing_request: int
+) -> None:
     async def lookup(*, key: str) -> str:
         return key
 
     target = OpenAIResponseTarget(
         model_name="gpt-4", endpoint="https://mock.azure.com", api_key="k", tools=[FunctionTool(function=lookup)]
     )
+    replies: list[object] = [create_mock_function_call_response("call_1", "lookup", {"key": "a"})][:failing_request]
+    replies.append(RuntimeError("down"))
     with (
-        patch.object(
-            target._async_client.responses, "create", new_callable=AsyncMock, side_effect=RuntimeError("down")
-        ),
+        patch.object(target._async_client.responses, "create", new_callable=AsyncMock, side_effect=replies),
         pytest.raises(Exception, match="down"),
     ):
         await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())

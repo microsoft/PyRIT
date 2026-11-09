@@ -19,6 +19,7 @@ from pyrit._code_execution import (
     SandboxStateKind,
     check_sandbox_contract_async,
 )
+from pyrit.models import ComponentIdentifier
 
 if TYPE_CHECKING:
     import asyncio
@@ -57,6 +58,11 @@ class _ResetIgnoresRevision(LocalPythonSandbox):
         await super()._reset_async(expected_revision=None)
 
 
+class _IdentifierHoldsSessions(LocalPythonSandbox):
+    def _build_identifier(self) -> ComponentIdentifier:
+        return ComponentIdentifier.of(self, params={"sessions": sorted(self.sessions)})
+
+
 class _WipesBeforeRefusingReset(LocalPythonSandbox):
     async def _reset_async(self, *, expected_revision: str | None) -> None:
         await super()._reset_async(expected_revision=None)
@@ -91,6 +97,7 @@ async def test_contract_passes_for_a_sandbox_that_follows_the_rules_async(
         (_ForgetsFilesOnClose, "must survive closing its session"),
         (_ResetIgnoresRevision, "must be refused with SandboxRevisionChangedError"),
         (_WipesBeforeRefusingReset, "A refused reset must leave the sandbox unchanged"),
+        (_IdentifierHoldsSessions, "static configuration only"),
         (_CutsOutputSilently, "must come back whole"),
     ],
 )
