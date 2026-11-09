@@ -1,4 +1,4 @@
-<p align="center"><img src="./doc/roakey.png" width="150"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/microsoft/PyRIT/releases/v1.2.0/doc/roakey.png" width="150"></p>
 
 # PyRIT: AI red teaming for models and applications
 
