@@ -24,7 +24,7 @@ from openai._exceptions import (
 
 from pyrit.auth import resolve_openai_auth, validate_token_provider_headers
 from pyrit.common import default_values
-from pyrit.exceptions.exception_classes import (
+from pyrit.exceptions import (
     RateLimitException,
     handle_bad_request_exception,
 )

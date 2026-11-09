@@ -7,12 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.common.apply_defaults import get_global_default_values, set_default_value
+from pyrit.common import get_global_default_values, set_default_value
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter import LLMGenericTextConverter, RolePlayToolCallConverter
-from pyrit.models import Message, MessagePiece, SeedPrompt
-from pyrit.models.identifiers import ConverterIdentifier
-from pyrit.prompt_target.common.prompt_target import PromptTarget
+from pyrit.models import ConverterIdentifier, Message, MessagePiece, SeedPrompt
+from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ConverterRegistry
 from pyrit.registry.resolution import derive_parameters
 

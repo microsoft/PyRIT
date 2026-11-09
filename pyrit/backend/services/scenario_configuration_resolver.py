@@ -8,14 +8,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
+from pyrit.scenario.core import resolve_technique_tokens
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
-from pyrit.scenario.core.technique_tokens import resolve_technique_tokens
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
+    from pyrit.models import ScenarioDatasetRequest
     from pyrit.models.component_spec import RegisteredComponentReference
-    from pyrit.models.scenario_dataset import ScenarioDatasetRequest
     from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario import Scenario

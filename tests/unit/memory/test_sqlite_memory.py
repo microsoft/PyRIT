@@ -23,14 +23,18 @@ from sqlalchemy.dialects.sqlite import CHAR, JSON
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.sqltypes import NullType
 
-from pyrit.common.singleton import Singleton
-from pyrit.converter.base64_converter import Base64Converter
+from pyrit.common import Singleton
+from pyrit.converter import Base64Converter
+from pyrit.memory import (
+    EmbeddingDataEntry,
+    MemoryEmbedding,
+    PromptMemoryEntry,
+    SQLiteMemory,
+    set_message_piece_sha256_async,
+)
 from pyrit.memory.alembic.versions.ab8f2c1a9d07_pre_alembic_release_schema import INITIAL_METADATA
-from pyrit.memory.memory_embedding import MemoryEmbedding
-from pyrit.memory.memory_models import Base, EmbeddingDataEntry, PromptMemoryEntry
+from pyrit.memory.memory_models import Base
 from pyrit.memory.migration import run_schema_migrations
-from pyrit.memory.sqlite_memory import SQLiteMemory
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
 from pyrit.models import (
     Conversation,
     EmbeddingData,
@@ -43,7 +47,7 @@ from pyrit.models import (
     TargetIdentifier,
     flatten_to_message_pieces,
 )
-from pyrit.prompt_target.text_target import TextTarget
+from pyrit.prompt_target import TextTarget
 from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import get_sample_conversation_entries, make_scenario_result
 

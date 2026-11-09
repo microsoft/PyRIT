@@ -6,10 +6,9 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, final
 
+from pyrit.common import AuthMode, print_deprecation_message
 from pyrit.common.async_compatibility import legacy_sync_override
 from pyrit.common.attack_result_scope import get_current_attack_result_id
-from pyrit.common.auth_mode import AuthMode
-from pyrit.common.deprecation import print_deprecation_message
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import MessageListNormalizer
 from pyrit.models import (
@@ -131,7 +130,7 @@ class PromptTarget(Identifiable):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="PromptTarget")
 

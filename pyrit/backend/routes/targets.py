@@ -11,16 +11,19 @@ Target types are set at app startup via initializers - you cannot add new types 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
 from pyrit.backend.middleware.auth import caller_principal, has_admin_access
-from pyrit.backend.models.common import CursorStr, IdentifierStr, ProblemDetail
-from pyrit.backend.models.targets import (
+from pyrit.backend.models import (
     CreateTargetRequest,
+    ProblemDetail,
     SetTargetCredentialRequest,
     TargetListResponse,
+)
+from pyrit.backend.models.common import CursorStr, IdentifierStr
+from pyrit.backend.models.targets import (
     TargetTypeResponse,
     UnregisteredTarget,
 )
-from pyrit.backend.services.target_service import get_target_service
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.backend.services import get_target_service
+from pyrit.models.catalog import TargetInstance
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 

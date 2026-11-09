@@ -19,22 +19,22 @@ from functools import lru_cache
 from typing import Any
 
 from pyrit.auth import CallerCredentialStore, create_caller_credential_provider
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
-from pyrit.backend.models.common import PaginationInfo
-from pyrit.backend.models.targets import (
+from pyrit.backend.mappers import target_object_to_instance
+from pyrit.backend.models import (
     CreateTargetRequest,
+    PaginationInfo,
     TargetListResponse,
+)
+from pyrit.backend.models.targets import (
     TargetTypeEntry,
     TargetTypeResponse,
     UnregisteredTarget,
 )
 from pyrit.backend.services.component_lifecycle import release_component_async
-from pyrit.common import REQUIRED_VALUE, default_values
-from pyrit.common.auth_mode import AUTH_MODES, AuthMode
-from pyrit.models import TargetIdentifier
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
+from pyrit.models import Parameter, TargetIdentifier
+from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
-from pyrit.models.parameter import Parameter
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import RegistryEntry, TargetRegistry
 

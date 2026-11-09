@@ -43,12 +43,12 @@ from pyrit.models import (
     TraceScorable,
 )
 from pyrit.prompt_target import (
+    LiteLLMChatTarget,
     OpenAIChatAudioConfig,
     TargetCapabilities,
     TargetConfiguration,
     TargetTraceConfig,
 )
-from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 from pyrit.score import InMemoryTraceClient, InMemoryTraceExporter, OtelToolCallScorer, OtelTraceSource
 
 # ---------------------------------------------------------------------------

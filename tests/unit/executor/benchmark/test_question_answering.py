@@ -8,7 +8,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
-from pyrit.executor.benchmark.question_answering import (
+from pyrit.executor.benchmark import (
     QuestionAnsweringBenchmark,
     QuestionAnsweringBenchmarkContext,
 )

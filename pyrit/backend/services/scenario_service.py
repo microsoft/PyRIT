@@ -13,15 +13,16 @@ from functools import lru_cache
 from time import monotonic
 
 from pyrit.auth import caller_principal_context
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
-from pyrit.backend.models.scenarios import ListRegisteredScenariosResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.models.catalog.scenario import (
-    RegisteredScenario,
+from pyrit.models import (
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
+)
+from pyrit.models.catalog import (
+    RegisteredScenario,
 )
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params

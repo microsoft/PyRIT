@@ -216,7 +216,7 @@
 # my_custom_scenarios.py
 
 from pyrit.common import apply_defaults
-from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
+from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Scenario, ScenarioTechnique
 from pyrit.score import SelfAskRefusalScorer, TrueFalseInverterScorer
 from pyrit.setup import initialize_pyrit_async
