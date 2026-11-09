@@ -4,7 +4,7 @@
 import logging
 import string
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import cast
 
@@ -214,12 +214,13 @@ class _BaseImageTextConverter(Converter):
         """
         overlay = Image.new("RGBA", (box_width, box_height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
-        fill_color = color + (255,)
+        fill_color = (color[0], color[1], color[2], 255)
 
         line_height = self._get_line_height(font=font)
         total_height = len(lines) * line_height
         y_start = (box_height - total_height) // 2 if center_text else 0
 
+        positioned_lines: list[tuple[str, tuple[float, float]]] = []
         for i, line in enumerate(lines):
             line_y = y_start + i * line_height
             if center_text:
@@ -227,9 +228,31 @@ class _BaseImageTextConverter(Converter):
                 line_x = (box_width - (line_bbox[2] - line_bbox[0])) // 2
             else:
                 line_x = 0
-            draw.text((line_x, line_y), line, font=font, fill=fill_color)
+            positioned_lines.append((line, (line_x, line_y)))
+        self._draw_positioned_lines(image=overlay, lines=positioned_lines, font=font, color=fill_color)
 
         return overlay
+
+    @staticmethod
+    def _draw_positioned_lines(
+        *,
+        image: Image.Image,
+        lines: Iterable[tuple[str, tuple[float, float]]],
+        font: FreeTypeFont,
+        color: tuple[int, int, int] | tuple[int, int, int, int],
+    ) -> None:
+        """
+        Draw pre-positioned lines without imposing wrapping or alignment policies.
+
+        Args:
+            image (Image.Image): Destination image, modified in place.
+            lines (Iterable[tuple[str, tuple[float, float]]]): Text and its drawing origin for each line.
+            font (FreeTypeFont): Font used to lay out the lines.
+            color (tuple[int, int, int] | tuple[int, int, int, int]): RGB or RGBA fill.
+        """
+        draw = ImageDraw.Draw(image)
+        for line, position in lines:
+            draw.text(position, line, font=font, fill=color)
 
     def _composite_overlay(
         self,

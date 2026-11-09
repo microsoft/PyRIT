@@ -1,5 +1,18 @@
 ---------------------------------------------------------
 
+Ugly Gerry font - No Rights Reserved
+https://uglygerry.com/
+
+PyRIT includes the unmodified Gerry.otf version 1.004 font, created by Ben Doessel
+and James Lee at Leo Burnett for RepresentUs in 2019. Its glyphs use the shapes of
+United States congressional districts.
+
+The original project website states "No Rights Reserved". The statement's source
+and the font download source are recorded in LICENSES/Ugly-Gerry.txt.
+The font is not covered by PyRIT's MIT license.
+
+---------------------------------------------------------
+
 ASSERT source portions - MIT
 https://github.com/responsibleai/ASSERT
 
