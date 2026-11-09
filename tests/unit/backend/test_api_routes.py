@@ -272,6 +272,62 @@ class TestAttackRoutes:
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         service.assert_not_called()
 
+    def test_legacy_operator_alias_enforces_the_dedicated_limit(self, client: TestClient) -> None:
+        """The legacy label alias accepts the same value length as the dedicated operator param."""
+        response = client.get("/api/attacks", params={"label": f"operator:{'x' * 500}"})
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    def test_legacy_operator_alias_same_set_in_any_order(self, client: TestClient) -> None:
+        """An identical operator set in a different order reaches the service unchanged."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get(
+                "/api/attacks",
+                params=[
+                    ("operator", "alice"),
+                    ("operator", "bob"),
+                    ("label", "operator:bob"),
+                    ("label", "operator:alice"),
+                ],
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert sorted(mock_service.list_attacks_async.call_args.kwargs["operator"]) == ["alice", "bob"]
+
+    def test_legacy_operator_alias_ignores_duplicate_values(self, client: TestClient) -> None:
+        """Duplicates on either side still describe one filter, not a conflict.
+
+        IN (...) and the pagination fingerprint both deduplicate values, so
+        one alice and two alices are the same filter set.
+        """
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.list_attacks_async = AsyncMock(
+                return_value=AttackListResponse(
+                    items=[],
+                    pagination=PaginationInfo(limit=20, has_more=False, next_cursor=None, prev_cursor=None),
+                )
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.get(
+                "/api/attacks",
+                params=[("operator", "alice"), ("label", "operator:alice"), ("label", "operator:alice")],
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        # The legacy alias list is forwarded verbatim; downstream IN filters and
+        # the pagination fingerprint deduplicate it, so the set is the contract.
+        assert set(mock_service.list_attacks_async.call_args.kwargs["operator"]) == {"alice"}
+
     def test_create_attack_target_not_found(self, client: TestClient) -> None:
         """Test attack creation with non-existent target."""
         with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
