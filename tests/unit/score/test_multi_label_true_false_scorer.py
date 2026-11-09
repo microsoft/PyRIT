@@ -258,7 +258,7 @@ async def test_invalid_piece_contracts_fail_before_any_scores_are_saved(
         scores[0].score_type = "float_scale"
         scores[0].score_value = "0.5"
     elif invalid == "value":
-        scores[0].score_value = "invalid"
+        scores[0] = scores[0].model_copy(update={"score_value": "invalid"})
     else:
         scores[0].id = scores[1].id
 

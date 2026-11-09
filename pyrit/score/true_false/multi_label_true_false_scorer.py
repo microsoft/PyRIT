@@ -195,8 +195,7 @@ class MessageMultiLabelTrueFalseScorer(MultiLabelTrueFalseScorer, MessageScorer)
         scores = self._build_neutral_fallback_score(message=message, objective=objective, neutral_value="false")
         for score in scores:
             if not score.is_undetermined:
-                score.status = ScoreStatus.UNDETERMINED
-                score.score_value = None
+                score.set_value(None)
                 score.score_value_description = "Blocked evidence; no labeled verdict was reachable."
                 score.score_rationale = "A transport block does not determine any of the declared labels."
         return scores
