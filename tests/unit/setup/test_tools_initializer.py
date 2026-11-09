@@ -10,8 +10,7 @@ from unit.mocks import MockPromptTarget
 from pyrit.converter import RolePlayToolCallConverter, ROT13Converter
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, InitializerRegistry, TargetRegistry
-from pyrit.registry.registry import Registry
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, InitializerRegistry, Registry, TargetRegistry
 from pyrit.setup.initializers import ToolsInitializer
 from pyrit.setup.initializers.techniques import build_technique_factories
 

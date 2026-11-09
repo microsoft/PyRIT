@@ -11,8 +11,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.common.attack_result_scope import get_current_attack_result_id
-from pyrit.converter import SuffixAppendConverter
-from pyrit.converter.converter import ConverterResult
+from pyrit.converter import ConverterResult, SuffixAppendConverter
 from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
@@ -20,9 +19,11 @@ from pyrit.executor.attack import (
     AttackScoringConfig,
     PromptSendingAttack,
     RedTeamingAttack,
+    SequenceCompletionPolicy,
+    SequentialAttack,
+    SequentialChildAttack,
     SingleTurnAttackContext,
 )
-from pyrit.executor.attack.compound import SequenceCompletionPolicy, SequentialAttack, SequentialChildAttack
 from pyrit.executor.attack.core.attack_strategy import _DefaultAttackStrategyEventHandler
 from pyrit.executor.core import Strategy
 from pyrit.memory import SQLiteMemory

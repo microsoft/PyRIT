@@ -13,11 +13,16 @@ from typing import Any
 import pytest
 
 from pyrit.common import apply_defaults, forward_init_parameters
-from pyrit.converter import BinaryConverter, CodeAttackConverter, SATAMaskingConverter
-from pyrit.converter.text_selection_strategy import WordProportionSelectionStrategy, WordSelectionStrategy
+from pyrit.converter import (
+    BinaryConverter,
+    CodeAttackConverter,
+    SATAMaskingConverter,
+    WordProportionSelectionStrategy,
+    WordSelectionStrategy,
+)
 from pyrit.converter.word_level_converter import WordLevelConverter
 from pyrit.models import Parameter, StructuredParameterValue
-from pyrit.registry.components import ConverterRegistry
+from pyrit.registry import ConverterRegistry
 from pyrit.registry.resolution import (
     _json_input_type,
     _resolve_structured_input,
@@ -194,7 +199,9 @@ def test_structured_input_requires_an_explicit_contract() -> None:
     ("annotation", "expected"),
     [
         (Collection[str] | None, list[str] | None),
+        (Collection[str | int], list[str | int]),
         (Sequence[int], list[int]),
+        (Sequence[list[int]] | None, list[list[int]] | None),
         (list[int], list[int]),
         (dict[str, int], dict[str, int]),
         (Mapping[str, int] | None, Mapping[str, int] | None),

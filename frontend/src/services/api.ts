@@ -35,12 +35,14 @@ import type {
   LabelOptionsResponse,
   CreateAttackResponse,
   AttackSummary,
+  AttackMetadata,
   AttackListResponse,
   DatasetListResponse,
   SeedExampleDetailResponse,
   SeedExampleListParams,
   SeedExampleListResponse,
   ConversationMessagesResponse,
+  ConversationPageParams,
   AddMessageRequest,
   AddMessageResponse,
   MessageSendRequest,
@@ -80,6 +82,8 @@ import type {
   AuthAccess,
   BackendScore,
   ManualScoreRequest,
+  MediaUploadRequest,
+  MediaUploadResponse,
   UpdateAttackRequest,
   SaveConversationRequest,
   Finding,
@@ -106,6 +110,12 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
+export const mediaApi = {
+  upload: async (request: MediaUploadRequest): Promise<MediaUploadResponse> => {
+    return (await apiClient.post<MediaUploadResponse>('/media/uploads', request)).data
+  },
+}
+
 const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
 
 export const operationsApi = {
@@ -128,7 +138,7 @@ export const operationsApi = {
     await apiClient.delete(operationPath(operationId))
   },
   listFindings: async (
-    operationId: string, params: { limit: number; offset: number; title?: string },
+    operationId: string, params: { limit: number; offset: number; title?: string; title_pattern?: string },
   ): Promise<FindingListResponse> => {
     return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
   },
@@ -492,6 +502,14 @@ export const attacksApi = {
     return response.data
   },
 
+  getAttackMetadata: async (attackResultId: string, conversationId?: string): Promise<AttackMetadata> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/metadata`
+    const response = conversationId === undefined
+      ? await apiClient.get(url)
+      : await apiClient.get(url, { params: { conversation_id: conversationId } })
+    return response.data
+  },
+
   updateAttack: async (attackResultId: string, request: UpdateAttackRequest): Promise<AttackSummary> => {
     const response = await apiClient.patch(`/attacks/${encodeURIComponent(attackResultId)}`, request)
     return response.data
@@ -509,10 +527,12 @@ export const attacksApi = {
     return response.data
   },
 
-  getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
+  getMessages: async (
+    attackResultId: string, conversationId: string, params?: ConversationPageParams,
+  ): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
-      { params: { conversation_id: conversationId } }
+      { params: { conversation_id: conversationId, ...params } }
     )
     return response.data
   },
@@ -542,10 +562,11 @@ export const attacksApi = {
     return response.data
   },
 
-  getConversations: async (attackResultId: string): Promise<AttackConversationsResponse> => {
-    const response = await apiClient.get(
-      `/attacks/${encodeURIComponent(attackResultId)}/conversations`
-    )
+  getConversations: async (
+    attackResultId: string, params?: ConversationPageParams,
+  ): Promise<AttackConversationsResponse> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/conversations`
+    const response = params ? await apiClient.get(url, { params }) : await apiClient.get(url)
     return response.data
   },
 
@@ -902,12 +923,16 @@ export const scenarioSuitesApi = {
 const MAX_SEED_SEARCH_LENGTH = 1_000
 
 function seedListQuery(params: SeedExampleListParams): Record<string, string | number | readonly string[]> {
+  if (params.search != null && params.value_pattern != null) {
+    throw new Error('Supply either literal search or value_pattern, not both.')
+  }
   const query: Record<string, string | number | readonly string[]> = {
     selection_key: params.selection_key,
   }
   if (params.limit != null) query.limit = params.limit
   if (params.cursor) query.cursor = params.cursor
   if (params.search) query.search = params.search.slice(0, MAX_SEED_SEARCH_LENGTH)
+  if (params.value_pattern != null) query.value_pattern = params.value_pattern
   if (params.modality && params.modality.length > 0) query.modality = params.modality
   if (params.seed_type && params.seed_type.length > 0) query.seed_type = params.seed_type
   if (params.harm_category && params.harm_category.length > 0) query.harm_category = params.harm_category

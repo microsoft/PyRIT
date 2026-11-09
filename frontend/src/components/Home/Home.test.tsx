@@ -9,6 +9,9 @@ import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
 import type { AttackSummary, OperationListItem, ScenarioRunListItem, ScenarioRunState } from '@/types'
 
 import Home from './Home'
+import { advanceAutoRefresh, installAutoRefreshTimers } from '@/test-utils/autoRefresh'
+
+installAutoRefreshTimers()
 
 jest.mock('@/services/api', () => ({
   attacksApi: { listAttacks: jest.fn() },
@@ -100,7 +103,7 @@ describe('Home', () => {
     render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
     await screen.findByText('Your recent work will appear here')
 
-    await user.click(screen.getByRole('button', { name: 'Refresh Home' }))
+    await advanceAutoRefresh()
     const delayedScan = await screen.findByRole('button', { name: /Delayed completion scan/ })
     await user.click(screen.getByRole('tab', { name: 'All', exact: true }))
     expect(delayedScan).toBeVisible()
@@ -288,6 +291,27 @@ describe('Home', () => {
     expect(mockOperations).toHaveBeenCalledTimes(1)
   })
 
+  it('should not present a partial page of recent attacks as operation totals', async () => {
+    mockAttacks.mockResolvedValue({
+      items: Array.from({ length: 5 }, (_, index: number) => attack({
+        attack_result_id: `attack-${index}`,
+        operation_id: 'saved-operation',
+        operation_name: 'Saved operation',
+      })),
+      pagination: { ...PAGINATION, has_more: true, next_cursor: 'more-attacks' },
+    })
+    mockOperations.mockResolvedValue({ items: [operation()] })
+
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+
+    const recent = await screen.findByRole('list')
+    expect(within(recent).getAllByRole('button')).toHaveLength(5)
+    const operations = screen.getByRole('region', { name: 'Operations', exact: true })
+    await within(operations).findByRole('button', { name: /Saved operation A real saved engagement/ })
+    expect(within(operations).queryByText(/attacks|total|sample|more in history/i)).not.toBeInTheDocument()
+    expect(mockAttacks).toHaveBeenCalledWith({ limit: 5, include_scenario_attacks: false })
+  })
+
   it('should rank newest-created operations when no saved operation is selected', async () => {
     mockOperations.mockResolvedValue({ items: [
       operation({ id: 'old', name: 'A old', created_at: '2026-10-01T00:00:00Z' }),
@@ -312,21 +336,30 @@ describe('Home', () => {
     expect(links[1]).toHaveAccessibleName(/^Saved operation/)
   })
 
-  it('should keep successful sources visible when another fails and retry without an empty-success fallback', async () => {
-    const user = userEvent.setup()
+  it('should keep successful sources visible when another fails and recover automatically', async () => {
     mockAttacks.mockRejectedValueOnce(new Error('Attack service unavailable'))
     mockScans.mockResolvedValue({ items: [scan()], pagination: PAGINATION })
     mockOperations.mockRejectedValueOnce(new Error('Operations unavailable'))
     render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
-    expect(await screen.findByText(/Could not load recent attacks/)).toBeInTheDocument()
+    expect(await screen.findByText('Attack service unavailable')).toBeInTheDocument()
     expect(screen.getByText('Safety scan')).toBeInTheDocument()
-    expect(await screen.findByText(/Could not load operations:/)).toBeInTheDocument()
+    expect(await screen.findByText('Operations unavailable')).toBeInTheDocument()
     expect(screen.queryByText('Your recent work will appear here')).not.toBeInTheDocument()
     expect(screen.queryByText('Keep related work together')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Retry operations' }))
+    expect(screen.queryByRole('button', { name: /Refresh Home|Retry/ })).not.toBeInTheDocument()
+    await advanceAutoRefresh()
     await screen.findByText('Keep related work together')
     expect(mockAttacks).toHaveBeenCalledTimes(2)
-    expect(screen.queryByText(/Could not load recent attacks/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Attack service unavailable')).not.toBeInTheDocument()
+  })
+
+  it('should show an identical source error only once', async () => {
+    mockAttacks.mockRejectedValueOnce(new Error('Recent service unavailable'))
+    mockScans.mockRejectedValueOnce(new Error('Recent service unavailable'))
+    render(<TestWrapper><Home {...defaultProps} /></TestWrapper>)
+    await screen.findByText('Recent service unavailable')
+    await waitFor(() => expect(screen.queryByText('Loading recent work...')).not.toBeInTheDocument())
+    expect(screen.getAllByText('Recent service unavailable')).toHaveLength(1)
   })
 
   it('should show loading rather than empty while summaries are pending and ignore stale runtime results', async () => {

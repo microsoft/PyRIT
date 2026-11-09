@@ -8,9 +8,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults, warn_if_set
 from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
-from pyrit.common.utils import warn_if_set
 from pyrit.exceptions import AdversarialChatResponseBlockedException, ComponentRole, execution_context
 from pyrit.executor.attack.component import (
     ConversationManager,
@@ -48,14 +47,13 @@ from pyrit.models import (
     Score,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import CapabilityName
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.score.score_utils import score_is_true
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from pyrit.prompt_target.common.prompt_target import PromptTarget
+    from pyrit.prompt_target import PromptTarget
 
 logger = logging.getLogger(__name__)
 

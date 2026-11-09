@@ -126,11 +126,15 @@ def make_assert_systematization() -> AssertSystematization:
 
 
 def make_assert_result(
-    *, config: AssertGenerationConfig | None = None, duplicate_text: bool = False, system_prompt: str = ""
+    *,
+    config: AssertGenerationConfig | None = None,
+    duplicate_text: bool = False,
+    system_prompt: str = "",
+    taxonomy: AssertTaxonomy | None = None,
 ) -> AssertGeneratorResult:
     """Build native seed groups, assignments, and coverage without model calls."""
     config = config or make_assert_config()
-    taxonomy = make_assert_taxonomy()
+    taxonomy = taxonomy or make_assert_taxonomy()
     dimensions = tuple(
         dimension
         if dimension.levels

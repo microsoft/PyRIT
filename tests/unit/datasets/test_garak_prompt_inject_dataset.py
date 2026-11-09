@@ -5,7 +5,7 @@
 
 from pathlib import Path
 
-from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
+from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
 from pyrit.models import SeedPrompt
 
 _DATASET_DIRECTORY = Path(__file__).parents[3] / "pyrit" / "datasets" / "seed_datasets" / "local" / "garak"

@@ -49,7 +49,7 @@ from pyrit.models.identifiers.scorer_identifier import ScorerIdentifier
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
 
 if TYPE_CHECKING:
-    from pyrit.executor.attack.core.attack_strategy import AttackStrategy
+    from pyrit.executor.attack import AttackStrategy
 
 # ``AttackIdentifier`` is imported for the eval-config deriver's type graph walk.
 _ = AttackIdentifier
@@ -448,9 +448,10 @@ class ScorerEvaluationIdentifier(EvaluationIdentifier):
 
     Rules are derived from ``ScorerIdentifier``'s field markers. The
     ``prompt_target`` child is projected to behavioral target params only
-    (``underlying_model_name``, ``temperature``, ``top_p``) and wrapper targets
-    are unwrapped, so the same scorer configuration on different deployments
-    produces the same eval hash.
+    (``underlying_model_name``, ``temperature``, ``top_p`` and, for raw HTTP
+    targets, ``http_request_fingerprint``) and wrapper targets are unwrapped, so
+    the same scorer configuration on different deployments produces the same
+    eval hash.
     """
 
     EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = ScorerIdentifier
@@ -476,9 +477,10 @@ class ObjectiveTargetEvaluationIdentifier(EvaluationIdentifier):
 
     Rules are derived from ``TargetIdentifier``'s field markers: the target's own
     params are filtered to the behavioral set (``underlying_model_name``,
-    ``temperature``, ``top_p``) via the derived ``OWN_RULE``, and wrapper targets
-    (e.g. ``RoundRobinTarget``) are unwrapped at the root, so the same logical
-    target produces the same eval hash whether bare or wrapped.
+    ``temperature``, ``top_p``, ``http_request_fingerprint``) via the derived
+    ``OWN_RULE``, and wrapper targets (e.g. ``RoundRobinTarget``) are unwrapped
+    at the root, so the same logical target produces the same eval hash whether
+    bare or wrapped.
     """
 
     EVAL_ROOT: ClassVar[type[ComponentIdentifier] | None] = TargetIdentifier

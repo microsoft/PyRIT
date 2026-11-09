@@ -7,9 +7,8 @@ test("creates and selects a runtime technique with the real backend @seeded", as
   for (const name of ["objective_scorer_chat", "adversarial_chat", "registry_local_objective"]) {
     const existing = await request.get(`/api/targets/${name}`, { headers });
     if (existing.status() === 404) {
-      const created = await request.post("/api/targets", { headers, data: name === "registry_local_objective"
-        ? { name, type: "TextTarget", params: {} }
-        : { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
+      const created = await request.post("/api/targets", { headers, data:
+        { name, type: "OpenAIChatTarget", auth_mode: "api_key", params: {
           endpoint: "http://127.0.0.1:9/v1", model_name: "local-test", api_key: "local-test-only",
         } } });
       expect(created.ok(), await created.text()).toBe(true);
@@ -474,9 +473,8 @@ test.describe("Converter Registry", () => {
     await expect(removeDialog.locator(":focus")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(removeDialog).toBeHidden();
-    // The row that opened the dialog was replaced by the refresh, so focus
-    // falls back to the always-mounted header action.
-    await expect(page.getByRole("button", { name: "New Converter" })).toBeFocused();
+    // The quiet read keeps the keyed row mounted, so focus returns to its opener.
+    await expect(removeTrigger).toBeFocused();
   });
 
   test("keeps a stale submission failure out of a reopened add dialog", async ({ page }) => {

@@ -7,12 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
-    VLSUCategory,
+from pyrit.datasets.seed_datasets.remote import (
     _VLSUMultimodalDataset,
 )
-from pyrit.memory import MemoryInterface
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
+    VLSUCategory,
+)
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import SeedDataset
 
 
