@@ -28,6 +28,13 @@ class _HrefParser(HTMLParser):
         '<a href="data:text/html,<script>alert(1)</script>">x</a>',
         '<iframe srcdoc="<script>alert(1)</script>"></iframe>',
         "<svg><script>alert(1)</script></svg>",
+        "<svg><animate onbegin=alert(1) attributeName=x dur=1s></svg>",
+        "<body onpageshow=alert(1)>",
+        "<marquee onstart=alert(1)>",
+        "<div onpointerup=alert(1)>x</div>",
+        "<video src=x onloadstart=alert(1)>",
+        "<audio autoplay onplay=alert(1) src=x>",
+        "<input oninvalid=alert(1) required>",
     ],
 )
 async def test_xss_detected(text: str, patch_central_database):
