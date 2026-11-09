@@ -22,14 +22,35 @@ class SandboxExecutionError(Exception):
     """
 
 
+class SandboxInputError(ValueError):
+    """The request was invalid, so nothing ran. The caller, or a model, can correct it."""
+
+
+class SandboxBusyError(SandboxExecutionError):
+    """The sandbox could not start the work right now, and nothing ran."""
+
+
+class SandboxSessionLostError(SandboxExecutionError):
+    """The session ended or expired before the work started, so nothing ran."""
+
+
+class SandboxUnavailableError(SandboxExecutionError):
+    """PyRIT refused the work, and nothing ran: the sandbox is closed, or quarantined until an operator acts."""
+
+
+class SandboxRevisionChangedError(SandboxExecutionError):
+    """A reset was refused because the sandbox's revision is not the one the caller expected."""
+
+
 @runtime_checkable
 class SandboxClient(Protocol):
     """
     Connect to a caller-configured backend that runs code in isolation.
 
-    Each invocation runs in a fresh environment. The client requests execution and cleanup,
-    and waits for cleanup before a cancelled call returns. It does not set up the backend
-    service, build images, or retain environments between calls.
+    A sandbox may keep state between calls: files a program writes can still be there for the
+    next call, until the sandbox is reset. Clients built on the ``Sandbox`` base class report
+    which kind they are in their capabilities. The client requests execution and cleanup, and does
+    not leave a cancelled call's work behind. It does not set up the backend service or build images.
     A runtime profile is a trusted name the client maps to its own configuration; the program
     cannot choose an image or a command. The caller supplies the running backend and trusted
     runtimes, and decides how to use the returned results.
@@ -47,7 +68,7 @@ class SandboxClient(Protocol):
         self, *, program: str, runtime_profile_name: _RuntimeProfileName, invocations: tuple[_ProgramInvocation, ...]
     ) -> _SandboxRun:
         """
-        Run each invocation of the program once, in order, in a fresh isolated environment.
+        Run each invocation of the program once, in order, in an isolated environment.
 
         Args:
             program (str): The code to run, without extracting it from surrounding prose.

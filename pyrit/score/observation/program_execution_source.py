@@ -9,7 +9,7 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING
 
-from pyrit._code_execution import SandboxExecutionError
+from pyrit._code_execution import SandboxExecutionError, SandboxInputError
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     Acquisition,
@@ -41,10 +41,12 @@ class ProgramExecutionSource:
     references. A message must contain exactly one text piece; blocked or failed responses
     leave evidence unavailable. Code is not extracted from prose.
 
-    Each acquisition runs afresh and returns a new observation. Program failures are execution
+    Each acquisition runs the program again and returns a new observation. A sandbox may keep state
+    between calls, so a program can observe what earlier calls left. Program failures are execution
     evidence; infrastructure failures are acquisition errors. A run that stops after some
     invocations leaves partial evidence. Streams retain at most ``max_output_chars`` characters
-    with truncation flags, and cleanup warnings remain in ``sandbox_warnings`` metadata.
+    with truncation flags. Cleanup warnings remain in ``sandbox_warnings`` metadata, and the
+    sandbox's own run identifiers, when it reports them, in ``sandbox_execution_ids``.
     """
 
     def __init__(self, *, sandbox: SandboxClient, max_output_chars: int = 64_000) -> None:
@@ -106,6 +108,10 @@ class ProgramExecutionSource:
                 runtime_profile_name=scorable.runtime_profile_name,
                 invocations=scorable.invocations,
             )
+        except SandboxInputError as error:
+            return self._observation(
+                scorable=scorable, acquisition=Acquisition.UNAVAILABLE, reasons=(f"the sandbox rejected it: {error}",)
+            )
         except SandboxExecutionError as error:
             logger.warning("Sandbox could not run program under %s: %s", scorable.runtime_profile_name, error)
             return self._observation(
@@ -129,8 +135,13 @@ class ProgramExecutionSource:
                 program_sha256=program_sha256 if events else None,
                 reasons=reasons,
             )
+        metadata: dict[str, str] = {}
         if run.warnings:
-            observation = observation.model_copy(update={"metadata": {"sandbox_warnings": "; ".join(run.warnings)}})
+            metadata["sandbox_warnings"] = "; ".join(run.warnings)
+        if run.execution_ids:
+            metadata["sandbox_execution_ids"] = ", ".join(run.execution_ids)
+        if metadata:
+            observation = observation.model_copy(update={"metadata": metadata})
         return observation
 
     async def _resolve_program_async(self, *, scorable: ProgramExecutionScorable) -> str:

@@ -15,7 +15,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxExecutionError
+from pyrit._code_execution import (
+    DockerRuntimeProfile,
+    DockerSandboxClient,
+    Sandbox,
+    SandboxClient,
+    SandboxExecutionError,
+    SandboxInputError,
+    SandboxStateKind,
+)
 from pyrit._code_execution.docker_client import _ClientOutput, _ContainerState, _InvocationResult
 from pyrit.models.code_execution import _ProgramInvocation, _SandboxRun
 
@@ -96,9 +104,12 @@ def _control(
     return AsyncMock(side_effect=command_async)
 
 
-async def _run_async(client: DockerSandboxClient) -> _SandboxRun:
+async def _run_async(client: DockerSandboxClient, *, timeout_seconds: float | None = None) -> _SandboxRun:
     return await client.execute_async(
-        program="print('ok')", runtime_profile_name="python", invocations=(_ProgramInvocation(),)
+        program="print('ok')",
+        runtime_profile_name="python",
+        invocations=(_ProgramInvocation(),),
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -283,15 +294,14 @@ async def test_deadline_distinguishes_stalled_capture_client_and_program_async(
 ) -> None:
     process, control = _process(returncode=None, eof=eof), _control(state=state)
     with (
-        patch.object(client, "_timeout_seconds", 0.05),
         patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=process),
         patch.object(client, "_control_async", control),
     ):
         if error is not None:
             with pytest.raises(SandboxExecutionError, match=error):
-                await _run_async(client)
+                await _run_async(client, timeout_seconds=0.05)
         else:
-            event = (await _run_async(client)).events[0]
+            event = (await _run_async(client, timeout_seconds=0.05)).events[0]
             assert event.timed_out is (not eof)
             assert event.exit_code == (0 if eof else None)
             assert event.stdout_truncated and event.stderr_truncated
@@ -404,7 +414,7 @@ async def test_partial_workspace_is_removed_after_write_failure_async(
         patch.object(client, "_control_async", _control()),
         patch("pathlib.Path.write_bytes", side_effect=OSError("disk full")),
         patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as launch,
-        pytest.raises(OSError, match="disk full"),
+        pytest.raises(SandboxExecutionError, match="disk full"),
     ):
         await _run_async(client)
     launch.assert_not_awaited()
@@ -564,3 +574,33 @@ def test_profiles_are_explicit_trusted_configuration() -> None:
         DockerSandboxClient(profiles={})
     with pytest.raises(ValueError):
         DockerSandboxClient(profiles={"bad name": DockerRuntimeProfile(image=_IMAGE, command=("python3",))})
+
+
+def test_docker_is_a_call_sandbox_with_its_configured_limits(client: DockerSandboxClient) -> None:
+    capabilities = client.get_capabilities()
+    assert isinstance(client, Sandbox) and isinstance(client, SandboxClient)
+    assert capabilities.state_kind is SandboxStateKind.CALL
+    assert client.get_runtime_profile_names() == frozenset({"python"})
+    assert capabilities.default_timeout_seconds == capabilities.max_timeout_seconds == 10.0
+    assert capabilities.max_output_bytes == 64_000 and capabilities.file_runtime_profile_name is None
+
+
+def test_profile_names_that_differ_only_in_punctuation_are_allowed() -> None:
+    profile = DockerRuntimeProfile(image=_IMAGE, command=("python3",))
+    client = DockerSandboxClient(profiles={"py-3": profile, "py_3": profile})
+    assert client.get_runtime_profile_names() == frozenset({"py-3", "py_3"})
+
+
+async def test_long_arguments_are_rejected_before_a_container_starts_async(client: DockerSandboxClient) -> None:
+    with (
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as launch,
+        patch.object(client, "_control_async", _control()) as control,
+        pytest.raises(SandboxInputError, match="standard input"),
+    ):
+        await client.execute_async(
+            program="print(1)",
+            runtime_profile_name="python",
+            invocations=(_ProgramInvocation(arguments=("x" * 20_000,)),),
+        )
+    launch.assert_not_awaited()
+    control.assert_not_awaited()
