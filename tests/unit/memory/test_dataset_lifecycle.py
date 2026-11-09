@@ -19,10 +19,10 @@ from pyrit.backend.models.datasets import DatasetUploadManifest
 from pyrit.backend.services.dataset_upload_service import _validated_seeds
 from pyrit.common import Singleton
 from pyrit.memory import CentralMemory, SeedEntry, SQLiteMemory
-from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
+from pyrit.memory.dataset_lifecycle import DatasetNameConflictError, entry_references_dataset_assets
 from pyrit.memory.dataset_mutation import DatasetVersionConflictError, dataset_version, editable_seed
-from pyrit.memory.memory_models import DatasetLifecycleEntry
-from pyrit.models import SeedPrompt, SeedRecord, SeedUnion
+from pyrit.memory.memory_models import DatasetLifecycleEntry, PromptMemoryEntry
+from pyrit.models import MessagePiece, SeedPrompt, SeedRecord, SeedUnion
 from pyrit.setup import SQLITE, initialize_pyrit_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -595,3 +595,33 @@ async def test_upload_publication_is_fenced_after_ownership_is_lost(
     write.assert_not_awaited()
     await first.release_dataset_upload_async(upload_id)
     await second.recover_dataset_cleanup_async()
+
+
+def test_only_seeds_and_media_rows_reference_dataset_assets(tmp_path: Path) -> None:
+    text = PromptMemoryEntry(entry=MessagePiece(conversation_id="c", role="user", original_value="hello"))
+    media = PromptMemoryEntry(
+        entry=MessagePiece(
+            conversation_id="c",
+            role="user",
+            original_value=str(tmp_path / "image.png"),
+            original_value_data_type="image_path",
+        )
+    )
+    seed = SeedEntry(entry=SeedPrompt(value="text seed", dataset_name="any", added_by="test"))
+    assert not entry_references_dataset_assets(text)
+    assert entry_references_dataset_assets(media)
+    assert entry_references_dataset_assets(seed)
+
+
+async def test_text_message_writes_skip_the_lifecycle_lock_but_seeds_take_it(
+    memories: tuple[SQLiteMemory, SQLiteMemory],
+) -> None:
+    memory = memories[0]
+    async with await memory.get_session_async() as session:
+        session.add(PromptMemoryEntry(entry=MessagePiece(conversation_id="c", role="user", original_value="hi")))
+        await session.flush()
+        assert not session.info.get("dataset_lifecycle_locked")
+        session.add(SeedEntry(entry=SeedPrompt(value="seed", dataset_name="locked", added_by="test")))
+        await session.flush()
+        assert session.info.get("dataset_lifecycle_locked")
+        await session.commit()

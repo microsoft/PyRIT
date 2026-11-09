@@ -75,18 +75,28 @@ class MemorySession(Session):
         if self._flushing:
             super().flush(objects)
             return
-        references = [
+        writes = [
             entry
             for entry in self.new | self.dirty | self.deleted
             if isinstance(entry, (SeedEntry, PromptMemoryEntry, ScorableContentEntry))
         ]
-        if references:
-            from pyrit.memory.dataset_lifecycle import lock_dataset_lifecycle, validate_dataset_reference_writes
-
-            lock_dataset_lifecycle(self)
-            validate_dataset_reference_writes(
-                session=self, entries=[entry for entry in references if entry not in self.deleted]
+        if writes:
+            from pyrit.memory.dataset_lifecycle import (
+                entry_references_dataset_assets,
+                lock_dataset_lifecycle,
+                validate_dataset_reference_writes,
             )
+
+            # Only seeds and media-bearing rows can reference dataset assets. Text-only message
+            # writes skip the global lifecycle lock so concurrent conversations are not serialized.
+            references = [entry for entry in writes if entry_references_dataset_assets(entry)]
+            if references:
+                lock_dataset_lifecycle(self)
+                validate_dataset_reference_writes(
+                    session=self, entries=[entry for entry in references if entry not in self.deleted]
+                )
+            else:
+                _begin_sqlite_write(self)
         with self.no_autoflush:
             removed = [entry for entry in self.deleted if isinstance(entry, ScoreEntry)]
             removed_links = [entry for entry in self.deleted if isinstance(entry, ScoreObservationEntry)]

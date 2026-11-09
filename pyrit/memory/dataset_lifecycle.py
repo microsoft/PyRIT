@@ -100,6 +100,25 @@ def lock_dataset_lifecycle(session: Session) -> None:
     session.info["dataset_lifecycle_locked"] = True
 
 
+def entry_references_dataset_assets(entry: object) -> bool:
+    """
+    Return whether writing ``entry`` can add or change a dataset reference.
+
+    Seeds always can, through dataset names and reservations. Message pieces and scorable
+    content reference dataset assets only through media-path values; cleanup never inspects
+    text rows, so text-only writes do not need the lifecycle lock.
+
+    Args:
+        entry (object): A pending ORM entry.
+
+    Returns:
+        bool: True when writing the entry must hold the dataset lifecycle lock.
+    """
+    if isinstance(entry, SeedEntry):
+        return True
+    return bool(_entry_media_values(entry))
+
+
 def _entry_media_values(entry: object) -> list[str]:
     if isinstance(entry, SeedEntry):
         try:
