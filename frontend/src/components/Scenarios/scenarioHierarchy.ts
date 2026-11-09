@@ -84,7 +84,10 @@ export function mergeRootPage(
       indexById.set(group.atomic_group_id, merged.length)
       merged.push({ ...group, roots: [...group.roots] })
     } else {
-      merged[i] = { ...merged[i], counts: group.counts, roots: [...merged[i].roots, ...group.roots] }
+      const targetGroup = merged[i]
+      if (targetGroup) {
+        merged[i] = { ...targetGroup, counts: group.counts, roots: [...targetGroup.roots, ...group.roots] }
+      }
     }
   }
   return merged

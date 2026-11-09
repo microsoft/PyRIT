@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from pyrit.common import forward_init_parameters
-from pyrit.exceptions.exception_classes import (
+from pyrit.exceptions import (
     pyrit_target_retry,
 )
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request

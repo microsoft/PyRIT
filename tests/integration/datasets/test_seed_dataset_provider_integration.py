@@ -8,12 +8,12 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets import SeedDatasetProvider
-from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
-from pyrit.datasets.seed_datasets.remote import _SimpleSafetyTestsDataset, _XSTestDataset
-from pyrit.datasets.seed_datasets.seed_metadata import (
+from pyrit.datasets import (
     SeedDatasetFilter,
+    SeedDatasetProvider,
 )
+from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
+from pyrit.datasets.seed_datasets.remote import _SimpleSafetyTestsDataset, _XSTestDataset
 from pyrit.models import ComponentIdentifier, SeedDataset, SeedPrompt
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ class TestRemoteFilteringIntegration:
         harm_categories: list,
     ) -> type:
         """Build a minimal concrete SeedDatasetProvider with class-level metadata."""
-        from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import _RemoteDatasetLoader
+        from pyrit.datasets.seed_datasets.remote import _RemoteDatasetLoader
 
         captured_name = name
 
@@ -614,7 +614,7 @@ class TestHarmbenchMetadataInScenario:
 
     async def test_harmbench_metadata_parses_correctly(self):
         """HarmBench's class-level metadata is correctly parsed into sets."""
-        from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
+        from pyrit.datasets.seed_datasets.remote import _HarmBenchDataset
 
         loader = _HarmBenchDataset()
         metadata = await loader._parse_metadata_async()
@@ -669,13 +669,13 @@ class TestHarmbenchMetadataInScenario:
         """
         from unittest.mock import MagicMock
 
-        from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+        from pyrit.executor.attack import AttackScoringConfig
         from pyrit.prompt_target import TextTarget
-        from pyrit.scenario.scenarios.foundry.red_team_agent import (
+        from pyrit.scenario.scenarios.foundry import (
             FoundryTechnique,
             RedTeamAgent,
         )
-        from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+        from pyrit.score import TrueFalseScorer
 
         # Load harmbench into memory
         datasets = await SeedDatasetProvider.fetch_datasets_async(

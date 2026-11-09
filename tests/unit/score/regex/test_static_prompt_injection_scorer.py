@@ -5,8 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.score import StaticPromptInjectionScorer
 
 # ---------------------------------------------------------------------------

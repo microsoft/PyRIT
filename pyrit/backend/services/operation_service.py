@@ -4,7 +4,7 @@
 from collections.abc import Sequence
 from uuid import UUID, uuid4
 
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
     AttackFindingItem,
     AttackFindingListResponse,
@@ -188,7 +188,13 @@ class OperationService:
         return saved
 
     async def list_findings_async(
-        self, *, operation_id: UUID, limit: int, offset: int, title_query: str | None = None
+        self,
+        *,
+        operation_id: UUID,
+        limit: int,
+        offset: int,
+        title_query: str | None = None,
+        title_pattern: str | None = None,
     ) -> FindingListResponse:
         """
         Read one page of an operation's findings and whether there is a next page.
@@ -198,7 +204,11 @@ class OperationService:
         """
         await self.get_async(operation_id)
         findings = await CentralMemory.get_memory_instance().get_findings_async(
-            operation_id=operation_id, limit=limit + 1, offset=offset, title_query=title_query
+            operation_id=operation_id,
+            limit=limit + 1,
+            offset=offset,
+            title_query=title_query,
+            title_pattern=title_pattern,
         )
         has_more = len(findings) > limit
         page = findings[:limit]

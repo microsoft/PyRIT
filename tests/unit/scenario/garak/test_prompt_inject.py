@@ -9,13 +9,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.analytics.technique_analysis import compute_technique_stats_async
+from pyrit.analytics import compute_technique_stats_async
 from pyrit.converter import Converter, SearchReplaceConverter
 from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
+from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario.core import DatasetConstraintError
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PromptInject,
     PromptInjectDatasetConfiguration,

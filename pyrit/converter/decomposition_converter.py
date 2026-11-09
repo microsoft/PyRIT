@@ -9,7 +9,7 @@ import uuid
 from collections import Counter
 from typing import Any
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE, apply_defaults
+from pyrit.common import REQUIRED_VALUE, apply_defaults
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
 from pyrit.converter.converter import Converter, ConverterResult
 from pyrit.exceptions import InvalidJsonException, pyrit_json_retry, remove_markdown_json

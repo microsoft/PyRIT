@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.backend.models.attacks import ConversationMessagesResponse
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.models import ConversationMessagesResponse
+from pyrit.backend.services import AttackService, ScenarioRunService
 from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.backend.services.scenario_run_service import (
     _LAUNCH_REFERENCES_METADATA_KEY,
@@ -23,7 +23,6 @@ from pyrit.backend.services.scenario_run_service import (
     _OPTIONAL_LAUNCH_FIELDS,
     ScenarioRunConflictError,
     ScenarioRunNotFoundError,
-    ScenarioRunService,
     _PreparedRun,
 )
 from pyrit.datasets import SeedDatasetProvider
@@ -58,10 +57,10 @@ from pyrit.models import (
     SeedDataset,
     SeedObjective,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.catalog import RunScenarioRequest, ScenarioRunSummary
 from pyrit.models.seeds import yaml_seed_loader
 from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, ScorerRegistry, TargetRegistry
-from pyrit.scenario import DatasetAttackConfiguration, IncompatibleTechniquePolicy
+from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, IncompatibleTechniquePolicy
 from pyrit.scenario.core import (
     AtomicAttack,
     AttackTechnique,
@@ -70,10 +69,10 @@ from pyrit.scenario.core import (
     ScenarioTechnique,
     get_default_adversarial_target,
 )
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse, _build_rapid_response_technique
-from pyrit.scenario.scenarios.foundry.red_team_agent import RedTeamAgent
+from pyrit.scenario.scenarios.airt import RapidResponse
+from pyrit.scenario.scenarios.airt.rapid_response import _build_rapid_response_technique
+from pyrit.scenario.scenarios.foundry import RedTeamAgent
 from pyrit.score import SubStringScorer
 from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
 from unit.mocks import MockPromptTarget

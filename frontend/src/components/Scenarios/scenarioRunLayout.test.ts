@@ -60,7 +60,11 @@ describe('singleAtomicGroupId', () => {
     ['more than one planned attack', { ...SUMMARY, overall: { ...COUNTS, planned: 2 } }, [], 0],
     ['an unknown plan', { ...SUMMARY, overall: { ...COUNTS, planned: null } }, [], 0],
     ['more than one execution', SUMMARY, [], 2],
+    ['no display groups', { ...SUMMARY, display_groups: [] }, [], 0],
+    ['no atomic group', { ...SUMMARY, display_groups: [{ ...GROUP, atomic_group_ids: [] }] }, [], 0],
+    ['two atomic groups', { ...SUMMARY, display_groups: [{ ...GROUP, atomic_group_ids: ['group', 'other'] }] }, [], 0],
     ['two display groups', { ...SUMMARY, display_groups: [GROUP, { ...GROUP, id: 'other', atomic_group_ids: ['other'] }] }, [], 0],
+    ['two saved roots', SUMMARY, [hierarchyGroup([root(), root({ attack_result_id: 'other' })])], 1],
     ['a compound root', SUMMARY, [hierarchyGroup([root({ child_attack_result_ids: ['child'] })])], 1],
   ] as const)('should not treat a run with %s as a single attack', (_label, summary, groups, loaded) => {
     expect(singleAtomicGroupId(summary, groups, loaded)).toBeNull()
@@ -78,6 +82,10 @@ describe('singleAttackAttempt', () => {
 })
 
 describe('liveAttacks', () => {
+  it('should have no running attacks when no conversations are active', () => {
+    expect(liveAttacks([])).toEqual([])
+  })
+
   it('should list each running attack once with all of its conversations counted', () => {
     const attacks = liveAttacks([LIVE, { ...LIVE, conversation_id: 'live-first', conversation_ids: undefined }, { ...LIVE, attack_result_id: 'other', conversation_ids: undefined }])
     expect(attacks.map((attack) => [attack.conversation.attack_result_id, attack.conversationCount])).toEqual([['live', 2], ['other', 1]])

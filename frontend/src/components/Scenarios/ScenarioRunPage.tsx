@@ -87,6 +87,14 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const runningAttacks = useMemo(() => liveAttacks(state.activeConversations), [state.activeConversations])
   const savedConversations = useMemo(() => interruptedConversations(state), [state])
 
+  const closeObjective = (): void => {
+    setObjective(null)
+    requestAnimationFrame(() => {
+      const trigger = objectiveTrigger.current
+      if (trigger?.isConnected) trigger.focus()
+    })
+  }
+
   const backLinkElement = <Link to={backLink.path} className={styles.backLink}><ArrowLeftRegular /> {backLink.label}</Link>
 
   if (!state.run || !state.summary) return (
@@ -175,7 +183,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
         hierarchySelection={attackDetails.hierarchySelection}
         onClose={attackDetails.close}
       />
-      <ObjectiveDetailsDialog objective={objective} onClose={() => { setObjective(null) }}
+      <ObjectiveDetailsDialog objective={objective} onClose={closeObjective}
         attempts={objective ? attemptsBySeed.get(objective.id) ?? [] : []} techniqueNames={techniqueNames}
         onOpenAttempt={openObjectiveAttempt} scenarioResultId={scenarioResultId} />
     </main>

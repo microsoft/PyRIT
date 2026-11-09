@@ -40,6 +40,7 @@ export default function AtomicAttackGroupsSection({
     const groupedAttempts = new Map<string, ScenarioProgressResult[]>()
     for (let index = results.length - 1; index >= 0; index -= 1) {
       const attempt = results[index]
+      if (!attempt) continue
       const existing = groupedAttempts.get(attempt.atomic_group_id)
       if (existing) {
         existing.push(attempt)
@@ -93,6 +94,7 @@ export default function AtomicAttackGroupsSection({
                 {displayGroups.map((group) => {
                   const attempts = (group.atomic_group_ids ?? [])
                     .flatMap((atomicGroupId) => attemptsByGroupId.get(atomicGroupId) ?? [])
+                    .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
                   const expanded = expandedGroupChoices.get(group.id) ?? defaultExpanded
                   const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
                   return (

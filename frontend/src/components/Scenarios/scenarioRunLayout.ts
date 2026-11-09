@@ -20,13 +20,15 @@ export function singleAtomicGroupId(
 ): string | null {
   const displayGroups = hierarchyDisplayGroups(summary.display_groups ?? summary.techniques, hierarchyGroups)
   const roots = hierarchyGroups.flatMap((group) => group.roots)
+  const displayGroup = displayGroups[0]
+  const root = roots[0]
   const single = summary.overall.planned === 1
     && runExecutionCount(summary, loadedResults).count <= 1
     && displayGroups.length === 1
-    && displayGroups[0].atomic_group_ids.length === 1
+    && displayGroup?.atomic_group_ids.length === 1
     && roots.length <= 1
-    && (roots.length === 0 || !hasChildReferences(roots[0]))
-  return single ? displayGroups[0].atomic_group_ids[0] : null
+    && (!root || !hasChildReferences(root))
+  return single ? displayGroup?.atomic_group_ids[0] ?? null : null
 }
 
 /** The single attack's attempt: its saved result, otherwise its saved root, otherwise the running attack. */
@@ -51,11 +53,14 @@ export interface LiveAttack {
 
 /** Running attacks, one per attack, in the order they were reported. */
 export function liveAttacks(activeConversations: readonly ScenarioActiveConversation[]): LiveAttack[] {
-  const conversationsByAttack = new Map<string, ScenarioActiveConversation[]>()
+  const conversationsByAttack = new Map<string, [ScenarioActiveConversation, ...ScenarioActiveConversation[]]>()
   for (const conversation of activeConversations) {
-    const conversations = conversationsByAttack.get(conversation.attack_result_id) ?? []
-    conversations.push(conversation)
-    conversationsByAttack.set(conversation.attack_result_id, conversations)
+    const conversations = conversationsByAttack.get(conversation.attack_result_id)
+    if (conversations) {
+      conversations.push(conversation)
+    } else {
+      conversationsByAttack.set(conversation.attack_result_id, [conversation])
+    }
   }
   return [...conversationsByAttack.values()].map((conversations) => ({
     conversation: conversations[0],

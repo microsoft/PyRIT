@@ -11,15 +11,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.models.attacks import AttackSummary
+from pyrit.backend.models import AttackSummary
 from pyrit.backend.models.operations import AttackFindingItem, AttackFindingListResponse
+from pyrit.backend.services import AttackService, ScenarioRunService
 from pyrit.backend.services import attack_service as attack_service_module
 from pyrit.backend.services import scenario_run_service as scenario_run_service_module
-from pyrit.backend.services.attack_service import AttackService
 from pyrit.backend.services.live_attack_reader import LiveAttack
 from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.backend.services.operation_service import OperationService
-from pyrit.backend.services.scenario_run_service import ScenarioRunService, _ActiveTask, find_live_attack
+from pyrit.backend.services.scenario_run_service import _ActiveTask, find_live_attack
 from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution
 from pyrit.executor.attack.core.attack_result_attribution import AttackResultAttribution
 from pyrit.memory import SQLiteMemory
