@@ -17,11 +17,11 @@ from sqlalchemy import event, select, update
 
 from pyrit.backend.models.datasets import DatasetUploadManifest
 from pyrit.backend.services.dataset_upload_service import _validated_seeds
-from pyrit.common.singleton import Singleton
-from pyrit.memory import CentralMemory, SQLiteMemory
+from pyrit.common import Singleton
+from pyrit.memory import CentralMemory, SeedEntry, SQLiteMemory
 from pyrit.memory.dataset_lifecycle import DatasetNameConflictError
 from pyrit.memory.dataset_mutation import DatasetVersionConflictError, dataset_version, editable_seed
-from pyrit.memory.memory_models import DatasetLifecycleEntry, SeedEntry
+from pyrit.memory.memory_models import DatasetLifecycleEntry
 from pyrit.models import SeedPrompt, SeedRecord, SeedUnion
 from pyrit.setup import SQLITE, initialize_pyrit_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer

@@ -24,13 +24,11 @@ from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.main import app
 from pyrit.backend.models.datasets import DatasetUploadLimits
 from pyrit.backend.services.dataset_upload_service import _DatasetMultipartParser
-from pyrit.memory import AzureBlobStorageIO, SQLiteMemory
+from pyrit.memory import AzureBlobStorageIO, PromptMemoryEntry, SeedEntry, SQLiteMemory
 from pyrit.memory.memory_models import (
     DatasetLifecycleEntry,
     DatasetMediaEntry,
-    PromptMemoryEntry,
     ScorableContentEntry,
-    SeedEntry,
 )
 from pyrit.models import AttackSeedGroup, MessagePiece, Seed, SeedObjective, SeedPrompt, SeedSimulatedConversation
 from unit.async_utils import TEST_WATCHDOG_SECONDS

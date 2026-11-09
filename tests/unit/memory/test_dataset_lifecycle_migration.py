@@ -18,8 +18,9 @@ from sqlalchemy.dialects import mssql
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateTable
 
+from pyrit.memory import SeedEntry
 from pyrit.memory.dataset_lifecycle import lock_dataset_lifecycle
-from pyrit.memory.memory_models import DatasetLifecycleEntry, DatasetLifecycleLock, DatasetMediaEntry, SeedEntry
+from pyrit.memory.memory_models import DatasetLifecycleEntry, DatasetLifecycleLock, DatasetMediaEntry
 from pyrit.memory.migration import check_schema_migrations
 
 REVISION = "f8a2c6e0b419"

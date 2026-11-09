@@ -58,7 +58,7 @@ if TYPE_CHECKING:
 
     from fastapi import Request
 
-    from pyrit.memory.memory_interface import MemoryInterface
+    from pyrit.memory import MemoryInterface
 
 logger = logging.getLogger(__name__)
 _SEED_ADAPTER = TypeAdapter(SeedUnion)
