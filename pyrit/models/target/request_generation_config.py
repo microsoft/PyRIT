@@ -13,9 +13,9 @@ if TYPE_CHECKING:
     from pyrit.models.messages.message import Message
 
 
-def _validate_temperature_range(value: tuple[float, float]) -> tuple[float, float]:
+def _validate_generation_range(value: tuple[float, float]) -> tuple[float, float]:
     """
-    Validate inclusive temperature bounds.
+    Validate inclusive generation parameter bounds.
 
     Returns:
         tuple[float, float]: The validated bounds.
@@ -24,11 +24,12 @@ def _validate_temperature_range(value: tuple[float, float]) -> tuple[float, floa
         ValueError: The minimum exceeds the maximum.
     """
     if value[0] > value[1]:
-        raise ValueError("Temperature minimum must not exceed maximum.")
+        raise ValueError("Generation parameter minimum must not exceed maximum.")
     return value
 
 
-TemperatureRange = Annotated[tuple[FiniteFloat, FiniteFloat], AfterValidator(_validate_temperature_range)]
+GenerationRange = Annotated[tuple[FiniteFloat, FiniteFloat], AfterValidator(_validate_generation_range)]
+TemperatureRange = GenerationRange
 
 
 class RequestGenerationConfig(BaseModel):

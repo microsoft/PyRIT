@@ -55,10 +55,11 @@ its database collation.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
-Registered and unregistered target descriptors expose `capabilities.supports_temperature`
-and a separate top-level `temperature_range`. Bounds are inclusive; `null` means no
-range is declared, not that temperature is unsupported. Clients must not substitute
-assumed bounds. Per-send values use
+REST target descriptors expose `capabilities.supports_temperature` and a separate
+top-level `temperature_range`, populated from the SDK's
+`target.generation_range(capability=CapabilityName.TEMPERATURE)` lookup.
+Bounds are inclusive; `null` means unknown bounds, not lack of support. Clients must
+not substitute assumed bounds. Per-send values use
 [`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
 
 ### Manual attack creation

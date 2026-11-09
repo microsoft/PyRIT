@@ -6,6 +6,7 @@ import logging
 import re
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from typing import Any, ClassVar, TypedDict
 from urllib.parse import urlparse
 
@@ -30,12 +31,12 @@ from pyrit.exceptions import (
     handle_bad_request_exception,
 )
 from pyrit.models import (
+    GenerationRange,
     Message,
     MessagePiece,
     ParameterResolution,
     RequestGenerationConfig,
     RequestGenerationInfo,
-    TemperatureRange,
 )
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import CapabilityName, TargetCapabilities
@@ -48,12 +49,11 @@ from pyrit.prompt_target.openai.openai_error_handling import (
 )
 
 logger = logging.getLogger(__name__)
-_TEMPERATURE_RANGE_ADAPTER = TypeAdapter(TemperatureRange)
 
 
 class _GenerationDeclarations(TypedDict, total=False):
     supports_temperature: bool
-    temperature_range: tuple[float, float]
+    ranges: dict[CapabilityName, tuple[float, float]]
 
 
 class _OpenAIModelSampling:
@@ -94,13 +94,15 @@ class _OpenAIModelSampling:
     _SNAPSHOT_SUFFIX: ClassVar[re.Pattern[str]] = re.compile(r"-\d{4}-\d{2}-\d{2}$")
 
     @classmethod
-    def temperature_range(cls, model_name: object) -> tuple[float, float]:
+    def generation_range(cls, *, capability: CapabilityName, model_name: object) -> tuple[float, float] | None:
         """
-        Return the model's inclusive runtime temperature bounds.
+        Return inferred bounds for a generation capability.
 
         Returns:
-            tuple[float, float]: Provider parameter minimum and maximum.
+            tuple[float, float] | None: Inclusive bounds, or None when no inference is available.
         """
+        if capability != CapabilityName.TEMPERATURE:
+            return None
         model = cls._SNAPSHOT_SUFFIX.sub("", model_name).lower() if isinstance(model_name, str) else ""
         return (0.0, 1.0) if model == "mistral-large-3" else (0.0, 2.0)
 
@@ -148,6 +150,7 @@ class OpenAITarget(PromptTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(supports_multi_message_pieces=True)
     )
+    _GENERATION_RANGE_ADAPTER: ClassVar[TypeAdapter[tuple[float, float]]] = TypeAdapter(GenerationRange)
     _response_adapter: OpenAIResponseAdapter[Any] = OpenAIResponseAdapter()
 
     # OpenAI-family targets can mint an Entra ID token for a recognized Azure
@@ -268,9 +271,9 @@ class OpenAITarget(PromptTarget):
             and "supports_temperature" in custom_configuration.capabilities.model_fields_set
         ):
             self._declared_generation["supports_temperature"] = custom_configuration.capabilities.supports_temperature
-        self._effective_generation = self._declared_generation.copy()
-        self._apply_temperature_range(temperature_range=temperature_range)
-        self._declared_generation = self._effective_generation.copy()
+        self._effective_generation = deepcopy(self._declared_generation)
+        self._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=temperature_range)
+        self._declared_generation = deepcopy(self._effective_generation)
 
         # Initialize parent with endpoint and model_name
         PromptTarget.__init__(
@@ -315,28 +318,32 @@ class OpenAITarget(PromptTarget):
         Returns:
             tuple[float, float] | None: Inclusive bounds for implemented generation options.
         """
-        if capability != CapabilityName.TEMPERATURE or capability not in self._SUPPORTED_GENERATION_CAPABILITIES:
+        if capability not in self._SUPPORTED_GENERATION_CAPABILITIES:
             return None
-        return self._effective_generation.get("temperature_range") or _OpenAIModelSampling.temperature_range(
-            self._effective_generation_parameters()["model"]
+        bounds = self._effective_generation.get("ranges", {}).get(capability)
+        if bounds is not None:
+            return bounds
+        return _OpenAIModelSampling.generation_range(
+            capability=capability, model_name=self._effective_generation_parameters()["model"]
         )
 
-    def _apply_temperature_range(self, *, temperature_range: tuple[float, float] | None) -> None:
+    def _apply_generation_range(self, *, capability: CapabilityName, bounds: tuple[float, float] | None) -> None:
         """
-        Apply bounds until the next model change; None restores model inference.
+        Apply capability-specific bounds until the next model change; None restores inference.
 
         Raises:
-            ValueError: Bounds are invalid or the adapter does not implement runtime temperature.
+            ValueError: Bounds are invalid or the adapter does not implement the generation capability.
         """
-        if temperature_range is None:
-            self._effective_generation.pop("temperature_range", None)
+        if bounds is None:
+            self._effective_generation.get("ranges", {}).pop(capability, None)
             return
-        if CapabilityName.TEMPERATURE not in self._SUPPORTED_GENERATION_CAPABILITIES:
-            raise ValueError(f"{type(self).__name__} does not implement runtime temperature.")
-        self._effective_generation["temperature_range"] = _TEMPERATURE_RANGE_ADAPTER.validate_python(temperature_range)
+        if capability not in self._SUPPORTED_GENERATION_CAPABILITIES:
+            raise ValueError(f"{type(self).__name__} does not implement runtime {capability.name.lower()}.")
+        validated = self._GENERATION_RANGE_ADAPTER.validate_python(bounds)
+        self._effective_generation.setdefault("ranges", {})[capability] = validated
 
     def _refresh_generation_capabilities(self) -> None:
-        self._effective_generation = self._declared_generation.copy()
+        self._effective_generation = deepcopy(self._declared_generation)
         parameters = self._effective_generation_parameters()
         support: dict[str, bool] = {}
         if CapabilityName.TEMPERATURE in self._SUPPORTED_GENERATION_CAPABILITIES:
@@ -460,7 +467,7 @@ class OpenAITarget(PromptTarget):
             "httpx_client_kwargs": dict(self._httpx_client_kwargs),
             "underlying_model": self._underlying_model,
             "custom_configuration": self.configuration,
-            "temperature_range": self._effective_generation.get("temperature_range"),
+            "temperature_range": self._effective_generation.get("ranges", {}).get(CapabilityName.TEMPERATURE),
         }
 
     async def cleanup_target_async(self) -> None:

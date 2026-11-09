@@ -132,7 +132,7 @@ class TestDiscoverTargetCapabilitiesAsync:
             api_key="test-only-key",
         )
         declared = ExtendedCapabilities.model_validate(target.capabilities.model_dump())
-        target._apply_temperature_range(temperature_range=(0.2, 1))
+        target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0.2, 1))
         target.apply_capabilities(capabilities=declared)
         with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=_ok_response()):
             result = await discover_target_capabilities_async(

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         unregister_common_json_schema,
     )
     from pyrit.models.target.request_generation_config import (
+        GenerationRange,
         ParameterResolution,
         RequestGenerationConfig,
         RequestGenerationInfo,
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
 _LAZY_EXPORTS: dict[str, str] = {
     "COMMON_JSON_SCHEMAS": "pyrit.models.target.json_schema_definition",
     "CapabilityName": "pyrit.models.target.target_capabilities",
+    "GenerationRange": "pyrit.models.target.request_generation_config",
     "JSON_SCHEMA_METADATA_KEY": "pyrit.models.target.json_schema_definition",
     "JsonResponseConfig": "pyrit.models.target.json_response_config",
     "JsonSchemaDefinition": "pyrit.models.target.json_schema_definition",

@@ -407,7 +407,7 @@ class TestTemporaryComponents:
             temperature_range=(0.2, 0.8) if declaration == "constructor" else None,
         )
         if declaration == "applied":
-            source._apply_temperature_range(temperature_range=(0.2, 0.8))
+            source._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0.2, 0.8))
         registry = TargetRegistry.get_registry_singleton()
         registry.instances.register(source, name="source")
         copied: PromptTarget | None = None
