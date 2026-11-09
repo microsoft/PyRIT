@@ -14,19 +14,21 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import Field
 
+from pyrit.backend.models import (
+    DatasetListResponse,
+    ProblemDetail,
+)
 from pyrit.backend.models.common import (
     MAX_CURSOR_LENGTH,
     MAX_ITEMS,
     MAX_LABEL_VALUE_LENGTH,
     CursorStr,
-    ProblemDetail,
 )
 from pyrit.backend.models.datasets import (
-    DatasetListResponse,
     SeedExampleDetailResponse,
     SeedExampleListResponse,
 )
-from pyrit.backend.services.dataset_service import get_dataset_service
+from pyrit.backend.services import get_dataset_service
 from pyrit.models import PromptDataType, SeedType
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
