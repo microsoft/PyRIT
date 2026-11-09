@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 
 import { attacksApi, targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { AddMessageResponse, ConversationSaveInput, NewAttackContext, TargetInstance } from '@/types'
+import type { AddMessageResponse, ConversationSaveInput, NewAttackContext, PieceConversion, TargetInstance } from '@/types'
 
 import { useConversationDraft } from './useConversationDraft'
 
@@ -19,6 +19,31 @@ const initial: ConversationSaveInput = {
 describe('useConversationDraft', () => {
   beforeEach(() => jest.resetAllMocks())
 
+  it('rehydrates uploaded history from retained files and releases the replacement URLs', () => {
+    const file = new File(['image'], 'history.png', { type: 'image/png' })
+    jest.mocked(URL.createObjectURL).mockReturnValue('blob:restored-history')
+    const { result, unmount } = renderHook(() => useConversationDraft())
+    act(() => result.current.begin({
+      ...initial, messages: [{
+        id: 'image', role: 'user', pieces: [{
+          draftId: 'image', data_type: 'image_path', original_value: '', file, previewUrl: 'blob:revoked-history',
+        }],
+      }],
+    }))
+    expect(result.current.draft?.messages[0].pieces[0]).toMatchObject({ file, previewUrl: 'blob:restored-history' })
+    expect(result.current.dirty).toBe(false)
+    unmount()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:restored-history')
+  })
+
+  it('only treats an imported final user turn as pending when explicitly marked', () => {
+    const { result } = renderHook(() => useConversationDraft(undefined, { pendingUserMessage: true }))
+    act(() => result.current.begin({ ...initial, unsavedImport: true }))
+    expect(result.current.history).toHaveLength(1)
+    act(() => result.current.begin({ ...initial, unsavedImport: true, pendingPromptId: 'message' }))
+    expect(result.current.history).toHaveLength(0)
+  })
+
   const temperatureTarget: TargetInstance = {
     ...makeTarget({
       target_registry_name: 'source', target_type: 'OpenAIChatTarget', temperature: 0.2,
@@ -26,6 +51,27 @@ describe('useConversationDraft', () => {
     }),
     supports_temperature_override: true,
   }
+
+  it('keeps execution identity in dirty tracking when bindings share a registered source', () => {
+    const bound: TargetInstance = {
+      ...temperatureTarget, identifier: { ...temperatureTarget.identifier, hash: 'effective-hash' },
+      binding: {
+        version: 1, source_name: 'source', source_hash: temperatureTarget.identifier.hash,
+        effective_hash: 'effective-hash', temperature: 0.8,
+      },
+    }
+    const { result } = renderHook(() => useConversationDraft())
+    act(() => result.current.begin({ ...initial, target: bound }))
+    expect(result.current.dirty).toBe(false)
+    act(() => result.current.changeTarget({
+      ...bound, identifier: { ...bound.identifier, hash: 'changed-effective-hash' },
+      binding: { ...bound.binding, version: 1, source_name: 'source', source_hash: temperatureTarget.identifier.hash,
+        effective_hash: 'changed-effective-hash', temperature: 1 },
+    }))
+    expect(result.current.dirty).toBe(true)
+    act(() => result.current.changeTarget(bound))
+    expect(result.current.dirty).toBe(false)
+  })
 
   it('saves a new attack with a private temperature and returns its target to chat', async () => {
     jest.mocked(targetsApi.buildTarget).mockResolvedValue({
@@ -159,6 +205,45 @@ describe('useConversationDraft', () => {
       expect(request.messages[0].pieces[0].data_type).toBe('audio_path')
     },
   )
+
+  it.each([false, true])('keeps the draft clean when applied conversions match no piece (empty: %s)', (empty: boolean) => {
+    const { result } = renderHook(() => useConversationDraft())
+    act(() => { result.current.begin({ ...initial, target: null }) })
+    expect(result.current.dirty).toBe(false)
+
+    const conversion: PieceConversion = {
+      pieceId: 'missing', pieceType: 'text', originalValue: 'Prompt',
+      convertedValue: 'converted', convertedDataType: 'text',
+      converterInstanceIds: ['converter'], converterProvenance: [],
+    }
+    act(() => {
+      result.current.applyConversions(empty ? {} : { missing: conversion })
+    })
+    expect(result.current.draft?.messages).toBe(initial.messages)
+    expect(result.current.dirty).toBe(false)
+    expect(result.current.shouldBlock()).toBe(false)
+
+    const pieceId = initial.messages[0].pieces[0].draftId
+    act(() => {
+      result.current.applyConversions({
+        [pieceId]: { ...conversion, pieceId },
+      })
+    })
+    expect(result.current.dirty).toBe(true)
+    expect(result.current.shouldBlock()).toBe(true)
+    expect(result.current.draft?.messages[0].pieces[0]).toMatchObject({
+      converted_value: 'converted', converted_value_data_type: 'text',
+      applied_converter_ids: ['converter'], applied_converter_provenance: [],
+    })
+    act(() => { result.current.applyConversions({ [pieceId]: null }) })
+    expect(result.current.draft?.messages[0].pieces[0].converted_value).toBeUndefined()
+    expect(result.current.draft?.messages[0].pieces[0].applied_converter_ids).toEqual([])
+    expect(initial.messages[0].pieces[0].converted_value).toBeUndefined()
+    act(() => { result.current.applyConversions({}) })
+    expect(result.current.dirty).toBe(true)
+    act(() => { result.current.begin(initial) })
+    expect(result.current.shouldBlock()).toBe(false)
+  })
 
   it('protects target-only changes and ignores target object replacement with the same identity', () => {
     const target = makeTarget({ target_registry_name: 'first' })

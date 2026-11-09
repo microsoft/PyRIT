@@ -12,20 +12,22 @@ import pytest
 import yaml
 
 import pyrit.datasets.seed_datasets.remote  # noqa: F401  triggers loader registration
-from pyrit.datasets import SeedDatasetProvider
-from pyrit.datasets.seed_datasets.local.local_dataset_loader import _LocalDatasetLoader
-from pyrit.datasets.seed_datasets.remote.agent_threat_rules_dataset import (
-    _AgentThreatRulesDataset,
-)
-from pyrit.datasets.seed_datasets.remote.darkbench_dataset import _DarkBenchDataset
-from pyrit.datasets.seed_datasets.remote.harmbench_dataset import _HarmBenchDataset
-from pyrit.datasets.seed_datasets.remote.promptintel_dataset import _PromptIntelDataset
-from pyrit.datasets.seed_datasets.remote.remote_dataset_loader import _RemoteDatasetLoader
-from pyrit.datasets.seed_datasets.seed_metadata import (
-    RECOMMENDED_TAGS,
+from pyrit.datasets import (
     SeedDatasetFilter,
     SeedDatasetLoadTime,
     SeedDatasetMetadata,
+    SeedDatasetProvider,
+)
+from pyrit.datasets.seed_datasets.local import _LocalDatasetLoader
+from pyrit.datasets.seed_datasets.remote import (
+    _AgentThreatRulesDataset,
+    _DarkBenchDataset,
+    _HarmBenchDataset,
+    _PromptIntelDataset,
+    _RemoteDatasetLoader,
+)
+from pyrit.datasets.seed_datasets.seed_metadata import (
+    RECOMMENDED_TAGS,
     SeedDatasetSizeCategory,
 )
 from pyrit.models import Modality, SeedDataset, SeedObjective, SeedPrompt
@@ -399,6 +401,19 @@ class TestMetadataParsingRemote:
             metadata=metadata,
             dataset_filter=SeedDatasetFilter(modalities={"audio"}),
         )
+
+    def test_filter_values_match_case_insensitively(self):
+        """Dataset metadata is stored lowercased, so filter values match regardless of case."""
+        metadata = SeedDatasetMetadata(
+            **SeedDatasetMetadata._coerce_metadata_values(
+                raw_metadata={"harm_categories": ["Violence"], "modalities": ["Text"], "size": "Large"}
+            )
+        )
+        for kwargs in ({"harm_categories": {"VIOLENCE"}}, {"modalities": {"Text"}}, {"size": {" Large "}}):
+            assert SeedDatasetProvider._match_filter_to_metadata(
+                metadata=metadata,
+                dataset_filter=SeedDatasetFilter(**kwargs),
+            ), kwargs
 
     def test_undeclared_axis_does_not_match(self):
         """A dataset silent on a filtered axis does not satisfy that axis."""

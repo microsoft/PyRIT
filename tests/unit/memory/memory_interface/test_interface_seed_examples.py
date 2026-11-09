@@ -15,8 +15,7 @@ from sqlalchemy.sql import Select
 
 from pyrit.common.pagination import DecodedKeysetCursor
 from pyrit.common.utils import to_sha256
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import Seed, SeedObjective, SeedPrompt, SeedRecord, SeedSimulatedConversation
 
 DATASET = "browse"

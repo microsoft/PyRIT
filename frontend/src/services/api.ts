@@ -1,10 +1,12 @@
 import axios, { type InternalAxiosRequestConfig } from 'axios'
 import { InteractionRequiredAuthError, type PublicClientApplication } from '@azure/msal-browser'
 import { generateClientId } from '@/utils/clientId'
-import { toApiError } from './errors'
+import { decodeBlobErrorAsync, toApiError } from './errors'
 import { compatibility, COMPATIBILITY_HEADER } from './compatibility'
 import { getGraphScopes } from '../auth/msalConfig'
 import type {
+  ApplyChatScorerRequest,
+  ApplyChatScorerResponse,
   TargetInstance,
   UnregisteredTarget,
   UnregisteredConverter,
@@ -33,12 +35,14 @@ import type {
   LabelOptionsResponse,
   CreateAttackResponse,
   AttackSummary,
+  AttackMetadata,
   AttackListResponse,
   DatasetListResponse,
   SeedExampleDetailResponse,
   SeedExampleListParams,
   SeedExampleListResponse,
   ConversationMessagesResponse,
+  ConversationPageParams,
   AddMessageRequest,
   AddMessageResponse,
   MessageSendRequest,
@@ -66,7 +70,8 @@ import type {
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
-  PairedOutcomeStatistics,
+  ScenarioHierarchyNode,
+  ScenarioHierarchyProjection,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -77,6 +82,8 @@ import type {
   AuthAccess,
   BackendScore,
   ManualScoreRequest,
+  MediaUploadRequest,
+  MediaUploadResponse,
   UpdateAttackRequest,
   SaveConversationRequest,
   Finding,
@@ -87,6 +94,7 @@ import type {
   FindingEvidenceCreateRequest,
   FindingEvidenceAttachResponse,
   FindingEvidenceListResponse,
+  FindingExportRequest,
   Operation,
   OperationCreate,
   OperationDetail,
@@ -101,6 +109,12 @@ import type {
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+export const mediaApi = {
+  upload: async (request: MediaUploadRequest): Promise<MediaUploadResponse> => {
+    return (await apiClient.post<MediaUploadResponse>('/media/uploads', request)).data
+  },
+}
 
 const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
 
@@ -124,7 +138,7 @@ export const operationsApi = {
     await apiClient.delete(operationPath(operationId))
   },
   listFindings: async (
-    operationId: string, params: { limit: number; offset: number; title?: string },
+    operationId: string, params: { limit: number; offset: number; title?: string; title_pattern?: string },
   ): Promise<FindingListResponse> => {
     return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
   },
@@ -155,6 +169,13 @@ export const operationsApi = {
     await apiClient.delete(
       `${operationPath(operationId)}/findings/${encodeURIComponent(findingId)}/evidence/${encodeURIComponent(evidenceId)}`,
     )
+  },
+  exportFindings: async (
+    operationId: string, request: FindingExportRequest, signal?: AbortSignal,
+  ): Promise<Blob> => {
+    return (await apiClient.post<Blob>(
+      `${operationPath(operationId)}/findings/export`, request, { responseType: 'blob', signal },
+    )).data
   },
 }
 
@@ -232,6 +253,8 @@ apiClient.interceptors.request.use(async (config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // File downloads receive error bodies as Blobs; read them before any check below.
+    await decodeBlobErrorAsync(error)
     const problem = error?.response?.data
     if (
       (error?.response?.status === 400 && problem?.type === 'urn:pyrit:compatibility:invalid') ||
@@ -462,6 +485,9 @@ export const initializersApi = {
 }
 
 export const attacksApi = {
+  applyScorer: async (attackResultId: string, request: ApplyChatScorerRequest): Promise<ApplyChatScorerResponse> => {
+    return (await apiClient.post(`/attacks/${encodeURIComponent(attackResultId)}/apply-scorer`, request)).data
+  },
   saveConversation: async (request: SaveConversationRequest): Promise<AddMessageResponse> => {
     const response = await apiClient.post('/attacks/save-conversation', request)
     return response.data
@@ -473,6 +499,14 @@ export const attacksApi = {
 
   getAttack: async (attackResultId: string): Promise<AttackSummary> => {
     const response = await apiClient.get(`/attacks/${encodeURIComponent(attackResultId)}`)
+    return response.data
+  },
+
+  getAttackMetadata: async (attackResultId: string, conversationId?: string): Promise<AttackMetadata> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/metadata`
+    const response = conversationId === undefined
+      ? await apiClient.get(url)
+      : await apiClient.get(url, { params: { conversation_id: conversationId } })
     return response.data
   },
 
@@ -493,10 +527,12 @@ export const attacksApi = {
     return response.data
   },
 
-  getMessages: async (attackResultId: string, conversationId: string): Promise<ConversationMessagesResponse> => {
+  getMessages: async (
+    attackResultId: string, conversationId: string, params?: ConversationPageParams,
+  ): Promise<ConversationMessagesResponse> => {
     const response = await apiClient.get(
       `/attacks/${encodeURIComponent(attackResultId)}/messages`,
-      { params: { conversation_id: conversationId } }
+      { params: { conversation_id: conversationId, ...params } }
     )
     return response.data
   },
@@ -526,10 +562,11 @@ export const attacksApi = {
     return response.data
   },
 
-  getConversations: async (attackResultId: string): Promise<AttackConversationsResponse> => {
-    const response = await apiClient.get(
-      `/attacks/${encodeURIComponent(attackResultId)}/conversations`
-    )
+  getConversations: async (
+    attackResultId: string, params?: ConversationPageParams,
+  ): Promise<AttackConversationsResponse> => {
+    const url = `/attacks/${encodeURIComponent(attackResultId)}/conversations`
+    const response = params ? await apiClient.get(url, { params }) : await apiClient.get(url)
     return response.data
   },
 
@@ -685,6 +722,7 @@ export const scenariosApi = {
     return response.data
   },
 
+  /** Lists scenario runs by creation time by default or by activity when requested. */
   listRuns: async (params?: {
     limit?: number
     cursor?: string
@@ -692,6 +730,8 @@ export const scenariosApi = {
     run_statuses?: ScenarioRunState[]
     label?: string[]
     operation_id?: string[]
+    reference_id?: string
+    sort_by?: 'created_at' | 'activity'
   }): Promise<ScenarioRunListResponse> => {
     const response = await apiClient.get('/scenarios/runs', {
       params,
@@ -714,13 +754,36 @@ export const scenariosApi = {
     return response.data
   },
 
-  getPairedOutcomes: async (
+  getLaunchConfiguration: async (scenarioResultId: string, signal?: AbortSignal): Promise<RunScenarioRequest> =>
+    (await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}/launch-configuration`, { signal })).data,
+
+  getRunConversation: async (scenarioResultId: string, conversationId: string): Promise<ConversationMessagesResponse> =>
+    (await apiClient.get(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/conversations/${encodeURIComponent(conversationId)}`,
+    )).data,
+
+  /** Loads one page of hierarchy roots. `cursor` continues roots only, never a node's children. */
+  getRunHierarchy: async (
     scenarioResultId: string,
-    params: { baseline_group_id: string; attack_group_id: string },
+    params?: { max_nodes?: number; cursor?: string },
     signal?: AbortSignal,
-  ): Promise<PairedOutcomeStatistics> => {
-    const response = await apiClient.get<PairedOutcomeStatistics>(
-      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
+  ): Promise<ScenarioHierarchyProjection> => {
+    const response = await apiClient.get<ScenarioHierarchyProjection>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  /** Loads one page of a node's saved children, continued with that node's `next_children_cursor`. */
+  getRunHierarchyNode: async (
+    scenarioResultId: string,
+    attackResultId: string,
+    params?: { limit?: number; children_cursor?: string },
+    signal?: AbortSignal,
+  ): Promise<ScenarioHierarchyNode> => {
+    const response = await apiClient.get<ScenarioHierarchyNode>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
       { params, signal },
     )
     return response.data
@@ -860,12 +923,16 @@ export const scenarioSuitesApi = {
 const MAX_SEED_SEARCH_LENGTH = 1_000
 
 function seedListQuery(params: SeedExampleListParams): Record<string, string | number | readonly string[]> {
+  if (params.search != null && params.value_pattern != null) {
+    throw new Error('Supply either literal search or value_pattern, not both.')
+  }
   const query: Record<string, string | number | readonly string[]> = {
     selection_key: params.selection_key,
   }
   if (params.limit != null) query.limit = params.limit
   if (params.cursor) query.cursor = params.cursor
   if (params.search) query.search = params.search.slice(0, MAX_SEED_SEARCH_LENGTH)
+  if (params.value_pattern != null) query.value_pattern = params.value_pattern
   if (params.modality && params.modality.length > 0) query.modality = params.modality
   if (params.seed_type && params.seed_type.length > 0) query.seed_type = params.seed_type
   if (params.harm_category && params.harm_category.length > 0) query.harm_category = params.harm_category

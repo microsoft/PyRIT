@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from pyrit.exceptions import AdversarialChatResponseBlockedException
-from pyrit.executor.attack.component.adversarial_conversation_manager import (
+from pyrit.executor.attack.component import (
     _AdversarialConversationManager,
 )
 from pyrit.executor.attack.core.attack_config import (

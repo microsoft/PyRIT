@@ -4,7 +4,7 @@ import { toApiError } from '@/services/errors'
 import { buildTemperatureTarget } from '@/services/targetRegistry'
 import type {
   AddMessageResponse, ConversationDraftMessage, ConversationDraftPiece, ConversationSaveInput,
-  MessageAttachment, NewAttackContext, PieceConversion, SaveConversationRequest, TargetInstance,
+  MessageAttachment, NewAttackContext, PieceConversionUpdates, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import {
@@ -12,12 +12,12 @@ import {
   unansweredToolCallId, validateDraft,
 } from '@/utils/conversationDraft'
 import { isPathDataType } from '@/utils/media'
-import { targetReference } from '@/utils/targetIdentity'
+import { targetIdentifierHash } from '@/utils/targetIdentity'
 
 import { useConversationSave } from './useConversationSave'
 
 function targetKey(target: TargetInstance | null): string | undefined {
-  return target ? JSON.stringify(targetReference(target)) : undefined
+  return target ? JSON.stringify([target.target_registry_name, targetIdentifierHash(target)]) : undefined
 }
 
 interface DraftState extends ConversationSaveInput {
@@ -25,6 +25,7 @@ interface DraftState extends ConversationSaveInput {
   baselineMessages: ConversationDraftMessage[]
   baselineTarget: string | undefined
   temperature: string
+  unsavedImport?: boolean
 }
 
 export function useConversationDraft(
@@ -39,12 +40,16 @@ export function useConversationDraft(
   const urls = useRef(new Set<string>())
   const workflow = useConversationSave(newAttackContext)
   const dirty = draft !== null && (
-    draft.messages !== draft.baselineMessages || draft.objective !== draft.initialObjective
-    || targetKey(draft.target) !== draft.baselineTarget || draft.temperature.trim() !== ''
+    draft.unsavedImport === true
+    || draft.messages !== draft.baselineMessages
+    || draft.objective !== draft.initialObjective
+    || targetKey(draft.target) !== draft.baselineTarget
+    || draft.temperature.trim() !== ''
   )
   const validationError = draft ? validateDraft(draft.messages) : null
   const messages = draft?.messages ?? []
-  const history = options.pendingUserMessage && messages[messages.length - 1]?.role === 'user'
+  const history = options.pendingUserMessage && (!draft?.unsavedImport || draft.pendingPromptId === messages[messages.length - 1]?.id)
+    && messages[messages.length - 1]?.role === 'user'
     ? messages.slice(0, -1) : messages
   const targetError = draft?.target
     ? editorTargetDisabledReason(draft.target, draftDataTypes(messages), history) : undefined
@@ -57,13 +62,26 @@ export function useConversationDraft(
 
   const begin = useCallback((input: ConversationSaveInput): void => {
     releaseUrls()
+    const messages = input.messages.some((message: ConversationDraftMessage) => message.pieces.some(
+      (piece: ConversationDraftPiece) => piece.file,
+    )) ? input.messages.map((message: ConversationDraftMessage) => ({
+      ...message,
+      pieces: message.pieces.map((piece: ConversationDraftPiece) => {
+        if (!piece.file) return piece
+        const previewUrl = URL.createObjectURL(piece.file)
+        urls.current.add(previewUrl)
+        return { ...piece, previewUrl }
+      }),
+    })) : input.messages
     const id = generateClientId()
     activeId.current = id
     saved.current = false
     setError(null)
     setDraft({
-      ...input, id, baselineMessages: input.messages, baselineTarget: targetKey(input.target), temperature: '',
-      sourcePieceIds: input.messages.flatMap((message: ConversationDraftMessage) => message.pieces.flatMap(
+      ...input, id, messages, baselineMessages: input.baselineMessages ?? messages,
+      baselineTarget: targetKey(input.target), temperature: input.temperature ?? '',
+      unsavedImport: input.unsavedImport,
+      sourcePieceIds: input.sourcePieceIds ?? input.messages.flatMap((message: ConversationDraftMessage) => message.pieces.flatMap(
         (piece: ConversationDraftPiece) => piece.source_piece_id ? [piece.source_piece_id] : [],
       )),
     })
@@ -133,18 +151,24 @@ export function useConversationDraft(
         ? { ...message, pieces: [...message.pieces, piece] } : message)
     })
   }
-  const applyConversions = (applied: Record<string, PieceConversion>): void => {
-    changeMessages((messages: ConversationDraftMessage[]) => messages.map((message: ConversationDraftMessage) => ({
-      ...message, pieces: message.pieces.map((piece: ConversationDraftPiece) => {
-        const result = applied[piece.draftId]
-        return result ? {
-          ...piece, converted_value: result.convertedValue,
-          converted_value_data_type: result.convertedDataType,
-          applied_converter_ids: result.converterInstanceIds,
-          applied_converter_provenance: result.converterProvenance,
-        } : piece
-      }),
-    })))
+  const applyConversions = (applied: PieceConversionUpdates): void => {
+    changeMessages((messages: ConversationDraftMessage[]) => {
+      let changed = false
+      const next = messages.map((message: ConversationDraftMessage) => ({
+        ...message, pieces: message.pieces.map((piece: ConversationDraftPiece) => {
+          if (!Object.prototype.hasOwnProperty.call(applied, piece.draftId)) return piece
+          const result = applied[piece.draftId]
+          changed = true
+          return {
+            ...piece, converted_value: result?.convertedValue,
+            converted_value_data_type: result?.convertedDataType,
+            applied_converter_ids: result?.converterInstanceIds ?? [],
+            applied_converter_provenance: result?.converterProvenance,
+          }
+        }),
+      }))
+      return changed ? next : messages
+    })
   }
   const save = async (
     destination: SaveConversationRequest['destination'], onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void,

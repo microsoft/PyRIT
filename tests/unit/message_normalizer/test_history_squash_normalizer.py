@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from pyrit.message_normalizer import HistorySquashNormalizer, MessageStringNormalizer
-from pyrit.models import JSON_SCHEMA_METADATA_KEY, Message, MessagePiece
-from pyrit.models.literals import ChatMessageRole
+from pyrit.models import JSON_SCHEMA_METADATA_KEY, ChatMessageRole, Message, MessagePiece
 
 
 def _make_message(role: ChatMessageRole, content: str) -> Message:
@@ -268,3 +267,20 @@ async def test_history_squash_propagates_last_message_metadata():
     assert len(result) == 1
     squashed_piece = result[0].message_pieces[0]
     assert squashed_piece.prompt_metadata == {"json_schema": schema, "scenario": "regression"}
+
+
+def test_history_squash_as_identifier_params_empty():
+    normalizer = HistorySquashNormalizer()
+    assert normalizer.as_identifier_params() == {}
+
+
+def test_history_squash_as_identifier_params_with_config():
+    from pyrit.message_normalizer import ConversationContextNormalizer
+
+    child = ConversationContextNormalizer()
+    normalizer = HistorySquashNormalizer(message_normalizer=child, expected_history_message_count=3)
+    params = normalizer.as_identifier_params()
+    assert params["expected_history_message_count"] == 3
+    assert "message_normalizer" in params
+    assert params["message_normalizer"]["class_name"] == "ConversationContextNormalizer"
+    assert normalizer.get_identifier().params == params

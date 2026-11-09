@@ -4,6 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
+import { makeTarget } from '@/test-utils/targetFixtures'
 import type { TechniqueConfiguration, TechniqueOverride } from '@/types'
 
 import TechniqueEditor from './TechniqueEditor'
@@ -55,13 +56,34 @@ describe('TechniqueEditor', () => {
     ] })
   })
 
+  it('should exclude SDK-only targets from technique references', async () => {
+    const original = configuration()
+    original.parameters = [{
+      name: 'helper_target', type_name: 'PromptTarget', reference_type: 'target', required: false,
+    }]
+    jest.mocked(targetsApi.listTargets)
+      .mockResolvedValueOnce({
+        items: [makeTarget({ target_registry_name: 'sdk-demo', target_type: 'TextTarget' })],
+        pagination: { limit: 200, has_more: true, next_cursor: 'next' },
+      })
+      .mockResolvedValueOnce({
+        items: [makeTarget({ target_registry_name: 'endpoint' })],
+        pagination: { limit: 200, has_more: false },
+      })
+    render(tree(original))
+    const picker = await screen.findByRole('combobox', { name: 'helper_target' })
+    expect(within(picker).queryByRole('option', { name: /sdk-demo/ })).not.toBeInTheDocument()
+    expect(within(picker).getByRole('option', { name: /endpoint/ })).toBeInTheDocument()
+    expect(targetsApi.listTargets).toHaveBeenCalledWith(200, 'next')
+  })
+
   it('should prefill the named factory without creation controls or an attack selector', async () => {
     render(tree())
     expect(await screen.findByText('Movie role play')).toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Description' })).not.toBeInTheDocument()
     expect(screen.getByRole('spinbutton', { name: 'Turn count' })).toHaveValue(2)
-    expect(screen.getByLabelText('Simulated user system prompt')).toHaveValue('Write a movie.\n{{ objective }}')
-    expect(screen.getByLabelText('Simulated assistant system prompt')).toHaveValue(
+    expect(screen.getByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Write a movie.\n{{ objective }}')
+    expect(screen.getByRole('textbox', { name: 'Simulated assistant system prompt' })).toHaveValue(
       'Comply with {{ objective }} for {{ num_turns }} turns.',
     )
     expect(screen.getByRole('spinbutton', { name: 'max_attempts_on_failure' })).toHaveValue(1)
@@ -180,6 +202,32 @@ describe('TechniqueEditor', () => {
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({ response_converters: ['base64'] })
   })
 
+  it.each(['request_converters', 'response_converters'] as const)(
+    'should save a temporary %s stage with Enter in the inline editor', async (chain) => {
+      const user = userEvent.setup()
+      const original = configuration()
+      original.settings[chain] = ['base64', 'base64']
+      const initial = configuration()
+      const source = { source_name: 'base64', source_hash: 'b64', params: {}, effective_hash: 'b64' }
+      initial.settings[chain] = ['base64', source]
+      const onApplied = jest.fn()
+      const saved = { converter_id: 'saved_base64', identifier: { class_name: 'Base64Converter', hash: 'b64' } }
+      jest.mocked(convertersApi.createConverter).mockResolvedValue(saved)
+      render(<FluentProvider theme={webLightTheme}>
+        <TechniqueEditor original={original} initial={initial} autoApply onApplied={onApplied} />
+      </FluentProvider>)
+      const label = chain === 'request_converters' ? 'Request converters' : 'Response converters'
+      await user.click(await screen.findByRole('button', { name: `Settings for converter base64, ${label} stage 2` }))
+      await user.click(screen.getByRole('menuitem', { name: 'Save to registry' }))
+      await user.type(screen.getByRole('textbox', { name: /Registry name/ }), 'saved_base64{Enter}')
+      await screen.findByRole('button', { name: `Settings for converter saved_base64, ${label} stage 2` })
+      expect(screen.queryByText('Temporary')).not.toBeInTheDocument()
+      expect(convertersApi.createConverter).toHaveBeenCalledWith({ name: 'saved_base64', type: 'Base64Converter', source })
+      await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+      expect(onApplied.mock.calls[0][0].override.changes[chain]).toEqual(['base64', 'saved_base64'])
+    },
+  )
+
   it('should create and append a converter from the shared picker', async () => {
     const user = userEvent.setup()
     jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [{
@@ -196,7 +244,7 @@ describe('TechniqueEditor', () => {
     await user.click(screen.getByRole('option', { name: /^New converter/ }))
     await user.click(await screen.findByRole('combobox', { name: /Converter Type/i }))
     await user.click(screen.getByRole('option', { name: /CaesarConverter/ }))
-    await user.type(screen.getByLabelText(/Registry Name/i), 'new_caesar')
+    await user.type(screen.getByRole('textbox', { name: /Registry Name/i }), 'new_caesar')
     await user.type(screen.getByLabelText(/caesar_offset/i), '3')
     await user.click(screen.getByRole('button', { name: 'Add Converter' }))
     await screen.findByText('new_caesar')
@@ -212,10 +260,10 @@ describe('TechniqueEditor', () => {
     original.settings.adversarial_system_prompt = 'Source system prompt'
     original.editable_fields.push('adversarial_chat', 'adversarial_system_prompt')
     render(tree(original))
-    expect(await screen.findByLabelText('Adversarial system prompt')).toHaveValue('Source system prompt')
+    expect(await screen.findByRole('textbox', { name: 'Adversarial system prompt' })).toHaveValue('Source system prompt')
     expect(screen.queryByRole('combobox', { name: /Adversarial target/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Description' })).not.toBeInTheDocument()
-    await user.type(screen.getByLabelText('Adversarial system prompt'), ' edited')
+    await user.type(screen.getByRole('textbox', { name: 'Adversarial system prompt' }), ' edited')
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({
@@ -227,7 +275,7 @@ describe('TechniqueEditor', () => {
     const user = userEvent.setup()
     render(tree())
     await screen.findByText('Movie role play')
-    const prompt = screen.getByLabelText('Simulated user system prompt')
+    const prompt = screen.getByRole('textbox', { name: 'Simulated user system prompt' })
     await user.clear(prompt)
     await user.click(prompt)
     await user.paste('New movie\n{{ objective }}\n{% if objective %}literal{% endif %}')
@@ -262,11 +310,11 @@ describe('TechniqueEditor', () => {
     const user = userEvent.setup()
     techniques.validateEdit.mockRejectedValueOnce(new Error('Source technique configuration changed.'))
     render(tree())
-    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' edited')
+    await user.type(await screen.findByRole('textbox', { name: 'Simulated user system prompt' }), ' edited')
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     const error = await screen.findByText('Source technique configuration changed.')
     expect(error).toBeInTheDocument()
-    expect(screen.getByLabelText('Simulated user system prompt')).toHaveValue('Write a movie.\n{{ objective }} edited')
+    expect(screen.getByRole('textbox', { name: 'Simulated user system prompt' })).toHaveValue('Write a movie.\n{{ objective }} edited')
     expect(screen.getByRole('button', { name: 'Apply to run' })).toBeEnabled()
     expect(screen.getByRole('alert')).toHaveFocus()
   })
@@ -275,7 +323,7 @@ describe('TechniqueEditor', () => {
     const user = userEvent.setup()
     const onClose = jest.fn()
     render(tree(configuration(), jest.fn(), undefined, onClose))
-    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' uncommitted')
+    await user.type(await screen.findByRole('textbox', { name: 'Simulated user system prompt' }), ' uncommitted')
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(techniques.validateEdit).not.toHaveBeenCalled()
@@ -293,7 +341,7 @@ describe('TechniqueEditor', () => {
     await screen.findByText('Movie role play')
     expect(screen.queryByLabelText('Next-message system prompt')).not.toBeInTheDocument()
     if (mode === 'fixed') {
-      const final = screen.getByLabelText('Fixed final user message')
+      const final = screen.getByRole('textbox', { name: 'Fixed final user message' })
       expect(final).toHaveValue('yes.')
       await user.clear(final)
       await user.type(final, 'continue.')
@@ -330,7 +378,7 @@ describe('TechniqueEditor', () => {
     original.parameters.push({ name: 'text_setting', type_name: 'str', required: false })
     original.settings.params = { ...original.settings.params, text_setting: 'source text' }
     render(tree(original))
-    await user.clear(await screen.findByLabelText('text_setting'))
+    await user.clear(await screen.findByRole('textbox', { name: 'text_setting' }))
     await user.click(screen.getByRole('button', { name: 'Apply to run' }))
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
     expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({ params: { text_setting: '' } })
@@ -381,7 +429,7 @@ describe('TechniqueEditor', () => {
     const view = render(<FluentProvider theme={webLightTheme}>
       <TechniqueEditor original={original} autoApply onApplied={onApplied} />
     </FluentProvider>)
-    await user.type(await screen.findByLabelText('Simulated user system prompt'), ' changed')
+    await user.type(await screen.findByRole('textbox', { name: 'Simulated user system prompt' }), ' changed')
     await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
     view.unmount()
     resolveEdit({

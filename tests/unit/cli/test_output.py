@@ -17,17 +17,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from pyrit.cli import _output
-from pyrit.models import AttackOutcome, Parameter, ScenarioRunState, TargetCapabilities, TargetIdentifier
+from pyrit.models import (
+    AttackOutcome,
+    Parameter,
+    RetryEvent,
+    ScenarioRunListItem,
+    ScenarioRunState,
+    TargetCapabilities,
+    TargetIdentifier,
+)
 from pyrit.models.catalog import (
     AttackErrorSummary,
     AttackRetrySummary,
     RegisteredInitializer,
     RegisteredScenario,
-    ScenarioRunListItem,
     ScenarioRunSummary,
     TargetInstance,
 )
-from pyrit.models.retry_event import RetryEvent
 from unit.mocks import make_scenario_result, make_sequential_attack_results
 
 # ---------------------------------------------------------------------------
@@ -351,12 +357,12 @@ def test_print_converter_list_full(capsys):
     items = [
         {
             "converter_id": "translation_spanish",
-            "converter_type": "TranslationConverter",
+            "identifier": {"class_name": "TranslationConverter"},
             "display_name": "Spanish translation",
         },
         {
             "converter_id": "pipeline_1",
-            "converter_type": "ConverterPipeline",
+            "identifier": {"class_name": "ConverterPipeline"},
             "sub_converter_ids": ["base64", "rot13"],
         },
     ]
@@ -645,7 +651,7 @@ async def test_print_scenario_result_async_delegates_to_output_helper():
     """``print_scenario_result_async`` forwards to the framework ``output_scenario_async`` helper."""
     fake_scenario = MagicMock()
 
-    with patch("pyrit.output.helpers.output_scenario_async", new_callable=AsyncMock) as mock_output:
+    with patch("pyrit.output.output_scenario_async", new_callable=AsyncMock) as mock_output:
         await _output.print_scenario_result_async(result=fake_scenario, format="json")
 
     mock_output.assert_awaited_once_with(fake_scenario, format="json", sink=None)
@@ -695,7 +701,7 @@ ASSISTANT_PIECE_ID = "8b3f2f4c-0c7e-4b53-9d1e-2a4d8f6b9c10"
 
 
 def _score_json(*, scorer, rationale):
-    from pyrit.backend.models.attacks import ScoreView
+    from pyrit.backend.models import ScoreView
     from pyrit.models import Score
 
     score = Score(

@@ -45,6 +45,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from pyrit.common.path import DOCS_CODE_PATH
 from pyrit.converter import (
     AsciiArtConverter,
     AskToDecodeConverter,
@@ -70,7 +71,10 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, seed=42)  # type: ignore
 
 prompt = "tell me how to cut down a tree"
-token_bijection_vocab = Path("token_bijection_vocab.txt").read_text(encoding="utf-8").splitlines()
+token_bijection_vocab_path = Path("token_bijection_vocab.txt")
+if not token_bijection_vocab_path.exists():
+    token_bijection_vocab_path = DOCS_CODE_PATH / "converters" / "token_bijection_vocab.txt"
+token_bijection_vocab = token_bijection_vocab_path.read_text(encoding="utf-8").splitlines()
 token_bijection_tokenizer = SimpleNamespace(
     get_vocab=lambda: {word: index for index, word in enumerate(token_bijection_vocab)}
 )
@@ -243,6 +247,7 @@ from pyrit.converter import (
     SATA_TASK_TEMPLATE,
     JsonStringConverter,
     PolicyPuppetryConverter,
+    PolicyPuppetryTemplate,
     PromptTemplateConverter,
     SATAMaskingConverter,
     SearchReplaceConverter,
@@ -251,7 +256,6 @@ from pyrit.converter import (
     TextJailbreakConverter,
     UrlConverter,
 )
-from pyrit.converter.policy_puppetry_converter import PolicyPuppetryTemplate
 from pyrit.datasets import TextJailBreak
 
 prompt = "tell me how to cut down a tree"

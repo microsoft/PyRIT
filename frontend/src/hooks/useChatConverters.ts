@@ -9,6 +9,7 @@ import type {
   ChatConverterController,
   ChatConverterSnapshot,
   ConverterInputPiece,
+  ConverterInstance,
   ConverterPipelineStage,
   ConverterPreviewResponse,
   ConverterPreviewStep,
@@ -16,6 +17,7 @@ import type {
   MessageAttachment,
   PieceConversion,
   PieceConversionUpdates,
+  SourceInstanceSpec,
 } from '@/types'
 import { generateClientId } from '@/utils/clientId'
 import { fileToBase64 } from '@/utils/messageMapper'
@@ -98,9 +100,9 @@ function changePipeline(state: ConversionState, pieceType: string, stages: Conve
   let prefixLength = 0
   while (
     prefixLength < previous.length && prefixLength < stages.length
-    && previous[prefixLength].id === stages[prefixLength].id
-    && previous[prefixLength].converterId === stages[prefixLength].converterId
-    && previous[prefixLength].temporary === stages[prefixLength].temporary
+    && previous[prefixLength]?.id === stages[prefixLength]?.id
+    && previous[prefixLength]?.converterId === stages[prefixLength]?.converterId
+    && previous[prefixLength]?.temporary === stages[prefixLength]?.temporary
   ) prefixLength++
   if (prefixLength === previous.length && prefixLength === stages.length) return state
 
@@ -140,7 +142,7 @@ function completedResults(state: ConversionState): Record<string, ConverterPrevi
     }
     const last = stages[stages.length - 1]
     if (!last || stages.length !== pipeline.length || stages.some(
-      (stage: ConverterStageResult, index: number) => stage.stageId !== pipeline[index].id,
+      (stage: ConverterStageResult, index: number) => stage.stageId !== pipeline[index]?.id,
     )) continue
     results[input.id] = {
       original_value: input.value,
@@ -242,6 +244,30 @@ export function usePieceConverters(
     const stage: ConverterPipelineStage = { id: generateClientId(), converterId }
     setPipeline(pieceType, (stages: ConverterPipelineStage[]) => [...stages, stage])
   }, [setPipeline])
+
+  const replaceTemporaryConverter = useCallback((
+    pieceType: string, stageId: string, source: SourceInstanceSpec, converter: ConverterInstance,
+  ): void => {
+    setState((current: ConversionState) => {
+      const stages = current.pipelines[pieceType] ?? []
+      const selected = stages.find((stage: ConverterPipelineStage) => stage.id === stageId && stage.temporary === source)
+      if (!selected) return current
+      const next = stages.map((stage: ConverterPipelineStage) => stage === selected
+        ? { id: stage.id, converterId: converter.converter_id } : stage)
+      if (converter.identifier.hash !== (selected.identifier?.hash ?? source.effective_hash)) {
+        return changePipeline(current, pieceType, next)
+      }
+      // Saving the same configuration changes future lookups, not past outputs or their signed provenance.
+      return {
+        ...current,
+        pipelines: { ...current.pipelines, [pieceType]: next },
+        pipelineRevisions: {
+          ...current.pipelineRevisions,
+          [pieceType]: (current.pipelineRevisions[pieceType] ?? 0) + 1,
+        },
+      }
+    })
+  }, [])
 
   const retainConverters = useCallback((availableIds: Set<string>): void => {
     setState((current: ConversionState) => {
@@ -346,8 +372,9 @@ export function usePieceConverters(
       )
       if (afterStageId !== undefined && boundary < 0) return []
       const start = boundary + 1
-      const value = boundary < 0 ? state.workingInputs[input.id] ?? input.value : previous[boundary].value
-      const dataType = boundary < 0 ? input.dataType : previous[boundary].generated.output_data_type
+      const prevBoundary = boundary >= 0 ? previous[boundary] : undefined
+      const value = prevBoundary ? prevBoundary.value : (state.workingInputs[input.id] ?? input.value)
+      const dataType = prevBoundary ? prevBoundary.generated.output_data_type : input.dataType
       if (start >= pipeline.length || (boundary < 0 && !value.trim() && !input.file)) return []
       return [{ input, pipeline, prefix: previous.slice(0, start), start, value, dataType }]
     })
@@ -392,10 +419,10 @@ export function usePieceConverters(
           } : {}),
         })
         if (response.steps.length !== remaining.length || response.steps.some(
-          (step: ConverterPreviewStep, index: number) => step.converter_id !== remaining[index].converterId,
+          (step: ConverterPreviewStep, index: number) => step.converter_id !== remaining[index]?.converterId,
         )) throw new Error('The conversion response does not match the requested stages.')
         const stages: ConverterStageResult[] = response.steps.map((step: ConverterPreviewStep, index: number) => ({
-          stageId: remaining[index].id, generated: step, value: step.output_value,
+          stageId: remaining[index]?.id ?? '', generated: step, value: step.output_value,
         }))
         return { input, pipelineRevision, stages: [...prefix, ...stages] }
       } catch (error) {
@@ -565,6 +592,7 @@ export function usePieceConverters(
     isConverting: state.isConverting,
     addConverter,
     setPipeline,
+    replaceTemporaryConverter,
     retainConverters,
     discardTemporarySettings,
     convert: (pieceType: string) => runConversion({ pieceType, includeIncomplete: true }),

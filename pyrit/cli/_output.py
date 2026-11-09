@@ -17,15 +17,18 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pyrit.cli.api_client import PyRITApiClient
-    from pyrit.models import Operation, ScenarioResult
+    from pyrit.models import (
+        Operation,
+        ScenarioResult,
+        ScenarioRunListItem,
+    )
     from pyrit.models.catalog import (
         RegisteredInitializer,
         RegisteredScenario,
-        ScenarioRunListItem,
         ScenarioRunSummary,
         TargetInstance,
     )
-    from pyrit.output.sink import OutputFormat, Sink
+    from pyrit.output import OutputFormat, Sink
 
 try:
     import termcolor
@@ -255,7 +258,8 @@ def print_converter_list(*, items: list[dict[str, Any]]) -> None:
     for conv in items:
         name = conv.get("converter_id", "unknown")
         _header(name)
-        print(f"    Class: {conv.get('converter_type', '')}")
+        identifier = conv.get("identifier") or {}
+        print(f"    Class: {identifier.get('class_name', '')}")
         display_name = conv.get("display_name") or ""
         if display_name:
             print(f"    Name: {display_name}")
@@ -429,7 +433,7 @@ async def print_scenario_result_async(
         format: Output format — "pretty" or "json". Defaults to "pretty".
         sink: Output sink. Defaults to None (the helper's default destination).
     """
-    from pyrit.output.helpers import output_scenario_async
+    from pyrit.output import output_scenario_async
 
     await output_scenario_async(result, format=format, sink=sink)
 
@@ -455,7 +459,7 @@ async def _write_json_document_async(document: str, *, sink: Sink | None = None)
         document (str): The serialized JSON document.
         sink (Sink | None): Destination sink. Defaults to StdoutSink.
     """
-    from pyrit.output.sink import StdoutSink
+    from pyrit.output import StdoutSink
 
     await (sink or StdoutSink()).write_async(document)
 

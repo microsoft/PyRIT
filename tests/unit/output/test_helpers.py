@@ -18,10 +18,15 @@ from pyrit.models import (
     ScenarioResult,
     Score,
 )
-from pyrit.output.conversation.source import MemoryConversationSource
-from pyrit.output.helpers import (
+from pyrit.output import (
+    FileSink,
+    IPythonMarkdownSink,
+    Sink,
+    StdoutSink,
+    get_default_sink,
     output_attack_async,
     output_conversation_async,
+    output_finding_report_async,
     output_scenario_async,
     output_scenario_attacks_async,
     output_scenario_conversations_async,
@@ -29,8 +34,10 @@ from pyrit.output.helpers import (
     output_score_async,
     output_scorer_async,
 )
+from pyrit.output.conversation.source import MemoryConversationSource
+from pyrit.output.finding_report.markdown import MarkdownFindingReportPrinter
+from pyrit.output.finding_report.report import FindingReport, FindingReportEntry, FindingReportField
 from pyrit.output.scenario_result.json import JsonScenarioResultMemoryPrinter
-from pyrit.output.sink import FileSink, IPythonMarkdownSink, StdoutSink, get_default_sink
 
 # --- get_default_sink tests ---
 
@@ -50,7 +57,7 @@ def test_get_default_sink_explicit_stdout():
     assert isinstance(sink, StdoutSink)
 
 
-@patch("pyrit.common.notebook_utils.is_in_ipython_session", return_value=True)
+@patch("pyrit.common.is_in_ipython_session", return_value=True)
 def test_get_default_sink_auto_detects_notebook(_mock):
     sink = get_default_sink()
     assert isinstance(sink, IPythonMarkdownSink)
@@ -143,6 +150,23 @@ async def test_output_attack_async_forwards_reasoning_summaries(mock_cls):
     await output_attack_async(result, include_reasoning_summaries=True)
 
     assert mock_printer.write_async.call_args.kwargs["include_reasoning_summaries"] is True
+
+
+@pytest.mark.parametrize("fmt", ["json", "html", "jsno"])
+async def test_output_attack_async_rejects_unsupported_format_before_writing_async(fmt, tmp_path) -> None:
+    path = tmp_path / "attack.md"
+    path.write_text("existing report")
+
+    with (
+        patch("pyrit.output.helpers.PrettyAttackResultMemoryPrinter") as pretty_cls,
+        patch("pyrit.output.helpers.MarkdownAttackResultMemoryPrinter") as markdown_cls,
+        pytest.raises(ValueError, match="Unsupported format for attack results"),
+    ):
+        await output_attack_async(MagicMock(), format=fmt, sink=FileSink(path=path))
+
+    pretty_cls.assert_not_called()
+    markdown_cls.assert_not_called()
+    assert path.read_text() == "existing report"
 
 
 async def test_output_scenario_async_unsupported_format():
@@ -241,6 +265,42 @@ async def test_output_score_async_unsupported_format():
         await output_score_async([AsyncMock()], format="markdown")
 
 
+# --- output_finding_report_async tests ---
+
+FINDING_REPORT = FindingReport(
+    operation_name="Synthetic evaluation",
+    findings=(
+        FindingReportEntry(
+            title="Synthetic finding",
+            severity=FindingReportField(label="Severity", value="Low"),
+            fields=(FindingReportField(label="Description", value="First line\nsecond line"),),
+            evidence=(),
+        ),
+    ),
+)
+
+
+class _RecordingSink(Sink):
+    def __init__(self) -> None:
+        self.written: list[str] = []
+
+    async def write_async(self, data: str) -> None:
+        self.written.append(data)
+
+
+async def test_output_finding_report_async_writes_markdown_to_the_sink():
+    sink = _RecordingSink()
+
+    await output_finding_report_async(FINDING_REPORT, sink=sink)
+
+    assert sink.written == [await MarkdownFindingReportPrinter().render_async(FINDING_REPORT)]
+
+
+async def test_output_finding_report_async_rejects_other_formats():
+    with pytest.raises(ValueError, match="Unsupported format for finding reports: 'json'"):
+        await output_finding_report_async(FINDING_REPORT, format="json")
+
+
 # --- json-branch tests (each routes to the Json* memory printer) ---
 
 
@@ -268,6 +328,23 @@ async def test_output_scenario_attacks_async_json(mock_cls):
     mock_cls.assert_called_once()
     assert isinstance(mock_cls.call_args[1]["sink"], StdoutSink)
     mock_printer.write_async.assert_awaited_once()
+
+
+@pytest.mark.parametrize("fmt", ["markdown", "html", "jsno"])
+async def test_output_scenario_attacks_async_rejects_unsupported_format_before_writing_async(fmt, tmp_path) -> None:
+    path = tmp_path / "attacks.txt"
+    path.write_text("existing report")
+
+    with (
+        patch("pyrit.output.helpers.PrettyScenarioResultMemoryPrinter") as pretty_cls,
+        patch("pyrit.output.helpers.JsonScenarioResultMemoryPrinter") as json_cls,
+        pytest.raises(ValueError, match="Unsupported format for scenario attacks"),
+    ):
+        await output_scenario_attacks_async(MagicMock(), format=fmt, sink=FileSink(path=path))
+
+    pretty_cls.assert_not_called()
+    json_cls.assert_not_called()
+    assert path.read_text() == "existing report"
 
 
 @patch("pyrit.output.scorer.json.JsonScorerMemoryPrinter")

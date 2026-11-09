@@ -15,9 +15,10 @@ from pyrit.executor.attack import (
     CrescendoAttack,
     PromptSendingAttack,
     RedTeamingAttack,
+    SequentialAttack,
+    SequentialChildAttack,
     TreeOfAttacksWithPruningAttack,
 )
-from pyrit.executor.attack.compound import SequentialAttack, SequentialChildAttack
 from pyrit.memory import MemoryInterface
 from pyrit.models import (
     AdversarialPrompts,
@@ -30,15 +31,19 @@ from pyrit.models import (
     MessagePiece,
     ScenarioRunPlanGroupKind,
     Score,
+    ScoringExpectation,
     SeedObjective,
     SeedPrompt,
     get_common_json_schema,
 )
-from pyrit.scenario import AtomicAttack
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import (
+    AtomicAttack,
+    AttackTechnique,
+    AttackTechniqueFactory,
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
+)
 from pyrit.scenario.core.matrix_atomic_attack_builder import MatrixAtomicAttackBuilder
-from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, IncompatibleTechniquePolicy
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques.core import get_technique_factories
 
@@ -68,8 +73,10 @@ def _factory(adversarial_chat: MockPromptTarget) -> AttackTechniqueFactory:
 
 
 class _PolicyScorer(SubStringScorer):
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
-        scores = await super()._score_piece_async(message_piece, objective=objective)
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
+        scores = await super()._score_piece_with_expectation_async(message_piece, expectation=expectation)
         scores[0].score_rationale = "Ask for the published policy without private order details."
         return scores
 

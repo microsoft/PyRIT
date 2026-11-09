@@ -17,16 +17,14 @@ from fastapi.testclient import TestClient
 
 from pyrit.analytics import compute_outcome_statistics
 from pyrit.backend.main import app
-from pyrit.backend.models.attacks import AttackConversationsResponse
-from pyrit.backend.models.common import PaginationInfo
+from pyrit.backend.models import AttackConversationsResponse, PaginationInfo
+from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.saved_conversation_read_service import SavedConversationReadService
 from pyrit.backend.services.scenario_progress_read_model import (
     ScenarioProgressReadModel,
     ScenarioProgressSnapshot,
 )
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
-from pyrit.memory import MemoryInterface, PromptMemoryEntry, SQLiteMemory
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
+from pyrit.memory import MemoryInterface, PromptMemoryEntry, SQLiteMemory, set_message_piece_sha256_async
 from pyrit.models import (
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -1214,20 +1212,22 @@ def test_hierarchy_traversal_halts_immediately_on_budget_exhaustion() -> None:
 
     snapshot = _make_test_snapshot(deltas=deltas)
 
-    import time
+    # Count mapped nodes instead of measuring wall-clock time, which is flaky on shared CI runners
+    with patch.object(
+        ScenarioProgressReadModel,
+        "_map_hierarchy_node",
+        wraps=ScenarioProgressReadModel._map_hierarchy_node,
+    ) as map_node_spy:
+        projection = ScenarioProgressReadModel.build_scenario_hierarchy(
+            scenario_result_id="scenario-run-1",
+            scenario_name="TestScenario",
+            scenario_version=1,
+            status=ScenarioRunState.COMPLETED,
+            snapshot=snapshot,
+            max_nodes=1,
+        )
 
-    start_time = time.perf_counter()
-    projection = ScenarioProgressReadModel.build_scenario_hierarchy(
-        scenario_result_id="scenario-run-1",
-        scenario_name="TestScenario",
-        scenario_version=1,
-        status=ScenarioRunState.COMPLETED,
-        snapshot=snapshot,
-        max_nodes=1,
-    )
-    elapsed = time.perf_counter() - start_time
-
-    assert elapsed < 0.05, f"Expected <0.05s, got {elapsed:.4f}s"
+    assert map_node_spy.call_count == 1
     assert projection.truncated is True
     # Count total nodes in projection
     node_count = sum(len(g.roots) for g in projection.groups)

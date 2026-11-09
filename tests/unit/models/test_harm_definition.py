@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from pyrit.common.path import HARM_DEFINITION_PATH
-from pyrit.models.harm_definition import (
+from pyrit.models import (
     HarmDefinition,
     ScaleDescription,
     get_all_harm_definitions,

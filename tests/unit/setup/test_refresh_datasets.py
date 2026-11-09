@@ -14,7 +14,7 @@ import pytest
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
-from pyrit.setup.initializers.refresh_datasets import RefreshDatasets
+from pyrit.setup.initializers import RefreshDatasets
 
 
 def _make_dataset(*, dataset_name: str, values: list[str], harm_categories: list[str] | None = None) -> SeedDataset:
