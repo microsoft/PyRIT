@@ -9,6 +9,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -54,8 +55,7 @@ def test_stores_share_the_lock_across_processes(tmp_path: Path, operation: str) 
             else:
                 store._cleanup_expired()
     """)
-    process: subprocess.Popen[str] | None = None
-    try:
+    with ExitStack() as cleanup:
         with FileLock(tmp_path / ".staging.lock"):
             process = subprocess.Popen(
                 [sys.executable, "-c", script, str(tmp_path), operation, str(value)],
@@ -63,6 +63,13 @@ def test_stores_share_the_lock_across_processes(tmp_path: Path, operation: str) 
                 stderr=subprocess.PIPE,
                 text=True,
             )
+
+            def stop_process() -> None:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=TEST_WATCHDOG_SECONDS)
+
+            cleanup.callback(stop_process)
             deadline = time.monotonic() + TEST_WATCHDOG_SECONDS
             while not marker.exists():
                 if process.poll() is not None:
@@ -74,10 +81,6 @@ def test_stores_share_the_lock_across_processes(tmp_path: Path, operation: str) 
             assert Path(marker.read_text()) == tmp_path / ".staging.lock"
         stdout, stderr = process.communicate(timeout=TEST_WATCHDOG_SECONDS)
         assert process.returncode == 0, f"{stdout} {stderr}"
-    finally:
-        if process is not None and process.poll() is None:
-            process.kill()
-            process.communicate(timeout=TEST_WATCHDOG_SECONDS)
     if operation == "cleanup":
         assert not path.exists()
     else:
