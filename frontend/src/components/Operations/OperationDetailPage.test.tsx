@@ -1,9 +1,10 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 
 import { attacksApi, operationsApi, scenariosApi } from '@/services/api'
+import { installRouterTestRequest } from '@/test-utils/routerRequest'
 import type { Finding, FindingListItem, Operation, OperationDetail } from '@/types'
 import OperationDetailPage from './OperationDetailPage'
 
@@ -204,15 +205,18 @@ it('refreshes evidence counts without collapsing the expanded list after detachm
   expect(await screen.findByText('No evidence attached.')).toBeInTheDocument()
 })
 
-it('puts all execution history after the findings without fetching or duplicating activity', async () => {
+it('links both feature histories after the findings without fetching or duplicating activity', async () => {
   jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
   renderPage()
   const finding = await screen.findByRole('heading', { name: FINDING.title })
-  const link = screen.getByRole('link', { name: 'All execution history' })
+  const link = screen.getByRole('link', { name: 'Attack history' })
   const url = new URL(link.getAttribute('href') ?? '', 'http://localhost')
-  expect(url.pathname).toBe('/history/attacks')
+  expect(url.pathname).toBe('/attack/history')
   expect(url.searchParams.getAll('operation_id')).toEqual([OPERATION.id])
   expect(url.searchParams.has('operation')).toBe(false)
+  const scannerUrl = new URL(screen.getByRole('link', { name: 'Scanner history' }).getAttribute('href') ?? '', 'http://localhost')
+  expect(scannerUrl.pathname).toBe('/scanner/history')
+  expect(scannerUrl.searchParams.getAll('operation_id')).toEqual([OPERATION.id])
   expect(finding.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(screen.queryByText('Human assessments, separate from attack outcomes and scores.')).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Recent attacks' })).not.toBeInTheDocument()
@@ -522,4 +526,35 @@ it('pages through findings', async () => {
   await screen.findByText(/no findings/i)
   expect(jest.mocked(operationsApi.listFindings).mock.calls.at(-1)).toEqual(['op-1', { limit: 20, offset: 20 }])
   expect(screen.getByText('Page 2')).toBeInTheDocument()
+})
+
+describe('history after changing a finding on the first page', () => {
+  let restoreRequest: () => void
+  beforeAll(() => { restoreRequest = installRouterTestRequest() })
+  afterAll(() => { restoreRequest() })
+
+  it.each(['saving', 'deleting'])('leaves the operation with one Back after %s a finding', async action => {
+    const user = userEvent.setup()
+    jest.mocked(operationsApi.listFindings).mockResolvedValue({ ...EMPTY, items: [FINDING] })
+    const router = createMemoryRouter([
+      { path: '/operations', element: <h1>Operations list</h1> },
+      { path: '/operations/:operationId', element: <OperationDetailPage /> },
+    ], { initialEntries: ['/operations', '/operations/op-1'], initialIndex: 1 })
+    render(<FluentProvider theme={webLightTheme}><RouterProvider router={router} /></FluentProvider>)
+
+    if (action === 'saving') {
+      await user.click(await screen.findByRole('button', { name: 'New finding' }))
+      const dialog = screen.getByRole('dialog')
+      await user.type(within(dialog).getByRole('textbox', { name: 'Title' }), FINDING.title)
+      await user.click(within(dialog).getByRole('button', { name: 'Save finding' }))
+      expect(await screen.findByText(`Finding saved: ${FINDING.title}`)).toBeInTheDocument()
+    } else {
+      await user.click(await screen.findByRole('button', { name: `Delete finding: ${FINDING.title}` }))
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete finding' }))
+      expect(await screen.findByText(`Finding deleted: ${FINDING.title}`)).toBeInTheDocument()
+    }
+
+    await act(async () => { await router.navigate(-1) })
+    expect(await screen.findByRole('heading', { level: 1, name: 'Operations list' })).toBeInTheDocument()
+  })
 })

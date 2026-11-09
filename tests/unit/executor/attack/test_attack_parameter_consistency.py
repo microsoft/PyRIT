@@ -732,20 +732,12 @@ _ADVERSARIAL_SYSTEM_PROMPT_PATHS = (
     ids=lambda p: f"{Path(p).parent.name}/{Path(p).name}",
 )
 def test_adversarial_system_prompt_declares_canonical_schema(prompt_path: Path) -> None:
-    """Every adversarial system prompt routed through ``_AdversarialConversationManager`` must declare the
-    canonical ``adversarial_chat`` response schema in its YAML, and its prose must describe the
-    ``next_message`` field, so the schema and the prompt text stay a matched pair.
+    """Adversarial system prompts must declare the shared response schema in YAML.
 
-    The manager force-applies the ``adversarial_chat`` schema whenever a prompt declares none. A prompt
-    whose prose still asks for raw output (a bare image request, a ``<|done|>`` sentinel, "output ONLY the
-    user message") then silently mismatches the forced JSON contract: capable targets comply anyway, but
-    targets that honor structured outputs strictly raise ``InvalidJsonException``. Declaring the schema in
-    the YAML makes the contract explicit and guards against new adversarial prompts regressing into that
-    schema-less straggler class.
+    The schema defines the response fields. Prompt prose does not need to repeat them.
     """
     seed = SeedPrompt.from_yaml_file(prompt_path)
     assert seed.response_json_schema == get_common_json_schema("adversarial_chat")
-    assert "next_message" in seed.value, "adversarial prompt prose must describe the next_message JSON field"
 
 
 # =============================================================================

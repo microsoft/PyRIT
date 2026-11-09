@@ -18,7 +18,7 @@
 # - Was there harmful content in the response? How bad was it?
 #
 # A scorer takes a response (or a whole conversation) and returns one or more
-# [`Score`](../../../pyrit/models/score.py) objects. Scorers are used three ways:
+# [`Score`](../../../pyrit/models/score/score.py) objects. Scorers are used three ways:
 # directly (this page), automatically inside an [attack](../executor/1_single_turn.ipynb#prompt-sending),
 # and over many stored responses with the [batch scorer](#batch-scoring).
 #
@@ -33,6 +33,10 @@
 #
 # The two are convertible: a `float_scale` score becomes `true_false` by applying a
 # threshold (see [Combining & stacking scorers](3_combining_scorers.ipynb)).
+#
+# To change a verdict after a score is created, call `score.set_value(...)` with a `bool`, a
+# number, or `None` for undetermined. It keeps `score_value` and `status` consistent. Assigning
+# `score_value` directly on a `true_false` score is deprecated until 2.0.
 # %% [markdown]
 # ## Scorer reference table
 #

@@ -7,11 +7,11 @@ from unittest.mock import patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.mossbench_dataset import (
+from pyrit.datasets.seed_datasets.remote import (
     MossBenchOversensitivityType,
     _MossBenchDataset,
 )
-from pyrit.memory.central_memory import CentralMemory
+from pyrit.memory import CentralMemory
 from pyrit.models import SeedDataset
 
 

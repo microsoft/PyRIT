@@ -3,7 +3,8 @@
 
 import pytest
 
-from pyrit.common.utils import combine_list, is_numeric_value, to_sha256
+from pyrit.common import combine_list
+from pyrit.common.utils import is_numeric_value, to_sha256
 
 
 @pytest.mark.parametrize(

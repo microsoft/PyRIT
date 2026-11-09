@@ -75,8 +75,7 @@ for score in scores:
 # Measures textual overlap between a response and a reference text (longest common
 # subsequence, Levenshtein, or Jaccard). Runs locally, no LLM.
 # %%
-from pyrit.score import PlagiarismScorer
-from pyrit.score.float_scale.plagiarism_scorer import PlagiarismMetric
+from pyrit.score import PlagiarismMetric, PlagiarismScorer
 
 reference = "The quick brown fox jumps over the lazy dog near the river bank."
 plagiarism_scorer = PlagiarismScorer(reference_text=reference, metric=PlagiarismMetric.LCS)

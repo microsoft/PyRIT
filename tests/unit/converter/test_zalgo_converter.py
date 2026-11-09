@@ -5,8 +5,7 @@ import random
 
 import pytest
 
-from pyrit.converter import ZalgoConverter
-from pyrit.converter.text_selection_strategy import WordProportionSelectionStrategy
+from pyrit.converter import WordProportionSelectionStrategy, ZalgoConverter
 from pyrit.registry import ConverterRegistry
 
 

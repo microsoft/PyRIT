@@ -1,11 +1,28 @@
+import { useState } from 'react'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
 import { convertersApi } from '@/services/api'
+import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import type { ConverterInstance, ConverterSelection, SourceInstanceSpec } from '@/types'
 
 import ConverterChainField from './ConverterChainField'
+
+describe('ConverterChainField', () => {
+  beforeEach(() => jest.clearAllMocks())
+
+  it('uses explicit help even when the visible label changes', async () => {
+    const user = userEvent.setup()
+    render(<FluentProvider theme={webLightTheme}>
+      <ConverterChainField label="Converted replies" help={HELP_DEFINITIONS.responseConverters}
+        converters={[]} value={[]} onChange={jest.fn()} onConvertersChanged={jest.fn()} />
+    </FluentProvider>)
+
+    await user.hover(screen.getByText('Converted replies'))
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Transform target responses before scoring.')
+  })
+})
 
 jest.mock('@/services/api', () => ({ convertersApi: { createConverter: jest.fn() } }))
 jest.mock('@/components/Registry/CreateConverterDialog', () => ({ __esModule: true, default: () => null }))
@@ -29,7 +46,7 @@ function Harness({ value, disabled = false }: { value?: ConverterSelection[]; di
     setSelection(value ?? [source])
   }
   return <FluentProvider theme={webLightTheme}>
-    <ConverterChainField label="Request converters" converters={converters} value={selection}
+    <ConverterChainField label="Request converters" help={HELP_DEFINITIONS.requestConverters} converters={converters} value={selection}
       onChange={setSelection} onConvertersChanged={setConverters} disabled={disabled} />
   </FluentProvider>
 }
@@ -44,6 +61,13 @@ describe('ConverterChainField registry save', () => {
   it('should disable the menu while the chain is disabled', () => {
     render(<Harness disabled />)
     expect(screen.getByRole('button', { name: /Settings for converter/ })).toBeDisabled()
+  })
+
+  it('should provide request-converter help in the registry save harness', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByRole('button', { name: /Request converters.*information/i }))
+    expect(await screen.findByRole('note')).toHaveTextContent(HELP_DEFINITIONS.requestConverters)
   })
 
   it('should not replace another stage after the temporary stage is removed', async () => {
@@ -102,4 +126,3 @@ describe('ConverterChainField registry save', () => {
     expect(screen.queryByRole('option', { name: /^saved/ })).not.toBeInTheDocument()
   })
 })
-import { useState } from 'react'

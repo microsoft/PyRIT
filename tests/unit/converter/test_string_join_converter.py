@@ -3,8 +3,7 @@
 
 import pytest
 
-from pyrit.converter import ConverterResult, StringJoinConverter
-from pyrit.converter.text_selection_strategy import AllWordsSelectionStrategy, WordIndexSelectionStrategy
+from pyrit.converter import AllWordsSelectionStrategy, ConverterResult, StringJoinConverter, WordIndexSelectionStrategy
 from pyrit.registry import ConverterRegistry
 
 
