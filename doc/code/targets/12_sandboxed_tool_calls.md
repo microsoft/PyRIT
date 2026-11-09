@@ -165,7 +165,8 @@ sandbox, it also:
 - opens the session on first use, closes it after ten idle minutes, and renews it before a session time
   limit could cut a call short;
 - lets one call at a time use the sandbox, first come first served, and waits up to five minutes for a turn;
-- keeps a call running, and the sandbox held, when its caller gives up, so nothing runs beside it;
+- when a caller gives up, lets its running program finish, holding the sandbox so nothing runs beside it,
+  and starts nothing more for it, not even a run that was waiting out a busy sandbox;
 - quarantines the sandbox when it can't confirm that a session closed, that a run's processes stopped, or
   that a reset finished, until `release_async`, which retries the close, or `reset_async`;
 - resets only after the running call finishes, closing the session first, and records the outcome.

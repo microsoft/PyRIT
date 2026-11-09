@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import sys
 import time
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -290,6 +292,40 @@ async def test_an_invalid_result_is_an_uncertain_failure_async(result: Any) -> N
     assert fake.closed_sessions == ["fake-session-1"]
 
 
+@pytest.mark.parametrize(
+    ("capabilities", "closed"),
+    [(FakeSandbox.DEFAULT_CAPABILITIES, ["fake-session-1"]), (_CALL_CAPABILITIES, [])],
+    ids=["environment", "call"],
+)
+async def test_a_run_the_adapter_cancels_by_itself_is_an_uncertain_failure_async(
+    capabilities: SandboxCapabilities, closed: list[str]
+) -> None:
+    fake = FakeSandbox(capabilities=capabilities)
+    fake.fail_next(hook=FakeSandboxHook.EXECUTE, error=asyncio.CancelledError())
+    with pytest.raises(SandboxExecutionError, match="cancelled the run by itself"):
+        await _run_async(fake)
+    current = asyncio.current_task()
+    assert current is not None and current.cancelling() == 0
+    assert fake.closed_sessions == closed
+
+
+async def test_other_hooks_that_cancel_by_themselves_have_failed_async() -> None:
+    fake = FakeSandbox()
+    fake.fail_next(hook=FakeSandboxHook.OPEN, error=asyncio.CancelledError())
+    with pytest.raises(SandboxExecutionError, match="open a session: the sandbox cancelled"):
+        await _run_async(fake)
+    fake.fail_next(hook=FakeSandboxHook.STATUS, error=asyncio.CancelledError())
+    assert (await fake.get_status_async()).condition is SandboxCondition.UNAVAILABLE
+    await _run_async(fake)
+    fake.fail_next(hook=FakeSandboxHook.CLOSE, error=asyncio.CancelledError())
+    await fake.release_async()
+    assert (await fake.get_status_async()).condition is SandboxCondition.QUARANTINED
+    fake.fail_next(hook=FakeSandboxHook.RESET, error=asyncio.CancelledError())
+    with pytest.raises(SandboxExecutionError, match="cancelled it by itself"):
+        await fake.reset_async()
+    assert (await fake.get_status_async()).condition is SandboxCondition.QUARANTINED
+
+
 async def test_an_unconfirmed_close_quarantines_until_released_async() -> None:
     fake = FakeSandbox()
     fake.fail_next(hook=FakeSandboxHook.EXECUTE, error=RuntimeError("lost the host"))
@@ -369,7 +405,7 @@ async def test_a_cancelled_open_still_records_its_session_async() -> None:
             await caller
         release.set()
         await _wait_until_async(lambda: not fake._lock.locked())
-    assert fake.open_sessions == {"fake-session-1"}
+    assert fake.open_sessions == {"fake-session-1"} and fake.runs == []
     await fake.close_async()
     assert fake.open_sessions == set()
 
@@ -386,6 +422,143 @@ async def test_a_caller_cancelled_while_waiting_never_runs_async() -> None:
     await _finish_async(holder, waiting)
     assert waiting.cancelled()
     assert [run.program for run in fake.runs] == ["holder"]
+
+
+@pytest.mark.parametrize("hops", [1, 2], ids=["before-it-resumes", "once-it-holds-the-lock"])
+async def test_a_caller_cancelled_as_the_sandbox_is_handed_to_it_returns_at_once_and_never_runs_async(
+    hops: int,
+) -> None:
+    loop = asyncio.get_running_loop()
+    waiters: list[asyncio.Task[Any]] = []
+
+    def cancel_after(hops_left: int) -> None:
+        if hops_left:
+            loop.call_soon(cancel_after, hops_left - 1)
+        else:
+            waiters[0].cancel()
+
+    async def handler_async(run: FakeRun) -> ProcessResult:
+        if run.program == "holder":
+            # The holder releases the sandbox right after this. One loop step later the waiter has been
+            # handed the lock but not resumed; two steps later it holds the lock and has started its run's
+            # task. On Python 3.11, asyncio.wait_for drops a cancellation at either point, so the waiter runs.
+            cancel_after(hops)
+        else:
+            await asyncio.sleep(0.5)
+        return ProcessResult(exit_code=0, stdout=run.program)
+
+    fake = FakeSandbox(handler=handler_async)
+    fake.gate = asyncio.Event()
+    holder = asyncio.create_task(_run_async(fake, program="holder"))
+    await _wait_until_async(lambda: len(fake.runs) == 1)
+    waiters.append(asyncio.create_task(_run_async(fake, program="waiter")))
+    await asyncio.sleep(0.01)
+    started = time.monotonic()
+    fake.gate.set()
+    await asyncio.wait(waiters, timeout=TEST_WATCHDOG_SECONDS)
+    assert waiters[0].cancelled() and time.monotonic() - started < 0.4
+    (held,) = await _finish_async(holder)
+    assert held.events[0].stdout == "holder"
+    await _wait_until_async(lambda: not fake._lock.locked())
+    assert [run.program for run in fake.runs] == ["holder"]
+
+
+@pytest.mark.parametrize(
+    "eager",
+    [
+        False,
+        pytest.param(True, marks=pytest.mark.skipif(sys.version_info < (3, 12), reason="eager tasks need Python 3.12")),
+    ],
+    ids=["lazy-tasks", "eager-tasks"],
+)
+async def test_a_caller_that_gives_up_during_busy_retries_never_runs_async(
+    eager: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    loop = asyncio.get_running_loop()
+    task_factory = loop.get_task_factory()
+    if eager:
+        loop.set_task_factory(asyncio.eager_task_factory)
+    fake = FakeSandbox()
+    fake.fail_next(hook=FakeSandboxHook.OPEN, error=SandboxBusyError("held"), times=1_000)
+    try:
+        with (
+            patch.object(FakeSandbox, "_BUSY_RETRY_INITIAL_SECONDS", 30.0),
+            caplog.at_level(logging.INFO, logger="pyrit._code_execution.sandbox"),
+        ):
+            caller = asyncio.create_task(_run_async(fake))
+            await _wait_until_async(lambda: len(fake._faults[FakeSandboxHook.OPEN]) == 999)
+            caller.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            # The retry would wait 30 s, but the call stops as soon as its caller is gone.
+            await asyncio.wait_for(_wait_until_async(lambda: not fake._lock.locked()), 1.0)
+            await asyncio.sleep(0)
+    finally:
+        loop.set_task_factory(task_factory)
+    assert fake.runs == [] and fake.open_sessions == set()
+    assert "did not run" in caplog.text
+
+
+async def test_invocations_that_have_not_started_are_dropped_when_the_caller_gives_up_async(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake = FakeSandbox()
+    fake.gate = asyncio.Event()
+    with caplog.at_level(logging.INFO, logger="pyrit._code_execution.sandbox"):
+        caller = asyncio.create_task(_run_async(fake, invocations=(_ProgramInvocation(),) * 2))
+        await _wait_until_async(lambda: len(fake.runs) == 1)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        fake.gate.set()
+        await _wait_until_async(lambda: not fake._lock.locked())
+        await asyncio.sleep(0)
+    assert len(fake.runs) == 1
+    (record,) = [record for record in caplog.records if "stopped early" in record.getMessage()]
+    assert record.levelno == logging.INFO and "the caller gave up" in record.getMessage()
+
+
+async def test_a_failure_after_the_caller_gave_up_is_logged_async(caplog: pytest.LogCaptureFixture) -> None:
+    gate = asyncio.Event()
+
+    async def second_fails_async(run: FakeRun) -> ProcessResult:
+        if len(fake.runs) == 2:
+            await gate.wait()
+            raise RuntimeError("worker died")
+        return ProcessResult(exit_code=0)
+
+    fake = FakeSandbox(handler=second_fails_async)
+    with caplog.at_level(logging.INFO, logger="pyrit._code_execution.sandbox"):
+        caller = asyncio.create_task(_run_async(fake, invocations=(_ProgramInvocation(),) * 3))
+        await _wait_until_async(lambda: len(fake.runs) == 2)
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        gate.set()
+        await _wait_until_async(lambda: not fake._lock.locked())
+        await asyncio.sleep(0)
+    assert len(fake.runs) == 2 and fake.closed_sessions == ["fake-session-1"]
+    (record,) = [record for record in caplog.records if "stopped early" in record.getMessage()]
+    assert record.levelno == logging.WARNING and "worker died" in record.getMessage()
+
+
+async def test_a_failure_is_logged_when_the_caller_gives_up_as_the_work_fails_async(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def fail_async() -> None:
+        await asyncio.sleep(0)
+        raise RuntimeError("the host went away")
+
+    work = asyncio.create_task(fail_async())
+    callers: list[asyncio.Task[Any]] = []
+    # Added before the shield's own callback, so the caller is cancelled just after the work fails.
+    work.add_done_callback(lambda _: callers[0].cancel())
+    callers.append(asyncio.create_task(Sandbox._await_owned_async(work)))
+    with caplog.at_level(logging.WARNING, logger="pyrit._code_execution.sandbox"):
+        with pytest.raises(asyncio.CancelledError):
+            await callers[0]
+        await asyncio.sleep(0)
+    assert "the host went away" in caplog.text
 
 
 @pytest.mark.parametrize("operation", ["release", "close"])
@@ -482,6 +655,18 @@ async def test_an_idle_timer_that_fires_during_a_call_waits_for_the_next_idle_pe
     assert fake._idle_handle is not None
     fake._on_idle_timer(fake._uses)
     await _wait_until_async(lambda: fake.closed_sessions == ["fake-session-1"])
+
+
+async def test_idle_close_waits_for_the_sandbox_to_be_free_async() -> None:
+    fake = FakeSandbox()
+    await _run_async(fake)
+    await fake._lock.acquire()
+    closing = asyncio.create_task(fake._close_if_idle_async(uses=fake._uses))
+    await asyncio.sleep(0.01)
+    assert fake.closed_sessions == []
+    fake._lock.release()
+    await _finish_async(closing)
+    assert fake.closed_sessions == ["fake-session-1"]
 
 
 async def test_idle_close_spares_a_session_used_since_its_timer_was_set_async() -> None:
@@ -594,6 +779,38 @@ async def test_reset_clears_a_quarantine_async() -> None:
         await _run_async(fake)
     await fake.reset_async()
     assert (await fake.get_status_async()).condition is SandboxCondition.READY
+    assert fake.open_sessions == set() and fake.closed_sessions == ["fake-session-1"]
+
+
+async def test_unconfirmed_closes_are_retried_until_confirmed_even_after_a_reset_async() -> None:
+    fake = FakeSandbox()
+    await _run_async(fake)
+    fake.fail_next(hook=FakeSandboxHook.CLOSE, error=RuntimeError("unreachable"), times=2)
+    await fake.release_async()
+    await fake.reset_async()
+    assert (await fake.get_status_async()).condition is SandboxCondition.READY
+    assert fake.open_sessions == {"fake-session-1"}
+    await _run_async(fake)
+    fake.fail_next(hook=FakeSandboxHook.CLOSE, error=RuntimeError("unreachable"), times=2)
+    await fake.release_async()
+    assert fake.open_sessions == {"fake-session-1", "fake-session-2"}
+    await fake.release_async()
+    assert fake.open_sessions == set() and fake.closed_sessions == ["fake-session-1", "fake-session-2"]
+    assert (await fake.get_status_async()).condition is SandboxCondition.READY
+
+
+async def test_a_reset_that_waits_too_long_is_busy_and_can_be_retried_async() -> None:
+    fake = FakeSandbox(acquire_timeout_seconds=0.05)
+    fake.gate = asyncio.Event()
+    running = asyncio.create_task(_run_async(fake))
+    await _wait_until_async(lambda: len(fake.runs) == 1)
+    with pytest.raises(SandboxBusyError, match="stayed busy"):
+        await fake.reset_async()
+    assert not (await fake.get_status_async()).resetting
+    fake.gate.set()
+    await _finish_async(running)
+    await fake.reset_async()
+    assert fake.reset_count == 1
 
 
 async def test_reset_is_refused_when_unsupported_async() -> None:
@@ -634,7 +851,7 @@ async def test_close_waits_for_the_running_call_and_is_final_async() -> None:
 async def test_close_never_raises_and_an_unconfirmed_close_can_still_be_retried_async() -> None:
     fake = FakeSandbox()
     await _run_async(fake)
-    fake.fail_next(hook=FakeSandboxHook.CLOSE, error=RuntimeError("unreachable"), times=3)
+    fake.fail_next(hook=FakeSandboxHook.CLOSE, error=RuntimeError("unreachable"), times=2)
     await fake.close_async()
     await fake.close_async()
     assert (await fake.get_status_async()).condition is SandboxCondition.QUARANTINED
@@ -691,7 +908,7 @@ async def test_status_reuses_the_last_report_while_a_call_runs_async() -> None:
     running = asyncio.create_task(_run_async(fake))
     await _wait_until_async(lambda: len(fake.runs) == 1)
     fake.revision = "fake-revision-2"
-    view = await fake.get_status_async()
+    view = await asyncio.wait_for(fake.get_status_async(), 0.5)
     assert view.busy and not view.status_is_current and view.status.revision == "fake-revision-1"
     fake.gate.set()
     await _finish_async(running)

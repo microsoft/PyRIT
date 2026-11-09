@@ -257,18 +257,72 @@ class SandboxView(BaseModel):
     last_reset: SandboxResetRecord | None = None
 
 
-@dataclass(frozen=True)
+_CALLER_GAVE_UP_REASON = "the caller gave up"
+
+
+class _CallerGaveUpError(SandboxUnavailableError):
+    """The caller gave up before a run started, so PyRIT never started it."""
+
+    def __init__(self) -> None:
+        super().__init__("The caller gave up before the run started; nothing ran.")
+
+
+@dataclass
 class _ExecutionRequest:
     program: str
     runtime_profile_name: str
     invocations: tuple[_ProgramInvocation, ...]
     timeout_seconds: float
+    caller: asyncio.Future[Any] | None = None
+    """What the caller awaits, in an ``environment`` sandbox. Cancelling the caller cancels it at once."""
+
+    def abandoned(self) -> bool:
+        """
+        Whether the caller gave up, so no more work should start for it.
+
+        Returns:
+            bool: True if the caller stopped waiting.
+        """
+        return self.caller is not None and self.caller.cancelled()
+
+    async def sleep_unless_abandoned_async(self, seconds: float) -> None:
+        """Wait, waking early if the caller gives up."""
+        if self.caller is None:
+            await asyncio.sleep(seconds)
+        else:
+            await asyncio.wait({self.caller}, timeout=seconds)
 
 
 def _log_abandoned_outcome(task: asyncio.Task[Any]) -> None:
     """Retrieve the outcome of work whose caller gave up, so a failure is logged, not lost."""
-    if not task.cancelled() and task.exception() is not None:
-        logger.warning("A sandbox operation whose caller gave up failed: %s", task.exception())
+    if task.cancelled():
+        return
+    error = task.exception()
+    if isinstance(error, _CallerGaveUpError):
+        logger.info("A sandbox call did not run: %s", error)
+    elif error is not None:
+        logger.warning("A sandbox operation whose caller gave up failed: %s", error)
+    elif isinstance(result := task.result(), _SandboxRun) and result.reasons:
+        gave_up = all(reason.endswith(_CALLER_GAVE_UP_REASON) for reason in result.reasons)
+        logger.log(
+            logging.INFO if gave_up else logging.WARNING,
+            "A sandbox call whose caller gave up stopped early: %s",
+            "; ".join(result.reasons),
+        )
+
+
+def _cancellation_requested() -> bool:
+    """
+    Whether the current task was asked to stop, as opposed to an adapter raising ``CancelledError`` by itself.
+
+    Like ``asyncio.timeout``, this reads the task's count of pending cancellations, so a task that swallowed
+    an earlier cancellation without ``uncancel()`` still counts as cancelled.
+
+    Returns:
+        bool: True if the task itself is being cancelled.
+    """
+    task = asyncio.current_task()
+    return task is None or task.cancelling() > 0
 
 
 class Sandbox(Identifiable, ABC):
@@ -280,18 +334,20 @@ class Sandbox(Identifiable, ABC):
     ``_open_session_async`` and ``_close_session_async`` (closing twice must be safe), and may implement
     ``_get_status_async`` and ``_reset_async``. Adapters raise ``SandboxInputError`` for bad input,
     ``SandboxBusyError`` when work can't start right now, ``SandboxSessionLostError`` when the session is
-    gone and nothing ran, and ``SandboxRevisionChangedError`` when a reset is refused. Any other failure is
-    uncertain: it is never retried and reaches callers as a ``SandboxExecutionError``.
+    gone and nothing ran, and ``SandboxRevisionChangedError`` when a reset is refused. Any other failure,
+    including a ``CancelledError`` a hook raises by itself, is uncertain: it is never retried and reaches
+    callers as a ``SandboxExecutionError``.
 
     An ``environment`` sandbox has one shared session that callers take turns using. A lock admits one
     call at a time, first come first served, within one deadline for waiting and retries. The first call
     opens the session; it closes after ``idle_timeout_seconds`` without use and at ``release_async`` or
     ``close_async``, and it is renewed before ``max_session_seconds`` could cut a call short. Runs, session
     closes and resets happen in tasks this class owns: a caller that gives up returns at once, while the
-    work finishes and holds the lock until it does. A busy open is retried with backoff, a lost session is
-    reopened and the call retried once, and after an uncertain failure the session is closed before the
-    next call. If a close or a reset can't be confirmed, the sandbox is quarantined: calls are refused until
-    ``release_async``, which retries the close, or ``reset_async``. ``close_async`` is final.
+    work finishes and holds the lock until it does. Runs that have not started when their caller gives up,
+    such as one waiting out a busy sandbox, never start. A busy open is retried with backoff, a lost
+    session is reopened and the call retried once, and after an uncertain failure the session is closed
+    before the next call. If a close or a reset can't be confirmed, the sandbox is quarantined: calls are
+    refused until ``release_async``, which retries the close, or ``reset_async``. ``close_async`` is final.
 
     A ``call`` sandbox shares nothing between calls, so its calls run concurrently in the caller's task,
     and its adapter cleans up when a call is cancelled.
@@ -345,7 +401,7 @@ class Sandbox(Identifiable, ABC):
         self._uses = 0
         self._closed = False
         self._quarantine_reason: str | None = None
-        self._quarantined_session_id: str | None = None
+        self._unconfirmed_session_ids: list[str] = []
         self._resetting = False
         self._last_reset: SandboxResetRecord | None = None
         self._last_status: SandboxStatus | None = None
@@ -472,7 +528,11 @@ class Sandbox(Identifiable, ABC):
         except BaseException:
             self._unlock()
             raise
-        return await self._await_owned_async(task)
+        # Recorded before the run can start (the task yields first), so it starts nothing for a caller
+        # that has given up: cancelling the caller cancels this shield at once.
+        waiter = asyncio.shield(task)
+        request.caller = waiter
+        return await self._await_owned_async(task, waiter=waiter)
 
     async def get_status_async(self) -> SandboxView:
         """
@@ -491,9 +551,9 @@ class Sandbox(Identifiable, ABC):
         """
         End the session if no call is running, and clear a quarantine. The sandbox's state is kept.
 
-        A quarantine from an unconfirmed close is cleared only if closing that session again succeeds,
-        which also works after ``close_async``. Release never opens a session. Once started, it runs to
-        the end even if the caller gives up.
+        Release first closes again every session whose close was not confirmed, which also works after
+        ``close_async``; the quarantine stays while any of those closes still fails. Release never opens a
+        session. Once started, it runs to the end even if the caller gives up.
 
         Raises:
             SandboxBusyError: If a call or reset holds the sandbox.
@@ -509,7 +569,8 @@ class Sandbox(Identifiable, ABC):
         Restore the sandbox's baseline, after the running call finishes.
 
         The session is closed first. Once started, a reset runs to the end even if the caller gives up.
-        A successful reset clears a quarantine.
+        A successful reset clears a quarantine; a session whose close is still unconfirmed is closed again
+        at the next release or close.
 
         Args:
             expected_revision (str | None): The revision the caller read; the reset is refused if the
@@ -657,6 +718,9 @@ class Sandbox(Identifiable, ABC):
             _SandboxRun: The request's runs.
         """
         try:
+            # Yield first: with an eager task factory, this task would otherwise start before
+            # execute_async records the caller, and could not see the caller give up.
+            await asyncio.sleep(0)
             return await self._run_invocations_async(request=request, deadline=deadline)
         finally:
             self._last_used_at = time.monotonic()
@@ -665,13 +729,15 @@ class Sandbox(Identifiable, ABC):
 
     async def _run_invocations_async(self, *, request: _ExecutionRequest, deadline: float | None) -> _SandboxRun:
         """
-        Run each invocation in order, stopping at the first failure or unconfirmed cleanup.
+        Run each invocation in order, stopping at the first failure or unconfirmed cleanup, or when the
+        caller has given up.
 
         Returns:
             _SandboxRun: The runs that happened, with any reasons, warnings and execution ids.
 
         Raises:
             SandboxInputError: If the first invocation was rejected.
+            _CallerGaveUpError: If the caller gave up before the first invocation started.
             SandboxExecutionError: If the first invocation could not run.
         """
         events: list[_ProgramExecutionEvent] = []
@@ -680,8 +746,15 @@ class Sandbox(Identifiable, ABC):
         reasons: tuple[str, ...] = ()
         for index, invocation in enumerate(request.invocations):
             try:
+                if request.abandoned():
+                    raise _CallerGaveUpError
                 result = await self._invoke_async(request=request, invocation=invocation, deadline=deadline)
                 events.append(self._to_event(index=index, request=request, result=result))
+            except _CallerGaveUpError:
+                if not events:
+                    raise
+                reasons = (f"stopped after invocation {index - 1}: {_CALLER_GAVE_UP_REASON}",)
+                break
             except (SandboxExecutionError, SandboxInputError) as error:
                 if not events:
                     raise
@@ -740,11 +813,15 @@ class Sandbox(Identifiable, ABC):
 
         Raises:
             SandboxInputError: If the adapter rejected the input; nothing ran.
+            SandboxUnavailableError: If the sandbox is closed or quarantined; nothing ran.
+            _CallerGaveUpError: If the caller gave up while the session opened; nothing ran.
             SandboxBusyError: If the sandbox could not start the run; nothing ran.
             SandboxSessionLostError: If the session was gone; it is forgotten and nothing ran.
             SandboxExecutionError: If the outcome is uncertain; the session is closed first.
         """
-        session_id = await self._ensure_session_async(timeout_seconds=request.timeout_seconds, deadline=deadline)
+        session_id = await self._ensure_session_async(request=request, deadline=deadline)
+        if request.abandoned():
+            raise _CallerGaveUpError
         try:
             return await self._call_execute_async(session_id=session_id, request=request, invocation=invocation)
         except (SandboxInputError, SandboxBusyError):
@@ -768,6 +845,7 @@ class Sandbox(Identifiable, ABC):
         Raises:
             SandboxInputError: If the adapter rejected the input.
             SandboxExecutionError: If the adapter failed, did not answer in time, or returned an invalid result.
+            CancelledError: If this task is being cancelled.
         """
         started = time.monotonic()
         try:
@@ -786,6 +864,10 @@ class Sandbox(Identifiable, ABC):
             raise
         except TimeoutError as error:
             raise SandboxExecutionError("The sandbox did not answer in time; the outcome is uncertain.") from error
+        except asyncio.CancelledError as error:
+            if _cancellation_requested():
+                raise
+            raise SandboxExecutionError("The sandbox cancelled the run by itself; the outcome is uncertain.") from error
         except Exception as error:
             message = (
                 f"The sandbox failed during the run, or returned an invalid result; the outcome is uncertain: {error}"
@@ -825,18 +907,18 @@ class Sandbox(Identifiable, ABC):
 
     # ---- sessions ------------------------------------------------------------------------------
 
-    async def _ensure_session_async(self, *, timeout_seconds: float, deadline: float) -> str:
+    async def _ensure_session_async(self, *, request: _ExecutionRequest, deadline: float) -> str:
         """
-        Return the open session, renewing it first if a run could outlast it.
+        Return the open session, renewing it first if the request's run could outlast it.
 
         Returns:
             str: The session identifier.
         """
-        if self._session_id is not None and not self._needs_renewal(timeout_seconds=timeout_seconds):
+        if self._session_id is not None and not self._needs_renewal(timeout_seconds=request.timeout_seconds):
             return self._session_id
         if self._session_id is not None:
             await self._discard_session_async()
-        return await self._open_session_with_retry_async(deadline=deadline)
+        return await self._open_session_with_retry_async(request=request, deadline=deadline)
 
     def _needs_renewal(self, *, timeout_seconds: float) -> bool:
         """
@@ -851,20 +933,24 @@ class Sandbox(Identifiable, ABC):
         remaining = self._session_opened_at + limit - time.monotonic()
         return remaining < timeout_seconds + self._RENEWAL_MARGIN_SECONDS
 
-    async def _open_session_with_retry_async(self, *, deadline: float) -> str:
+    async def _open_session_with_retry_async(self, *, request: _ExecutionRequest, deadline: float) -> str:
         """
-        Open a session, retrying a busy sandbox with backoff until the deadline.
+        Open a session for a request, retrying a busy sandbox with backoff until the deadline.
 
         Returns:
             str: The new session's identifier.
 
         Raises:
+            SandboxUnavailableError: If the sandbox is closed or quarantined.
+            _CallerGaveUpError: If the caller gave up.
             SandboxBusyError: If the sandbox is still busy at the deadline.
             SandboxExecutionError: If the open failed.
         """
         delay = self._BUSY_RETRY_INITIAL_SECONDS
         while True:
             self._raise_if_unusable()
+            if request.abandoned():
+                raise _CallerGaveUpError
             sent_at = time.monotonic()
             try:
                 session_id = await self._call_control_async(
@@ -873,7 +959,7 @@ class Sandbox(Identifiable, ABC):
             except SandboxBusyError:
                 if time.monotonic() + delay > deadline:
                     raise
-                await asyncio.sleep(delay)
+                await request.sleep_unless_abandoned_async(delay)
                 delay = min(delay * 2, self._BUSY_RETRY_MAX_SECONDS)
                 continue
             self._session_id, self._session_opened_at = session_id, sent_at
@@ -888,30 +974,34 @@ class Sandbox(Identifiable, ABC):
 
     async def _close_or_quarantine_async(self, *, session_id: str) -> bool:
         """
-        Close a session; if the close can't be confirmed, quarantine the sandbox and remember the session.
+        Close a session. Until a close is confirmed, the session stays listed as unconfirmed, and a close
+        that fails quarantines the sandbox.
 
         Returns:
             bool: Whether the session is known to be closed.
         """
+        if session_id not in self._unconfirmed_session_ids:
+            self._unconfirmed_session_ids.append(session_id)
         try:
             await self._call_control_async(self._close_session_async(session_id=session_id), action="close a session")
         except SandboxSessionLostError:
-            return True
+            pass
         except SandboxExecutionError as error:
             self._quarantine(reason=f"Closing session {session_id} could not be confirmed: {error}")
-            self._quarantined_session_id = session_id
             return False
+        self._unconfirmed_session_ids.remove(session_id)
         return True
 
-    async def _retry_quarantined_close_async(self) -> bool:
+    async def _retry_unconfirmed_closes_async(self) -> bool:
         """
-        Close again the session whose close could not be confirmed, if there is one.
+        Close again each session whose close was not confirmed.
 
         Returns:
-            bool: Whether no unconfirmed session remains.
+            bool: Whether every such session is now known to be closed.
         """
-        session_id, self._quarantined_session_id = self._quarantined_session_id, None
-        return session_id is None or await self._close_or_quarantine_async(session_id=session_id)
+        for session_id in list(self._unconfirmed_session_ids):
+            await self._close_or_quarantine_async(session_id=session_id)
+        return not self._unconfirmed_session_ids
 
     def _quarantine(self, *, reason: str) -> None:
         """Refuse calls until an operator releases or resets the sandbox."""
@@ -926,21 +1016,22 @@ class Sandbox(Identifiable, ABC):
 
     async def _release_locked_async(self) -> None:
         """
-        Retry an unconfirmed close, clear the quarantine if it succeeds, and end the session while holding
-        the lock, then release the lock.
+        Retry each unconfirmed close, clear the quarantine once none remains, and end the session while
+        holding the lock, then release the lock.
         """
         try:
-            if await self._retry_quarantined_close_async():
+            if await self._retry_unconfirmed_closes_async():
                 self._quarantine_reason = None
             await self._discard_session_async()
         finally:
             self._unlock()
 
     async def _close_locked_async(self) -> None:
-        """End the session, and any session whose close was unconfirmed, while holding the lock, then release it."""
+        """Retry each unconfirmed close and end the session while holding the lock, then release it."""
         try:
+            await self._retry_unconfirmed_closes_async()
             await self._discard_session_async()
-            if await self._retry_quarantined_close_async():
+            if not self._unconfirmed_session_ids:
                 self._quarantine_reason = None
         finally:
             self._lock.release()
@@ -1013,8 +1104,8 @@ class Sandbox(Identifiable, ABC):
         started_at = datetime.now(UTC)
         self._last_reset = SandboxResetRecord(started_at=started_at)
         try:
+            await self._retry_unconfirmed_closes_async()
             await self._discard_session_async()
-            await self._retry_quarantined_close_async()
             await self._call_reset_async(expected_revision=expected_revision)
         except Exception as error:
             if not isinstance(error, (SandboxInputError, SandboxBusyError, SandboxRevisionChangedError)):
@@ -1024,7 +1115,13 @@ class Sandbox(Identifiable, ABC):
             )
             raise
         else:
-            self._quarantine_reason, self._quarantined_session_id = None, None
+            self._quarantine_reason = None
+            if self._unconfirmed_session_ids:
+                logger.warning(
+                    "Sandbox %s was reset, but closing sessions %s is unconfirmed; release and close retry it.",
+                    type(self).__name__,
+                    ", ".join(self._unconfirmed_session_ids),
+                )
             self._last_reset = SandboxResetRecord(started_at=started_at, finished_at=datetime.now(UTC), succeeded=True)
         finally:
             self._resetting = False
@@ -1038,6 +1135,7 @@ class Sandbox(Identifiable, ABC):
         Raises:
             SandboxInputError: If the adapter rejected the request.
             SandboxExecutionError: If the reset failed or did not finish in time.
+            CancelledError: If this task is being cancelled.
         """
         try:
             async with asyncio.timeout(self._RESET_TIMEOUT_SECONDS):
@@ -1046,6 +1144,10 @@ class Sandbox(Identifiable, ABC):
             raise
         except TimeoutError as error:
             raise SandboxExecutionError(f"The reset did not finish in {self._RESET_TIMEOUT_SECONDS:g} s.") from error
+        except asyncio.CancelledError as error:
+            if _cancellation_requested():
+                raise
+            raise SandboxExecutionError("The reset failed: the sandbox cancelled it by itself.") from error
         except Exception as error:
             raise SandboxExecutionError(f"The reset failed: {error}") from error
 
@@ -1189,6 +1291,7 @@ class Sandbox(Identifiable, ABC):
 
         Raises:
             SandboxExecutionError: If the call failed or did not answer in time.
+            CancelledError: If this task is being cancelled.
         """
         try:
             async with asyncio.timeout(self._HOOK_TIMEOUT_SECONDS):
@@ -1197,6 +1300,10 @@ class Sandbox(Identifiable, ABC):
             raise
         except TimeoutError as error:
             raise SandboxExecutionError(f"Could not {action}: no answer in time.") from error
+        except asyncio.CancelledError as error:
+            if _cancellation_requested():
+                raise
+            raise SandboxExecutionError(f"Could not {action}: the sandbox cancelled the call by itself.") from error
         except Exception as error:
             raise SandboxExecutionError(f"Could not {action}: {error}") from error
 
@@ -1213,9 +1320,14 @@ class Sandbox(Identifiable, ABC):
         return task
 
     @staticmethod
-    async def _await_owned_async(task: asyncio.Task[_T]) -> _T:
+    async def _await_owned_async(task: asyncio.Task[_T], *, waiter: asyncio.Future[_T] | None = None) -> _T:
         """
         Wait for owned work; a caller that gives up returns at once, and the work finishes alone.
+
+        Args:
+            task (asyncio.Task[_T]): The owned work.
+            waiter (asyncio.Future[_T] | None): The shield over ``task`` to wait on, when the work watches
+                it to see whether its caller gave up. Defaults to a new shield.
 
         Returns:
             _T: The work's result.
@@ -1224,10 +1336,10 @@ class Sandbox(Identifiable, ABC):
             CancelledError: If the caller was cancelled; the work continues.
         """
         try:
-            return await asyncio.shield(task)
+            return await (waiter if waiter is not None else asyncio.shield(task))
         except asyncio.CancelledError:
-            if not task.done():
-                task.add_done_callback(_log_abandoned_outcome)
+            # Even when the work finished at the same moment: the shield marked its error as retrieved.
+            task.add_done_callback(_log_abandoned_outcome)
             raise
 
     def _validate_hooks(self, *, capabilities: SandboxCapabilities) -> None:
