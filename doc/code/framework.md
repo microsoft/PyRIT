@@ -262,10 +262,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   persists it. Outbound request metadata is separate from chat role, so missing trace
   links remain detectable on tool and assistant continuations.
 - Because targets are so varied, it is reasonable to return multiple tool calls, or none at all.
-- A target that runs tools itself bounds its tool loop. When a tool raises `ToolInfrastructureError`,
-  such as a `SandboxToolProvider` tool whose sandbox failed, the target answers every pending call and
-  ends the turn with an error response whose metadata says why (`ToolLoopStop`), rather than asking
-  the model to fix infrastructure. `OpenAIResponseTarget` does this today.
+- A target that runs tools itself bounds its tool loop. When a tool raises `ToolInfrastructureError`
+  because its own infrastructure failed, such as a `SandboxToolProvider` tool whose sandbox failed,
+  the target answers every pending call and ends the turn with an error response whose metadata says why
+  (`ToolLoopStop`), rather than asking the model to fix infrastructure. `OpenAIResponseTarget` does this today.
 - One attack can have many targets (and in fact, converters and scorers can also use targets to convert/score the prompt).
 - **Does not own**: what to send or what to do with the response. A target sends a prepared `Message` and returns a response — it doesn't convert prompts (converters), score (scorers), manage the conversation or decide the next turn (attacks), apply attack logic, or persist prompts and responses to memory (the `prompt_normalizer` owns that). Its retries stay at the target layer (e.g. `RateLimitException`).
 
