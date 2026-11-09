@@ -116,6 +116,25 @@ async def get_saved_conversation_async(conversation_id: IdentifierStr) -> AddMes
     return response
 
 
+def _reconcile_legacy_filter(*, legacy_name: str, dedicated: list[str] | None, legacy: list[str]) -> None:
+    """
+    Reconcile a legacy label alias with its dedicated query parameter.
+
+    The legacy values arrive through label parsing rather than the dedicated
+    parameter's field constraints, so the dedicated limit is enforced here, and
+    the conflict check compares the values as a set because the two spellings
+    of one filter list their values in any order.
+    """
+    overlong = [value for value in legacy if len(value) > 128]
+    if overlong:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{legacy_name} values must be at most 128 characters",
+        )
+    if dedicated is not None and sorted(dedicated) != sorted(legacy):
+        raise HTTPException(status_code=422, detail=f"{legacy_name} conflicts with legacy label={legacy_name} filter")
+
+
 @router.get(
     "",
     response_model=AttackListResponse,
@@ -199,8 +218,11 @@ async def list_attacks(  # pyrit-async-suffix-exempt
             new_item="GET /attacks?operator=...",
             removed_in="1.4.0",
         )
-        if operator is not None and operator != legacy_operator:
-            raise HTTPException(status_code=422, detail="operator conflicts with legacy label=operator filter")
+        _reconcile_legacy_filter(
+            legacy_name="operator",
+            dedicated=operator,
+            legacy=legacy_operator,
+        )
         operator = legacy_operator
     if legacy_operation is not None:
         print_deprecation_message(
@@ -208,8 +230,11 @@ async def list_attacks(  # pyrit-async-suffix-exempt
             new_item="GET /attacks?operation=...",
             removed_in="1.4.0",
         )
-        if operation is not None and operation != legacy_operation:
-            raise HTTPException(status_code=422, detail="operation conflicts with legacy label=operation filter")
+        _reconcile_legacy_filter(
+            legacy_name="operation",
+            dedicated=operation,
+            legacy=legacy_operation,
+        )
         operation = legacy_operation
     # Strip empty strings from the list-valued query params. The service layer
     # coerces an all-empty ``converter_types`` list to None ("no filter"); the
