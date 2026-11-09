@@ -27,7 +27,9 @@ class SearchReplaceConverter(Converter):
 
         Raises:
             ValueError: If ``pattern`` is not a string or contains invalid regex syntax,
-                ``replace`` is not a string or non-empty list of strings, or ``regex_flags`` is not an integer.
+                ``replace`` is not a string or non-empty list of strings,
+                any replacement template in ``replace`` is invalid for ``pattern``,
+                or ``regex_flags`` is not an integer.
         """
         if not isinstance(pattern, str):
             raise ValueError("pattern must be a string.")
@@ -50,6 +52,12 @@ class SearchReplaceConverter(Converter):
             self._replace_list = list(replace)
         else:
             raise ValueError("replace must be a string or a non-empty list of strings.")
+
+        for replacement in self._replace_list:
+            try:
+                self._compiled_regex.sub(replacement, "")
+            except (re.error, IndexError) as e:
+                raise ValueError(f"Invalid regex replacement template in replace: {e}") from e
 
         self._pattern = pattern
         self._regex_flags = regex_flags

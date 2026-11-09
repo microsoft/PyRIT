@@ -88,6 +88,17 @@ def test_search_replace_invalid_regex_flags(invalid_flags):
         SearchReplaceConverter(pattern="hello", replace="world", regex_flags=invalid_flags)
 
 
+@pytest.mark.parametrize("invalid_template", [r"C:\Users\admin", r"\1", r"\g<foo>"])
+def test_search_replace_invalid_replacement_template(invalid_template):
+    with pytest.raises(ValueError, match="Invalid regex replacement template in replace"):
+        SearchReplaceConverter(pattern="PLACEHOLDER", replace=invalid_template)
+
+
+def test_search_replace_valid_replacement_template():
+    converter = SearchReplaceConverter(pattern=r"(?P<name>\w+)", replace=r"\g<name>")
+    assert converter._replace_list == [r"\g<name>"]
+
+
 def test_search_replace_build_identifier():
     converter = SearchReplaceConverter(pattern="test", replace=["A", "B"], regex_flags=re.IGNORECASE)
     identifier = converter._build_identifier()
