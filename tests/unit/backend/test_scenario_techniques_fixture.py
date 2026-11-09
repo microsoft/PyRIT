@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Literal
 import pytest
 
 from frontend.e2e.fixtures.scenario_techniques_backend import _guard_preset_paths
-from pyrit.models.catalog.scenario_preset import ScenarioPreset
-from pyrit.registry.scenario_preset_storage import ScenarioPresetStorage
+from pyrit.models import ScenarioPreset
+from pyrit.registry import ScenarioPresetStorage
 
 if TYPE_CHECKING:
     from pathlib import Path

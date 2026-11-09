@@ -1,7 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from pyrit.show_versions import _get_deps_info, show_versions
+from pyrit import show_versions
+from pyrit.show_versions import _get_deps_info
 
 
 def test_get_deps_info_contains_pyrit():

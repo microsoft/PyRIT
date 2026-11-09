@@ -95,7 +95,7 @@ export default function ScenarioEstimateSection({
       )}
       {state.status === 'stale' && (
         <Text size={200} className={styles.warningText} role="status">
-          {state.error}
+          {state.label} {state.error}
         </Text>
       )}
     </section>

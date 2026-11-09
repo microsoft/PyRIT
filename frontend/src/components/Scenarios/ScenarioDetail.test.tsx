@@ -1318,9 +1318,52 @@ describe('ScenarioDetail', () => {
 
     const estimate = screen.getByTestId('run-estimate')
     expect(within(estimate).getByText('8')).toBeInTheDocument()
+    expect(within(estimate).getByRole('status')).toHaveTextContent('Showing the last successful estimate.')
     expect(within(estimate).getByRole('status')).toHaveTextContent('Preview service unavailable')
     expect(screen.getByTestId('scenario-target-select')).toHaveValue('target-b')
     expect(screen.getByTestId('launch-scenario-btn')).not.toBeDisabled()
+  })
+
+  it('keeps the current dataset limit separate from refreshing and stale attack counts', async () => {
+    jest.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+    const settings: ScenarioDatasetSettings = {
+      sources: [{ name: 'harmbench', max_size: 'all', fetch: 'never', configured_provider: false }],
+      max_per_dataset: 'all', max_total: 5, fetch: 'never', filters: {},
+    }
+    mockGetScenario.mockResolvedValue(makeScenario({ dataset_defaults: settings }))
+    let rejectEstimate: (reason: unknown) => void = () => {}
+    mockEstimateRun
+      .mockResolvedValueOnce({
+        ...makeEstimate(5), status: 'approximate',
+        dataset_defaults: settings, effective_datasets: settings,
+      })
+      .mockReturnValueOnce(new Promise<ScenarioRunSizeEstimateResponse>((_, reject) => {
+        rejectEstimate = reject
+      }))
+    renderDetail('/scanner/launch/foundry.red_team_agent')
+    await flushRenderedPromises()
+    await advanceTimers(300)
+    const estimate = screen.getByTestId('run-estimate')
+    const limit = within(estimate).getByText('Dataset selection limit').closest('dt')?.nextElementSibling
+
+    await setObjectiveLimit(user, '3')
+    await advanceTimers(300)
+    expect(limit).toHaveTextContent('3')
+    expect(within(estimate).getByText('Up to 5')).toBeInTheDocument()
+    expect(within(estimate).getByRole('status')).toHaveTextContent('Updating estimate...')
+
+    rejectEstimate({
+      isAxiosError: true,
+      response: { status: 503, data: { detail: 'Deliberate estimate failure' } },
+    })
+    await flushRenderedPromises()
+    expect(limit).toHaveTextContent('3')
+    expect(within(estimate).getByText('Up to 5')).toBeInTheDocument()
+    expect(within(estimate).getByRole('status')).toHaveTextContent(
+      'Showing the last successful estimate. Deliberate estimate failure',
+    )
+    expect(screen.getByRole('button', { name: 'Edit Maximum objectives' })).toHaveTextContent('Up to 3')
   })
 
   it('does not request a preview while the custom technique selection is empty', async () => {

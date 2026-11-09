@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from pyrit.memory import SQLiteMemory
-    from pyrit.models.catalog.scenario import ScenarioRunSizeEstimate, ScenarioRunSizeEstimateRequest
+    from pyrit.models import ScenarioRunSizeEstimate, ScenarioRunSizeEstimateRequest
     from pyrit.scenario.core.scenario_context import ScenarioContext
 
 
@@ -161,7 +161,7 @@ def _register_components() -> None:
 
 
 def _guard_preset_paths(*, patches: ExitStack, directory: Path) -> None:
-    from pyrit.registry.scenario_preset_storage import ScenarioPresetStorage
+    from pyrit.registry import ScenarioPresetStorage
 
     root = directory.resolve()
     original_directory = ScenarioPresetStorage._local_directory
@@ -189,7 +189,7 @@ def _install_estimate_controls(*, patches: ExitStack, memory: SQLiteMemory) -> N
     from fastapi import HTTPException
 
     from pyrit.backend.main import app
-    from pyrit.backend.services.scenario_service import get_scenario_service
+    from pyrit.backend.services import get_scenario_service
     from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
     from pyrit.registry import ScenarioPresetRegistry
 

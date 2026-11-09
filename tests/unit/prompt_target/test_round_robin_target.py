@@ -143,7 +143,7 @@ def test_init_rejects_mismatched_modalities():
 
 @pytest.mark.usefixtures("patch_central_database")
 def test_init_rejects_mismatched_policy():
-    from pyrit.prompt_target.common.target_capabilities import (
+    from pyrit.prompt_target import (
         CapabilityHandlingPolicy,
         CapabilityName,
         UnsupportedCapabilityBehavior,
@@ -503,11 +503,7 @@ def test_init_uses_model_name_fallback_for_underlying_model():
 @pytest.mark.usefixtures("patch_central_database")
 def test_init_rejects_mismatched_normalizer_templates():
     from pyrit.message_normalizer import JsonSchemaNormalizer
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     caps = TargetCapabilities(
         supports_multi_turn=True,
@@ -539,11 +535,7 @@ def test_init_rejects_mismatched_normalizer_templates():
 @pytest.mark.usefixtures("patch_central_database")
 def test_init_accepts_identical_custom_normalizer_templates():
     from pyrit.message_normalizer import JsonSchemaNormalizer
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     caps = TargetCapabilities(
         supports_multi_turn=True,
@@ -573,11 +565,7 @@ def test_init_accepts_identical_custom_normalizer_templates():
 def test_init_rejects_custom_identifiable_normalizers_with_mismatched_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
         def __init__(self, prefix: str):
@@ -616,11 +604,7 @@ def test_init_rejects_custom_identifiable_normalizers_with_mismatched_params():
 def test_init_accepts_custom_identifiable_normalizers_with_matching_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class CustomPrefixNormalizer(Identifiable, MessageListNormalizer[Message]):
         def __init__(self, prefix: str):
@@ -659,11 +643,7 @@ def test_init_accepts_custom_identifiable_normalizers_with_matching_params():
 def test_init_rejects_delegating_normalizers_with_mismatched_child_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
         pass
@@ -722,11 +702,7 @@ def test_init_rejects_delegating_normalizers_with_mismatched_child_params():
 def test_init_accepts_delegating_normalizers_with_matching_child_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
         pass
@@ -785,11 +761,7 @@ def test_init_accepts_delegating_normalizers_with_matching_child_params():
 def test_init_rejects_multi_level_delegating_normalizers_with_mismatched_leaf_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
         pass
@@ -852,11 +824,7 @@ def test_init_rejects_multi_level_delegating_normalizers_with_mismatched_leaf_pa
 def test_init_accepts_multi_level_delegating_normalizers_with_matching_leaf_params():
     from pyrit.message_normalizer import MessageListNormalizer
     from pyrit.models import ComponentIdentifier, Identifiable
-    from pyrit.prompt_target.common.target_capabilities import (
-        CapabilityHandlingPolicy,
-        CapabilityName,
-        UnsupportedCapabilityBehavior,
-    )
+    from pyrit.prompt_target import CapabilityHandlingPolicy, CapabilityName, UnsupportedCapabilityBehavior
 
     class _IdentifiableListNormalizer(Identifiable, MessageListNormalizer[Message]):
         pass
