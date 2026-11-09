@@ -3,7 +3,6 @@
 
 import logging
 import posixpath
-from enum import Enum
 from typing import ClassVar
 from urllib.parse import urlparse
 
@@ -13,6 +12,7 @@ from azure.storage.blob import ContentSettings
 from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
 from pyrit.common import default_values, print_deprecation_message
+from pyrit.memory.storage import SupportedContentType
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -20,16 +20,6 @@ from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 from pyrit.prompt_target.common.utils import limit_requests_per_minute
 
 logger = logging.getLogger(__name__)
-
-
-class SupportedContentType(Enum):
-    """
-    All supported content types for uploading blobs to provided storage account container.
-    See all options here: https://www.iana.org/assignments/media-types/media-types.xhtml.
-    """
-
-    PLAIN_TEXT = "text/plain"
-    HTML = "text/html"
 
 
 class AzureBlobStorageTarget(PromptTarget):

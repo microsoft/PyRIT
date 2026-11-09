@@ -30,6 +30,7 @@ class SupportedContentType(Enum):
 
     # TODO, add other media supported types
     PLAIN_TEXT = "text/plain"
+    HTML = "text/html"
 
 
 class StorageIO(ABC):

@@ -378,3 +378,12 @@ async def test_send_prompt_async_returns_url_of_uploaded_blob(
     )
     mock_client.get_blob_client.assert_called_once_with(blob=expected_blob_path)
     assert response[0].get_value() == expected_blob_url
+
+
+def test_supported_content_type_is_shared_between_storage_and_target():
+    from pyrit.memory.storage import SupportedContentType as StorageContentType
+    from pyrit.prompt_target import azure_blob_storage_target
+
+    # The target re-exports the storage enum so existing imports keep working and there is one definition.
+    assert azure_blob_storage_target.SupportedContentType is StorageContentType
+    assert {member.value for member in StorageContentType} >= {"text/plain", "text/html"}
