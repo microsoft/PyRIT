@@ -107,6 +107,8 @@ async def test_xss_executable_data_uris_detected(text: str, patch_central_databa
         '<script>alert(1)</script x = \t"bar">',
         "<script>alert(1)</script x=>",
         "<script>alert(1)</script x=/>",
+        '<script>alert(1)</script x="</script>">',
+        "<script>alert(1)</scripts></script>",
         "<script/>alert(1)</script>",
         "<SCRIPT/x>alert(1)</SCRIPT >",
     ],
@@ -136,6 +138,15 @@ async def test_xss_script_tag_name_lookalikes_not_detected(text: str, patch_cent
 )
 async def test_xss_script_tag_incomplete_ending_not_detected(*, ending: str, patch_central_database: MagicMock) -> None:
     score = (await XSSOutputScorer().score_text_async(text=f"<script>alert(1)</script{ending}"))[0]
+    assert score.get_value() is False
+    assert score.score_rationale == ""
+
+
+@pytest.mark.parametrize("quote", ['"', "'"])
+async def test_xss_script_tag_end_tag_in_unfinished_attribute_not_detected(
+    *, quote: str, patch_central_database: MagicMock
+) -> None:
+    score = (await XSSOutputScorer().score_text_async(text=f"<script>alert(1)</script x={quote}</script>"))[0]
     assert score.get_value() is False
     assert score.score_rationale == ""
 

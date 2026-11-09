@@ -77,8 +77,10 @@ class XSSOutputScorer(_ConfigurableRegexScorerMixin, RegexScorer):
     _DEFAULT_PATTERNS: dict[str, str] | None = {
         # HTML tag names end at ASCII whitespace, "/" or ">". Only quotes starting attribute
         # values delay the closing ">"; quotes in names or unquoted values are literal.
+        # The body cannot skip an appropriate end-tag prefix with unfinished attributes.
         "Script Tag": (
-            r"(?ai)<script[\t\n\f\r />][\s\S]*?</script(?=[\t\n\f\r />])"
+            r"(?ai)<script[\t\n\f\r />](?:(?!</script[\t\n\f\r />])[\s\S])*+"
+            r"</script(?=[\t\n\f\r />])"
             r"(?:[\t\n\f\r /]++|[^\t\n\f\r />][^\t\n\f\r /=>]*+"
             r"""(?:[\t\n\f\r ]*+=[\t\n\f\r ]*+(?:"[^"]*"|'[^']*'|"""
             r"""[^\t\n\f\r >"'][^\t\n\f\r >]*+|(?=>))|(?![\t\n\f\r ]*=)))*+>"""
