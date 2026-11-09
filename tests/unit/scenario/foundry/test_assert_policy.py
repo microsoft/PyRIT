@@ -499,13 +499,18 @@ def _group_id(attack: Any) -> str:
 
 
 async def test_groups_with_identical_content_keep_their_own_units_and_stances_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_duplicate_result())
+    result = _duplicate_result()
+    await _store_async(name="assert_a", result=result)
     args = {"incompatible_technique_policy": "skip", "include_baseline": True, **_datasets("assert_a")}
     scenario = await harness.initialize_async(harness.scenario(), **args)
 
     (logical_id,) = {attack.seed_groups[0].logical_id for attack in scenario._atomic_attacks}
     by_name = {attack.atomic_attack_name: attack for attack in scenario._atomic_attacks}
-    names = [f"single_turn__{logical_id}__group_{index}" for index in range(3)]
+    seed_ids = {
+        AssertGroupMetadata.from_metadata(group.objective.metadata).group_id: group.objective.id
+        for group in result.seed_groups
+    }
+    names = [f"single_turn__{logical_id}__{seed_ids[f'group_{index}']}" for index in range(3)]
     assert set(by_name) == {*names, *(name.replace("single_turn", "baseline", 1) for name in names)}
     assert {_group_id(by_name[name]): by_name[name].display_group for name in names} == {
         "group_0": "single_turn_permissible",
@@ -540,6 +545,47 @@ async def test_sampled_identical_content_resumes_the_same_stored_group_async(har
     (restored,) = resumed._atomic_attacks
     assert restored.atomic_attack_name == planned.atomic_attack_name
     assert _group_id(restored) == "group_2"
+
+
+async def test_sampled_resume_keeps_the_sampled_batch_when_generation_ids_collide_async(harness: _Harness) -> None:
+    config = make_assert_config(group_count=1, include_adversarial_prompt=False)
+    batches = [
+        make_assert_result(config=config, duplicate_text=True, system_prompt=_SYSTEM_A, taxonomy=taxonomy)
+        for taxonomy in (make_assert_taxonomy(), _taxonomy_b())
+    ]
+    for batch in batches:
+        await _store_async(name="assert_a", result=batch)
+    groups = [batch.seed_groups[0] for batch in batches]
+    assert len({group.logical_id for group in groups}) == 1
+    assert {AssertGroupMetadata.from_metadata(group.objective.metadata).group_id for group in groups} == {"group_0"}
+    later = max(groups, key=lambda group: str(group.objective.id))
+    args = {
+        "scenario_techniques": [AssertTechnique.SingleTurn],
+        "dataset_overrides": {"sources": [{"name": "assert_a"}], "max_total": 1},
+    }
+
+    def sample_later_batch(items: list[Any], count: int) -> list[Any]:
+        return [item for item in items if item[1].objective.id == later.objective.id][:count]
+
+    with patch("pyrit.scenario.core.dataset_configuration.random.sample", side_effect=sample_later_batch):
+        original = await harness.initialize_async(harness.scenario(), **args)
+    (planned,) = original._atomic_attacks
+    assert planned.seed_groups[0].objective.id == later.objective.id
+    planned_judge = planned.attack_technique.attack.get_attack_scoring_config().objective_scorer.get_identifier()
+
+    resumed = await harness.initialize_async(harness.scenario(scenario_result_id=original._scenario_result_id), **args)
+    (restored,) = resumed._atomic_attacks
+    assert restored.atomic_attack_name == planned.atomic_attack_name
+    assert restored.seed_groups[0].objective.id == later.objective.id
+    restored_judge = restored.attack_technique.attack.get_attack_scoring_config().objective_scorer.get_identifier()
+    assert restored_judge == planned_judge
+
+
+async def test_repeated_stored_objective_seed_is_rejected_async(harness: _Harness) -> None:
+    group = _result(group_count=1).seed_groups[0]
+    config = DatasetAttackConfiguration(seed_groups=[group, group.model_copy(deep=True)], max_total="all")
+    with pytest.raises(ValueError, match=f"objective seed {group.objective.id} more than once"):
+        await harness.initialize_async(harness.scenario(), dataset_config=config)
 
 
 async def test_baseline_sends_only_the_objective_with_the_group_judges_async(harness: _Harness) -> None:

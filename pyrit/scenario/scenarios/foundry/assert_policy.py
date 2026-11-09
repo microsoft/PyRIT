@@ -228,22 +228,6 @@ class _GroupScoring:
     permissible: bool
 
 
-class _UnitNames:
-    """Stable, unique atomic-attack names, including for groups with identical content."""
-
-    def __init__(self, *, repeated_ids: set[str]) -> None:
-        self._repeated_ids = repeated_ids
-        self._counts: Counter[str] = Counter()
-
-    def allocate(self, *, prefix: str, group: AttackSeedGroup) -> str:
-        name = f"{prefix}__{group.logical_id}"
-        if group.logical_id in self._repeated_ids:
-            # Identical content shares a logical ID, so the stored generation ID tells the units apart on resume.
-            name += f"__{AssertGroupMetadata.from_metadata(group.objective.metadata).group_id}"
-        self._counts[name] += 1
-        return name if self._counts[name] == 1 else f"{name}__{self._counts[name]}"
-
-
 class AssertPolicy(Scenario):
     """
     Run stored ASSERT seed groups against a target and judge each conversation against its policy.
@@ -376,7 +360,7 @@ class AssertPolicy(Scenario):
             dict[str, list[AttackSeedGroup]]: Selected groups keyed by dataset.
 
         Raises:
-            ValueError: If no dataset is selected.
+            ValueError: If no dataset is selected, or a stored objective seed appears more than once.
             DatasetConstraintError: If the selected datasets contain no groups.
         """
         if self._has_no_datasets():
@@ -389,8 +373,15 @@ class AssertPolicy(Scenario):
         population = selection.select(apply_sampling=False)
         if not any(population.values()):
             raise DatasetConstraintError("The selected ASSERT datasets contain no seed groups.")
+        groups = [group for dataset_groups in population.values() for group in dataset_groups]
+        repeated_seeds = [seed_id for seed_id, count in Counter(g.objective.id for g in groups).items() if count > 1]
+        if repeated_seeds:
+            raise ValueError(
+                f"The selected ASSERT seed groups include objective seed {repeated_seeds[0]} more than once. "
+                "Select each stored group once."
+            )
         await asyncio.to_thread(self._configure_judges, population=population)
-        counts = Counter(group.logical_id for groups in population.values() for group in groups)
+        counts = Counter(group.logical_id for group in groups)
         self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
         return selection.select(apply_sampling=True) if apply_sampling else population
 
@@ -463,6 +454,14 @@ class AssertPolicy(Scenario):
     def _get_generation_order(group: AttackSeedGroup) -> tuple[str, str]:
         return AssertGroupMetadata.from_metadata(group.objective.metadata).group_id, str(group.objective.id)
 
+    def _get_unit_name(self, *, prefix: str, group: AttackSeedGroup) -> str:
+        name = f"{prefix}__{group.logical_id}"
+        if group.logical_id in self._repeated_ids:
+            # Identical content shares a logical ID, and separate generation batches reuse group IDs,
+            # so the stored objective seed ID keeps each name bound to its group across reads.
+            name += f"__{group.objective.id}"
+        return name
+
     @staticmethod
     def _build_judges(
         *,
@@ -511,7 +510,6 @@ class AssertPolicy(Scenario):
                 policy=context.incompatible_technique_policy,
             ):
                 continue
-            names = _UnitNames(repeated_ids=self._repeated_ids)
             for dataset_name, groups in context.seed_groups_by_dataset.items():
                 selected = self._select_groups(
                     technique=technique, factory=factory, dataset_name=dataset_name, groups=groups, context=context
@@ -524,7 +522,7 @@ class AssertPolicy(Scenario):
                             technique=technique,
                             factory=factory,
                             group=group,
-                            name=names.allocate(prefix=technique.value, group=group),
+                            name=self._get_unit_name(prefix=technique.value, group=group),
                         )
                     )
         return attacks
@@ -639,7 +637,6 @@ class AssertPolicy(Scenario):
         Returns:
             list[AtomicAttack]: One baseline unit per selected group.
         """
-        names = _UnitNames(repeated_ids=self._repeated_ids)
         baselines = []
         for group in sorted(context.seed_groups, key=self._get_generation_order):
             scoring = self._get_scoring(group)
@@ -651,7 +648,7 @@ class AssertPolicy(Scenario):
             )
             baselines.append(
                 AtomicAttack(
-                    atomic_attack_name=names.allocate(prefix="baseline", group=group),
+                    atomic_attack_name=self._get_unit_name(prefix="baseline", group=group),
                     display_group="baseline",
                     attack_technique=AttackTechnique(
                         attack=attack,
