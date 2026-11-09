@@ -30,7 +30,7 @@ from pyrit.backend.models.targets import (
 from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.common import REQUIRED_VALUE, default_values
 from pyrit.common.auth_mode import AUTH_MODES, AuthMode
-from pyrit.models import TargetIdentifier
+from pyrit.models import CapabilityName, TargetIdentifier
 from pyrit.models.catalog.target import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.models.parameter import Parameter
@@ -495,7 +495,7 @@ class TargetService:
                 return UnregisteredTarget(
                     identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
                     capabilities=target_obj.capabilities,
-                    temperature_range=target_obj.temperature_range,
+                    temperature_range=target_obj.generation_range(capability=CapabilityName.TEMPERATURE),
                 )
             finally:
                 await release_component_async(target_obj)

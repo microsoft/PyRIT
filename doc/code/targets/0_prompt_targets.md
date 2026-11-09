@@ -72,8 +72,9 @@ piece = MessagePiece(
 )
 ```
 
-Check `target.capabilities.supports_temperature` and `target.temperature_range`
-before choosing a value. Bounds are inclusive; `None` means unspecified bounds,
+Check `target.capabilities.supports_temperature` and
+`target.generation_range(capability=CapabilityName.TEMPERATURE)` before choosing
+a value (`CapabilityName` is in `pyrit.models`). Bounds are inclusive; `None` means unspecified bounds,
 not lack of support. Missing or null temperature preserves existing defaults.
 Invalid, conflicting, or unsupported overrides fail before provider I/O.
 
@@ -282,7 +283,7 @@ Each target class defines defaults; instances can override individual capabiliti
 
 For well-known underlying models, you can look up a profile with `get_known_capabilities(underlying_model="gpt-4o")` from `pyrit.prompt_target`.
 Profiles alone do not determine runtime temperature support; check the instance's
-capabilities and separate `temperature_range` property as described under
+capabilities and `generation_range()` lookup as described under
 [Runtime generation configuration](#runtime-generation-configuration).
 
 Tool-call history uses the existing `function_call` and `function_call_output` input

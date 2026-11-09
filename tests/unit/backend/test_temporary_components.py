@@ -52,7 +52,14 @@ from pyrit.converter import (
     TranslationConverter,
 )
 from pyrit.memory import SQLiteMemory
-from pyrit.models import JSONValue, Operation, PromptDataType, RequestGenerationConfig, RequestGenerationInfo
+from pyrit.models import (
+    CapabilityName,
+    JSONValue,
+    Operation,
+    PromptDataType,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
+)
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import (
     HuggingFaceChatTarget,
@@ -394,7 +401,7 @@ class TestTemporaryComponents:
             temperature_range=(0.2, 0.8) if declaration == "constructor" else None,
         )
         if declaration == "applied":
-            source.apply_temperature_range(temperature_range=(0.2, 0.8))
+            source._apply_temperature_range(temperature_range=(0.2, 0.8))
         registry = TargetRegistry.get_registry_singleton()
         registry.instances.register(source, name="source")
         copied: PromptTarget | None = None
@@ -421,7 +428,7 @@ class TestTemporaryComponents:
             if copied is not None:
                 assert isinstance(copied, target_type)
                 copied.set_model_name(model_name="Mistral-Large-3")
-                assert copied.temperature_range == (explicit or (0, 1))
+                assert copied.generation_range(capability=CapabilityName.TEMPERATURE) == (explicit or (0, 1))
         finally:
             if copied is not None:
                 await copied.cleanup_target_async()

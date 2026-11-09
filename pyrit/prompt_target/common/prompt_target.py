@@ -426,11 +426,17 @@ class PromptTarget(Identifiable):
                     f"{type(self).__name__} does not support runtime {capability.name.lower()} "
                     "for this model configuration."
                 )
+        for name, capability in config.FIELD_CAPABILITIES.items():
+            value = getattr(config, name)
+            if value is not None:
+                bounds = self.generation_range(capability=capability)
+                if bounds is not None and not bounds[0] <= value <= bounds[1]:
+                    raise ValueError(f"{name} must be between {bounds[0]:g} and {bounds[1]:g} inclusive.")
         self._validate_request_generation_config(config)
         return config
 
     def _validate_request_generation_config(self, config: RequestGenerationConfig) -> None:
-        """Validate adapter-specific parameter ranges and joint model/mode restrictions."""
+        """Validate adapter-specific joint parameter and model/mode restrictions."""
 
     def _validate_request_generation_info(
         self, *, config: RequestGenerationConfig, info: RequestGenerationInfo | None
@@ -828,9 +834,16 @@ class PromptTarget(Identifiable):
         """
         return self._configuration.capabilities
 
-    @property
-    def temperature_range(self) -> tuple[float, float] | None:
-        """Inclusive runtime temperature bounds, or None when no bounds are declared."""
+    def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+        """
+        Look up inclusive runtime bounds independently of capability support.
+
+        Args:
+            capability (CapabilityName): The generation option to look up.
+
+        Returns:
+            tuple[float, float] | None: Inclusive bounds, or None when unspecified.
+        """
         return None
 
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:

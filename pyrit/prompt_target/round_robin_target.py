@@ -52,7 +52,7 @@ class RoundRobinTarget(PromptTarget):
     (all mutable state is modified in synchronous code blocks).
     """
 
-    _SUPPORTED_GENERATION_CAPABILITIES = frozenset({CapabilityName.TEMPERATURE})
+    _SUPPORTED_GENERATION_CAPABILITIES = frozenset(RequestGenerationConfig.FIELD_CAPABILITIES.values())
 
     def __init__(
         self,
@@ -153,24 +153,31 @@ class RoundRobinTarget(PromptTarget):
 
     @property
     def capabilities(self) -> TargetCapabilities:
-        """The wrapper capabilities restricted to temperature support shared by every child."""
+        """The wrapper capabilities restricted to generation options shared by every child."""
         capabilities = super().capabilities
         children = [target.capabilities for target in self._targets]
-        bounds = self._temperature_range_intersection()
-        supported = capabilities.supports_temperature and all(child.supports_temperature for child in children)
-        return capabilities.model_copy(
-            update={"supports_temperature": supported and (bounds is None or bounds[0] <= bounds[1])}
-        )
+        updates: dict[str, bool] = {}
+        for capability in self._SUPPORTED_GENERATION_CAPABILITIES:
+            bounds = self._generation_range_intersection(capability=capability)
+            supported = capabilities.includes(capability=capability) and all(
+                child.includes(capability=capability) for child in children
+            )
+            updates[capability.value] = supported and (bounds is None or bounds[0] <= bounds[1])
+        return capabilities.model_copy(update=updates)
 
-    @property
-    def temperature_range(self) -> tuple[float, float] | None:
-        """Shared bounds, unknown if any child omits them or the ranges do not overlap."""
-        if any(target.temperature_range is None for target in self._targets):
+    def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+        """
+        Look up bounds shared by every child for a generation option.
+
+        Returns:
+            tuple[float, float] | None: Inclusive bounds, or None if unknown or disjoint.
+        """
+        if any(target.generation_range(capability=capability) is None for target in self._targets):
             return None
-        bounds = self._temperature_range_intersection()
+        bounds = self._generation_range_intersection(capability=capability)
         return bounds if bounds is not None and bounds[0] <= bounds[1] else None
 
-    def _temperature_range_intersection(self) -> tuple[float, float] | None:
+    def _generation_range_intersection(self, *, capability: CapabilityName) -> tuple[float, float] | None:
         """
         Intersect the children's declared ranges.
 
@@ -178,7 +185,9 @@ class RoundRobinTarget(PromptTarget):
             tuple[float, float] | None: Known intersection, or None if no bounds are declared.
                 A reversed pair indicates disjoint ranges.
         """
-        ranges = [bounds for target in self._targets if (bounds := target.temperature_range) is not None]
+        ranges = [
+            bounds for target in self._targets if (bounds := target.generation_range(capability=capability)) is not None
+        ]
         if not ranges:
             return None
         return max(bounds[0] for bounds in ranges), min(bounds[1] for bounds in ranges)

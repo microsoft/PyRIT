@@ -5,7 +5,7 @@ import asyncio
 import json
 import os
 from copy import deepcopy
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -512,6 +512,8 @@ async def test_responses_revalidate_mode_after_async_preparation_async(
         "gpt-4.1-mini",
         "gpt-4.1-nano",
         "gpt-4.1-mini-2025-04-14",
+        "GpT-4O",
+        "GPT-4.1-MINI-2025-04-14",
     ],
 )
 def test_openai_non_reasoning_sampling_families(model: str) -> None:
@@ -533,6 +535,9 @@ def test_openai_non_reasoning_sampling_families(model: str) -> None:
         ("gpt-5.6-sol", False),
         ("gpt-5.6-terra", False),
         ("gpt-5.6-luna", False),
+        ("GpT-5.4", True),
+        ("GPT-5.5", False),
+        ("GpT-5.6-SoL-2026-01-01", False),
     ],
 )
 @pytest.mark.parametrize("effort", [None, "none", "minimal", "low", "medium", "high", "xhigh", "max", ""])
@@ -559,6 +564,9 @@ def test_openai_conditional_sampling_uses_model_reasoning_default(
         "o4-mini",
         "gpt-4o-audio-preview-2024-12-17",
         "gpt-4o-mini-realtime-preview",
+        "GpT-5",
+        "O3-MINI-2025-01-31",
+        "GpT-4o-AuDiO-PrEvIeW-2024-12-17",
     ],
 )
 def test_explicit_sampling_declaration_overrides_model_inference(model: str) -> None:
@@ -582,6 +590,8 @@ def test_explicit_sampling_declaration_overrides_model_inference(model: str) -> 
         "gpt-5.4-mini-extra",
         "gpt-5.99",
         "gpt-4o-2024-08-06-custom",
+        "GpT-5-Custom",
+        "GPT-5.5-FUTURE-2026-01-01",
         "",
     ],
 )
@@ -739,9 +749,9 @@ def test_capability_updates_mask_unimplemented_generation_without_mutating_input
     assert capabilities.supports_temperature
     assert target.configuration.policy is configuration.policy
     assert target.configuration.normalizer_overrides == configuration.normalizer_overrides
-    assert target.temperature_range is None
+    assert target.generation_range(capability=CapabilityName.TEMPERATURE) is None
     with pytest.raises(ValueError, match="does not implement runtime temperature"):
-        target.apply_temperature_range(temperature_range=(0, 1))
+        target._apply_temperature_range(temperature_range=(0, 1))
     with pytest.raises(ValueError, match="does not implement runtime temperature"):
         target_type(
             model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key", temperature_range=(0, 1)
@@ -774,13 +784,13 @@ def test_send_validation_rejects_unimplemented_generation_even_if_configuration_
 
 @pytest.mark.parametrize("supports_temperature", [False, True])
 def test_capability_updates_preserve_opted_in_generation(target: OpenAIChatTarget, supports_temperature: bool) -> None:
-    target.apply_temperature_range(temperature_range=(0, 0.8))
+    target._apply_temperature_range(temperature_range=(0, 0.8))
     target.apply_capabilities(
         capabilities=target.capabilities.model_copy(update={"supports_temperature": supports_temperature})
     )
     assert target.capabilities.supports_temperature is supports_temperature
-    assert target.temperature_range == (0, 0.8)
-    target.apply_temperature_range(temperature_range=(0, 1))
+    assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 0.8)
+    target._apply_temperature_range(temperature_range=(0, 1))
     assert target.capabilities.supports_temperature is supports_temperature
     if supports_temperature:
         assert target.validate_request_generation_config(request(0)).temperature == 0
@@ -1628,27 +1638,112 @@ async def test_declared_bounds_do_not_change_target_identity_async(
         declared = OpenAIChatTarget(**parameters, temperature_range=bounds)
         identifier = declared.get_identifier()
         assert identifier == original.get_identifier()
-        declared.apply_temperature_range(temperature_range=(0.5, 0.7))
+        declared._apply_temperature_range(temperature_range=(0.5, 0.7))
         assert declared.get_identifier() is identifier
-        assert original.temperature_range == (0, 2)
+        assert original.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 2)
 
 
 @pytest.mark.parametrize("bounds", [(1, 0), (float("nan"), 1), (0, float("inf"))])
 async def test_invalid_bounds_leave_applied_declarations_unchanged_async(
     *, target: OpenAIChatTarget, bounds: tuple[float, float]
 ) -> None:
-    target.apply_temperature_range(temperature_range=(0.2, 0.8))
+    target._apply_temperature_range(temperature_range=(0.2, 0.8))
     with pytest.raises(ValueError):
-        target.apply_temperature_range(temperature_range=bounds)
-    assert target.temperature_range == (0.2, 0.8)
+        target._apply_temperature_range(temperature_range=bounds)
+    assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0.2, 0.8)
     with pytest.raises(ValueError):
         OpenAIChatTarget(
             model_name="gpt-4o", endpoint="https://example.test/v1", api_key="test-only-key", temperature_range=bounds
         )
 
 
-def test_base_target_has_no_assumed_bounds(patch_central_database: Any) -> None:
-    assert MockPromptTarget().temperature_range is None
+@pytest.mark.parametrize("capability", list(CapabilityName))
+def test_base_target_has_no_assumed_bounds(patch_central_database: Any, capability: CapabilityName) -> None:
+    assert MockPromptTarget().generation_range(capability=capability) is None
+
+
+@pytest.mark.parametrize(
+    ("bounds", "temperature", "valid"),
+    [
+        (None, 99, True),
+        ((0, 1), None, True),
+        ((0, 1), 0, True),
+        ((0, 1), 1, True),
+        ((0, 1), -0.1, False),
+        ((0, 1), 1.1, False),
+        ((0, 0), 0, True),
+        ((0, 0), 0.1, False),
+    ],
+)
+async def test_base_validator_enforces_generation_ranges_before_io_async(
+    *,
+    patch_central_database: Any,
+    bounds: tuple[float, float] | None,
+    temperature: float | None,
+    valid: bool,
+) -> None:
+    class BoundedTarget(MockPromptTarget):
+        _SUPPORTED_GENERATION_CAPABILITIES = frozenset({CapabilityName.TEMPERATURE})
+
+        def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+            return bounds if capability == CapabilityName.TEMPERATURE else None
+
+    target = BoundedTarget(
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_temperature=True))
+    )
+    with (
+        patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock) as send,
+        patch.object(target, "_validate_request_generation_config") as validate_mode,
+    ):
+        if valid:
+            assert target.validate_request_generation_config(request(temperature)).temperature == temperature
+            validate_mode.assert_called_once()
+        else:
+            with pytest.raises(ValueError, match="temperature must be between"):
+                await target.send_prompt_async(message=request(temperature))
+            validate_mode.assert_not_called()
+        send.assert_not_called()
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, 4, 5])
+def test_base_validator_uses_additional_field_capability_mapping(
+    *, patch_central_database: Any, value: float | None
+) -> None:
+    class ExtendedConfig(RequestGenerationConfig):
+        # An existing flag stands in for a future generation capability.
+        FIELD_CAPABILITIES: ClassVar[dict[str, CapabilityName]] = {
+            **RequestGenerationConfig.FIELD_CAPABILITIES,
+            "additional_parameter": CapabilityName.JSON_OUTPUT,
+        }
+        additional_parameter: float | None = None
+
+    ranges = {CapabilityName.TEMPERATURE: (0.0, 2.0), CapabilityName.JSON_OUTPUT: (1.0, 4.0)}
+
+    class BoundedTarget(MockPromptTarget):
+        _SUPPORTED_GENERATION_CAPABILITIES = frozenset(ranges)
+
+        def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+            return ranges.get(capability)
+
+    target = BoundedTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(supports_temperature=True, supports_json_output=True)
+        )
+    )
+    config = ExtendedConfig(temperature=0, additional_parameter=value)
+    with patch.object(RequestGenerationConfig, "from_message", return_value=config):
+        if value in (0, 5):
+            with pytest.raises(ValueError, match="additional_parameter must be between 1 and 4 inclusive"):
+                target.validate_request_generation_config(request())
+        else:
+            assert target.validate_request_generation_config(request()) == config
+
+
+@pytest.mark.parametrize("capability", [value for value in CapabilityName if value != CapabilityName.TEMPERATURE])
+def test_openai_does_not_reuse_temperature_bounds_for_other_capabilities(
+    target: OpenAIChatTarget, capability: CapabilityName
+) -> None:
+    assert target.generation_range(capability=capability) is None
 
 
 @pytest.mark.parametrize("model", ["Mistral-Large-3", "mistral-large-3", "Mistral-Large-3-2026-01-01"])
@@ -1692,8 +1787,8 @@ async def test_declared_temperature_range_is_enforced_before_io_async(
         )
         if applied:
             target.apply_capabilities(capabilities=declared)
-            target.apply_temperature_range(temperature_range=bounds)
-        assert target.temperature_range == bounds
+            target._apply_temperature_range(temperature_range=bounds)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == bounds
         assert "temperature_range" not in declared.model_dump()
         identifier = target.get_identifier()
         for temperature in (*bounds, None):
@@ -1705,7 +1800,7 @@ async def test_declared_temperature_range_is_enforced_before_io_async(
                 info.temperature.resolved == bodies[-1]["temperature"] == (1.5 if temperature is None else temperature)
             )
         for invalid in (bounds[0] - 0.1, bounds[1] + 0.1):
-            with pytest.raises(ValueError, match="OpenAI request temperature must be between"):
+            with pytest.raises(ValueError, match="temperature must be between"):
                 await target.send_prompt_async(message=request(invalid))
         assert len(bodies) == 3
         assert target._temperature == 1.5
@@ -1730,21 +1825,21 @@ async def test_temperature_range_refresh_uses_constructor_declaration_or_model_a
             temperature_range=constructor_range,
             httpx_client_kwargs={"http_client": client},
         )
-        assert target.temperature_range == (constructor_range or (0, 1))
-        target.apply_temperature_range(temperature_range=(0, 0.5))
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (constructor_range or (0, 1))
+        target._apply_temperature_range(temperature_range=(0, 0.5))
         target.apply_capabilities(capabilities=TargetCapabilities(supports_temperature=True))
-        assert target.temperature_range == (0, 0.5)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 0.5)
         for model, inferred_range in (("gpt-4o", (0, 2)), ("Mistral-Large-3", (0, 1))):
             target.set_model_name(model_name=model)
             bounds = constructor_range or inferred_range
-            assert target.temperature_range == bounds
+            assert target.generation_range(capability=CapabilityName.TEMPERATURE) == bounds
             assert target.validate_request_generation_config(request(bounds[1])).temperature == bounds[1]
-            with pytest.raises(ValueError, match="OpenAI request temperature must be between"):
+            with pytest.raises(ValueError, match="temperature must be between"):
                 target.validate_request_generation_config(request(bounds[1] + 0.1))
-        target.apply_temperature_range(temperature_range=None)
-        assert target.temperature_range == (0, 1)
+        target._apply_temperature_range(temperature_range=None)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 1)
         target.set_model_name(model_name="Mistral-Large-3")
-        assert target.temperature_range == (constructor_range or (0, 1))
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (constructor_range or (0, 1))
 
 
 @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
@@ -1774,7 +1869,7 @@ async def test_mistral_range_is_advertised_and_enforced_before_io_async(
             httpx_client_kwargs={"http_client": client},
         )
         assert target.capabilities.supports_temperature
-        assert target.temperature_range == (0, 1)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 1)
         identifier = target.get_identifier()
         if temperature is not None and temperature > 1:
             with pytest.raises(ValueError, match="between 0 and 1"):
@@ -1797,12 +1892,12 @@ async def test_mistral_bounds_use_effective_model_async(*, patch_central_databas
         api_key="test-only-key",
     )
     try:
-        assert target.temperature_range == (0, 1)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 1)
         with pytest.raises(ValueError, match="between 0 and 1"):
             target.validate_request_generation_config(request(2))
         if source == "model":
             target.set_model_name(model_name="gpt-4o")
-            assert target.temperature_range == (0, 2)
+            assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 2)
             assert target.validate_request_generation_config(request(2)).temperature == 2
     finally:
         await target.cleanup_target_async()
@@ -1822,7 +1917,7 @@ async def test_round_robin_exposes_intersected_child_ranges_async(patch_central_
         ]
         target = RoundRobinTarget(targets=children)
         assert target.capabilities.supports_temperature
-        assert target.temperature_range == (0, 1)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 1)
         assert target.validate_request_generation_config(request(1)).temperature == 1
         with pytest.raises(ValueError, match="between 0 and 1"):
             target.validate_request_generation_config(request(2))
@@ -1849,10 +1944,10 @@ async def test_round_robin_intersects_declared_child_ranges_async(patch_central_
         ]
         target = RoundRobinTarget(targets=children)
         assert target.capabilities.supports_temperature
-        assert target.temperature_range == (0.5, 1)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0.5, 1)
         assert target.validate_request_generation_config(request(0.7)).temperature == 0.7
         for invalid in (0.4, 1.1):
-            with pytest.raises(ValueError, match="OpenAI request temperature must be between"):
+            with pytest.raises(ValueError, match="temperature must be between"):
                 target.validate_request_generation_config(request(invalid))
 
 
@@ -1881,16 +1976,19 @@ def test_round_robin_distinguishes_unknown_and_disjoint_ranges(
             self._bounds = bounds
             self.apply_capabilities(capabilities=self.capabilities.model_copy(update={"supports_temperature": True}))
 
-        @property
-        def temperature_range(self) -> tuple[float, float] | None:
-            return self._bounds
+        def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+            return self._bounds if capability == CapabilityName.TEMPERATURE else None
 
     target = RoundRobinTarget(targets=[RangeTarget(bounds=value) for value in bounds])
     assert target.capabilities.supports_temperature is supported
-    assert target.temperature_range == expected
+    assert target.generation_range(capability=CapabilityName.TEMPERATURE) == expected
+    assert target.generation_range(capability=CapabilityName.JSON_OUTPUT) is None
     if not supported:
         with pytest.raises(ValueError, match="does not support runtime temperature"):
             target.validate_request_generation_config(request(0.5))
+    elif any(value is not None for value in bounds):
+        with pytest.raises(ValueError, match="temperature must be between"):
+            target.validate_request_generation_config(request(3))
 
 
 async def test_no_override_preserves_request_body_async(target: OpenAIChatTarget) -> None:

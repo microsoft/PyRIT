@@ -125,7 +125,7 @@ class _OpenAIModelSampling:
         if declared_support is not None:
             return declared_support
         # Only dated snapshots inherit a named model's rule, not arbitrary prefixed variants.
-        model = cls._SNAPSHOT_SUFFIX.sub("", model_name)
+        model = cls._SNAPSHOT_SUFFIX.sub("", model_name).lower()
         if model in cls._UNSUPPORTED_MODELS:
             return False
         if model in cls._REASONING_DEFAULT_MODELS:
@@ -269,7 +269,7 @@ class OpenAITarget(PromptTarget):
         ):
             self._declared_generation["supports_temperature"] = custom_configuration.capabilities.supports_temperature
         self._effective_generation = self._declared_generation.copy()
-        self.apply_temperature_range(temperature_range=temperature_range)
+        self._apply_temperature_range(temperature_range=temperature_range)
         self._declared_generation = self._effective_generation.copy()
 
         # Initialize parent with endpoint and model_name
@@ -308,16 +308,20 @@ class OpenAITarget(PromptTarget):
             capabilities = self._generation_capabilities_for_mode(capabilities)
         super().apply_capabilities(capabilities=capabilities)
 
-    @property
-    def temperature_range(self) -> tuple[float, float] | None:
-        """Resolved runtime bounds, independently of whether the current mode supports temperature."""
-        if CapabilityName.TEMPERATURE not in self._SUPPORTED_GENERATION_CAPABILITIES:
+    def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
+        """
+        Resolve declared or inferred bounds independently of the current sampling mode.
+
+        Returns:
+            tuple[float, float] | None: Inclusive bounds for implemented generation options.
+        """
+        if capability != CapabilityName.TEMPERATURE or capability not in self._SUPPORTED_GENERATION_CAPABILITIES:
             return None
         return self._effective_generation.get("temperature_range") or _OpenAIModelSampling.temperature_range(
             self._effective_generation_parameters()["model"]
         )
 
-    def apply_temperature_range(self, *, temperature_range: tuple[float, float] | None) -> None:
+    def _apply_temperature_range(self, *, temperature_range: tuple[float, float] | None) -> None:
         """
         Apply bounds until the next model change; None restores model inference.
 
@@ -375,12 +379,6 @@ class OpenAITarget(PromptTarget):
             raise ValueError(
                 f"Runtime temperature is not supported for this {type(self).__name__} model configuration."
             )
-        bounds = self.temperature_range
-        if bounds is None:
-            raise ValueError(f"Runtime temperature bounds are unavailable for {type(self).__name__}.")
-        minimum, maximum = bounds
-        if not minimum <= config.temperature <= maximum:
-            raise ValueError(f"OpenAI request temperature must be between {minimum:g} and {maximum:g} inclusive.")
 
     def _prepare_request_generation(self, *, body: dict[str, Any], request: Message) -> None:
         # Public sends and wrapper dispatch clear incoming evidence. Retries and tool

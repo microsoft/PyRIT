@@ -56,7 +56,9 @@ def target_mock_factory() -> Callable[[type[PromptTarget]], MagicMock]:
     """Create independent target mocks with the base target's default bounds."""
 
     def _create_target(target_type: type[PromptTarget]) -> MagicMock:
-        return MagicMock(spec=target_type, temperature_range=None)
+        target = MagicMock(spec=target_type)
+        target.generation_range.return_value = None
+        return target
 
     return _create_target
 

@@ -52,7 +52,7 @@ def _mock_prompt_target(*, identifier: ComponentIdentifier | None = None) -> Mag
     mock_target = MagicMock(spec=PromptTarget)
     mock_target.get_identifier.return_value = identifier if identifier is not None else _mock_target_identifier()
     mock_target.capabilities = TargetCapabilities()
-    mock_target.temperature_range = None
+    mock_target.generation_range.return_value = None
     return mock_target
 
 

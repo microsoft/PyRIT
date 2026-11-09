@@ -134,7 +134,7 @@ class TestDiscoverTargetCapabilitiesAsync:
             api_key="test-only-key",
         )
         declared = ExtendedCapabilities.model_validate(target.capabilities.model_dump())
-        target.apply_temperature_range(temperature_range=(0.2, 1))
+        target._apply_temperature_range(temperature_range=(0.2, 1))
         target.apply_capabilities(capabilities=declared)
         with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=_ok_response()):
             result = await discover_target_capabilities_async(
@@ -144,12 +144,12 @@ class TestDiscoverTargetCapabilitiesAsync:
         assert isinstance(result, ExtendedCapabilities)
         assert result.additional_declaration
         assert result.output_modalities == declared.output_modalities
-        assert target.temperature_range == (0.2, 1)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0.2, 1)
         assert target.capabilities == result
         assert isinstance(target.capabilities, ExtendedCapabilities)
         target.set_model_name(model_name="gpt-5" if supported else "unknown")
         assert target.capabilities.supports_temperature is not supported
-        assert target.temperature_range == (0, 2)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 2)
 
     async def test_returns_only_supported_when_all_probes_succeed(self) -> None:
         target = MockPromptTarget()
