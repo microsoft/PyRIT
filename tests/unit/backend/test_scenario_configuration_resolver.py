@@ -11,12 +11,11 @@ import pytest
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import SeedObjective
-from pyrit.models.catalog.scenario import RunScenarioRequest
+from pyrit.models import DatasetSourceInput, ScenarioDatasetOptions, ScenarioDatasetRequest, SeedObjective
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit
-from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetOptions, ScenarioDatasetRequest
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, DatasetFetchPolicy, DatasetSource, Scenario
 from pyrit.scenario.core import (
@@ -25,14 +24,17 @@ from pyrit.scenario.core import (
     scenario_target_defaults,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
-from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
-from pyrit.scenario.scenarios.airt.rapid_response import RapidResponse
-from pyrit.scenario.scenarios.garak.api_key import ApiKey
-from pyrit.scenario.scenarios.garak.exploitation import Exploitation
-from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination
-from pyrit.scenario.scenarios.garak.prompt_inject import PromptInject, PromptInjectDatasetConfiguration
-from pyrit.scenario.scenarios.garak.system_prompt_extraction import SystemPromptExtraction
-from pyrit.scenario.scenarios.garak.web_injection import WebInjection
+from pyrit.scenario.scenarios.adaptive import TextAdaptive
+from pyrit.scenario.scenarios.airt import RapidResponse
+from pyrit.scenario.scenarios.garak import (
+    ApiKey,
+    Exploitation,
+    PackageHallucination,
+    PromptInject,
+    PromptInjectDatasetConfiguration,
+    SystemPromptExtraction,
+    WebInjection,
+)
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from unit.mocks import MockPromptTarget
 

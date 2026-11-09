@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from scipy.io import wavfile
 
-from pyrit.converter.audio_volume_converter import AudioVolumeConverter
+from pyrit.converter import AudioVolumeConverter
 from pyrit.registry import ConverterRegistry
 
 

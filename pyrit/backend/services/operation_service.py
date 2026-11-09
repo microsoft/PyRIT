@@ -4,7 +4,7 @@
 from collections.abc import Sequence
 from uuid import UUID, uuid4
 
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
     EvidenceAvailability,
     FindingCreateRequest,
