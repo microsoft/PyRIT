@@ -10,9 +10,9 @@ import pytest
 from pyrit.executor.attack import RedTeamingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedObjective, SeedPrompt, TargetIdentifier
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
-from pyrit.scenario.scenarios.airt.cyber import Cyber
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario import DatasetAttackConfiguration
+from pyrit.scenario.scenarios.airt import Cyber
 from pyrit.score import TrueFalseScorer
 from pyrit.setup.initializers.techniques import (
     build_technique_factories,

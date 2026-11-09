@@ -22,6 +22,16 @@ available to assistive technology while the help is closed. Required markers,
 validation errors, input-format guidance, and unavailable-estimate reasons
 stay visible.
 
+## GUI targets
+
+`TextTarget` is an SDK demonstration and manual-workflow target that writes to
+the Python host's text stream without returning a response. It remains available
+in the SDK and REST API, but is excluded from GUI creation, registries, and target
+choices, including converter, technique, and round-robin references. Registered
+round-robin targets containing a `TextTarget` are excluded as well.
+Saved history remains readable, but chats bound to a `TextTarget` cannot send
+further prompts from the GUI.
+
 ## Conversation selection
 
 Opening a saved attack with related conversations automatically opens the
@@ -251,6 +261,50 @@ evidence includes 222 pieces, a split scored multimodal turn, overlapping stable
 piece IDs and 121 references. Journeys cover bounded requests, continuation
 retry/restart failures, pending-reader ownership, URL/History context and
 keyboard/touch use. `PYRIT_E2E_HIERARCHY_PORT` overrides the loopback port.
+
+### Isolated Scenario dataset and estimate browser checks
+
+From `frontend`, run:
+
+```powershell
+$env:PYRIT_PYTHON = uv run --no-sync python -c "import sys; print(sys.executable)"
+npm run test:e2e:scenario-datasets
+```
+
+The desktop and narrow projects use real configuration, preset, estimate, and
+launch handlers over disposable SQLite data. Three local datasets have 8, 6, and
+3 examples, with fixed seed/group IDs and reproducible sampling. A harmless local
+target and scorer complete the launch without paid model calls. The fixture uses
+private configuration and explicitly enables local
+administrator access on its loopback server so the real preset-write routes can
+be exercised. It never uses a shared database or user credentials.
+Startup pins both imported default-configuration paths and explicitly configures
+the preset registry's private source. Before every preset save or delete, a guard
+checks the actual storage source, document, and lock paths. The report retains
+these containment checks alongside the real estimate responses.
+Preset names distinguish the viewport, repetition, and retry so test attempts
+cannot collide with presets saved by earlier attempts.
+`PYRIT_E2E_DATASETS_PORT` overrides the default port, 18612.
+
+The journeys cover keyboard preset creation, scenario and target selection,
+dataset search and limit editing, saved-preset reloads, estimates without a
+target, target-required launch, inherited and per-source caps, and the persisted
+launch configuration. Configured budgets
+remain approximate, not selected population counts. An unlimited configuration
+is genuinely unavailable before initialization; the production benchmark's
+cached-results policy supplies the tested conditional range. Exact counts are
+checked only on the initialized run plan.
+An additional real-handler launch removes the combined cap and verifies source
+overrides and the inherited per-dataset cap against locally delivered objectives.
+
+Loading and error evidence uses explicitly labeled, one-shot backend holds and
+failures. Dataset checking has a visible status outside the table's responsive
+columns, including while cached metadata is refreshed. Successful requests still
+use the real handlers, and guards reject dataset preparation during estimates or
+any provider lookup. Screenshots and JSON estimate/launch evidence are attached
+to the Playwright report for both
+viewports. The dedicated CI projects share the existing report merge and failure
+gate; the normal E2E configuration excludes this fixture-only spec.
 
 ## Development
 

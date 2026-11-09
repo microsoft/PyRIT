@@ -14,9 +14,9 @@ from typing import Any
 from PIL import Image
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.converter import CodeAttackConverter
-from pyrit.converter.text_selection_strategy import (
+from pyrit.converter import (
     AllWordsSelectionStrategy,
+    CodeAttackConverter,
     ContentWordSelectionStrategy,
     IndexSelectionStrategy,
     KeywordSelectionStrategy,

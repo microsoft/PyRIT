@@ -6,17 +6,17 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
+from pyrit.models import TargetIdentifier
 from pyrit.models.catalog import TargetInstance
-from pyrit.models.identifiers import TargetIdentifier
-from pyrit.prompt_target.common.conversation_normalization_pipeline import NORMALIZABLE_CAPABILITIES
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
     CapabilityName,
     TargetCapabilities,
+    TargetConfiguration,
     UnsupportedCapabilityBehavior,
     get_known_capabilities,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target.common.conversation_normalization_pipeline import NORMALIZABLE_CAPABILITIES
 
 
 class TestCapabilityHandlingPolicy:
@@ -496,7 +496,7 @@ class TestGetDefaultConfiguration:
     def _make_target_class(self, *, default_config: "TargetConfiguration"):
         """Create a minimal concrete PromptTarget subclass with the given _DEFAULT_CONFIGURATION."""
         from pyrit.models import Message
-        from pyrit.prompt_target.common.prompt_target import PromptTarget
+        from pyrit.prompt_target import PromptTarget
 
         class _ConcreteTarget(PromptTarget):
             _DEFAULT_CONFIGURATION = default_config
@@ -555,7 +555,7 @@ class TestGetDefaultConfiguration:
         assert result.capabilities.output_modalities == frozenset({frozenset(["audio_path"])})
 
     def test_prompt_target_preserves_system_prompt_for_recognized_model(self):
-        from pyrit.prompt_target.common.prompt_target import PromptTarget
+        from pyrit.prompt_target import PromptTarget
 
         result = PromptTarget.get_default_configuration("gpt-4o")
 

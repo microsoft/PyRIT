@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.sorry_bench_dataset import _SorryBenchDataset
+from pyrit.datasets.seed_datasets.remote import _SorryBenchDataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 
