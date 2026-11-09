@@ -360,6 +360,19 @@ Stop these test-owned servers after the run.
 
 ### Request Limits
 
+Attachments upload in the background while editing remains available, with up to three
+uploads at a time. Send and Save reuse completed uploads; failures expose Retry and
+removal controls. Unused uploads expire after 24 hours, including across restarts.
+Only media used in a message or conversion enters permanent results storage.
+
+`POST /api/media/uploads` accepts `data_type`, base64 `content`, and `mime_type`.
+It returns **201** with an opaque `value` and `expires_at` (UTC Unix seconds).
+Retained drafts refresh uploads one hour before that expiration without changing their
+references. Older backends without `expires_at` use a 23-hour refresh interval.
+The shared local staging directory has a **1 GiB** quota; uploads exceeding it receive
+**507** and can be retried after unused uploads expire. Expired bytes are reclaimed
+before admitting new uploads. Renewing existing bytes does not consume extra quota.
+
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
 API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,
 labels, filters, cursors, configuration files, and initializer scripts also have length or

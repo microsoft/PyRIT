@@ -1,4 +1,5 @@
 import type {
+  AttachmentUploadOutcome,
   BackendMessage,
   BackendMessagePiece,
   BackendScore,
@@ -8,8 +9,96 @@ import type {
   MessageDisplayPiece,
   MessageError,
   MessagePieceRequest,
-} from '../types'
+} from '@/types'
+import { mediaApi } from '@/services/api'
+import { toApiError } from '@/services/errors'
+
 import { generationDisplay } from './requestGeneration'
+
+// File identity survives draft copies and handoffs without retaining discarded files.
+const ATTACHMENT_UPLOADS = new WeakMap<File, {
+  promise: Promise<AttachmentUploadOutcome>
+  expiresAt: number
+  outcome?: AttachmentUploadOutcome
+}>()
+const ATTACHMENT_UPLOAD_LISTENERS = new WeakMap<File, Set<(outcome: AttachmentUploadOutcome | undefined) => void>>()
+// Leave a one-hour buffer before the server's staging lease expires.
+const ATTACHMENT_REFRESH_BUFFER_MS = 60 * 60 * 1000
+const LEGACY_ATTACHMENT_REUSE_MS = 23 * 60 * 60 * 1000
+const MAX_ACTIVE_UPLOADS = 3
+let activeUploads = 0
+const pendingUploads: Array<() => void> = []
+
+function queueAttachmentUpload(task: () => Promise<AttachmentUploadOutcome>): Promise<AttachmentUploadOutcome> {
+  return new Promise((resolve, reject) => {
+    const start = (): void => {
+      activeUploads += 1
+      void task().then(resolve, reject).finally(() => {
+        activeUploads -= 1
+        pendingUploads.shift()?.()
+      })
+    }
+    if (activeUploads < MAX_ACTIVE_UPLOADS) start()
+    else pendingUploads.push(start)
+  })
+}
+
+/** Start once on attachment; message preparation awaits this same upload. */
+export function startAttachmentUpload(file: File, retry = false): Promise<AttachmentUploadOutcome> {
+  const existing = ATTACHMENT_UPLOADS.get(file)
+  if (existing && !retry && existing.expiresAt > Date.now()) return existing.promise
+  let expiresAt = Number.POSITIVE_INFINITY
+  const upload = queueAttachmentUpload(async (): Promise<AttachmentUploadOutcome> => {
+    try {
+      const response = await mediaApi.upload({
+        data_type: mimeTypeToDataType(file.type),
+        content: await fileToBase64(file),
+        mime_type: file.type || 'application/octet-stream',
+      })
+      if (response.expires_at !== undefined && !Number.isFinite(response.expires_at)) {
+        throw new Error('The upload returned an invalid staging expiration.')
+      }
+      expiresAt = response.expires_at === undefined
+        ? Date.now() + LEGACY_ATTACHMENT_REUSE_MS
+        : response.expires_at * 1000 - ATTACHMENT_REFRESH_BUFFER_MS
+      return { status: 'uploaded', value: response.value }
+    } catch (error: unknown) {
+      // Background failures are values so they can be shown before Send is clicked.
+      return { status: 'failed', detail: toApiError(error).detail }
+    }
+  })
+  ATTACHMENT_UPLOADS.set(file, { promise: upload, expiresAt: Number.POSITIVE_INFINITY })
+  for (const listener of ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? []) listener(undefined)
+  void upload.then((outcome: AttachmentUploadOutcome) => {
+    const current = ATTACHMENT_UPLOADS.get(file)
+    if (current?.promise !== upload) return
+    current.outcome = outcome
+    current.expiresAt = expiresAt
+    for (const listener of ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? []) listener(outcome)
+  })
+  return upload
+}
+
+/** Observe replacements and their outcomes, not just the first upload promise. */
+export function subscribeAttachmentUpload(
+  file: File, listener: (outcome: AttachmentUploadOutcome | undefined) => void,
+): () => void {
+  const listeners = ATTACHMENT_UPLOAD_LISTENERS.get(file) ?? new Set()
+  listeners.add(listener)
+  ATTACHMENT_UPLOAD_LISTENERS.set(file, listeners)
+  void startAttachmentUpload(file)
+  listener(ATTACHMENT_UPLOADS.get(file)?.outcome)
+  return () => {
+    listeners.delete(listener)
+    if (!listeners.size) ATTACHMENT_UPLOAD_LISTENERS.delete(file)
+  }
+}
+
+export async function uploadedFileValue(file: File): Promise<string> {
+  const outcome = await startAttachmentUpload(file)
+  if (outcome.status === 'failed') throw new Error(`Upload failed for ${file.name}: ${outcome.detail}`)
+  return outcome.value
+}
 
 /**
  * Read a File or Blob and return its contents as a base64-encoded string (no data URI prefix).
@@ -450,7 +539,11 @@ export function backendMessagesToFrontend(messages: BackendMessage[], partialSeq
 export async function attachmentToMessagePieceRequest(att: MessageAttachment): Promise<MessagePieceRequest> {
   let base64Value: string
   if (att.file) {
-    base64Value = await fileToBase64(att.file)
+    if (ATTACHMENT_UPLOADS.has(att.file)) {
+      base64Value = await uploadedFileValue(att.file)
+    } else {
+      base64Value = await fileToBase64(att.file)
+    }
   } else if (att.sourceValue != null) {
     base64Value = att.sourceValue
   } else if (att.url.startsWith('data:')) {

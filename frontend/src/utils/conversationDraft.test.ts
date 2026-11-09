@@ -1,14 +1,19 @@
 import type { ChatConverterSnapshot, ConversationDraftMessage, ConversationDraftPiece, MessagePieceRequest, TargetCapabilities } from '@/types'
 import { makeTarget } from '@/test-utils/targetFixtures'
+import { mediaApi } from '@/services/api'
 
-import { buildMessagePieces } from './messageMapper'
+import { buildMessagePieces, startAttachmentUpload } from './messageMapper'
 import {
   attachmentDraft, draftAttachment,
   draftConverterInputs, draftDataTypes, draftMessageToComposer, draftMessageToInput, editorTargetDisabledReason,
   canBranchFirstPrompt, historyReplayDisabledReason, serializeDraft, toConversationDraft, unansweredToolCallId, validateDraft,
 } from './conversationDraft'
 
+jest.mock('@/services/api', () => ({ mediaApi: { upload: jest.fn() } }))
+
 describe('conversation drafts', () => {
+  beforeEach(() => jest.clearAllMocks())
+
   it('omits generation evidence from loaded, edited, and new draft pieces without mutating source metadata', async () => {
     const metadata = {
       _pyrit_generation: { temperature: { requested: 0.2, resolved: 0.2, source: 'request' } },
@@ -33,6 +38,47 @@ describe('conversation drafts', () => {
     expect(saved[0].pieces.map((piece: MessagePieceRequest) => piece.prompt_metadata)).toEqual([expected, expected, undefined])
     expect(saved[0].pieces.map((piece: MessagePieceRequest) => piece.source_piece_id)).toEqual(['first', 'second', undefined])
     expect(metadata._pyrit_generation.temperature.resolved).toBe(0.2)
+  })
+
+  it('reuses a composer upload when saving an editor draft without losing metadata or conversions', async () => {
+    const file = new File(['image'], 'photo.png', { type: 'image/png' })
+    jest.mocked(mediaApi.upload).mockResolvedValueOnce({ value: 'pyrit-upload:staged' })
+    await startAttachmentUpload(file)
+    const metadata = {
+      video_id: 'retained', request_generation_config: { temperature: 0 },
+      _pyrit_generation: { temperature: { requested: 0.2, resolved: 0.2, source: 'request' } },
+    }
+    const piece = attachmentDraft({
+      draftId: 'image', file, type: 'image', name: file.name, mimeType: file.type, url: 'blob:preview',
+      metadata,
+    })
+    const saved = await serializeDraft([{
+      id: 'message', role: 'user', pieces: [{
+        ...piece, converted_value: '/results/converted.png', converted_value_data_type: 'image_path',
+        applied_converter_ids: ['converter'],
+      }],
+    }])
+    expect(saved[0].pieces[0]).toMatchObject({
+      original_value: 'pyrit-upload:staged', data_type: 'image_path',
+      converted_value: '/results/converted.png', applied_converter_ids: ['converter'],
+    })
+    expect(saved[0].pieces[0].prompt_metadata).toEqual({
+      video_id: 'retained', request_generation_config: { temperature: 0 },
+    })
+    expect(metadata._pyrit_generation.temperature.resolved).toBe(0.2)
+    expect(mediaApi.upload).toHaveBeenCalledTimes(1)
+  })
+
+  it('surfaces an editor upload failure instead of resending the bytes on save', async () => {
+    jest.mocked(mediaApi.upload).mockRejectedValueOnce(new Error('Storage unavailable'))
+    const file = new File(['image'], 'failed.png', { type: 'image/png' })
+    await startAttachmentUpload(file)
+    await expect(serializeDraft([{
+      id: 'message', role: 'user', pieces: [{
+        draftId: 'image', data_type: 'image_path', original_value: '', file,
+      }],
+    }])).rejects.toThrow('Upload failed for failed.png: Storage unavailable')
+    expect(mediaApi.upload).toHaveBeenCalledTimes(1)
   })
 
   it.each([
