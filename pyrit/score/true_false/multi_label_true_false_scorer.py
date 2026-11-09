@@ -7,7 +7,7 @@ from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from pyrit.common.brick_contract import forward_init_parameters
+from pyrit.common import forward_init_parameters
 from pyrit.common.task_utils import gather_with_cleanup_async
 from pyrit.models import ComponentIdentifier, Message, Score, ScoreStatus, ScoringExpectation
 from pyrit.score.message_scorer import MessageScorer

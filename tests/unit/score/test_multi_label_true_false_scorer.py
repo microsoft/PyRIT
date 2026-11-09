@@ -28,21 +28,21 @@ from pyrit.models import (
 from pyrit.prompt_target import PromptTarget
 from pyrit.score import (
     FloatScaleThresholdScorer,
+    JsonSchemaResponseHandler,
     MessageMultiLabelTrueFalseScorer,
     MultiLabelTrueFalseScorer,
+    ObjectiveScorerEvaluator,
     Scorer,
     ScorerEvaluator,
     ScorerPromptValidator,
     SubStringScorer,
+    TrueFalseAggregatorFunc,
     TrueFalseCompositeScorer,
     TrueFalseInverterScorer,
     TrueFalseScoreAggregator,
     TrueFalseScoreSelector,
 )
 from pyrit.score.observation.target_judge import JudgmentRequest, TargetJudge
-from pyrit.score.response_handler import JsonSchemaResponseHandler
-from pyrit.score.scorer_evaluation.scorer_evaluator import ObjectiveScorerEvaluator
-from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
