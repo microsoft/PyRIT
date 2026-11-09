@@ -35,7 +35,7 @@ from pyrit.models import (
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import ScenarioRegistry
 from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, IncompatibleTechniqueError
-from pyrit.scenario.scenarios.foundry.assert_policy import AssertPolicy, AssertTechnique
+from pyrit.scenario.scenarios.foundry import AssertPolicy, AssertTechnique
 from pyrit.score import (
     AssertJudgmentMode,
     AssertScoringDimension,

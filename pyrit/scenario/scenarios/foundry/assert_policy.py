@@ -28,16 +28,12 @@ from pyrit.models import (
     ScenarioRunSizeEstimateStatus,
     SeedGroupRequirements,
 )
+from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.dataset_configuration import (
-    DatasetAttackConfiguration,
-    DatasetConstraintError,
-    DatasetSourceKind,
-)
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSourceKind
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
