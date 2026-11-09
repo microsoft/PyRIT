@@ -128,12 +128,13 @@ class TestRestoreOrderAndRebuild:
 
     def test_finds_a_startup_entry_by_its_exact_name(self, tmp_path: Path) -> None:
         registry = TargetRegistry.get_registry_singleton()
-        for name in ("ghost\ud800", "other\udcff"):
+        # Each name has a different normalized form, so a lookup that normalized names would miss them.
+        for name in ("cafe\u0301", "target\uff10"):
             startup_target = OpenAIChatTarget(
                 endpoint="https://startup.openai.azure.com/openai/v1", model_name="gpt-4o", auth_mode="identity"
             )
             registry.instances.register(startup_target, name=name)
-        _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("ghost\ud800", "other\udcff"))
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("cafe\u0301", "target\uff10"))
 
         report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
@@ -592,7 +593,7 @@ class TestRestoreFailures:
         assert keep == "QuotingError: got https://host/v1 (rest hidden because it may include a credential)"
         assert exploding == "QuotingError: got https://host/v1"
 
-    def test_reports_a_reference_name_that_is_not_valid_text(self, tmp_path: Path) -> None:
+    def test_reports_a_reference_name_that_is_not_valid_text_as_invalid(self, tmp_path: Path) -> None:
         _save_text(
             tmp_path,
             RegistryRecipeKind.TARGETS,
@@ -604,10 +605,8 @@ class TestRestoreFailures:
         report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
-        assert failure.reason is RestoreFailureReason.MISSING_DEPENDENCY
-        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800")
-        sent = json.loads(json.dumps(report.model_dump(mode="json"), ensure_ascii=False).encode("utf-8"))
-        assert sent["failures"][0]["dependency"]["name"] == "ghost\\ud800"
+        assert (failure.name, failure.reason) == ("pool", RestoreFailureReason.INVALID_RECIPE)
+        assert json.loads(report.model_dump_json())["failures"][0]["name"] == "pool"
 
     def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
         attack_registry = AttackRegistry.get_registry_singleton()

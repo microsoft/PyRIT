@@ -10,11 +10,21 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from azure.core.exceptions import HttpResponseError, ResourceNotFoundError, ServiceRequestError
+from azure.core.exceptions import (
+    ClientAuthenticationError,
+    HttpResponseError,
+    ResourceNotFoundError,
+    ServiceRequestError,
+    ServiceResponseError,
+)
 from azure.storage.blob import ContainerClient, StorageErrorCode
 
+import pyrit.registry.file_document_storage as storage_module
 from pyrit.registry.file_document_storage import (
+    DocumentConflictError,
     DocumentListing,
+    DocumentStorageUnavailableError,
+    DocumentUnreadableError,
     FileDocumentStorage,
     UnreadableDocument,
     _read_regular_file,
@@ -39,6 +49,16 @@ def _blob_client(*, names: list[str]) -> MagicMock:
     return client
 
 
+def _blob_error(
+    *, status_code: int, error_code: str, message: str = "Storage error.", missing: bool = False
+) -> HttpResponseError:
+    error_type = ResourceNotFoundError if missing else HttpResponseError
+    error = error_type(message=message)
+    error.status_code = status_code
+    error.error_code = error_code
+    return error
+
+
 def _count_open_files() -> int | None:
     # Linux lists this process's open files here; elsewhere the count is skipped.
     descriptors = Path("/proc/self/fd")
@@ -61,7 +81,7 @@ def _change_after_listing(*, change: Callable[[], None], cache_types: bool = Fal
         yield iter(listed)
         change()
 
-    with patch("pyrit.registry.file_document_storage.os.scandir", side_effect=scandir):
+    with patch.object(storage_module, "_scandir", side_effect=scandir):
         yield
 
 
@@ -81,8 +101,9 @@ class TestLocalListingWithIssues:
 
         assert listing == DocumentListing(
             documents={"first": b"one"},
-            unreadable=(UnreadableDocument(name="second", message="Permission denied"),),
+            unreadable=(UnreadableDocument(name="second", file_name="second.json", message="Permission denied"),),
         )
+        assert isinstance(listing.unreadable[0].error, PermissionError)
         assert documents == {"first": b"one"}
 
     def test_reports_badly_named_files_as_ignored_without_reading_them(self, tmp_path: Path) -> None:
@@ -162,8 +183,9 @@ class TestLocalListingWithIssues:
 
         assert listing == DocumentListing(
             documents={"kept": b"kept"},
-            unreadable=(UnreadableDocument(name="swapped", message="Not a regular file"),),
+            unreadable=(UnreadableDocument(name="swapped", file_name="swapped.json", message="Not a regular file"),),
         )
+        assert listing.unreadable[0].error is None
         assert _count_open_files() == open_files
 
     @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="Named pipes need os.mkfifo")
@@ -179,7 +201,7 @@ class TestLocalListingWithIssues:
             os.mkfifo(path)
             return descriptor
 
-        with patch("pyrit.registry.file_document_storage.os.open", side_effect=open_then_replace):
+        with patch.object(storage_module, "_open", side_effect=open_then_replace):
             listing = _local_storage(tmp_path)._list_documents_with_issues()
 
         assert listing == DocumentListing(documents={"document": b"original"})
@@ -196,11 +218,11 @@ class TestLocalListingWithIssues:
             os.mkfifo(path)
             return real_open(path, flags, *args)
 
-        with patch("pyrit.registry.file_document_storage.os.open", side_effect=replace_then_open):
+        with patch.object(storage_module, "_open", side_effect=replace_then_open):
             listing = _local_storage(tmp_path)._list_documents_with_issues()
 
         assert listing == DocumentListing(
-            unreadable=(UnreadableDocument(name="document", message="Not a regular file"),)
+            unreadable=(UnreadableDocument(name="document", file_name="document.json", message="Not a regular file"),)
         )
 
     def test_reports_entries_that_are_not_regular_files_without_reading_them(self, tmp_path: Path) -> None:
@@ -214,8 +236,8 @@ class TestLocalListingWithIssues:
             listing = _local_storage(tmp_path)._list_documents_with_issues()
 
         assert listing.unreadable == (
-            UnreadableDocument(name="broken_link", message="Not a regular file"),
-            UnreadableDocument(name="folder", message="Not a regular file"),
+            UnreadableDocument(name="broken_link", file_name="broken_link.json", message="Not a regular file"),
+            UnreadableDocument(name="folder", file_name="folder.json", message="Not a regular file"),
         )
         read.assert_not_called()
 
@@ -229,14 +251,13 @@ class TestLocalListingWithIssues:
 
         with (
             _change_after_listing(change=deleted.unlink, cache_types=True),
-            patch(
-                "pyrit.registry.file_document_storage.os.lstat",
-                side_effect=PermissionError(13, "Permission denied"),
-            ),
+            patch.object(storage_module, "_lstat", side_effect=PermissionError(13, "Permission denied")),
         ):
             listing = _local_storage(tmp_path)._list_documents_with_issues()
 
-        assert listing == DocumentListing(unreadable=(UnreadableDocument(name="deleted", message="Permission denied"),))
+        assert listing == DocumentListing(
+            unreadable=(UnreadableDocument(name="deleted", file_name="deleted.json", message="Permission denied"),)
+        )
 
     def test_reports_a_link_loop_and_keeps_the_others(self, tmp_path: Path) -> None:
         (tmp_path / "good.json").write_bytes(b"ok")
@@ -267,9 +288,17 @@ class TestLocalListingWithIssues:
     def test_raises_when_the_directory_cannot_be_listed(self, tmp_path: Path) -> None:
         (tmp_path / "first.json").write_bytes(b"one")
 
-        with patch("pyrit.registry.file_document_storage.os.scandir", side_effect=PermissionError(13, "denied")):
-            with pytest.raises(PermissionError):
+        with patch.object(storage_module, "_scandir", side_effect=PermissionError(13, "denied")):
+            with pytest.raises(DocumentStorageUnavailableError) as raised:
                 _local_storage(tmp_path)._list_documents_with_issues()
+
+        assert isinstance(raised.value.__cause__, PermissionError)
+        assert (raised.value.label, raised.value.source, raised.value.reason) == (
+            "Test documents",
+            str(tmp_path),
+            "denied",
+        )
+        assert str(raised.value) == f"Test documents storage at {tmp_path} is unavailable: denied"
 
 
 class TestBlobListingWithIssues:
@@ -286,9 +315,7 @@ class TestBlobListingWithIssues:
 
         def download_blob(blob_name: str) -> SimpleNamespace:
             if blob_name == "saved/broken.json":
-                error = HttpResponseError(message=f"Forbidden: {_SAS_SOURCE}")
-                error.status_code = 403
-                raise error
+                raise _blob_error(status_code=409, error_code="BlobArchived", message=f"Archived: {_SAS_SOURCE}")
             return SimpleNamespace(readall=lambda: b"content")
 
         client.download_blob.side_effect = download_blob
@@ -297,7 +324,10 @@ class TestBlobListingWithIssues:
             listing = _blob_storage()._list_documents_with_issues()
 
         assert listing.documents == {"good": b"content"}
-        assert listing.unreadable == (UnreadableDocument(name="broken", message="HttpResponseError (403)"),)
+        assert listing.unreadable == (
+            UnreadableDocument(name="broken", file_name="broken.json", message="HttpResponseError (409, BlobArchived)"),
+        )
+        assert isinstance(listing.unreadable[0].error, HttpResponseError)
         assert [issue.file_name for issue in listing.ignored] == ["Bad-Name.json"]
         assert all("secret-signature" not in issue.message for issue in (*listing.unreadable, *listing.ignored))
         client.list_blobs.assert_called_once_with(name_starts_with="saved/")
@@ -305,18 +335,11 @@ class TestBlobListingWithIssues:
         assert downloaded == ["saved/broken.json", "saved/good.json"]
 
     def test_skips_only_a_blob_deleted_after_listing(self) -> None:
-        client = _blob_client(names=["saved/kept.json", "saved/deleted.json", "saved/container_gone.json"])
-        error_codes = {
-            "saved/deleted.json": StorageErrorCode.BLOB_NOT_FOUND,
-            "saved/container_gone.json": StorageErrorCode.CONTAINER_NOT_FOUND,
-        }
+        client = _blob_client(names=["saved/kept.json", "saved/deleted.json"])
 
         def download_blob(blob_name: str) -> SimpleNamespace:
-            if blob_name in error_codes:
-                error = ResourceNotFoundError(message="Not found.")
-                error.status_code = 404
-                error.error_code = error_codes[blob_name]
-                raise error
+            if blob_name == "saved/deleted.json":
+                raise _blob_error(status_code=404, error_code=StorageErrorCode.BLOB_NOT_FOUND, missing=True)
             return SimpleNamespace(readall=lambda: b"kept")
 
         client.download_blob.side_effect = download_blob
@@ -324,12 +347,29 @@ class TestBlobListingWithIssues:
         with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
             listing = _blob_storage()._list_documents_with_issues()
 
-        assert listing == DocumentListing(
-            documents={"kept": b"kept"},
-            unreadable=(
-                UnreadableDocument(name="container_gone", message="ResourceNotFoundError (404, ContainerNotFound)"),
-            ),
-        )
+        assert listing == DocumentListing(documents={"kept": b"kept"})
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            _blob_error(status_code=404, error_code=StorageErrorCode.CONTAINER_NOT_FOUND, missing=True),
+            _blob_error(status_code=403, error_code=StorageErrorCode.AUTHORIZATION_FAILURE),
+            _blob_error(status_code=401, error_code="InvalidAuthenticationInfo"),
+            ClientAuthenticationError(message="no token"),
+            ServiceRequestError(message="connection refused"),
+            ServiceResponseError(message="connection reset"),
+        ],
+    )
+    def test_raises_when_an_error_affects_the_whole_container(self, error: Exception) -> None:
+        client = _blob_client(names=["saved/first.json", "saved/second.json"])
+        client.download_blob.side_effect = error
+
+        with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+            with pytest.raises(DocumentStorageUnavailableError) as raised:
+                _blob_storage()._list_documents_with_issues()
+
+        assert raised.value.__cause__ is error
+        assert "secret-signature" not in str(raised.value)
 
     def test_raises_when_the_container_cannot_be_listed(self) -> None:
         def failing_pages() -> Iterator[SimpleNamespace]:
@@ -340,8 +380,154 @@ class TestBlobListingWithIssues:
         client.list_blobs.return_value = failing_pages()
 
         with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
-            with pytest.raises(HttpResponseError):
+            with pytest.raises(DocumentStorageUnavailableError) as raised:
                 _blob_storage()._list_documents_with_issues()
+
+        assert isinstance(raised.value.__cause__, HttpResponseError)
+
+
+class TestReadDocument:
+    def test_reads_a_document_and_treats_a_missing_one_as_missing(self, tmp_path: Path) -> None:
+        (tmp_path / "present.json").write_bytes(b"content")
+        storage = _local_storage(tmp_path)
+
+        assert storage._read_document_bytes("present") == b"content"
+        assert storage._read_document_bytes("absent") is None
+        assert _local_storage(tmp_path / "missing_folder")._read_document_bytes("absent") is None
+
+    @pytest.mark.parametrize("entry", ["folder", "broken link", "pipe"])
+    @pytest.mark.timeout(60, method="thread")
+    def test_reports_what_the_listing_reports_as_unreadable(self, tmp_path: Path, entry: str) -> None:
+        path = tmp_path / "odd.json"
+        if entry == "folder":
+            path.mkdir()
+        elif entry == "broken link":
+            try:
+                path.symlink_to(tmp_path / "missing_target.json")
+            except OSError:
+                pytest.skip("Creating symbolic links isn't permitted here")
+        elif not hasattr(os, "mkfifo"):
+            pytest.skip("Named pipes need os.mkfifo")
+        else:
+            os.mkfifo(path)
+        storage = _local_storage(tmp_path)
+
+        with pytest.raises(DocumentUnreadableError) as raised:
+            storage._read_document_bytes("odd")
+
+        assert (raised.value.name, raised.value.file_name, raised.value.reason) == (
+            "odd",
+            "odd.json",
+            "Not a regular file",
+        )
+        assert [issue.name for issue in storage._list_documents_with_issues().unreadable] == ["odd"]
+
+    def test_reports_a_file_it_cannot_open(self, tmp_path: Path) -> None:
+        (tmp_path / "locked.json").write_bytes(b"secret")
+
+        with patch.object(storage_module, "_open", side_effect=PermissionError(13, "Permission denied")):
+            with pytest.raises(DocumentUnreadableError) as raised:
+                _local_storage(tmp_path)._read_document_bytes("locked")
+
+        assert raised.value.reason == "Permission denied"
+        assert isinstance(raised.value.__cause__, PermissionError)
+        assert str(raised.value) == f"Test documents 'locked.json' in {tmp_path} can't be read: Permission denied"
+
+    def test_blob_treats_only_a_missing_blob_as_missing(self) -> None:
+        client = _blob_client(names=[])
+        client.download_blob.side_effect = _blob_error(
+            status_code=404, error_code=StorageErrorCode.BLOB_NOT_FOUND, missing=True
+        )
+
+        with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+            assert _blob_storage()._read_document_bytes("absent") is None
+
+    def test_blob_raises_when_the_container_is_gone(self) -> None:
+        client = _blob_client(names=[])
+        client.download_blob.side_effect = _blob_error(
+            status_code=404, error_code=StorageErrorCode.CONTAINER_NOT_FOUND, missing=True
+        )
+
+        with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+            with pytest.raises(DocumentStorageUnavailableError) as raised:
+                _blob_storage()._read_document_bytes("present")
+
+        assert not isinstance(raised.value, DocumentUnreadableError)
+
+    def test_blob_reports_a_blob_it_cannot_read(self) -> None:
+        client = _blob_client(names=[])
+        client.download_blob.side_effect = _blob_error(status_code=409, error_code="BlobArchived")
+
+        with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+            with pytest.raises(DocumentUnreadableError) as raised:
+                _blob_storage()._read_document_bytes("archived")
+
+        assert raised.value.reason == "HttpResponseError (409, BlobArchived)"
+
+
+class TestDeleteDocument:
+    def test_blob_reports_a_missing_blob_as_already_gone(self) -> None:
+        client = _blob_client(names=[])
+        client.delete_blob.side_effect = _blob_error(
+            status_code=404, error_code=StorageErrorCode.BLOB_NOT_FOUND, missing=True
+        )
+
+        with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+            assert _blob_storage()._delete_document("absent") is False
+
+    def test_blob_raises_when_the_container_is_gone(self) -> None:
+        client = _blob_client(names=[])
+        client.delete_blob.side_effect = _blob_error(
+            status_code=404, error_code=StorageErrorCode.CONTAINER_NOT_FOUND, missing=True
+        )
+
+        with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+            with pytest.raises(DocumentStorageUnavailableError):
+                _blob_storage()._delete_document("present")
+
+
+class TestConditionalSave:
+    def test_local_refuses_to_replace_something_it_cannot_read(self, tmp_path: Path) -> None:
+        (tmp_path / "odd.json").mkdir()
+
+        with pytest.raises(DocumentUnreadableError):
+            _local_storage(tmp_path)._save_document_conditional(name="odd", content=b"new", expected_version=None)
+
+        assert (tmp_path / "odd.json").is_dir()
+
+    def test_blob_update_of_a_deleted_blob_is_a_conflict(self) -> None:
+        client = _blob_client(names=[])
+        client.download_blob.side_effect = _blob_error(
+            status_code=404, error_code=StorageErrorCode.BLOB_NOT_FOUND, missing=True
+        )
+
+        with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+            with pytest.raises(DocumentConflictError) as raised:
+                _blob_storage()._save_document_conditional(name="gone", content=b"new", expected_version="v1")
+
+        assert raised.value.actual_version is None
+
+    def test_blob_update_raises_when_the_container_is_gone(self) -> None:
+        client = _blob_client(names=[])
+        client.download_blob.side_effect = _blob_error(
+            status_code=404, error_code=StorageErrorCode.CONTAINER_NOT_FOUND, missing=True
+        )
+
+        with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
+            with pytest.raises(DocumentStorageUnavailableError) as raised:
+                _blob_storage()._save_document_conditional(name="present", content=b"new", expected_version="v1")
+
+        assert not isinstance(raised.value, DocumentUnreadableError)
+        client.upload_blob.assert_not_called()
+
+
+def test_a_listing_cannot_be_changed_by_its_reader(tmp_path: Path) -> None:
+    (tmp_path / "first.json").write_bytes(b"one")
+
+    listing = _local_storage(tmp_path)._list_documents_with_issues()
+
+    with pytest.raises(TypeError):
+        listing.documents["second"] = b"two"  # type: ignore[index]
 
 
 class TestListDocuments:
@@ -368,8 +554,8 @@ class TestListDocuments:
         assert _local_storage(tmp_path)._list_documents() == {"good": b"ok"}
 
     def test_raises_when_the_directory_cannot_be_listed(self, tmp_path: Path) -> None:
-        with patch("pyrit.registry.file_document_storage.os.scandir", side_effect=PermissionError(13, "denied")):
-            with pytest.raises(PermissionError):
+        with patch.object(storage_module, "_scandir", side_effect=PermissionError(13, "denied")):
+            with pytest.raises(DocumentStorageUnavailableError):
                 _local_storage(tmp_path)._list_documents()
 
     def test_logs_an_unreadable_blob_without_exposing_the_url(self) -> None:
