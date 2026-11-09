@@ -93,7 +93,7 @@ import pandas as pd
 
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
-from pyrit.setup.initializers.techniques import TechniqueInitializer
+from pyrit.setup.initializers import TechniqueInitializer
 
 await initialize_pyrit_async(memory_db_type=IN_MEMORY, silent=True)  # type: ignore
 

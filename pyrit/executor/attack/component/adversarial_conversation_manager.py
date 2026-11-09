@@ -22,10 +22,10 @@ from pyrit.exceptions import (
     execution_context,
     remove_markdown_json,
 )
+from pyrit.executor.attack.core import resolve_adversarial_json_schema
 from pyrit.executor.attack.core.attack_config import (
     AdversarialPromptRequirements,
     AttackAdversarialConfig,
-    resolve_adversarial_json_schema,
 )
 from pyrit.models import (
     JsonResponseConfig,

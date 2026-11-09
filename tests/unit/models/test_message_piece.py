@@ -13,7 +13,7 @@ import pytest
 from unit.mocks import get_sample_conversations
 
 from pyrit.converter import Base64Converter
-from pyrit.memory.storage.serializers import set_message_piece_sha256_async
+from pyrit.memory import set_message_piece_sha256_async
 from pyrit.models import (
     ChatMessageRole,
     ComponentIdentifier,

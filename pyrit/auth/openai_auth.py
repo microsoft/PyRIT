@@ -5,9 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import cast
 
 from pyrit.auth.azure_auth import ensure_async_token_provider, get_azure_openai_auth, is_azure_openai_endpoint
-from pyrit.common import default_values
-from pyrit.common.auth_mode import AuthMode
-from pyrit.common.deprecation import print_deprecation_message
+from pyrit.common import AuthMode, default_values, print_deprecation_message
 
 # The OpenAI SDK requires a key, so a no-key target passes this fixed, non-secret value.
 # Servers that need no key ignore the resulting Authorization header.

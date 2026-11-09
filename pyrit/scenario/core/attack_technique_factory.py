@@ -32,17 +32,19 @@ from pydantic import BaseModel
 from pyrit.common import REQUIRED_VALUE, get_global_default_values
 from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.common.path import EXECUTOR_SEED_PROMPT_PATH
-from pyrit.executor.attack import AttackParameters, PromptSendingAttack
-from pyrit.executor.attack.component.prepended_conversation_config import PrependedConversationConfig
-from pyrit.executor.attack.core.attack_config import (
+from pyrit.executor.attack import (
     AttackAdversarialConfig,
     AttackConverterConfig,
+    AttackParameters,
     AttackScoringConfig,
+    PrependedConversationConfig,
+    PromptSendingAttack,
 )
 from pyrit.models import (
     AttackTechniqueSeedGroup,
     ComponentIdentifier,
     Identifiable,
+    NextMessageSystemPromptPaths,
     PromptDataType,
     SeedGroupRequirements,
     SeedIdentifier,
@@ -54,7 +56,6 @@ from pyrit.models import (
     load_simulated_target_prompt,
     resolve_prompt_source,
 )
-from pyrit.models.seeds.seed_simulated_conversation import NextMessageSystemPromptPaths
 from pyrit.scenario.core._attack_constructor_compatibility import ScorerOverridePolicy, _ConstructorCompatibilityHelper
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target

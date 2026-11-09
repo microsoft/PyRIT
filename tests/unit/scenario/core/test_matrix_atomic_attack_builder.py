@@ -23,9 +23,13 @@ import pytest
 from pyrit.executor.attack import AttackStrategy, PromptSendingAttack
 from pyrit.models import AttackSeedGroup, AttackTechniqueSeedGroup, SeedGroupRequirements, SeedObjective, SeedPrompt
 from pyrit.prompt_target import CapabilityName, PromptTarget, TargetRequirements
-from pyrit.scenario import IncompatibleTechniqueError, IncompatibleTechniquePolicy
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario import (
+    AttackTechnique,
+    AttackTechniqueFactory,
+    IncompatibleTechniqueError,
+    IncompatibleTechniquePolicy,
+    TechniqueRequirements,
+)
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
     MatrixAtomicAttackBuilder,
     MatrixCombo,
@@ -33,7 +37,6 @@ from pyrit.scenario.core.matrix_atomic_attack_builder import (
     build_matrix_atomic_attacks,
 )
 from pyrit.scenario.core.scenario_context import ScenarioContext
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
 from pyrit.score import SubStringScorer, TrueFalseScorer
 from tests.unit.mocks import MockPromptTarget
 

@@ -34,7 +34,7 @@ Prism.languages.dotenv = {
 }
 
 function highlightDotenv(value: string): string {
-  return Prism.highlight(value, Prism.languages.dotenv, 'dotenv')
+  return Prism.highlight(value, Prism.languages.dotenv ?? {}, 'dotenv')
 }
 
 export default function DotenvEditor({ value, disabled, onChange }: DotenvEditorProps) {

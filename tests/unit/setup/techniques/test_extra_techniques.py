@@ -12,14 +12,11 @@ from PIL import Image
 from unit.mocks import MockPromptTarget
 
 from pyrit.converter import CodeAttackConverter, PromptTemplateConverter, SearchReplaceConverter
-from pyrit.executor.attack import CrescendoAttack, PromptSendingAttack
-from pyrit.executor.attack.core.attack_config import AttackScoringConfig
-from pyrit.executor.attack.core.attack_executor import AttackExecutor
+from pyrit.executor.attack import AttackExecutor, AttackScoringConfig, CrescendoAttack, PromptSendingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import AttackOutcome, AttackSeedGroup, Message, MessagePiece, SeedObjective, SeedPrompt
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
+from pyrit.scenario import AttackTechniqueFactory
 from pyrit.score import SubStringScorer
 from pyrit.setup.initializers.techniques import core, extra
 

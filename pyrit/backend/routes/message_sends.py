@@ -8,9 +8,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from pyrit.backend.models.common import IdentifierStr, ProblemDetail
+from pyrit.backend.models import ProblemDetail
+from pyrit.backend.models.common import IdentifierStr
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendStatus
-from pyrit.backend.services.attack_service import get_attack_service
+from pyrit.backend.services import get_attack_service
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.message_send_service import MessageSendNotFoundError, get_message_send_service
 from pyrit.memory.memory_interface import AttackStateConflictError

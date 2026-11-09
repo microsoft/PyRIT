@@ -11,7 +11,7 @@ hint extraction for consistent error handling across OpenAI-based prompt targets
 import json
 import logging
 
-from pyrit.exceptions.exception_classes import CONTENT_FILTER_MARKERS
+from pyrit.exceptions import CONTENT_FILTER_MARKERS
 
 logger = logging.getLogger(__name__)
 

@@ -33,7 +33,9 @@ import {
 } from '@/components/Parameters/parameterForm'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetAuthMode, TargetInstance, TargetTypeEntry } from '@/types'
+import { isGuiTarget } from '@/utils/targetVisibility'
 import {
   targetIdentifierHash,
   targetModelName,
@@ -143,12 +145,15 @@ function getTargetDisplayName(targetType: string): string {
   return TARGET_DISPLAY_NAMES[targetType] ?? targetType
 }
 
-function getAuthDescription(entry: TargetTypeEntry): string | null {
+function getAuthDescription(entry: TargetTypeEntry, registryMetadataLoaded: boolean): string | null {
   if (entry.target_type === 'GitHubCopilotTarget') {
 return 'Supported authentication: GitHub token'
   }
   const authModes = entry.supported_auth_modes
-  if (authModes.length === 0) return null
+  if (authModes.length === 0) {
+    // The built-in fallback entries also carry an empty list, so only registry data can say "no credentials".
+    return registryMetadataLoaded ? 'No authentication required' : null
+  }
 
   const labels = authModes.map((mode) => AUTH_MODE_LABELS[mode])
   return `Supported authentication: ${labels.join(' or ')}`
@@ -168,7 +173,7 @@ function defaultSupportsNoKey(targetType: string): boolean {
 function getParameterLabel(name: string): string {
   return name
     .split('_')
-    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0].toUpperCase()}${word.slice(1)}`)
+    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0]?.toUpperCase() ?? ''}${word.slice(1)}`)
     .join(' ')
 }
 
@@ -395,7 +400,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const hasApiKeyField = hasField('api_key')
   const selectedTargetDisplayName = getTargetDisplayName(targetType)
   const selectedTargetAuthDescription = targetTypeEntry
-    ? getAuthDescription(targetTypeEntry)
+    ? getAuthDescription(targetTypeEntry, typeMetadataAvailable)
     : null
   const supportsIdentity = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('identity')
@@ -441,9 +446,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (!open || !isRoundRobin) return
     if (existingTargets && existingTargets.length > 0) return
     let cancelled = false
-    targetsApi.listTargets(200)
-      .then((res) => {
-        if (!cancelled) setAvailableTargets(res.items)
+    listRegisteredTargets()
+      .then((items) => {
+        if (!cancelled) setAvailableTargets(items)
       })
       .catch(() => {
         // Ignore fetch errors — the list will just be empty
@@ -469,6 +474,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     )
     const candidates = availableTargets.filter(
       (t) =>
+        isGuiTarget(t) &&
         getTargetType(t) !== 'RoundRobinTarget' &&
         !selectedNames.has(t.target_registry_name) &&
         !(targetIdentifierHash(t) && selectedHashes.has(targetIdentifierHash(t)!)),
@@ -477,7 +483,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (selectedInnerTargets.length === 0) return candidates
     // Otherwise, filter to only targets compatible with the first one
     const firstSelected = availableTargets.find(
-      (t) => t.target_registry_name === selectedInnerTargets[0].registryName,
+      (t) => t.target_registry_name === selectedInnerTargets[0]?.registryName,
     )
     if (!firstSelected) return candidates
     return candidates.filter((t) => isCompatible(firstSelected, t))
@@ -696,7 +702,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 >
                   {targetTypeOptions.map((entry) => {
                     const displayName = getTargetDisplayName(entry.target_type)
-                    const authDescription = getAuthDescription(entry)
+                    const authDescription = getAuthDescription(entry, typeMetadataAvailable)
                     const accessibleDescription = [
                       displayName,
                       entry.description,

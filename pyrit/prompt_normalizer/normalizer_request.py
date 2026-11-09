@@ -9,7 +9,7 @@ from pyrit.models import Message
 from pyrit.prompt_normalizer.converter_configuration import (
     ConverterConfiguration,
 )
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName
 from pyrit.prompt_target.common.target_send_context import TargetSendContext
 
 
