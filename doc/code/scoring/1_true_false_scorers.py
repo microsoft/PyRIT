@@ -192,7 +192,8 @@ print(f"[markdown] plain text   -> {plain.get_value()}")
 # malicious dependency (ported from garak's `packagehallucination` probe). It lives beside
 # the `RegexScorer` family but is not a subclass: rather than "does a bad pattern match?",
 # it *extracts* imported package names and flags any that are **absent** from a known-good
-# reference set you inject via `known_packages` (for Python, the standard library is added
+# reference set you inject via `known_packages` (names that ship with the language or its SDK,
+# such as the Python standard library or the Flutter SDK packages for Dart, are added
 # automatically). Because it inspects generated code, it only scores `assistant` messages.
 # %%
 from pyrit.models import MessagePiece

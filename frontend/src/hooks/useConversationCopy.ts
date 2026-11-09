@@ -165,7 +165,7 @@ export function useConversationCopy(options: UseConversationCopyOptions): Conver
       let promptSnapshot: ChatConverterSnapshot | undefined
       if (restoresFirstPrompt && activeTarget) {
         const selected = source.messages[messageIndex]
-        if (!canBranchFirstPrompt(activeTarget, source.messages, messageIndex)
+        if (!selected || !canBranchFirstPrompt(activeTarget, source.messages, messageIndex)
           || selectedPieceIds.some((id: string) => !selected.message_pieces.some((piece: BackendMessagePiece) => piece.id === id))) {
           throw new Error('The selected prompt changed. Reload the conversation before branching.')
         }
@@ -177,6 +177,9 @@ export function useConversationCopy(options: UseConversationCopyOptions): Conver
         const restoration = preparePromptRestore(saved?.converters, branchConverterSnapshot)
         promptSnapshot = restoration.snapshot
         const promptMessage = copiedMessages[copiedMessages.length - 1]
+        if (!promptMessage) {
+          throw new Error('No prompt message to branch from.')
+        }
         restoredPrompt = saved ? {
           text: saved.originalValue, attachments: saved.attachments, textMetadata: saved.textMetadata, converters: promptSnapshot,
         } : draftMessageToComposer(restoration.pipelineChanged ? {

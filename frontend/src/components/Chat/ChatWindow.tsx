@@ -1842,7 +1842,8 @@ export default function ChatWindow({
         setMessages(prev => {
           // A pending navigation load may still leave a different conversation in state.
           const failedMessages = hasMatchingTranscript ? prev : [...messages, userMessage]
-          if (failedMessages.length > 0 && failedMessages[failedMessages.length - 1].isLoading) {
+          const lastFailedMessage = failedMessages[failedMessages.length - 1]
+          if (failedMessages.length > 0 && lastFailedMessage?.isLoading) {
             return [...failedMessages.slice(0, -1), errorMessage]
           }
           return [...failedMessages, errorMessage]

@@ -19,7 +19,7 @@ interface PythonCodeEditorProps {
 }
 
 function highlightPython(source: string): string {
-  return Prism.highlight(source, Prism.languages.python, 'python')
+  return Prism.highlight(source, Prism.languages.python ?? {}, 'python')
 }
 
 export function PythonCodeBlock({ source, ariaLabel }: PythonCodeBlockProps) {
