@@ -14,15 +14,14 @@ from fastapi.testclient import TestClient
 
 from pyrit.auth import CallerCredentialRequiredError, caller_principal_scope
 from pyrit.backend.main import app
-from pyrit.backend.models.targets import CreateTargetRequest
+from pyrit.backend.models import CreateTargetRequest
+from pyrit.backend.services import TargetService, get_target_service
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.target_service import (
-    TargetService,
     clear_caller_credentials,
     get_caller_credential_store,
-    get_target_service,
 )
-from pyrit.models.catalog.target import TargetInstance
+from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.registry import TargetRegistry
