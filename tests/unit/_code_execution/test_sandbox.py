@@ -278,11 +278,16 @@ async def test_an_adapter_that_does_not_answer_is_uncertain_async() -> None:
     assert fake.closed_sessions == ["fake-session-1"]
 
 
-async def test_an_invalid_result_is_an_uncertain_failure_async() -> None:
-    unvalidated = ProcessResult.model_construct(exit_code=0, timed_out=True, duration_ms=1)
-    fake = FakeSandbox(handler=lambda run: unvalidated)
-    with pytest.raises(SandboxExecutionError, match="can't be recorded"):
+@pytest.mark.parametrize(
+    "result",
+    [ProcessResult.model_construct(exit_code=0, timed_out=True, duration_ms=1), {"exit_code": 0}],
+    ids=["unvalidated", "not-a-result"],
+)
+async def test_an_invalid_result_is_an_uncertain_failure_async(result: Any) -> None:
+    fake = FakeSandbox(handler=lambda run: result)
+    with pytest.raises(SandboxExecutionError, match="invalid result"):
         await _run_async(fake)
+    assert fake.closed_sessions == ["fake-session-1"]
 
 
 async def test_an_unconfirmed_close_quarantines_until_released_async() -> None:
@@ -464,30 +469,29 @@ async def test_an_idle_session_closes_by_itself_async() -> None:
 
 
 async def test_an_idle_timer_that_fires_during_a_call_waits_for_the_next_idle_period_async() -> None:
-    fake = FakeSandbox(idle_timeout_seconds=0.05)
+    fake = FakeSandbox()
     await _run_async(fake)
     fake.gate = asyncio.Event()
     running = asyncio.create_task(_run_async(fake))
     await _wait_until_async(lambda: len(fake.runs) == 2)
-    assert fake._last_used_at is not None
-    fake._on_idle_timer(fake._last_used_at)
+    fake._on_idle_timer(fake._uses)
     await asyncio.sleep(0)
     assert fake.closed_sessions == []
     fake.gate.set()
     await _finish_async(running)
+    assert fake._idle_handle is not None
+    fake._on_idle_timer(fake._uses)
     await _wait_until_async(lambda: fake.closed_sessions == ["fake-session-1"])
 
 
 async def test_idle_close_spares_a_session_used_since_its_timer_was_set_async() -> None:
     fake = FakeSandbox()
     await _run_async(fake)
-    stale = fake._last_used_at
+    stale = fake._uses
     await _run_async(fake)
-    assert stale is not None and fake._last_used_at != stale
-    await fake._close_if_idle_async(last_used_at=stale)
+    await fake._close_if_idle_async(uses=stale)
     assert fake.closed_sessions == []
-    assert fake._last_used_at is not None
-    await fake._close_if_idle_async(last_used_at=fake._last_used_at)
+    await fake._close_if_idle_async(uses=fake._uses)
     assert fake.closed_sessions == ["fake-session-1"]
 
 
@@ -522,6 +526,9 @@ async def test_a_reset_that_fails_quarantines_until_one_succeeds_async() -> None
     assert (await fake.get_status_async()).condition is SandboxCondition.QUARANTINED
     with pytest.raises(SandboxUnavailableError):
         await _run_async(fake)
+    with pytest.raises(SandboxRevisionChangedError):
+        await fake.reset_async(expected_revision="fake-revision-0")
+    assert (await fake.get_status_async()).condition is SandboxCondition.QUARANTINED
     await fake.reset_async()
     assert (await fake.get_status_async()).condition is SandboxCondition.READY
 
@@ -618,6 +625,10 @@ async def test_close_waits_for_the_running_call_and_is_final_async() -> None:
     assert (await fake.get_status_async()).closed
     with pytest.raises(SandboxUnavailableError, match="closed"):
         await _run_async(fake, program="after")
+    with pytest.raises(SandboxUnavailableError, match="closed"):
+        await fake.reset_async()
+    await fake.release_async()
+    assert fake.reset_count == 0 and fake.open_sessions == set()
 
 
 async def test_close_never_raises_async() -> None:
@@ -721,6 +732,10 @@ async def test_unconfirmed_cleanup_stops_further_runs_async() -> None:
     run = await _run_async(fake, invocations=(_ProgramInvocation(),) * 2)
     assert len(run.events) == 1 and len(fake.runs) == 1
     assert run.warnings == ("could not remove",) and "stopped after invocation 0" in run.reasons[0]
+    with pytest.raises(SandboxUnavailableError, match="may still be running"):
+        await _run_async(fake)
+    await fake.release_async()
+    assert fake.closed_sessions == ["fake-session-1"]
 
 
 async def test_identifier_holds_static_configuration_only_async() -> None:

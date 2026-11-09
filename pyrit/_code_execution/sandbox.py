@@ -184,7 +184,9 @@ class ProcessResult(BaseModel):
     measured. ``execution_id`` is the infrastructure's identifier for the run, if it has one.
     ``runtime_image_digest`` and ``resolved_command`` are optional provenance. ``warnings`` report
     problems that do not invalidate the result. ``cleanup_confirmed`` is False when the sandbox could not
-    confirm that the run's processes or resources were removed; PyRIT then starts nothing beside them.
+    confirm that the run's processes or resources were removed; PyRIT then starts nothing beside them: no
+    further invocation of the request, and in an ``environment`` sandbox no further call, since the sandbox
+    is quarantined until it is released or reset.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -340,6 +342,7 @@ class Sandbox(Identifiable, ABC):
         self._session_id: str | None = None
         self._session_opened_at: float | None = None
         self._last_used_at: float | None = None
+        self._uses = 0
         self._closed = False
         self._quarantine_reason: str | None = None
         self._quarantined_session_id: str | None = None
@@ -489,12 +492,13 @@ class Sandbox(Identifiable, ABC):
         End the session if no call is running, and clear a quarantine. The sandbox's state is kept.
 
         A quarantine from an unconfirmed close is cleared only if closing that session again succeeds.
-        Once started, the release runs to the end even if the caller gives up.
+        Once started, the release runs to the end even if the caller gives up. A closed sandbox has
+        nothing to release.
 
         Raises:
             SandboxBusyError: If a call or reset holds the sandbox.
         """
-        if self.get_capabilities().state_kind is SandboxStateKind.CALL:
+        if self.get_capabilities().state_kind is SandboxStateKind.CALL or self._closed:
             return
         if not await self._try_lock_async():
             raise SandboxBusyError("A call or reset holds the sandbox; release it after that finishes.")
@@ -513,12 +517,15 @@ class Sandbox(Identifiable, ABC):
 
         Raises:
             SandboxInputError: If this sandbox does not support reset.
+            SandboxUnavailableError: If the sandbox is closed.
             SandboxBusyError: If a reset is already running, or the sandbox stayed busy too long.
             SandboxRevisionChangedError: If the revision is not the expected one.
             SandboxExecutionError: If the reset failed.
         """
         if not self.get_capabilities().supports_reset:
             raise SandboxInputError("This sandbox does not support reset.")
+        if self._closed:
+            raise SandboxUnavailableError("The sandbox is closed.")
         if self._resetting:
             raise SandboxBusyError("A reset of this sandbox is already running.")
         self._resetting = True
@@ -542,9 +549,7 @@ class Sandbox(Identifiable, ABC):
         self._cancel_idle_close()
         if self.get_capabilities().state_kind is SandboxStateKind.CALL:
             return
-        try:
-            await asyncio.wait_for(self._lock.acquire(), timeout=self._acquire_timeout_seconds)
-        except TimeoutError:
+        if not await self._wait_for_lock_async(timeout_seconds=self._acquire_timeout_seconds):
             logger.warning("Sandbox %s stayed busy; its session closes when it is idle.", type(self).__name__)
             return
         await self._await_owned_async(self._spawn(self._close_locked_async()))
@@ -651,6 +656,7 @@ class Sandbox(Identifiable, ABC):
             return await self._run_invocations_async(request=request, deadline=deadline)
         finally:
             self._last_used_at = time.monotonic()
+            self._uses += 1
             self._unlock()
 
     async def _run_invocations_async(self, *, request: _ExecutionRequest, deadline: float | None) -> _SandboxRun:
@@ -681,8 +687,10 @@ class Sandbox(Identifiable, ABC):
             if result.execution_id is not None:
                 execution_ids.append(result.execution_id)
             if not result.cleanup_confirmed:
+                detail = "; ".join(result.warnings) or "cleanup was not confirmed"
+                if deadline is not None:
+                    self._quarantine(reason=f"A run's processes may still be running: {detail}")
                 if index + 1 < len(request.invocations):
-                    detail = "; ".join(result.warnings) or "cleanup was not confirmed"
                     reasons = (f"stopped after invocation {index}: {detail}",)
                 break
         return _SandboxRun(
@@ -751,11 +759,11 @@ class Sandbox(Identifiable, ABC):
         Call the adapter, bounded by the run's timeout plus a grace period, with failures classified.
 
         Returns:
-            ProcessResult: What the run did, with its duration filled in.
+            ProcessResult: What the run did, validated, with its duration filled in.
 
         Raises:
             SandboxInputError: If the adapter rejected the input.
-            SandboxExecutionError: If the adapter failed or did not answer in time.
+            SandboxExecutionError: If the adapter failed, did not answer in time, or returned an invalid result.
         """
         started = time.monotonic()
         try:
@@ -768,12 +776,16 @@ class Sandbox(Identifiable, ABC):
                     stdin=invocation.stdin,
                     timeout_seconds=request.timeout_seconds,
                 )
+            # Validate again: model_copy and model_construct skip validation.
+            result = ProcessResult.model_validate(result.model_dump())
         except (SandboxExecutionError, SandboxInputError):
             raise
         except TimeoutError as error:
             raise SandboxExecutionError("The sandbox did not answer in time; the outcome is uncertain.") from error
         except Exception as error:
-            message = f"The sandbox failed during the run; the outcome is uncertain: {error}"
+            message = (
+                f"The sandbox failed during the run, or returned an invalid result; the outcome is uncertain: {error}"
+            )
             raise SandboxExecutionError(message) from error
         if result.duration_ms is None:
             result = result.model_copy(update={"duration_ms": int((time.monotonic() - started) * 1000)})
@@ -870,22 +882,32 @@ class Sandbox(Identifiable, ABC):
         if session_id is not None:
             await self._close_or_quarantine_async(session_id=session_id)
 
-    async def _close_or_quarantine_async(self, *, session_id: str) -> None:
-        """Close a session; if the close can't be confirmed, quarantine the sandbox and remember the session."""
+    async def _close_or_quarantine_async(self, *, session_id: str) -> bool:
+        """
+        Close a session; if the close can't be confirmed, quarantine the sandbox and remember the session.
+
+        Returns:
+            bool: Whether the session is known to be closed.
+        """
         try:
             await self._call_control_async(self._close_session_async(session_id=session_id), action="close a session")
         except SandboxSessionLostError:
-            return
+            return True
         except SandboxExecutionError as error:
             self._quarantine(reason=f"Closing session {session_id} could not be confirmed: {error}")
             self._quarantined_session_id = session_id
+            return False
+        return True
 
-    async def _retry_quarantined_close_async(self) -> None:
-        """Clear the quarantine, closing first the session whose close failed; it stays if that fails again."""
-        session_id = self._quarantined_session_id
-        self._quarantine_reason, self._quarantined_session_id = None, None
-        if session_id is not None:
-            await self._close_or_quarantine_async(session_id=session_id)
+    async def _retry_quarantined_close_async(self) -> bool:
+        """
+        Close again the session whose close could not be confirmed, if there is one.
+
+        Returns:
+            bool: Whether no unconfirmed session remains.
+        """
+        session_id, self._quarantined_session_id = self._quarantined_session_id, None
+        return session_id is None or await self._close_or_quarantine_async(session_id=session_id)
 
     def _quarantine(self, *, reason: str) -> None:
         """Refuse calls until an operator releases or resets the sandbox."""
@@ -899,9 +921,13 @@ class Sandbox(Identifiable, ABC):
         self._cancel_idle_close()
 
     async def _release_locked_async(self) -> None:
-        """Retry an unconfirmed close and end the session while holding the lock, then release the lock."""
+        """
+        Retry an unconfirmed close, clear the quarantine if it succeeds, and end the session while holding
+        the lock, then release the lock.
+        """
         try:
-            await self._retry_quarantined_close_async()
+            if await self._retry_quarantined_close_async():
+                self._quarantine_reason = None
             await self._discard_session_async()
         finally:
             self._unlock()
@@ -1023,7 +1049,7 @@ class Sandbox(Identifiable, ABC):
         if self._session_id is None or self._last_used_at is None:
             return
         delay = max(self._last_used_at + self._idle_timeout_seconds - time.monotonic(), 0.0)
-        self._idle_handle = asyncio.get_running_loop().call_later(delay, self._on_idle_timer, self._last_used_at)
+        self._idle_handle = asyncio.get_running_loop().call_later(delay, self._on_idle_timer, self._uses)
 
     def _cancel_idle_close(self) -> None:
         """Cancel a scheduled idle close."""
@@ -1031,21 +1057,22 @@ class Sandbox(Identifiable, ABC):
             self._idle_handle.cancel()
             self._idle_handle = None
 
-    def _on_idle_timer(self, last_used_at: float) -> None:
+    def _on_idle_timer(self, uses: int) -> None:
         """Start closing an idle session, unless something holds the sandbox; its holder reschedules."""
         self._idle_handle = None
         if self._session_id is not None and not self._lock.locked():
-            self._spawn(self._close_if_idle_async(last_used_at=last_used_at))
+            self._spawn(self._close_if_idle_async(uses=uses))
 
-    async def _close_if_idle_async(self, *, last_used_at: float) -> None:
+    async def _close_if_idle_async(self, *, uses: int) -> None:
         """
         Close the session if no call has used it since the idle timer was set.
 
-        Comparing uses rather than clock readings keeps this correct when a timer fires a clock tick early.
-        A call that used the session in the meantime rescheduled the timer when it released the lock.
+        Counting uses rather than reading the clock keeps this correct when a timer fires a clock tick early
+        and when two uses fall in one tick. A call that used the session in the meantime rescheduled the
+        timer when it released the lock.
         """
         async with self._lock:
-            if self._session_id is not None and self._last_used_at == last_used_at:
+            if self._session_id is not None and self._uses == uses:
                 await self._discard_session_async()
 
     # ---- helpers -------------------------------------------------------------------------------
@@ -1111,12 +1138,8 @@ class Sandbox(Identifiable, ABC):
         Raises:
             SandboxBusyError: If the deadline passed first.
         """
-        try:
-            await asyncio.wait_for(self._lock.acquire(), timeout=max(deadline - time.monotonic(), 0.0))
-        except TimeoutError as error:
-            raise SandboxBusyError(
-                f"The sandbox stayed busy for {self._acquire_timeout_seconds:g} s; nothing ran."
-            ) from error
+        if not await self._wait_for_lock_async(timeout_seconds=deadline - time.monotonic()):
+            raise SandboxBusyError(f"The sandbox stayed busy for {self._acquire_timeout_seconds:g} s; nothing ran.")
 
     async def _try_lock_async(self) -> bool:
         """
@@ -1127,8 +1150,21 @@ class Sandbox(Identifiable, ABC):
         """
         if self._lock.locked():
             return False
+        return await self._wait_for_lock_async(timeout_seconds=self._STATUS_LOCK_WAIT_SECONDS)
+
+    async def _wait_for_lock_async(self, *, timeout_seconds: float) -> bool:
+        """
+        Wait up to a time limit for the lock.
+
+        ``asyncio.timeout`` rather than ``asyncio.wait_for``: on Python 3.11, ``wait_for`` can drop a
+        caller's cancellation that arrives as the lock is handed over, so a caller that gave up would run.
+
+        Returns:
+            bool: Whether the lock is now held.
+        """
         try:
-            await asyncio.wait_for(self._lock.acquire(), timeout=self._STATUS_LOCK_WAIT_SECONDS)
+            async with asyncio.timeout(max(timeout_seconds, 0.0)):
+                await self._lock.acquire()
         except TimeoutError:
             return False
         return True
