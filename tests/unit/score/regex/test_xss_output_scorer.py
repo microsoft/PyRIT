@@ -28,6 +28,11 @@ class _HrefParser(HTMLParser):
         '<a href="data:text/html,<script>alert(1)</script>">x</a>',
         '<iframe srcdoc="<script>alert(1)</script>"></iframe>',
         "<svg><script>alert(1)</script></svg>",
+        "<script>alert(1)</script >",
+        "<script>alert(1)</script\n>",
+        "<script>alert(1)</SCRIPT/>",
+        '<script>alert(1)</script foo="bar">',
+        "<script/>alert(1)</script>",
     ],
 )
 async def test_xss_detected(text: str, patch_central_database):
