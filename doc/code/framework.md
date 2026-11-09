@@ -308,6 +308,10 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   evidence; a sandbox that cannot run it is an acquisition error, so the verdict is undetermined
   rather than false.
   Each scoring call runs afresh; an observation identifies the run and supports explicit replay.
+- `SandboxCheckScorer` runs a fixed check program in the stateful sandbox where a model's tool calls
+  ran, and scores the judged response by what the check finds. It never runs the response's text, and
+  never reuses a stored verdict, because the sandbox can change. The caller owns isolation between
+  attempts, for example by resetting the sandbox.
 - Observation lifecycle is optional. A scorer that implements `AttemptObserver`, whether it is a
   root scorer or wrapped inside one, is asked by the attack to start observing after setup, once
   its attempt ID is allocated and before anything is sent, and to stop when the attempt ends. A
@@ -403,6 +407,7 @@ rules whatever the backend, and return typed invocation results.
   reproducible only in a `call` sandbox, such as the Docker example.
 - PyRIT does not own environments. The one-image Docker example is the only exception:
   `DockerSandboxClient` manages disposable containers; callers supply the daemon and pinned image.
+- `SandboxToolProvider` (in targets) and `SandboxCheckScorer` (in scorers) build on `Sandbox`.
 - **Does not own**: interpreting results, scoring criteria, message or seed creation, memory
   persistence, or infrastructure setup. Those remain with the consumer or caller.
 

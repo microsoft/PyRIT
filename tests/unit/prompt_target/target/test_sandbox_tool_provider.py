@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,17 +27,25 @@ from pyrit._code_execution import (
     SandboxStateKind,
 )
 from pyrit.models import (
+    Equals,
     Message,
     MessagePiece,
+    MessageScorable,
+    ProgramBehaves,
+    ProgramCase,
+    ProgramResult,
     ToolExecutionMetadata,
     ToolLoopStop,
     ToolLoopStopReason,
 )
 from pyrit.prompt_target import OpenAIResponseTarget, SandboxToolProvider, Tool, ToolInfrastructureError
+from pyrit.score import SandboxCheckScorer
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from pyrit.memory import SQLiteMemory
 
 
 @pytest.fixture
@@ -287,6 +296,36 @@ def _tool_outputs(messages: list[Message]) -> list[tuple[dict[str, Any], bool]]:
             assert execution is not None
             outputs.append((json.loads(json.loads(piece.original_value)["output"]), execution.invoked))
     return outputs
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_the_check_sees_what_the_models_tool_call_did_async(
+    registry: SandboxRegistry, sqlite_instance: SQLiteMemory, tmp_path: Path
+) -> None:
+    sandbox = LocalPythonSandbox(root=tmp_path)
+    registry.register(sandbox, name="linux")
+    condition = ProgramBehaves(
+        runtime_profile_name="python", cases=(ProgramCase(expected=ProgramResult(stdout=Equals(value="present"))),)
+    )
+    check = SandboxCheckScorer(
+        sandbox="linux",
+        check_program="import os\nprint('present' if os.path.exists('flag.txt') else 'absent')\n",
+        condition=condition,
+    )
+    target = _target(SandboxToolProvider(sandbox="linux"))
+    replies = [_function_call("call_1", "run_python", {"program": "open('flag.txt', 'w').write('x')"}), _text("Done.")]
+    request = MessagePiece(role="user", original_value="Go", conversation_id=str(uuid.uuid4())).to_message()
+    await sqlite_instance.add_message_to_memory_async(request=request)
+    scorable = MessageScorable(message_piece_ids=(request.get_piece().id,))
+    (before,) = await check.score_async(scorable=scorable)
+
+    with patch.object(target._async_client.responses, "create", new_callable=AsyncMock, side_effect=replies):
+        responses = await target.send_prompt_async(message=request)
+    await sqlite_instance.add_message_to_memory_async(request=responses[-1])
+    (after,) = await check.score_async(scorable=MessageScorable(message_piece_ids=(responses[-1].get_piece().id,)))
+
+    assert before.get_value() is False and after.get_value() is True
+    await registry.close_all_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")

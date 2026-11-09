@@ -1,13 +1,16 @@
 # Sandboxed Tool Calls
 
 To test a model that acts by running code, its code has to run somewhere isolated that can keep its work
-across a conversation. PyRIT has two pieces for this:
+across a conversation, and something other than the model has to say what that code did. PyRIT has three
+pieces for this:
 
 - a **`Sandbox`**, which runs programs on some infrastructure, such as a container, a VM or a hosted service;
-- **`SandboxToolProvider`**, which turns a sandbox into tools a model can call, such as `run_python`.
+- **`SandboxToolProvider`**, which turns a sandbox into tools a model can call, such as `run_python`;
+- **`SandboxCheckScorer`**, which runs a fixed check program in the same sandbox after a turn and scores the
+  response by what the check finds.
 
-`pyrit._code_execution` is experimental, and so is `SandboxToolProvider`, which is built on it: their API
-may change without a deprecation cycle.
+`pyrit._code_execution` is experimental, and so are the two classes built on it: their API may change
+without a deprecation cycle.
 
 ## Give a model tools that run in a sandbox
 
@@ -55,6 +58,41 @@ await SandboxRegistry.get_registry_singleton().close_all_async()
 
 `close_async` is final. To end a session and keep using the sandbox, use `release_async`, which can also
 retry a close that couldn't be confirmed, even after `close_async`.
+
+## Check what the code did
+
+A model's claim that it succeeded is not evidence. A check program, run in the same sandbox after the turn,
+verifies the effect itself:
+
+```python
+from pyrit.models import Equals, ProgramBehaves, ProgramCase, ProgramResult
+from pyrit.score import SandboxCheckScorer
+
+check = SandboxCheckScorer(
+    sandbox="windows-1",
+    check_program="import os\nprint('present' if os.path.exists('C:/task.flag') else 'absent')\n",
+    condition=ProgramBehaves(
+        runtime_profile_name="windows-python",
+        cases=(ProgramCase(expected=ProgramResult(stdout=Equals(value="present"))),),
+    ),
+)
+```
+
+Use it as an attack's objective scorer. It scores the response being judged true when every case of the
+check produces its expected result, and false when one doesn't. When the sandbox fails, or the check times
+out, the score is undetermined, so an infrastructure problem is never counted as the model failing. The
+response's own text never runs. The check's program and output are stored as an observation linked to the
+score.
+
+The check reads the sandbox as it is when it runs. So it runs again on every call rather than reusing a
+stored verdict, and isolation is the caller's job, since a later attempt could otherwise score true on an
+earlier attempt's effect: run one attempt at a time per sandbox (`max_concurrency=1`), turn off automatic
+retries of failed attempts (`max_attempts_on_failure=0`), and reset the sandbox between attempts. It needs a
+sandbox whose state persists.
+
+The check runs as the same account as the model's code, so it must not trust anything the model could have
+written. For example, run Python checks in isolated mode, so a module the model saved in the working
+directory can't stand in for a standard one.
 
 ## The Docker example
 
