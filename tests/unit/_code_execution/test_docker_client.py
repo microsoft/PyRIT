@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import stat
 import threading
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from openai.types.responses import ResponseOutputText
 
 from pyrit._code_execution import (
     DockerRuntimeProfile,
@@ -25,7 +27,9 @@ from pyrit._code_execution import (
     SandboxStateKind,
 )
 from pyrit._code_execution.docker_client import _ClientOutput, _ContainerState, _InvocationResult
+from pyrit.models import MessagePiece
 from pyrit.models.code_execution import _ProgramInvocation, _SandboxRun
+from pyrit.prompt_target import OpenAIResponseTarget, SandboxToolProvider
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -583,6 +587,44 @@ def test_docker_is_a_call_sandbox_with_its_configured_limits(client: DockerSandb
     assert client.get_runtime_profile_names() == frozenset({"python"})
     assert capabilities.default_timeout_seconds == capabilities.max_timeout_seconds == 10.0
     assert capabilities.max_output_bytes == 64_000 and capabilities.file_runtime_profile_name is None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_a_model_tool_call_runs_in_a_container_and_returns_its_result_async(
+    client: DockerSandboxClient,
+) -> None:
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        tool_providers=[SandboxToolProvider(sandbox=client)],
+    )
+    call = MagicMock(status="completed", error=None)
+    call.output = [MagicMock(type="function_call", call_id="call_1", arguments=json.dumps({"program": "print('ok')"}))]
+    call.output[0].name = "run_python"
+    answer = MagicMock(status="completed", error=None)
+    text = ResponseOutputText(annotations=[], text="It printed ok.", type="output_text")
+    answer.output = [MagicMock(type="message", content=[text])]
+    sent: list[list[dict[str, object]]] = []
+
+    async def create_async(**kwargs: object) -> MagicMock:
+        sent.append(kwargs["input"])  # type: ignore[arg-type]
+        return call if len(sent) == 1 else answer
+
+    with (
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=_process(output=b"ok")) as launch,
+        patch.object(client, "_control_async", _control()),
+        patch.object(target._async_client.responses, "create", side_effect=create_async),
+    ):
+        responses = await target.send_prompt_async(
+            message=MessagePiece(role="user", original_value="Run it").to_message()
+        )
+
+    argv = launch.call_args.args
+    assert "--network" in argv and argv[argv.index("--network") + 1] == "none"
+    output = json.loads(sent[1][-1]["output"])  # type: ignore[arg-type]
+    assert (output["exit_code"], output["stdout"], output["timed_out"]) == (0, "ok", False)
+    assert responses[-1].get_value() == "It printed ok."
 
 
 def test_profile_names_that_differ_only_in_punctuation_are_allowed() -> None:
