@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -67,46 +66,6 @@ def scenario_accepts_dataset_config(scenario_class: type[Scenario]) -> bool:
     return any(parameter.name == "dataset_config" for parameter in scenario_class.supported_parameters())
 
 
-def assert_supported_example_shapes(*, reference: DatasetExampleReference, members: Sequence[SeedRecord]) -> None:
-    """
-    Reject records that cannot become one attack group.
-
-    The check uses stored fields only. It does not render templates or open files.
-
-    Raises:
-        DatasetExampleSelectionError: If the example does not have exactly one objective,
-            or a simulated conversation is not stored JSON.
-    """
-    objective_count = sum(member.seed_type == "objective" for member in members)
-    if objective_count != 1:
-        raise DatasetExampleSelectionError(
-            code="unsupported",
-            selection_key=reference.selection_key,
-            example_id=reference.example_id,
-            detail="An exact example must contain exactly one stored objective.",
-        )
-    conversations = [member for member in members if member.seed_type == "simulated_conversation"]
-    if len(conversations) > 1:
-        raise DatasetExampleSelectionError(
-            code="unsupported",
-            selection_key=reference.selection_key,
-            example_id=reference.example_id,
-            detail="An exact example cannot contain more than one simulated conversation.",
-        )
-    for member in conversations:
-        try:
-            parsed = json.loads(member.value)
-        except json.JSONDecodeError:
-            parsed = None
-        if not isinstance(parsed, dict):
-            raise DatasetExampleSelectionError(
-                code="unsupported",
-                selection_key=reference.selection_key,
-                example_id=reference.example_id,
-                detail="A simulated conversation must remain stored JSON configuration.",
-            )
-
-
 async def resolve_dataset_example_selection_async(
     *,
     selection: DatasetExampleSelection,
@@ -126,7 +85,7 @@ async def resolve_dataset_example_selection_async(
         tuple[ResolvedDatasetExample, ...]: One result per reference, in request order.
 
     Raises:
-        DatasetExampleSelectionError: If a key, duplicate, missing row, fingerprint, or shape is invalid.
+        DatasetExampleSelectionError: If a key is invalid, duplicated, missing, or stale.
     """
     reader = memory or CentralMemory.get_memory_instance()
     parsed: list[tuple[DatasetExampleReference, str | None]] = []
@@ -182,7 +141,6 @@ async def resolve_dataset_example_selection_async(
                 example_id=reference.example_id,
                 detail="The stored example changed. Refresh the dataset or choose the example again.",
             )
-        assert_supported_example_shapes(reference=reference, members=members)
         resolved.append(ResolvedDatasetExample(reference=reference, members=tuple(members)))
     return tuple(resolved)
 

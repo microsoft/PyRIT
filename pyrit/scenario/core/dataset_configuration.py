@@ -1150,7 +1150,7 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
             dict[str, list[AttackSeedGroup]]: The inline label mapped to every group.
 
         Raises:
-            DatasetExampleSelectionError: If a stored record cannot be built into one attack group.
+            DatasetExampleSelectionError: If a simulated conversation cannot be built from its stored JSON.
             DatasetConstraintError: If the selection is empty.
         """
         del apply_sampling
@@ -1168,18 +1168,8 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
     def _build_attack_group(
         self, *, reference: DatasetExampleReference, members: Sequence[SeedRecord]
     ) -> AttackSeedGroup:
-        try:
-            seeds = [_seed_from_record(record=member, reference=reference) for member in members]
-            return AttackSeedGroup(seeds=seeds)
-        except DatasetExampleSelectionError:
-            raise
-        except (OSError, ValueError) as exc:
-            raise DatasetExampleSelectionError(
-                code="unsupported",
-                selection_key=reference.selection_key,
-                example_id=reference.example_id,
-                detail="The stored example cannot be built into one attack group.",
-            ) from exc
+        seeds = [_seed_from_record(record=member, reference=reference) for member in members]
+        return AttackSeedGroup(seeds=seeds)
 
 
 def _seed_from_record(

@@ -444,33 +444,33 @@ async def test_scenario_without_dataset_config_is_unsupported() -> None:
 
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("objective_count", [0, 2])
-async def test_unsupported_shapes_fail_for_estimate_and_launch(
+async def test_objective_count_does_not_reject_the_selection(
     sqlite_instance: MemoryInterface, objective_count: int
 ) -> None:
     group = uuid4()
     seeds: list[Seed[Any]] = [_objective(f"goal {index}", prompt_group_id=group) for index in range(objective_count)]
     seeds.append(_prompt("body", prompt_group_id=group, sequence=1, role="user"))
     await _store(sqlite_instance, *seeds)
-    example_id = group
-    found = await sqlite_instance.get_seed_example_async(dataset_name=DATASET, example_id=example_id)
-    selection = DatasetExampleSelection(
-        examples=[
-            DatasetExampleReference(
-                selection_key=NAMED,
-                example_id=example_id,
-                fingerprint=dataset_example_fingerprint(selection_key=NAMED, example_id=example_id, members=found),
-            )
-        ]
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[group], dataset_name=DATASET)
+    resolved_config = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="test.exact",
+        scenario_class=_ExactScenario,
+        example_selection=selection,
+        memory=sqlite_instance,
     )
-    for _entry in ("estimate", "launch"):
-        with pytest.raises(DatasetExampleSelectionError, match="unsupported") as caught:
-            await ScenarioConfigurationResolver.resolve_configuration_async(
-                scenario_name="test.exact",
-                scenario_class=_ExactScenario,
-                example_selection=selection,
-                memory=sqlite_instance,
-            )
-        assert caught.value.code == "unsupported"
+    members = resolved_config["dataset_config"]._selected_examples[0][1]
+    assert sum(member.seed_type == "objective" for member in members) == objective_count
+    assert any(member.value == "body" for member in members)
+    scenario = _ExactScenario()
+    scenario.set_params_from_args(args=resolved_config)
+    with patch.object(
+        ExactExampleDatasetConfiguration,
+        "get_attack_seed_groups_async",
+        new_callable=AsyncMock,
+        side_effect=AssertionError("groups"),
+    ):
+        estimate = await scenario.get_run_size_estimate_async()
+    assert estimate.dataset_size.model_dump() == {"kind": "bounded", "value": 1}
 
 
 @pytest.mark.usefixtures("patch_central_database")
