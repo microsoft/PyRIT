@@ -11,19 +11,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from unit.mocks import MockPromptTarget
 
-from pyrit.analytics.technique_analysis import compute_technique_stats_async
+from pyrit.analytics import compute_technique_stats_async
 from pyrit.converter import Converter, SearchReplaceConverter
 from pyrit.memory import SQLiteMemory
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, Message, MessagePiece, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ScenarioRegistry
-from pyrit.scenario.core.dataset_configuration import (
-    DatasetAttackConfiguration,
-    DatasetConstraintError,
-    DatasetSource,
-    ResolvedDataset,
-    require_seed_type,
-)
+from pyrit.scenario import DatasetAttackConfiguration, DatasetSource
+from pyrit.scenario.core import DatasetConstraintError, ResolvedDataset
+from pyrit.scenario.core.dataset_configuration import require_seed_type
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     PromptInject,
     PromptInjectDatasetConfiguration,

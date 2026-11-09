@@ -15,8 +15,7 @@ from sqlalchemy import String, event, select
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import SQLAlchemyError
 
-from pyrit.memory import MemoryInterface
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import AnswerMatches, MessagePiece, SeedDataset, SeedGroup, SeedObjective, SeedOrigin, SeedPrompt
 
 
@@ -469,6 +468,37 @@ async def test_get_seeds_with_dataset_name_pattern_startswith(sqlite_instance: M
     assert all(seed.dataset_name.startswith("harm") for seed in result)
 
 
+async def test_add_seeds_mixed_case_url_schemes_hash_original_value(
+    sqlite_instance: MemoryInterface, tmp_path: Path
+) -> None:
+    """Regression test for #3861: mixed-case URL schemes hash the original spelling.
+
+    Before the fix, a mixed-case scheme was misclassified as a local file path and
+    ingestion raised FileNotFoundError; a future fix must not lowercase the stored
+    URL or its hash input either. No URL is fetched.
+    """
+    urls = [
+        "HTTPS://example.invalid/é?q=☃",
+        "HtTp://example.invalid/é?q=☃",
+        "https://example.invalid/é?q=☃",
+    ]
+    local_file = tmp_path / "seed.txt"
+    local_file.write_bytes(b"local-seed-content")
+
+    seeds = [SeedPrompt(value=url, dataset_name="dataset", data_type="url") for url in urls]
+    seeds.append(SeedPrompt(value=str(local_file), dataset_name="dataset", data_type="url"))
+
+    await sqlite_instance.add_seeds_to_memory_async(seeds=seeds, added_by="test")
+
+    stored = await sqlite_instance.get_seeds_async(dataset_name="dataset")
+    assert len(stored) == 4
+    by_value = {seed.value: seed for seed in stored}
+    for url in urls:
+        assert by_value[url].value == url
+        assert by_value[url].value_sha256 == sha256(url.encode("utf-8")).hexdigest()
+    assert by_value[str(local_file)].value_sha256 == sha256(b"local-seed-content").hexdigest()
+
+
 async def test_get_seeds_with_dataset_name_pattern_contains(sqlite_instance: MemoryInterface):
     seed_prompts = [
         SeedPrompt(value="prompt1", dataset_name="test_harm_dataset", data_type="text"),
@@ -766,7 +796,7 @@ async def test_get_seed_groups_with_list_filters_matches_decoded_elements(
 
 
 @pytest.mark.parametrize("field", ["authors", "harm_categories", "groups", "parameters"])
-async def test_seed_list_substring_filters_preserve_sqlite_like_semantics(
+async def test_seed_list_filters_require_explicit_patterns_and_ignore_case(
     sqlite_instance: MemoryInterface, field: str
 ) -> None:
     await sqlite_instance.add_seeds_to_memory_async(
@@ -774,10 +804,13 @@ async def test_seed_list_substring_filters_preserve_sqlite_like_semantics(
         added_by="test",
     )
 
-    for needle in ["ann", "a_n", "a%n", "\u00c9THIQUE"]:
+    for needle in ["ann", "\u00c9THIQUE", "\u00e9thique"]:
         result = await sqlite_instance.get_seeds_async(**{field: [needle]})
         assert [seed.value for seed in result] == ["match"]
-    assert await sqlite_instance.get_seeds_async(**{field: ["\u00e9thique"]}) == []
+    for pattern in ["a_n", "a%n"]:
+        assert await sqlite_instance.get_seeds_async(**{field: [pattern]}) == []
+        result = await sqlite_instance.get_seeds_async(**{f"{field}_patterns": [pattern]})
+        assert [seed.value for seed in result] == ["match"]
 
 
 @pytest.mark.parametrize(
@@ -795,8 +828,9 @@ def test_seed_list_substring_filters_decode_json_on_both_dialects(
     assert sql.count(expansion) == 2
     assert sql.count("EXISTS") == 2
     assert " AND " in sql
-    assert needle in compiled.params.values()
-    assert r"\u00e9" in compiled.params.values()
+    assert f"%{needle}%" in compiled.params.values()
+    assert r"%\u00e9%" in compiled.params.values()
+    assert "ESCAPE '/'" in sql
 
 
 async def test_get_seeds_with_substring_filters_groups(sqlite_instance: MemoryInterface):

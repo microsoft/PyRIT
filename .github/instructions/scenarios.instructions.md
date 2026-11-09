@@ -184,9 +184,11 @@ Options:
 - Validators run on full filtered populations before any sampling.
 - Ingredients must remain complete. Prefer declaring them as required data: override
   `get_required_data()` to return a `ScenarioRequiredData`, assemble groups from
-  `required_data.load_async()`, and limit them with `dataset_config.select_assembled_groups()`.
+  `required_data.load_async()`, and limit them with `dataset_config.select_assembled_groups()`
+  (a single source-free `DatasetAttackConfiguration`; sourced and compound configurations are rejected).
   Required data is prepared and refreshed like any source (fresh runs and explicit loads only,
-  never estimates or resume), is never capped, sampled, filtered, or deselected, and stays in
+  never estimates or resume). Every row that remains after filtering is read, without sampling
+  or size caps, and required datasets can't be deselected. Required data stays in
   the dataset settings projection and scenario identity. `ApiKey` is the reference. Older
   scenarios that keep ingredients in `dataset_config` use `max_per_dataset="all"` and no finite
   source `max_size`; cap the assembled attack groups with `max_total`, not ingredient rows.

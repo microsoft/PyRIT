@@ -48,7 +48,7 @@ import torch.multiprocessing as mp
 from pydantic import Field
 
 import pyrit.executor.promptgen.gcg.attack.gcg.gcg_attack as attack_lib
-from pyrit.common.utils import combine_dict
+from pyrit.common import combine_dict
 from pyrit.executor.promptgen.core.prompt_generator_strategy import (
     PromptGeneratorStrategy,
     PromptGeneratorStrategyContext,

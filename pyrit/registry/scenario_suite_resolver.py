@@ -8,19 +8,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
-from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioLaunchConfiguration
-from pyrit.models.scenario_suite_execution import (
+from pyrit.models import (
     LaunchScenarioSuiteRequest,
+    ScenarioLaunchConfiguration,
     ScenarioSuiteExecutionMetadata,
 )
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.registry.components.scenario_preset_registry import ScenarioPresetRegistry
 from pyrit.registry.components.scenario_suite_registry import ScenarioSuiteRegistry
 
 if TYPE_CHECKING:
     from uuid import UUID
 
-    from pyrit.models.catalog.scenario_preset import ScenarioPreset
-    from pyrit.models.catalog.scenario_suite import ScenarioSuiteRegistryEntry
+    from pyrit.models import ScenarioPreset
+    from pyrit.models.catalog import ScenarioSuiteRegistryEntry
 
 
 class _RunDefaults(TypedDict, total=False):

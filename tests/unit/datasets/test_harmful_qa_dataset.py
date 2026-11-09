@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from pyrit.datasets.seed_datasets.remote.harmful_qa_dataset import _HarmfulQADataset
+from pyrit.datasets.seed_datasets.remote import _HarmfulQADataset
 from pyrit.models import SeedDataset, SeedPrompt
 
 

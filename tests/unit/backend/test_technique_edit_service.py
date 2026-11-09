@@ -16,9 +16,8 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.models.techniques import CreateTechniqueRequest
+from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
-from pyrit.backend.services.scenario_run_service import ScenarioRunService
-from pyrit.backend.services.scenario_service import ScenarioService
 from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.common.apply_defaults import GlobalDefaultValues
@@ -30,17 +29,18 @@ from pyrit.executor.attack import (
     AttackParameters,
     AttackScoringConfig,
     AttackStrategy,
+    PrependedConversationConfig,
     PromptSendingAttack,
     RedTeamingAttack,
+    SimulatedConversationResult,
 )
-from pyrit.executor.attack.component import PrependedConversationConfig
-from pyrit.executor.attack.multi_turn.simulated_conversation import SimulatedConversationResult
 from pyrit.memory import CentralMemory
 from pyrit.message_normalizer import ConversationContextNormalizer
 from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueSeedGroup,
     Message,
+    ScenarioRunSizeEstimateRequest,
     SeedGroup,
     SeedGroupRequirements,
     SeedObjective,
@@ -48,7 +48,7 @@ from pyrit.models import (
     SeedSimulatedConversation,
     load_next_message_prompt,
 )
-from pyrit.models.catalog.scenario import RunScenarioRequest, ScenarioRunSizeEstimateRequest
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.component_spec import RegisteredComponentReference, SourceInstanceSpec
 from pyrit.models.technique_edit import (
     SimulationChanges,
@@ -58,11 +58,11 @@ from pyrit.models.technique_edit import (
     TechniqueSettings,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
+from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, ScorerRegistry, TargetRegistry
+from pyrit.scenario import TechniqueRequirements
 from pyrit.scenario.core import AttackTechniqueFactory
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
-from pyrit.scenario.scenarios.technique.execute import Execute
+from pyrit.scenario.scenarios.technique import Execute
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
 
@@ -925,3 +925,20 @@ def test_edit_routes_and_invalid_selection(
             techniques=["plain"],
             technique_override=TechniqueOverride.model_validate(response.json()["override"]),
         )
+
+
+def test_edit_route_limits_description_and_dependency_identities(
+    edit_catalog: AttackTechniqueRegistry, compatibility_headers: dict[str, str]
+) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    path = "/api/techniques/role_play_movie_script/edit"
+    spec = _specification().model_dump(mode="json", exclude_unset=True)
+
+    at_limit = client.post(path, json={**spec, "changes": {"description": "d" * 100_000}})
+    dependency_at_limit = client.post(path, json={**spec, "dependencies": {"adversarial_chat": "h" * 128}})
+
+    assert at_limit.status_code == 200, at_limit.text
+    assert at_limit.json()["configuration"]["settings"]["description"] == "d" * 100_000
+    assert dependency_at_limit.status_code == 200, dependency_at_limit.text
+    assert client.post(path, json={**spec, "changes": {"description": "d" * 100_001}}).status_code == 422
+    assert client.post(path, json={**spec, "dependencies": {"adversarial_chat": "h" * 129}}).status_code == 422

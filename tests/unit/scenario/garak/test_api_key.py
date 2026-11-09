@@ -22,14 +22,9 @@ from pyrit.models import (
     SeedDataset,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario import DatasetSource, ScenarioRequiredData
-from pyrit.scenario.core.dataset_configuration import (
-    DatasetAttackConfiguration,
-    DatasetConstraintError,
-    ResolvedDataset,
-)
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration, DatasetSource, ScenarioRequiredData
+from pyrit.scenario.core import DatasetConstraintError, ResolvedDataset
 from pyrit.scenario.core.required_data import _RequiredDatasetConfiguration
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     ApiKey,
     ApiKeyDatasetConfiguration,

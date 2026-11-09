@@ -312,7 +312,7 @@ display(overlay_img)
 # #### Testing Against AI Vision Systems
 
 # %%
-from pyrit.executor.attack.single_turn import PromptSendingAttack
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import SeedGroup, SeedPrompt
 from pyrit.prompt_target import OpenAIChatTarget
 

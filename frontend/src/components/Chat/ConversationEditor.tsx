@@ -165,9 +165,11 @@ interface ConversationEditorProps {
   onSaved: (response: AddMessageResponse, target?: TargetInstance | null) => void
   onSave?: (destination: SaveConversationRequest['destination']) => void
   onExit?: () => Promise<boolean>
+  onDiscard?: (navigatingAway?: boolean) => void
   saveDestination?: SaveConversationRequest['destination']
   saveLabel?: string
   initialConverters?: ChatConverterSnapshot
+  blockNavigation?: boolean
 }
 
 export interface ConversationEditorHandle {
@@ -179,9 +181,9 @@ export interface ConversationEditorHandle {
 }
 
 export default function ConversationEditor({
-  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit,
+  controller, ref, sameAttackDisabledReason, newAttackDisabledReason, onSaved, onSave, onExit, onDiscard,
   saveDestination: directSaveDestination, saveLabel = 'Save conversation',
-  initialConverters,
+  initialConverters, blockNavigation = true,
 }: ConversationEditorProps) {
   const styles = useConversationEditorStyles()
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -191,7 +193,11 @@ export default function ConversationEditor({
   const { draft, saving, error, dirty, validationError, targetError, changePiece, changeAttachments, insert, addPiece } = controller
   const messages = useMemo(() => draft?.messages ?? [], [draft?.messages])
   const target = draft?.target
-  const blocker = useBlocker(controller.shouldBlock)
+  const shouldBlock = useCallback(() => {
+    if (blockNavigation === false) return false
+    return controller.shouldBlock()
+  }, [blockNavigation, controller])
+  const blocker = useBlocker(shouldBlock)
   useBeforeUnload(useCallback((event: BeforeUnloadEvent): void => {
     if (controller.shouldBlock()) {
       event.preventDefault()
@@ -226,7 +232,10 @@ export default function ConversationEditor({
   const cancel = (): void => {
     if (saving) return
     if (dirty) setDiscardOpen(true)
-    else controller.discard()
+    else {
+      controller.discard()
+      onDiscard?.(false)
+    }
   }
   const save = (destination: SaveConversationRequest['destination']): void => {
     if (converters.isConverting) return
@@ -370,7 +379,9 @@ export default function ConversationEditor({
           <DialogActions>
             <Button className={styles.button} onClick={() => { setDiscardOpen(false); if (blocker.state === 'blocked') blocker.reset() }}>Keep editing</Button>
             <Button className={styles.button} disabled={saving} onClick={() => {
+              const isNavigating = blocker.state === 'blocked'
               controller.discard()
+              onDiscard?.(isNavigating)
               if (blocker.state === 'blocked') blocker.proceed()
             }}>Discard draft</Button>
           </DialogActions>

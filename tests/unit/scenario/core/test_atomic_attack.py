@@ -9,8 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack import AttackExecutor, AttackStrategy, PromptSendingAttack
-from pyrit.executor.attack.core import AttackExecutorResult
+from pyrit.executor.attack import AttackExecutor, AttackExecutorResult, AttackStrategy, PromptSendingAttack
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
     AtomicAttackIdentifier,
@@ -28,8 +27,7 @@ from pyrit.models import (
     TargetIdentifier,
 )
 from pyrit.prompt_target import CapabilityName, TargetRequirements
-from pyrit.scenario import AtomicAttack, IncompatibleTechniqueError, TechniqueRequirements
-from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario import AtomicAttack, AttackTechnique, IncompatibleTechniqueError, TechniqueRequirements
 from tests.unit.mocks import MockPromptTarget
 
 
