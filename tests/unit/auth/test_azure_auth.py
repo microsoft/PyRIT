@@ -8,14 +8,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 from azure.core.credentials import AccessToken
 
-from pyrit.auth.azure_auth import (
+from pyrit.auth import (
     AzureAuth,
     ensure_async_token_provider,
     get_azure_token_provider,
-    get_speech_config,
-    get_speech_config_from_default_azure_credential,
     is_azure_ml_endpoint,
     is_azure_openai_endpoint,
+)
+from pyrit.auth.azure_auth import (
+    get_speech_config,
+    get_speech_config_from_default_azure_credential,
     validate_speech_region_shape,
 )
 

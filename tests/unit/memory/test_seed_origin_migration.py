@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import SeedEntry
 
 
 def test_origin_migration_preserves_legacy_rows() -> None:

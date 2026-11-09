@@ -8,14 +8,14 @@ from unittest.mock import patch
 import pytest
 from unit.async_utils import TEST_WATCHDOG_SECONDS, settle_tasks_async, wait_for_completion_async
 
-from pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset import (
-    _JSONL_PATHS as _REAL_MANIFEST,
-)
-from pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset import (
+from pyrit.datasets import SeedDatasetProvider
+from pyrit.datasets.seed_datasets.remote import (
     AnthropicModelWrittenEvalCategory,
     _AnthropicModelWrittenEvalsDataset,
 )
-from pyrit.datasets.seed_datasets.seed_dataset_provider import SeedDatasetProvider
+from pyrit.datasets.seed_datasets.remote.anthropic_model_written_evals_dataset import (
+    _JSONL_PATHS as _REAL_MANIFEST,
+)
 from pyrit.memory import SQLiteMemory
 from pyrit.models import SeedDataset, SeedOrigin, SeedPrompt
 

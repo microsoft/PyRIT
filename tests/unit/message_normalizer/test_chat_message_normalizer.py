@@ -10,8 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from pyrit.message_normalizer import ChatMessageNormalizer
-from pyrit.models import ChatMessage, Message, MessagePiece
-from pyrit.models.literals import ChatMessageRole, PromptDataType
+from pyrit.models import ChatMessage, ChatMessageRole, Message, MessagePiece, PromptDataType
 
 
 def _make_message(role: ChatMessageRole, content: str) -> Message:

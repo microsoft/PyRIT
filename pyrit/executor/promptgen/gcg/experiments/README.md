@@ -44,6 +44,39 @@ within the embedding rows agree. These vocabulary fingerprints are cached for
 the lifetime of each loaded worker, across optimization steps and progressive
 phases, so its tokenizer must not be modified while that worker is in use.
 
+### Compatibility matrix
+
+The matrix is architecture-based. Other checkpoints with a tested architecture
+and tokenizer kind are expected to work if they pass the checks above.
+
+| Family | Tested checkpoints | Architecture (`model_type`) | Tokenizer |
+| --- | --- | --- | --- |
+| Qwen | Qwen2.5-0.5B-Instruct, Qwen3-0.6B | `qwen2`, `qwen3` | byte-level BPE |
+| Phi | Phi-3-mini-4k-instruct, Phi-4-mini-instruct | `phi3` | SentencePiece BPE (Phi-3), byte-level BPE (Phi-4) |
+| Gemma | gemma-2-2b-it, gemma-3-1b-it | `gemma2`, `gemma3_text` | SentencePiece BPE |
+| Llama | TinyLlama-1.1B-Chat-v1.0, Llama-3.2-1B-Instruct | `llama` | SentencePiece BPE (TinyLlama), byte-level BPE (Llama 3.2) |
+| Mistral | Mistral-7B-Instruct-v0.3, Mistral-Nemo-Instruct-2407, Mixtral-8x7B-Instruct-v0.1 | `mistral`, `mixtral` | SentencePiece BPE, byte-level BPE (Nemo) |
+| SmolLM | SmolLM2-135M-Instruct, SmolLM3-3B | `llama`, `smollm3` | byte-level BPE |
+| DeepSeek R1 distills | DeepSeek-R1-Distill-Qwen-1.5B, DeepSeek-R1-Distill-Llama-8B | `qwen2`, `llama` | byte-level BPE |
+
+`tests/integration/executor/promptgen/gcg/test_gcg_compatibility_integration.py`
+loads each checkpoint's real tokenizer and config, checks the goal, control, and
+target slices, and loads workers through `get_workers` with a tiny randomly
+initialized float16 model of the same architecture and vocabulary. It then runs
+one optimization step of each progressive phase and checks the admitted goals,
+models, and completed step count. A single-model run takes two steps. A mixed run
+trains two Qwen2.5 sizes that
+share a gradient group alongside a DeepSeek distill that does not, with a
+held-out TinyLlama model. These runs cover template rendering, slicing,
+gradients, candidate filtering, and scoring, not attack success on the full
+model. Worker gradients and losses must be finite, and every gradient row must
+have a finite, nonzero norm before normalization. The Gemma, Llama 3.2, and
+Mistral 7B/Nemo rows use unsloth's ungated mirrors, so no Hugging Face token is
+needed.
+
+Set `RUN_ALL_TESTS=true` to opt into these integration tests. Without that opt-in,
+the integration test runner skips them without downloading tokenizers or configs.
+
 ### Running on Azure ML
 
 `run.py` is a thin CLI wrapper around `GCG.execute_async`. It takes a single

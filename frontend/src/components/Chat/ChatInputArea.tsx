@@ -59,7 +59,7 @@ function TargetResolutionBanner({ status, activeTarget, onRetry, onConfigureTarg
     const text = status === 'error'
       ? 'Target verification failed. Sending is disabled; human scores can still be changed by the same operator.'
       : status === 'unavailable'
-        ? 'The target used by this attack is not currently registered. Sending is disabled; human scores can still be changed by the same operator.'
+        ? 'The target used by this attack is unavailable in the GUI. Sending is disabled; human scores can still be changed by the same operator.'
         : "Multiple registered targets have this attack's identity. Remove duplicate registrations, then retry."
     return <StatusBanner className={styles.statusBanner} textClassName={styles.statusBannerText}
       icon={<WarningRegular fontSize={18} />} text={text} buttonText="Retry" buttonIcon={<ArrowSyncRegular />}

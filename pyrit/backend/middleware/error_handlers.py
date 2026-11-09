@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from pyrit.backend.middleware.request_size import RequestTooLargeError, request_too_large_response
-from pyrit.backend.models.common import FieldError, ProblemDetail
+from pyrit.backend.models import FieldError, ProblemDetail
 from pyrit.exceptions.analytics_exception import AnalyticsException
 
 logger = logging.getLogger(__name__)

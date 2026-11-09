@@ -16,7 +16,7 @@ function humanizeTechniqueSetName(name: string): string {
     return knownLabel
   }
   const words = name.replace(/_/g, ' ')
-  return words.length > 0 ? `${words[0].toUpperCase()}${words.slice(1)}` : name
+  return words.length > 0 ? `${words[0]?.toUpperCase() ?? ''}${words.slice(1)}` : name
 }
 
 export function techniqueSetMembers(scenario: RegisteredScenario, name: string): string[] {

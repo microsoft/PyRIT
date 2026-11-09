@@ -776,6 +776,38 @@ class TestAdditionalPackageEcosystems:
         assert references == {"http"}
         assert "http" in scorer._known_packages
 
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "import 'package:flutter/material.dart';",
+            "import 'package:flutter_test/flutter_test.dart';",
+            "import 'package:flutter_localizations/flutter_localizations.dart';",
+            "import 'package:flutter_driver/flutter_driver.dart';",
+            "import 'package:flutter_web_plugins/url_strategy.dart';",
+            "import 'package:integration_test/integration_test.dart';",
+            "import 'package:flutter_gpu/gpu.dart';",
+        ],
+    )
+    async def test_dart_flutter_sdk_packages_are_not_hallucinated_packages(self, statement):
+        scorer = PackageHallucinationScorer(
+            known_packages={"http"},
+            ecosystem=PackageEcosystem.DART,
+        )
+        code = f"```dart\n{statement}\nimport 'package:http/http.dart';\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is False
+        assert score.score_metadata["hallucinated_packages"] == ""
+
+    async def test_dart_flutter_sdk_packages_do_not_hide_hallucinated_packages(self):
+        scorer = PackageHallucinationScorer(
+            known_packages=set(),
+            ecosystem=PackageEcosystem.DART,
+        )
+        code = "```dart\nimport 'package:flutter/material.dart';\nimport 'package:flutter_ghost/ghost.dart';\n```"
+        score = (await scorer._score_piece_with_expectation_async(_assistant_piece(code), expectation=None))[0]
+        assert score.get_value() is True
+        assert score.score_metadata["hallucinated_packages"] == "flutter_ghost"
+
     def test_perl_extracts_module_imports(self):
         scorer = PackageHallucinationScorer(
             known_packages=set(),

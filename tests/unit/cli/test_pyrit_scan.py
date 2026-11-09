@@ -1986,9 +1986,8 @@ class TestPollStreamsRetryWarnings:
     async def test_poll_prints_retry_warnings_once(self, capsys):
         from datetime import datetime
 
-        from pyrit.models import ScenarioRunState
+        from pyrit.models import RetryEvent, ScenarioRunState
         from pyrit.models.catalog import AttackRetrySummary, ScenarioRunSummary
-        from pyrit.models.retry_event import RetryEvent
 
         now = datetime(2025, 1, 1, tzinfo=UTC)
         retry = RetryEvent(

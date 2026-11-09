@@ -298,7 +298,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
 
   const rerunValues = matchPath('/scanner/launch/:scenarioName', location.pathname)
     ? new URLSearchParams(location.search).getAll('rerun') : []
-  const rerunId = rerunValues.length ? rerunValues.length === 1 ? rerunValues[0] : '' : null
+  const rerunId = rerunValues.length ? (rerunValues.length === 1 ? (rerunValues[0] ?? '') : '') : null
   const rerun = useScenarioLaunchSeed(rerunId, generation, ready)
   const { updateAttribution: updateRerunAttribution } = rerun
   const launchLabels = useMemo<Record<string, string>>(() => rerun.active
@@ -1089,7 +1089,7 @@ function App() {
   const accountKey = account?.homeAccountId
     ? `${account.tenantId}:${account.homeAccountId}`
     : authConfig.clientId ? null : 'local'
-  const operatorAlias = account?.username ? account.username.split('@')[0].toLowerCase() : null
+  const operatorAlias = account?.username ? (account.username.split('@')[0]?.toLowerCase() ?? null) : null
   return (
     <RuntimeProvider>
       <RuntimeBanner />

@@ -24,8 +24,8 @@ from pyrit.executor.attack import (
     MultiPromptSendingAttack,
     MultiPromptSendingAttackParameters,
     MultiTurnAttackContext,
+    PrependedConversationConfig,
 )
-from pyrit.executor.attack.component import PrependedConversationConfig
 from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
@@ -330,7 +330,7 @@ class TestSetupPhase:
 
         # Mock that simulates initialize_context_async merging labels
         async def mock_initialize(*, context, memory_labels=None, **kwargs):
-            from pyrit.common.utils import combine_dict
+            from pyrit.common import combine_dict
 
             context.memory_labels = combine_dict(existing_dict=memory_labels, new_dict=context.memory_labels)
             return ConversationState(turn_count=0)

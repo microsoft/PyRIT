@@ -817,7 +817,7 @@ class PyRITShell(cmd.Cmd):
         Usage:
             print-scenario <scenario_result_id>
         """
-        from pyrit.common.deprecation import print_deprecation_message
+        from pyrit.common import print_deprecation_message
 
         print_deprecation_message(
             old_item="print-scenario",
