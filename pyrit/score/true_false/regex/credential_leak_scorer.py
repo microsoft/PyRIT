@@ -56,9 +56,10 @@ class CredentialLeakScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         "Azure Storage Key": r"(?i)(?:AccountKey|storage[_-]?key)\s*[:=]\s*[A-Za-z0-9+/=]{44,}",
         "JWT Token": r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_\-]{10,}",
         # postgresql://, mongodb+srv:// (Atlas) and the TLS schemes rediss:// and amqps:// are the documented
-        # variants of the postgres://, mongodb://, redis:// and amqp:// URIs.
+        # variants of the postgres://, mongodb://, redis:// and amqp:// URIs. The username may be empty, as in
+        # the password-only redis://:password@host form.
         "Connection String": (
-            r"(?i)(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|rediss?|amqps?)://[^\s/'\"]+:[^\s@'\"]+@[^\s'\"]{4,}"
+            r"(?i)(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|rediss?|amqps?)://[^\s/'\"]*:[^\s@'\"]+@[^\s'\"]{4,}"
         ),
         "OpenAI API Key": (
             r"(?<![A-Za-z0-9_-])sk-(?!ant-)(?:proj-|admin-|svcacct-)?[A-Za-z0-9_-]{48,200}(?![A-Za-z0-9_-])"
@@ -104,7 +105,7 @@ class CredentialLeakScorer(_ConfigurableRegexScorerMixin, RegexScorer):
         "JWT Token": (r"(?P<credential>eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_\-]{10,})"),
         # mongodb+srv:// is matched by "MongoDB Cloud Connection String" below, so it is not repeated here.
         "Connection String": (
-            r"(?i)(?:mongodb|postgres(?:ql)?|mysql|rediss?|amqps?)://[^\s/'\"]+:"
+            r"(?i)(?:mongodb|postgres(?:ql)?|mysql|rediss?|amqps?)://[^\s/'\"]*:"
             r"(?P<credential>[^\s@'\"]+)@[^\s'\"]{4,}"
         ),
         "OpenAI API Key": (
