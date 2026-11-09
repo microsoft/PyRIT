@@ -13,7 +13,7 @@ from unit.mocks import MockPromptTarget
 
 from build_scripts import evaluate_scorers
 from pyrit import setup
-from pyrit.exceptions.exception_classes import handle_bad_request_exception
+from pyrit.exceptions import handle_bad_request_exception
 from pyrit.memory import SQLiteMemory
 from pyrit.models import Message, MessagePiece
 from pyrit.registry import ScorerRegistry

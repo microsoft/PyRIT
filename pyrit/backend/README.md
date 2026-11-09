@@ -30,6 +30,23 @@ API keys do not authenticate incoming GUI users.
 
 ## API Endpoints
 
+### Memory text search
+
+Text searches are case-insensitive literal substrings by default. Wildcards require
+an explicit full LIKE pattern: `%` matches any number of characters, `_` matches
+one, and `/` escapes the next character. Brackets, `*` and backslashes are literal.
+Patterns are not automatically wrapped in `%`; a dangling `/` is invalid.
+
+`GET /api/datasets/seeds` accepts `search` for literals or `value_pattern` for
+patterns. `GET /api/operations/{operation_id}/findings` accepts `title` or
+`title_pattern`. `POST /api/analytics/attacks/facets` accepts `search` or `search_pattern`.
+Supplying both companion filters is invalid. An explicit empty pattern matches
+empty text, whereas an empty literal query retains its no-filter behavior.
+Dataset cursors are bound to the pattern and search mode as well as other filters.
+Existing UI search boxes remain literal. Unicode lowercasing is used rather than
+full case folding; SQL Server's locale, accent and character semantics depend on
+its database collation.
+
 ### Health & Status
 - `GET /api/health` - Health check
 - `GET /api/version` - Version information

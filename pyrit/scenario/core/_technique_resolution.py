@@ -77,7 +77,7 @@ def resolve_technique_factories_for_techniques(
     Raises:
         TechniqueResolutionError: If any selected technique has no registered factory.
     """
-    from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+    from pyrit.registry import AttackTechniqueRegistry
 
     all_factories = dict(AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise())
     if extra_factories:
