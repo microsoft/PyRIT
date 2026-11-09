@@ -438,8 +438,10 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
                 ) : (
                   <div className={styles.displayGroupList}>
                     {displayGroups.map((group) => {
+                      // Merge member groups newest-first so the row cap keeps the group's latest executions.
                       const attempts = (group.atomic_group_ids ?? [])
                         .flatMap((atomicGroupId) => attemptsByGroupId.get(atomicGroupId) ?? [])
+                        .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
                       const defaultExpanded = displayGroups.length <= AUTO_EXPAND_GROUP_LIMIT
                       const expanded = expandedGroupChoices.get(group.id) ?? defaultExpanded
                       const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
