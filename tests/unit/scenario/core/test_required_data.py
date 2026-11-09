@@ -26,11 +26,17 @@ from pyrit.scenario import (
     CompoundDatasetAttackConfiguration,
     DatasetAttackConfiguration,
     DatasetSource,
+    ResolvedDataset,
     Scenario,
     ScenarioRequiredData,
 )
-from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, ScenarioTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetConstraintError, ResolvedDataset
+from pyrit.scenario.core import (
+    AtomicAttack,
+    AttackTechnique,
+    BaselineAttackPolicy,
+    DatasetConstraintError,
+    ScenarioTechnique,
+)
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.score import SubStringScorer
 
