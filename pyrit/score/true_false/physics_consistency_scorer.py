@@ -25,7 +25,7 @@ import math
 import re
 from typing import Any
 
-from pyrit.models import MessagePiece, Score
+from pyrit.models import MessagePiece, Score, ScoringExpectation
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.true_false_scorer import MessageTrueFalseScorer
 
@@ -362,7 +362,9 @@ class PhysicsConsistencyScorer(MessageTrueFalseScorer):
     def _build_identifier(self) -> Any:
         return self._create_identifier(params={"fail_on": self._fail_on, "rules_version": 4})
 
-    async def _score_piece_async(self, message_piece: MessagePiece, *, objective: str | None = None) -> list[Score]:
+    async def _score_piece_with_expectation_async(
+        self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None
+    ) -> list[Score]:
         result = check_text(message_piece.converted_value)
         detected = result["verdict"] == "FAIL" or (self._fail_on == "WARN" and result["verdict"] == "WARN")
         details = "; ".join(f"[{v['rule']}] {v['detail']}" for v in result["violations"]) or "none"
