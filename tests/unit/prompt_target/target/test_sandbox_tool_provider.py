@@ -327,7 +327,10 @@ async def test_adapter_rejection_is_not_scored_as_execution_async(
         attack_scoring_config=AttackScoringConfig(objective_scorer=MessageToolCallScorer()),
         max_attempts_on_failure=0,
     )
-    expectation = ScoringExpectation(conditions=(ToolsCalled(tools=(ToolCallRequirement(name=name),)),))
+    expectation = ScoringExpectation(
+        objective="use the sandbox tool",
+        conditions=(ToolsCalled(tools=(ToolCallRequirement(name=name),)),),
+    )
     replies = [_function_call("call_1", name, arguments), _text("done")]
     try:
         with patch.object(
