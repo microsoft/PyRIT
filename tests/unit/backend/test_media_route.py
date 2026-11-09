@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.main import app
-from pyrit.backend.models.attacks import MessagePieceRequest
+from pyrit.backend.models import MessagePieceRequest
 from pyrit.backend.services.media_persistence import persist_message_pieces_async
 from pyrit.backend.services.staged_media import staged_media_store
 
