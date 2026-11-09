@@ -1084,7 +1084,14 @@ class MemoryInterface(abc.ABC):
         if operation_id is not None:
             statement = statement.where(FindingEntry.operation_id == operation_id)
         if title_query or title_pattern is not None:
-            statement = statement.where(text_match(column=FindingEntry.title, value=title_query, pattern=title_pattern))
+            statement = statement.where(
+                text_match(
+                    column=FindingEntry.title,
+                    value=title_query,
+                    pattern=title_pattern,
+                    casefold=title_pattern is None,
+                )
+            )
         statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
@@ -5644,7 +5651,12 @@ class MemoryInterface(abc.ABC):
                 and_(
                     SeedEntry.data_type == "text",
                     SeedEntry.seed_type != "simulated_conversation",
-                    text_match(column=SeedEntry.value, value=value_search, pattern=value_pattern),
+                    text_match(
+                        column=SeedEntry.value,
+                        value=value_search,
+                        pattern=value_pattern,
+                        casefold=value_pattern is None,
+                    ),
                 )
             )
 
