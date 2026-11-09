@@ -17,7 +17,7 @@ from PIL import Image
 from scipy.io import wavfile
 
 from pyrit.common.path import DATASETS_PATH, PATHS_DICT
-from pyrit.memory.storage.serializers import set_seed_sha256_async
+from pyrit.memory import set_seed_sha256_async
 from pyrit.models import (
     AttackSeedGroup,
     Message,
@@ -26,8 +26,9 @@ from pyrit.models import (
     SeedGroup,
     SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
+    SimulatedTargetSystemPromptPaths,
 )
-from pyrit.models.seeds import SeedSimulatedConversation, SimulatedTargetSystemPromptPaths
 
 
 @pytest.fixture

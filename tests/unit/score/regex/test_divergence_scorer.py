@@ -31,7 +31,7 @@ from pyrit.score.true_false.regex.divergence_scorer import _DEFAULT_MITIGATION_S
 if TYPE_CHECKING:
     from pyrit.memory import MemoryInterface
     from pyrit.models import ChatMessageRole, PromptDataType, PromptResponseError
-    from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
+    from pyrit.score import TrueFalseAggregatorFunc
 
 
 def _expectation(text: str = "poem") -> ScoringExpectation:

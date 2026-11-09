@@ -295,7 +295,7 @@ export default function ConverterPanel({
   // Offer converters that accept whatever the pipeline currently emits, so a
   // chain can legally continue past a converter that changes the data type.
   const lastSelectedConverter = selectedConverters[selectedConverters.length - 1]
-  const nextInputType = lastSelectedConverter?.identifier.supported_output_types?.[0] ?? activeDataType
+  const nextInputType: string = lastSelectedConverter?.identifier.supported_output_types?.[0] ?? activeDataType ?? ''
 
   const filteredConverters = converters.filter((converter: ConverterInstance) => {
     const supported = converter.identifier.supported_input_types ?? []
@@ -332,7 +332,9 @@ export default function ConverterPanel({
     setPipeline(effectiveActiveTab, (stages: ConverterPipelineStage[]) => {
       const nextPipeline = [...stages]
       const [movedConverter] = nextPipeline.splice(sourceIndex, 1)
-      nextPipeline.splice(targetIndex, 0, movedConverter)
+      if (movedConverter) {
+        nextPipeline.splice(targetIndex, 0, movedConverter)
+      }
       return nextPipeline
     })
   }, [setPipeline, effectiveActiveTab, selectedStages.length])
@@ -524,7 +526,7 @@ export default function ConverterPanel({
                     ))}
                     onSave={() => {
                       const stage = selectedStages[index]
-                      if (stage.temporary) setSaving({
+                      if (stage?.temporary) setSaving({
                         stage, pieceType: effectiveActiveTab, converterType: converter.identifier.class_name,
                         source: stage.temporary, generation,
                       })
@@ -589,8 +591,8 @@ export default function ConverterPanel({
                       />
                       <ValuePreview
                         label="Converted message"
-                        dataType={results[input.id].converted_value_data_type}
-                        value={results[input.id].converted_value}
+                        dataType={results[input.id]?.converted_value_data_type ?? 'text'}
+                        value={results[input.id]?.converted_value}
                         emptyText="This conversion returned an empty value."
                         testId="converter-final-result"
                       />
@@ -611,8 +613,15 @@ export default function ConverterPanel({
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
         onCreated={(converterId: string, isCurrentOpening: boolean) => {
-          if (isCurrentOpening) setCreateDialogOpen(false)
-          void loadConverters(converterId, effectiveActiveTab)
+          if (isCurrentOpening) {
+            setCreateDialogOpen(false)
+            void loadConverters(converterId, effectiveActiveTab)
+            return
+          }
+          // A dismissed creation may still finish on the server. Refresh the
+          // registry so the converter is available, but do not mutate the
+          // pipeline the user chose after dismissing the dialog.
+          void loadConverters()
         }}
       />
       {settings && <CreateConverterDialog

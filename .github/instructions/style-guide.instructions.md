@@ -207,6 +207,31 @@ from pyrit.common.net_utility import get_httpx_client
 ```
 
 Within the same package, import from the specific file to avoid circular imports.
+Use absolute paths; Ruff's `TID252` rejects relative imports.
+
+Use the shortest existing public package export, including for nested APIs:
+`from pyrit.executor.attack import AttackStrategy`, not
+`from pyrit.executor.attack.core.attack_strategy import AttackStrategy`.
+Do not add exports just to shorten an import or flatten separate executor APIs.
+
+The `check-public-imports` pre-commit hook reads `_LAZY_EXPORTS` statically and
+checks Python files and notebook code cells, including deferred and
+`TYPE_CHECKING` imports. It follows chained re-exports without importing PyRIT.
+Imports within the package owning the public export, package initializers, and
+immutable Alembic revisions retain their implementation imports.
+Tests remain in scope so public API tests do not depend on implementation filenames;
+helpers without public exports can still be imported directly. Notebook checks remain
+independent because synchronization with paired Python files is not enforced.
+Local commits check changed files; CI checks all files. After changing public exports,
+run `uv run pre-commit run check-public-imports --all-files` to check unchanged consumers too.
+Running `uv run python -m build_scripts.check_public_imports` also scans all tracked files.
+
+Patch lazy exports where the consumer looks them up. For a deferred
+`from pyrit.score import find_objective_metrics_by_eval_hash`, use
+`patch("pyrit.score.find_objective_metrics_by_eval_hash")`, not a patch of the
+implementation module. Otherwise the public package may cache the mock beyond
+the patch's lifetime, or its already-cached real function may bypass the patch.
+Internal consumers that import the implementation module still need patches there.
 
 ### Typing Backports (`typing_extensions`)
 

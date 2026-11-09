@@ -1223,7 +1223,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "branch-target-hash",
       },
     });
@@ -1880,13 +1880,15 @@ describe("App", () => {
   });
 
   it("hydrates history filters from the URL query string", () => {
-    renderApp("/attack/history?outcome=success&attackType=PromptSendingAttack");
+    renderApp("/attack/history?outcome=success&operator=alice&attackType=PromptSendingAttack&converter=Base64Converter");
 
     const filters = JSON.parse(
       screen.getByTestId("history-filters").textContent ?? "{}"
     );
     expect(filters.outcome).toBe("success");
-    expect(filters.attackTypes).toEqual(["PromptSendingAttack"]);
+    expect(filters.operator).toEqual(["alice"]);
+    expect(filters).not.toHaveProperty("attackTypes");
+    expect(filters).not.toHaveProperty("converter");
   });
 
   it("writes filter changes into the URL", () => {
@@ -1979,7 +1981,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "persisted-alias",
         identifier_hash: "persisted-alias-hash",
       },
@@ -2011,7 +2013,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "reused-alias",
         identifier_hash: "original-hash",
       },
@@ -2042,7 +2044,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "removed-alias",
         identifier_hash: "original-hash",
       },
@@ -2072,7 +2074,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "catalog",
         identifier_hash: "catalog-target-hash",
       },
@@ -2103,7 +2105,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         target_registry_name: "persisted-alias",
         identifier_hash: "persisted-alias-hash",
       },
@@ -2137,7 +2139,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "pagination-hash",
       },
     });
@@ -2170,7 +2172,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "remount-hash",
       },
     });
@@ -2203,7 +2205,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "removed-hash",
       },
     });
@@ -2243,7 +2245,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "revisited-hash",
       },
     };
@@ -2334,7 +2336,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "duplicate-hash",
       },
     });
@@ -2375,7 +2377,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: "other-target-hash",
       },
     });
@@ -2479,7 +2481,7 @@ describe("App", () => {
         labels: {},
         related_conversation_ids: [],
         target: {
-          target_type: "TextTarget",
+          target_type: "OpenAIChatTarget",
           identifier_hash: "retry-hash",
         },
       });
@@ -2514,7 +2516,7 @@ describe("App", () => {
       labels: {},
       related_conversation_ids: [],
       target: {
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         identifier_hash: `${attackId}-hash`,
       },
     }));

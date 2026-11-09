@@ -6,11 +6,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from pyrit.analytics import compute_outcome_statistics
+from pyrit.analytics import (
+    compute_outcome_statistics,
+    compute_scenario_statistics,
+)
 from pyrit.analytics.scenario_statistics import (
     ScenarioPlanLookup,
     combine_execution_counts,
-    compute_scenario_statistics,
     resolve_execution_unit,
     select_execution_attack_result_ids,
 )

@@ -6,6 +6,7 @@ import re
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
+from unit.async_utils import settle_tasks_async, wait_for_completion_async, wait_for_event_async
 from unit.mocks import MockPromptTarget
 
 from pyrit.converter import (
@@ -29,6 +30,7 @@ from pyrit.converter import (
     DiacriticConverter,
     EmojiConverter,
     FlipConverter,
+    IndexSelectionStrategy,
     LeetspeakConverter,
     LLMGenericTextConverter,
     MaliciousQuestionGeneratorConverter,
@@ -52,7 +54,6 @@ from pyrit.converter import (
     VariationConverter,
     VigenereConverter,
 )
-from pyrit.converter.text_selection_strategy import IndexSelectionStrategy
 from pyrit.executor.promptgen.fuzzer import FuzzerConverter
 from pyrit.memory import CentralMemory, SQLiteMemory
 from pyrit.models import PromptDataType, SeedPrompt
@@ -250,6 +251,103 @@ async def test_convert_tokens_nested_regions_run_concurrently_async() -> None:
         )
     assert started == {"one", "two"}
     assert result.output_text == "⟪ONE⟫ and ⟪TWO⟫"
+
+
+async def test_convert_tokens_out_of_order_completion_keeps_region_order_async() -> None:
+    converter = Base64Converter()
+    second_finished = asyncio.Event()
+
+    async def convert_region_async(*, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        if prompt == "one":
+            await second_finished.wait()
+        else:
+            second_finished.set()
+        return ConverterResult(output_text=prompt.upper(), output_type=input_type)
+
+    with patch.object(converter, "convert_async", new_callable=AsyncMock, side_effect=convert_region_async):
+        result = await converter.convert_tokens_async(prompt="⟪one⟫ and ⟪two⟫")
+
+    assert result.output_text == "ONE and TWO"
+
+
+async def test_convert_tokens_failed_region_cancels_in_flight_regions_async() -> None:
+    converter = Base64Converter()
+    error = RuntimeError("rate limited")
+    error.__cause__ = OSError("connection reset")
+    sibling_started = asyncio.Event()
+    cleaned_up: list[str] = []
+
+    async def convert_region_async(*, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        if prompt == "bad":
+            await sibling_started.wait()
+            raise error
+        sibling_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            # Cleanup that yields must still finish before the caller sees the failure.
+            await asyncio.sleep(0)
+            cleaned_up.append(prompt)
+            raise
+        raise AssertionError("sibling region was not cancelled")
+
+    with (
+        patch.object(converter, "convert_async", new_callable=AsyncMock, side_effect=convert_region_async),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        await converter.convert_tokens_async(prompt="⟪slow⟫ and ⟪bad⟫")
+
+    assert exc_info.value is error
+    assert isinstance(exc_info.value.__cause__, OSError)
+    assert cleaned_up == ["slow"]
+
+
+async def test_convert_tokens_failure_preserves_caller_cancellation_count_async() -> None:
+    converter = Base64Converter()
+    caller = asyncio.current_task()
+    assert caller is not None
+    initial_cancellations = caller.cancelling()
+    error = RuntimeError("rate limited")
+
+    with patch.object(converter, "convert_async", new_callable=AsyncMock, side_effect=error):
+        for _ in range(2):
+            with pytest.raises(RuntimeError) as exc_info:
+                await converter.convert_tokens_async(prompt="⟪one⟫ and ⟪two⟫")
+            assert exc_info.value is error
+            assert caller.cancelling() == initial_cancellations
+
+
+async def test_convert_tokens_caller_cancellation_drains_regions_async() -> None:
+    converter = Base64Converter()
+    started: set[str] = set()
+    all_started = asyncio.Event()
+    cancelled: set[str] = set()
+
+    async def convert_region_async(*, prompt: str, input_type: PromptDataType = "text") -> ConverterResult:
+        started.add(prompt)
+        if len(started) == 2:
+            all_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.add(prompt)
+            raise
+        raise AssertionError("region was not cancelled")
+
+    with patch.object(converter, "convert_async", new_callable=AsyncMock, side_effect=convert_region_async):
+        task = asyncio.create_task(converter.convert_tokens_async(prompt="⟪one⟫ and ⟪two⟫"))
+        try:
+            await wait_for_event_async(event=all_started, tasks=[task])
+            task.cancel("stop converting")
+            with pytest.raises(asyncio.CancelledError, match="stop converting"):
+                await wait_for_completion_async(future=task)
+            assert cancelled == {"one", "two"}
+            assert task.cancelled()
+            assert task.cancelling() == 1
+        finally:
+            if not task.done():
+                task.cancel()
+            await settle_tasks_async(task)
 
 
 async def test_convert_tokens_nested_parents_wait_for_next_call_async() -> None:
@@ -684,7 +782,7 @@ async def test_character_space_converter_punctuation() -> None:
     converter = CharacterSpaceConverter()
     output = await converter.convert_async(prompt="Hello, world! How's everything?", input_type="text")
     assert output.output_type == "text"
-    assert output.output_text == "H e l l o    w o r l d    H o w  s   e v e r y t h i n g "
+    assert output.output_text == "H e l l o   w o r l d   H o w s   e v e r y t h i n g"
 
 
 async def test_url_converter() -> None:

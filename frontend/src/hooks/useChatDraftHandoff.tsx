@@ -151,7 +151,7 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
       )
       preservedDraftsRef.current.delete(key)
       const remaining = Array.from(preservedDraftsRef.current.values())
-      const nextActive = remaining.length > 0 ? remaining[remaining.length - 1] : null
+      const nextActive = remaining[remaining.length - 1] ?? null
       preservedDraftRef.current = nextActive
       setPreservedDraft(nextActive)
       setDraftsVersion((v) => v + 1)
@@ -251,7 +251,7 @@ export function ChatDraftProvider({ children }: { children: ReactNode }) {
     // Return draft content without revoking attachments (ownership transfers to ChatWindow)
     preservedDraftsRef.current.delete(key)
     const remaining = Array.from(preservedDraftsRef.current.values())
-    const nextActive = remaining.length > 0 ? remaining[remaining.length - 1] : null
+    const nextActive = remaining[remaining.length - 1] ?? null
     preservedDraftRef.current = nextActive
     setPreservedDraft(nextActive)
     setDraftsVersion((v) => v + 1)
