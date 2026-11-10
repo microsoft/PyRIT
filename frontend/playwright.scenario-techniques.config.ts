@@ -1,0 +1,32 @@
+import process from 'node:process'
+
+import { defineConfig } from '@playwright/test'
+
+import analytics from './playwright.analytics.config'
+
+const port = Number(process.env.PYRIT_E2E_TECHNIQUES_PORT ?? '18611')
+if (!Number.isInteger(port) || port < 1 || port > 65535) {
+  throw new Error('PYRIT_E2E_TECHNIQUES_PORT must be a valid TCP port.')
+}
+const url = `http://127.0.0.1:${port}`
+
+export default defineConfig({
+  ...analytics,
+  testMatch: 'scenario-techniques.spec.ts',
+  use: {
+    ...analytics.use,
+    baseURL: url,
+    storageState: {
+      cookies: [],
+      origins: [{ origin: url, localStorage: [{ name: 'pyrit-tour-completed', value: 'true' }] }],
+    },
+  },
+  projects: [{ name: 'scenario-techniques', use: { viewport: { width: 1440, height: 1050 } } }],
+  webServer: {
+    command: `cd .. && uv run --no-sync python -m frontend.e2e.fixtures.scenario_techniques_backend --port ${port}`,
+    env: { PYTHONIOENCODING: 'utf-8' },
+    url: `${url}/api/health`,
+    reuseExistingServer: false,
+    timeout: 120_000,
+  },
+})

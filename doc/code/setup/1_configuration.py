@@ -165,8 +165,7 @@ from pyrit.prompt_normalizer import (
 )
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
-from pyrit.setup.initializers.scorers import ScorerInitializerTags
+from pyrit.setup.initializers import ScorerInitializer, ScorerInitializerTags, TargetInitializer
 
 # Run the built-in initializers. ScorerInitializer pulls its chat targets
 # out of the TargetRegistry.

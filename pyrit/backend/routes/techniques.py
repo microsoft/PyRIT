@@ -127,7 +127,7 @@ async def create_technique_async(*, body: CreateTechniqueRequest, request: Reque
     try:
         return await get_technique_service().create_async(
             request=body,
-            owner=saved_entry_owner_from_request(request),
+            owner=saved_entry_owner_from_request(request) if body.persist else None,
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as exc:

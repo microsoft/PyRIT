@@ -15,8 +15,6 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from azure.core.exceptions import AzureError
-
 from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.models import ComponentType, Parameter
 from pyrit.models.catalog import (
@@ -27,10 +25,11 @@ from pyrit.models.catalog import (
     TechniqueRecipe,
 )
 from pyrit.registry import ConverterRegistry, InstanceHoldingRegistry, RegistryEntry, ScorerRegistry, TargetRegistry
-from pyrit.registry.file_document_storage import DocumentConflictError
+from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
     SAVED_ENTRY_OWNER_METADATA_KEY,
+    RegistryNameTakenError,
     registry_entry_origin,
 )
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
@@ -62,6 +61,22 @@ class SavedEntryRemovalError(RuntimeError):
     """A saved entry can't be removed through the API yet, since it comes back from its saved file at every start."""
 
 
+def launch_script_class_reason(type_name: str) -> str:
+    """
+    Explain why an entry of a class that a scan's launch script added can't be saved.
+
+    Args:
+        type_name (str): The name the class is registered under.
+
+    Returns:
+        str: The reason.
+    """
+    return (
+        f"'{type_name}' was added by a scan's launch script, so a saved entry of it couldn't be restored after a "
+        "restart."
+    )
+
+
 async def prepare_saved_params_async(
     *,
     registry: InstanceHoldingRegistry[Any, Any],
@@ -82,16 +97,22 @@ async def prepare_saved_params_async(
         dict[str, Any]: The parameters to build and save the entry with.
 
     Raises:
-        NotSaveableError: If the entry would hold or use a credential, or names a Temporary entry.
+        NotSaveableError: If the entry would hold or use a credential, its class was added by a scan's launch
+            script, or it names a Temporary entry.
         ValueError: If an address the entry would use isn't a full http(s) or ws(s) address.
     """
+    if registry.is_temporary_class(type_name):
+        raise NotSaveableError(f"{launch_script_class_reason(type_name)} It can still be created without saving it.")
     saved_params = dict(params)
     fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
     for name, turned_off in fallbacks.items():
         if turned_off is not None and saved_params.get(name) in (None, ""):
             saved_params[name] = turned_off
     metadata = await asyncio.to_thread(registry.get_registered_class_metadata, type_name)
-    parameters = metadata.parameters if metadata is not None else ()
+    if metadata is None:
+        # Restore falls back to the class itself the same way, so saving never checks less than restoring.
+        metadata = await asyncio.to_thread(registry.get_class_metadata, cls)
+    parameters = metadata.parameters
     try:
         check_saved_entry_params(cls=cls, parameters=parameters, params=saved_params)
     except SavedEntryRefusedError as error:
@@ -263,14 +284,14 @@ async def save_then_register_async(
         await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)
     except DocumentConflictError as error:
         raise SavedEntryConflictError(f"A saved {singular} named '{name}' already exists.") from error
-    except (OSError, AzureError) as error:
+    except DocumentStorageUnavailableError as error:
         logger.error(
             "Saved %s '%s' couldn't be written to %s (%s). If the write reached storage anyway, the %s is restored "
             "at the next start.",
             singular,
             name,
             storage.display_source,
-            type(error).__name__,
+            error.reason,
             singular,
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
@@ -279,7 +300,7 @@ async def save_then_register_async(
     except Exception as error:
         if not await _delete_recipe_async(storage=storage, singular=singular, name=name):
             raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
-        if isinstance(error, ValueError):
+        if isinstance(error, RegistryNameTakenError):
             raise SavedEntryConflictError(str(error)) from error
         raise
 
@@ -300,7 +321,7 @@ async def _delete_recipe_async(*, storage: RegistryRecipeStorage, singular: str,
             singular,
             name,
             storage.display_source,
-            type(error).__name__,
+            error.reason if isinstance(error, DocumentStorageUnavailableError) else type(error).__name__,
             singular,
         )
         return False

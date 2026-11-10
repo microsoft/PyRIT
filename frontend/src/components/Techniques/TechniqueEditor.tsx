@@ -319,6 +319,7 @@ export default function TechniqueEditor({
   const inputsDisabled = disabled || submitting
   const displayedError = autoApply && revision > 0 ? editError ?? error : error
   const content = (
+            // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- only keeps Enter in a field from submitting the form
             <div className={styles.form} onKeyDown={(event) => {
               if (autoApply && event.key === 'Enter' && event.target instanceof HTMLInputElement
                 && event.currentTarget.contains(event.target)) event.preventDefault()
