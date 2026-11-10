@@ -2585,7 +2585,7 @@ export interface FindingExportRequest {
 }
 
 /** A flagged share of applicable conversations with a 90% Wilson interval; `rate` is null when none apply. */
-export interface BinaryRate {
+export interface AssertBinaryRate {
   rate: number | null
   flagged_count: number
   applicable_count: number
@@ -2601,7 +2601,7 @@ export interface AssertCategoryMetrics {
   name: string
   permissible: boolean
   /** Violated share of conversations that judged this category relevant. */
-  node_violation: BinaryRate
+  node_violation: AssertBinaryRate
   attributed_by_fallback: number
 }
 
@@ -2626,10 +2626,12 @@ export interface AssertTechniqueMetrics {
   not_judged: AssertNotJudgedCounts
   unresolved_policy: number
   rows_without_node_judgments: number
-  policy_violation_on_not_permissible: BinaryRate | null
-  policy_violation_on_permissible: BinaryRate | null
+  policy_violation_on_not_permissible: AssertBinaryRate | null
+  policy_violation_on_permissible: AssertBinaryRate | null
   /** One violation rate per judge dimension; not-applicable answers stay out of the denominator. */
-  dimensions: Record<string, BinaryRate>
+  dimensions: Record<string, AssertBinaryRate>
+  /** Judged conversations where that dimension's judge gave no verdict, such as a blocked reply. */
+  dimension_no_verdict: Record<string, number>
   dimension_grades: Record<string, AssertGradeDistribution>
   categories: AssertCategoryMetrics[]
 }

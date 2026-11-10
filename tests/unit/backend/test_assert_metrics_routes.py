@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from pyrit.analytics.assert_policy_metrics import _rate
 from pyrit.backend.main import app
+from pyrit.backend.services.scenario_run_service import ScenarioRunNotCompletedError
 from pyrit.models import AssertPolicyMetrics, ScenarioResult
 from pyrit.models.results.assert_policy_metrics import AssertNotJudgedCounts, AssertTechniqueMetrics
 from unit.mocks import make_scenario_result
@@ -72,7 +73,7 @@ def test_assert_metrics_serializes_technique_rates(client: TestClient) -> None:
     ("saved", "error", "expected"),
     [
         (None, None, 404),
-        (None, ValueError("Results are only available for completed runs."), 409),
+        (None, ScenarioRunNotCompletedError("Results are only available for completed runs."), 409),
         (make_scenario_result(scenario_name="ContentHarms", attack_results={}), None, 400),
     ],
 )
@@ -88,16 +89,20 @@ def test_assert_metrics_returns_explicit_errors(
 
 
 @pytest.mark.usefixtures("patch_central_database")
-def test_assert_metrics_reports_internal_failures_as_server_errors(compatibility_headers: dict[str, str]) -> None:
+@pytest.mark.parametrize("failure", ["loading", "computing"])
+def test_assert_metrics_reports_internal_failures_as_sanitized_server_errors(
+    compatibility_headers: dict[str, str], failure: str
+) -> None:
     client = TestClient(app, headers=compatibility_headers, raise_server_exceptions=False)
+    secret = ValueError("invalid stored identifier at C:/private/path")
+    load = AsyncMock(side_effect=secret) if failure == "loading" else AsyncMock(return_value=_assert_result())
+    compute = AsyncMock(side_effect=secret) if failure == "computing" else AsyncMock()
     with (
         patch("pyrit.backend.routes.scenarios.get_scenario_run_service") as service,
-        patch(
-            "pyrit.backend.routes.scenarios.compute_assert_policy_metrics_async",
-            AsyncMock(side_effect=ValueError("invalid stored identifier")),
-        ),
+        patch("pyrit.backend.routes.scenarios.compute_assert_policy_metrics_async", compute),
     ):
-        service.return_value.get_run_results_async = AsyncMock(return_value=_assert_result())
+        service.return_value.get_run_results_async = load
         response = client.get(_URL)
 
     assert response.status_code == 500
+    assert "private" not in response.text

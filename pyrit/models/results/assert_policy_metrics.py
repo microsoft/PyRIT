@@ -17,7 +17,7 @@ class _AssertMetricsModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class BinaryRate(_AssertMetricsModel):
+class AssertBinaryRate(_AssertMetricsModel):
     """
     A flagged share of applicable conversations, with a 90% Wilson score interval.
 
@@ -54,7 +54,7 @@ class AssertCategoryMetrics(_AssertMetricsModel):
     behavior_name: str
     name: str
     permissible: bool
-    node_violation: BinaryRate
+    node_violation: AssertBinaryRate
     attributed_by_fallback: _Count = 0
 
 
@@ -72,11 +72,12 @@ class AssertGradeDistribution(_AssertMetricsModel):
 
 class AssertNotJudgedCounts(_AssertMetricsModel):
     """
-    Why effective results have no policy verdict.
+    Why effective results have no judge verdict at all.
 
-    ``target_input_refused`` and ``target_error`` are deliberate skips of a blocked or errored
-    target reply. ``judge_no_verdict`` is an undetermined objective score, such as a blocked judge
-    reply. ``attack_error`` is an errored attack. ``not_scored`` has no objective score at all.
+    ``target_input_refused`` and ``target_error`` are deliberate skips of a blocked or errored target
+    reply. ``judge_no_verdict`` means no judge dimension returned a verdict or a not-applicable answer,
+    for example because every judge reply was blocked. ``attack_error`` is an errored attack.
+    ``not_scored`` has no judge scores at all.
     """
 
     target_input_refused: _Count = 0
@@ -90,12 +91,19 @@ class AssertTechniqueMetrics(_AssertMetricsModel):
     """
     ASSERT metrics for the effective results of one technique.
 
-    The permissibility split counts each judged conversation once per stance, as flagged when any
-    relevant category with that permissibility was violated and as not applicable when none was
-    relevant. It leaves out ``unresolved_policy`` conversations, whose stored seed group couldn't
-    be read, and ``rows_without_node_judgments`` conversations. ``dimensions`` has a violation rate for
-    each judge dimension; not-applicable answers are counted but left out of its denominator.
+    Each judge dimension is read independently. ``dimensions`` has a violation rate for each judge
+    dimension: not-applicable answers are counted in ``not_applicable_count`` but left out of the
+    denominator, and ``dimension_no_verdict`` counts judged conversations where that dimension's judge
+    gave no verdict, such as a blocked judge reply. For every dimension, ``applicable_count`` +
+    ``not_applicable_count`` + ``dimension_no_verdict`` equals ``scored_total``.
     ``dimension_grades`` adds grade counts and the median for graded dimensions.
+
+    The permissibility split uses the ``policy_violation`` judge. It counts each conversation with a
+    policy verdict once per stance, as flagged when any relevant category with that permissibility was
+    violated and as not applicable when none was relevant. It leaves out ``unresolved_policy``
+    conversations, whose stored seed group couldn't be read, ``rows_without_node_judgments``
+    conversations, whose policy verdict has no per-category judgments, and conversations without a
+    policy verdict.
     """
 
     technique: str
@@ -104,9 +112,10 @@ class AssertTechniqueMetrics(_AssertMetricsModel):
     not_judged: AssertNotJudgedCounts
     unresolved_policy: _Count = 0
     rows_without_node_judgments: _Count = 0
-    policy_violation_on_not_permissible: BinaryRate | None = None
-    policy_violation_on_permissible: BinaryRate | None = None
-    dimensions: dict[str, BinaryRate] = Field(default_factory=dict)
+    policy_violation_on_not_permissible: AssertBinaryRate | None = None
+    policy_violation_on_permissible: AssertBinaryRate | None = None
+    dimensions: dict[str, AssertBinaryRate] = Field(default_factory=dict)
+    dimension_no_verdict: dict[str, _Count] = Field(default_factory=dict)
     dimension_grades: dict[str, AssertGradeDistribution] = Field(default_factory=dict)
     categories: list[AssertCategoryMetrics] = Field(default_factory=list)
 
@@ -116,9 +125,9 @@ class AssertPolicyMetrics(_AssertMetricsModel):
     ASSERT's headline metrics for one ``foundry.assert_policy`` run.
 
     ``techniques`` is keyed by attack technique name, with ``baseline`` (ASSERT's prompt cases) first;
-    rates are never pooled across them. The split is unavailable,
-    with ``split_unavailable_reason`` set, when no judged conversation has per-category judgments.
-    ``judgment_mode`` is ``category_validated``, ``direct``, ``mixed``, or None when nothing was judged.
+    rates are never pooled across them. The split is unavailable, with ``split_unavailable_reason``
+    set, when no conversation has a policy verdict with per-category judgments. ``judgment_mode`` is
+    ``category_validated``, ``direct``, or ``mixed`` across the policy verdicts, or None when there are none.
     """
 
     scenario_result_id: str

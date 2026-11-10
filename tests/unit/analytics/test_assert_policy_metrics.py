@@ -24,27 +24,34 @@ from pyrit.analytics.assert_policy_metrics import (
     _aggregate,
     _build_row,
     _Grade,
+    _group_key,
     _GroupContext,
-    _objective_seed_key,
+    _load_group_contexts_async,
     _rate,
     _Row,
+    _select_effective_results,
+)
+from pyrit.analytics.assert_policy_metrics import (
+    _technique as _metrics_technique,
 )
 from pyrit.datasets import AssertProvider
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.promptgen import AssertGeneratorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    AssertBinaryRate,
     AssertPolicyMetrics,
     AtomicAttackIdentifier,
     AttackOutcome,
     AttackResult,
-    BinaryRate,
+    AttackSeedGroup,
     ComponentIdentifier,
     Message,
     PromptResponseError,
     ScenarioResult,
     Score,
     ScoreStatus,
+    SeedPrompt,
     construct_response_from_request,
 )
 from pyrit.registry import AttackTechniqueRegistry
@@ -201,7 +208,7 @@ def _datasets(name: str = "assert_a") -> dict[str, Any]:
     return {"dataset_overrides": {"sources": [{"name": name}]}}
 
 
-def _counts(rate: BinaryRate | None) -> tuple[int, int, int] | None:
+def _counts(rate: AssertBinaryRate | None) -> tuple[int, int, int] | None:
     return None if rate is None else (rate.flagged_count, rate.applicable_count, rate.not_applicable_count)
 
 
@@ -341,6 +348,79 @@ async def test_identical_objectives_resolve_their_own_stored_group_async(harness
     assert {category.name for category in single.categories} == {"public_policy", "private_disclosure"}
 
 
+def _distinct_user_prompts(result: AssertGeneratorResult) -> AssertGeneratorResult:
+    """Keep each group's objective but give it its own user prompt, so the groups' logical IDs differ."""
+    groups = []
+    for index, group in enumerate(result.seed_groups):
+        seeds = [
+            SeedPrompt(**{**seed.model_dump(exclude={"id", "value_sha256"}), "value": f"Question {index}?"})
+            if isinstance(seed, SeedPrompt) and seed.role == "user"
+            else seed
+            for seed in group.seeds
+        ]
+        groups.append(AttackSeedGroup(seeds=seeds, adversarial_prompts=group.adversarial_prompts))
+    return result.model_copy(update={"seed_groups": tuple(groups)})
+
+
+async def test_same_objective_with_different_prompts_resolves_each_group_async(harness: _Harness) -> None:
+    config = make_assert_config(group_count=3, include_adversarial_prompt=False)
+    stored = _distinct_user_prompts(make_assert_result(config=config, duplicate_text=True, system_prompt="You help."))
+    assert len({group.objective.value for group in stored.seed_groups}) == 1
+    assert len({group.logical_id for group in stored.seed_groups}) == 3
+    await _store_async(stored)
+    result = await harness.run_async(**_prompt_case(), **_datasets())
+
+    units = _select_effective_results(result)
+    contexts = await _load_group_contexts_async(memory=CentralMemory.get_memory_instance(), units=units)
+
+    # Groups 0 and 1 are assigned public_policy and group 2 private_disclosure.
+    assigned = {
+        _user_prompt(unit.result): getattr(contexts[unit.result.attack_result_id], "assigned_category", None)
+        for unit in units
+    }
+    assert assigned == {
+        "Question 0?": "public_policy",
+        "Question 1?": "public_policy",
+        "Question 2?": "private_disclosure",
+    }
+    single = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
+    assert single.unresolved_policy == 0
+
+
+def _user_prompt(result: AttackResult) -> str:
+    identifier = AtomicAttackIdentifier.from_component_identifier(result.atomic_attack_identifier)
+    return next(value for seed in identifier.seed_identifiers if (value := seed.value) and value.startswith("Question"))
+
+
+async def test_technique_names_with_double_underscores_resolve_duplicate_groups_async(harness: _Harness) -> None:
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+        [AttackTechniqueFactory(name="my__prompt", attack_class=PromptSendingAttack, technique_tags=["single_turn"])]
+    )
+    _build_assert_policy_technique.cache_clear()
+    config = make_assert_config(group_count=3, include_adversarial_prompt=False)
+    await _store_async(make_assert_result(config=config, duplicate_text=True, system_prompt="You help."))
+    result = await harness.run_async(
+        scenario_techniques=[_technique("my__prompt")], include_baseline=False, **_datasets()
+    )
+
+    metrics = await compute_assert_policy_metrics_async(result)
+
+    assert list(metrics.techniques) == ["my__prompt"]
+    assert metrics.techniques["my__prompt"].unresolved_policy == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        (f"my__technique__{'a' * 64}", "my__technique"),
+        (f"my__technique__{'a' * 64}__0f0e5c1b-1b5e-4c55-9d7b-9c3c1d2f1a3e", "my__technique"),
+        ("legacy_name", "legacy_name"),
+    ],
+)
+def test_technique_without_plan_strips_only_the_unit_suffix(name: str, expected: str) -> None:
+    assert _metrics_technique(name, None) == expected
+
+
 async def test_groups_without_stored_metadata_are_unresolved_async(harness: _Harness) -> None:
     groups = list(_groups().seed_groups)
     config = DatasetAttackConfiguration(seed_groups=groups, max_total="all")
@@ -433,6 +513,79 @@ async def test_graded_and_not_applicable_dimensions_async(harness: _Harness, tmp
     assert grades.counts == {"1": 2, "2": 1, "3": 1}
     assert grades.median == 1.5
     assert "verification_skip" not in single.dimension_grades
+
+
+async def test_undetermined_custom_objective_keeps_policy_and_other_verdicts_async(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    await _store_async(_groups())
+    preset = tmp_path / "graded.yaml"
+    preset.write_text(_GRADED_PRESET, encoding="utf-8")
+    with patch.object(_Harness, "judge_async", _judge_dimensions_async):
+        result = await harness.run_async(
+            **_prompt_case(),
+            judge_preset_files=[str(preset)],
+            objective_dimension="verification_skip",
+            **_datasets(),
+        )
+
+    single = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
+
+    # Items 0 and 3 answer the objective dimension "not applicable", but their policy verdicts still count.
+    assert (single.total, single.scored_total) == (4, 4)
+    assert _counts(single.dimensions["verification_skip"]) == (1, 2, 2)
+    assert _counts(single.dimensions["policy_violation"]) == (2, 4, 0)
+    assert _counts(single.policy_violation_on_not_permissible) == (1, 1, 3)
+    assert _counts(single.policy_violation_on_permissible) == (1, 3, 1)
+
+
+async def _block_overrefusal_for_item_one_async(
+    self: _Harness, *, normalized_conversation: list[Message]
+) -> list[Message]:
+    system = normalized_conversation[0].get_value()
+    if _OVERREFUSAL in system and _item(normalized_conversation[-1].get_value()) == 1:
+        return _reply(normalized_conversation[-1], value="blocked", error="blocked")
+    return await _POLICY_JUDGE_ASYNC(self, normalized_conversation=normalized_conversation)
+
+
+async def test_one_blocked_dimension_judge_is_no_verdict_not_not_applicable_async(harness: _Harness) -> None:
+    await _store_async(_groups())
+    with patch.object(_Harness, "judge_async", _block_overrefusal_for_item_one_async):
+        result = await harness.run_async(**_prompt_case(), **_datasets())
+
+    single = (await compute_assert_policy_metrics_async(result)).techniques["prompt_sending"]
+
+    assert single.scored_total == 4
+    assert _counts(single.dimensions["overrefusal"]) == (0, 3, 0)
+    assert single.dimension_no_verdict == {"policy_violation": 0, "overrefusal": 1}
+    assert _counts(single.dimensions["policy_violation"]) == (2, 4, 0)
+    for name, rate in single.dimensions.items():
+        no_verdict = single.dimension_no_verdict[name]
+        assert rate.applicable_count + rate.not_applicable_count + no_verdict == single.scored_total
+
+
+def test_dimension_scores_break_timestamp_ties_by_score_id() -> None:
+    piece_id = uuid.uuid4()
+    objective = _score("policy_violation", piece_id=piece_id, scorer_class="Judge", marked=True)
+    first = _score("overrefusal", piece_id=piece_id, scorer_class="Judge", marked=True)
+    second = first.model_copy(update={"id": uuid.UUID(int=0), "score_value": "false"})
+    first = first.model_copy(update={"id": uuid.UUID(int=1), "timestamp": second.timestamp})
+
+    for order in ([objective, first, second], [objective, second, first]):
+        row = _build_row(technique="t", result=_result(objective), piece_scores=order, context=None)
+        assert row.verdicts["overrefusal"] is True
+
+
+def test_mixed_judgment_modes_are_reported_as_mixed() -> None:
+    rows = [
+        _Row(technique="t", not_judged_reason=None, judgment_mode=mode, verdicts={"policy_violation": False})
+        for mode in ("direct", "category_validated")
+    ]
+
+    metrics = _aggregate(scenario_result_id="run", rows=rows)
+
+    assert metrics.judgment_mode == "mixed"
+    assert _aggregate(scenario_result_id="run", rows=rows[:1]).judgment_mode == "direct"
 
 
 def test_named_grades_report_the_lower_median_in_declared_order() -> None:
@@ -573,7 +726,7 @@ def test_unreadable_attack_identifiers_leave_the_policy_unresolved() -> None:
     result = AttackResult(conversation_id="c", objective="o", atomic_attack_identifier=identifier)
 
     with patch.object(AtomicAttackIdentifier, "from_component_identifier", side_effect=ValueError("legacy identifier")):
-        assert _objective_seed_key(result) is None
+        assert _group_key(result) is None
 
 
 async def test_non_assert_result_is_rejected_async() -> None:

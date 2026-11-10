@@ -242,9 +242,11 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 # generated for. Conversations without per-category judgments or a stored seed group are left out
 # of these two rates and counted separately. Rates are reported separately for each technique and
 # for the baseline, with 90% Wilson intervals, and rates with fewer than 5 applicable conversations
-# are flagged. The result also has a violation rate for each judge dimension, which counts
-# not-applicable answers separately and adds grade counts and the median for graded dimensions, and
-# a violation rate for each taxonomy category over the conversations that judged it relevant.
+# are flagged. The result also has a violation rate for each judge dimension, read independently of
+# the other dimensions. Not-applicable answers and judge replies without a verdict, such as blocked
+# ones, are counted separately and left out of that rate. Graded dimensions add grade counts and the
+# median. There's also a violation rate for each taxonomy category over the conversations that
+# judged it relevant.
 # `model_dump_json()` gives a `metrics.json`-style document, and the GUI shows the same metrics on a
 # completed run's page.
 

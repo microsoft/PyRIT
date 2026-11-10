@@ -38,7 +38,11 @@ from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, Cursor
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_scenario_run_service, get_scenario_service
-from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
+from pyrit.backend.services.scenario_run_service import (
+    ScenarioRunConflictError,
+    ScenarioRunNotCompletedError,
+    ScenarioRunNotFoundError,
+)
 from pyrit.models import (
     AssertPolicyMetrics,
     ScenarioHierarchyNode,
@@ -664,16 +668,25 @@ async def get_assert_policy_metrics_async(*, scenario_result_id: IdentifierStr) 
     """
     Report ASSERT's metrics for a completed foundry.assert_policy run.
 
+    Unfinished runs return 409 and other scenarios 400. Saved results that can't be loaded or read
+    as ASSERT metrics are internal failures: they're logged and return a sanitized 500 rather than
+    reaching the global ValueError-to-400 handler.
+
     Returns:
         AssertPolicyMetrics: Per-technique permissibility split, judge-dimension rates, and category rates.
     """
-    result = await get_scenario_run_results(scenario_result_id=scenario_result_id)
     try:
+        result = await get_scenario_run_service().get_run_results_async(scenario_result_id=scenario_result_id)
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=f"Scenario run '{scenario_result_id}' not found"
+            )
         return await compute_assert_policy_metrics_async(result)
+    except ScenarioRunNotCompletedError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from None
     except NotAssertPolicyRunError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
     except ValueError as exc:
-        # Any other ValueError is an internal failure; keep it from the global ValueError-to-400 handler.
         logger.exception("Could not compute ASSERT metrics for scenario run %s.", scenario_result_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

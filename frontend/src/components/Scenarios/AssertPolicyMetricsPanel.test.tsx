@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 import { useAssertPolicyMetrics } from '@/hooks/useAssertPolicyMetrics'
-import type { AssertPolicyMetrics, AssertTechniqueMetrics, BinaryRate } from '@/types'
+import type { AssertPolicyMetrics, AssertTechniqueMetrics, AssertBinaryRate } from '@/types'
 
 import AssertPolicyMetricsPanel from './AssertPolicyMetricsPanel'
 import { isAssertPolicyRun } from './assertPolicyRun'
@@ -11,7 +11,7 @@ import { isAssertPolicyRun } from './assertPolicyRun'
 jest.mock('@/hooks/useAssertPolicyMetrics', () => ({ useAssertPolicyMetrics: jest.fn() }))
 const mockUseMetrics = jest.mocked(useAssertPolicyMetrics)
 
-function rate(flagged: number, applicable: number, notApplicable = 0): BinaryRate {
+function rate(flagged: number, applicable: number, notApplicable = 0): AssertBinaryRate {
   return {
     rate: applicable ? flagged / applicable : null,
     flagged_count: flagged,
@@ -34,6 +34,7 @@ function technique(name: string, overrides: Partial<AssertTechniqueMetrics> = {}
     policy_violation_on_not_permissible: rate(2, 4, 4),
     policy_violation_on_permissible: rate(1, 6, 2),
     dimensions: { policy_violation: rate(3, 8), overrefusal: rate(1, 8), quality_failure: rate(2, 6, 2) },
+    dimension_no_verdict: { policy_violation: 0, overrefusal: 1, quality_failure: 0 },
     dimension_grades: { quality_failure: { counts: { '1': 4, '2': 1, '3': 1 }, median: 1 } },
     categories: [
       { behavior_name: 'support', name: 'public_policy', permissible: true, node_violation: rate(1, 6), attributed_by_fallback: 0 },
@@ -73,7 +74,8 @@ describe('AssertPolicyMetricsPanel', () => {
     ])
     const single = within(table).getByRole('row', { name: /red_teaming/ })
     expect(single).toHaveTextContent('8 of 8')
-    expect(single).toHaveTextContent('50.0%2 / 4 · 4 n/a')
+    expect(single).toHaveTextContent('50.0%2 / 4 · 4 n/a90% CI 5.0%–60.0%')
+    expect(single).toHaveTextContent('12.5%1 / 8 · 1 no verdict')
     expect(single).toHaveTextContent('16.7%1 / 6 · 2 n/a')
     expect(single).toHaveTextContent('33.3%2 / 6 · 2 n/a')
     expect(within(single).getByText('median 1 · 1: 4, 2: 1, 3: 1')).toBeInTheDocument()
@@ -90,13 +92,14 @@ describe('AssertPolicyMetricsPanel', () => {
           scored_total: 7,
           not_judged: { target_input_refused: 1, target_error: 0, judge_no_verdict: 0, attack_error: 0, not_scored: 0 },
           unresolved_policy: 2,
+          dimension_no_verdict: { policy_violation: 1, overrefusal: 0, quality_failure: 0 },
         }),
       },
     })
 
     expect(screen.getByText(
       'Some conversations are left out of these rates. red_teaming not judged: 1 target blocked; '
-        + 'left out of the stance rates only: 2 without a stored policy.',
+        + 'left out of the stance rates only: 2 without a stored policy, 1 without a policy verdict.',
     )).toBeInTheDocument()
   })
 

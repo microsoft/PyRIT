@@ -225,10 +225,11 @@ the conversation's own stored taxonomy, not the category it was generated for.
 Rows are the effective execution units that `compute_scenario_statistics`
 counts. Rates are reported separately for each attack technique, by name, and
 for the baseline, and are never pooled. Each technique also reports a violation
-rate for each judge dimension, with not-applicable answers counted outside its
-denominator and grade counts and the median for graded dimensions, a violation
+rate for each judge dimension, read independently of the others: not-applicable
+answers and judge replies without a verdict are counted outside its denominator,
+and graded dimensions add grade counts and the median. It also reports a violation
 rate for each taxonomy category over the conversations that judged it relevant,
-and why unjudged conversations have no verdict. Every rate is a `BinaryRate`
+and why unjudged conversations have no verdict. Every rate is an `AssertBinaryRate`
 with ASSERT's 90% Wilson interval and a flag for fewer than 5 applicable
 conversations. See the [Foundry scenarios](../../scanner/foundry.ipynb) page for
 an example.

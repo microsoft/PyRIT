@@ -19,7 +19,7 @@ import {
 
 import { useAssertPolicyMetrics } from '@/hooks/useAssertPolicyMetrics'
 import type {
-  AssertGradeDistribution, AssertNotJudgedCounts, AssertPolicyMetrics, AssertTechniqueMetrics, BinaryRate,
+  AssertGradeDistribution, AssertNotJudgedCounts, AssertPolicyMetrics, AssertTechniqueMetrics, AssertBinaryRate,
 } from '@/types'
 
 import { useAssertPolicyMetricsPanelStyles } from './AssertPolicyMetricsPanel.styles'
@@ -37,8 +37,9 @@ const NOT_JUDGED_LABELS: Record<keyof AssertNotJudgedCounts, string> = {
 interface RateColumn {
   key: string
   label: string
-  rate: (technique: AssertTechniqueMetrics) => BinaryRate | null
+  rate: (technique: AssertTechniqueMetrics) => AssertBinaryRate | null
   grades?: (technique: AssertTechniqueMetrics) => AssertGradeDistribution | undefined
+  noVerdict?: (technique: AssertTechniqueMetrics) => number
 }
 
 interface AssertPolicyMetricsPanelProps {
@@ -82,6 +83,7 @@ function MetricsBody({ metrics }: { metrics: AssertPolicyMetrics }) {
       label: name.replace(/_/g, ' '),
       rate: (technique) => technique.dimensions[name] ?? null,
       grades: (technique) => technique.dimension_grades[name],
+      noVerdict: (technique) => technique.dimension_no_verdict[name] ?? 0,
     })),
   ]
   const notes = techniques.flatMap((technique) => exclusionNote(technique, splitAvailable))
@@ -120,7 +122,11 @@ function MetricsBody({ metrics }: { metrics: AssertPolicyMetrics }) {
                 <TableCell>{`${technique.scored_total} of ${technique.total}`}</TableCell>
                 {columns.map((column) => (
                   <TableCell key={column.key}>
-                    <RateCell rate={column.rate(technique)} grades={column.grades?.(technique)} />
+                    <RateCell
+                      rate={column.rate(technique)}
+                      grades={column.grades?.(technique)}
+                      noVerdict={column.noVerdict?.(technique) ?? 0}
+                    />
                   </TableCell>
                 ))}
               </TableRow>
@@ -144,11 +150,13 @@ function exclusionNote(technique: AssertTechniqueMetrics, splitAvailable: boolea
   const notJudged = (Object.keys(NOT_JUDGED_LABELS) as Array<keyof AssertNotJudgedCounts>)
     .filter((reason) => technique.not_judged[reason] > 0)
     .map((reason) => `${technique.not_judged[reason]} ${NOT_JUDGED_LABELS[reason]}`)
+  const policyNoVerdict = technique.dimension_no_verdict.policy_violation ?? 0
   const splitOnly = [
     technique.unresolved_policy > 0 ? `${technique.unresolved_policy} without a stored policy` : null,
     splitAvailable && technique.rows_without_node_judgments > 0
       ? `${technique.rows_without_node_judgments} without per-category judgments`
       : null,
+    splitAvailable && policyNoVerdict > 0 ? `${policyNoVerdict} without a policy verdict` : null,
   ].filter((reason): reason is string => reason !== null)
   const parts = [
     ...(notJudged.length > 0 ? [`not judged: ${notJudged.join(', ')}`] : []),
@@ -199,14 +207,30 @@ function CategoryTable({ techniques }: { techniques: AssertTechniqueMetrics[] })
   )
 }
 
-function RateCell({ rate, grades }: { rate: BinaryRate | null; grades?: AssertGradeDistribution }) {
+interface RateCellProps {
+  rate: AssertBinaryRate | null
+  grades?: AssertGradeDistribution
+  noVerdict?: number
+}
+
+function RateCell({ rate, grades, noVerdict = 0 }: RateCellProps) {
   const styles = useAssertPolicyMetricsPanelStyles()
   if (!rate || rate.rate === null) return <Text className={styles.hint}>—</Text>
-  const notApplicable = rate.not_applicable_count > 0 ? ` · ${rate.not_applicable_count} n/a` : ''
+  const excluded = [
+    rate.not_applicable_count > 0 ? `${rate.not_applicable_count} n/a` : null,
+    noVerdict > 0 ? `${noVerdict} no verdict` : null,
+  ].filter((part): part is string => part !== null)
   return (
     <div className={styles.rateCell}>
-      <Text weight="semibold">{`${(rate.rate * 100).toFixed(1)}%`}</Text>
-      <Text size={200} className={styles.hint}>{`${rate.flagged_count} / ${rate.applicable_count}${notApplicable}`}</Text>
+      <Text weight="semibold">{formatPercent(rate.rate)}</Text>
+      <Text size={200} className={styles.hint}>
+        {[`${rate.flagged_count} / ${rate.applicable_count}`, ...excluded].join(' · ')}
+      </Text>
+      {rate.ci_lower !== null && rate.ci_upper !== null && (
+        <Text size={200} className={styles.hint}>
+          {`90% CI ${formatPercent(rate.ci_lower)}–${formatPercent(rate.ci_upper)}`}
+        </Text>
+      )}
       {!rate.sufficient_support && (
         <Badge appearance="outline" color="warning" size="small">{`n < ${MIN_SUPPORT}`}</Badge>
       )}
@@ -217,6 +241,10 @@ function RateCell({ rate, grades }: { rate: BinaryRate | null; grades?: AssertGr
       )}
     </div>
   )
+}
+
+function formatPercent(value: number): string {
+  return `${(value * 100).toFixed(1)}%`
 }
 
 function techniqueLabel(technique: string): string {

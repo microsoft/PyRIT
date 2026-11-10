@@ -183,6 +183,10 @@ class ScenarioRunNotFoundError(ValueError):
     """The requested saved run is not in the active memory database."""
 
 
+class ScenarioRunNotCompletedError(ValueError):
+    """Results were requested for a saved run that hasn't completed."""
+
+
 @dataclass
 class _PreparedRun:
     """Scenario and request-scoped default captured on the backend loop."""
@@ -3256,7 +3260,7 @@ class ScenarioRunService:
             ScenarioResult if the run is completed and results exist, None if not found.
 
         Raises:
-            ValueError: If the run is not in a completed state.
+            ScenarioRunNotCompletedError: If the run is not in a completed state.
         """
         results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
         if not results:
@@ -3266,7 +3270,9 @@ class ScenarioRunService:
         run_response = await self._build_response_from_db_async(scenario_result=scenario_result)
 
         if run_response.status != ScenarioRunState.COMPLETED:
-            raise ValueError(f"Results are only available for completed runs. Current status: '{run_response.status}'.")
+            raise ScenarioRunNotCompletedError(
+                f"Results are only available for completed runs. Current status: '{run_response.status}'."
+            )
 
         return scenario_result
 
