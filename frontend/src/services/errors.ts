@@ -16,6 +16,16 @@ export function conflictingOperation(cause: unknown): Operation | null {
   return { id: operation.id, name: operation.name, created_at: operation.created_at }
 }
 
+/** One RFC 7807 `errors[]` entry describing a problem with a specific field. */
+export interface ApiFieldError {
+  /** Raw backend field path, e.g. `body.attack_result_id` or `pieces[0].data_type`. */
+  field: string
+  /** The server's explanation, e.g. a UUID parsing message. */
+  message: string
+  /** Optional machine-readable validation code (the Pydantic error type). */
+  code?: string
+}
+
 /**
  * Normalized error from any API call.
  *
@@ -30,6 +40,8 @@ export interface ApiError {
   detail: string
   /** RFC 7807 `type` URI, if the backend included one. */
   type?: string
+  /** Field-level errors from an RFC 7807 `errors[]` array, in server order. */
+  fieldErrors: ApiFieldError[]
   /** True when no HTTP response was received (DNS failure, CORS block, etc.). */
   isNetworkError: boolean
   /** True when the request exceeded the configured timeout. */
@@ -58,6 +70,7 @@ export function toApiError(err: unknown): ApiError {
       return {
         status: null,
         detail: 'Request timed out. The server may be busy — please try again.',
+        fieldErrors: [],
         isNetworkError: false,
         isTimeout: true,
         raw: err,
@@ -69,20 +82,22 @@ export function toApiError(err: unknown): ApiError {
       return {
         status: null,
         detail: 'Network error — check that the backend is running and reachable.',
+        fieldErrors: [],
         isNetworkError: true,
         isTimeout: false,
         raw: err,
       }
     }
 
-    // We have an HTTP response — try to extract RFC 7807 detail
+    // We have an HTTP response — try to extract the RFC 7807 problem details.
     const { status, data } = err.response
-    const { detail, type } = extractDetail(data)
+    const { detail, type, fieldErrors } = extractProblem(data)
 
     return {
       status,
       detail: detail || `Server error (${status})`,
       type,
+      fieldErrors,
       isNetworkError: false,
       isTimeout: false,
       raw: err,
@@ -94,6 +109,7 @@ export function toApiError(err: unknown): ApiError {
     return {
       status: null,
       detail: err.message || 'An unexpected error occurred.',
+      fieldErrors: [],
       isNetworkError: false,
       isTimeout: false,
       raw: err,
@@ -105,6 +121,7 @@ export function toApiError(err: unknown): ApiError {
     return {
       status: null,
       detail: err,
+      fieldErrors: [],
       isNetworkError: false,
       isTimeout: false,
       raw: err,
@@ -115,10 +132,67 @@ export function toApiError(err: unknown): ApiError {
   return {
     status: null,
     detail: 'An unexpected error occurred.',
+    fieldErrors: [],
     isNetworkError: false,
     isTimeout: false,
     raw: err,
   }
+}
+
+/** Transport locations FastAPI/Pydantic prefixes onto validation field paths. */
+const FIELD_LOCATION_PREFIXES = new Set(['body', 'query', 'path', 'header', 'cookie', 'form'])
+
+/** Bound the work done for a malformed or hostile response body. */
+const MAX_FIELD_ERRORS = 50
+
+/**
+ * Reduce an API field path to the name a form control uses.
+ *
+ * `body.attack_result_id` becomes `attack_result_id`, and indexed paths such as
+ * `body.pieces[0].data_type` become `data_type`. A path without a location
+ * prefix keeps its last segment so callers can match leaf names consistently.
+ */
+export function apiFieldLeaf(field: string): string {
+  const segments = field.split('.').filter(Boolean)
+  if (segments.length > 1 && FIELD_LOCATION_PREFIXES.has((segments[0] ?? '').toLowerCase())) segments.shift()
+  const leaf = (segments[segments.length - 1] ?? field).replace(/\[[^\]]*\]/g, '').trim()
+  return leaf || field.trim()
+}
+
+export interface GroupedApiFieldErrors<K extends string> {
+  /** Server messages keyed by the form field they belong to, in server order. */
+  fields: Partial<Record<K, string>>
+  /** Errors that did not match a field the caller can display. */
+  unmatched: ApiFieldError[]
+}
+
+/**
+ * Match RFC 7807 field errors against the fields a form currently renders.
+ *
+ * `aliases` covers backend names that differ from the form's names. Errors for
+ * hidden or unknown fields are returned in `unmatched` so callers can show them
+ * in an error summary rather than silently dropping the server's explanation.
+ */
+export function groupApiFieldErrors<K extends string>(
+  error: ApiError,
+  visibleFields: readonly K[],
+  aliases: Readonly<Record<string, K>> = {},
+): GroupedApiFieldErrors<K> {
+  const allowed = new Set<string>(visibleFields)
+  const fields: Partial<Record<K, string>> = {}
+  const unmatched: ApiFieldError[] = []
+
+  for (const item of error.fieldErrors) {
+    const leaf = apiFieldLeaf(item.field)
+    const key = aliases[leaf] ?? (allowed.has(leaf) ? (leaf as K) : undefined)
+    if (!key || !allowed.has(key)) {
+      unmatched.push(item)
+      continue
+    }
+    fields[key] = fields[key] ? `${fields[key]} ${item.message}` : item.message
+  }
+
+  return { fields, unmatched }
 }
 
 /** Respect a server-directed cooldown before a user retries a busy read. */
@@ -173,22 +247,45 @@ function readBlobText(blob: Blob): Promise<string> {
 }
 
 /**
- * Extract `detail` and `type` from an Axios response body.
+ * Extract the problem details from an Axios response body.
  *
  * The body may be:
- * - An RFC 7807 JSON object with `.detail` and optionally `.type`
+ * - An RFC 7807 JSON object with `.detail`, optionally `.type`, and for
+ *   validation failures an `errors[]` array of field/message pairs
  * - A plain string (e.g. nginx HTML error page)
  * - Something else entirely (null, number, etc.)
  */
-function extractDetail(data: unknown): { detail: string | undefined; type: string | undefined } {
+function extractProblem(data: unknown): {
+  detail: string | undefined
+  type: string | undefined
+  fieldErrors: ApiFieldError[]
+} {
   if (typeof data === 'string') {
-    return { detail: data, type: undefined }
+    return { detail: data, type: undefined, fieldErrors: [] }
   }
   if (typeof data === 'object' && data !== null) {
     const obj = data as Record<string, unknown>
     const detail = typeof obj.detail === 'string' ? obj.detail : undefined
     const type = typeof obj.type === 'string' ? obj.type : undefined
-    return { detail, type }
+    return { detail, type, fieldErrors: extractFieldErrors(obj.errors) }
   }
-  return { detail: undefined, type: undefined }
+  return { detail: undefined, type: undefined, fieldErrors: [] }
+}
+
+/** Keep only well-formed `errors[]` entries; ignore anything untrusted. */
+function extractFieldErrors(value: unknown): ApiFieldError[] {
+  if (!Array.isArray(value)) return []
+  const result: ApiFieldError[] = []
+  for (const entry of value) {
+    if (result.length >= MAX_FIELD_ERRORS) break
+    if (typeof entry !== 'object' || entry === null) continue
+    const item = entry as Record<string, unknown>
+    if (typeof item.field !== 'string' || typeof item.message !== 'string') continue
+    const field = item.field.trim()
+    const message = item.message.trim()
+    if (!field || !message) continue
+    const code = typeof item.code === 'string' && item.code.trim() ? item.code.trim() : undefined
+    result.push(code ? { field, message, code } : { field, message })
+  }
+  return result
 }

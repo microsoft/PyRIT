@@ -8,4 +8,8 @@ export const useFindingDialogStyles = makeStyles({
   button: { ...mobileTouchTarget },
   harmPicker: { minWidth: 0, width: '100%' },
   harmListbox: { maxHeight: '240px', overflowY: 'auto' },
+  fieldErrorList: {
+    margin: `${tokens.spacingVerticalXS} 0 0`,
+    paddingLeft: tokens.spacingHorizontalL,
+  },
 })

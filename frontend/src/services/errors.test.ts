@@ -1,4 +1,6 @@
-import { decodeBlobErrorAsync, retryAfterMilliseconds, toApiError } from './errors'
+import {
+  apiFieldLeaf, decodeBlobErrorAsync, groupApiFieldErrors, retryAfterMilliseconds, toApiError,
+} from './errors'
 import type { ApiError } from './errors'
 
 // ---------------------------------------------------------------------------
@@ -274,5 +276,157 @@ describe('decodeBlobErrorAsync', () => {
     await decodeBlobErrorAsync(makeAxiosError({ hasResponse: false }))
 
     expect(notAxios.response.data).toBe(body)
+  })
+
+  it('keeps field errors after a JSON Blob body is decoded', async () => {
+    const problem = {
+      detail: 'Request validation failed',
+      errors: [{ field: 'body.attack_result_id', message: 'Invalid UUID', code: 'uuid_parsing' }],
+    }
+    const err = makeAxiosError({
+      status: 422,
+      data: new Blob([JSON.stringify(problem)], { type: 'application/json' }),
+    })
+
+    await decodeBlobErrorAsync(err)
+
+    expect(toApiError(err).fieldErrors).toEqual([
+      { field: 'body.attack_result_id', message: 'Invalid UUID', code: 'uuid_parsing' },
+    ])
+  })
+})
+
+describe('toApiError field errors', () => {
+  it('preserves well-formed RFC 7807 errors[] entries in server order', () => {
+    const err = makeAxiosError({
+      status: 422,
+      data: {
+        detail: 'Request validation failed',
+        errors: [
+          { field: ' body.attack_result_id ', message: ' Input should be a valid UUID ', code: 'uuid_parsing' },
+          { field: 'body.title', message: 'String should have at most 200 characters' },
+        ],
+      },
+    })
+
+    const result = toApiError(err)
+
+    expect(result.detail).toBe('Request validation failed')
+    expect(result.fieldErrors).toEqual([
+      { field: 'body.attack_result_id', message: 'Input should be a valid UUID', code: 'uuid_parsing' },
+      { field: 'body.title', message: 'String should have at most 200 characters' },
+    ])
+  })
+
+  it('drops malformed entries and empty messages instead of surfacing garbage', () => {
+    const err = makeAxiosError({
+      status: 422,
+      data: {
+        detail: 'Request validation failed',
+        errors: [
+          null,
+          'not an object',
+          { field: 'body.title' },
+          { message: 'Missing field' },
+          { field: 'body.title', message: '   ' },
+          { field: 'body.title', message: 'Valid', code: 42 },
+          { field: 'body.title', message: 'Also valid', code: '  ' },
+        ],
+      },
+    })
+
+    expect(toApiError(err).fieldErrors).toEqual([
+      { field: 'body.title', message: 'Valid' },
+      { field: 'body.title', message: 'Also valid' },
+    ])
+  })
+
+  it.each([
+    ['a body that is not an array', { errors: { field: 'body.title', message: 'Invalid' } }],
+    ['an HTML proxy page', '<html>Bad Gateway</html>'],
+    ['no response body', null],
+  ])('returns an empty list for %s', (_name, data) => {
+    expect(toApiError(makeAxiosError({ status: 422, data })).fieldErrors).toEqual([])
+  })
+
+  it.each([
+    ['a network failure', makeAxiosError({ hasResponse: false })],
+    ['a timeout', makeAxiosError({ code: 'ECONNABORTED', hasResponse: false })],
+    ['a plain Error', new Error('Storage offline')],
+    ['a string throw', 'Storage offline'],
+    ['null', null],
+  ])('returns an empty list for %s', (_name, cause) => {
+    expect(toApiError(cause).fieldErrors).toEqual([])
+  })
+
+  it('bounds the number of field errors accepted from a response', () => {
+    const errors = Array.from({ length: 80 }, (_, index) => ({
+      field: `body.field_${index}`, message: `Invalid ${index}`,
+    }))
+    expect(toApiError(makeAxiosError({ status: 422, data: { errors } })).fieldErrors).toHaveLength(50)
+  })
+})
+
+describe('apiFieldLeaf', () => {
+  it.each([
+    ['body.attack_result_id', 'attack_result_id'],
+    ['query.limit', 'limit'],
+    ['path.operation_id', 'operation_id'],
+    ['body.pieces[0].data_type', 'data_type'],
+    ['pieces[2].data_type', 'data_type'],
+    ['attack_result_id', 'attack_result_id'],
+    ['body', 'body'],
+    ['', ''],
+  ])('normalizes %j to %j', (path, expected) => {
+    expect(apiFieldLeaf(path)).toBe(expected)
+  })
+})
+
+describe('groupApiFieldErrors', () => {
+  function problem(errors: unknown): ApiError {
+    return toApiError(makeAxiosError({ status: 422, data: { detail: 'Request validation failed', errors } }))
+  }
+
+  it('maps visible fields, joins duplicate messages, and reports the rest', () => {
+    const grouped = groupApiFieldErrors(problem([
+      { field: 'body.title', message: 'Too short' },
+      { field: 'body.attack_result_id', message: 'Invalid UUID' },
+      { field: 'body.title', message: 'Already used' },
+      { field: 'body.unknown', message: 'Not editable here' },
+    ]), ['title', 'attack_result_id'])
+
+    expect(grouped.fields).toEqual({
+      title: 'Too short Already used',
+      attack_result_id: 'Invalid UUID',
+    })
+    expect(grouped.unmatched).toEqual([{ field: 'body.unknown', message: 'Not editable here' }])
+  })
+
+  it('does not map an error onto a field the form is not rendering', () => {
+    const grouped = groupApiFieldErrors(
+      problem([{ field: 'body.severity_other', message: 'Required' }]),
+      ['title', 'severity'],
+    )
+    expect(grouped.fields).toEqual({})
+    expect(grouped.unmatched).toHaveLength(1)
+  })
+
+  it('honors aliases and rejects aliases that point at hidden fields', () => {
+    const grouped = groupApiFieldErrors(
+      problem([
+        { field: 'body.attackId', message: 'Invalid UUID' },
+        { field: 'body.harmType', message: 'Unknown category' },
+      ]),
+      ['attack_result_id'],
+      { attackId: 'attack_result_id', harmType: 'harm_type' },
+    )
+    expect(grouped.fields).toEqual({ attack_result_id: 'Invalid UUID' })
+    expect(grouped.unmatched.map(item => item.field)).toEqual(['body.harmType'])
+  })
+
+  it('returns nothing for errors that have no field-level detail', () => {
+    const grouped = groupApiFieldErrors(toApiError(new Error('Storage offline')), ['title'])
+    expect(grouped.fields).toEqual({})
+    expect(grouped.unmatched).toEqual([])
   })
 })
