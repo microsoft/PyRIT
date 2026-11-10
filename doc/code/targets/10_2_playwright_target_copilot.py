@@ -14,7 +14,9 @@
 # Similar to the more generic `PlaywrightTarget`, `PlaywrightCopilotTarget` uses Playwright for browser automation.
 # It is built specifically for testing Microsoft's Copilots (currently supports M365 and Consumer Copilot).
 # %%
+import asyncio
 import pathlib
+import sys
 
 from playwright.async_api import Page, async_playwright
 
@@ -52,8 +54,7 @@ await initialize_pyrit_async(memory_db_type=IN_MEMORY)
 
 
 # %%
-async def connect_to_existing_browser(browser_debug_port, run_function):
-    """Connect to an existing browser session with remote debugging enabled"""
+async def _connect_and_run(browser_debug_port, run_function):
     async with async_playwright() as playwright:
         # Connect to existing browser instance running on debug port
         browser = await playwright.chromium.connect_over_cdp(f"http://localhost:{browser_debug_port}")
@@ -80,6 +81,25 @@ async def connect_to_existing_browser(browser_debug_port, run_function):
 
         # Don't close browser since it was already running
         await context.close()
+
+
+async def connect_to_existing_browser(browser_debug_port, run_function):
+    """Connect to an existing browser session with remote debugging enabled"""
+    # Playwright starts a driver subprocess, which the Windows SelectorEventLoop used by some Jupyter
+    # kernels does not support, so run the whole session on a worker thread with a ProactorEventLoop.
+    # https://playwright.dev/python/docs/library#incompatible-with-selectoreventloop-of-asyncio-on-windows
+    if sys.platform == "win32" and isinstance(asyncio.get_running_loop(), asyncio.SelectorEventLoop):
+
+        def run_on_proactor_loop():
+            loop = asyncio.ProactorEventLoop()
+            try:
+                loop.run_until_complete(_connect_and_run(browser_debug_port, run_function))
+            finally:
+                loop.close()
+
+        await asyncio.to_thread(run_on_proactor_loop)
+    else:
+        await _connect_and_run(browser_debug_port, run_function)
 
 
 # %% [markdown]
