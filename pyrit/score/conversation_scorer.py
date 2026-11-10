@@ -136,7 +136,8 @@ class ConversationScorer(MessageScorer, ABC):
     _trace_requirement: TraceEvidenceRequirement = TraceEvidenceRequirement.NONE
     _max_rendered_trace_chars: int = 60000
 
-    TRACE_RENDERING_VERSION: ClassVar[int] = 2
+    #: 2 fenced and indented trace content; 3 renders steps unreachable through parent links.
+    TRACE_RENDERING_VERSION: ClassVar[int] = 3
     #: Metadata key on an undetermined result whose judge was not called because the configured
     #: trace requirement was not met. Its value is the reason.
     EVIDENCE_REQUIREMENT_UNMET_KEY: ClassVar[str] = "evidence_requirement_unmet"

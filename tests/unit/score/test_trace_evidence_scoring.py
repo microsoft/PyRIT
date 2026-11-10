@@ -377,6 +377,22 @@ def test_trace_free_scorers_keep_their_identity(capture: LocalTraceCapture) -> N
     assert "trace_source" in traced.get_identifier().children
 
 
+def test_trace_rendering_version_separates_traced_judge_identities(capture: LocalTraceCapture) -> None:
+    def traced() -> Scorer:
+        return build_assert_policy_scorer(
+            target=MockPromptTarget(),
+            taxonomy=make_assert_taxonomy(),
+            trace_evidence=AssertTraceEvidence(source=capture.source()),
+        )
+
+    current = traced().get_identifier()
+    with patch.object(ConversationScorer, "TRACE_RENDERING_VERSION", 2):
+        previous = traced().get_identifier()
+
+    assert current.params["trace_rendering_version"] == 3
+    assert previous.hash != current.hash
+
+
 def test_trace_requirement_needs_a_source() -> None:
     with pytest.raises(ValueError, match="needs a trace_source"):
         create_conversation_scorer(
