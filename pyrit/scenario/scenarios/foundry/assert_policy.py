@@ -32,6 +32,8 @@ from pyrit.models import (
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
+    SeedGroupRequirements,
+    SeedMetadataRequirement,
     SeedPrompt,
 )
 from pyrit.models.score.assert_judge import AssertJudgeConfig, describe_validation_errors
@@ -609,6 +611,33 @@ class AssertPolicy(Scenario):
         samples: int = self.params["judge_samples"]
         return len(self._judge_dimensions) * samples
 
+    def get_dataset_requirements(self) -> SeedGroupRequirements:
+        """
+        Declare the policy context required by every ASSERT judge, regardless of provenance.
+
+        Returns:
+            SeedGroupRequirements: The scenario-wide ASSERT schema check.
+        """
+        return SeedGroupRequirements(
+            metadata=(
+                SeedMetadataRequirement(
+                    name="assert_generation",
+                    key=AssertGroupMetadata.METADATA_KEY,
+                    description="ASSERT generation metadata and policy taxonomy",
+                    validator=AssertGroupMetadata.from_metadata,
+                ),
+            )
+        )
+
+    def get_baseline_dataset_requirements(self) -> SeedGroupRequirements:
+        """
+        Declare the stored user prompt required by ASSERT's prompt-case baseline.
+
+        Returns:
+            SeedGroupRequirements: The prompt-case baseline's input requirements.
+        """
+        return SeedGroupRequirements(required_user_prompt=True)
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
@@ -634,8 +663,22 @@ class AssertPolicy(Scenario):
         await self._resolve_judge_dimensions_async()
         selection = await self._dataset_config._resolve_attack_groups_async()
         population = selection.select(apply_sampling=False)
+        self._validate_dataset_population(population)
         if not any(population.values()):
             raise DatasetConstraintError("The selected ASSERT datasets contain no seed groups.")
+        groups = [group for dataset_groups in population.values() for group in dataset_groups]
+        self._validate_dataset_assessment_population(population)
+        selected = (
+            self._sample_dataset_population(population=population, selection=selection)
+            if apply_sampling
+            else population
+        )
+        await asyncio.to_thread(self._configure_judges, population=population)
+        counts = Counter(group.logical_id for group in groups)
+        self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
+        return selected
+
+    def _validate_dataset_assessment_population(self, population: dict[str, list[AttackSeedGroup]]) -> None:
         groups = [group for dataset_groups in population.values() for group in dataset_groups]
         repeated_seeds = [seed_id for seed_id, count in Counter(g.objective.id for g in groups).items() if count > 1]
         if repeated_seeds:
@@ -643,10 +686,14 @@ class AssertPolicy(Scenario):
                 f"The selected ASSERT seed groups include objective seed {repeated_seeds[0]} more than once. "
                 "Select each stored group once."
             )
-        await asyncio.to_thread(self._configure_judges, population=population)
-        counts = Counter(group.logical_id for group in groups)
-        self._repeated_ids = {logical_id for logical_id, count in counts.items() if count > 1}
-        return selection.select(apply_sampling=True) if apply_sampling else population
+        if self.params.get("target_system_prompt") is not None and any(
+            self._get_stored_system_prompt(group) for group in groups
+        ):
+            raise ValueError(
+                "target_system_prompt is only for target-owned instructions, but a selected group stores "
+                "its own system prompt. Remove target_system_prompt, or generate the groups with "
+                "target_owns_instructions=True."
+            )
 
     def _configure_judges(self, *, population: dict[str, list[AttackSeedGroup]]) -> None:
         """
@@ -663,12 +710,6 @@ class AssertPolicy(Scenario):
         for dataset_name, groups in population.items():
             for group in groups:
                 metadata = self._read_metadata(group=group, dataset_name=dataset_name)
-                if self.params.get("target_system_prompt") is not None and self._get_stored_system_prompt(group):
-                    raise ValueError(
-                        f"target_system_prompt is only for target-owned instructions, but a group in dataset "
-                        f"'{dataset_name}' stores its own system prompt. Remove target_system_prompt, or "
-                        "generate the groups with target_owns_instructions=True."
-                    )
                 system_prompt = self._get_judged_system_prompt(group)
                 key = self._get_policy_key(metadata=metadata, system_prompt=system_prompt)
                 if key not in self._judges_by_policy:
@@ -709,8 +750,8 @@ class AssertPolicy(Scenario):
         except ValueError as error:
             raise ValueError(
                 f"Dataset '{dataset_name}' contains a seed group without valid ASSERT generation metadata "
-                f"('{group.objective.value[:80]}'). foundry.assert_policy only runs groups generated with "
-                f"AssertGenerator and stored with AssertProvider. Details: {error}"
+                f"('{group.objective.value[:80]}'). Generate or import groups that meet the ASSERT schema. "
+                f"Details: {error}"
             ) from error
 
     @staticmethod
@@ -963,10 +1004,17 @@ class AssertPolicy(Scenario):
         Returns:
             list[AtomicAttack]: One baseline unit per group with a stored user prompt.
         """
-        groups = sorted(context.seed_groups, key=self._get_generation_order)
-        prompted = [group for group in groups if any(prompt.role == "user" for prompt in group.prompts)]
-        if len(prompted) < len(groups):
-            logger.warning("Baseline: skipping %d group(s) without a stored user prompt.", len(groups) - len(prompted))
+        prompted = sorted(
+            filter_seed_groups(
+                seed_groups=context.seed_groups,
+                requirements=self.get_baseline_dataset_requirements(),
+                seed_technique=None,
+                technique_name="baseline",
+                dataset_name="selected datasets",
+                policy=context.incompatible_technique_policy,
+            ),
+            key=self._get_generation_order,
+        )
         baselines = []
         for group in prompted:
             scoring = self._get_scoring(group)

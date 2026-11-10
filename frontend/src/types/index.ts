@@ -1576,6 +1576,37 @@ export interface ScenarioDatasetLoadResponse {
   items: DatasetInfo[]
 }
 
+export interface DatasetCompatibilityReason {
+  code: string
+  message: string
+  requirement: string
+  count: number | null
+}
+
+export interface DatasetTechniqueCompatibility {
+  technique_name: string
+  is_baseline: boolean
+  usable_count: number
+  skipped_count: number
+  reasons: DatasetCompatibilityReason[]
+}
+
+export interface DatasetCompatibility {
+  name: string
+  status: 'compatible' | 'incompatible' | 'not_verified'
+  selected: boolean
+  group_count: number | null
+  reasons: DatasetCompatibilityReason[]
+  techniques: DatasetTechniqueCompatibility[]
+}
+
+export interface ScenarioDatasetCompatibility {
+  requirements: Array<{ name: string; description: string }>
+  items: DatasetCompatibility[]
+  selection_compatible: boolean | null
+  selection_reasons: DatasetCompatibilityReason[]
+}
+
 export interface RegisteredScenario {
   supports_objective_scorer?: boolean
   /** Maximum resolved concrete techniques, excluding baseline. Omitted/null means unrestricted. */

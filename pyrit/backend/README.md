@@ -55,6 +55,34 @@ its database collation.
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
 
+### Scenario dataset compatibility
+
+`POST /api/scenarios/catalog/{scenario_name}/datasets/assess` accepts the same
+configuration as the scenario estimate route. By default it lists scenario-permitted
+candidates using grouped stored facts, without hydrating prompts, parsing policy
+taxonomies, fetching providers, or calling a model. `not_verified` is not a successful
+schema check: metadata-key presence and provider provenance cannot establish validity.
+
+Add `?validate_selected=true` to validate the selected stored contents with the SDK's
+scenario requirements, technique preparation, and named adversarial-prompt checks.
+The response includes structured reasons and separate usable/skipped counts for each
+technique and baseline, before selection limits. Techniques can use disjoint subsets.
+Unloaded providers remain `not_verified`; the existing `datasets/load` action loads
+missing data explicitly, after which callers reassess it.
+
+ASSERT requires valid policy-generation metadata for every group, including imported
+groups, independently of technique. Its prompt baseline needs a stored user prompt;
+its default conversation technique needs stored tester instructions. Invalid policy
+groups reject the selection even under `skip`. A baseline does not rescue a selection
+with no usable selected technique. The GUI recommends generating both prompt types;
+the Python generation defaults remain unchanged.
+
+Assessments are read-only snapshots, not launch authorization. SDK estimates for
+scenarios with data requirements validate their selected stored data, and launch/resume
+revalidates contents using the established dataset identities and saved run plan.
+`GET /api/datasets` remains the unfiltered catalog. Required ingredient datasets remain
+separate from compatibility requirements.
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,

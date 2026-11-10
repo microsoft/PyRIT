@@ -27,9 +27,9 @@ if TYPE_CHECKING:
     from pyrit.models.seeds.attack_technique_seed_group import AttackTechniqueSeedGroup
     from pyrit.models.seeds.seed import Seed
     from pyrit.models.seeds.seed_dataset import SeedDataset
-    from pyrit.models.seeds.seed_dataset_summary import SeedDatasetSummary
+    from pyrit.models.seeds.seed_dataset_summary import SeedDatasetGroupProfile, SeedDatasetSummary
     from pyrit.models.seeds.seed_group import SeedGroup, SeedUnion
-    from pyrit.models.seeds.seed_group_requirements import SeedGroupRequirements
+    from pyrit.models.seeds.seed_group_requirements import SeedGroupRequirements, SeedMetadataRequirement
     from pyrit.models.seeds.seed_grouping import group_seeds_into_attack_groups
     from pyrit.models.seeds.seed_objective import SeedObjective
     from pyrit.models.seeds.seed_origin import SeedOrigin
@@ -66,8 +66,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AttackTechniqueSeedGroup": "pyrit.models.seeds.attack_technique_seed_group",
     "SeedDataset": "pyrit.models.seeds.seed_dataset",
     "SeedDatasetSummary": "pyrit.models.seeds.seed_dataset_summary",
+    "SeedDatasetGroupProfile": "pyrit.models.seeds.seed_dataset_summary",
     "SeedGroup": "pyrit.models.seeds.seed_group",
     "SeedGroupRequirements": "pyrit.models.seeds.seed_group_requirements",
+    "SeedMetadataRequirement": "pyrit.models.seeds.seed_group_requirements",
     "SeedObjective": "pyrit.models.seeds.seed_objective",
     "SeedOrigin": "pyrit.models.seeds.seed_origin",
     "SeedPrompt": "pyrit.models.seeds.seed_prompt",

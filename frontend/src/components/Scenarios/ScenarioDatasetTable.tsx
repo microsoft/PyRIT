@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react'
 
 import {
-  Badge, Button, Combobox, Divider, mergeClasses, MessageBar, MessageBarBody, Option, Radio, RadioGroup,
+  Badge, Button, Combobox, Divider, mergeClasses, MessageBar, MessageBarBody, Option, Radio, RadioGroup, Switch,
   Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, ToggleButton, Tooltip,
 } from '@fluentui/react-components'
 import { DismissRegular } from '@fluentui/react-icons'
@@ -11,6 +11,7 @@ import { MODALITY_LABELS } from '@/components/Config/targetFilters'
 import type {
   DatasetInfo, DatasetFetchPolicy, ScenarioDatasetLimit, ScenarioDatasetOptions, ScenarioDatasetRequest,
   ScenarioDatasetSettings, ScenarioDatasetSourceInput,
+  ScenarioDatasetCompatibility,
 } from '@/types'
 
 import DatasetLimitControl from './DatasetLimitControl'
@@ -33,17 +34,22 @@ interface ScenarioDatasetTableProps {
   onReload: () => void
   onChange: (request: ScenarioDatasetRequest) => void
   onValidationChange: (error: string | null) => void
+  compatibility?: ScenarioDatasetCompatibility | null
+  compatibilityLoading?: boolean
+  compatibilityError?: string | null
 }
 
 export default function ScenarioDatasetTable({
   request, defaults, effective, options, datasets, disabled, loading, metadataError,
   preparing = false, loadError, loadEnabled = false, onLoad, onReload, onChange, onValidationChange,
+  compatibility, compatibilityLoading = false, compatibilityError,
 }: ScenarioDatasetTableProps) {
   const styles = useScenarioDatasetTableStyles()
   const loadingId = useId()
   const [search, setSearch] = useState('')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [emptySelections, setEmptySelections] = useState<string[]>([])
+  const [showIncompatible, setShowIncompatible] = useState(false)
   const selected: ScenarioDatasetSourceInput[] = request.sources ?? defaults.sources.map((source) => ({ name: source.name }))
   const canSelect = options.supports_overrides && options.mode !== 'fixed'
   const canEditSources = options.supports_overrides && options.source_settings !== false
@@ -54,8 +60,13 @@ export default function ScenarioDatasetTable({
   const busy = disabled || preparing
   const total = datasetTotalLimit(request, defaults)
   const filters = { ...defaults.filters, ...request.filters }
+  const assessed = new Map(compatibility?.items.map((item) => [item.name, item]) ?? [])
   const candidates = datasetChoices(datasets, defaults.sources, options)
     .filter((name) => !selected.some((source) => source.name === name) && name.toLowerCase().includes(search.toLowerCase()))
+    .filter((name) => showIncompatible || assessed.get(name)?.status !== 'incompatible')
+  const unverifiedSelection = selected.some((source) => assessed.get(source.name)?.status === 'not_verified')
+  const noSuitableDatasets = compatibility && compatibility.requirements.length > 0
+    && !compatibility.items.some((item) => item.status === 'compatible')
   const { loaded, allLoaded } = datasetFacts(datasets, selected.map((source) => source.name))
   const availableMetadata: Record<string, string[]> = {
     harm_categories: [...new Set(loaded.flatMap((dataset) => dataset.harm_categories))],
@@ -142,22 +153,40 @@ export default function ScenarioDatasetTable({
 
   return (
     <div className={styles.root}>
+      {compatibility && compatibility.requirements.length > 0 && <div className={styles.compatibility}>
+        <Text>Showing datasets suitable for this scenario.</Text>
+        <Text size={200}>Required: {compatibility.requirements.map((requirement) => requirement.description).join('; ')}.</Text>
+      </div>}
+      {compatibility && canSelect && <Switch label="Show incompatible" checked={showIncompatible}
+        disabled={busy} onChange={(_, data) => setShowIncompatible(data.checked)} />}
+      {compatibilityLoading && <Text role="status" size={200}>Checking dataset compatibility...</Text>}
+      {noSuitableDatasets && <MessageBar intent="warning"><MessageBarBody>
+        No suitable datasets have been verified. Generate a dataset that meets the scenario requirements, or load and validate a candidate.
+      </MessageBarBody></MessageBar>}
+      {compatibility?.items.some((item) => item.techniques.length > 0) && <Text size={200}>
+        Coverage is before dataset limits. Compatibility is checked again when the scan starts.
+      </Text>}
+      {compatibility?.selection_reasons.map((reason) => <MessageBar key={`${reason.code}:${reason.message}`}
+        intent={compatibility.selection_compatible === false ? 'error' : 'info'}>
+        <MessageBarBody>{reason.message}</MessageBarBody>
+      </MessageBar>)}
       {selected.length > 0 && (loading || preparing) && <Text role="status" size={200} className={styles.loadingHint}>
         {preparing ? 'Loading datasets...' : 'Checking dataset details...'}
       </Text>}
-      {!allLoaded && selected.length > 0 && <div className={styles.toolbar}>
+      {(!allLoaded || unverifiedSelection) && selected.length > 0 && <div className={styles.toolbar}>
         {onLoad && <Button appearance="primary" className={styles.button}
           disabled={busy || loading || !loadEnabled || hasMissingRefresh || requiresImport
             || metadataError !== null || validationError !== null}
-          onClick={onLoad}>{preparing ? 'Loading datasets...' : 'Load datasets'}</Button>}
+          onClick={onLoad}>{preparing ? 'Loading datasets...' : compatibility ? 'Load and validate' : 'Load datasets'}</Button>}
         {requiresImport && <Text size={200}>Import the missing datasets into PyRIT first.</Text>}
         {hasMissingRefresh && <Text size={200}>
           Datasets set to refresh will load when the scan starts. Change the loading policy to load them now.
         </Text>}
         {metadataError && <Button className={styles.button} disabled={busy} onClick={onReload}>Retry checking datasets</Button>}
       </div>}
-      {[metadataError, loadError, ...errors].filter((error): error is string => Boolean(error))
+      {[metadataError, loadError, compatibilityError, ...errors].filter((error): error is string => Boolean(error))
         .map((error) => <MessageBar key={error} intent="error"><MessageBarBody role="alert">{error}</MessageBarBody></MessageBar>)}
+      {compatibilityError && <Button className={styles.button} disabled={busy} onClick={onReload}>Retry compatibility check</Button>}
       {selected.length === 0 ? <Text>{canSelect ? 'No dataset selected.' : 'This scenario has no named datasets.'}</Text>
         : <div className={styles.scroll}>
         <Table className={styles.table} aria-label="Selected datasets">
@@ -178,7 +207,21 @@ export default function ScenarioDatasetTable({
             return <TableRow key={source.name}>
               <TableCell><Text className={styles.datasetName} weight="semibold">
                 {datasetNameWithOrigin(source.name, metadata)}
-              </Text></TableCell>
+              </Text>
+              {assessed.get(source.name) && <div className={styles.compatibility}>
+                <Text size={200}>{assessed.get(source.name)?.status === 'compatible' ? 'Validated'
+                  : assessed.get(source.name)?.status === 'incompatible' ? 'Incompatible' : 'Not verified'}</Text>
+                {assessed.get(source.name)?.techniques.map((technique) => <Text key={technique.technique_name} size={200}>
+                  {technique.is_baseline ? 'Baseline' : technique.technique_name}: {technique.usable_count.toLocaleString()} usable
+                  {technique.skipped_count > 0 ? `, ${technique.skipped_count.toLocaleString()} skipped` : ''}
+                </Text>)}
+                {[...(assessed.get(source.name)?.reasons ?? []),
+                  ...(assessed.get(source.name)?.techniques.flatMap((technique) => technique.reasons) ?? [])]
+                  .map((reason) => <Text key={`${reason.requirement}:${reason.message}`} size={200}>
+                    {reason.count != null ? `${reason.count.toLocaleString()} groups: ` : ''}{reason.message}
+                  </Text>)}
+              </div>}
+              </TableCell>
               <TableCell>{canLimit ? <DatasetLimitControl label={`${source.name} objective limit`}
                 showLabel={false} text={size} value={source.max_size} defaultValue={inherited}
                 draft={drafts[`source:${source.name}`]} disabled={busy}
@@ -228,14 +271,23 @@ export default function ScenarioDatasetTable({
           onChange={(event) => setSearch(event.target.value)}
           onOptionSelect={(_, data) => {
             const name = data.optionValue
-            if (!name || !candidates.includes(name)) return
+            if (!name || !candidates.includes(name) || assessed.get(name)?.status === 'incompatible') return
             if (replaceSingleSource) clearSourceDrafts()
             onChange({ ...request, sources: replaceSingleSource ? [{ name }] : [...selected, { name }] })
             setSearch('')
           }}>
           {candidates.map((name) => {
             const label = datasetNameWithOrigin(name, datasets.find((dataset) => dataset.name === name))
-            return <Option key={name} value={name} text={label}>{label}</Option>
+            const assessment = assessed.get(name)
+            return <Option key={name} value={name} text={label} disabled={assessment?.status === 'incompatible'}>
+              <div className={styles.compatibility}>
+                <Text>{label}</Text>
+                {assessment && <Text size={200}>
+                  {assessment.status === 'compatible' ? 'Validated' : assessment.status === 'incompatible'
+                    ? assessment.reasons.map((reason) => reason.message).join(' ') : 'Not verified - load and validate'}
+                </Text>}
+              </div>
+            </Option>
           })}
         </Combobox>}
         <Button className={styles.button} disabled={busy} onClick={() => {

@@ -5,6 +5,7 @@ import type {
   PromptGenerationDetail,
   PromptGenerationPreflightResponse,
   PromptGenerationReview,
+  ScenarioDatasetCompatibility,
 } from '../src/types'
 import { formatRange } from '../src/components/PromptGeneration/promptGenerationPresentation'
 
@@ -98,6 +99,7 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   await page.getByRole('button', { name: 'Generate dataset', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Generate datasets' })).toBeVisible()
   await chooseGenerator(page, 'ASSERT policy dataset')
+  await expect(page.getByRole('checkbox', { name: /^Include tester instructions/ })).toBeChecked()
 
   await page.getByRole('textbox', { name: /^Behavior name/ }).fill('returns_privacy')
   await page.getByRole('textbox', { name: /^Policy text/ }).fill(POLICY)
@@ -158,12 +160,37 @@ test('generates a reviewed ASSERT dataset, opens its scenario preselected, and l
   await expect(runScenario).toHaveAttribute(
     'href', `/scanner/launch/${FOLLOW_UP_SCENARIO}?dataset=${encodeURIComponent(name)}`,
   )
+  const assessing = page.waitForResponse((response: Response) =>
+    apiPath(response) === `/api/scenarios/catalog/${FOLLOW_UP_SCENARIO}/datasets/assess`
+    && new URL(response.url()).searchParams.get('validate_selected') === 'true'
+    && (response.request().postDataJSON().datasets?.sources ?? [])
+      .some((source: { name: string }) => source.name === name))
   await runScenario.click()
+  const assessed = await assessing
+  expect(assessed.status(), await assessed.text()).toBe(200)
+  const compatibility: ScenarioDatasetCompatibility = await assessed.json()
+  expect(compatibility.selection_compatible).toBe(true)
+  const stored = compatibility.items.find((item) => item.name === name)
+  expect(stored?.status).toBe('compatible')
+  expect(stored?.techniques.find((technique) => technique.is_baseline)?.usable_count).toBe(4)
+  expect(stored?.techniques.some((technique) => !technique.is_baseline && technique.usable_count === 4)).toBe(true)
   await expect(page.getByRole('heading', { level: 2, name: FOLLOW_UP_SCENARIO })).toBeVisible({ timeout: JOB_TIMEOUT_MS })
   const selected = page.getByRole('table', { name: 'Selected datasets' })
   await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible({ timeout: CATALOG_TIMEOUT_MS })
   await expect(page.getByTestId('requested-datasets-warning')).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Generate an ASSERT policy dataset' })).toBeVisible()
+  await expect(selected.getByText('Validated', { exact: true })).toBeVisible()
+  await expect(selected.getByText('Baseline: 4 usable', { exact: true })).toBeVisible()
+  const picker = page.getByRole('combobox', { name: 'Add dataset', exact: true })
+  await picker.fill('offline_plain')
+  await expect(page.getByRole('option', { name: /^offline_plain/ })).toHaveCount(0)
+  await picker.press('Escape')
+  await page.getByRole('switch', { name: 'Show incompatible' }).check()
+  await picker.click()
+  const incompatible = page.getByRole('option', { name: /^offline_plain/ })
+  await expect(incompatible).toHaveAttribute('aria-disabled', 'true')
+  await expect(incompatible).toContainText('ASSERT generation metadata')
+  await expect(selected.getByRole('row').filter({ hasText: `${name} (generated)` })).toBeVisible()
 
   // Without a link, the scenario starts with no dataset and the generated one can be chosen.
   await page.goto(`/scanner/launch/${FOLLOW_UP_SCENARIO}`)

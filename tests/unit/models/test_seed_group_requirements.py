@@ -10,6 +10,7 @@ from pyrit.models import (
     ChatMessageRole,
     MatchesObjective,
     SeedGroupRequirements,
+    SeedMetadataRequirement,
     SeedObjective,
     SeedPrompt,
     SeedSimulatedConversation,
@@ -20,6 +21,50 @@ def test_empty_requirements_accept_additional_prompts() -> None:
     group = AttackSeedGroup(seeds=[SeedObjective(value="objective"), SeedPrompt(value="context")])
 
     assert SeedGroupRequirements().check(seed_group=group) == []
+
+
+@pytest.mark.parametrize(
+    ("requirements", "message"),
+    [
+        (SeedGroupRequirements(required_user_prompt=True), "stored user prompt"),
+        (SeedGroupRequirements(required_adversarial_prompt=True), "Stored adversarial prompts"),
+    ],
+)
+def test_required_inputs_are_checked(*, requirements: SeedGroupRequirements, message: str) -> None:
+    group = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+    assert message in requirements.check(seed_group=group)[0]
+
+
+def test_named_metadata_requirement_reuses_owning_parser() -> None:
+    from unit.assert_mocks import make_assert_result
+
+    from pyrit.models import AssertGroupMetadata
+
+    requirements = SeedGroupRequirements(
+        metadata=(
+            SeedMetadataRequirement(
+                name="assert_generation",
+                key=AssertGroupMetadata.METADATA_KEY,
+                description="ASSERT policy metadata",
+                validator=AssertGroupMetadata.from_metadata,
+            ),
+        )
+    )
+    group = make_assert_result().seed_groups[0]
+    assert requirements.check(seed_group=group) == []
+    group.objective.metadata = {AssertGroupMetadata.METADATA_KEY: {}}
+    assert requirements.check(seed_group=group) == ["Requires valid ASSERT policy metadata (assert_generation)."]
+    assert requirements.to_identity()["metadata"] == [
+        {"name": "assert_generation", "key": "assert_generation", "version": 1}
+    ]
+
+
+def test_default_requirement_identity_remains_unchanged() -> None:
+    assert SeedGroupRequirements().to_identity() == {
+        "objective_only": False,
+        "try_adapt": False,
+        "user_prompts_only": False,
+    }
 
 
 def test_objective_only_accepts_objective_conditions_and_metadata() -> None:

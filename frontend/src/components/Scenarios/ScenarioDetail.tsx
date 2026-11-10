@@ -37,6 +37,7 @@ import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
 import { useScenarioDatasets } from '@/hooks/useScenarioDatasets'
+import { useScenarioDatasetCompatibility } from '@/hooks/useScenarioDatasetCompatibility'
 import { useScenarioDetail } from '@/hooks/useScenarioDetail'
 import { useScenarioPreset } from '@/hooks/useScenarioPreset'
 import { useScenarioLaunch } from '@/hooks/useScenarioLaunch'
@@ -576,6 +577,13 @@ function ScenarioLaunchForm({
     [estimateRequest, scenario.scenario_name, runtime.generation],
   )
   const datasetMetadata = useScenarioDatasets()
+  const datasetCompatibility = useScenarioDatasetCompatibility({
+    scenarioName: scenario.scenario_name,
+    request: supportsDatasets ? estimateRequest : null,
+    revision: datasetMetadata.revision,
+    ready: runtime.ready && !staleSelection,
+  })
+  const incompatibleDatasets = datasetCompatibility.data?.selection_compatible === false
   const runEstimate = useScenarioRunEstimate({
     scenarioName: scenario.scenario_name,
     request: estimateRequest,
@@ -650,9 +658,9 @@ function ScenarioLaunchForm({
     confirmLaunch,
   } = useScenarioLaunch({
     requestResult,
-    submitBlocked: conversationBusy || Boolean(techniqueEditError),
+    submitBlocked: conversationBusy || Boolean(techniqueEditError) || incompatibleDatasets,
     launchBlocked: conversationBusy || Boolean(techniqueEditError) || !runtime.ready || !defaultsReady
-      || staleSelection || unavailableSelection || checkingRefreshPolicies,
+      || staleSelection || unavailableSelection || checkingRefreshPolicies || incompatibleDatasets,
     onLaunched: (summary: ScenarioRunSummary) => {
       // The launched request is the one this render built, so it is still current here.
       if (requestResult.ok) rememberScanTargets(targets, requestResult.request)
@@ -1015,6 +1023,9 @@ function ScenarioLaunchForm({
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}
                 datasets={datasetMetadata.items} disabled={submitting}
+                compatibility={datasetCompatibility.data}
+                compatibilityLoading={datasetCompatibility.loading}
+                compatibilityError={datasetCompatibility.error}
                 loading={datasetMetadata.loading} metadataError={datasetMetadata.error}
                 preparing={datasetMetadata.preparing} loadError={datasetMetadata.loadError}
                 loadEnabled={runtime.ready && !staleSelection && estimateRequest !== null
@@ -1090,7 +1101,7 @@ function ScenarioLaunchForm({
                 className={styles.launchButton}
                 appearance="primary"
                 type="submit"
-                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || (supportsDatasets && datasetError !== null)}
+                disabled={!runtime.ready || !defaultsReady || staleSelection || unavailableSelection || submitting || conversationBusy || Boolean(techniqueEditError) || techniqueSelectionError !== null || datasetMetadata.preparing || incompatibleDatasets || (supportsDatasets && datasetError !== null)}
                 data-testid="launch-scenario-btn"
               >
                 Launch scan

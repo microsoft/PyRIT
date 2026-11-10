@@ -78,6 +78,7 @@ export function useScenarioDatasets() {
 
   const current = runtime.ready && snapshot?.key === key ? snapshot : null
   return {
+    revision: key,
     items: runtime.ready && snapshot?.generation === runtime.generation ? snapshot.items : [],
     error: current?.error ?? null,
     loading: runtime.ready && current === null,

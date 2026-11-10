@@ -13,6 +13,7 @@ export const useScenarioDatasetTableStyles = makeStyles({
   chip: { ...mobileTouchTarget, padding: tokens.spacingHorizontalXXS, minWidth: 'unset' },
   actionsCell: { width: '3em' },
   datasetName: { overflowWrap: 'anywhere' },
+  compatibility: { display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, overflowWrap: 'anywhere' },
   limitButton: {
     ...mobileTouchTarget,
     justifyContent: 'flex-start',

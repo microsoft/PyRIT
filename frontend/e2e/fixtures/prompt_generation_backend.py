@@ -144,12 +144,18 @@ def _register_target() -> None:
 
 
 async def _seed_async(memory: SQLiteMemory) -> None:
+    from pyrit.models import SeedObjective
+
     fixture_directory = Path(memory.db_path).resolve().parent.parent
     # Generation records live next to media output, so both must stay inside the fixture directory.
     if not Path(str(memory.results_path)).resolve().is_relative_to(fixture_directory):
         raise RuntimeError("Refusing to store generation records outside the fixture-owned directory.")
     memory.disable_embedding()
     _register_target()
+    await memory.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="An ordinary objective without policy metadata.", dataset_name="offline_plain")],
+        added_by="prompt-generation-browser-fixture",
+    )
 
 
 def _serve(*, directory: Path, port: int) -> None:

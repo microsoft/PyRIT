@@ -16,16 +16,25 @@ from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
+from pyrit.memory import CentralMemory
 from pyrit.models import (
+    DatasetSelectionMode,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
 )
 from pyrit.models.catalog import (
     RegisteredScenario,
 )
+from pyrit.models.dataset_compatibility import (
+    DatasetCompatibility,
+    DatasetCompatibilityReason,
+    DatasetCompatibilityStatus,
+    ScenarioDatasetCompatibility,
+)
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params
 from pyrit.scenario.core import Scenario, override_default_adversarial_target
+from pyrit.scenario.core.dataset_compatibility import assess_candidate_profiles, describe_requirements
 
 logger = logging.getLogger(__name__)
 _ESTIMATE_CACHE_SIZE = 128
@@ -287,6 +296,121 @@ class ScenarioService:
         return ScenarioDatasetLoadResponse(
             settings=settings, items=[item for item in metadata.items if item.name in names]
         )
+
+    async def assess_datasets_async(
+        self,
+        *,
+        scenario_name: str,
+        request: ScenarioRunSizeEstimateRequest,
+        validate_selected: bool = False,
+    ) -> ScenarioDatasetCompatibility | None:
+        """
+        List candidates from stored facts; fully check only an explicitly requested selection.
+
+        Returns:
+            ScenarioDatasetCompatibility | None: Assessment, or None for an unknown scenario.
+        """
+        try:
+            scenario_class = self._registry.get_class(scenario_name)
+        except KeyError:
+            return None
+        reject_non_external_params(
+            params=request.scenario_params or {},
+            declared=scenario_class.supported_parameters(),
+            owner=scenario_name,
+        )
+        resolver = ScenarioConfigurationResolver()
+        adversarial_target = resolver.resolve_adversarial_target(target_name=request.adversarial_target_name)
+        with override_default_adversarial_target(adversarial_target):
+            scenario = await self._create_assessment_scenario_async(
+                scenario_name=scenario_name, scenario_class=scenario_class, request=request
+            )
+            result = await self._list_dataset_candidates_async(scenario)
+            if validate_selected:
+                try:
+                    async with self._configured_estimate_semaphore:
+                        selected = await scenario.get_dataset_compatibility_async(allow_unloaded=True)
+                except ValueError as error:
+                    reason = DatasetCompatibilityReason(code="invalid_dataset", message=str(error))
+                    selected = ScenarioDatasetCompatibility(
+                        selection_compatible=False,
+                        selection_reasons=[reason],
+                        items=[
+                            DatasetCompatibility(
+                                name=name,
+                                selected=True,
+                                status=DatasetCompatibilityStatus.INCOMPATIBLE,
+                                reasons=[reason],
+                            )
+                            for name in scenario._dataset_config.dataset_names
+                        ],
+                    )
+                checked = {item.name: item for item in selected.items}
+                result.items = [checked.pop(item.name, item) for item in result.items]
+                result.items.extend(checked.values())
+                result.selection_compatible = selected.selection_compatible
+                result.selection_reasons = selected.selection_reasons
+        return result
+
+    async def _create_assessment_scenario_async(
+        self,
+        *,
+        scenario_name: str,
+        scenario_class: type[Scenario],
+        request: ScenarioRunSizeEstimateRequest,
+    ) -> Scenario:
+        resolver = ScenarioConfigurationResolver()
+        kwargs = await asyncio.to_thread(
+            resolver.resolve_configuration,
+            scenario_name=scenario_name,
+            scenario_class=scenario_class,
+            techniques=request.techniques,
+            technique_override=request.technique_override,
+            datasets=request.dataset_request,
+            objective_target=resolver.resolve_target(target_name=request.target_name) if request.target_name else None,
+            include_baseline=request.include_baseline,
+        )
+        constructor = resolver.resolve_constructor_kwargs(
+            scenario_class=scenario_class, objective_scorer=request.objective_scorer
+        )
+        scenario = await asyncio.to_thread(self._registry.create_instance, scenario_name, **constructor)
+        scenario.set_params_from_args(args={**(request.scenario_params or {}), **kwargs})
+        await asyncio.to_thread(scenario._resolve_runtime_configuration, require_objective_target=False)
+        return scenario
+
+    async def _list_dataset_candidates_async(self, scenario: Scenario) -> ScenarioDatasetCompatibility:
+        requirements = scenario.get_dataset_requirements()
+        metadata = await get_dataset_service().list_datasets_async()
+        profiles = await CentralMemory.get_memory_instance().get_seed_dataset_group_profiles_async(
+            metadata_keys=[requirement.key for requirement in requirements.metadata]
+        )
+        by_name = {}
+        for profile in profiles:
+            by_name.setdefault(profile.dataset_name, []).append(profile)
+        options = scenario.get_dataset_options()
+        selected = set(scenario._dataset_config.dataset_names)
+        required = scenario._required_data
+        if required is not None:
+            selected.update(required.dataset_names)
+        allowed = set(options.allowed_names)
+        if options.mode is DatasetSelectionMode.FIXED:
+            allowed = {source.name for source in scenario.get_default_dataset_settings().sources}
+        candidates = {item.name for item in metadata.items if item.selection_key != "dataset:unnamed"} | selected
+        items = []
+        for name in sorted(candidates):
+            if options.mode is not DatasetSelectionMode.ANY and name not in allowed:
+                continue
+            item = assess_candidate_profiles(name=name, profiles=by_name.get(name, []), requirements=requirements)
+            item.selected = name in selected
+            if name not in by_name:
+                item.group_count = None
+                item.reasons = [
+                    DatasetCompatibilityReason(
+                        code="not_loaded", message="Not verified. Load this provider's data and validate it first."
+                    )
+                ]
+            items.append(item)
+        return ScenarioDatasetCompatibility(requirements=describe_requirements(requirements), items=items)
 
     async def _get_default_run_size_estimate_async(self, *, metadata: ScenarioMetadata) -> ScenarioRunSizeEstimate:
         """Return a cached, cancellation-safe scenario-owned estimate."""

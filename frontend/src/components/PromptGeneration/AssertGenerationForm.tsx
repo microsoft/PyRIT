@@ -505,7 +505,7 @@ function AssertGenerationFormContent({
           checked={settings.includeAdversarialPrompt}
           disabled={submitting}
           onChange={(_, data) => updateSettings({ includeAdversarialPrompt: data.checked === true })}
-          label="Include an adversarial prompt (needed for the multi-turn technique)"
+          label="Include tester instructions (required by the default ASSERT conversation technique)"
         />
       </section>
 

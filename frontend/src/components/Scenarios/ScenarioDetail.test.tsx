@@ -45,6 +45,9 @@ jest.mock('@/services/api', () => ({
   scenarioPresetsApi: { get: jest.fn() },
   promptGeneratorsApi: { list: jest.fn().mockResolvedValue({ items: [] }) },
   scenariosApi: {
+    assessDatasets: jest.fn().mockResolvedValue({
+      requirements: [], items: [], selection_compatible: null, selection_reasons: [],
+    }),
     estimateRun: jest.fn(),
     getScenario: jest.fn(),
     startRun: jest.fn(),

@@ -5,7 +5,9 @@ import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter } from 'react-router'
 
-import type { DatasetInfo, ScenarioDatasetOptions, ScenarioDatasetRequest, ScenarioDatasetSettings } from '@/types'
+import type {
+  DatasetInfo, ScenarioDatasetCompatibility, ScenarioDatasetOptions, ScenarioDatasetRequest, ScenarioDatasetSettings,
+} from '@/types'
 
 import ScenarioDatasetTable from './ScenarioDatasetTable'
 
@@ -36,10 +38,12 @@ interface HarnessProps {
   onLoad?: jest.Mock
   loading?: boolean
   preparing?: boolean
+  compatibility?: ScenarioDatasetCompatibility
 }
 function Harness({
   options = OPTIONS, defaults = DEFAULTS, datasets = DATASETS, initialRequest = {}, onChange = jest.fn(), onLoad = jest.fn(),
   loading = false, preparing = false,
+  compatibility,
 }: HarnessProps) {
   const [request, setRequest] = useState<ScenarioDatasetRequest>(initialRequest)
   const [validation, setValidation] = useState<string | null>(null)
@@ -57,6 +61,7 @@ function Harness({
   return <FluentProvider theme={webLightTheme}><MemoryRouter>
     <ScenarioDatasetTable request={request} defaults={defaults} effective={effective} options={options}
       datasets={datasets} disabled={false} loading={loading} preparing={preparing} metadataError={null}
+      compatibility={compatibility}
       loadEnabled onLoad={onLoad} onReload={jest.fn()} onValidationChange={setValidation}
       onChange={(next) => { setRequest(next); onChange(next) }} />
     <button disabled={validation !== null}>Launch</button>
@@ -79,6 +84,73 @@ async function addDataset(user: ReturnType<typeof userEvent.setup>, name: string
 }
 
 describe('ScenarioDatasetTable', () => {
+  it('keeps an incompatible selection visible and explains independent technique coverage', () => {
+    render(<Harness compatibility={{
+      requirements: [{ name: 'policy', description: 'policy taxonomy' }],
+      selection_compatible: false,
+      selection_reasons: [{ code: 'no_usable_techniques', message: 'No usable selected techniques.', requirement: 'scenario', count: null }],
+      items: [{
+        name: 'stored', selected: true, status: 'compatible', group_count: 8, reasons: [],
+        techniques: [
+          { technique_name: 'baseline', is_baseline: true, usable_count: 8, skipped_count: 0, reasons: [] },
+          { technique_name: 'assert_package', is_baseline: false, usable_count: 0, skipped_count: 8,
+            reasons: [{ code: 'tester', requirement: 'assert_package', count: 8, message: 'Stored tester instructions are required.' }] },
+        ],
+      }],
+    }} />)
+    expect(screen.getByText('stored (local)')).toBeInTheDocument()
+    expect(screen.getByText('Baseline: 8 usable')).toBeInTheDocument()
+    expect(screen.getByText('assert_package: 0 usable, 8 skipped')).toBeInTheDocument()
+    expect(screen.getByText(/Stored tester instructions are required/)).toBeInTheDocument()
+    expect(screen.getByText('No usable selected techniques.')).toBeInTheDocument()
+  })
+
+  it('hides incompatible choices until requested and keeps them disabled with a reason', async () => {
+    const user = userEvent.setup()
+    render(<Harness compatibility={{
+      requirements: [], selection_compatible: null, selection_reasons: [],
+      items: [{
+        name: 'other', selected: false, status: 'incompatible', group_count: 8, techniques: [],
+        reasons: [{ code: 'policy', message: 'Missing policy taxonomy.', requirement: 'scenario', count: 8 }],
+      }],
+    }} />)
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    expect(screen.queryByRole('option', { name: /^other/ })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await user.click(screen.getByRole('switch', { name: 'Show incompatible' }))
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    const incompatible = screen.getByRole('option', { name: /^other/ })
+    expect(incompatible).toHaveAttribute('aria-disabled', 'true')
+    expect(within(incompatible).getByText('Missing policy taxonomy.')).toBeInTheDocument()
+  })
+
+  it('can select the first dataset and shows the no-suitable-datasets recovery', () => {
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} compatibility={{
+      requirements: [{ name: 'policy', description: 'policy taxonomy' }],
+      selection_compatible: null, selection_reasons: [],
+      items: [{
+        name: 'other', selected: false, status: 'incompatible', group_count: 8, techniques: [],
+        reasons: [{ code: 'policy', message: 'Missing policy taxonomy.', requirement: 'scenario', count: 8 }],
+      }],
+    }} />)
+    expect(screen.getByRole('combobox', { name: 'Add dataset' })).toBeEnabled()
+    expect(screen.getByText(/No suitable datasets/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Browse datasets' })).toHaveAttribute('href', '/datasets')
+  })
+
+  it('labels unloaded selections as unverified with an explicit load-and-validate action', () => {
+    const onLoad = jest.fn()
+    render(<Harness initialRequest={{ sources: [{ name: 'remote' }] }} onLoad={onLoad} compatibility={{
+      requirements: [], selection_compatible: null, selection_reasons: [],
+      items: [{
+        name: 'remote', selected: true, status: 'not_verified', group_count: null, reasons: [], techniques: [],
+      }],
+    }} />)
+    expect(screen.getByText('Not verified')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Load and validate' })).toBeEnabled()
+    expect(onLoad).not.toHaveBeenCalled()
+  })
+
   it('shows a compact table with resolved sizes and metadata, without a loading banner for loaded data', () => {
     const onChange = jest.fn()
     render(<Harness onChange={onChange} />)
