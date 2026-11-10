@@ -16,7 +16,8 @@
 # like any built-in target.
 #
 # If your application is a simple HTTP endpoint, try [`HTTPTarget`](./10_http_target.ipynb) first.
-# It may work without any custom code.
+# It may work without any custom code. If your application is a Python agent that runs in the same
+# process, see [Example: an in-process agent](#example-an-in-process-agent).
 #
 # ## Anatomy of a custom target
 #
@@ -145,3 +146,183 @@ red_teaming_attack = RedTeamingAttack(
 
 result = await red_teaming_attack.execute_async(objective=objective)  # type: ignore
 await output_attack_async(result)
+
+# %% [markdown]
+# ## Example: an in-process agent
+#
+# Many agents run as Python code in the same process as PyRIT. For example, a LangGraph graph might
+# sit behind a `chat(message, history)` function. You don't need an HTTP server or a special target
+# type to test such an agent. A custom target can call the agent function directly.
+#
+# The example agent below is a deterministic travel planner, so this section runs without a model.
+# It remembers the destination from earlier turns and calls a `search_flights` tool. The tool records
+# an OpenTelemetry execution span, as an instrumented agent framework would.
+#
+# A `LocalTraceCapture` records the agent's spans in this process so scorers can read them. It owns a
+# tracer provider without span limits and an in-memory span store.
+
+# %%
+from pyrit.score import LocalTraceCapture
+
+capture = LocalTraceCapture()
+
+
+def search_flights(*, destination: str) -> str:
+    """Look up a flight and record the tool execution."""
+    with capture.tracer.start_as_current_span(
+        "search_flights",
+        attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "search_flights"},
+    ):
+        return f"Round trip to {destination}: $820"
+
+
+async def travel_agent_async(*, message: str, history: list[dict[str, str]]) -> str:
+    """Plan a trip. ``history`` holds the earlier user and assistant turns, with the current message last."""
+    destinations = [
+        turn["content"].removeprefix("I want to visit ").rstrip(".")
+        for turn in history
+        if turn["role"] == "user" and turn["content"].startswith("I want to visit ")
+    ]
+    if not destinations:
+        return "Where would you like to go?"
+    if "flight" not in message.lower():
+        return f"{destinations[-1]} sounds great. Should I look for flights?"
+    return f"{search_flights(destination=destinations[-1])}. Shall I book it?"
+
+
+# %% [markdown]
+# The target turns the normalized conversation into the agent's arguments and wraps the reply in a
+# response message. The agent is stateless: it receives the full history on every call. The target
+# therefore declares `supports_multi_turn` and `supports_editable_history`. Multi-turn attacks, such as
+# the default `red_teaming` technique of `foundry.assert_policy`, can then hold a conversation with it.
+# If your agent keeps its own conversation state instead, declare only `supports_multi_turn`.
+#
+# If the agent function is synchronous, call it with `await asyncio.to_thread(...)` so that it does
+# not block other requests.
+
+# %%
+from collections.abc import Awaitable, Callable
+
+from pyrit.prompt_target import TargetCapabilities, TargetConfiguration, TargetTraceConfig
+
+
+class InProcessAgentTarget(PromptTarget):
+    """Send each request, with the earlier turns, to an agent function in this process."""
+
+    _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
+        capabilities=TargetCapabilities(supports_multi_turn=True, supports_editable_history=True)
+    )
+
+    def __init__(
+        self,
+        *,
+        agent: Callable[..., Awaitable[str]],
+        trace_config: TargetTraceConfig | None = None,
+        max_requests_per_minute: int | None = None,
+    ) -> None:
+        super().__init__(max_requests_per_minute=max_requests_per_minute, trace_config=trace_config)
+        self._agent = agent
+
+    def _build_identifier(self) -> ComponentIdentifier:
+        return self._create_identifier(params={"agent": f"{self._agent.__module__}:{self._agent.__qualname__}"})
+
+    @limit_requests_per_minute
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        request = normalized_conversation[-1].get_piece()
+        history = [
+            {"role": message.api_role, "content": message.get_piece().converted_value}
+            for message in normalized_conversation
+            if message.api_role in ("user", "assistant")
+        ]
+        reply = await self._agent(message=request.converted_value, history=history)
+        return [construct_response_from_request(request=request, response_text_pieces=[reply])]
+
+
+# %% [markdown]
+# ### Connecting the agent's traces
+#
+# Give the target `trace_config=capture.trace_config()`. `PromptTarget` then runs each call to
+# `_send_prompt_to_target_async` inside a fresh `pyrit.target` trace and records that trace on the
+# request. Spans that the agent creates in that call, including spans from OpenInference
+# instrumentation, join the request's trace. Custom targets disable tracing by default, so without
+# this setting no trace is recorded.
+#
+# Scorers can then judge what the agent did, not only what it said. Here, `OtelToolCallScorer` checks
+# that the agent ran `search_flights`. `MultiPromptSendingAttack` sends two fixed turns, so the second
+# turn only works if the target passed the first turn back to the agent as history. See
+# [Trace-backed tool-call scoring](../scoring/5_tool_call_scorer.ipynb) and
+# [Judging with execution traces](../scoring/8_trace_evidence_scoring.ipynb) for details on trace evidence.
+
+# %%
+from pyrit.executor.attack import MultiPromptSendingAttack
+from pyrit.models import ScoringExpectation, ToolCallRequirement, ToolsCalled
+from pyrit.score import OtelToolCallScorer
+from pyrit.score.observation import OtelTraceSource
+
+travel_target = InProcessAgentTarget(agent=travel_agent_async, trace_config=capture.trace_config())
+travel_attack = MultiPromptSendingAttack(
+    objective_target=travel_target,
+    attack_scoring_config=AttackScoringConfig(
+        objective_scorer=OtelToolCallScorer(source=OtelTraceSource(trace_client=capture.client))
+    ),
+)
+result = await travel_attack.execute_async(  # type: ignore
+    objective="Get the travel agent to search for flights",
+    user_messages=[
+        Message.from_prompt(prompt="I want to visit Tokyo.", role="user"),
+        Message.from_prompt(prompt="Yes, find me a flight.", role="user"),
+    ],
+    expectation=ScoringExpectation(conditions=(ToolsCalled(tools=(ToolCallRequirement(name="search_flights"),)),)),
+)
+await output_attack_async(result)
+capture.close()
+
+# %% [markdown]
+# ### Using a real agent framework
+#
+# A framework agent does not need hand-written spans. Install the matching
+# [OpenInference](https://github.com/Arize-ai/openinference) instrumentor, for example
+# `openinference-instrumentation-langchain` for LangChain or LangGraph, and call
+# `capture.instrument()` once. Installed OpenInference instrumentors then record into the capture.
+#
+# Then pass the agent's entry function to the target. Context propagates through `await` and
+# `asyncio.to_thread`. If your agent starts its own threads or processes, it must pass the trace
+# context to them, or its spans will not join the request's trace.
+#
+# ### Using the target from `pyrit_scan` and the GUI
+#
+# To refer to the target by name, register it from a
+# [custom initializer](../setup/pyrit_initializer.ipynb). Add the script's path to
+# [`initialization_scripts`](../../getting_started/pyrit_conf.md) in `.pyrit_conf`. Register the
+# capture's trace source too, so scenarios can read the agent's traces:
+#
+# ```python
+# from my_agent_package import InProcessAgentTarget, travel_agent_async
+#
+# from pyrit.registry import TargetRegistry
+# from pyrit.score import LocalTraceCapture
+# from pyrit.setup.pyrit_initializer import PyRITInitializer
+#
+#
+# class TravelAgentInitializer(PyRITInitializer):
+#     """Register the in-process travel agent as a target, with its trace source."""
+#
+#     async def initialize_async(self) -> None:
+#         capture = LocalTraceCapture()
+#         capture.instrument()
+#         capture.register(name="travel_agent_traces")
+#         TargetRegistry.get_registry_singleton().instances.register(
+#             InProcessAgentTarget(agent=travel_agent_async, trace_config=capture.trace_config()),
+#             name="travel_agent",
+#         )
+# ```
+#
+# Scenarios can then use both by name. For example, ASSERT policy judges read the agent's traces as
+# well as the transcript with:
+#
+# ```bash
+# pyrit_scan foundry.assert_policy --target travel_agent --trace-source travel_agent_traces
+# ```
+#
+# The target also appears in the GUI's list of targets. The initializer runs the agent's code in the
+# PyRIT process, so only use agent code that you trust.
