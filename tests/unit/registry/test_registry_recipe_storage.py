@@ -177,20 +177,32 @@ class TestRegistryRecipeStorageListing:
         nested: object = "x"
         for _ in range(300):
             nested = {"list": [nested]}
-        _write(tmp_path / "targets", "deep", "[" * 100_000 + "]" * 100_000)
         _write(tmp_path / "targets", "deep_params", json.dumps({**_TARGET, "params": {"x": nested}}))
         _write(tmp_path / "targets", "contoso_gpt4o", json.dumps(_TARGET))
 
         listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
 
-        failures = {failure.name: failure for failure in listing.failures}
-        assert set(failures) == {"deep", "deep_params"}
-        for failure in failures.values():
-            assert (failure.reason, failure.message) == (
-                RestoreFailureReason.INVALID_RECIPE,
-                "Nested too deeply to read.",
-            )
+        (failure,) = listing.failures
+        assert (failure.name, failure.reason, failure.message) == (
+            "deep_params",
+            RestoreFailureReason.INVALID_RECIPE,
+            "Nested too deeply to read.",
+        )
         assert list(listing.recipes) == ["contoso_gpt4o"]
+
+    def test_reports_a_document_too_deep_for_the_json_parser(self, tmp_path: Path) -> None:
+        # How deep the parser can go depends on the stack size, so it's made to give up here.
+        _write(tmp_path / "targets", "deep", "[[[]]]")
+
+        with patch("pyrit.registry.registry_recipe_storage.json.loads", side_effect=RecursionError):
+            listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        (failure,) = listing.failures
+        assert (failure.name, failure.reason, failure.message) == (
+            "deep",
+            RestoreFailureReason.INVALID_RECIPE,
+            "Nested too deeply to read.",
+        )
 
     def test_limits_a_technique_description_like_the_create_request(self, tmp_path: Path) -> None:
         folder = tmp_path / "techniques"
