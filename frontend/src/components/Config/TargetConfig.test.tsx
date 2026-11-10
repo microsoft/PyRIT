@@ -122,6 +122,22 @@ describe("TargetConfig", () => {
     });
   });
 
+  it("should omit SDK-only targets from the registry and default selector", async () => {
+    const sdkTarget = makeTarget({
+      target_registry_name: "sdk_demo", target_type: "TextTarget",
+      capabilities: { supports_multi_turn: true },
+    });
+    const onTargetsLoaded = jest.fn();
+    mockedTargetsApi.listTargets.mockResolvedValue({
+      items: [sdkTarget, ...sampleTargets], pagination: { limit: 200, has_more: false },
+    });
+    render(<TestWrapper><TargetConfig {...defaultProps} onTargetsLoaded={onTargetsLoaded} /></TestWrapper>);
+    expect(await screen.findByText("openai_chat_gpt4")).toBeInTheDocument();
+    expect(screen.queryByText("sdk_demo")).not.toBeInTheDocument();
+    expect(screen.queryByText("TextTarget")).not.toBeInTheDocument();
+    expect(onTargetsLoaded).toHaveBeenCalledWith(sampleTargets);
+  });
+
   it("should load every registry page before offering defaults", async () => {
     const user = userEvent.setup();
     mockedTargetsApi.listTargets
@@ -517,7 +533,7 @@ describe("TargetConfig", () => {
     const targetsNoParams: TargetInstance[] = [
       makeTarget({
         target_registry_name: "simple_target",
-        target_type: "TextTarget",
+        target_type: "OpenAIChatTarget",
         endpoint: "http://localhost",
         model_name: "text",
       }),
@@ -535,7 +551,7 @@ describe("TargetConfig", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("TextTarget")).toBeInTheDocument();
+      expect(screen.getByText("OpenAIChatTarget")).toBeInTheDocument();
     });
 
     // No reasoning or other special params should be displayed

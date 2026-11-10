@@ -10,8 +10,7 @@ import re
 
 import pytest
 
-from pyrit.models import ComponentIdentifier, Message, MessagePiece
-from pyrit.models.parameter import ComponentType
+from pyrit.models import ComponentIdentifier, ComponentType, Message, MessagePiece
 from pyrit.prompt_target import (
     CopilotType,
     PlaywrightCopilotTarget,
@@ -20,7 +19,7 @@ from pyrit.prompt_target import (
     TargetCapabilities,
     TargetConfiguration,
 )
-from pyrit.registry.components import TargetMetadata, TargetRegistry
+from pyrit.registry import TargetMetadata, TargetRegistry
 from pyrit.registry.resolution import derive_parameters
 
 
@@ -360,15 +359,19 @@ class TestClassMetadata:
         assert any(p.is_reference_to(ComponentType.TARGET) for p in meta.parameters)
 
     def test_metadata_supported_auth_modes_projects_class_attribute(self, registry: TargetRegistry):
-        # Identity-capable targets expose both modes; api-key-only targets expose one.
-        assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity")
-        assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ("api_key",)
+        # Identity-capable targets expose their modes; api-key-only targets expose one.
+        assert self._metadata_for(registry, "OpenAIChatTarget").supported_auth_modes == ("api_key", "identity", "none")
+        assert self._metadata_for(registry, "GitHubCopilotTarget").supported_auth_modes == ("api_key",)
+
+    def test_metadata_supported_auth_modes_empty_for_credential_free_target(self, registry: TargetRegistry):
+        # TextTarget writes to a local stream, so it must not advertise api-key auth.
+        assert self._metadata_for(registry, "TextTarget").supported_auth_modes == ()
 
     def test_metadata_supported_auth_modes_sourced_from_class_attributes(self, registry: TargetRegistry):
         # Auth modes are read off the class via Param.ClassAttr, not a fabricated instance.
         meta = self._metadata_for(registry, "OpenAIChatTarget")
         assert "supported_auth_modes" in meta.class_attributes
-        assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity")
+        assert meta.class_attributes["supported_auth_modes"] == ("api_key", "identity", "none")
 
     @pytest.mark.usefixtures("patch_central_database")
     def test_instance_registration_does_not_invalidate_class_metadata(self, registry: TargetRegistry) -> None:
@@ -402,7 +405,9 @@ class TestClassMetadata:
 class TestRegistrationGate:
     """The identifier blueprint must line up with a resolvable contract for every target."""
 
-    CREDENTIAL_NAME_PATTERN = re.compile(r"token|secret|password|credential|api_key", re.IGNORECASE)
+    CREDENTIAL_NAME_PATTERN = re.compile(
+        r"token|secret|password|credential|api_key|_key$|cookie|session_id", re.IGNORECASE
+    )
     NON_CREDENTIAL_PARAMETER_NAMES = frozenset(
         {
             "api_key_header",
@@ -422,7 +427,7 @@ class TestRegistrationGate:
         assert "RoundRobinTarget" in names
 
     def test_every_target_reference_maps_to_a_wired_registry(self, registry: TargetRegistry) -> None:
-        from pyrit.models.identifiers import TargetIdentifier
+        from pyrit.models import TargetIdentifier
 
         for name in registry.get_class_names():
             parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)
@@ -435,7 +440,7 @@ class TestRegistrationGate:
                     )
 
     def test_credential_parameters_are_sensitive(self, registry: TargetRegistry) -> None:
-        from pyrit.models.identifiers import TargetIdentifier
+        from pyrit.models import TargetIdentifier
 
         for name in registry.get_class_names():
             parameters = derive_parameters(cls=registry.get_class(name), identifier_type=TargetIdentifier)
@@ -457,4 +462,14 @@ class TestRegistrationGate:
                 continue
             assert target_cls.get_auth_mode_parameters(auth_mode="identity") == {"auth_mode": "identity"}, (
                 f"{name} advertises identity support but does not forward an explicit auth_mode"
+            )
+
+    def test_no_key_targets_accept_an_explicit_auth_mode(self, registry: TargetRegistry) -> None:
+        # A no-key target that dropped the explicit mode would fall back to reading a key variable.
+        for name in registry.get_class_names():
+            target_cls = registry.get_class(name)
+            if "none" not in target_cls.supported_auth_modes:
+                continue
+            assert target_cls.get_auth_mode_parameters(auth_mode="none") == {"auth_mode": "none"}, (
+                f"{name} advertises no-key support but does not forward an explicit auth_mode"
             )

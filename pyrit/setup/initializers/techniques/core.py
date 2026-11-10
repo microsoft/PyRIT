@@ -38,8 +38,7 @@ from pyrit.models import (
     load_simulated_target_prompt,
 )
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
-from pyrit.scenario.core.technique_requirements import TechniqueRequirements
+from pyrit.scenario import AttackTechniqueFactory, TechniqueRequirements
 
 _BIJECTION_PRACTICE_PHRASES: tuple[str, ...] = (
     "orange",

@@ -14,7 +14,7 @@ import pytest
 
 from pyrit.models import Seed, SeedDataset
 from pyrit.scenario import DatasetSource
-from pyrit.scenario.scenarios.garak.latent_injection import LatentInjectionDatasetConfiguration
+from pyrit.scenario.scenarios.garak import LatentInjectionDatasetConfiguration
 
 _DATASET_DIR = Path(__file__).parent.parent.parent.parent / "pyrit" / "datasets" / "seed_datasets" / "local" / "garak"
 
@@ -130,17 +130,24 @@ async def test_payload_split_preserves_complete_prompt_population_async(
         groups = await config.get_attack_seed_groups_async()
     assert len(groups) == 4266
     assert all(group.objective.value and group.prompts[0].value for group in groups)
-    # These fingerprints include the objectives, prompts, and logical IDs before the payload split.
+    # Retain the pre-correction content fingerprint independently of logical IDs.
+    content = sorted(
+        (group.objective.metadata["family"], group.objective.value, group.prompts[0].value) for group in groups
+    )
+    assert hashlib.sha256(json.dumps(content, ensure_ascii=False).encode()).hexdigest() == (
+        "c0a779848569af008f63fe733ba039b40420f60ef0c32850042ab27a0894b6af"
+    )
+    # Objectives and prompts are unchanged; logical IDs now use ordered seed content hashes.
     expected = {
-        "fact_eiffel": "ef849eeea99d49777c19b74eaf321f072b9c310bcc9c37b3d1cb431f59319786",
-        "fact_legal": "ad37fab4a5eea7587de336c6be433b9e6318d3d8f05e22a78998cb5151ef112e",
-        "latent_jailbreak": "aa66b8a4f00493a991c4eac078900373e73847141c87802cf83695979572ce2f",
-        "report": "40cabdb6ee290a1e141e9050b39696958e8de3a6f741ef3a763193396b6896a9",
-        "resume": "8adfb55c327a4a9d7d2809a72c03fd88c516e5afe1944902afc53516ec451af5",
-        "translation_fr": "7b3be9df7af9fbd97a8fd4d3e7836184f59de0a78007211b9d24c30bec4cc112",
-        "translation_zh": "9cf4e66d299e6eebc27cf727109e0c39314ac2ea89eb3d99c2fac6c275a2df41",
-        "whois": "fdfd45739f7c3c586d679277f4bb948194c952d01a48be1c6f918404ebf7208c",
-        "whois_snippet": "330ef45ddf294e8129375115f2ea0184a52b92ce069870b6f00052c9638af308",
+        "fact_eiffel": "0dcf9d19fd11c8b947af7371efedb6ac928d95c30d1a29f747956a51182fcd0d",
+        "fact_legal": "5d4f85cef2be617315195c6b21b28f97faef347bb938632a1a9ece24d23fe1fb",
+        "latent_jailbreak": "28c71dd3cdcf0eec8fe9c1d3c70777cc1d6a314f2f11df32417669052a405fb9",
+        "report": "f26b77c5fd5a54ee470f1e2c466421cba86b2165c0157c1a7ef93b1ab5ca0342",
+        "resume": "e327a7225ebd8b787f15a846985f6a405d8896cd665d876581cbf3040feba8c1",
+        "translation_fr": "c5d31d7a1f347ab6853e28dffe6618a3ee6f8bf59ba5dd61e608ea29940babac",
+        "translation_zh": "ceb67f22e2f5dc64b6850da13c0ebc195bfd6db16308fddeecde8e9acb00ad28",
+        "whois": "30ca5c8633ddc4a7535e19dfec7614381b87c85ca08d13039d21d41d0ae58242",
+        "whois_snippet": "7d3f54417e2555733c83eaa19011fe4066db5ae0bdfed71d0a615e03aead28e3",
     }
     for family, fingerprint in expected.items():
         rows = sorted(

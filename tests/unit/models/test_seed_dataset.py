@@ -6,10 +6,7 @@ from typing import assert_type
 
 import pytest
 
-from pyrit.models.seeds.seed import Seed
-from pyrit.models.seeds.seed_dataset import SeedDataset
-from pyrit.models.seeds.seed_objective import SeedObjective
-from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models import Seed, SeedDataset, SeedObjective, SeedPrompt
 
 
 def test_seed_dataset_init_from_dicts():

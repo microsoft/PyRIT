@@ -49,6 +49,38 @@ describe('datasetQuery', () => {
     expect(catalogQueryFromSearchParams(new URLSearchParams('sort=nope')).sort).toBe('name')
   })
 
+  it('deduplicates parsed facets in first-occurrence order', () => {
+    const params = new URLSearchParams([
+      ['modality', 'text'],
+      ['modality', 'image/png'],
+      ['modality', 'text'],
+      ['modality', 'audio_path'],
+      ['modality', 'image/png'],
+      ['harm_category', 'violence'],
+      ['harm_category', 'a&b'],
+      ['harm_category', 'violence'],
+      ['harm_category', 'データ'],
+      ['harm_category', 'a&b'],
+    ])
+
+    expect(catalogQueryFromSearchParams(params)).toEqual({
+      ...DEFAULT_DATASET_CATALOG_QUERY,
+      modalities: ['text', 'image/png', 'audio_path'],
+      harmCategories: ['violence', 'a&b', 'データ'],
+    })
+  })
+
+  it('deduplicates serialized facets in first-occurrence order', () => {
+    const params = catalogQueryToSearchParams({
+      ...DEFAULT_DATASET_CATALOG_QUERY,
+      modalities: ['text', 'image/png', 'text', 'audio_path', 'image/png'],
+      harmCategories: ['violence', 'a&b', 'violence', 'データ', 'a&b'],
+    })
+
+    expect(params.getAll('modality')).toEqual(['text', 'image/png', 'audio_path'])
+    expect(params.getAll('harm_category')).toEqual(['violence', 'a&b', 'データ'])
+  })
+
   it('filters by name, modality, and harm without treating unlabeled rows as safe', () => {
     const hate = makeDataset({
       name: 'Hate bench',

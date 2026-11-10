@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from pyrit.backend.main import app
 from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH
 from pyrit.backend.models.message_sends import MessageSendStatus
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService
 from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError, ManualSendQueueFullError
 from pyrit.backend.services.message_send_service import MessageSendNotFoundError, MessageSendService
 from pyrit.memory.memory_interface import AttackStateConflictError
@@ -115,6 +115,8 @@ def test_invalid_fields_are_not_admitted(
     ("error", "status"),
     [
         (ValueError("Attack not found"), 404),
+        (ValueError("The destination attack does not exist"), 404),
+        (LookupError("The destination attack does not exist"), 404),
         (ValueError("Target mismatch"), 400),
         (ManualSendConflictError("Conversation busy"), 409),
         (AttackStateConflictError("History changed"), 409),

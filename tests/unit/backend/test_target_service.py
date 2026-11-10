@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.backend.models.targets import CreateTargetRequest
-from pyrit.backend.services.target_service import TargetService, get_target_service
+from pyrit.backend.models import CreateTargetRequest
+from pyrit.backend.services import TargetService, get_target_service
 from pyrit.models import ComponentIdentifier
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities
@@ -257,8 +257,18 @@ class TestListTargetTypes:
         result = await service.list_target_types_async()
 
         openai_entry = next(item for item in result.items if item.target_type == "OpenAIChatTarget")
-        assert "api_key" in openai_entry.supported_auth_modes
-        assert "identity" in openai_entry.supported_auth_modes
+        assert openai_entry.supported_auth_modes == ["api_key", "identity", "none"]
+        azure_ml_entry = next(item for item in result.items if item.target_type == "AzureMLChatTarget")
+        assert azure_ml_entry.supported_auth_modes == ["api_key", "identity"]
+
+    async def test_types_report_no_auth_modes_for_credential_free_target_async(self) -> None:
+        """TextTarget needs no credentials, so its type entry advertises no auth modes."""
+        service = TargetService()
+
+        result = await service.list_target_types_async()
+
+        entry = next(item for item in result.items if item.target_type == "TextTarget")
+        assert entry.supported_auth_modes == []
 
     async def test_types_include_github_copilot_form_parameters_async(self) -> None:
         service = TargetService()
@@ -1665,3 +1675,40 @@ class TestFrontendBackendCompatibilitySync:
             "frontend/src/components/Config/targetParameterPolicy.ts with a renderable or "
             "explicitly unsupported policy, then update this expected catalog."
         )
+
+
+class TestCreateTargetNoKeyAuth:
+    """No-key auth at the service boundary: the service confirms support and drops any key."""
+
+    async def test_create_openai_target_with_no_key_reads_no_server_credentials(self, sqlite_instance) -> None:
+        with patch.dict(
+            os.environ,
+            {"OPENAI_CHAT_KEY": "server-key", "OPENAI_ADDITIONAL_REQUEST_HEADERS": '{"X-Server-Secret": "s"}'},
+        ):
+            service = TargetService()
+            request = CreateTargetRequest(
+                type="OpenAIChatTarget",
+                params={
+                    "endpoint": "http://localhost:11434/v1",
+                    "model_name": "llama3",
+                    "api_key": "should-be-ignored",
+                },
+                auth_mode="none",
+            )
+
+            result = await service.create_target_async(request=request)
+
+        target_obj = service.get_target_object(target_registry_name=result.target_registry_name)
+        assert target_obj._api_key == "not-needed"  # type: ignore[attr-defined]
+        assert target_obj._headers == {}  # type: ignore[attr-defined]
+
+    async def test_create_target_with_no_key_rejects_unsupported_type(self, sqlite_instance) -> None:
+        service = TargetService()
+        request = CreateTargetRequest(
+            type="AzureMLChatTarget",
+            params={"endpoint": "https://example.inference.ml.azure.com/score"},
+            auth_mode="none",
+        )
+
+        with pytest.raises(ValueError, match="does not support no-key authentication"):
+            await service.create_target_async(request=request)

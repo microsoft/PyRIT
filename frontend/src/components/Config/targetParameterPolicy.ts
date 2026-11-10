@@ -1,5 +1,6 @@
 import { isJsonObjectParameter, nonNullableTypeName } from '@/components/Parameters/parameterForm'
 import type { Parameter, TargetTypeEntry } from '@/types'
+import { isGuiTargetType } from '@/utils/targetVisibility'
 
 export type TargetParameterOwner = 'authentication' | 'connection' | 'round_robin' | 'unsupported'
 
@@ -62,7 +63,7 @@ export function canConfigureRequiredTargetParameter(targetType: string, paramete
 }
 
 export function canConfigureTargetType(entry: TargetTypeEntry): boolean {
-  return entry.parameters.every(
+  return isGuiTargetType(entry.target_type) && entry.parameters.every(
     (parameter) => !parameter.required
       || canConfigureRequiredTargetParameter(entry.target_type, parameter),
   )
