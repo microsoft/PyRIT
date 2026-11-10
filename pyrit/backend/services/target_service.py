@@ -549,7 +549,11 @@ class TargetService:
         )
         if request.persist:
             params = await prepare_saved_params_async(
-                registry=self._registry, type_name=request.type, cls=target_cls, params=params
+                registry=self._registry,
+                type_name=request.type,
+                cls=target_cls,
+                params=params,
+                auth_mode=request.auth_mode,
             )
 
         # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
@@ -594,6 +598,7 @@ class TargetService:
                     type_name=request.type,
                     target_cls=target_cls,
                     target_obj=target_obj,
+                    auth_mode=request.auth_mode,
                     params=params,
                     owner=owner,
                     recipes_source=recipes_source,
@@ -614,6 +619,7 @@ class TargetService:
         type_name: str,
         target_cls: type[PromptTarget],
         target_obj: PromptTarget,
+        auth_mode: AuthMode,
         params: dict[str, Any],
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
@@ -621,7 +627,8 @@ class TargetService:
         """
         Save the target's recipe, then register the target as a saved entry.
 
-        The recipe names the class by the registry name the request used, which restore looks up.
+        The recipe names the class by the registry name the request used, which restore looks up, and keeps
+        the auth mode apart from the parameters, as the create request does.
 
         Returns:
             TargetInstance: The saved target.
@@ -638,11 +645,16 @@ class TargetService:
             owner=owner,
             current_user_oid=owner.oid if owner is not None else None,
         )
+        auth_parameters = target_cls.get_auth_mode_parameters(auth_mode=auth_mode)
         await save_then_register_async(
             kind=RegistryRecipeKind.TARGETS,
             name=name,
             recipe=ComponentRecipe(
-                class_module=target_cls.__module__, class_name=type_name, params=params, owner=owner
+                class_module=target_cls.__module__,
+                class_name=type_name,
+                auth_mode=auth_mode,
+                params={key: value for key, value in params.items() if key not in auth_parameters},
+                owner=owner,
             ),
             recipes_source=recipes_source,
             register=lambda metadata: self._registry.instances.register(target_obj, name=name, metadata=metadata),

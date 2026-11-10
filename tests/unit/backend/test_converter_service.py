@@ -10,6 +10,7 @@ import base64
 import codecs
 import json
 from collections.abc import AsyncGenerator, Iterator
+from functools import partial
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ from pyrit.backend.services.saved_entries import (
     SavedEntryRemovalError,
     SavedEntryStorageError,
 )
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.common import apply_defaults, reset_default_values, set_default_value
 from pyrit.converter import (
     AzureSpeechTextToAudioConverter,
@@ -65,6 +67,7 @@ from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryEntryOrigin,
     RegistryRecipeKind,
+    RegistryRestoreReport,
     RestoreFailureReason,
     SavedEntryOwner,
 )
@@ -2380,6 +2383,13 @@ class TestConverterParamsExtraction:
         assert isinstance(result.identifier.supported_output_types, list)
 
 
+async def _restore(source: Path) -> RegistryRestoreReport:
+    """Restore the saved converters through the API's create, as startup does."""
+    get_converter_service.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(source)).restore_async(build_async=build_async)
+
+
 def _persist(name: str, converter_type: str, params: dict[str, Any] | None = None) -> CreateConverterRequest:
     return CreateConverterRequest(name=name, type=converter_type, params=params or {}, persist=True)
 
@@ -2425,7 +2435,7 @@ class TestPersistConverter:
         assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
         saved_hash = entry.instance.get_identifier().hash
         ConverterRegistry.reset_registry_singleton()
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
         restored = ConverterRegistry.get_registry_singleton().instances.get("caesar_converter")
         assert restored is not None
         assert restored.get_identifier().hash == saved_hash
@@ -2549,7 +2559,7 @@ class TestPersistConverter:
 
         assert _saved_converter(tmp_path, "banner")["params"] == {"text_to_add": "hello"}
         ConverterRegistry.reset_registry_singleton()
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
 
     async def test_a_taken_name_is_a_conflict_only_when_saving(
         self, upload_service: ConverterService, tmp_path: Path
@@ -2748,7 +2758,7 @@ class TestPersistConverterWithADefaultTarget:
         }
         reset_default_values()
         ConverterRegistry.reset_registry_singleton()
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
 
     async def test_names_a_default_target_by_a_name_that_lasts(
         self, upload_service: ConverterService, tmp_path: Path
@@ -2774,7 +2784,7 @@ class TestPersistConverterWithADefaultTarget:
 
         assert _saved_converter(tmp_path, "puzzled")["params"] == left_unset
         ConverterRegistry.reset_registry_singleton()
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
 
     @pytest.mark.parametrize("left_unset", [{}, {"converter_target": None}, {"converter_target": ""}])
     async def test_refuses_a_default_target_that_is_gone_after_a_restart(
@@ -2995,11 +3005,14 @@ async def test_saves_a_copy_as_its_changes_and_rebuilds_it_from_the_converter_it
     instances = ConverterRegistry.get_registry_singleton().instances
     with registration_origin(RegistryEntryOrigin.CONFIGURATION):
         instances.register(SearchReplaceConverter(pattern="fish", replace="dog"), name="startup_replace")
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
 
     restored = instances.get_entry("bird_replace")
     assert restored is not None
-    assert restored.metadata == {SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
+    assert (restored.metadata[SAVED_ENTRY_METADATA_KEY], restored.metadata[SAVED_ENTRY_OWNER_METADATA_KEY]) == (
+        "converters",
+        owner,
+    )
     assert (
         restored.instance.get_identifier().params["pattern"],
         restored.instance.get_identifier().params["replace_list"],
@@ -3098,7 +3111,7 @@ async def test_a_saved_copy_edited_to_change_where_its_source_sends_requests_doe
         encoding="utf-8",
     )
 
-    failures = RegistryRecipeRestorer(source=str(tmp_path)).restore().failures
+    failures = (await _restore(tmp_path)).failures
 
     assert [(failure.name, failure.reason) for failure in failures] == [
         ("westus_speech", RestoreFailureReason.BUILD_ERROR)
@@ -3118,7 +3131,7 @@ async def test_a_copy_whose_converter_is_gone_doesnt_restore(
     )
     ConverterRegistry.reset_registry_singleton()
 
-    failures = RegistryRecipeRestorer(source=str(tmp_path)).restore().failures
+    failures = (await _restore(tmp_path)).failures
 
     assert [(failure.name, failure.reason, failure.message) for failure in failures] == [
         (
@@ -3148,7 +3161,7 @@ async def test_restores_a_copy_of_a_saved_converter_after_the_converter_it_copie
     await service.create_converter_async(request=request, recipes_source=str(tmp_path))
     ConverterRegistry.reset_registry_singleton()
 
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
 
     restored = ConverterRegistry.get_registry_singleton().instances.get("bird_replace")
     assert restored is not None
@@ -3182,7 +3195,7 @@ async def test_a_saved_copy_takes_its_sign_in_from_the_converter_it_copies(tmp_p
         )
 
     assert "source-key" not in (tmp_path / "converters" / "ava_speech.json").read_text()
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
     restored = restarted.get("ava_speech")
     assert restored is not None
     assert restored.get_identifier().params["synthesis_voice_name"] == "en-US-AvaNeural"
