@@ -214,6 +214,7 @@ class DockerSandboxClient:
         self._temp_root = Path(tempfile.gettempdir())
         self._capabilities = SandboxCapabilities(
             runtime_profiles=tuple(RuntimeProfile(name=name) for name in sorted(self._profiles)),
+            description="a disposable Docker container with no network",
             max_input_bytes=self._MAX_INPUT_BYTES,
             max_arguments_bytes=self._MAX_ARGUMENTS_BYTES,
             max_output_bytes=self._max_output_bytes,

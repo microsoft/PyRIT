@@ -22,12 +22,17 @@ class RuntimeProfile(BaseModel):
     """
     One trusted way a sandbox runs program text, such as Python or PowerShell.
 
-    ``name`` is what callers pass; the client maps it to its own configuration.
+    ``name`` is what callers pass; the client maps it to its own configuration. ``tool_name``
+    optionally names the runtime for model tools (``run_<tool_name>``), such as ``powershell`` for a
+    profile named ``windows-powershell``. ``description`` tells a model what the runtime is, such as
+    "Python 3.12".
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: _RuntimeProfileName
+    tool_name: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_]{1,60}$")
+    description: str = Field(default="", max_length=200)
 
 
 class SandboxCapabilities(BaseModel):
@@ -38,11 +43,13 @@ class SandboxCapabilities(BaseModel):
     standard input and its arguments together; ``max_arguments_bytes``, when set, also bounds the
     arguments alone, for backends that pass them on a command line. ``max_output_bytes`` is the most
     output of each stream the sandbox returns before marking it truncated. Timeouts are in seconds.
+    ``description`` tells a model where its code runs.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     runtime_profiles: tuple[RuntimeProfile, ...] = Field(min_length=1)
+    description: str = Field(default="an isolated sandbox", min_length=1, max_length=500)
     max_input_bytes: int = Field(default=65_536, ge=1)
     max_arguments_bytes: int | None = Field(default=None, ge=1)
     max_output_bytes: int = Field(default=32_768, ge=1)

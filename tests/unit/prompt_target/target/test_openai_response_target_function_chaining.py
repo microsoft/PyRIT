@@ -18,7 +18,7 @@ from openai.types.responses import ResponseOutputText
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import Message, MessagePiece, ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import FunctionTool, OpenAIResponseTarget, ToolInfrastructureError
+from pyrit.prompt_target import FunctionTool, OpenAIResponseTarget, ToolInfrastructureError, ToolInputError
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
 
 
@@ -598,6 +598,66 @@ async def test_tool_round_limit_counts_parallel_responses_and_answers_every_pend
     )
     target.validate_tool_history(result)
     assert filter_non_replayable_messages(messages=result) == result[:-1]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("strict_dispatch", [False, True])
+async def test_input_rejection_preserves_same_round_and_model_retry_async(
+    *, legacy: bool, strict_dispatch: bool
+) -> None:
+    executed: list[str] = []
+
+    async def lookup_async(*, key: str) -> dict[str, str]:
+        if key == "rejected":
+            raise ToolInputError("choose a supported key")
+        executed.append(key)
+        return {"value": key}
+
+    async def legacy_lookup_async(arguments: dict[str, Any]) -> dict[str, str]:
+        return await lookup_async(key=arguments["key"])
+
+    target = OpenAIResponseTarget(
+        model_name="gpt-4",
+        endpoint="https://mock.azure.com",
+        api_key="mock-key",
+        fail_on_missing_function=strict_dispatch,
+        tools=[] if legacy else [FunctionTool(function=lookup_async, name="lookup")],
+        custom_functions={"lookup": legacy_lookup_async} if legacy else None,
+    )
+    first = create_mock_function_call_response("call_rejected", "lookup", {"key": "rejected"})
+    first.output.extend(create_mock_function_call_response("call_same_round", "lookup", {"key": "same-round"}).output)
+    retry = create_mock_function_call_response("call_retry", "lookup", {"key": "corrected"})
+    with patch.object(
+        target._async_client.responses,
+        "create",
+        new_callable=AsyncMock,
+        side_effect=[first, retry, create_mock_text_response("done")],
+    ) as create:
+        responses = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
+
+    assert create.await_count == 3
+    assert executed == ["same-round", "corrected"]
+    assert _call_outputs(responses) == [
+        (
+            "call_rejected",
+            {"error": "tool_input_error", "function": "lookup", "message": "choose a supported key"},
+            False,
+        ),
+        ("call_same_round", {"value": "same-round"}, True),
+        ("call_retry", {"value": "corrected"}, True),
+    ]
+    assert responses[-1].get_value() == "done"
+    assert all(
+        ToolLoopStop.from_metadata(metadata=piece.prompt_metadata) is None
+        for response in responses
+        for piece in response.message_pieces
+    )
+    target.validate_tool_history(responses)
+    second_request = create.await_args_list[1].kwargs["input"]
+    outputs = [entry for entry in second_request if entry.get("type") == "function_call_output"]
+    assert [entry["call_id"] for entry in outputs] == ["call_rejected", "call_same_round"]
+    assert json.loads(outputs[0]["output"])["message"] == "choose a supported key"
 
 
 @pytest.mark.parametrize("invoked", [None, False], ids=["unknown-outcome", "not-invoked"])
