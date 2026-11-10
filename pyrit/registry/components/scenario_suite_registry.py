@@ -8,10 +8,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from pyrit.models.catalog.scenario_suite import (
+from pyrit.models import (
     ScenarioSuite,
-    ScenarioSuiteRegistryEntry,
     StoredScenarioSuite,
+)
+from pyrit.models.catalog import (
+    ScenarioSuiteRegistryEntry,
 )
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry import Registry

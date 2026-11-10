@@ -11,8 +11,8 @@ from uuid import UUID
 import pytest
 from azure.core.exceptions import AzureError
 
-from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService, get_scenario_suite_service
-from pyrit.models.catalog import PresetEntry, PresetIssue, ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
+from pyrit.backend.services import ScenarioSuiteService, get_scenario_suite_service
+from pyrit.models import PresetEntry, PresetIssue, ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioSuiteConflictError,

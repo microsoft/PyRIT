@@ -20,8 +20,7 @@ from unit.mocks import MockPromptTarget
 from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
-from pyrit.memory import CentralMemory
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.message_normalizer import (
     ConversationContextNormalizer,
     HistorySquashNormalizer,
@@ -31,15 +30,16 @@ from pyrit.message_normalizer import (
 )
 from pyrit.models import ComponentIdentifier, Message, MessagePiece, PromptResponseError
 from pyrit.prompt_normalizer import PromptNormalizer
-from pyrit.prompt_target import AzureMLChatTarget, OpenAIChatTarget
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.prompt_target import (
+    AzureMLChatTarget,
     CapabilityHandlingPolicy,
     CapabilityName,
+    OpenAIChatTarget,
+    OpenAIResponseTarget,
     TargetCapabilities,
+    TargetConfiguration,
     UnsupportedCapabilityBehavior,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
-from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
 
 
 def _make_message_piece(*, role: str, content: str, conversation_id: str = "conv1") -> MessagePiece:

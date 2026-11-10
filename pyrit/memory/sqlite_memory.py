@@ -25,9 +25,9 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.util.concurrency import greenlet_spawn
 
+from pyrit.common import Singleton
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.common.singleton import Singleton
-from pyrit.memory.analytics_sql import UnicodeLower
+from pyrit.memory.analytics_sql import UnicodeCaseFold, UnicodeLower, text_match, validate_text_search
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -281,13 +281,26 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         return str(value).lower() if value is not None else None
 
     @staticmethod
+    def _unicode_casefold(value: str | int | float | bytes | None) -> str | None:
+        """
+        Casefold SQLite text per character, retaining NULL semantics.
+
+        Returns:
+            str | None: The folded value, or SQL NULL.
+        """
+        return str(value).casefold() if value is not None else None
+
+    @staticmethod
     def _register_analytics_lower(*, engine: Engine) -> None:
-        """Install the Unicode lowercase function for analytics and JSON filters on every pooled SQLite connection."""
+        """Install the Unicode fold functions for analytics and JSON filters on every pooled SQLite connection."""
 
         @event.listens_for(engine, "connect")
         def register(dbapi_connection: Any, connection_record: Any) -> None:
             dbapi_connection.create_function(
                 UnicodeLower.SQLITE_FUNCTION_NAME, 1, SQLiteMemory._unicode_lower, deterministic=True
+            )
+            dbapi_connection.create_function(
+                UnicodeCaseFold.SQLITE_FUNCTION_NAME, 1, SQLiteMemory._unicode_casefold, deterministic=True
             )
 
     async def get_session_async(self) -> AsyncSession:
@@ -452,7 +465,8 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         *,
         json_column: InstrumentedAttribute[Any],
         property_path: str,
-        value: str,
+        value: str | None = None,
+        value_pattern: str | None = None,
         partial_match: bool = False,
         case_sensitive: bool = False,
     ) -> Any:
@@ -462,22 +476,32 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         Args:
             json_column (InstrumentedAttribute[Any]): The JSON-backed model field to query.
             property_path (str): The JSON path for the property to match.
-            value (str): The string value that must match the extracted JSON property value.
-            partial_match (bool): Whether to perform a substring match. Defaults to False.
+            value (str | None): The string value to match, exactly unless partial_match is True.
+            value_pattern (str | None): A full case-insensitive LIKE pattern instead of value.
+            partial_match (bool): Whether value is a case-insensitive literal substring. Defaults to False.
             case_sensitive (bool): Whether the match should be case-sensitive. Defaults to False.
 
         Returns:
             Any: A SQLAlchemy condition for the backend-specific JSON query.
+
+        Raises:
+            ValueError: If filters conflict, a pattern is invalid, or an exact value is absent.
         """
         raw = func.json_extract(json_column, property_path)
+        validate_text_search(value=value, pattern=value_pattern)
+        if partial_match and case_sensitive:
+            raise ValueError("case_sensitive is not reliably supported with partial_match across all backends")
+        if value_pattern is not None and (partial_match or case_sensitive):
+            raise ValueError("Cannot use value_pattern with partial_match or case_sensitive")
+        if partial_match or value_pattern is not None:
+            return text_match(column=raw, value=value, pattern=value_pattern)
+        if value is None:
+            raise ValueError("An exact JSON property match requires value")
         if case_sensitive:
             extracted_value, target = raw, value
         else:
             extracted_value, target = UnicodeLower(raw), value.lower()
 
-        if partial_match:
-            escaped = target.replace("%", "\\%").replace("_", "\\_")
-            return extracted_value.like(f"%{escaped}%", escape="\\")
         return extracted_value == target
 
     def _get_condition_json_array_match(

@@ -13,13 +13,12 @@ import pytest
 from pyrit.executor.attack.component.modality_router import _ModalityFeedbackRouter
 from pyrit.message_normalizer._helpers import format_message_piece_for_context
 from pyrit.models import Message, MessagePiece
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from pyrit.models.literals import PromptDataType
+    from pyrit.models import PromptDataType
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import {
   targetIdentifierHash,
 } from '@/utils/targetIdentity'
 import type { TargetHashResolution } from '@/utils/targetIdentity'
+import { isGuiTarget, isGuiTargetType } from '@/utils/targetVisibility'
 
 interface RegistryResolution {
   attackId: string | null
@@ -55,10 +56,12 @@ async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashRes
       params: { temperature: target.binding.temperature },
       effective_hash: target.binding.effective_hash,
     })
+    if (!isGuiTarget(source)) return { status: 'unavailable' }
     return {
       status: 'resolved',
       target: {
         ...source, target_registry_name: target.binding.source_name,
+        capabilities: target.binding.capabilities ?? source.capabilities,
         binding: target.binding, reconstructable: true, supports_temperature_override: true,
       },
     }
@@ -70,14 +73,33 @@ async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashRes
         typeof namedTarget?.identifier?.hash === 'string'
         && targetIdentifierHash(namedTarget) === target.identifier_hash
       ) {
-        return { status: 'resolved' as const, target: namedTarget }
+        return isGuiTarget(namedTarget)
+          ? {
+            status: 'resolved' as const,
+            target: target.capabilities
+              ? {
+                ...namedTarget, capabilities: target.capabilities,
+                supports_history_replay: target.supports_history_replay ?? namedTarget.supports_history_replay,
+              }
+              : namedTarget,
+          }
+          : { status: 'unavailable' }
       }
     } catch (error) {
       if (toApiError(error).status !== 404) throw error
     }
   }
 
-  return resolveTargetByIdentifierHash(target.identifier_hash, await listRegisteredTargets())
+  const resolution = resolveTargetByIdentifierHash(target.identifier_hash, await listRegisteredTargets())
+  return resolution.status === 'resolved' && target.capabilities
+    ? {
+      ...resolution,
+      target: {
+        ...resolution.target, capabilities: target.capabilities,
+        supports_history_replay: target.supports_history_replay ?? resolution.target.supports_history_replay,
+      },
+    }
+    : resolution
 }
 
 export function useAttackTargetResolution({
@@ -102,7 +124,7 @@ export function useAttackTargetResolution({
   const [resolutionAttempt, setResolutionAttempt] = useState(0)
 
   useEffect(() => {
-    if (!ready || !attackId || !hasCompleteIdentifier(attackTarget)) return
+    if (!ready || !attackId || !hasCompleteIdentifier(attackTarget) || !isGuiTargetType(attackTarget.target_type)) return
     if (useCreatedTarget) return
 
     let cancelled = false
@@ -137,9 +159,10 @@ export function useAttackTargetResolution({
   const getResolutionStatus = (): AttackTargetResolutionStatus => {
     if (!attackId) return 'idle'
     if (targetUnbound && !attackTarget) return 'unbound'
+    if (attackTarget && !isGuiTargetType(attackTarget.target_type)) return 'unavailable'
     if (!hasCompleteIdentifier(attackTarget)) return 'legacy'
     if (useCreatedTarget) {
-      return createdTarget && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
+      return createdTarget && isGuiTarget(createdTarget) && targetIdentifierHash(createdTarget) === attackTarget.identifier_hash
         ? 'resolved'
         : 'unavailable'
     }

@@ -18,7 +18,7 @@ import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, assert_never, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, assert_never, cast, get_args
 from uuid import UUID
 
 import aiofiles
@@ -41,11 +41,11 @@ from pyrit.cli._cli_args import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from pyrit.models import Parameter
     from pyrit.models.catalog import (
         RunScenarioRequest,
         ScenarioRunSummary,
     )
-    from pyrit.models.parameter import Parameter
 
 
 def _is_read_timeout(exc: BaseException) -> bool:
@@ -298,6 +298,10 @@ def _add_run_arguments(*, parser: ArgumentParser, scenario_params: list[Paramete
         help="Name of the scenario to run",
     )
     parser.add_argument("--target", type=str, help=ARG_HELP["target"])
+    parser.add_argument("--scoring-target", type=str, help="Registered target for the scenario scoring rubric")
+    parser.add_argument(
+        "--adversarial-target", type=str, help="Registered generation target; never inferred from --target"
+    )
     parser.add_argument(
         "--initializers",
         type=_parse_initializer_arg,
@@ -481,7 +485,7 @@ def _scenario_value_coercer(*, name: str, annotation: Any) -> Callable[[Any], An
     if annotation is None or annotation is str:
         return None
 
-    from pyrit.models.parameter import Parameter
+    from pyrit.models import Parameter
 
     element_param = Parameter(name=name, description="", param_type=annotation)
 
@@ -510,14 +514,16 @@ def _scenario_param_kwargs(*, parameter: Parameter) -> dict[str, Any]:
     Returns:
         dict[str, Any]: kwargs ready to pass to ``ArgumentParser.add_argument``.
     """
+    from pyrit.models.parameter import _unwrap_optional
+
     kwargs: dict[str, Any] = {
         "dest": f"{_SCENARIO_DEST_PREFIX}{parameter.name}",
         "default": argparse.SUPPRESS,
         "help": parameter.description,
     }
-    param_type = parameter.param_type
+    param_type = _unwrap_optional(parameter.param_type)
     element_type: Any
-    if get_origin(param_type) is list:
+    if parameter.is_list:
         type_args = get_args(param_type)
         element_type = type_args[0] if type_args else str
         kwargs["nargs"] = "+"
@@ -584,7 +590,7 @@ _LEGACY_COMMAND_FLAGS: dict[str, str] = {
 
 def _warn_legacy(*, old: str, new: str) -> None:
     """Warn (visibly and via ``DeprecationWarning``) about a legacy ``pyrit_scan`` invocation."""
-    from pyrit.common.deprecation import print_deprecation_message
+    from pyrit.common import print_deprecation_message
 
     print_deprecation_message(old_item=f"pyrit_scan {old}", new_item=f"pyrit_scan {new}", removed_in="1.3.0")
     # DeprecationWarning is suppressed by default in a CLI, so also print a visible note.
@@ -1007,6 +1013,10 @@ def _build_run_request(*, parsed_args: Namespace, scenario_name: str) -> RunScen
         "scenario_name": scenario_name,
         "target_name": parsed_args.target or "",
     }
+    for role in ("scoring", "adversarial"):
+        name = getattr(parsed_args, f"{role}_target", None)
+        if name:
+            kwargs[f"{role}_target_name"] = name
 
     if parsed_args.initializers:
         init_names: list[str] = []

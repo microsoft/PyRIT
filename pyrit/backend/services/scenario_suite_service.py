@@ -11,15 +11,17 @@ from typing import Literal
 
 from azure.core.exceptions import AzureError
 
-from pyrit.backend.models.scenario_suites import (
+from pyrit.backend.models import (
     ScenarioSuiteEntryStatus,
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
 )
-from pyrit.models.catalog import (
+from pyrit.models import (
     PresetIssue,
     ScenarioSuite,
     ScenarioSuiteEntry,
+)
+from pyrit.models.catalog import (
     ScenarioSuiteRegistryEntry,
 )
 from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry

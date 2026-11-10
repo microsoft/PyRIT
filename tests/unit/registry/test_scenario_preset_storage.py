@@ -12,10 +12,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION, ScenarioPreset
-from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
+from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest, ScenarioPreset
+from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION
+from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetStorage
 from pyrit.registry.file_document_storage import _release_exclusive_lock, _try_acquire_exclusive_lock
-from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
 
 
 def _make_preset(**overrides: object) -> ScenarioPreset:

@@ -18,43 +18,37 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
-from pyrit.analytics import PairedOutcomeStatistics, compute_paired_outcome_statistics
-from pyrit.backend.models.attacks import ConversationMessagesResponse
-from pyrit.backend.models.common import (
-    MAX_IDENTIFIER_LENGTH,
-    MAX_ITEMS,
-    CursorStr,
-    IdentifierStr,
-    LabelFilterStr,
-    ProblemDetail,
+from pyrit.analytics import (
+    PairedOutcomeDetailPage,
+    PairedOutcomeStatistics,
+    PairedOutcomeTransition,
+    compute_paired_outcome_statistics,
+    get_paired_outcome_details,
 )
-from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
-from pyrit.backend.models.scenarios import (
+from pyrit.backend.models import (
+    ConversationMessagesResponse,
     ListRegisteredScenariosResponse,
+    ProblemDetail,
     ScenarioRunListResponse,
 )
+from pyrit.backend.models.common import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, CursorStr, IdentifierStr, LabelFilterStr
+from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.routes.common import parse_label_query_params
-from pyrit.backend.services.scenario_run_service import (
-    ScenarioRunConflictError,
-    ScenarioRunNotFoundError,
-    get_scenario_run_service,
-)
-from pyrit.backend.services.scenario_service import get_scenario_service
+from pyrit.backend.services import get_scenario_run_service, get_scenario_service
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
+from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.models import (
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
     ScenarioQueueSnapshot,
     ScenarioResult,
     ScenarioRunProgress,
-    ScenarioRunState,
-)
-from pyrit.models.catalog import (
-    RegisteredScenario,
-    RunScenarioRequest,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateRequest,
-    ScenarioRunSummary,
+    ScenarioRunState,
 )
+from pyrit.models.catalog import RegisteredScenario, RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.scenario_readiness import ScenarioReadiness
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -100,6 +94,26 @@ async def get_scan_conversation_async(
 # ============================================================================
 # Scenario Catalog
 # ============================================================================
+
+
+@router.post("/catalog/{scenario_name}/readiness", response_model=ScenarioReadiness)
+async def get_scenario_readiness_async(
+    *, scenario_name: IdentifierStr, request: ScenarioRunSizeEstimateRequest
+) -> ScenarioReadiness:
+    """
+    Resolve scan roles independently of run-size estimation or dataset preparation.
+
+    Returns:
+        ScenarioReadiness: Effective roles and configuration issues.
+    """
+    try:
+        return await run_in_threadpool(
+            ScenarioConfigurationResolver.resolve_readiness,
+            scenario_name=scenario_name,
+            request=request,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @router.get(
@@ -578,6 +592,45 @@ async def get_scenario_run_results(scenario_result_id: IdentifierStr) -> Scenari
             detail=f"Scenario run '{scenario_result_id}' not found",
         )
     return result
+
+
+@router.get(
+    "/runs/{scenario_result_id}/paired-outcomes/details",
+    response_model=PairedOutcomeDetailPage,
+    responses={
+        400: {"model": ProblemDetail, "description": "Invalid selection, pairing evidence, or detail cursor"},
+        404: {"model": ProblemDetail, "description": "Run not found"},
+        409: {"model": ProblemDetail, "description": "Run not yet completed"},
+    },
+)
+async def get_paired_outcome_details_async(
+    *,
+    scenario_result_id: IdentifierStr,
+    baseline_group_id: IdentifierStr = Query(..., description="Saved baseline atomic group ID"),
+    attack_group_id: IdentifierStr = Query(..., description="Saved attack atomic group ID"),
+    transition: PairedOutcomeTransition = Query(..., description="Decided outcome transition"),
+    limit: int = Query(25, ge=1, le=100, description="Maximum matching pairs per page"),
+    cursor: CursorStr | None = Query(None, description="Opaque filter-bound detail cursor"),
+) -> PairedOutcomeDetailPage:
+    """
+    Load a bounded page of objective and conversation details for one transition.
+
+    Returns:
+        PairedOutcomeDetailPage: Pairs selected by the same SDK semantics as aggregate analytics.
+    """
+    result = await get_scenario_run_results(scenario_result_id=scenario_result_id)
+    try:
+        return await run_in_threadpool(
+            get_paired_outcome_details,
+            result,
+            baseline_group_id=baseline_group_id,
+            attack_group_id=attack_group_id,
+            transition=transition,
+            limit=limit,
+            cursor=cursor,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
 
 
 @router.get(

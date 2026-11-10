@@ -59,6 +59,7 @@ import type {
   ScenarioPresetResponse,
   ScenarioSuite,
   LaunchScenarioSuiteRequest,
+  ScenarioSuiteReadinessRequest,
   ScenarioSuiteExecutionSummary,
   ScenarioSuiteListResponse,
   ScenarioSuiteResponse,
@@ -66,12 +67,16 @@ import type {
   UpdateScenarioSuiteRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
+  ScenarioReadiness,
   ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
   ScenarioHierarchyNode,
   ScenarioHierarchyProjection,
+  PairedOutcomeStatistics,
+  PairedOutcomeDetailPage,
+  PairedOutcomeTransition,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -82,6 +87,8 @@ import type {
   AuthAccess,
   BackendScore,
   ManualScoreRequest,
+  MediaUploadRequest,
+  MediaUploadResponse,
   UpdateAttackRequest,
   SaveConversationRequest,
   Finding,
@@ -108,6 +115,12 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
+export const mediaApi = {
+  upload: async (request: MediaUploadRequest): Promise<MediaUploadResponse> => {
+    return (await apiClient.post<MediaUploadResponse>('/media/uploads', request)).data
+  },
+}
+
 const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
 
 export const operationsApi = {
@@ -130,7 +143,7 @@ export const operationsApi = {
     await apiClient.delete(operationPath(operationId))
   },
   listFindings: async (
-    operationId: string, params: { limit: number; offset: number; title?: string },
+    operationId: string, params: { limit: number; offset: number; title?: string; title_pattern?: string },
   ): Promise<FindingListResponse> => {
     return (await apiClient.get(`${operationPath(operationId)}/findings`, { params })).data
   },
@@ -372,6 +385,14 @@ export const runtimeApi = {
 }
 
 export const targetsApi = {
+  detectCapabilities: async (target: TargetInstance): Promise<TargetInstance> => {
+    const response = await apiClient.post<TargetInstance>(
+      `/targets/${encodeURIComponent(target.target_registry_name)}/detect-capabilities`,
+      { expected_hash: target.identifier.hash },
+    )
+    return response.data
+  },
+
   listTargetTypes: async (): Promise<TargetTypeListResponse> => {
     const response = await apiClient.get('/targets/types')
     return response.data
@@ -628,6 +649,10 @@ export const scoresApi = {
 }
 
 export const scorersApi = {
+  listTypes: async (): Promise<{ items: Array<{ scorer_type: string; parameters: import('@/types').Parameter[]; supports_objective_scoring: boolean }> }> =>
+    (await apiClient.get('/scorers/types')).data,
+  createScorer: async (request: { name: string; type: string; params: Record<string, unknown> }): Promise<import('@/types').ScorerInstance> =>
+    (await apiClient.post('/scorers', request)).data,
   listScorers: async (limit = 200, cursor?: string): Promise<{
     items: import('@/types').ScorerInstance[]
     pagination: { has_more: boolean; next_cursor: string | null }
@@ -709,6 +734,12 @@ export const scenariosApi = {
     return response.data
   },
 
+  readiness: async (
+    scenarioName: string, request: ScenarioRunSizeEstimateRequest, signal?: AbortSignal,
+  ): Promise<ScenarioReadiness> => (await apiClient.post(
+    `/scenarios/catalog/${encodeURIComponent(scenarioName)}/readiness`, request, { signal },
+  )).data,
+
   getRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
     const response = await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}`)
     return response.data
@@ -776,6 +807,36 @@ export const scenariosApi = {
   ): Promise<ScenarioHierarchyNode> => {
     const response = await apiClient.get<ScenarioHierarchyNode>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  getPairedOutcomes: async (
+    scenarioResultId: string,
+    params: { baseline_group_id: string; attack_group_id: string },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeStatistics> => {
+    const response = await apiClient.get<PairedOutcomeStatistics>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  getPairedOutcomeDetails: async (
+    scenarioResultId: string,
+    params: {
+      baseline_group_id: string
+      attack_group_id: string
+      transition: PairedOutcomeTransition
+      cursor?: string
+      limit: number
+    },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeDetailPage> => {
+    const response = await apiClient.get<PairedOutcomeDetailPage>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes/details`,
       { params, signal },
     )
     return response.data
@@ -849,6 +910,8 @@ export const scenarioPresetsApi = {
 }
 
 export const scenarioSuitesApi = {
+  readiness: async (name: string, request: ScenarioSuiteReadinessRequest, signal?: AbortSignal): Promise<ScenarioReadiness> =>
+    (await apiClient.post(`/scenario-suites/${encodeURIComponent(name)}/readiness`, request, { signal })).data,
   list: async (signal?: AbortSignal): Promise<ScenarioSuiteListResponse> => {
     const response = await apiClient.get('/scenario-suites', { signal })
     return response.data
@@ -927,12 +990,16 @@ export const scenarioSuitesApi = {
 const MAX_SEED_SEARCH_LENGTH = 1_000
 
 function seedListQuery(params: SeedExampleListParams): Record<string, string | number | readonly string[]> {
+  if (params.search != null && params.value_pattern != null) {
+    throw new Error('Supply either literal search or value_pattern, not both.')
+  }
   const query: Record<string, string | number | readonly string[]> = {
     selection_key: params.selection_key,
   }
   if (params.limit != null) query.limit = params.limit
   if (params.cursor) query.cursor = params.cursor
   if (params.search) query.search = params.search.slice(0, MAX_SEED_SEARCH_LENGTH)
+  if (params.value_pattern != null) query.value_pattern = params.value_pattern
   if (params.modality && params.modality.length > 0) query.modality = params.modality
   if (params.seed_type && params.seed_type.length > 0) query.seed_type = params.seed_type
   if (params.harm_category && params.harm_category.length > 0) query.harm_category = params.harm_category

@@ -81,7 +81,8 @@ async def test_translation_converter_user_prompt_byte_for_byte_equivalent(sqlite
     sent_message = mock_send.call_args[1]["message"]
     piece = sent_message.message_pieces[0]
     assert piece.original_value == raw_prompt
-    assert piece.converted_value == expected
+    # The system prompt is sent ahead of the user prompt in the same user turn.
+    assert piece.converted_value.endswith(f"\n\n{expected}")
 
 
 async def test_translation_converter_retries_on_exception(sqlite_instance):

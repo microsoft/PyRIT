@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pyrit.models.catalog.scenario_preset import PresetEntry, PresetIssue, ScenarioPreset, StoredPreset
+from pyrit.models import PresetEntry, PresetIssue, ScenarioPreset, StoredPreset
 from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -426,7 +426,7 @@ def _technique_issues(*, preset: ScenarioPreset, metadata: ScenarioMetadata) -> 
     if not preset.techniques:
         return []
 
-    from pyrit.scenario.core.technique_tokens import CONVERTER_MODIFIER_PREFIX, resolve_technique_tokens
+    from pyrit.scenario.core import CONVERTER_MODIFIER_PREFIX, resolve_technique_tokens
 
     resolution = resolve_technique_tokens(
         tokens=preset.techniques,

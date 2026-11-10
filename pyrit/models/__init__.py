@@ -72,6 +72,12 @@ if TYPE_CHECKING:
     )
     from pyrit.models.conversation_stats import ConversationStats
     from pyrit.models.conversation_summary import ConversationSummary
+    from pyrit.models.decomposition import (
+        DecompositionNode,
+        DecompositionPath,
+        DecompositionTree,
+        validate_own_decomposition,
+    )
     from pyrit.models.embeddings import EmbeddingData, EmbeddingResponse, EmbeddingSupport, EmbeddingUsageInformation
     from pyrit.models.finding import Finding, FindingCreate, FindingEvidence, FindingSeverity
     from pyrit.models.harm_definition import HarmDefinition, ScaleDescription, get_all_harm_definitions
@@ -217,6 +223,7 @@ if TYPE_CHECKING:
         ScenarioSuiteExecutionStatus,
         ScenarioSuiteExecutionSummary,
         ScenarioSuiteLaunchEntrySnapshot,
+        ScenarioSuiteReadinessRequest,
         ScenarioSuiteSubmissionState,
     )
     from pyrit.models.score import (
@@ -249,6 +256,7 @@ if TYPE_CHECKING:
         ScoreStatus,
         ScoreType,
         ScoringExpectation,
+        StartsWith,
         SurfaceBaseline,
         SurfaceCoverage,
         SurfaceEntry,
@@ -288,6 +296,7 @@ if TYPE_CHECKING:
         SeedSimulatedConversation,
         SeedUnion,
         SimulatedTargetSystemPromptPaths,
+        build_objective_decomposition_tree,
         group_seeds_into_attack_groups,
         load_next_message_prompt,
         load_simulated_target_prompt,
@@ -335,7 +344,7 @@ if TYPE_CHECKING:
         unregister_common_json_schema,
     )
     from pyrit.models.target.request_trace_context import RequestTraceContext
-    from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata
+    from pyrit.models.target.tool_execution_metadata import ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
 
 _LAZY_EXPORTS: dict[str, str] = {
     "AdversarialPrompts": "pyrit.models.seeds.adversarial_prompts",
@@ -364,6 +373,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Contains": "pyrit.models.score",
     "Equals": "pyrit.models.score",
     "Regex": "pyrit.models.score",
+    "StartsWith": "pyrit.models.score",
     "TextMatcher": "pyrit.models.score",
     "OutputMatches": "pyrit.models.score",
     "ProgramBehaves": "pyrit.models.score",
@@ -390,6 +400,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "scenario_dataset_size_from_limit": "pyrit.models.scenario_dataset_size_estimate",
     "RequestTraceContext": "pyrit.models.target.request_trace_context",
     "ToolExecutionMetadata": "pyrit.models.target.tool_execution_metadata",
+    "ToolLoopStop": "pyrit.models.target.tool_execution_metadata",
+    "ToolLoopStopReason": "pyrit.models.target.tool_execution_metadata",
     "AttackAnalyticsCell": "pyrit.models.analytics",
     "AttackAnalyticsConverterDirection": "pyrit.models.analytics",
     "AttackAnalyticsDimension": "pyrit.models.analytics",
@@ -442,6 +454,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ConversationRetryReason": "pyrit.models.messages.conversation_retry",
     "ConversationStats": "pyrit.models.conversation_stats",
     "ConversationSummary": "pyrit.models.conversation_summary",
+    "DecompositionNode": "pyrit.models.decomposition",
+    "DecompositionPath": "pyrit.models.decomposition",
+    "DecompositionTree": "pyrit.models.decomposition",
+    "validate_own_decomposition": "pyrit.models.decomposition",
     "Finding": "pyrit.models.finding",
     "FindingCreate": "pyrit.models.finding",
     "FindingEvidence": "pyrit.models.finding",
@@ -464,6 +480,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_all_values": "pyrit.models.messages.conversations",
     "group_conversation_message_pieces_by_sequence": "pyrit.models.messages.conversations",
     "group_message_pieces_into_conversations": "pyrit.models.messages.conversations",
+    "build_objective_decomposition_tree": "pyrit.models.seeds",
     "group_seeds_into_attack_groups": "pyrit.models.seeds",
     "HarmDefinition": "pyrit.models.harm_definition",
     "Identifiable": "pyrit.models.identifiers",
@@ -558,6 +575,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SCENARIO_SUITE_EXECUTION_METADATA_KEY": "pyrit.models.scenario_suite_execution",
     "SCENARIO_SUITE_EXECUTION_METADATA_VERSION": "pyrit.models.scenario_suite_execution",
     "LaunchScenarioSuiteRequest": "pyrit.models.scenario_suite_execution",
+    "ScenarioSuiteReadinessRequest": "pyrit.models.scenario_suite_execution",
     "ScenarioSuiteExecutionEntryState": "pyrit.models.scenario_suite_execution",
     "ScenarioSuiteExecutionEntrySummary": "pyrit.models.scenario_suite_execution",
     "ScenarioSuiteExecutionMetadata": "pyrit.models.scenario_suite_execution",

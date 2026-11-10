@@ -22,8 +22,9 @@ import {
 } from '@fluentui/react-components'
 
 import HelpField from '@/components/HelpField'
-import { convertersApi, targetsApi } from '@/services/api'
+import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import { useTargetPreferences } from '@/hooks/useTargetPreferences'
 import { resolveDefaultAdversarialTarget } from '@/utils/targetIdentity'
 import { mapMediaUrl } from '@/utils/media'
@@ -39,6 +40,7 @@ import {
   getInitialFormValues,
   getParameterControlKind,
   isStructuredParameterFormValue,
+  nonNullableTypeName,
   type ParameterControlKind,
   type ParameterFormValue,
 } from '@/components/Parameters/parameterForm'
@@ -106,11 +108,16 @@ function isEditableParameter(parameter: Parameter): boolean {
     return parameter.reference_type === 'target' || parameter.reference_type === 'converter'
   }
   if (parameter.choices?.length) return true
+  const typeName = nonNullableTypeName(parameter.type_name)
+  if (parameter.is_list) {
+    const element = /^list\[(.+)\]$/.exec(typeName)?.[1]
+    return element !== undefined && EDITABLE_PARAMETER_TYPES.has(`list[${nonNullableTypeName(element)}]`)
+  }
 
   const members: string[] = []
   let member = ''
   let depth = 0
-  for (const character of parameter.type_name) {
+  for (const character of typeName) {
     if (character === '|' && depth === 0) {
       members.push(member.trim())
       member = ''
@@ -194,6 +201,7 @@ function ParameterInput({
   const [manualValue, setManualValue] = useState<string | null>(null)
   const label = `${parameter.name}${parameter.required ? ' *' : ''}`
   const help = parameter.description?.trim()
+  const typeName = nonNullableTypeName(parameter.type_name)
   const uploadsDisabled = disabled || !allowUploads
 
   useLayoutEffect(() => {
@@ -235,7 +243,7 @@ function ParameterInput({
     )
   }
 
-  if (parameter.type_name === 'bool') {
+  if (typeName === 'bool') {
     const checked = (value || parameterDefaultValue(parameter) || 'false').toLowerCase() === 'true'
     return (
       <HelpField label={label} help={help} validationMessage={showError ? 'Required' : undefined}>
@@ -270,8 +278,8 @@ function ParameterInput({
     )
   }
 
-  const isFile = parameter.type_name === 'Path'
-    || parameter.type_name === 'Path | str'
+  const isFile = typeName === 'Path'
+    || typeName === 'Path | str'
     || /path|file/i.test(parameter.name)
     || /path|file/i.test(parameter.description ?? '')
   const mappedImage = isFile && value.startsWith('data:')
@@ -280,7 +288,7 @@ function ParameterInput({
   const fileDetails = selectedFile?.value === value ? selectedFile : undefined
   const hasFileValue = isFile && value.startsWith('data:') && (Boolean(fileDetails) || manualValue !== value)
   const defaultValue = parameterDefaultValue(parameter)
-  const pathPlaceholder = parameter.type_name === 'Path | str'
+  const pathPlaceholder = typeName === 'Path | str'
     ? 'Upload a file or enter a URL' : 'Upload a file or enter a server path'
 
   return (
@@ -390,7 +398,7 @@ export default function CreateConverterDialog({
         setSubmitting(false)
         return Promise.all([
           convertersApi.listConverterTypes(),
-          targetsApi.listTargets(200),
+          listRegisteredTargets(),
           convertersApi.listConverters(),
         ])
       })
@@ -399,7 +407,7 @@ export default function CreateConverterDialog({
         const [response, targetResponse, converterResponse] = responses
         if (!cancelled) {
           setConverterTypes(editing ? response.items : response.items.filter(canConfigureConverterType))
-          setTargets(targetResponse.items)
+          setTargets(targetResponse)
           setConverters(converterResponse.items)
           if (editing) {
             const entry = response.items.find((item) => item.converter_type === editing.converter.identifier.class_name)
@@ -411,7 +419,7 @@ export default function CreateConverterDialog({
               ])),
               ...editing.spec?.params,
             }
-            const defaultTarget = resolveDefaultAdversarialTarget(preferences, targetResponse.items)
+            const defaultTarget = resolveDefaultAdversarialTarget(preferences, targetResponse)
             const defaultedParameters = new Set<string>()
             for (const parameter of entry?.parameters ?? []) {
               const reference = params[parameter.name]
@@ -421,7 +429,7 @@ export default function CreateConverterDialog({
               }
               if (!reference || typeof reference !== 'object' || !('hash' in reference)) continue
               if (parameter.reference_type === 'target') {
-                params[parameter.name] = targetResponse.items.find(
+                params[parameter.name] = targetResponse.find(
                   (target) => target.identifier.hash === reference.hash,
                 )?.target_registry_name ?? ''
               } else if (parameter.reference_type === 'converter') {

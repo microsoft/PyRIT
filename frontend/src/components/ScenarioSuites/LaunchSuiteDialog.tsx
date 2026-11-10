@@ -1,4 +1,4 @@
-import { type FormEvent, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 
 import {
   Badge,
@@ -16,6 +16,11 @@ import {
 import { useNavigate } from 'react-router'
 
 import TargetSelect from '@/components/Config/TargetSelect'
+import CreateTargetDialog from '@/components/Config/CreateTargetDialog'
+import CreateScorerDialog from '@/components/Scorers/CreateScorerDialog'
+import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
+import { useScorerRegistry } from '@/hooks/useScorerRegistry'
+import { useRuntime } from '@/hooks/useRuntime'
 import HelpField from '@/components/HelpField'
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
@@ -31,10 +36,14 @@ import {
 } from '@/components/Scenarios/scenarioRunLimits'
 import { scenarioSuitesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { resolvedRoleLabel } from '@/utils/targetIdentity'
 import type {
   LaunchScenarioSuiteRequest,
   ScenarioSuiteResponse,
   TargetInstance,
+  ScorerInstance,
+  RegisteredComponentReference,
+  ScenarioReadiness,
 } from '@/types'
 
 import { useLaunchSuiteDialogStyles } from './LaunchSuiteDialog.styles'
@@ -80,16 +89,30 @@ export default function LaunchSuiteDialog({
 }: LaunchSuiteDialogProps) {
   const styles = useLaunchSuiteDialogStyles()
   const navigate = useNavigate()
+  const runtime = useRuntime()
+  const scorerRegistry = useScorerRegistry()
+  const [selectionGeneration, setSelectionGeneration] = useState(runtime.generation)
+  const [createdTargets, setCreatedTargets] = useState<Array<{ generation: string; target: TargetInstance }>>([])
+  const [createdScorers, setCreatedScorers] = useState<Array<{ generation: string; scorer: ScorerInstance }>>([])
+  const availableTargets = [...targets, ...createdTargets.filter((entry) => entry.generation === runtime.generation)
+    .map((entry) => entry.target).filter((entry) => !targets.some((target) => target.target_registry_name === entry.target_registry_name))]
+  const availableScorers = [...scorerRegistry.scorers, ...createdScorers.filter((entry) => entry.generation === runtime.generation)
+    .map((entry) => entry.scorer).filter((entry) => !scorerRegistry.scorers.some((scorer) => scorer.scorer_registry_name === entry.scorer_registry_name))]
+  const [createRole, setCreateRole] = useState<'objective' | 'scoring' | 'adversarial' | null>(null)
+  const [createScorer, setCreateScorer] = useState(false)
+  const [creationGeneration, setCreationGeneration] = useState(runtime.generation)
+  const [scoringTargetName, setScoringTargetName] = useState('')
+  const [objectiveScorer, setObjectiveScorer] = useState<RegisteredComponentReference | null>(null)
   const { rememberScanTargets } = useUserPreferences()
-  const adversarialTargets = targets.filter(
+  const adversarialTargets = availableTargets.filter(
     (target) => target.capabilities?.supports_multi_turn === true,
   )
   const [selectedTargetName, setTargetName] = useState<string>()
   const [selectedAdversarialTargetName, setAdversarialTargetName] = useState<string>()
   const targetName = initialTargetName(
     selectedTargetName === undefined ? defaultObjectiveTarget
-      : targets.find((target: TargetInstance) => target.target_registry_name === selectedTargetName) ?? null,
-    targets,
+      : availableTargets.find((target: TargetInstance) => target.target_registry_name === selectedTargetName) ?? null,
+    availableTargets,
   )
   const adversarialTargetName = initialTargetName(
     selectedAdversarialTargetName === undefined ? defaultAdversarialTarget
@@ -100,34 +123,71 @@ export default function LaunchSuiteDialog({
   const [maxRetries, setMaxRetries] = useState(DEFAULT_MAX_RETRIES)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const request = useMemo<LaunchScenarioSuiteRequest>(() => ({
+    expected_version: suite.version,
+    entries: suite.entry_statuses.map((entry) => ({
+      entry_id: entry.entry_id, preset_name: entry.preset_name, origin: entry.origin, preset_version: entry.preset_version,
+    })),
+    target_name: targetName,
+    ...(adversarialTargetName ? { adversarial_target_name: adversarialTargetName } : {}),
+    ...(scoringTargetName ? { scoring_target_name: scoringTargetName } : {}),
+    ...(objectiveScorer ? { objective_scorer: objectiveScorer } : {}),
+    max_concurrency: maxConcurrency, max_retries: maxRetries,
+    ...(operationId ? { operation_id: operationId } : {}),
+    ...(Object.keys(labels).length > 0 ? { labels } : {}),
+  }), [suite, targetName, adversarialTargetName, scoringTargetName, objectiveScorer,
+    maxConcurrency, maxRetries, operationId, labels])
+  const requestKey = JSON.stringify([runtime.generation, request.expected_version, request.entries,
+    targetName, adversarialTargetName, scoringTargetName, objectiveScorer])
+  const [roleState, setRoleState] = useState<{ key: string; result?: ScenarioReadiness; error?: string } | null>(null)
+  useEffect(() => {
+    if (!runtime.ready) return
+    const controller = new AbortController()
+    void scenarioSuitesApi.readiness(suite.suite.name,
+      { ...request, target_name: targetName || undefined }, controller.signal).then((result) => {
+        if (!controller.signal.aborted) setRoleState({ key: requestKey, result })
+      }).catch((failure: unknown) => {
+        if (!controller.signal.aborted) setRoleState({ key: requestKey, error: toApiError(failure).detail })
+      })
+    return () => { controller.abort() }
+  }, [runtime.ready, request, requestKey, suite.suite.name, targetName])
+  const readiness = roleState?.key === requestKey ? roleState.result : undefined
+  const rolesReady = Boolean(readiness && readiness.issues.length === 0)
+    && selectionGeneration === runtime.generation && runtime.ready
+  const usesRole = (role: string): boolean => readiness
+    ? [...readiness.bindings, ...readiness.issues].some((entry) => entry.role === role) : false
+  const groupedIssues = new Map<string, {
+    role: string; reason: string; remediation: string; components: string[]
+  }>()
+  for (const issue of readiness?.issues ?? []) {
+    const key = JSON.stringify([issue.role, issue.reason, issue.remediation])
+    const existing = groupedIssues.get(key)
+    if (existing) {
+      if (!existing.components.includes(issue.component)) existing.components.push(issue.component)
+    } else {
+      groupedIssues.set(key, { ...issue, components: [issue.component] })
+    }
+  }
+  const roleIssues = (role: string) => [...groupedIssues.entries()].filter(([, issue]) => issue.role === role)
+    .map(([key, issue]) => <Text key={key} role="alert">
+      {issue.components.join(', ')}: {issue.reason} {issue.remediation}
+    </Text>)
+  const beginTargetCreation = (role: 'objective' | 'scoring' | 'adversarial'): void => {
+    setCreationGeneration(runtime.generation)
+    setCreateRole(role)
+  }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
-    if (targetName === '' || submitting || !defaultsReady) {
+    if (!rolesReady || targetName === '' || submitting || !defaultsReady) {
       return
-    }
-
-    const request: LaunchScenarioSuiteRequest = {
-      expected_version: suite.version,
-      entries: suite.entry_statuses.map((entry) => ({
-        entry_id: entry.entry_id,
-        preset_name: entry.preset_name,
-        origin: entry.origin,
-        preset_version: entry.preset_version,
-      })),
-      target_name: targetName,
-      ...(adversarialTargetName === '' ? {} : { adversarial_target_name: adversarialTargetName }),
-      max_concurrency: maxConcurrency,
-      max_retries: maxRetries,
-      ...(operationId ? { operation_id: operationId } : {}),
-      ...(Object.keys(labels).length > 0 ? { labels } : {}),
     }
 
     setSubmitting(true)
     setError(null)
     try {
       const execution = await scenarioSuitesApi.launch(suite.suite.name, request)
-      rememberScanTargets(targets, request)
+      rememberScanTargets(availableTargets, request)
       navigate(suiteExecutionRoutePath(execution.suite_execution_id))
     } catch (err: unknown) {
       const apiError = toApiError(err)
@@ -141,7 +201,9 @@ export default function LaunchSuiteDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(_, data) => { if (!data.open) onDismiss() }}>
+    <><Dialog open={!createRole && !createScorer} onOpenChange={(_, data) => {
+      if (!data.open && !createRole && !createScorer) onDismiss()
+    }}>
       <DialogSurface>
         <form onSubmit={handleSubmit}>
           <DialogBody>
@@ -173,25 +235,63 @@ export default function LaunchSuiteDialog({
                 </MessageBar>
               )}
               <TargetSelect
-                targets={targets}
+                targets={availableTargets}
                 value={targetName}
-                onChange={(target) => setTargetName(target?.target_registry_name ?? '')}
+                onChange={(target) => { setTargetName(target?.target_registry_name ?? ''); setSelectionGeneration(runtime.generation) }}
                 label="Target"
                 help={HELP_DEFINITIONS.objectiveTarget}
                 hint="The registered target every suite entry attacks."
                 placeholder="Select a target"
                 disabled={submitting}
               />
-              <TargetSelect
+              <Button disabled={submitting} onClick={() => beginTargetCreation('objective')}>Create objective target</Button>
+              {roleIssues('objective_target')}
+              <ChatScorerPicker value={objectiveScorer} scorers={availableScorers} onChange={setObjectiveScorer}
+                usage="scenario" label="Objective scorer" loading={scorerRegistry.loading}
+                error={scorerRegistry.error} disabled={submitting}
+                defaultLabel={readiness?.bindings.some((binding) => binding.role === 'objective_scorer')
+                  ? `Scenario rubrics: ${[...new Set(readiness.bindings.filter((entry) => entry.role === 'objective_scorer')
+                    .map((entry) => entry.identifier.class_name))].join(', ')}` : 'No configured default scorer'} />
+              <Button disabled={submitting} onClick={() => { setCreationGeneration(runtime.generation); setCreateScorer(true) }}>
+                Create objective scorer
+              </Button>
+              {roleIssues('objective_scorer')}
+              {(scoringTargetName !== '' || usesRole('scoring_target')) && <>
+                <TargetSelect targets={availableTargets} value={scoringTargetName}
+                  onChange={(target) => setScoringTargetName(target?.target_registry_name ?? '')}
+                  label="Scoring Target"
+                  placeholder={resolvedRoleLabel(readiness, 'scoring_target', availableTargets, 'No configured scoring target')}
+                  disabled={submitting} />
+                <Button disabled={submitting} onClick={() => beginTargetCreation('scoring')}>Create scoring target</Button>
+                {roleIssues('scoring_target')}
+              </>}
+              {usesRole('adversarial_target') && <><TargetSelect
                 targets={adversarialTargets}
                 value={adversarialTargetName}
                 onChange={(target) => setAdversarialTargetName(target?.target_registry_name ?? '')}
                 label="Adversarial Target"
                 help={HELP_DEFINITIONS.adversarialTarget}
                 hint="Only used by suite entries whose scenarios require a second target."
-                placeholder="Use server default"
+                placeholder={resolvedRoleLabel(readiness, 'adversarial_target', availableTargets, 'No configured generation target')}
                 disabled={submitting}
               />
+              <Button disabled={submitting} onClick={() => beginTargetCreation('adversarial')}>Create adversarial target</Button>
+              {roleIssues('adversarial_target')}</>}
+              {roleState?.key === requestKey && roleState.error && <MessageBar intent="error">
+                <MessageBarBody role="alert">{roleState.error}</MessageBarBody>
+              </MessageBar>}
+              {readiness && readiness.issues.length > 0 && <MessageBar intent="warning">
+                <MessageBarBody role="alert" aria-label="Suite configuration issues">
+                  Resolve the highlighted fields before launching.
+                  Affected entries: {[...new Set(readiness.issues.map((issue) => issue.component))].join(', ')}.
+                  {[...groupedIssues.entries()]
+                    .filter(([, issue]) => !['objective_target', 'objective_scorer', 'scoring_target', 'adversarial_target']
+                      .includes(issue.role))
+                    .map(([key, issue]) => <Text key={key} block>
+                      {issue.components.join(', ')}: {issue.reason} {issue.remediation}
+                    </Text>)}
+                </MessageBarBody>
+              </MessageBar>}
               <HelpField label="Max concurrency per run" help={HELP_DEFINITIONS.maxConcurrency}>
                 <SingleStepSpinButton
                   className={styles.numberInput}
@@ -222,7 +322,7 @@ export default function LaunchSuiteDialog({
               <Button
                 appearance="primary"
                 type="submit"
-                disabled={targetName === '' || submitting || !defaultsReady}
+                disabled={!rolesReady || targetName === '' || submitting || !defaultsReady}
                 data-testid="confirm-launch-suite"
               >
                 {submitting ? 'Launching...' : 'Launch suite'}
@@ -232,5 +332,24 @@ export default function LaunchSuiteDialog({
         </form>
       </DialogSurface>
     </Dialog>
+      {createRole && <CreateTargetDialog open existingTargets={availableTargets} onClose={() => setCreateRole(null)}
+        onCreated={(target) => {
+          if (creationGeneration === runtime.generation) {
+            setCreatedTargets((current) => [...current, { generation: runtime.generation, target }])
+            if (createRole === 'objective') { setTargetName(target.target_registry_name); setSelectionGeneration(runtime.generation) }
+            if (createRole === 'scoring') setScoringTargetName(target.target_registry_name)
+            if (createRole === 'adversarial') setAdversarialTargetName(target.target_registry_name)
+          }
+          setCreateRole(null)
+        }} />}
+      {createScorer && <CreateScorerDialog targets={availableTargets} scorers={availableScorers}
+        onClose={() => setCreateScorer(false)} onCreated={(scorer) => {
+          if (creationGeneration === runtime.generation) {
+            setCreatedScorers((current) => [...current, { generation: runtime.generation, scorer }])
+            setObjectiveScorer({ registry_name: scorer.scorer_registry_name, identifier_hash: scorer.identifier.hash })
+          }
+          setCreateScorer(false)
+        }} />}
+    </>
   )
 }

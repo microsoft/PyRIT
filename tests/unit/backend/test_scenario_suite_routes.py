@@ -16,23 +16,28 @@ from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.scenario_suites import (
+from pyrit.backend.models import (
     ScenarioSuiteEntryStatus,
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
 )
+from pyrit.backend.services import (
+    ScenarioSuiteExecutionService,
+    ScenarioSuiteService,
+)
 from pyrit.backend.services.scenario_suite_execution_service import (
     ScenarioSuiteExecutionCapacityError,
-    ScenarioSuiteExecutionService,
 )
-from pyrit.backend.services.scenario_suite_service import ScenarioSuiteService
 from pyrit.models import (
+    PresetIssue,
+    ScenarioSuite,
+    ScenarioSuiteEntry,
     ScenarioSuiteExecutionEntrySummary,
     ScenarioSuiteExecutionStatus,
     ScenarioSuiteExecutionSummary,
     ScenarioSuiteSubmissionState,
 )
-from pyrit.models.catalog import PresetIssue, ScenarioSuite, ScenarioSuiteEntry, ScenarioSuiteRegistryEntry
+from pyrit.models.catalog import ScenarioSuiteRegistryEntry
 from pyrit.registry import (
     ScenarioPresetRegistry,
     ScenarioSuiteConflictError,

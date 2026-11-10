@@ -28,7 +28,7 @@ const OPENAI_COMMON_PARAMETERS: Parameter[] = [
   {
     name: "endpoint",
     type_name: "str",
-    required: false,
+    required: true,
     default: null,
     description: "The target URL for the OpenAI service.",
   },
@@ -52,7 +52,7 @@ const AZURE_ML_COMMON_PARAMETERS: Parameter[] = [
   {
     name: "endpoint",
     type_name: "str",
-    required: false,
+    required: true,
     default: null,
     description: "The endpoint URL for the deployed Azure ML model.",
   },
@@ -274,6 +274,12 @@ const TARGET_TYPES: TargetTypeListResponse = {
       description: "A prompt target that distributes requests across multiple inner targets using weighted round-robin selection.",
     },
     {
+      target_type: "TextTarget",
+      parameters: [],
+      supported_auth_modes: [],
+      description: "Writes prompts to a local text stream.",
+    },
+    {
       target_type: "HTTPTarget",
       parameters: [
         {
@@ -346,6 +352,7 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   OpenAIVideoTarget: "OpenAI video",
   RoundRobinTarget: "Weighted round robin",
   HTTPTarget: "HTTPTarget",
+  TextTarget: "TextTarget",
   AzureBlobStorageTarget: "AzureBlobStorageTarget",
 };
 
@@ -412,7 +419,7 @@ async function selectTargetType(value: string): Promise<void> {
   await waitFor(() => {
     restoreDialogAccessibility();
     expect(screen.getByRole("combobox", { name: /target type/i })).toHaveTextContent(
-      TARGET_DISPLAY_NAMES[value]
+      TARGET_DISPLAY_NAMES[value] ?? value
     );
   });
 }
@@ -497,6 +504,22 @@ describe("parseWeight", () => {
 });
 
 describe("CreateTargetDialog", () => {
+  it("explains explicit manual model entry instead of promising environment fallback", async () => {
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [{ target_type: "OpenAIChatTarget", supported_auth_modes: ["api_key"],
+        parameters: OPENAI_COMMON_PARAMETERS.map((parameter) =>
+        parameter.name === "model_name" ? {
+          ...parameter, required: true, description: "If None, uses OPENAI_CHAT_MODEL from the environment.",
+        } : parameter) }],
+    });
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await selectTargetType("OpenAIChatTarget");
+    expect(await screen.findByText(/Enter the model or deployment name explicitly/)).toBeVisible();
+    expect(screen.queryByText(/If None, uses OPENAI_CHAT_MODEL/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create Target" })).toBeDisabled();
+    expect(mockedTargetsApi.createTarget).not.toHaveBeenCalled();
+  });
+
   const defaultProps = {
     open: true,
     onClose: jest.fn(),
@@ -543,7 +566,7 @@ describe("CreateTargetDialog", () => {
 
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(11);
-    for (const entry of TARGET_TYPES.items.filter((item) => item.target_type !== "PlaywrightTarget")) {
+    for (const entry of TARGET_TYPES.items.filter((item) => !["PlaywrightTarget", "TextTarget"].includes(item.target_type))) {
       const option = screen.getByRole("option", {
         name: new RegExp(`Implementation: ${entry.target_type}`),
       });
@@ -581,6 +604,49 @@ describe("CreateTargetDialog", () => {
     expect(selectedDetails).toHaveTextContent("RoundRobinTarget");
     expect(selectedDetails).toHaveTextContent("weighted round-robin selection");
     expect(selectedDetails).toHaveTextContent("Supported authentication: API key");
+  });
+
+  it("should not offer the SDK-only TextTarget", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await openTargetTypePicker();
+
+    expect(screen.queryByRole("option", { name: /Implementation: TextTarget/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Writes prompts to a local text stream.")).not.toBeInTheDocument();
+  });
+
+  it("should still describe other credential-free target types", async () => {
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [...TARGET_TYPES.items, {
+        target_type: "CredentialFreeTarget",
+        parameters: [],
+        supported_auth_modes: [],
+        description: "A credential-free endpoint.",
+      }],
+    });
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await openTargetTypePicker();
+    const option = screen.getByRole("option", { name: /Implementation: CredentialFreeTarget/ });
+    expect(option).toHaveTextContent("No authentication required");
+    expect(option).not.toHaveTextContent("API key");
+  });
+
+  it("should not offer SDK-only inner targets in a round-robin target", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} existingTargets={[
+          makeTarget({ target_registry_name: "demo", target_type: "TextTarget" }),
+          makeTarget({ target_registry_name: "endpoint", target_type: "OpenAIChatTarget" }),
+        ]} />
+      </TestWrapper>
+    );
+    await selectTargetType("RoundRobinTarget");
+    expect(screen.queryByRole("option", { name: /demo/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /endpoint/ })).toBeInTheDocument();
   });
 
   it("should keep the selected target displayed after focus moves to another field", async () => {
@@ -959,6 +1025,23 @@ describe("CreateTargetDialog", () => {
       "https://github.com/microsoft/PyRIT/blob/main/.pyrit_conf_example"
     );
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("preserves an optional endpoint default for a locally implemented target", async () => {
+    const user = userEvent.setup();
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [{
+        target_type: "LocalTarget",
+        parameters: [{ name: "endpoint", type_name: "str", required: false, default: "" }],
+        supported_auth_modes: ["api_key"],
+      }],
+    });
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await selectTargetType("LocalTarget");
+    const create = screen.getByRole("button", { name: "Create Target", exact: true });
+    expect(create).toBeEnabled();
+    await user.click(create);
+    expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({ type: "LocalTarget", params: {} });
   });
 
   it("should require an endpoint when identity authentication is selected", async () => {

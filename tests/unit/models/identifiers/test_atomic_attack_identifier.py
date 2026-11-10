@@ -4,14 +4,14 @@
 
 from typing import assert_type
 
-from pyrit.models.identifiers import (
+from pyrit.models import (
     AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     ComponentIdentifier,
     SeedIdentifier,
+    SeedPrompt,
     compute_eval_hash,
 )
-from pyrit.models.seeds.seed_prompt import SeedPrompt
 
 
 class _FakeSeedGroup:

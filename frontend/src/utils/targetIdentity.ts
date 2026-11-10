@@ -1,4 +1,4 @@
-import type { AttackTargetResolutionStatus, TargetInfo, TargetInstance, TargetPreferences, TargetReference } from '../types'
+import type { AttackTargetResolutionStatus, ScenarioReadiness, TargetInfo, TargetInstance, TargetPreferences, TargetReference } from '../types'
 
 /**
  * Helpers for reading a target's identity off its embedded `identifier`.
@@ -20,7 +20,7 @@ function hoistFromInner(
   const inners = target.inner_targets ?? []
   if (inners.length > 0) {
     const values = new Set(inners.map(pick).filter((value): value is string => Boolean(value)))
-    if (values.size === 1) return [...values][0]
+    if (values.size === 1) return [...values][0] ?? null
   }
   return null
 }
@@ -48,6 +48,23 @@ export function targetEndpoint(target: TargetInstance): string | null {
 /** The ComponentIdentifier content hash used for duplicate detection. */
 export function targetIdentifierHash(target: TargetInstance): string {
   return target.identifier.hash
+}
+
+export function resolvedRoleLabel(
+  readiness: ScenarioReadiness | undefined,
+  role: string,
+  targets: TargetInstance[],
+  missingLabel: string,
+): string {
+  const bindings = readiness?.bindings.filter((binding) => binding.role === role) ?? []
+  if (bindings.length === 0) return missingLabel
+  const labels = bindings.map((binding) => {
+    const matches = targets.filter((target) => target.identifier.hash === binding.identifier.hash)
+    return matches.length > 0
+      ? matches.map((target) => target.target_registry_name).join(' / ')
+      : binding.identifier.class_name
+  })
+  return `Configured: ${[...new Set(labels)].join(', ')}`
 }
 
 export function targetReference(target: TargetInstance): TargetReference {
@@ -110,8 +127,9 @@ export function resolveTargetByIdentifierHash(
     (target) => targetIdentifierHash(target) === identifierHash,
   )
 
-  if (matches.length === 1) {
-    return { status: 'resolved', target: matches[0] }
+  const first = matches[0]
+  if (matches.length === 1 && first) {
+    return { status: 'resolved', target: first }
   }
   return { status: matches.length === 0 ? 'unavailable' : 'ambiguous' }
 }

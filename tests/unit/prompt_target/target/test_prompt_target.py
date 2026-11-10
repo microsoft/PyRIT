@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 import json
 from collections.abc import MutableSequence
 from typing import Any
@@ -8,10 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai.types.chat import ChatCompletion
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, get_sample_conversations, openai_chat_response_json_dict
 
-from pyrit.executor.attack.core.attack_strategy import AttackStrategy
-from pyrit.memory.memory_interface import MemoryInterface
+from pyrit.executor.attack import AttackStrategy
+from pyrit.memory import MemoryInterface
 from pyrit.message_normalizer import HistorySquashNormalizer
 from pyrit.models import (
     ChatMessageRole,
@@ -22,14 +24,17 @@ from pyrit.models import (
     PromptDataType,
     flatten_to_message_pieces,
 )
-from pyrit.prompt_target import AzureBlobStorageTarget, AzureMLChatTarget, OpenAIChatTarget, PromptShieldTarget
-from pyrit.prompt_target.common.target_capabilities import (
+from pyrit.prompt_target import (
+    AzureBlobStorageTarget,
+    AzureMLChatTarget,
     CapabilityHandlingPolicy,
     CapabilityName,
+    OpenAIChatTarget,
+    PromptShieldTarget,
     TargetCapabilities,
+    TargetConfiguration,
     UnsupportedCapabilityBehavior,
 )
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
 
 
 @pytest.fixture
@@ -63,6 +68,72 @@ def mock_attack_strategy():
         class_module="pyrit.executor.attack.test_attack",
     )
     return strategy
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("error", [None, ValueError, asyncio.CancelledError])
+def test_capabilities_scope_restores_configuration_and_preserves_policy(error: type[BaseException] | None) -> None:
+    target = MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(supports_multi_turn=True),
+            normalizer_overrides={CapabilityName.EDITABLE_HISTORY: HistorySquashNormalizer()},
+        )
+    )
+    other = MockPromptTarget()
+    original = target.configuration
+    other_original = other.configuration
+    saved = original.capabilities.model_copy(update={"supports_multi_turn": False, "supports_json_output": True})
+
+    def scoped_operation() -> None:
+        with target.capabilities_scope(saved):
+            assert target.configuration is not original
+            assert target.configuration.policy is original.policy
+            assert target.configuration.normalizer_overrides == original.normalizer_overrides
+            assert target.configuration.pipeline.has_normalizer_for(capability=CapabilityName.EDITABLE_HISTORY)
+            assert target.capabilities == saved
+            assert other.configuration is other_original
+            with other.capabilities_scope(saved):
+                assert target.capabilities == saved
+                assert other.capabilities == saved
+                with target.capabilities_scope(original.capabilities):
+                    assert target.capabilities == original.capabilities
+                assert target.capabilities == saved
+            if error is not None:
+                raise error("Interrupted scoped operation")
+
+    if error is None:
+        scoped_operation()
+    else:
+        with pytest.raises(error):
+            scoped_operation()
+    assert target.configuration is original
+    assert target.capabilities == original.capabilities
+    assert other.configuration is other_original
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_capabilities_scope_does_not_change_concurrent_target_reads_async() -> None:
+    target = MockPromptTarget()
+    original = target.configuration
+    saved = target.capabilities.model_copy(update={"supports_multi_turn": False})
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def scoped_operation_async() -> None:
+        with target.capabilities_scope(saved):
+            entered.set()
+            await asyncio.wait_for(release.wait(), timeout=TEST_WATCHDOG_SECONDS)
+            assert target.capabilities == saved
+
+    task = asyncio.create_task(scoped_operation_async())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
+        assert target.configuration is original
+        assert target.capabilities.supports_multi_turn
+    finally:
+        release.set()
+        await task
+    assert target.configuration is original
 
 
 @pytest.mark.parametrize("data_type", ["audio_path", "video_path", "binary_path"])
@@ -902,7 +973,7 @@ def test_identifier_is_deterministic_across_instances():
 def test_identifier_same_when_normalizer_overrides_differ():
     from pyrit.message_normalizer import GenericSystemSquashNormalizer, MessageListNormalizer
     from pyrit.models import Message
-    from pyrit.prompt_target.common.target_capabilities import CapabilityName
+    from pyrit.prompt_target import CapabilityName
 
     class _CustomSystemSquash(MessageListNormalizer[Message]):
         async def normalize_async(self, messages):  # pragma: no cover - not exercised

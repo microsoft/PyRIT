@@ -6,6 +6,7 @@ import { createMemoryRouter, MemoryRouter, RouterProvider, Route, Routes, useLoc
 import ChatWindow from "./ChatWindow";
 import { makeTarget } from "@/test-utils/targetFixtures";
 import { UserPreferencesProvider } from "@/hooks/useUserPreferences";
+import { ChatDraftProvider } from "@/hooks/useChatDraftHandoff";
 import * as runtimeHooks from "@/hooks/useRuntime";
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from "@/utils/userPreferences";
 import {
@@ -30,7 +31,7 @@ import {
   TargetInstance,
   TargetResponseStatus,
 } from "@/types";
-import { attacksApi, convertersApi, scoresApi, targetsApi } from "@/services/api";
+import { attacksApi, convertersApi, mediaApi, scoresApi, targetsApi } from "@/services/api";
 import * as messageMapper from "@/utils/messageMapper";
 
 jest.mock("./FindingEvidenceDialog", () => ({
@@ -59,6 +60,7 @@ const buildCapabilities = (
 jest.setTimeout(60000);
 
 jest.mock("@/services/api", () => ({
+  mediaApi: { upload: jest.fn().mockResolvedValue({ value: "/stored/attachment" }) },
   attacksApi: {
     applyScorer: jest.fn(),
     createAttack: jest.fn(),
@@ -338,6 +340,22 @@ describe("ChatWindow Integration", () => {
     labels: { operator: 'testuser', operation: 'test_op' },
   };
 
+  it("should keep the first send's transcript when the created attack route commits mid-send", async () => {
+    const user = userEvent.setup();
+    mockSendResult.mockImplementation(() => new Promise(() => {}));
+    const { rerender } = render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
+    await user.type(screen.getByTestId("chat-input"), "First prompt");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockSendResult).toHaveBeenCalled());
+
+    rerender(<TestWrapper><ChatWindow {...defaultProps} attackResultId="default-created-attack"
+      conversationId="default-created-conversation" activeConversationId="default-created-conversation" /></TestWrapper>);
+
+    expect(mockedAttacksApi.getMessages).not.toHaveBeenCalled();
+    expect(within(screen.getByTestId("message-list")).getByText("First prompt")).toBeInTheDocument();
+    mockSendResult.mockReset();
+  });
+
   it("should accept file drops across the chat and composer without duplicate attachments or lost text", async () => {
     const user = userEvent.setup();
     render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
@@ -485,6 +503,7 @@ describe("ChatWindow Integration", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(mediaApi.upload).mockReset().mockResolvedValue({ value: "/stored/attachment" });
     for (const api of [mockedAttacksApi, mockedConvertersApi, mockedScoresApi, mockedMapper]) {
       for (const mock of Object.values(api)) {
         if (jest.isMockFunction(mock)) mock.mockReset();
@@ -1199,6 +1218,8 @@ describe("ChatWindow Integration", () => {
         onAttackChange={onAttackChange}
       /></TestWrapper>);
       await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
+      expect(screen.getByRole("textbox")).toHaveValue("");
+      await user.type(screen.getByRole("textbox"), "Draft to send");
       await user.click(screen.getByRole("button", { name: /send message/i }));
       await waitFor(() => expect(mockedAttacksApi.submitMessageSend).toHaveBeenCalledTimes(2));
       mockedAttacksApi.getMessages.mockResolvedValue(reply);
@@ -2930,6 +2951,38 @@ describe("ChatWindow Integration", () => {
     expect(mockedConvertersApi.previewConversion).not.toHaveBeenCalled();
   });
 
+  it("disables both editor Save actions until a failed attachment upload recovers", async () => {
+    const user = userEvent.setup();
+    jest.mocked(mediaApi.upload).mockRejectedValueOnce(new Error("Upload unavailable"));
+    const target = makeTarget({
+      capabilities: buildCapabilities({
+        supports_editable_history: true, supports_multi_message_pieces: true,
+        supported_input_modalities: ["text", "image_path"],
+      }),
+    });
+    const router = createMemoryRouter([{ path: "/", element: <ChatWindow {...defaultProps} activeTarget={target} /> }]);
+    render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+      <RouterProvider router={router} />
+    </UserPreferencesProvider></FluentProvider>);
+    await user.upload(screen.getByTestId("file-input"), new File(["image"], "retry.png", { type: "image/png" }));
+    await screen.findByText(/Upload failed for retry.png: Upload unavailable/);
+    await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
+    await screen.findByTestId("conversation-editor");
+    const toolbarSave = screen.getByRole("button", { name: "Save to new attack", exact: true });
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    expect(toolbarSave).toBeDisabled();
+    await user.hover(toolbarSave);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Retry or remove attachments whose uploads failed.");
+    expect(mockedAttacksApi.saveConversation).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Retry upload" }));
+    await waitFor(() => expect(toolbarSave).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    await waitFor(() => expect(screen.queryByTestId("conversation-editor")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit Conversation", exact: true }));
+    expect(await screen.findByRole("button", { name: "Save to new attack", exact: true })).toBeEnabled();
+  });
+
   it("keeps an empty original prompt with a manually authored converted value across editor Save", async () => {
     const user = userEvent.setup();
     mockedAttacksApi.saveConversation.mockResolvedValue({
@@ -3976,7 +4029,7 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1));
     const binding = {
       version: 1, source_name: source.target_registry_name, source_hash: source.identifier.hash,
-      temperature: 0.8, effective_hash: "private-hash",
+      temperature: 0.8, effective_hash: "private-hash", capabilities: source.capabilities,
     };
     expect(targetsApi.buildTarget).toHaveBeenCalledWith("OpenAIChatTarget", {
       source_name: source.target_registry_name, source_hash: source.identifier.hash,
@@ -4894,11 +4947,11 @@ describe("ChatWindow Integration", () => {
       conversationId: "conv-a",
       activeConversationId: "conv-a",
     };
-    const rendered = render(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+    const rendered = render(<TestWrapper><ChatDraftProvider><ChatWindow {...props} /></ChatDraftProvider></TestWrapper>);
     expect(await screen.findByText("Only conversation A history")).toBeInTheDocument();
     await user.type(screen.getByRole("textbox"), "Unsent draft");
 
-    rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="conv-b" /></TestWrapper>);
+    rendered.rerender(<TestWrapper><ChatDraftProvider><ChatWindow {...props} activeConversationId="conv-b" /></ChatDraftProvider></TestWrapper>);
     await waitFor(() => {
       expect(mockedAttacksApi.getMessages).toHaveBeenCalledWith(props.attackResultId, "conv-b");
     });
@@ -4908,22 +4961,26 @@ describe("ChatWindow Integration", () => {
     await user.click(sendButton);
     await user.keyboard("{Enter}");
     expect(mockSendResult).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox")).toHaveValue("Unsent draft");
+    expect(screen.getByRole("textbox")).toHaveValue("");
 
     await act(async () => {
       resolveSecondHistory(secondHistory);
     });
     expect(await screen.findByText("Only conversation B history")).toBeInTheDocument();
     expect(screen.queryByText("Only conversation A history")).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox"), "Conversation B draft");
     await user.click(sendButton);
     await waitFor(() => {
       expect(mockSendResult).toHaveBeenCalledWith(
         props.attackResultId,
-        expect.objectContaining({ target_conversation_id: "conv-b" }),
+        expect.objectContaining({
+          target_conversation_id: "conv-b",
+          pieces: [expect.objectContaining({ original_value: "Conversation B draft" })],
+        }),
       );
       expect(screen.getByRole("button", { name: /export conversation/i })).toBeEnabled();
     });
-    expect(screen.getByRole("textbox")).toHaveValue("Unsent draft");
+    expect(screen.getByRole("textbox")).toHaveValue("Conversation B draft");
     expect(screen.queryByText("Only conversation A history")).not.toBeInTheDocument();
 
     jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
@@ -4948,6 +5005,9 @@ describe("ChatWindow Integration", () => {
     expect(JSON.parse(exportedText).conversation_id).toBe("conv-b");
     expect(exportedText).toContain("Only conversation B history");
     expect(exportedText).not.toContain("Only conversation A history");
+    mockedAttacksApi.getMessages.mockResolvedValueOnce(firstHistory);
+    rendered.rerender(<TestWrapper><ChatDraftProvider><ChatWindow {...props} /></ChatDraftProvider></TestWrapper>);
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveValue("Unsent draft"));
   });
 
   it.each(["original", "new"])(
@@ -5061,7 +5121,7 @@ describe("ChatWindow Integration", () => {
     expect(mockSendResult).not.toHaveBeenCalled();
   });
 
-  it("should preserve a recovered media converter before its file read completes", async () => {
+  it("should preserve a recovered media converter without rereading an uploaded file", async () => {
     const user = userEvent.setup();
     const file = new File(["image contents"], "evidence.png", { type: "image/png" });
     const NativeFileReader = FileReader;
@@ -5160,11 +5220,11 @@ describe("ChatWindow Integration", () => {
 
     rendered.rerender(<TestWrapper><ChatWindow {...props} activeConversationId="conv-other" /></TestWrapper>);
     await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled());
-    await user.click(screen.getByTestId("remove-attachment-0"));
-    await waitFor(() => {
-      expect(screen.queryByTestId("clear-media-conversion-image")).not.toBeInTheDocument();
-    });
+    expect(screen.queryByRole("button", { name: "Remove evidence.png" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("clear-media-conversion-image")).not.toBeInTheDocument();
     rendered.rerender(<TestWrapper><ChatWindow {...props} /></TestWrapper>);
+    expect(screen.queryByRole("button", { name: "Remove evidence.png" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("clear-media-conversion-image")).not.toBeInTheDocument();
     const recover = await findRecoveryAction(user);
     deferFileReads = true;
     await user.click(recover);
@@ -5178,19 +5238,17 @@ describe("ChatWindow Integration", () => {
     expect(deferredReads).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: /send message/i }));
-    await waitFor(() => expect(deferredReads).toHaveLength(1));
-    await act(async () => {
-      await deferredReads[0]();
-    });
-    expect(mockSendResult).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(mockSendResult).toHaveBeenLastCalledWith(
       props.attackResultId,
       expect.objectContaining({
         target_conversation_id: "conv-media-recovery",
         pieces: [expect.objectContaining({
-          data_type: "image_path", applied_converter_ids: ["preserved-image-converter"],
+          data_type: "image_path", original_value: "/stored/attachment",
+          applied_converter_ids: ["preserved-image-converter"],
         })],
       }),
-    );
+    ));
+    expect(deferredReads).toHaveLength(0);
   });
 
   it("should preserve the draft and expose recovery for an HTTP 200 processing error", async () => {
@@ -6674,7 +6732,7 @@ describe("ChatWindow Integration", () => {
         target_conversation_id: "conv-media",
         pieces: [
           { data_type: "text", original_value: "Describe this image" },
-          { data_type: "image_path", original_value: "aW1hZ2UgYnl0ZXM=", mime_type: "image/png" },
+          { data_type: "image_path", original_value: "/stored/attachment", mime_type: "image/png" },
         ],
       }),
     );
@@ -6765,7 +6823,7 @@ describe("ChatWindow Integration", () => {
       });
       const selected = jest.fn();
       function BranchHarness() {
-        const [conversation, setConversation] = useState(options.selectedPipeline ? "other" : "first-source");
+        const [conversation, setConversation] = useState("first-source");
         return <>
           <button onClick={() => setConversation("other")}>Switch conversation</button>
           <button onClick={() => setConversation("first-source")}>Open saved conversation</button>
@@ -6775,12 +6833,18 @@ describe("ChatWindow Integration", () => {
             onSelectConversation={(id: string) => { selected(id); setConversation(id); }} />
         </>;
       }
-      render(<TestWrapper><BranchHarness /></TestWrapper>);
+      const savedSource = stored.get("first-source");
+      if (options.selectedPipeline) stored.set("first-source", empty("first-source"));
+      render(<TestWrapper><ChatDraftProvider><BranchHarness /></ChatDraftProvider></TestWrapper>);
       if (options.selectedPipeline) {
         await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toBeEnabled());
         await user.click(screen.getByRole("button", { name: "Toggle converter panel" }));
         await user.click(await screen.findByRole("combobox", { name: "Add converter" }));
         await user.click(await screen.findByRole("option", { name: /^first/ }));
+        await user.click(screen.getByRole("button", { name: "Switch conversation" }));
+        await waitFor(() => expect(screen.getByPlaceholderText("Type prompt here")).toBeEnabled());
+        if (!savedSource) throw new Error("Missing source conversation");
+        stored.set("first-source", savedSource);
         await user.click(screen.getByRole("button", { name: "Open saved conversation" }));
       }
       if (options.sent !== false) await waitFor(() => expect(
@@ -8015,6 +8079,9 @@ describe("ChatWindow Integration", () => {
 
   it.each([false, true])("sends only the successful image after a partial failure (remove failed input: %s)", async (removeFailed: boolean) => {
     const user = userEvent.setup();
+    jest.mocked(mediaApi.upload).mockImplementation(async (request) => ({
+      value: request.content === "c2Vjb25k" ? "/stored/second.png" : "/stored/first.png",
+    }));
     mockedConvertersApi.listConverters.mockResolvedValue({
       items: [makeConverterInstance("compress", "ImageCompressionConverter", ["image_path"], ["image_path"])],
     });
@@ -8066,7 +8133,7 @@ describe("ChatWindow Integration", () => {
       pieces: expect.arrayContaining([expect.objectContaining({ applied_converter_ids: ["compress"] })]),
     })));
     const request = mockSendResult.mock.calls[0][1];
-    expect(request.pieces[removeFailed ? 0 : 1].original_value).toBe("c2Vjb25k");
+    expect(request.pieces[removeFailed ? 0 : 1].original_value).toBe("/stored/second.png");
     expect(request.pieces[removeFailed ? 0 : 1].applied_converter_ids).toEqual(["compress"]);
     expect(request.pieces).toHaveLength(removeFailed ? 1 : 2);
   });

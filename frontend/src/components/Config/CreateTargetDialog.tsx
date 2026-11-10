@@ -33,7 +33,9 @@ import {
 } from '@/components/Parameters/parameterForm'
 import { targetsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import type { TargetAuthMode, TargetInstance, TargetTypeEntry } from '@/types'
+import { isGuiTarget } from '@/utils/targetVisibility'
 import {
   targetIdentifierHash,
   targetModelName,
@@ -143,12 +145,15 @@ function getTargetDisplayName(targetType: string): string {
   return TARGET_DISPLAY_NAMES[targetType] ?? targetType
 }
 
-function getAuthDescription(entry: TargetTypeEntry): string | null {
+function getAuthDescription(entry: TargetTypeEntry, registryMetadataLoaded: boolean): string | null {
   if (entry.target_type === 'GitHubCopilotTarget') {
 return 'Supported authentication: GitHub token'
   }
   const authModes = entry.supported_auth_modes
-  if (authModes.length === 0) return null
+  if (authModes.length === 0) {
+    // The built-in fallback entries also carry an empty list, so only registry data can say "no credentials".
+    return registryMetadataLoaded ? 'No authentication required' : null
+  }
 
   const labels = authModes.map((mode) => AUTH_MODE_LABELS[mode])
   return `Supported authentication: ${labels.join(' or ')}`
@@ -168,7 +173,7 @@ function defaultSupportsNoKey(targetType: string): boolean {
 function getParameterLabel(name: string): string {
   return name
     .split('_')
-    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0].toUpperCase()}${word.slice(1)}`)
+    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0]?.toUpperCase() ?? ''}${word.slice(1)}`)
     .join(' ')
 }
 
@@ -217,7 +222,7 @@ function isAzureMlEndpoint(endpoint: string): boolean {
 interface CreateTargetDialogProps {
   open: boolean
   onClose: () => void
-  onCreated: () => void
+  onCreated: (target: TargetInstance) => void
   /** Existing targets, passed from the parent to avoid a redundant API call. */
   existingTargets?: TargetInstance[]
 }
@@ -395,7 +400,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const hasApiKeyField = hasField('api_key')
   const selectedTargetDisplayName = getTargetDisplayName(targetType)
   const selectedTargetAuthDescription = targetTypeEntry
-    ? getAuthDescription(targetTypeEntry)
+    ? getAuthDescription(targetTypeEntry, typeMetadataAvailable)
     : null
   const supportsIdentity = targetTypeEntry
     ? targetTypeEntry.supported_auth_modes.includes('identity')
@@ -406,7 +411,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
   const showAuthField = targetType !== '' && (supportsIdentity || supportsNoKey)
   const isIdentity = showAuthField && authMode === 'identity'
   const isNoKey = showAuthField && authMode === 'none'
-  const endpointRequired = hasEndpointField
+  const endpointRequired = Boolean(endpointParameter?.required) || (metadataUnavailableForSelection && hasEndpointField)
   const modelNameRequired = Boolean(modelNameParameter?.required)
   const underlyingModelRequired = Boolean(underlyingModelParameter?.required)
   const apiKeyRequired = Boolean(apiKeyParameter?.required) && !isIdentity && !isNoKey
@@ -441,9 +446,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (!open || !isRoundRobin) return
     if (existingTargets && existingTargets.length > 0) return
     let cancelled = false
-    targetsApi.listTargets(200)
-      .then((res) => {
-        if (!cancelled) setAvailableTargets(res.items)
+    listRegisteredTargets()
+      .then((items) => {
+        if (!cancelled) setAvailableTargets(items)
       })
       .catch(() => {
         // Ignore fetch errors — the list will just be empty
@@ -469,6 +474,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     )
     const candidates = availableTargets.filter(
       (t) =>
+        isGuiTarget(t) &&
         getTargetType(t) !== 'RoundRobinTarget' &&
         !selectedNames.has(t.target_registry_name) &&
         !(targetIdentifierHash(t) && selectedHashes.has(targetIdentifierHash(t)!)),
@@ -477,7 +483,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (selectedInnerTargets.length === 0) return candidates
     // Otherwise, filter to only targets compatible with the first one
     const firstSelected = availableTargets.find(
-      (t) => t.target_registry_name === selectedInnerTargets[0].registryName,
+      (t) => t.target_registry_name === selectedInnerTargets[0]?.registryName,
     )
     if (!firstSelected) return candidates
     return candidates.filter((t) => isCompatible(firstSelected, t))
@@ -540,7 +546,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       setError(null)
 
       try {
-        await targetsApi.createTarget({
+        const target = await targetsApi.createTarget({
           type: 'RoundRobinTarget',
           params: {
             targets: selectedInnerTargets.map((t) => t.registryName),
@@ -548,7 +554,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
           },
         })
         resetForm()
-        onCreated()
+        onCreated(target)
       } catch (err) {
         // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
         // messages) rather than the generic axios "Request failed with status code 400".
@@ -610,7 +616,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
         params[underlyingModelParameter?.name ?? 'underlying_model'] = underlyingModel
       }
 
-      await targetsApi.createTarget({
+      const target = await targetsApi.createTarget({
         type: targetType,
         params,
         ...(isIdentity ? { auth_mode: 'identity' as const } : {}),
@@ -618,7 +624,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
       })
 
       resetForm()
-      onCreated()
+      onCreated(target)
     } catch (err) {
       // Surface the backend's RFC 7807 `detail` (e.g. RoundRobinTarget validation
       // messages) rather than the generic axios "Request failed with status code 400".
@@ -696,7 +702,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                 >
                   {targetTypeOptions.map((entry) => {
                     const displayName = getTargetDisplayName(entry.target_type)
-                    const authDescription = getAuthDescription(entry)
+                    const authDescription = getAuthDescription(entry, typeMetadataAvailable)
                     const accessibleDescription = [
                       displayName,
                       entry.description,
@@ -909,7 +915,9 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                   {hasModelNameField && (
                     <Field
                       label="Model / Deployment Name"
-                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameParameter?.description || undefined}
+                      hint={isGitHubCopilot ? GITHUB_COPILOT_MODEL_HINT : modelNameRequired
+                        ? 'Enter the model or deployment name explicitly. To use environment configuration, select an initializer-registered target instead.'
+                        : modelNameParameter?.description || undefined}
                       required={modelNameRequired}
                       validationMessage={fieldErrors.modelName}
                       validationState={fieldErrors.modelName ? 'error' : 'none'}

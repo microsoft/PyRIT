@@ -10,19 +10,22 @@ from azure.core.exceptions import AzureError
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from pyrit.backend.middleware.auth import current_user_name, require_admin
-from pyrit.backend.models.common import IdentifierStr, ProblemDetail
-from pyrit.backend.models.scenario_suites import (
+from pyrit.backend.models import (
+    ProblemDetail,
     ScenarioSuiteListResponse,
     ScenarioSuiteResponse,
     UpdateScenarioSuiteRequest,
 )
-from pyrit.backend.services.scenario_suite_execution_service import (
-    ScenarioSuiteExecutionCapacityError,
-    get_scenario_suite_execution_service,
+from pyrit.backend.models.common import IdentifierStr
+from pyrit.backend.services import get_scenario_suite_execution_service, get_scenario_suite_service
+from pyrit.backend.services.scenario_suite_execution_service import ScenarioSuiteExecutionCapacityError
+from pyrit.models import (
+    LaunchScenarioSuiteRequest,
+    ScenarioSuite,
+    ScenarioSuiteExecutionSummary,
+    ScenarioSuiteReadinessRequest,
 )
-from pyrit.backend.services.scenario_suite_service import get_scenario_suite_service
-from pyrit.models import LaunchScenarioSuiteRequest, ScenarioSuiteExecutionSummary
-from pyrit.models.catalog import ScenarioSuite
+from pyrit.models.scenario_readiness import ScenarioReadiness
 from pyrit.registry import (
     ScenarioSuiteConflictError,
     ScenarioSuiteExecutionNotFoundError,
@@ -89,6 +92,30 @@ async def list_scenario_suites() -> ScenarioSuiteListResponse:  # pyrit-async-su
     """
     try:
         return await get_scenario_suite_service().list_suites_async()
+    except AzureError as exc:
+        raise _storage_unavailable() from exc
+
+
+@router.post("/{name}/readiness", response_model=ScenarioReadiness)
+async def get_scenario_suite_readiness_async(
+    *,
+    name: str,
+    body: ScenarioSuiteReadinessRequest,
+) -> ScenarioReadiness:
+    """
+    Preview every suite child without creating an execution.
+
+    Returns:
+        ScenarioReadiness: Effective child roles and configuration issues.
+    """
+    try:
+        return await get_scenario_suite_execution_service().get_readiness_async(name=name, request=body)
+    except ScenarioSuiteExecutionNotFoundError as exc:
+        raise _not_found(name) from exc
+    except (ScenarioSuiteLaunchConflictError, ScenarioSuiteConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
     except AzureError as exc:
         raise _storage_unavailable() from exc
 
