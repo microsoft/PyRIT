@@ -22,6 +22,11 @@ if TYPE_CHECKING:
     from pyrit.models import ChatMessageRole
 
 
+def _is_blocked(piece: MessagePiece) -> bool:
+    # A content-filtered turn is a real provider round trip and stays in history, so it replays as text.
+    return piece.converted_value_data_type == "error" and piece.response_error == "blocked"
+
+
 class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNormalizer):
     """
     Normalizer that converts a list of Messages to a list of ChatMessages.
@@ -113,7 +118,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
                 role = "developer"
 
             # Use simple string for single text piece, otherwise use content list
-            if len(pieces) == 1 and pieces[0].converted_value_data_type == "text":
+            if len(pieces) == 1 and (pieces[0].converted_value_data_type == "text" or _is_blocked(pieces[0])):
                 content: str | list[dict[str, Any]] = pieces[0].converted_value
             else:
                 content = [await self._piece_to_content_dict_async(piece) for piece in pieces]
@@ -142,7 +147,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         Convert a MessagePiece to a content dict for multipart messages.
 
         Supported data types:
-        - text: {"type": "text", "text": "..."}
+        - text, or a content-filtered error: {"type": "text", "text": "..."}
         - image_path: {"type": "image_url", "image_url": {"url": "data:..."}}
         - audio_path: {"type": "input_audio", "input_audio": {"data": "...", "format": "wav|mp3"}}
         - url: {"type": "image_url", "image_url": {"url": "https://..."}}
@@ -159,7 +164,7 @@ class ChatMessageNormalizer(MessageListNormalizer[ChatMessage], MessageStringNor
         data_type = piece.converted_value_data_type or piece.original_value_data_type
         content = piece.converted_value
 
-        if data_type == "text":
+        if data_type == "text" or _is_blocked(piece):
             return {"type": "text", "text": content}
         if data_type == "image_path":
             # Convert local image to base64 data URL

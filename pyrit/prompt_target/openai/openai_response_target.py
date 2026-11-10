@@ -364,7 +364,7 @@ class OpenAIResponseTarget(OpenAITarget):
         Convert a single inline piece into a Responses API content item.
 
         Args:
-            piece: The inline piece (text, image_path, or structured refusal).
+            piece: The inline piece (text, image_path, blocked error, or structured refusal).
 
         Returns:
             A dict in the Responses API content item shape.
@@ -380,7 +380,7 @@ class OpenAIResponseTarget(OpenAITarget):
                 "type": "output_text",
                 "text": structured_refusal,
             }
-        if piece.converted_value_data_type == "text":
+        if piece.converted_value_data_type in ("text", "error"):
             return {
                 "type": "input_text" if piece.api_role in ["developer", "user"] else "output_text",
                 "text": piece.converted_value,
@@ -434,7 +434,9 @@ class OpenAIResponseTarget(OpenAITarget):
         data_type = piece.converted_value_data_type
         if data_type == "reasoning":
             return None
-        if data_type in {"text", "image_path"} or piece.structured_refusal is not None:
+        # A content-filtered turn is a real provider round trip and stays in history, so it replays as text.
+        is_blocked = data_type == "error" and piece.response_error == "blocked"
+        if data_type in {"text", "image_path"} or is_blocked or piece.structured_refusal is not None:
             item = await self._construct_input_item_from_piece_async(piece)
             return _SerializedPiece(item=item, placement="inline")
         if data_type == "function_call":
