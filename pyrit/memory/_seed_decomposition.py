@@ -175,7 +175,7 @@ def apply_decomposition_identity(*, seeds: Sequence[Seed[Any]], identity: Decomp
 
 def assign_decomposition_identity(*, target: Seed[Any], source: Seed[Any]) -> None:
     """
-    Give a caller's seed the identifiers of its stored copy, including absent group IDs.
+    Give a caller's seed its stored identifiers and links, retaining incoming path labels.
 
     Args:
         target (Seed): The caller's seed, updated in place.
@@ -185,7 +185,10 @@ def assign_decomposition_identity(*, target: Seed[Any], source: Seed[Any]) -> No
     target.prompt_group_id = source.prompt_group_id
     if isinstance(target, SeedObjective) and isinstance(source, SeedObjective):
         target.parent_objective_id = source.parent_objective_id
-        target.paths = source.paths
+        target.paths = tuple(
+            path.model_copy(update={"id": stored.id, "steps": stored.steps})
+            for path, stored in zip(target.paths, source.paths, strict=True)
+        )
 
 
 def _apply_identity(*, seed: Seed[Any], identity: DecompositionIdentity) -> Seed[Any]:
@@ -239,10 +242,7 @@ def _canonicalize_node(
         "objective": member_key(objective),
         "group": [member_key(mate) for mate in group],
         "children": [child_form for child_form, _ in children],
-        "paths": [
-            {"name": path.name, "description": path.description, "steps": [position[step] for step in path.steps]}
-            for path in objective.paths
-        ],
+        "paths": [[position[step] for step in path.steps] for path in objective.paths],
     }
     return form, [objective, *group, *(seed for _, child_seeds in children for seed in child_seeds)]
 
