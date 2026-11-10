@@ -7,15 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pyrit.registry import (
-    AttackTechniqueRegistry,
-    SavedEntryUnavailableError,
-    ScenarioRegistry,
-    ScorerRegistry,
-    TargetRegistry,
-    TechniqueSelectionUnavailableError,
-    UnavailableEntry,
-)
+from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario.core import resolve_technique_tokens
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 from pyrit.score import TrueFalseScorer
@@ -113,41 +105,6 @@ class ScenarioConfigurationResolver:
             f"Target '{target_name}' not found in registry. Available targets: {', '.join(available_names)}"
         )
 
-    @staticmethod
-    def _refuse_broad_selection_while_techniques_are_held(
-        *,
-        scenario_class: type[Scenario],
-        techniques: list[str] | None,
-        technique_override: TechniqueOverride | None,
-    ) -> None:
-        """
-        Refuse choosing techniques by all, default, or a tag while a saved technique couldn't be restored.
-
-        A broken technique's tags may be unknown, so such a selection could quietly leave it out. Naming
-        techniques still works, and scenarios whose techniques don't come from the registry aren't affected.
-
-        Raises:
-            SavedEntryUnavailableError: If a named technique is held for a saved technique that couldn't be restored.
-            TechniqueSelectionUnavailableError: If the selection is broad while a saved technique is held.
-        """
-        held = raise_if_a_named_technique_is_held(techniques)
-        if not held or "scenario_techniques" not in {p.name for p in scenario_class.supported_parameters()}:
-            return
-        selectors = [token.partition(":")[0] for token in techniques or []]
-        if not selectors and technique_override is not None:
-            return
-        try:
-            technique_class = scenario_class()._technique_class  # type: ignore[ty:missing-argument]
-        except Exception:
-            technique_class = None
-        if technique_class is not None and getattr(technique_class, "_selection_catalog", None) is None:
-            return
-        aggregates = {"all", "default"}
-        if technique_class is not None:
-            aggregates |= {tag.casefold() for tag in technique_class.get_aggregate_tags()}
-        if not selectors or any(selector.casefold() in aggregates for selector in selectors):
-            raise TechniqueSelectionUnavailableError(names=[entry.name for entry in held if entry.name is not None])
-
     @classmethod
     def resolve_configuration(
         cls,
@@ -174,9 +131,6 @@ class ScenarioConfigurationResolver:
         Raises:
             ValueError: If techniques or dataset overrides are invalid.
         """
-        cls._refuse_broad_selection_while_techniques_are_held(
-            scenario_class=scenario_class, techniques=techniques, technique_override=technique_override
-        )
         resolved: dict[str, Any] = {}
         if objective_target is not None:
             resolved["objective_target"] = objective_target
@@ -259,25 +213,3 @@ class ScenarioConfigurationResolver:
         if resolution.issues:
             raise ValueError(resolution.issues[0].message)
         return resolution.techniques, resolution.technique_converters
-
-
-def raise_if_a_named_technique_is_held(techniques: list[str] | None) -> list[UnavailableEntry]:
-    """
-    Refuse technique tokens that name a saved technique that couldn't be restored, in any letter case.
-
-    Args:
-        techniques (list[str] | None): Technique tokens, each optionally followed by ``:`` and converters.
-
-    Returns:
-        list[UnavailableEntry]: Every held saved technique, and a held folder of them.
-
-    Raises:
-        SavedEntryUnavailableError: If a token names a held technique.
-    """
-    held = AttackTechniqueRegistry.get_registry_singleton().instances.get_unavailable_entries()
-    held_by_name = {entry.name.casefold(): entry for entry in held if entry.name is not None}
-    for token in techniques or []:
-        name = token.partition(":")[0]
-        if (entry := held_by_name.get(name.casefold())) is not None:
-            raise SavedEntryUnavailableError(entry=entry, name=name)
-    return held

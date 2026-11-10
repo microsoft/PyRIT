@@ -70,12 +70,11 @@ is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITI
 | names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
 | would save a key, or use one of this server's keys or address settings | **400** not-saveable |
 | gives an address that can carry a credential | **400** not-saveable |
-| saves a target type that can't be saved, or one that only a scan's launch scripts added | **400** not-saveable |
+| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** not-saveable |
 | saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** not-saveable |
 | uses a Temporary target | **400** not-saveable |
 | gives an address that isn't a full http(s) or ws(s) address, where this server's address setting would apply | **400** |
 | takes a name that a target or a saved file already has | **409** |
-| takes the name of a saved entry that couldn't be restored | **409** |
 | can't be written to storage | **503** |
 
 A not-saveable **400** has `"type": "/errors/not-saveable"`, and the request can be sent again without `persist`; the
@@ -92,8 +91,8 @@ A saved target records the create request without its name: the target type, `au
 API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
 constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
 changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
-restores one. A file that still doesn't match fails to restore with the reason, and its name stays held, so nothing
-else stands in for it.
+restores one. A file that still doesn't match fails to restore with the reason, and the backend stays not ready until
+the file is fixed or deleted, so nothing runs without the saved target.
 
 ### Manual attack creation
 
