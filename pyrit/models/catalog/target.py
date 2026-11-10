@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from pyrit.models.identifiers.component_identifier import JSONValue
 from pyrit.models.identifiers.target_identifier import TargetIdentifier
-from pyrit.models.target.request_generation_config import TemperatureRange
+from pyrit.models.target.request_generation_config import GenerationRange
 from pyrit.models.target.target_capabilities import TargetCapabilities
 
 
@@ -54,8 +54,9 @@ class TargetInstance(BaseModel):
         ),
     )
     capabilities: TargetCapabilities = Field(..., description="Structured snapshot of target capabilities")
-    temperature_range: TemperatureRange | None = Field(
-        None, description="Inclusive runtime temperature bounds; null means no range is declared, not no support"
+    generation_ranges: dict[str, GenerationRange] = Field(
+        default_factory=dict,
+        description="Inclusive runtime bounds keyed by generation option name; missing entries mean unknown bounds",
     )
     supports_history_replay: bool = Field(
         False,

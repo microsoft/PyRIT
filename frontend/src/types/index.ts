@@ -504,8 +504,8 @@ export interface TargetInstance {
   /** Typed identity: class name, endpoint, model name, generation params, content hash. */
   identifier: TargetIdentifier
   capabilities?: TargetCapabilities | null
-  /** Inclusive runtime bounds; missing/null means no range is declared, not no support. */
-  temperature_range?: readonly [number, number] | null
+  /** Inclusive runtime bounds by option; missing entries mean unknown bounds, not lack of support. */
+  generation_ranges?: Partial<Record<keyof RequestGenerationConfig, readonly [number, number]>>
   /** Effective replay support, including configured adapters and provider restoration. */
   supports_history_replay?: boolean
   /** Non-promoted constructor params, curated for display (e.g., RoundRobin weights). */
@@ -626,7 +626,7 @@ export interface TargetBinding {
 export interface UnregisteredTarget {
   identifier: TargetIdentifier
   capabilities: TargetCapabilities
-  temperature_range?: readonly [number, number] | null
+  generation_ranges?: TargetInstance['generation_ranges']
 }
 
 export interface UnregisteredConverter {
@@ -746,7 +746,7 @@ export interface Parameter {
   is_list?: boolean
   /** Structured input variants mapped to their constructor parameters. */
   variants?: Record<string, Parameter[]> | null
-  reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
+  reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | 'source' | null
   /** Whether parameter controls must obscure the entered value. */
   sensitive?: boolean
   /** Whether parameter controls must preserve line breaks in the entered value. */

@@ -29,7 +29,6 @@ def _validate_generation_range(value: tuple[float, float]) -> tuple[float, float
 
 
 GenerationRange = Annotated[tuple[FiniteFloat, FiniteFloat], AfterValidator(_validate_generation_range)]
-TemperatureRange = GenerationRange
 
 
 class RequestGenerationConfig(BaseModel):

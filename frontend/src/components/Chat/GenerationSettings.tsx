@@ -28,7 +28,7 @@ export default function GenerationSettings(props: GenerationSettingsProps) {
   const { target, disabled } = props
   return <TemperatureControl key={JSON.stringify([
     target?.target_registry_name, target?.identifier.hash, target?.capabilities?.supports_temperature,
-    target?.temperature_range, disabled,
+    target?.generation_ranges, disabled,
   ])} {...props} />
 }
 

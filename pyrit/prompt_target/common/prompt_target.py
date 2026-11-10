@@ -460,8 +460,8 @@ class PromptTarget(Identifiable):
 
         Called by ``send_prompt_async`` after validation and normalization.
 
-        Adapters opting into ``_SUPPORTED_GENERATION_CAPABILITIES`` must validate
-        their parameter limits and modes in ``_validate_request_generation_config``.
+        Adapters opting into ``_SUPPORTED_GENERATION_CAPABILITIES`` declare bounds via
+        ``generation_range`` and validate modes in ``_validate_request_generation_config``.
         After asynchronous payload preparation, revalidate before provider I/O,
         apply overrides to the actual payload (including passthrough settings),
         and write ``RequestGenerationInfo`` to the normalized request's first piece.
@@ -832,6 +832,15 @@ class PromptTarget(Identifiable):
             TargetCapabilities: The capabilities for this target.
         """
         return self._configuration.capabilities
+
+    @property
+    def generation_ranges(self) -> dict[str, tuple[float, float]]:
+        """Known runtime bounds keyed by generation option name, independent of capability support."""
+        return {
+            name: bounds
+            for name, capability in RequestGenerationConfig.FIELD_CAPABILITIES.items()
+            if (bounds := self.generation_range(capability=capability)) is not None
+        }
 
     def generation_range(self, *, capability: CapabilityName) -> tuple[float, float] | None:
         """

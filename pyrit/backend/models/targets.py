@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from pyrit.backend.models.common import MAX_ITEMS, REGISTRY_INSTANCE_NAME_PATTERN, IdentifierStr, PaginationInfo
 from pyrit.common import AuthMode
-from pyrit.models import JSONValue, Parameter, TargetCapabilities, TargetIdentifier, TemperatureRange
+from pyrit.models import GenerationRange, JSONValue, Parameter, TargetCapabilities, TargetIdentifier
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec
 
@@ -97,6 +97,7 @@ class UnregisteredTarget(BaseModel):
 
     identifier: TargetIdentifier
     capabilities: TargetCapabilities
-    temperature_range: TemperatureRange | None = Field(
-        None, description="Inclusive runtime temperature bounds; null means no range is declared, not no support"
+    generation_ranges: dict[str, GenerationRange] = Field(
+        default_factory=dict,
+        description="Inclusive runtime bounds keyed by generation option name; missing entries mean unknown bounds",
     )

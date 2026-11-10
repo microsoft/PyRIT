@@ -2,19 +2,19 @@ import type { MessagePieceRequest, TargetInstance } from '@/types'
 import { GENERATION_FIELDS, generationDisplay, generationFieldRange, parseGenerationConfig, withRequestGenerationConfig } from './requestGeneration'
 
 describe('request temperature', () => {
-  it('uses the range key declared by each generation field', () => {
+  it('looks up bounds by generation field name', () => {
     for (const field of GENERATION_FIELDS) {
-      const target: Pick<TargetInstance, 'temperature_range'> = { [field.rangeKey]: [0.2, 1] }
+      const target: Pick<TargetInstance, 'generation_ranges'> = { generation_ranges: { [field.name]: [0.2, 1] } }
       expect(generationFieldRange(field.name, target)).toEqual([0.2, 1])
     }
   })
 
-  it.each([undefined, null, {}, { temperature_range: null }])('does not guess missing bounds (%j)', (target?: Pick<TargetInstance, 'temperature_range'> | null) => {
+  it.each([undefined, null, {}, { generation_ranges: {} }])('does not guess missing bounds (%j)', (target?: Pick<TargetInstance, 'generation_ranges'> | null) => {
     expect(generationFieldRange('temperature', target)).toBeUndefined()
   })
 
   it('preserves a declared zero-only range', () => {
-    expect(generationFieldRange('temperature', { temperature_range: [0, 0] })).toEqual([0, 0])
+    expect(generationFieldRange('temperature', { generation_ranges: { temperature: [0, 0] } })).toEqual([0, 0])
   })
 
   it.each(['0', '0.8', '2'])('attaches numeric %s to only one piece', (input: string) => {
@@ -46,7 +46,7 @@ describe('request temperature', () => {
   })
 
   it.each(['', ' ', 'NaN', 'Infinity', '-0.1', '2.1', 'not a number', '0x1', '0b1', '1e', 'true'])('rejects %s', (input: string) => {
-    expect(() => parseGenerationConfig({ temperature: input }, { capabilities: { supports_temperature: true }, temperature_range: [0, 2] }))
+    expect(() => parseGenerationConfig({ temperature: input }, { capabilities: { supports_temperature: true }, generation_ranges: { temperature: [0, 2] } }))
       .toThrow(/finite number between 0 and 2/)
   })
 
@@ -60,13 +60,13 @@ describe('request temperature', () => {
 
   it.each(['0', '0.7', '1'])('accepts %s within the target temperature range', (temperature: string) => {
     expect(parseGenerationConfig({ temperature }, {
-      capabilities: { supports_temperature: true }, temperature_range: [0, 1],
+      capabilities: { supports_temperature: true }, generation_ranges: { temperature: [0, 1] },
     })).toEqual({ temperature: Number(temperature) })
   })
 
   it.each(['1.01', '2', '-0.1'])('rejects %s outside the target temperature range', (temperature: string) => {
     expect(() => parseGenerationConfig({ temperature }, {
-      capabilities: { supports_temperature: true }, temperature_range: [0, 1],
+      capabilities: { supports_temperature: true }, generation_ranges: { temperature: [0, 1] },
     })).toThrow('Temperature must be a finite number between 0 and 1.')
   })
 
@@ -74,7 +74,7 @@ describe('request temperature', () => {
     expect(parseGenerationConfig({ temperature: '3' }, { capabilities: { supports_temperature: true } }))
       .toEqual({ temperature: 3 })
     expect(() => parseGenerationConfig({ temperature: '0' }, {
-      capabilities: { supports_temperature: false }, temperature_range: [0, 2],
+      capabilities: { supports_temperature: false }, generation_ranges: { temperature: [0, 2] },
     })).toThrow(/does not support runtime temperature/)
     expect(() => parseGenerationConfig({ temperature: 'Infinity' }, { capabilities: { supports_temperature: true } }))
       .toThrow('Temperature must be a finite number.')

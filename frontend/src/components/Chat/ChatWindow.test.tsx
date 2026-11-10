@@ -4383,7 +4383,7 @@ describe("ChatWindow Integration", () => {
     const user = userEvent.setup();
     const target = {
       ...mockTarget, capabilities: buildCapabilities({ supports_temperature: true }),
-      temperature_range: [0, 2] as const,
+      generation_ranges: { temperature: [0, 2] as const },
     };
     render(<TestWrapper><ChatWindow {...defaultProps} activeTarget={target} /></TestWrapper>);
     await chooseTemperature(user, "2.1");

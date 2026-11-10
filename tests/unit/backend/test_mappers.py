@@ -65,7 +65,7 @@ def target_mock_factory() -> Callable[[type[PromptTarget]], MagicMock]:
 
     def _create_target(target_type: type[PromptTarget]) -> MagicMock:
         target = MagicMock(spec=target_type)
-        target.generation_range.return_value = None
+        target.generation_ranges = {}
         return target
 
     return _create_target
@@ -1602,7 +1602,7 @@ class TestTargetObjectToInstance:
         assert result.identifier.endpoint == "http://test"
         assert result.identifier.model_name == "gpt-4"
         assert result.identifier.temperature == 0.7
-        assert result.temperature_range is None
+        assert result.generation_ranges == {}
         # hash is auto-populated by the ComponentIdentifier validator and surfaced on
         # the embedded identifier so the frontend can dedupe targets that resolve to the
         # same underlying configuration.
@@ -1996,8 +1996,8 @@ class TestTargetObjectToInstanceRoundRobin:
         assert len(result.inner_targets) == 2
         assert result.inner_targets[0].identifier.endpoint == "https://a.openai.azure.com"
         assert result.inner_targets[1].identifier.endpoint == "https://b.openai.azure.com"
-        assert result.temperature_range is None
-        assert all(inner.temperature_range is None for inner in result.inner_targets)
+        assert result.generation_ranges == {}
+        assert all(inner.generation_ranges == {} for inner in result.inner_targets)
 
     def test_round_robin_identifier_carries_no_model_name(
         self, *, target_mock_factory: Callable[[type[PromptTarget]], MagicMock]

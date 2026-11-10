@@ -75,8 +75,11 @@ piece = MessagePiece(
 Check `target.capabilities.supports_temperature` and
 `target.generation_range(capability=CapabilityName.TEMPERATURE)` before choosing
 a value (`CapabilityName` is in `pyrit.models`). Bounds are inclusive; `None` means unspecified bounds,
-not lack of support. OpenAI targets accept a `temperature_range` constructor argument
-to override inferred bounds. Missing or null temperature preserves existing defaults.
+not lack of support. `target.generation_ranges` exposes all known bounds keyed by
+option name. OpenAI targets accept `generation_ranges={"temperature": (0.0, 1.0)}`
+to override inferred bounds for selected options; omitted entries retain inference.
+These declarations do not enable unsupported options or change configured defaults.
+Missing or null request temperature preserves existing defaults.
 Invalid, conflicting, or unsupported overrides fail before provider I/O.
 
 Read saved request and response evidence with

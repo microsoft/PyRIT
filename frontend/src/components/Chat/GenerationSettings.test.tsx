@@ -13,7 +13,7 @@ import GenerationSettings from './GenerationSettings'
 const target = makeTarget({
   target_registry_name: 'chat',
   temperature: 0.2,
-  temperature_range: [0, 2],
+  generation_ranges: { temperature: [0, 2] },
   capabilities: { supports_temperature: true },
 })
 
@@ -124,7 +124,7 @@ describe('GenerationSettings', () => {
     const mistral = makeTarget({
       model_name: 'Mistral-Large-3',
       capabilities: { supports_temperature: true },
-      temperature_range: [0, 1],
+      generation_ranges: { temperature: [0, 1] },
     })
     render(<TestWrapper><SettingsHarness selectedTarget={mistral} /></TestWrapper>)
     await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
@@ -159,7 +159,7 @@ describe('GenerationSettings', () => {
     const onChange = jest.fn()
     const positiveMinimumTarget = makeTarget({
       capabilities: { supports_temperature: true },
-      temperature_range: [0.2, 1],
+      generation_ranges: { temperature: [0.2, 1] },
     })
     render(<TestWrapper><SettingsHarness selectedTarget={positiveMinimumTarget} onChange={onChange} /></TestWrapper>)
     await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
@@ -174,10 +174,10 @@ describe('GenerationSettings', () => {
     expect(parseGenerationConfig(onChange.mock.lastCall[0], positiveMinimumTarget)).toEqual({})
   })
 
-  it.each([undefined, null])('should not invent bounds or disable supported temperature without a range (%s)', async (temperature_range: undefined | null) => {
+  it.each([undefined, {}])('should not invent bounds or disable supported temperature without a range (%s)', async (generation_ranges: TargetInstance['generation_ranges']) => {
     const user = userEvent.setup()
     const onChange = jest.fn()
-    const unknownRangeTarget = { ...target, temperature_range }
+    const unknownRangeTarget = { ...target, generation_ranges }
     render(<TestWrapper><SettingsHarness selectedTarget={unknownRangeTarget} onChange={onChange} /></TestWrapper>)
     await user.click(screen.getByRole('button', { name: /^Adjust temperature/ }))
     const input = screen.getByRole('textbox', { name: 'Temperature' })

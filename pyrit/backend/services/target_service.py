@@ -31,7 +31,7 @@ from pyrit.backend.models.targets import (
 )
 from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
-from pyrit.models import CapabilityName, Parameter, TargetIdentifier
+from pyrit.models import Parameter, TargetIdentifier
 from pyrit.models.catalog import TargetInstance
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
@@ -495,7 +495,7 @@ class TargetService:
                 return UnregisteredTarget(
                     identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
                     capabilities=target_obj.capabilities,
-                    temperature_range=target_obj.generation_range(capability=CapabilityName.TEMPERATURE),
+                    generation_ranges=target_obj.generation_ranges,
                 )
             finally:
                 await release_component_async(target_obj)

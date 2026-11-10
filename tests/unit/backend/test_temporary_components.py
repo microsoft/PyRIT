@@ -359,6 +359,23 @@ class TestTemporaryComponents:
             await second.cleanup_target_async()
             await source.cleanup_target_async()
 
+    @pytest.mark.parametrize("target_type", ["OpenAIChatTarget", "OpenAICompletionTarget", "OpenAIResponseTarget"])
+    async def test_generation_range_declarations_remain_python_only_async(self, target_type: str) -> None:
+        with pytest.raises(ValueError, match="generation_ranges.*cannot be set through the API"):
+            await TargetService().create_target_async(
+                request=CreateTargetRequest(
+                    type=target_type,
+                    register=False,
+                    params={
+                        "model_name": "gpt-4o",
+                        "endpoint": "https://example.test/v1",
+                        "api_key": "test-only-key",
+                        "generation_ranges": {"temperature": [0.2, 0.8]},
+                    },
+                )
+            )
+        assert not TargetRegistry.get_registry_singleton().instances.get_names()
+
     @pytest.mark.parametrize(
         "model, supported, maximum", [("gpt-4o", True, 2), ("Mistral-Large-3", True, 1), ("o3", False, 2)]
     )
@@ -379,11 +396,13 @@ class TestTemporaryComponents:
             target = RoundRobinTarget(targets=children) if wrapped else children[0]
             descriptor = target_object_to_instance("target", target)
             assert descriptor.capabilities.supports_temperature is supported
-            assert descriptor.temperature_range == (0, maximum)
-            assert descriptor.model_dump(mode="json")["temperature_range"] == [0, maximum]
-            assert "temperature_range" not in descriptor.model_dump(mode="json")["capabilities"]
+            assert descriptor.generation_ranges == {"temperature": (0, maximum)}
+            assert descriptor.model_dump(mode="json")["generation_ranges"] == {"temperature": [0, maximum]}
+            assert "generation_ranges" not in descriptor.model_dump(mode="json")["capabilities"]
             if descriptor.inner_targets:
-                assert all(child.temperature_range == (0, maximum) for child in descriptor.inner_targets)
+                assert all(
+                    child.generation_ranges == {"temperature": (0, maximum)} for child in descriptor.inner_targets
+                )
             if wrapped:
                 children[1].apply_capabilities(
                     capabilities=children[1].capabilities.model_copy(update={"supports_temperature": False})
@@ -404,7 +423,7 @@ class TestTemporaryComponents:
             model_name="gpt-4o",
             endpoint="https://example.test/v1",
             api_key="test-only-key",
-            temperature_range=(0.2, 0.8) if declaration == "constructor" else None,
+            generation_ranges={"temperature": (0.2, 0.8)} if declaration == "constructor" else None,
         )
         if declaration == "applied":
             source._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0.2, 0.8))
@@ -413,7 +432,9 @@ class TestTemporaryComponents:
         copied: PromptTarget | None = None
         try:
             explicit = None if declaration == "inferred" else (0.2, 0.8)
-            assert registry.get_reconstruction_parameters(source)["temperature_range"] == explicit
+            assert registry.get_reconstruction_parameters(source)["generation_ranges"] == (
+                {"temperature": explicit} if explicit is not None else {}
+            )
             service = TargetService()
             spec = SourceInstanceSpec(source_name="source", source_hash=source.get_identifier().hash, params={})
             if register:
@@ -426,9 +447,9 @@ class TestTemporaryComponents:
                     request=CreateTargetRequest(type=target_type.__name__, register=False, source=spec)
                 )
             expected = explicit or (0, 2)
-            assert descriptor.temperature_range == expected
-            assert descriptor.model_dump(mode="json")["temperature_range"] == list(expected)
-            assert "temperature_range" not in descriptor.model_dump(mode="json")["capabilities"]
+            assert descriptor.generation_ranges == {"temperature": expected}
+            assert descriptor.model_dump(mode="json")["generation_ranges"] == {"temperature": list(expected)}
+            assert "generation_ranges" not in descriptor.model_dump(mode="json")["capabilities"]
             assert type(descriptor).model_validate_json(descriptor.model_dump_json()) == descriptor
             assert not source._client.is_closed()
             if copied is not None:

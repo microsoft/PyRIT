@@ -56,10 +56,14 @@ its database collation.
 - `GET /api/targets/{id}` - Get target details
 
 REST target descriptors expose `capabilities.supports_temperature` and a separate
-top-level `temperature_range`, populated from the SDK's
-`target.generation_range(capability=CapabilityName.TEMPERATURE)` lookup.
-Bounds are inclusive; `null` means unknown bounds, not lack of support. Clients must
-not substitute assumed bounds. Per-send values use
+`generation_ranges` map, such as `{"temperature": [0, 2]}`, populated from the SDK's
+`target.generation_ranges` snapshot. Bounds are inclusive; missing entries mean
+unknown bounds, not lack of support. Clients must not substitute assumed bounds.
+OpenAI SDK constructors accept `generation_ranges={"temperature": (0, 1)}`;
+omitted entries retain inferred bounds, while descriptors include effective bounds.
+Range declarations remain Python-only constructor inputs, not REST `params`
+overrides; reconstruction preserves declarations from the source target.
+Per-send values use
 [`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
 
 ### Manual attack creation

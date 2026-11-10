@@ -151,6 +151,9 @@ class OpenAITarget(PromptTarget):
         capabilities=TargetCapabilities(supports_multi_message_pieces=True)
     )
     _GENERATION_RANGE_ADAPTER: ClassVar[TypeAdapter[tuple[float, float]]] = TypeAdapter(GenerationRange)
+    _GENERATION_RANGES_ADAPTER: ClassVar[TypeAdapter[dict[str, tuple[float, float]]]] = TypeAdapter(
+        dict[str, GenerationRange]
+    )
     _response_adapter: OpenAIResponseAdapter[Any] = OpenAIResponseAdapter()
 
     # OpenAI-family targets can mint an Entra ID token for a recognized Azure
@@ -197,7 +200,7 @@ class OpenAITarget(PromptTarget):
         httpx_client_kwargs: dict[str, Any] | None = None,
         underlying_model: str | None = None,
         custom_configuration: TargetConfiguration | None = None,
-        temperature_range: tuple[float, float] | None = None,
+        generation_ranges: dict[str, GenerationRange] | None = None,
     ) -> None:
         """
         Initialize an instance of OpenAITarget.
@@ -234,8 +237,9 @@ class OpenAITarget(PromptTarget):
                 Defaults to None.
             custom_configuration (TargetConfiguration, Optional): Override the default configuration for
                 this target instance. If None, uses the class-level defaults. Defaults to None.
-            temperature_range (tuple[float, float] | None): Inclusive runtime bounds overriding model inference.
-                Does not enable unsupported model modes or change the configured temperature default.
+            generation_ranges (dict[str, GenerationRange] | None): Inclusive runtime bounds keyed by generation
+                option name, overriding model inference for those options. Omitted entries retain inference.
+                Does not enable unsupported options or model modes, or change configured defaults.
 
         Raises:
             ValueError: If identity auth is requested for an endpoint that is not a recognized
@@ -272,7 +276,12 @@ class OpenAITarget(PromptTarget):
         ):
             self._declared_generation["supports_temperature"] = custom_configuration.capabilities.supports_temperature
         self._effective_generation = deepcopy(self._declared_generation)
-        self._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=temperature_range)
+        if generation_ranges is not None:
+            for name, bounds in self._GENERATION_RANGES_ADAPTER.validate_python(generation_ranges).items():
+                capability = RequestGenerationConfig.FIELD_CAPABILITIES.get(name)
+                if capability is None:
+                    raise ValueError(f"Unknown generation option: {name}")
+                self._apply_generation_range(capability=capability, bounds=bounds)
         self._declared_generation = deepcopy(self._effective_generation)
 
         # Initialize parent with endpoint and model_name
@@ -467,7 +476,11 @@ class OpenAITarget(PromptTarget):
             "httpx_client_kwargs": dict(self._httpx_client_kwargs),
             "underlying_model": self._underlying_model,
             "custom_configuration": self.configuration,
-            "temperature_range": self._effective_generation.get("ranges", {}).get(CapabilityName.TEMPERATURE),
+            "generation_ranges": {
+                name: bounds
+                for name, capability in RequestGenerationConfig.FIELD_CAPABILITIES.items()
+                if (bounds := self._effective_generation.get("ranges", {}).get(capability)) is not None
+            },
         }
 
     async def cleanup_target_async(self) -> None:

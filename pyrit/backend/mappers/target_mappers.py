@@ -79,7 +79,7 @@ def target_object_to_instance(target_registry_name: str, target_obj: PromptTarge
         target_registry_name=target_registry_name,
         identifier=target_identifier,
         capabilities=target_obj.capabilities,
-        temperature_range=target_obj.generation_range(capability=CapabilityName.TEMPERATURE),
+        generation_ranges=target_obj.generation_ranges,
         supports_history_replay=supports_history_replay,
         target_specific_params=_target_specific_params(target_identifier),
         inner_targets=_build_inner_targets(target_obj),

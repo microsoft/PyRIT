@@ -10,23 +10,22 @@ export const GENERATION_FIELDS: ReadonlyArray<{
   readonly name: keyof RequestGenerationConfig
   readonly label: string
   readonly capability: Extract<keyof TargetCapabilities, `supports_${string}`>
-  readonly rangeKey: Extract<keyof TargetInstance, `${string}_range`>
   readonly step: number
 }> = [
-  { name: 'temperature', label: 'Temperature', capability: 'supports_temperature', rangeKey: 'temperature_range', step: 0.1 },
+  { name: 'temperature', label: 'Temperature', capability: 'supports_temperature', step: 0.1 },
 ]
 
 export function generationFieldRange(
-  name: keyof RequestGenerationConfig, target?: Pick<TargetInstance, 'temperature_range'> | null,
+  name: keyof RequestGenerationConfig, target?: Pick<TargetInstance, 'generation_ranges'> | null,
 ): readonly [number, number] | undefined {
   const field = GENERATION_FIELDS.find((entry) => entry.name === name)
   if (!field) throw new Error(`Unknown generation option: ${name}`)
-  return target?.[field.rangeKey] ?? undefined
+  return target?.generation_ranges?.[field.name]
 }
 
 export function generationFieldError(
   name: keyof RequestGenerationConfig, input: string | undefined,
-  target?: Pick<TargetInstance, 'capabilities' | 'temperature_range'> | null,
+  target?: Pick<TargetInstance, 'capabilities' | 'generation_ranges'> | null,
 ): string | undefined {
   if (input === undefined) return undefined
   const field = GENERATION_FIELDS.find((entry) => entry.name === name)
@@ -41,7 +40,7 @@ export function generationFieldError(
 }
 
 export function generationConfigError(
-  draft: RequestGenerationDraft, target?: Pick<TargetInstance, 'capabilities' | 'temperature_range'> | null,
+  draft: RequestGenerationDraft, target?: Pick<TargetInstance, 'capabilities' | 'generation_ranges'> | null,
 ): string | undefined {
   for (const field of GENERATION_FIELDS) {
     const error = generationFieldError(field.name, draft[field.name], target)
@@ -51,7 +50,7 @@ export function generationConfigError(
 }
 
 export function parseGenerationConfig(
-  draft: RequestGenerationDraft, target?: Pick<TargetInstance, 'capabilities' | 'temperature_range'> | null,
+  draft: RequestGenerationDraft, target?: Pick<TargetInstance, 'capabilities' | 'generation_ranges'> | null,
 ): RequestGenerationConfig {
   const config: { -readonly [Field in keyof RequestGenerationConfig]?: number } = {}
   for (const field of GENERATION_FIELDS) {

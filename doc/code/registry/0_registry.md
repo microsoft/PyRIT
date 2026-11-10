@@ -135,8 +135,11 @@ server. It does not change the source. Missing, changed, or ambiguous sources
 produce an error. If a source was renamed, a unique matching hash can resolve it.
 An optional `effective_hash` checks the reconstructed object's identity.
 Converter descriptors expose `reconstructable` and `reconstruction_error`;
-target REST descriptors expose runtime support in `capabilities` and temperature
-bounds in the top-level `temperature_range` field, independent of reconstruction. Use
+target REST descriptors expose runtime support in `capabilities` and inclusive
+bounds in the `generation_ranges` map, such as `{"temperature": [0, 2]}`, independent
+of reconstruction. Missing entries mean unknown bounds, not lack of support.
+Reconstruction preserves explicitly configured ranges and leaves omitted entries
+to model inference. Use
 [runtime generation configuration](../targets/0_prompt_targets.md#runtime-generation-configuration)
 for per-request overrides instead of rebuilding a target.
 Constructor inputs that are not in the registry's build contract are not
@@ -181,6 +184,36 @@ Scorer list responses build identifiers only for the requested page. Runtime
 replacement clears the cached scorer service so requests use the new registry.
 
 The backend owns file-upload handling and cleanup, not the registry.
+
+## Source Registry
+
+`SourceRegistry` holds observation sources, the components that acquire the
+evidence a source-backed scorer judges (a conversation, a trace, files on a
+surface). It discovers the source classes exported from
+`pyrit.score.observation` and holds configured instances under `.instances`,
+like the converter, scorer, and target registries. Sources have their own
+namespace rather than sharing the scorer namespace: a source is configured
+independently of the scorer that reads it, and one source can serve several
+scorers.
+
+A scorer's `source` argument is a registry reference, so a scorer can name a
+registered source instead of receiving the object:
+
+```python
+from pyrit.registry import ScorerRegistry, SourceRegistry
+
+SourceRegistry.get_registry_singleton().create_named_instance(
+    name="workspace",
+    type_name="LocalFileSurfaceSource",
+    params={"root": "/path/to/workspace"},
+)
+scorer = ScorerRegistry.get_registry_singleton().create_instance("FileWriteScorer", source="workspace")
+```
+
+A live source object is still accepted and passes through unchanged.
+`ScorerIdentifier` declares `source` in `constructor_references` rather than as
+a promoted field, so stored scorer identities, their hashes, and the memory
+schema are unchanged.
 
 ## Attack Class Registry
 
