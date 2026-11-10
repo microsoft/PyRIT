@@ -66,6 +66,7 @@ print(f"  Identity Hash: {scorer_identity.hash}")
 # - **Recall**: Of all actual "true" cases, how many did we catch? High recall = few false negatives.
 # - **F1 Score**: Harmonic mean of precision and recall. Balances both concerns.
 # - **Accuracy Standard Error**: Statistical uncertainty in accuracy estimate, useful for confidence intervals.
+# - **Constant-Guess Baselines** (`baseline_accuracy`, `baseline_f1_score`): What a scorer that ignores the response would get on the same labels. The accuracy baseline always returns the more common human label; the F1 baseline always answers true, the best any constant can do on F1. A scorer whose accuracy or F1 is not above its baseline has not beaten a constant guess on that dataset. Results recorded before these fields existed report `None`.
 #
 # **Which metric matters most?**
 # - If false positives are costly (e.g., flagging safe content as harmful) → prioritize **precision**
