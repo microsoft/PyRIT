@@ -6,6 +6,7 @@ import json
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from threading import current_thread
 from typing import Any
 from unittest.mock import patch
 
@@ -26,7 +27,12 @@ from pyrit.models.catalog import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
-from pyrit.registry.registry_recipe_restore import RecipeBuilder, RecipeRejectedError, RegistryRecipeRestorer
+from pyrit.registry.registry_recipe_restore import (
+    RecipeBuilder,
+    RecipeRejectedError,
+    RegistryRecipeRestorer,
+    SavedRecipes,
+)
 from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RegistryRecipeStorage
 from unit.mocks import MockPromptTarget
 
@@ -215,6 +221,26 @@ class TestRestoreOrderAndRebuild:
 
         assert report.failures == []
         assert [ref.name for ref in report.restored] == ["contoso_gpt4o"]
+
+    async def test_reads_in_a_worker_thread_and_builds_on_the_calling_one(self, tmp_path: Path) -> None:
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
+        restorer = RegistryRecipeRestorer(source=str(tmp_path))
+        read, threads = restorer.read, {}
+
+        def read_noting_thread() -> SavedRecipes:
+            threads["read"] = current_thread()
+            return read()
+
+        async def build_noting_thread(stored: StoredRecipe) -> None:
+            threads["build"] = current_thread()
+            await _build_async(stored)
+
+        with patch.object(restorer, "read", read_noting_thread):
+            report = await restorer.restore_async(build_async=build_noting_thread)
+
+        assert report.failures == []
+        assert threads["build"] is current_thread()
+        assert threads["read"] is not current_thread()
 
     async def test_orders_entries_of_the_same_kind(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("b_member", "c_member"))

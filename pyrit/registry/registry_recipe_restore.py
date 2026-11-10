@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import traceback
 from collections.abc import Awaitable, Callable
@@ -149,12 +150,12 @@ class RegistryRecipeRestorer:
         Args:
             build_async (RecipeBuilder): Builds one checked entry and registers it under its name. It raises
                 ``RecipeRejectedError`` to report a reason; any other error is reported as a build error.
-            saved (SavedRecipes | None): What ``read`` returned. Defaults to reading now.
+            saved (SavedRecipes | None): What ``read`` returned. Defaults to reading now, in a worker thread.
 
         Returns:
             RegistryRestoreReport: What was restored, what failed and why, and which files were ignored.
         """
-        saved = saved if saved is not None else self.read()
+        saved = saved if saved is not None else await asyncio.to_thread(self.read)
         listings, failures = list(saved.listings), list(saved.failures)
         causes: dict[_FailureKey, BaseException] = {(kind, None): error for kind, error in saved.causes.items()}
         for listing in listings:
