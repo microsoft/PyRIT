@@ -18,7 +18,7 @@ _DELIVERY_FRAMING = (
 )
 
 
-def _mock_target_returning(converted_value: str) -> PromptTarget:
+def _mock_target_returning(converted_value: str) -> MagicMock:
     target = MagicMock(spec=PromptTarget)
     target.send_prompt_async = AsyncMock(
         return_value=[
