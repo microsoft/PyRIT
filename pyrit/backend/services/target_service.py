@@ -15,6 +15,8 @@ Targets can be:
 import asyncio
 import logging
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
 from functools import lru_cache
 from typing import Any
 from weakref import WeakKeyDictionary
@@ -80,6 +82,41 @@ class TargetService:
         self._detecting: set[str] = set()
         self._detecting_sources: set[int] = set()
         self._legacy_binding_capabilities: WeakKeyDictionary[PromptTarget, TargetCapabilities] = WeakKeyDictionary()
+
+    def saved_capabilities(self, *, target: PromptTarget, metadata: dict[str, Any]) -> TargetCapabilities:
+        """
+        Resolve a manual chat's snapshot, or its source's pre-detection session fallback.
+
+        Returns:
+            TargetCapabilities: Saved capabilities without changing the registered target.
+        """
+        binding = TargetBinding.from_metadata(metadata)
+        if binding is not None and binding.capabilities is not None:
+            return binding.capabilities
+        saved = metadata.get("target_capabilities")
+        if saved is not None:
+            return TargetCapabilities.model_validate(saved)
+        return self._legacy_binding_capabilities.get(target, target.capabilities)
+
+    @contextmanager
+    def capabilities_scope(
+        self, *, target: PromptTarget | None, metadata: dict[str, Any]
+    ) -> Generator[None, None, None]:
+        """
+        Preserve a manual chat's configuration on its original, caller-owned target.
+
+        Yields:
+            None: A task-local scope; the live target is neither mutated nor released.
+        """
+        if target is None:
+            yield
+            return
+        capabilities = self.saved_capabilities(target=target, metadata=metadata)
+        if capabilities == target.capabilities:
+            yield
+            return
+        with target.capabilities_scope(capabilities):
+            yield
 
     async def detect_capabilities_async(self, *, target_registry_name: str, expected_hash: str) -> TargetInstance:
         """
@@ -245,6 +282,20 @@ class TargetService:
             The PromptTarget object if found, None otherwise.
         """
         return self._registry.instances.get(target_registry_name)
+
+    def get_target_object_by_identifier_hash(self, identifier_hash: str) -> PromptTarget | None:
+        """
+        Resolve a legacy saved target only when its registry identity is unambiguous.
+
+        Returns:
+            PromptTarget | None: The sole matching registry entry, or None when missing or ambiguous.
+        """
+        matches = [
+            entry.instance
+            for entry in self._registry.instances.get_all_instances()
+            if entry.instance.get_identifier().hash == identifier_hash
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     @staticmethod
     def _get_supported_auth_modes(auth_modes: tuple[str, ...]) -> list[AuthMode]:

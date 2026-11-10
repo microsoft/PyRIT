@@ -3,7 +3,8 @@
 
 import abc
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, ClassVar, final
 
@@ -72,6 +73,9 @@ class PromptTarget(Identifiable):
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
     _DISPATCH_CAPABILITIES: ClassVar[ContextVar[tuple["PromptTarget", TargetCapabilities] | None]] = ContextVar(
         "target_dispatch_capabilities", default=None
+    )
+    _CONFIGURATION_SCOPES: ClassVar[ContextVar[tuple[tuple["PromptTarget", TargetConfiguration], ...]]] = ContextVar(
+        "target_configuration_scopes", default=()
     )
 
     # Declarative auth facts consumed by the create-target service and catalog.
@@ -747,7 +751,33 @@ class PromptTarget(Identifiable):
         Returns:
             TargetConfiguration: The configuration for this target.
         """
+        for target, configuration in reversed(self._CONFIGURATION_SCOPES.get()):
+            if target is self:
+                return configuration
         return self._configuration
+
+    @contextmanager
+    def capabilities_scope(self, capabilities: TargetCapabilities) -> Generator[None, None, None]:
+        """
+        Use saved capabilities for this task without replacing the live target or its state.
+
+        Args:
+            capabilities: Capabilities used for normalization, validation, and provider serialization.
+
+        Yields:
+            None: The task-local configuration scope, restored even on cancellation.
+        """
+        configuration = self.configuration
+        scoped = TargetConfiguration(
+            capabilities=capabilities,
+            policy=configuration.policy,
+            normalizer_overrides=configuration.normalizer_overrides,
+        )
+        token = self._CONFIGURATION_SCOPES.set((*self._CONFIGURATION_SCOPES.get(), (self, scoped)))
+        try:
+            yield
+        finally:
+            self._CONFIGURATION_SCOPES.reset(token)
 
     @property
     def capabilities(self) -> TargetCapabilities:
@@ -764,7 +794,7 @@ class PromptTarget(Identifiable):
         override = self._DISPATCH_CAPABILITIES.get()
         if override is not None and override[0] is self:
             return override[1]
-        return self._configuration.capabilities
+        return self.configuration.capabilities
 
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
         """

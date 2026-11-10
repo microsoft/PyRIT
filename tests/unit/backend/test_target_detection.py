@@ -21,14 +21,35 @@ from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from PIL import Image
 
+from pyrit.backend.models import (
+    AddMessageRequest,
+    CreateAttackRequest,
+    CreateConversationRequest,
+    MessagePieceRequest,
+    MessageRequest,
+)
+from pyrit.backend.models.attacks import SaveConversationRequest
+from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
 from pyrit.backend.routes.targets import router
 from pyrit.backend.services import TargetService
-from pyrit.models import Conversation, Message, TargetCapabilities
+from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler
+from pyrit.backend.services.message_send_service import MessageSendService
+from pyrit.memory import SQLiteMemory
+from pyrit.models import (
+    AtomicAttackIdentifier,
+    AttackIdentifier,
+    AttackResult,
+    Conversation,
+    Message,
+    TargetCapabilities,
+)
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import OpenAIChatTarget, OpenAITTSTarget, RoundRobinTarget, TargetConfiguration
 from pyrit.prompt_target.common.discover_target_capabilities import DEFAULT_TEST_ASSETS, CapabilityDiscoveryError
 from pyrit.registry import TargetRegistry
 from unit.async_utils import TEST_WATCHDOG_SECONDS
+from unit.backend.mocks import _settle_send_async
 from unit.mocks import MockPromptTarget
 
 
@@ -660,6 +681,232 @@ async def test_detection_preserves_existing_binding_and_multi_turn_provider_send
         if restored is not None:
             await restored.cleanup_target_async()
         await source.cleanup_target_async()
+
+
+@pytest.mark.parametrize(("legacy", "registry_hint"), [(False, True), (True, True), (True, False)])
+async def test_detection_preserves_default_chat_service_history_async(
+    detection_service: tuple[TargetService, _DetectableTarget],
+    sqlite_instance: SQLiteMemory,
+    legacy: bool,
+    registry_hint: bool,
+) -> None:
+    service, _ = detection_service
+    source = OpenAIChatTarget(api_key="test-key", endpoint="https://example.test", model_name="test-model")
+    service._registry.instances.register(source, name="default-chat")
+    original = source.capabilities
+    completion = ChatCompletion(
+        id="chat-result",
+        created=0,
+        model="test-model",
+        object="chat.completion",
+        choices=[Choice(index=0, finish_reason="stop", message=ChatCompletionMessage(role="assistant", content="ok"))],
+    )
+    sends = MessageSendService(scheduler=ManualSendScheduler())
+    attacks = AttackService(message_send_service=sends, memory=sqlite_instance)
+    try:
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service", return_value=service),
+            patch("pyrit.backend.services.message_send_service.get_target_service", return_value=service),
+            patch.object(source._client.chat.completions, "create", new=AsyncMock(return_value=completion)) as send,
+        ):
+            chat = await attacks.create_attack_async(request=CreateAttackRequest(target_registry_name="default-chat"))
+            if legacy:
+                [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[chat.attack_result_id])
+                saved.metadata.pop("target_capabilities", None)
+                if not registry_hint:
+                    saved.metadata.pop("target_registry_name", None)
+                await sqlite_instance.update_attack_result_async(
+                    conversation_id=chat.conversation_id,
+                    update_fields={"attack_metadata": saved.metadata},
+                )
+                [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[chat.attack_result_id])
+                assert "target_capabilities" not in saved.metadata
+            request = AddMessageRequest(
+                pieces=[MessagePieceRequest(original_value="First turn.")],
+                target_registry_name="default-chat",
+                target_conversation_id=chat.conversation_id,
+                send=True,
+            )
+            await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert len(send.call_args.kwargs["messages"]) == 1
+            with patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new=AsyncMock(return_value=original.model_copy(update={"supports_multi_turn": False})),
+            ):
+                await service.detect_capabilities_async(
+                    target_registry_name="default-chat", expected_hash=source.get_identifier().hash
+                )
+            assert not source.capabilities.supports_multi_turn
+            request.pieces = [MessagePieceRequest(original_value="Second turn.")]
+            result = await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert send.await_count == 2
+            assert [message["role"] for message in send.call_args.kwargs["messages"]] == ["user", "assistant", "user"]
+            assert result.attack.target is not None
+            assert result.attack.target.capabilities == original
+            assert result.attack.target.supports_history_replay
+            assert not source.capabilities.supports_multi_turn
+            reopened = AttackService(message_send_service=sends, memory=sqlite_instance)
+            summary = await reopened.get_attack_async(attack_result_id=chat.attack_result_id)
+            assert summary is not None and summary.target is not None
+            assert summary.target.capabilities == original
+            assert summary.target.supports_history_replay
+            repeated = await reopened.submit_message_send_async(
+                attack_result_id=chat.attack_result_id,
+                request=MessageSendRequest(
+                    pieces=[MessagePieceRequest(original_value="Repeated turn.")],
+                    target_registry_name="default-chat",
+                    target_conversation_id=chat.conversation_id,
+                    submission_id=str(uuid.uuid4()),
+                    count=2,
+                ),
+            )
+            repeated = await _settle_send_async(service=sends, status=repeated)
+            assert repeated.state == MessageSendState.COMPLETED
+            assert send.await_count == 4
+            assert all(len(call.kwargs["messages"]) == 5 for call in send.call_args_list[-2:])
+            branch = await reopened.create_related_conversation_async(
+                attack_result_id=chat.attack_result_id,
+                request=CreateConversationRequest(source_conversation_id=chat.conversation_id, cutoff_index=1),
+            )
+            assert branch is not None
+            request.target_conversation_id = branch.conversation_id
+            await reopened.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert len(send.call_args.kwargs["messages"]) == 3
+            saved_conversation = await reopened.save_conversation_async(
+                request=SaveConversationRequest(
+                    save_id=uuid.uuid4(),
+                    destination="same_attack",
+                    attack_result_id=uuid.UUID(chat.attack_result_id),
+                    target_registry_name="default-chat",
+                    messages=[
+                        MessageRequest(role="user", pieces=[MessagePieceRequest(original_value="Edited first.")]),
+                        MessageRequest(
+                            role="simulated_assistant", pieces=[MessagePieceRequest(original_value="Edited reply.")]
+                        ),
+                    ],
+                )
+            )
+            request.target_conversation_id = saved_conversation.messages.conversation_id
+            await reopened.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert len(send.call_args.kwargs["messages"]) == 3
+            new_chat = await reopened.create_attack_async(
+                request=CreateAttackRequest(target_registry_name="default-chat")
+            )
+            new_summary = await reopened.get_attack_async(attack_result_id=new_chat.attack_result_id)
+            assert new_summary is not None and new_summary.target is not None
+            assert new_summary.target.capabilities == source.capabilities
+            assert not new_summary.target.capabilities.supports_multi_turn
+            [saved] = await sqlite_instance.get_attack_results_async(attack_result_ids=[new_chat.attack_result_id])
+            assert TargetCapabilities.model_validate(saved.metadata["target_capabilities"]) == source.capabilities
+            fresh_service = TargetService()
+            assert fresh_service.saved_capabilities(target=source, metadata=saved.metadata) == source.capabilities
+            request.target_conversation_id = new_chat.conversation_id
+            await reopened.add_message_async(attack_result_id=new_chat.attack_result_id, request=request)
+            assert len(send.call_args.kwargs["messages"]) == 1
+            with patch(
+                "pyrit.backend.services.target_service.discover_target_capabilities_async",
+                new=AsyncMock(return_value=original),
+            ):
+                await service.detect_capabilities_async(
+                    target_registry_name="default-chat", expected_hash=source.get_identifier().hash
+                )
+            new_summary = await reopened.get_attack_async(attack_result_id=new_chat.attack_result_id)
+            assert new_summary is not None and new_summary.target is not None
+            assert not new_summary.target.capabilities.supports_multi_turn
+            assert source.capabilities.supports_multi_turn
+            previous_calls = send.await_count
+            blocked = await reopened.submit_message_send_async(
+                attack_result_id=new_chat.attack_result_id,
+                request=MessageSendRequest(
+                    pieces=[MessagePieceRequest(original_value="This chat retains its single-turn snapshot.")],
+                    target_registry_name="default-chat",
+                    target_conversation_id=new_chat.conversation_id,
+                    submission_id=str(uuid.uuid4()),
+                ),
+            )
+            blocked = await _settle_send_async(service=sends, status=blocked)
+            assert blocked.state == MessageSendState.FAILED
+            assert send.await_count == previous_calls
+    finally:
+        await sends.shutdown_async()
+        await source.cleanup_target_async()
+
+
+async def test_default_chat_preserves_caller_owned_target_state_async(
+    detection_service: tuple[TargetService, _DetectableTarget], sqlite_instance: SQLiteMemory
+) -> None:
+    service, source = detection_service
+    sends = MessageSendService(scheduler=ManualSendScheduler())
+    attacks = AttackService(message_send_service=sends, memory=sqlite_instance)
+    original = source.capabilities
+    try:
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service", return_value=service),
+            patch("pyrit.backend.services.message_send_service.get_target_service", return_value=service),
+            patch.object(source, "_send_prompt_to_target_async", wraps=source._send_prompt_to_target_async) as send,
+        ):
+            chat = await attacks.create_attack_async(request=CreateAttackRequest(target_registry_name="test-target"))
+            request = AddMessageRequest(
+                pieces=[MessagePieceRequest(original_value="First turn.")],
+                target_registry_name="test-target",
+                target_conversation_id=chat.conversation_id,
+                send=True,
+            )
+            await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            with patch.object(
+                service,
+                "_probe_capabilities_async",
+                new=AsyncMock(return_value=original.model_copy(update={"supports_multi_turn": False})),
+            ):
+                await service.detect_capabilities_async(
+                    target_registry_name="test-target", expected_hash=source.get_identifier().hash
+                )
+            with patch.object(
+                service._registry, "recreate_instance", side_effect=AssertionError("Must reuse live state")
+            ):
+                request.pieces = [MessagePieceRequest(original_value="Second turn.")]
+                await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert source.prompt_sent == ["First turn.", "Second turn."]
+            assert len(send.call_args.kwargs["normalized_conversation"]) == 3
+            assert not source.closed
+            assert not source.capabilities.supports_multi_turn
+    finally:
+        await sends.shutdown_async()
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+async def test_legacy_manual_summary_resolves_only_unique_target_hash_async(
+    detection_service: tuple[TargetService, _DetectableTarget], sqlite_instance: SQLiteMemory, ambiguous: bool
+) -> None:
+    service, source = detection_service
+    original = source.capabilities
+    attack = AttackResult(
+        conversation_id=str(uuid.uuid4()),
+        objective="Legacy chat objective",
+        atomic_attack_identifier=AtomicAttackIdentifier.build(
+            attack_identifier=AttackIdentifier(
+                class_name="Legacy chat objective",
+                class_module="pyrit.backend",
+                objective_target=source.get_identifier(),
+            )
+        ),
+    )
+    await sqlite_instance.add_attack_results_to_memory_async(attack_results=[attack])
+    with patch.object(
+        service,
+        "_probe_capabilities_async",
+        new=AsyncMock(return_value=original.model_copy(update={"supports_multi_turn": False})),
+    ):
+        await service.detect_capabilities_async(
+            target_registry_name="test-target", expected_hash=source.get_identifier().hash
+        )
+    if ambiguous:
+        service._registry.instances.register(_DetectableTarget(), name="same-identity")
+    with patch("pyrit.backend.services.attack_service.get_target_service", return_value=service):
+        summary = await AttackService(memory=sqlite_instance).get_attack_async(attack_result_id=attack.attack_result_id)
+    assert summary is not None and summary.target is not None
+    assert summary.target.capabilities == (None if ambiguous else original)
+    assert not source.capabilities.supports_multi_turn
 
 
 async def test_detection_does_not_promote_untransmitted_tts_features_async(

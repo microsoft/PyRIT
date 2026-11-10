@@ -800,6 +800,8 @@ export interface TargetInfo {
   model_name?: string | null
   identifier_hash: string
   binding?: TargetBinding | null
+  capabilities?: TargetCapabilities | null
+  supports_history_replay?: boolean | null
 }
 
 export type AttackTargetResolutionStatus =

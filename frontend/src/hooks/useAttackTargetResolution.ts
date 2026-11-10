@@ -74,7 +74,15 @@ async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashRes
         && targetIdentifierHash(namedTarget) === target.identifier_hash
       ) {
         return isGuiTarget(namedTarget)
-          ? { status: 'resolved' as const, target: namedTarget }
+          ? {
+            status: 'resolved' as const,
+            target: target.capabilities
+              ? {
+                ...namedTarget, capabilities: target.capabilities,
+                supports_history_replay: target.supports_history_replay ?? namedTarget.supports_history_replay,
+              }
+              : namedTarget,
+          }
           : { status: 'unavailable' }
       }
     } catch (error) {
@@ -82,7 +90,16 @@ async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashRes
     }
   }
 
-  return resolveTargetByIdentifierHash(target.identifier_hash, await listRegisteredTargets())
+  const resolution = resolveTargetByIdentifierHash(target.identifier_hash, await listRegisteredTargets())
+  return resolution.status === 'resolved' && target.capabilities
+    ? {
+      ...resolution,
+      target: {
+        ...resolution.target, capabilities: target.capabilities,
+        supports_history_replay: target.supports_history_replay ?? resolution.target.supports_history_replay,
+      },
+    }
+    : resolution
 }
 
 export function useAttackTargetResolution({

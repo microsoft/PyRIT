@@ -115,6 +115,36 @@ describe('useAttackTargetResolution', () => {
     expect(result.current.activeTarget).toBeNull()
   })
 
+  it.each(['named', 'hash'])('keeps saved default chat capabilities after a %s lookup', async (lookup: string) => {
+    const savedCapabilities = {
+      supports_multi_turn: true, supports_system_prompt: true,
+      supports_json_output: false, supports_json_schema: false,
+      supported_input_modalities: ['text'], supported_output_modalities: ['text'],
+    }
+    const detected = {
+      ...replacementTarget,
+      capabilities: { ...savedCapabilities, supports_multi_turn: false },
+      supports_history_replay: false,
+    }
+    jest.mocked(targetsApi.getTarget).mockResolvedValue(detected)
+    jest.mocked(listRegisteredTargets).mockResolvedValue([detected])
+    const savedTarget: TargetInfo = {
+      ...targetInfo, target_registry_name: lookup === 'named' ? 'target' : undefined,
+      capabilities: savedCapabilities, supports_history_replay: true,
+    }
+    const { result } = renderHook(() => useAttackTargetResolution({
+      attackId: 'saved', attackLoadSequence: 1,
+      attackTarget: savedTarget,
+      attackTargetSource: 'persisted',
+    }))
+    await waitFor(() => expect(result.current.resolutionStatus).toBe('resolved'))
+    expect(result.current.activeTarget?.capabilities).toEqual(savedCapabilities)
+    expect(result.current.activeTarget?.supports_history_replay).toBe(true)
+    expect(detected.capabilities.supports_multi_turn).toBe(false)
+    expect(detected.supports_history_replay).toBe(false)
+    expect(targetsApi.buildTarget).not.toHaveBeenCalled()
+  })
+
   it('resolves a created attack from the new registry after the runtime generation changes', async () => {
     const { result, rerender } = renderHook(() => useAttackTargetResolution({
       attackId: 'attack-id',

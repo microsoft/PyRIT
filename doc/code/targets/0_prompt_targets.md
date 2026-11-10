@@ -336,6 +336,8 @@ Strict discovery only probes features with a verified adapter contract (OpenAI C
 
 `RoundRobinTarget` normalizes against its own configuration. During each child dispatch, capability reads use the parent's flags in a task-local scope, so detected support can reach the provider without changing independently registered children. Child configurations, identities, and independent sends retain their own settings; the dispatch scope is restored on success, failure, or cancellation.
 
+The backend snapshots capabilities when a manual chat selects a target, with or without a temperature override. Default-temperature chats use their saved flags in a task-local `PromptTarget.capabilities_scope` for normalization, validation, replay, and provider serialization. They continue using the original live target and its conversation state, without reconstruction or cleanup of caller-owned targets. Saved chats expose the same flags and effective replay support when reopened. Legacy chats without a snapshot use the source's pre-detection flags only within the detecting backend session; new chats take the current detected capabilities.
+
 ## Multi-Modal Targets
 
 Like most of PyRIT, targets can be multi-modal.
