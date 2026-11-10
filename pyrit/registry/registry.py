@@ -610,10 +610,10 @@ class Registry(ABC, Generic[T, MetadataT]):
                 name = self._get_registry_name(cls)
             self._validate_class(cls)
             if current_registration_origin() is RegistryEntryOrigin.TEMPORARY and not self._discovering:
-                # A class that first appears while a scan's launch scripts run is gone after a restart.
+                # A class a scan's launch scripts add, or put in place of another, is gone after a restart.
                 # The classes discovery finds come back, so they are found first.
                 self._ensure_discovered()
-                if name not in self._classes:
+                if self._classes.get(name) is not cls:
                     self._temporary_class_names.add(name)
             self._classes[name] = cls
             self._metadata_cache = None
@@ -621,13 +621,13 @@ class Registry(ABC, Generic[T, MetadataT]):
 
     def is_temporary_class(self, name: str) -> bool:
         """
-        Return whether a class was first registered by a scan's launch scripts, so it's gone after a restart.
+        Return whether a scan's launch scripts added the class under this name, so it's gone after a restart.
 
         Args:
             name (str): The catalog name.
 
         Returns:
-            bool: True for a class only a scan's launch scripts registered.
+            bool: True for a class a scan's launch scripts added, or put in place of another one.
         """
         with self._catalog_lock:
             return name in self._temporary_class_names
