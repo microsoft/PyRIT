@@ -1211,9 +1211,11 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
                             const picked = serverCredentials.find((credential) => (
                               credential.name === serverCredentialName
                             )) ?? serverCredentials[0]
-                            setServerCredentialName(picked.name)
-                            // Kept when the user switches back to typing a key for the same address.
-                            setEndpoint(picked.endpoint)
+                            if (picked) {
+                              setServerCredentialName(picked.name)
+                              // Kept when the user switches back to typing a key for the same address.
+                              setEndpoint(picked.endpoint)
+                            }
                           }
                           if (next === 'identity') {
                             setApiKey('')
