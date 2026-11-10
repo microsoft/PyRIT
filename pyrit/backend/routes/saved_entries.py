@@ -1,7 +1,11 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-"""Saved targets, converters, scorers, and techniques, addressed by their stored files."""
+"""
+Saved targets, converters, scorers, and techniques, addressed by their stored files.
+
+These routes answer while the runtime isn't ready, so an entry that keeps it from starting can be deleted.
+"""
 
 from typing import Annotated
 

@@ -136,7 +136,7 @@ class SavedEntryService:
 
         The running entry is removed before its file is deleted, so no request can pick it up in between, and is
         put back if the file can't be deleted. A startup entry that has the same name stays. Deleting an entry that
-        couldn't be restored frees its name, which brings back a startup entry it hid.
+        couldn't be restored takes it off the runtime's list of restore failures.
 
         Args:
             kind (RegistryRecipeKind): The kind of entry.
@@ -179,9 +179,7 @@ class SavedEntryService:
             if users:
                 raise SavedEntryInUseError(_in_use_message(singular=singular, name=name, users=users))
             instances = REGISTRIES_BY_KIND[kind].get_registry_singleton().instances
-            held = any(unavailable.name == name for unavailable in instances.get_unavailable_entries())
-            # A held name isn't listed, so this looks up only an entry that was registered.
-            entry = instances.get_entry(name) if name in instances.get_names() else None
+            entry = instances.get_entry(name)
             if entry is not None and registry_entry_origin(entry.metadata) is not RegistryEntryOrigin.SAVED:
                 entry = None
             if entry is not None:
@@ -209,8 +207,6 @@ class SavedEntryService:
                     error.reason,
                 )
                 raise SavedEntryStorageError(f"Saved {kind.value} can't be deleted right now.") from error
-            if held:
-                instances.clear_unavailable(name)
             if entry is not None and not _registered_anywhere(entry.instance):
                 await release_component_async(entry.instance)
             if runtime is not None:

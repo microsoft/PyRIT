@@ -120,7 +120,8 @@ refuses a saved converter (**409**); delete it with `DELETE /api/saved-entries/c
 ### Saved entries
 
 Saved targets, converters, scorers, and techniques are addressed by their saved files, where `kind` is `targets`,
-`converters`, `scorers`, or `techniques`.
+`converters`, `scorers`, or `techniques`. These routes answer while the runtime isn't ready, so an entry that keeps it
+from starting can be deleted.
 
 - `GET /api/saved-entries/{kind}/{name}` - The file's `version`, why it can't be used if it can't (`problem`), who
   saved it (`saved_by`, `saved_by_me`), and whether the caller may change or delete it (`can_change`). **404** when no saved
@@ -132,11 +133,11 @@ Saved targets, converters, scorers, and techniques are addressed by their saved 
   administrator. `expected_version` is required (**422**) unless the file can't be read. **409** when the file
   changed since that version, another saved entry names this one (they're listed), a registered entry of any origin
   holds it (they're listed; a Temporary one is gone after the next restart or configuration apply), or a request, run,
-  send, or estimate is in progress. **503** when storage can't be read or written. Deleting an entry that couldn't be
-  restored takes it off `GET /api/restore-failures` and frees its name right away, which brings back a startup entry
-  with the same name. Saving and deleting take turns, and a save checks again that the entries it names still come
-  back after a restart (**409** otherwise). A save whose entry then can't be registered deletes its file again, unless
-  another writer has replaced the file since.
+  send, or estimate is in progress. **503** when storage can't be read or written, or while the runtime is starting.
+  Deleting an entry that couldn't be restored takes it off `GET /api/restore-failures`; apply the configuration or
+  restart the backend to finish recovering. Saving and deleting take turns, and a save checks again that the entries
+  it names still come back after a restart (**409** otherwise). A save whose entry then can't be registered deletes
+  its file again, unless another writer has replaced the file since.
 
 ### Manual attack creation
 

@@ -176,7 +176,9 @@ _RESTORE_FAILURE_EXPLANATIONS: dict[RestoreFailureReason, str] = {
     RestoreFailureReason.UNKNOWN_CLASS: "Its class or attack type isn't available.",
     RestoreFailureReason.MODULE_MISMATCH: "Its class is now one from outside PyRIT.",
     RestoreFailureReason.UNSUPPORTED_CLASS: "Its class can't be rebuilt from a saved file.",
-    RestoreFailureReason.UNSUPPORTED_CREDENTIAL: "It holds a credential, which a saved file can't hold.",
+    RestoreFailureReason.UNSUPPORTED_CREDENTIAL: (
+        "It holds a credential, or would use one of this server's, which a saved entry can't do."
+    ),
     RestoreFailureReason.NAME_CLASH: "Its name or one of its tags is already taken.",
     RestoreFailureReason.MISSING_DEPENDENCY: "It uses an entry that doesn't exist.",
     RestoreFailureReason.FAILED_DEPENDENCY: "It uses an entry that couldn't be restored.",

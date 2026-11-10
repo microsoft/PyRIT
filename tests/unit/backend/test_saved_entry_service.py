@@ -44,13 +44,7 @@ from pyrit.models.catalog import (
     RestoreFailureReason,
     SavedEntryOwner,
 )
-from pyrit.registry import (
-    AttackTechniqueRegistry,
-    ConverterRegistry,
-    SavedEntryUnavailableError,
-    ScorerRegistry,
-    TargetRegistry,
-)
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import registration_origin, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
@@ -227,28 +221,12 @@ async def test_deleting_a_saved_file_whose_name_a_startup_entry_took_keeps_that_
     with registration_origin(RegistryEntryOrigin.CONFIGURATION):
         instances.register(startup, name="cat_replace")
     assert [failure.reason for failure in await _restore(tmp_path)] == [RestoreFailureReason.NAME_CLASH]
-    with pytest.raises(SavedEntryUnavailableError):
-        instances.get("cat_replace")
+    assert instances.get("cat_replace") is startup
 
     await _delete(tmp_path, CONVERTERS, "cat_replace", version=await _version(tmp_path, CONVERTERS, "cat_replace"))
 
     assert not (tmp_path / "converters" / "cat_replace.json").exists()
     assert instances.get("cat_replace") is startup
-
-
-async def test_deleting_an_entry_that_couldnt_be_restored_frees_its_name(tmp_path: Path) -> None:
-    _write(tmp_path, CONVERTERS, "ghost", {"class_module": "nowhere", "class_name": "Nope", "params": {}})
-    assert [failure.reason for failure in await _restore(tmp_path)] == [RestoreFailureReason.UNKNOWN_CLASS]
-    instances = ConverterRegistry.get_registry_singleton().instances
-    admin = _caller(BEN_OID, admin=True)
-
-    await _delete(
-        tmp_path, CONVERTERS, "ghost", version=await _version(tmp_path, CONVERTERS, "ghost", admin), caller=admin
-    )
-
-    assert "ghost" not in instances
-    assert instances.get("ghost") is None
-    instances.register(SearchReplaceConverter(pattern="cat", replace="dog"), name="ghost")
 
 
 async def test_an_entry_another_saved_entry_names_isnt_deleted(tmp_path: Path) -> None:
