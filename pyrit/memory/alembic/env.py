@@ -1,8 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+from collections.abc import Collection, Mapping
+
 from alembic import context
-from alembic.runtime.migration import MigrationInfo
+from alembic.runtime.migration import MigrationContext, MigrationInfo
 from sqlalchemy.engine import Connection
 from sqlalchemy.schema import Index, SchemaItem
 
@@ -33,7 +35,10 @@ def _include_object(
     return True
 
 
-def _record_applied_revision(*, step: MigrationInfo, **_: object) -> None:
+# Alembic's callback protocol requires positional as well as keyword arguments.
+def _record_applied_revision(
+    ctx: MigrationContext, step: MigrationInfo, heads: Collection[object], run_args: Mapping[str, object]
+) -> None:
     if step.is_upgrade and step.is_migration:
         applied_revisions.update(step.up_revision_ids)
 

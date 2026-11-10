@@ -15,7 +15,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy.orm import Session
 
-from pyrit.memory.memory_models import SeedEntry
+from pyrit.memory import SeedEntry
 from pyrit.models import AttackTechniqueSeedGroup, SeedIdentifier, SeedObjective, SeedPrompt, SeedSimulatedConversation
 
 
