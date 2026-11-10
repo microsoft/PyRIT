@@ -35,6 +35,7 @@ from pyrit.registry.instance_registry import (
     record_saved_entry_refusals,
     registration_origin,
     registry_entry_origin,
+    saved_entry_registration,
 )
 
 
@@ -186,6 +187,16 @@ class TestRegistration:
     )
     def test_tells_where_an_entry_comes_from(self, metadata: dict[str, object], origin: RegistryEntryOrigin):
         assert registry_entry_origin(metadata) is origin
+
+    def test_a_restore_scope_marks_only_the_entry_it_names(self, registry: DefaultInstanceRegistry[_TestItem]):
+        with saved_entry_registration(kind="targets", name="saved"):
+            registry.register(_item("saved"), name="saved", metadata={"owner": "admin"})
+            registry.register(_item("helper"), name="helper")
+        registry.register(_item("later"), name="later")
+
+        assert registry.get_entry("saved").metadata == {"owner": "admin", SAVED_ENTRY_METADATA_KEY: "targets"}
+        assert SAVED_ENTRY_METADATA_KEY not in registry.get_entry("helper").metadata
+        assert SAVED_ENTRY_METADATA_KEY not in registry.get_entry("later").metadata
 
     def test_a_caught_duplicate_name_for_a_saved_entry_is_recorded(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})

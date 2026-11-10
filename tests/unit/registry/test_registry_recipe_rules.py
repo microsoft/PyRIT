@@ -33,9 +33,14 @@ def isolated_target_registry() -> Iterator[None]:
 
 
 def _check(class_name: str, params: dict[str, Any]) -> None:
+    """Check a target recipe; an ``auth_mode`` key stands for the recipe's top-level auth mode."""
     registry = TargetRegistry.get_registry_singleton()
     cls = registry.get_class(class_name)
-    check_saved_entry_params(cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=params)
+    values = dict(params)
+    auth_mode = values.pop("auth_mode", None)
+    check_saved_entry_params(
+        cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=values, auth_mode=auth_mode
+    )
 
 
 def test_check_saved_entry_params_accepts_a_target_that_takes_no_credentials() -> None:
