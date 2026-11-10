@@ -46,6 +46,23 @@ async def test_flip_converter_palindrome():
     assert result.output_type == "text"
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("🇮🇳 flag", "galf 🇮🇳"),
+        ("👨‍👩‍👧 family", "ylimaf 👨‍👩‍👧"),
+        ("👍🏽 OK", "KO 👍🏽"),
+        ("1️⃣ test", "tset 1️⃣"),
+        ("cafe\u0301", "e\u0301fac"),
+        ("hello world", "dlrow olleh"),
+    ],
+)
+async def test_flip_converter_reverses_grapheme_clusters_async(*, prompt: str, expected: str) -> None:
+    result = await FlipConverter().convert_async(prompt=prompt)
+
+    assert result.output_text == expected
+
+
 async def test_flip_converter_input_not_supported():
     converter = FlipConverter()
     with pytest.raises(ValueError):
