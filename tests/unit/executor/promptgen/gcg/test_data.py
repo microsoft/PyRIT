@@ -51,6 +51,48 @@ async def test_create_config_preserves_provided_targets_without_adversarial_targ
     assert config.train_targets == ["Provided a", "Provided b"]
 
 
+@pytest.mark.parametrize("seed_class", [SeedObjective, SeedPrompt])
+@pytest.mark.parametrize("provided_target", [False, True])
+async def test_create_config_accepts_text_seeds_async(
+    *, seed_class: type[SeedObjective] | type[SeedPrompt], provided_target: bool, completion_scorer: MagicMock
+) -> None:
+    metadata = {"gcg_target": "Provided"} if provided_target else {}
+    dataset = SeedDataset(seeds=[seed_class(value="text goal", data_type="text", metadata=metadata)])
+    target = _mock_adversarial_target("Generated", "Generated")
+
+    config = await create_gcg_data_config_async(
+        dataset=dataset, test_dataset=dataset, adversarial_target=target, completion_scorer=completion_scorer
+    )
+
+    assert config.train_goals == config.test_goals == ["text goal"]
+    assert config.train_targets == config.test_targets == ["Provided" if provided_target else "Generated"]
+    assert target.send_prompt_async.await_count == (0 if provided_target else 2)
+
+
+@pytest.mark.parametrize("data_type", ["image_path", "audio_path", "video_path"])
+@pytest.mark.parametrize("metadata", [{"gcg_target": "Prefix"}, {}])
+@pytest.mark.parametrize("held_out", [False, True])
+async def test_create_config_rejects_nontext_seeds_before_generation_async(
+    *, data_type: str, metadata: dict[str, str], held_out: bool, completion_scorer: MagicMock
+) -> None:
+    dataset = SeedDataset(seeds=[SeedPrompt(value="example.media", data_type=data_type, metadata=metadata)])
+    train = (
+        SeedDataset(seeds=[SeedObjective(value="train", metadata={"gcg_target": "Provided"})]) if held_out else dataset
+    )
+    target = _mock_adversarial_target("Generated")
+
+    with pytest.raises(ValueError, match=f"GCG requires text seeds; got data_type='{data_type}'"):
+        await create_gcg_data_config_async(
+            dataset=train,
+            test_dataset=dataset if held_out else None,
+            adversarial_target=target,
+            completion_scorer=completion_scorer,
+        )
+
+    target.send_prompt_async.assert_not_awaited()
+    completion_scorer.score_text_async.assert_not_awaited()
+
+
 async def test_create_config_generates_only_missing_targets(completion_scorer: MagicMock) -> None:
     dataset = SeedDataset(
         seeds=[

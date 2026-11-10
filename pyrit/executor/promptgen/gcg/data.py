@@ -25,7 +25,12 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from pyrit.executor.promptgen.gcg.config import GCGDataConfig, _get_seed_target, _validate_nonblank_string
+from pyrit.executor.promptgen.gcg.config import (
+    GCGDataConfig,
+    _get_seed_goal,
+    _get_seed_target,
+    _validate_nonblank_string,
+)
 from pyrit.models import MessagePiece, SeedDataset, SeedPrompt
 
 if TYPE_CHECKING:
@@ -81,7 +86,7 @@ async def create_gcg_data_config_async(
     max_generated_target_length: int = 256,
 ) -> GCGDataConfig:
     """
-    Resolve a ``SeedDataset`` into inline GCG goals and target completions.
+    Resolve a text-only ``SeedDataset`` into inline GCG goals and target completions.
 
     A nonempty target completion under ``metadata[target_metadata_key]`` is
     preserved. When metadata is missing or blank, ``adversarial_target`` is
@@ -111,9 +116,9 @@ async def create_gcg_data_config_async(
         GCGDataConfig: Inline training and test goals with resolved targets.
 
     Raises:
-        ValueError: If the maximum length is not positive, target metadata is
-            missing without an adversarial target and acceptance scorer, or
-            generation produces an invalid or rejected completion.
+        ValueError: If a seed is not text, the maximum length is not positive,
+            target metadata is missing without an adversarial target and acceptance
+            scorer, or generation produces an invalid or rejected completion.
     """
     if (
         not isinstance(max_generated_target_length, int)
@@ -175,13 +180,13 @@ async def _resolve_goals_and_targets_async(
         tuple[list[str], list[str]]: Paired goals and completions in seed order.
 
     Raises:
-        ValueError: If a missing completion cannot be generated and scored.
+        ValueError: If a seed is not text or a missing completion cannot be generated and scored.
     """
     goals: list[str] = []
     targets: list[str] = []
 
     for seed in dataset.seeds:
-        goal = _validate_nonblank_string(value=seed.value, field_name="Seed goal")
+        goal = _get_seed_goal(seed=seed)
         provided_target = _get_seed_target(seed=seed, target_metadata_key=target_metadata_key)
         if provided_target is not None:
             resolved_target = provided_target

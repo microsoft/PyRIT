@@ -21,7 +21,7 @@ from pyrit.executor.promptgen.gcg.config import (
     GCGOutputConfig,
     GCGStrategyConfig,
 )
-from pyrit.models import SeedDataset, SeedObjective
+from pyrit.models import SeedDataset, SeedObjective, SeedPrompt
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -307,6 +307,27 @@ def test_from_seed_dataset_materializes_train_goals_and_targets() -> None:
     assert config.train_targets == ["Sure, a", "Sure, b"]
     assert config.test_goals == []
     assert config.test_targets == []
+
+
+@pytest.mark.parametrize("seed_class", [SeedObjective, SeedPrompt])
+def test_from_seed_dataset_accepts_text_seeds(seed_class: type[SeedObjective] | type[SeedPrompt]) -> None:
+    dataset = SeedDataset(seeds=[seed_class(value="text goal", data_type="text", metadata={"gcg_target": "Prefix"})])
+
+    config = GCGDataConfig.from_seed_dataset(dataset, test_dataset=dataset)
+
+    assert config.train_goals == config.test_goals == ["text goal"]
+    assert config.train_targets == config.test_targets == ["Prefix"]
+
+
+@pytest.mark.parametrize("data_type", ["image_path", "audio_path", "video_path"])
+@pytest.mark.parametrize("metadata", [{"gcg_target": "Prefix"}, {}])
+@pytest.mark.parametrize("held_out", [False, True])
+def test_from_seed_dataset_rejects_nontext_seeds(*, data_type: str, metadata: dict[str, str], held_out: bool) -> None:
+    dataset = SeedDataset(seeds=[SeedPrompt(value="example.media", data_type=data_type, metadata=metadata)])
+    train = _seed_dataset_with_targets([("train goal", "Train prefix")]) if held_out else dataset
+
+    with pytest.raises(ValueError, match=f"GCG requires text seeds; got data_type='{data_type}'"):
+        GCGDataConfig.from_seed_dataset(train, test_dataset=dataset if held_out else None)
 
 
 def test_from_seed_dataset_includes_test_dataset() -> None:

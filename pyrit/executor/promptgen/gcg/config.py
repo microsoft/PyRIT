@@ -43,6 +43,12 @@ def _validate_nonblank_string(*, value: object, field_name: str) -> str:
     return value
 
 
+def _get_seed_goal(*, seed: SeedUnion) -> str:
+    if seed.data_type != "text":
+        raise ValueError(f"GCG requires text seeds; got data_type={seed.data_type!r} for seed {seed.value!r}.")
+    return _validate_nonblank_string(value=seed.value, field_name="Seed goal")
+
+
 def _get_seed_target(*, seed: SeedUnion, target_metadata_key: str) -> str | None:
     target = (seed.metadata or {}).get(target_metadata_key)
     if target is None:
@@ -165,7 +171,7 @@ class GCGDataConfig:
         """
         Materialize fully specified ``SeedDataset``(s) into an inline config.
 
-        Each seed's ``value`` becomes a goal and its
+        Each text seed's ``value`` becomes a goal and its
         ``metadata[target_metadata_key]`` becomes the paired target string.
         This strict synchronous path requires every seed to carry a target.
         Use ``create_gcg_data_config_async`` when missing targets should be
@@ -184,8 +190,8 @@ class GCGDataConfig:
             GCGDataConfig: A config with goals and targets stored inline.
 
         Raises:
-            ValueError: If a goal is blank or target metadata is missing, blank,
-                or not a string.
+            ValueError: If a seed is not text, a goal is blank, or target metadata
+                is missing, blank, or not a string.
         """
         train_goals, train_targets = cls._resolve_goals_and_targets(
             dataset=dataset, target_metadata_key=target_metadata_key
@@ -217,13 +223,13 @@ class GCGDataConfig:
             tuple[list[str], list[str]]: ``(goals, targets)`` in seed order.
 
         Raises:
-            ValueError: If a goal is blank or target metadata is missing, blank,
-                or not a string.
+            ValueError: If a seed is not text, a goal is blank, or target metadata
+                is missing, blank, or not a string.
         """
         goals: list[str] = []
         targets: list[str] = []
         for seed in dataset.seeds:
-            goal = _validate_nonblank_string(value=seed.value, field_name="Seed goal")
+            goal = _get_seed_goal(seed=seed)
             target = _get_seed_target(seed=seed, target_metadata_key=target_metadata_key)
             if target is None:
                 raise ValueError(
