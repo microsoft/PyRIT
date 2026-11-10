@@ -929,6 +929,8 @@ class AdversarialBenchmark(Scenario):
         Database queries are deduplicated across both the planned technique
         eval hash and the inner attack eval hash. The latter supports rows
         persisted before an atomic attack enriched them with technique seeds.
+        It is not queried for attacks that generate simulated conversations:
+        the inner attack identity does not record that adversarial chat.
         The skip eligibility decision is then applied per atomic attack using
         a Python-side filter on ``attribution_data["parent_collection"]``.
 
@@ -976,10 +978,9 @@ class AdversarialBenchmark(Scenario):
 
         lookup_hashes_by_name: dict[str, set[str]] = {}
         for attack in atomic_attacks:
-            lookup_hashes = {
-                attack.technique_eval_hash,
-                compute_inner_attack_eval_hash(attack=attack.attack_technique.attack),
-            }
+            lookup_hashes = {attack.technique_eval_hash}
+            if attack.simulated_conversation_adversarial_chat_eval_hash is None:
+                lookup_hashes.add(compute_inner_attack_eval_hash(attack=attack.attack_technique.attack))
             lookup_hashes_by_name[attack.atomic_attack_name] = {value for value in lookup_hashes if value}
 
         # One DB query per unique hash (deduplication), results stored temporarily by hash.

@@ -3,7 +3,7 @@ import type {
   ConverterInputPiece, MessageAttachment, PieceConversion, SaveConversationRequest, TargetInstance,
 } from '@/types'
 import { generateClientId } from './clientId'
-import { dataTypeToAttachmentType, fileToBase64, mimeTypeToDataType } from './messageMapper'
+import { dataTypeToAttachmentType, mimeTypeToDataType, uploadedFileValue } from './messageMapper'
 import { buildMediaUrl, isPathDataType } from './media'
 
 export const DRAFT_ROLES: ConversationDraftRole[] = ['system', 'user', 'simulated_assistant', 'simulated_tool', 'developer']
@@ -286,7 +286,7 @@ export async function serializeDraft(messages: ConversationDraftMessage[]): Prom
     role: message.role,
     pieces: await Promise.all(message.pieces.map(async (piece: ConversationDraftPiece) => ({
       data_type: piece.data_type,
-      original_value: piece.file ? await fileToBase64(piece.file) : piece.original_value,
+      original_value: piece.file ? await uploadedFileValue(piece.file) : piece.original_value,
       converted_value: piece.converted_value,
       converted_value_data_type: piece.converted_value_data_type,
       applied_converter_ids: piece.converted_value === undefined ? undefined : piece.applied_converter_ids,

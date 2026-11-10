@@ -98,6 +98,8 @@ export interface UseConversationCopyOptions {
     attackResultId: string, conversationId: string, objective?: string, target?: TargetInstance | null,
   ) => void
   onAttackChange?: (attack: AttackSummary) => void
+  /** Claims the destination before navigation transfers a restored composer draft. */
+  onRestoreDestination?: (attackId: string, conversationId: string) => void
 }
 
 export interface ConversationCopy {
@@ -215,6 +217,7 @@ export function useConversationCopy(options: UseConversationCopyOptions): Conver
             ? { chat_scorer: defaultChatScorer } : {}),
         })
         if (getViewedConversationId() !== sourceId || getDraftRevision() !== draftRevision) return
+        options.onRestoreDestination?.(response.attack_result_id, response.conversation_id)
         options.onConversationCreated(response.attack_result_id, response.conversation_id, objective, target)
         options.restoreRecoverableDraft()
         options.openPanel()
@@ -242,6 +245,9 @@ export function useConversationCopy(options: UseConversationCopyOptions): Conver
         return
       }
       if (isFailedPrompt && getDraftRevision() !== draftRevision) return
+      if (isFailedPrompt || restoredPrompt) {
+        options.onRestoreDestination?.(response.attack.attack_result_id, response.messages.conversation_id)
+      }
       if (destination === 'same_attack') {
         if (restoredPrompt) {
           options.showConversation(response.messages)

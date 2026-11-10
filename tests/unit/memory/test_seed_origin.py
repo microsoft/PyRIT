@@ -7,8 +7,9 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import select
 
-from pyrit.memory import MemoryInterface
+from pyrit.memory import MemoryInterface, SeedEntry
 from pyrit.models import (
     Seed,
     SeedDataset,
@@ -36,6 +37,10 @@ class TestSeedOrigin:
         else:
             seed = seed_type(value="An objective", origin=origin, dataset_name="origins")
         await sqlite_instance.add_seeds_to_memory_async(seeds=[seed], added_by="operator")
+        async with await sqlite_instance.get_session_async() as session:
+            entry = (await session.scalars(select(SeedEntry))).one()
+            assert entry.origin == origin.value
+            assert entry.get_seed_record().origin is origin
         [stored] = await sqlite_instance.get_seeds_async(origin=origin)
         assert stored.origin is origin
         assert stored.added_by == "operator"
