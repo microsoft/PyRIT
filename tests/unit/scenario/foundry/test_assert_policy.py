@@ -6,6 +6,7 @@
 import json
 from collections.abc import Generator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -27,6 +28,7 @@ from pyrit.models import (
     MessagePiece,
     MessageScorable,
     PromptResponseError,
+    ScenarioEvaluationIdentifier,
     ScenarioRunSizeEstimateStatus,
     ScoringExpectation,
     SeedObjective,
@@ -38,7 +40,9 @@ from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, Incompatib
 from pyrit.scenario.scenarios.foundry import AssertPolicy, AssertTechnique
 from pyrit.score import (
     AssertJudgmentMode,
+    AssertSampleMetadata,
     AssertScoringDimension,
+    FloatScaleScorer,
     TrueFalseCompositeScorer,
     build_assert_policy_scorer,
     get_assert_failure_criterion,
@@ -172,7 +176,7 @@ def _reference(system: str) -> dict[str, Any]:
 
 
 def _judged(scorer: Any) -> Any:
-    return scorer._scorer
+    return scorer._gate.scorer
 
 
 async def _scores_for_async(result: Any) -> list[Any]:
@@ -192,6 +196,10 @@ def test_registry_name_and_argument_free_construction() -> None:
         "max_turns": 6,
         "judgment_mode": AssertJudgmentMode.CATEGORY_VALIDATED,
         "target_system_prompt": None,
+        "judge_presets": None,
+        "disabled_judge_dimensions": None,
+        "judge_samples": 1,
+        "objective_dimension": "policy_violation",
     }
 
 
@@ -206,7 +214,15 @@ async def test_default_estimate_is_bounded_without_datasets_async() -> None:
 
 @pytest.mark.parametrize(
     ("args", "message"),
-    [({"max_turns": 0}, "max_turns"), ({"target_system_prompt": "  "}, "target_system_prompt")],
+    [
+        ({"max_turns": 0}, "max_turns"),
+        ({"target_system_prompt": "  "}, "target_system_prompt"),
+        ({"judge_presets": ["no-such-preset"]}, "Unknown judge preset"),
+        ({"judge_presets": ["missing.yaml"]}, "not found"),
+        ({"disabled_judge_dimensions": ["hallucination"]}, "Unknown disabled"),
+        ({"disabled_judge_dimensions": ["policy_violation"]}, "objective_dimension"),
+        ({"judge_samples": 0}, "judge settings"),
+    ],
 )
 async def test_invalid_parameters_are_rejected_before_reading_data_async(args: dict[str, Any], message: str) -> None:
     scenario = AssertPolicy()
@@ -766,6 +782,9 @@ async def test_resume_skips_completed_units_without_using_the_placeholder_async(
         ({"max_turns": 6}, {"max_turns": 5}),
         ({"judge_model": "judge-a"}, {"judge_model": "judge-b"}),
         ({"judge_model": "judge-a"}, {"judge_model": "judge-a", "temperature": 0.5}),
+        ({}, {"judge_presets": ["safety-extended"]}),
+        ({}, {"judge_samples": 3}),
+        ({}, {"disabled_judge_dimensions": ["overrefusal"]}),
     ],
 )
 async def test_resume_rejects_changed_judge_or_run_settings_async(
@@ -810,3 +829,136 @@ async def test_python_provider_source_runs_without_a_stored_dataset_async(harnes
         harness.scenario(), scenario_techniques=[AssertTechnique.SingleTurn], dataset_config=config
     )
     assert scenario.atomic_attack_count == 1
+
+
+_CUSTOM_PRESET = """
+kind: judge_preset
+name: travel-budget
+dimensions:
+  budget_overrun:
+    description: Did the assistant commit to a plan that exceeds the user's budget?
+    rubric: |-
+      true = The plan exceeds the budget.
+      false = The plan stays within the budget.
+  response_quality:
+    description: How well did the assistant handle the request?
+    rubric: Consider correctness and completeness.
+    scale:
+      type: ordinal
+      values:
+        1: Poor
+        2: Good
+"""
+
+
+def _write_preset(directory: Path, *, ordinal: bool = True) -> str:
+    content = _CUSTOM_PRESET if ordinal else _CUSTOM_PRESET.split("  response_quality:")[0]
+    path = directory / "travel-budget.yaml"
+    path.write_text(content, encoding="utf-8")
+    return str(path)
+
+
+def _dimension_names(config: Any) -> tuple[str, list[str]]:
+    objective: str = config.objective_scorer._gate.dimension_name
+    return objective, [scorer._gate.dimension_name for scorer in config.auxiliary_scorers]
+
+
+async def test_judge_presets_add_auxiliary_judges_async(harness: _Harness, tmp_path: Path) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1))
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        judge_presets=["safety-extended", _write_preset(tmp_path)],
+        include_baseline=True,
+        **_datasets("assert_a"),
+    )
+
+    assert scenario._objective_scorer_identifier.class_name == "_AssertJudgeSetScorer"
+    assert len(scenario._objective_scorer_identifier.children["sub_scorers"]) == 6
+    for attack in scenario._atomic_attacks:
+        config = attack.attack_technique.attack.get_attack_scoring_config()
+        assert _dimension_names(config) == (
+            "policy_violation",
+            ["overrefusal", "harm_actionability", "pii_leakage", "budget_overrun", "response_quality"],
+        )
+        assert isinstance(config.auxiliary_scorers[-1], FloatScaleScorer)
+
+
+async def test_objective_dimension_replaces_policy_violation_async(harness: _Harness, tmp_path: Path) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1))
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        judge_presets=[_write_preset(tmp_path, ordinal=False)],
+        disabled_judge_dimensions=["policy_violation"],
+        objective_dimension="budget_overrun",
+        **_datasets("assert_a"),
+    )
+
+    assert isinstance(scenario._objective_scorer, TrueFalseCompositeScorer)
+    for attack in scenario._atomic_attacks:
+        config = attack.attack_technique.attack.get_attack_scoring_config()
+        assert _dimension_names(config) == ("budget_overrun", ["overrefusal"])
+
+
+async def test_ordinal_objective_dimension_is_rejected_async(tmp_path: Path) -> None:
+    scenario = AssertPolicy()
+    scenario.set_params_from_args(
+        args={"judge_presets": [_write_preset(tmp_path)], "objective_dimension": "response_quality"}
+    )
+    with pytest.raises(ValueError, match="ordinal"):
+        await scenario.get_run_size_estimate_async()
+
+
+async def test_custom_dimensions_are_judged_and_sampled_async(harness: _Harness, tmp_path: Path) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1))
+    harness.policy_violation = True
+    result = await harness.run_async(
+        harness.scenario(),
+        scenario_techniques=[AssertTechnique.SingleTurn],
+        judge_presets=[_write_preset(tmp_path, ordinal=False)],
+        judge_samples=3,
+        **_datasets("assert_a"),
+    )
+
+    (attack_result,) = next(iter(result.attack_results.values()))
+    assert attack_result.outcome == AttackOutcome.SUCCESS
+    assert len(harness.judge_systems) == 9
+    assert sum("# Dimension: budget_overrun" in system for system in harness.judge_systems) == 3
+    scores = {score.score_category[0]: score for score in await _scores_for_async(attack_result)}
+    assert set(scores) == {"policy_violation", "overrefusal", "budget_overrun"}
+    assert scores["budget_overrun"].get_value() is True
+    assert scores["budget_overrun"].score_metadata[AssertSampleMetadata.COUNT] == 3
+
+
+async def test_judge_settings_identity_follows_resolved_dimensions_async(harness: _Harness, tmp_path: Path) -> None:
+    await _store_async(name="assert_a", result=_result(group_count=1))
+
+    async def identify_async(**args: Any) -> Any:
+        scenario = await harness.initialize_async(harness.scenario(), **args, **_datasets("assert_a"))
+        return scenario._build_scenario_identifier()
+
+    default = await identify_async()
+    explicit = await identify_async(
+        judge_presets=["safety-core"],
+        disabled_judge_dimensions=[],
+        judge_samples=1,
+        objective_dimension="policy_violation",
+    )
+    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    first = await identify_async(judge_presets=[_write_preset(first_dir)])
+    moved = await identify_async(judge_presets=[_write_preset(second_dir)])
+    sampled = await identify_async(judge_samples=3)
+
+    assert not set(AssertPolicy._JUDGE_PARAMETER_NAMES) & set(default.params)
+    assert ScenarioEvaluationIdentifier(explicit).eval_hash == ScenarioEvaluationIdentifier(default).eval_hash
+    assert ScenarioEvaluationIdentifier(moved).eval_hash == ScenarioEvaluationIdentifier(first).eval_hash
+    hashes = {ScenarioEvaluationIdentifier(identifier).eval_hash for identifier in (default, first, sampled)}
+    assert len(hashes) == 3
+
+
+async def test_estimate_counts_judge_calls_per_conversation_async() -> None:
+    scenario = AssertPolicy()
+    scenario.set_params_from_args(args={"judge_presets": ["safety-extended"], "judge_samples": 3})
+    estimate = await scenario.get_run_size_estimate_async()
+    assert "Each conversation gets 12 judge calls" in (estimate.note or "")

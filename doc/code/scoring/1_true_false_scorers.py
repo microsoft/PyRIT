@@ -469,9 +469,16 @@ for mode in AssertJudgmentMode:
 #
 # Category validation establishes structural consistency, not whether the model selected the right
 # categories or interpreted the evidence correctly. Verdicts can still conflict with their reasoning.
-# This does not port ASSERT's XML citation resolution or multi-judge aggregation, and it does not
-# establish accuracy parity or calibration. A scenario can configure repeated judgments with
-# `TrueFalseCompositeScorer` without changing this scorer's policy or merging the two dimensions.
+# This does not port ASSERT's XML citation resolution, and it does not establish accuracy parity or
+# calibration.
+#
+# `dimension` also accepts a custom `AssertJudgeDimension`, such as one from ASSERT's judge presets
+# (`list_assert_judge_presets()` or `load_assert_judge_preset()`). A boolean custom dimension returns
+# a true/false score. An ordinal dimension returns a float score for the grade's position in its
+# scale, with the grade in `assert_grade` metadata. A not-applicable answer is undetermined, with
+# `assert_not_applicable` metadata. `samples` repeats the judge call and aggregates the verdicts as
+# ASSERT does: a majority vote with ties counted as failures, or the lower median grade. See
+# [Foundry scenarios](../../scanner/foundry.ipynb) for the preset file format.
 #
 # %% [markdown]
 # ## External classifier integrations

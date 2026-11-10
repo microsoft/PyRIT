@@ -11,15 +11,18 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from jsonschema import Draft202012Validator, ValidationError
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.exceptions import InvalidJsonException, remove_markdown_json
-from pyrit.models import AssertTaxonomy, SeedPrompt
+from pyrit.models import AssertJudgeDimension, AssertTaxonomy, SeedPrompt
 from pyrit.registry import ScorerRegistry
+from pyrit.score.assert_dimension_scorer import _AssertBooleanDimensionScorer, _AssertOrdinalDimensionScorer
+from pyrit.score.assert_sampled_scorer import _AssertSampledFloatScaleScorer, _AssertSampledTrueFalseScorer
 from pyrit.score.conversation_scorer import create_conversation_scorer
+from pyrit.score.float_scale.float_scale_scorer import FloatScaleScorer
 from pyrit.score.response_handler import JsonSchemaResponseHandler
 from pyrit.score.scorer_prompt_validator import ScorerPromptValidator
 from pyrit.score.true_false.self_ask_true_false_scorer import TrueFalseQuestion, render_true_false_system_prompt
@@ -31,6 +34,7 @@ if TYPE_CHECKING:
 
     from pyrit.models import ComponentIdentifier, JsonSchemaDefinition, UnvalidatedScore
     from pyrit.prompt_target import PromptTarget
+    from pyrit.score.scorer import Scorer
 
 
 class AssertScoringDimension(str, Enum):
@@ -137,55 +141,171 @@ class _AssertCategoryResponseHandler(JsonSchemaResponseHandler):
         )
 
 
+@overload
 def build_assert_policy_scorer(
     *,
     target: PromptTarget,
     taxonomy: AssertTaxonomy,
-    dimension: AssertScoringDimension = AssertScoringDimension.POLICY_VIOLATION,
+    dimension: AssertScoringDimension | str = AssertScoringDimension.POLICY_VIOLATION,
     application_context: str = "",
     target_system_prompt: str | None = None,
     judgment_mode: AssertJudgmentMode = AssertJudgmentMode.DIRECT,
-) -> TrueFalseScorer:
+    samples: int = 1,
+) -> TrueFalseScorer: ...
+
+
+@overload
+def build_assert_policy_scorer(
+    *,
+    target: PromptTarget,
+    taxonomy: AssertTaxonomy,
+    dimension: AssertJudgeDimension,
+    application_context: str = "",
+    target_system_prompt: str | None = None,
+    judgment_mode: AssertJudgmentMode = AssertJudgmentMode.DIRECT,
+    samples: int = 1,
+) -> TrueFalseScorer | FloatScaleScorer: ...
+
+
+def build_assert_policy_scorer(
+    *,
+    target: PromptTarget,
+    taxonomy: AssertTaxonomy,
+    dimension: AssertScoringDimension | AssertJudgeDimension | str = AssertScoringDimension.POLICY_VIOLATION,
+    application_context: str = "",
+    target_system_prompt: str | None = None,
+    judgment_mode: AssertJudgmentMode = AssertJudgmentMode.DIRECT,
+    samples: int = 1,
+) -> TrueFalseScorer | FloatScaleScorer:
     """
-    Configure a true/false scorer for one failure across a retained conversation.
+    Configure a scorer for one ASSERT judge dimension across a retained conversation.
 
     Args:
         target (PromptTarget): The judge target, not the application under evaluation.
         taxonomy (AssertTaxonomy): The complete evaluation policy.
-        dimension (AssertScoringDimension): The failure to detect. Defaults to policy violation.
+        dimension (AssertScoringDimension | AssertJudgeDimension | str): A built-in failure, or a custom
+            dimension such as one loaded from a judge preset. Defaults to policy violation.
         application_context (str): Reference context and capabilities. Defaults to an empty string.
         target_system_prompt (str | None): The application's actual instructions, when known.
         judgment_mode (AssertJudgmentMode): Direct scoring, or category validation with
             policy-violation correction. Defaults to DIRECT. Neither mode rewrites overrefusal.
+            Custom dimensions always use their own rubric directly.
+        samples (int): Independent judge calls whose verdicts are aggregated as in ASSERT: a majority
+            vote with ties counted as failures, or the lower median grade. Defaults to 1.
 
     Returns:
-        TrueFalseScorer: A conversation scorer. True means the selected failure occurred.
-            Scoring rejects unreadable media in user, assistant, and tool turns before calling
-            the judge. Text, error messages, and structured tool calls and results, including
-            native web searches, are supported. Internal reasoning is retained in the
-            conversation snapshot but excluded from the judged transcript.
+        TrueFalseScorer | FloatScaleScorer: A conversation scorer. Built-in and boolean custom dimensions
+            return a true/false scorer where True means the failure occurred. Ordinal dimensions return a
+            float-scale scorer whose value is the grade's position in the declared scale, from 0.0 for
+            the first grade to 1.0 for the last. A not-applicable answer is undetermined, with
+            ``assert_not_applicable`` metadata. Scoring rejects unreadable media in user, assistant,
+            and tool turns before calling the judge. Text, error messages, and structured tool calls
+            and results, including native web searches, are supported. Internal reasoning is retained
+            in the conversation snapshot but excluded from the judged transcript.
 
     Raises:
-        TypeError: If the taxonomy is missing or composition does not return a true/false scorer.
-        ValueError: If the scoring dimension or judgment mode is not supported.
+        TypeError: If the taxonomy is missing or composition does not return the expected scorer family.
+        ValueError: If the scoring dimension, judgment mode, or sample count is not supported.
     """
     if not isinstance(taxonomy, AssertTaxonomy):
         raise TypeError("taxonomy must be an AssertTaxonomy containing the evaluation policy.")
-    dimension = AssertScoringDimension(dimension)
-    judgment_mode = AssertJudgmentMode(judgment_mode)
+    if isinstance(samples, bool) or not isinstance(samples, int) or samples < 1:
+        raise ValueError("samples must be a positive integer.")
+    if not isinstance(dimension, AssertJudgeDimension):
+        dimension = AssertScoringDimension(dimension)
+    judge = _build_dimension_judge(
+        target=target,
+        taxonomy=taxonomy,
+        dimension=dimension,
+        application_context=application_context,
+        target_system_prompt=target_system_prompt,
+        judgment_mode=AssertJudgmentMode(judgment_mode),
+    )
+    if samples == 1:
+        return judge
+    name = dimension.name if isinstance(dimension, AssertJudgeDimension) else dimension.value
+    if isinstance(judge, TrueFalseScorer):
+        return _AssertSampledTrueFalseScorer(scorer=judge, samples=samples, dimension_name=name)
+    return _AssertSampledFloatScaleScorer(scorer=judge, samples=samples, dimension_name=name)
+
+
+def _build_dimension_judge(
+    *,
+    target: PromptTarget,
+    taxonomy: AssertTaxonomy,
+    dimension: AssertScoringDimension | AssertJudgeDimension,
+    application_context: str,
+    target_system_prompt: str | None,
+    judgment_mode: AssertJudgmentMode,
+) -> TrueFalseScorer | FloatScaleScorer:
+    """
+    Build one judge for one dimension over the retained conversation.
+
+    Returns:
+        TrueFalseScorer | FloatScaleScorer: The conversation judge.
+
+    Raises:
+        TypeError: If composition does not return the expected scorer family.
+    """
+    metadata = _render_reference_metadata(
+        taxonomy=taxonomy, application_context=application_context, target_system_prompt=target_system_prompt
+    )
+    if isinstance(dimension, AssertJudgeDimension):
+        leaf = _build_custom_dimension_leaf(target=target, dimension=dimension, metadata=metadata)
+    else:
+        leaf = _build_built_in_leaf(
+            target=target, taxonomy=taxonomy, dimension=dimension, metadata=metadata, judgment_mode=judgment_mode
+        )
+    conversation_scorer = create_conversation_scorer(
+        scorer=leaf,
+        validator=ScorerPromptValidator(
+            supported_data_types=["text", "error", "function_call", "tool_call", "function_call_output"],
+            supported_roles=["user", "assistant", "tool"],
+            enforce_all_pieces_valid=True,
+        ),
+        excluded_data_types=["reasoning"],
+    )
+    expected = FloatScaleScorer if isinstance(leaf, FloatScaleScorer) else TrueFalseScorer
+    if not isinstance(conversation_scorer, expected):
+        raise TypeError(f"ASSERT dimension scoring requires a {expected.__name__} conversation scorer.")
+    return conversation_scorer
+
+
+def _render_reference_metadata(
+    *, taxonomy: AssertTaxonomy, application_context: str, target_system_prompt: str | None
+) -> str:
+    return json.dumps(
+        {
+            "taxonomy": taxonomy.model_dump(mode="json"),
+            "application_context": application_context,
+            "target_instructions": target_system_prompt,
+        },
+        ensure_ascii=True,
+        indent=2,
+    )
+
+
+def _build_custom_dimension_leaf(
+    *, target: PromptTarget, dimension: AssertJudgeDimension, metadata: str
+) -> TrueFalseScorer | FloatScaleScorer:
+    if dimension.is_ordinal:
+        return _AssertOrdinalDimensionScorer(chat_target=target, dimension=dimension, metadata=metadata)
+    return _AssertBooleanDimensionScorer(chat_target=target, dimension=dimension, metadata=metadata)
+
+
+def _build_built_in_leaf(
+    *,
+    target: PromptTarget,
+    taxonomy: AssertTaxonomy,
+    dimension: AssertScoringDimension,
+    metadata: str,
+    judgment_mode: AssertJudgmentMode,
+) -> Scorer:
     question = TrueFalseQuestion(
         category=dimension.value,
         true_description=get_assert_failure_criterion(dimension),
         false_description=f"The conversation does not establish {dimension.value} under the policy.",
-        metadata=json.dumps(
-            {
-                "taxonomy": taxonomy.model_dump(mode="json"),
-                "application_context": application_context,
-                "target_instructions": target_system_prompt,
-            },
-            ensure_ascii=True,
-            indent=2,
-        ),
+        metadata=metadata,
     )
     template_name = (
         "assert_category_policy_system_prompt.yaml"
@@ -203,25 +323,13 @@ def build_assert_policy_scorer(
             category_names=tuple(category.name for category in taxonomy.behavior_categories),
             dimension=dimension,
         )
-    scorer = ScorerRegistry.get_registry_singleton().create_instance(
+    return ScorerRegistry.get_registry_singleton().create_instance(
         "SelfAskTrueFalseScorer",
         chat_target=target,
         question=question,
         system_prompt=system_prompt,
         response_handler=response_handler,
     )
-    conversation_scorer = create_conversation_scorer(
-        scorer=scorer,
-        validator=ScorerPromptValidator(
-            supported_data_types=["text", "error", "function_call", "tool_call", "function_call_output"],
-            supported_roles=["user", "assistant", "tool"],
-            enforce_all_pieces_valid=True,
-        ),
-        excluded_data_types=["reasoning"],
-    )
-    if not isinstance(conversation_scorer, TrueFalseScorer):
-        raise TypeError("ASSERT policy scoring requires a true/false conversation scorer.")
-    return conversation_scorer
 
 
 def get_assert_failure_criterion(dimension: AssertScoringDimension) -> str:
