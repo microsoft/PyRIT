@@ -176,7 +176,7 @@ class SeedDataset(BaseModel):
         return data
 
     @classmethod
-    def from_yaml_file(cls, file: str | Path) -> SeedDataset:
+    def from_yaml_file(cls, file: str | Path, *, default_dataset_name: str | None = None) -> SeedDataset:
         """
         Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
 
@@ -186,6 +186,8 @@ class SeedDataset(BaseModel):
 
         Args:
             file: The input file path.
+            default_dataset_name: Dataset name used when the YAML declares neither
+                ``dataset_name`` nor ``name``.
 
         Returns:
             SeedDataset: The loaded dataset.
@@ -198,7 +200,7 @@ class SeedDataset(BaseModel):
         # it at the top of this module would create a circular import.
         from pyrit.models.seeds.yaml_seed_loader import load_seed_dataset_from_yaml
 
-        return load_seed_dataset_from_yaml(file)
+        return load_seed_dataset_from_yaml(file, default_dataset_name=default_dataset_name)
 
     def get_values(
         self,
