@@ -1298,7 +1298,7 @@ async def test_every_signed_in_user_sees_why_saved_entries_were_not_restored_asy
 
     await _start_with_recipes_async(runtime, recipes=recipes)
 
-    assert runtime.state == "ready"
+    assert runtime.state == "failed"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
         failures = await client.get("/api/restore-failures")
         readiness = await client.get("/api/runtime")
@@ -1543,9 +1543,7 @@ _BROKEN_TARGET = {"class_module": "nowhere", "class_name": "Nope"}
 
 
 @pytest.mark.usefixtures("patch_central_database")
-async def test_fixing_the_file_and_applying_restores_the_entry_and_releases_its_name_async(
-    runtime: RuntimeLifecycle, tmp_path: Path
-) -> None:
+async def test_fixing_the_file_and_applying_restores_the_entry_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
     recipes = tmp_path / "recipes"
     _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
     await _start_with_recipes_async(runtime, recipes=recipes)
@@ -1573,8 +1571,25 @@ async def test_readiness_counts_restore_failures_without_their_details_async(
         readiness = await client.get("/api/runtime")
 
     assert readiness.json() == {
-        "ready": True,
-        "state": "ready",
+        "ready": False,
+        "state": "failed",
         "generation": runtime.generation,
         "restore_failures": 1,
     }
+
+
+async def test_the_failure_list_answers_while_other_routes_wait_for_ready_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
+    await _start_with_recipes_async(runtime, recipes=recipes)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        failures = await client.get("/api/restore-failures")
+        targets = await client.get("/api/targets")
+
+    assert runtime.state == "failed"
+    assert failures.status_code == 200
+    assert [item["name"] for item in failures.json()["items"]] == ["ghost"]
+    assert targets.status_code == 503

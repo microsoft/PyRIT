@@ -51,14 +51,17 @@ interface RestoreFailures {
   listFailed: boolean
 }
 
-// The list is read when the count or the runtime generation changes, rather than on every readiness poll.
-function useRestoreFailures(count: number, generation: string): RestoreFailures {
+// A later apply or restart can fail again with the same count and generation, so the list is read on every
+// poll while the banner shows.
+function useRestoreFailures(): RestoreFailures {
   const [failures, setFailures] = useState<RestoreFailure[]>([])
   const [listFailed, setListFailed] = useState(false)
   useEffect(() => {
     let cancelled = false
-    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let fetching = false
     const load = async (): Promise<void> => {
+      if (fetching) return
+      fetching = true
       try {
         const list = await runtimeApi.getRestoreFailures()
         if (!cancelled) {
@@ -66,19 +69,19 @@ function useRestoreFailures(count: number, generation: string): RestoreFailures 
           setListFailed(false)
         }
       } catch {
-        // Keep the last list and say it couldn't be refreshed; try again shortly.
-        if (!cancelled) {
-          setListFailed(true)
-          retryTimer = setTimeout(() => { void load() }, POLL_INTERVAL_MS)
-        }
+        // Keep the last list and say it couldn't be refreshed; the next poll tries again.
+        if (!cancelled) setListFailed(true)
+      } finally {
+        fetching = false
       }
     }
     void load()
+    const timer = setInterval(() => { void load() }, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
-      clearTimeout(retryTimer)
+      clearInterval(timer)
     }
-  }, [count, generation])
+  }, [])
   return { failures, listFailed }
 }
 
@@ -91,21 +94,21 @@ function describeFailure(failure: RestoreFailure): string {
   return `${subject}: ${failure.message}${dependency}`
 }
 
-function RestoreFailuresBanner({ count, generation }: { count: number; generation: string }) {
+function RestoreFailuresBanner({ count }: { count: number }) {
   const styles = useRuntimeBannerStyles()
   const listId = useId()
   const [expanded, setExpanded] = useState(false)
-  const { failures, listFailed } = useRestoreFailures(count, generation)
-  const techniqueFailed = failures.some((failure) => failure.kind === 'techniques')
-  const entries = count === 1 ? '1 saved entry' : `${count} saved entries`
-  const impact = techniqueFailed
-    ? `${entries} can't be used until fixed, and until then a scan has to name its techniques.`
-    : `${entries} can't be used until fixed.`
+  const { failures, listFailed } = useRestoreFailures()
+  const summary = count === 1
+    ? "1 saved entry couldn't be restored, so new runs and sends are unavailable until it's fixed."
+    : `${count} saved entries couldn't be restored, so new runs and sends are unavailable until they're fixed.`
+  const files = count === 1 ? 'its file' : 'their files'
   return (
     <MessageBar intent="warning" layout="multiline">
       <MessageBarBody>
         <MessageBarTitle>Some saved entries couldn&apos;t be restored</MessageBarTitle>
-        {impact} An administrator can fix or delete their files, then apply the configuration or restart the backend.
+        {summary} Drafts are preserved.
+        An administrator can fix or delete {files}, then apply the configuration or restart the backend.
         <div
           id={listId}
           role="region"
@@ -141,11 +144,9 @@ function RestoreFailuresBanner({ count, generation }: { count: number; generatio
 
 export function RuntimeBanner() {
   const runtime = useRuntime()
+  if (runtime.ready) return null
   const failureCount = runtime.restore_failures ?? 0
-  if (runtime.ready) {
-    if (failureCount === 0) return null
-    return <RestoreFailuresBanner count={failureCount} generation={runtime.generation} />
-  }
+  if (runtime.state === 'failed' && failureCount > 0) return <RestoreFailuresBanner count={failureCount} />
   return (
     <MessageBar intent="warning">
       <MessageBarBody>
