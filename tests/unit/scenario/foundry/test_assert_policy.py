@@ -197,6 +197,7 @@ def test_registry_name_and_argument_free_construction() -> None:
         "judgment_mode": AssertJudgmentMode.CATEGORY_VALIDATED,
         "target_system_prompt": None,
         "judge_presets": None,
+        "judge_preset_files": None,
         "disabled_judge_dimensions": None,
         "judge_samples": 1,
         "objective_dimension": "policy_violation",
@@ -218,7 +219,8 @@ async def test_default_estimate_is_bounded_without_datasets_async() -> None:
         ({"max_turns": 0}, "max_turns"),
         ({"target_system_prompt": "  "}, "target_system_prompt"),
         ({"judge_presets": ["no-such-preset"]}, "Unknown judge preset"),
-        ({"judge_presets": ["missing.yaml"]}, "not found"),
+        ({"judge_presets": ["../judge_presets/safety-core"]}, "judge settings"),
+        ({"judge_preset_files": ["missing.yaml"]}, "not found"),
         ({"disabled_judge_dimensions": ["hallucination"]}, "Unknown disabled"),
         ({"disabled_judge_dimensions": ["policy_violation"]}, "objective_dimension"),
         ({"judge_samples": 0}, "judge settings"),
@@ -783,6 +785,7 @@ async def test_resume_skips_completed_units_without_using_the_placeholder_async(
         ({"judge_model": "judge-a"}, {"judge_model": "judge-b"}),
         ({"judge_model": "judge-a"}, {"judge_model": "judge-a", "temperature": 0.5}),
         ({}, {"judge_presets": ["safety-extended"]}),
+        ({}, {"objective_dimension": "overrefusal"}),
         ({}, {"judge_samples": 3}),
         ({}, {"disabled_judge_dimensions": ["overrefusal"]}),
     ],
@@ -867,7 +870,8 @@ async def test_judge_presets_add_auxiliary_judges_async(harness: _Harness, tmp_p
     await _store_async(name="assert_a", result=_result(group_count=1))
     scenario = await harness.initialize_async(
         harness.scenario(),
-        judge_presets=["safety-extended", _write_preset(tmp_path)],
+        judge_presets=["safety-extended"],
+        judge_preset_files=[_write_preset(tmp_path)],
         include_baseline=True,
         **_datasets("assert_a"),
     )
@@ -887,7 +891,7 @@ async def test_objective_dimension_replaces_policy_violation_async(harness: _Har
     await _store_async(name="assert_a", result=_result(group_count=1))
     scenario = await harness.initialize_async(
         harness.scenario(),
-        judge_presets=[_write_preset(tmp_path, ordinal=False)],
+        judge_preset_files=[_write_preset(tmp_path, ordinal=False)],
         disabled_judge_dimensions=["policy_violation"],
         objective_dimension="budget_overrun",
         **_datasets("assert_a"),
@@ -902,7 +906,7 @@ async def test_objective_dimension_replaces_policy_violation_async(harness: _Har
 async def test_ordinal_objective_dimension_is_rejected_async(tmp_path: Path) -> None:
     scenario = AssertPolicy()
     scenario.set_params_from_args(
-        args={"judge_presets": [_write_preset(tmp_path)], "objective_dimension": "response_quality"}
+        args={"judge_preset_files": [_write_preset(tmp_path)], "objective_dimension": "response_quality"}
     )
     with pytest.raises(ValueError, match="ordinal"):
         await scenario.get_run_size_estimate_async()
@@ -914,7 +918,7 @@ async def test_custom_dimensions_are_judged_and_sampled_async(harness: _Harness,
     result = await harness.run_async(
         harness.scenario(),
         scenario_techniques=[AssertTechnique.SingleTurn],
-        judge_presets=[_write_preset(tmp_path, ordinal=False)],
+        judge_preset_files=[_write_preset(tmp_path, ordinal=False)],
         judge_samples=3,
         **_datasets("assert_a"),
     )
@@ -936,25 +940,42 @@ async def test_judge_settings_identity_follows_resolved_dimensions_async(harness
         scenario = await harness.initialize_async(harness.scenario(), **args, **_datasets("assert_a"))
         return scenario._build_scenario_identifier()
 
+    def eval_hash(identifier: Any) -> str:
+        return ScenarioEvaluationIdentifier(identifier).eval_hash
+
     default = await identify_async()
     explicit = await identify_async(
-        judge_presets=["safety-core"],
-        disabled_judge_dimensions=[],
-        judge_samples=1,
-        objective_dimension="policy_violation",
+        judge_presets=[], disabled_judge_dimensions=[], judge_samples=1, objective_dimension="policy_violation"
     )
     first_dir, second_dir = tmp_path / "first", tmp_path / "second"
     first_dir.mkdir()
     second_dir.mkdir()
-    first = await identify_async(judge_presets=[_write_preset(first_dir)])
-    moved = await identify_async(judge_presets=[_write_preset(second_dir)])
-    sampled = await identify_async(judge_samples=3)
+    first = await identify_async(judge_preset_files=[_write_preset(first_dir)])
+    moved = await identify_async(judge_preset_files=[_write_preset(second_dir)])
+    (second_dir / "travel-budget.yaml").write_text(_CUSTOM_PRESET.replace("Poor", "Weak"), encoding="utf-8")
+    edited = await identify_async(judge_preset_files=[str(second_dir / "travel-budget.yaml")])
+    objective = await identify_async(objective_dimension="overrefusal")
+    settings = await identify_async(
+        judge_presets=["safety-extended"],
+        disabled_judge_dimensions=["pii_leakage"],
+        judge_samples=3,
+        objective_dimension="harm_actionability",
+    )
 
+    assert default.params == explicit.params
     assert not set(AssertPolicy._JUDGE_PARAMETER_NAMES) & set(default.params)
-    assert ScenarioEvaluationIdentifier(explicit).eval_hash == ScenarioEvaluationIdentifier(default).eval_hash
-    assert ScenarioEvaluationIdentifier(moved).eval_hash == ScenarioEvaluationIdentifier(first).eval_hash
-    hashes = {ScenarioEvaluationIdentifier(identifier).eval_hash for identifier in (default, first, sampled)}
-    assert len(hashes) == 3
+    assert eval_hash(explicit) == eval_hash(default)
+    assert eval_hash(moved) == eval_hash(first)
+    assert "judge_preset_files" not in first.params
+    assert objective.params["objective_dimension"] == "overrefusal"
+    assert {name: settings.params[name] for name in AssertPolicy._JUDGE_PARAMETER_NAMES if name in settings.params} == {
+        "judge_presets": ["safety-extended"],
+        "disabled_judge_dimensions": ["pii_leakage"],
+        "judge_samples": 3,
+        "objective_dimension": "harm_actionability",
+    }
+    hashes = {eval_hash(identifier) for identifier in (default, first, edited, objective, settings)}
+    assert len(hashes) == 5
 
 
 async def test_estimate_counts_judge_calls_per_conversation_async() -> None:

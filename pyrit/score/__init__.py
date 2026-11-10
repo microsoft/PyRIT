@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.score.assert_judge_presets import (
         list_assert_judge_presets,
         load_assert_judge_preset,
+        load_assert_judge_preset_file,
         resolve_assert_judge_dimensions,
     )
     from pyrit.score.assert_sampled_scorer import AssertSampleMetadata
@@ -186,6 +187,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "AssertSampleMetadata": "pyrit.score.assert_sampled_scorer",
     "list_assert_judge_presets": "pyrit.score.assert_judge_presets",
     "load_assert_judge_preset": "pyrit.score.assert_judge_presets",
+    "load_assert_judge_preset_file": "pyrit.score.assert_judge_presets",
     "resolve_assert_judge_dimensions": "pyrit.score.assert_judge_presets",
     "AssertScoringDimension": "pyrit.score.true_false.assert_policy_scorer",
     "build_assert_policy_scorer": "pyrit.score.true_false.assert_policy_scorer",

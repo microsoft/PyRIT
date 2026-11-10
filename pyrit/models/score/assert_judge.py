@@ -20,6 +20,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     StringConstraints,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -177,16 +178,34 @@ class AssertJudgePreset(_AssertJudgeModel):
             raise ValueError(f"Judge preset file {path} must contain a YAML mapping.")
         try:
             return cls.model_validate(dict(loaded))
-        except ValueError as error:
-            raise ValueError(f"Invalid judge preset file {path}: {error}") from error
+        except ValidationError as error:
+            raise ValueError(f"Invalid judge preset file {path}: {describe_validation_errors(error)}") from None
+
+
+def describe_validation_errors(error: ValidationError) -> str:
+    """
+    Describe validation errors by field location and reason, without the rejected values.
+
+    Values are omitted so that errors about externally supplied input can't echo file contents.
+
+    Args:
+        error (ValidationError): The validation error.
+
+    Returns:
+        str: One ``location: message`` entry per error, separated by semicolons.
+    """
+    return "; ".join(
+        f"{'.'.join(str(part) for part in item['loc']) or 'value'}: {item['msg']}"
+        for item in error.errors(include_input=False, include_url=False, include_context=False)
+    )
 
 
 class AssertJudgeConfig(_AssertJudgeModel):
     """
     The judge dimensions an ASSERT evaluation scores.
 
-    Dimensions resolve in order: enabled built-ins, then ``presets`` in list order, then inline
-    ``dimensions``. A later definition replaces an earlier one with the same name, and
+    Dimensions resolve in order: built-ins, then built-in ``presets`` by name, then ``preset_files``,
+    then inline ``dimensions``. A later definition replaces an earlier one with the same name, and
     ``disabled_dimensions`` removes names from the result. ``samples`` repeats every judge call and
     aggregates the verdicts. ``objective_dimension`` is the boolean dimension a scenario uses as its
     objective; every other dimension is recorded as an auxiliary score.
@@ -194,7 +213,8 @@ class AssertJudgeConfig(_AssertJudgeModel):
 
     DEFAULT_OBJECTIVE_DIMENSION: ClassVar[str] = "policy_violation"
 
-    presets: tuple[_Text, ...] = ()
+    presets: tuple[_PresetName, ...] = ()
+    preset_files: tuple[Path, ...] = ()
     dimensions: tuple[AssertJudgeDimension, ...] = ()
     disabled_dimensions: tuple[_Identifier, ...] = ()
     samples: Annotated[int, Field(strict=True, ge=1, le=25)] = 1
@@ -209,4 +229,6 @@ class AssertJudgeConfig(_AssertJudgeModel):
             raise ValueError("disabled_dimensions must not repeat a name.")
         if len(set(self.presets)) != len(self.presets):
             raise ValueError("presets must not repeat a preset.")
+        if len(set(self.preset_files)) != len(self.preset_files):
+            raise ValueError("preset_files must not repeat a file.")
         return self

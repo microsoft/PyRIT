@@ -473,9 +473,10 @@ for mode in AssertJudgmentMode:
 # calibration.
 #
 # `dimension` also accepts a custom `AssertJudgeDimension`, such as one from ASSERT's judge presets
-# (`list_assert_judge_presets()` or `load_assert_judge_preset()`). A boolean custom dimension returns
-# a true/false score. An ordinal dimension returns a float score for the grade's position in its
-# scale, with the grade in `assert_grade` metadata. A not-applicable answer is undetermined, with
+# (`list_assert_judge_presets()` or `load_assert_judge_preset()`) or your own preset file
+# (`load_assert_judge_preset_file()`). A boolean custom dimension returns a true/false score. An
+# ordinal dimension returns a float score for the grade's position in its scale, with the grade in
+# `assert_grade` metadata. A not-applicable answer is undetermined, with
 # `assert_not_applicable` metadata. `samples` repeats the judge call and aggregates the verdicts as
 # ASSERT does: a majority vote with ties counted as failures, or the lower median grade. See
 # [Foundry scenarios](../../scanner/foundry.ipynb) for the preset file format.

@@ -30,37 +30,52 @@ def list_assert_judge_presets() -> dict[str, AssertJudgePreset]:
     return {preset.name: preset for preset in presets}
 
 
-def load_assert_judge_preset(reference: str | Path) -> AssertJudgePreset:
+def load_assert_judge_preset(name: str) -> AssertJudgePreset:
     """
-    Load a judge preset by built-in name or from a YAML file.
+    Load a judge preset that ships with PyRIT.
+
+    Only shipped names are accepted, so a name can't reach other files. Load your own preset files
+    with ``load_assert_judge_preset_file``.
 
     Args:
-        reference (str | Path): A built-in preset name such as ``safety-extended``, or a path to a
-            ``judge_preset`` YAML file.
+        name (str): A built-in preset name such as ``safety-extended``.
 
     Returns:
         AssertJudgePreset: The preset.
 
     Raises:
-        ValueError: If the name is unknown or the file is not a valid judge preset.
+        ValueError: If the name is not a built-in preset.
     """
-    path = Path(reference)
-    if isinstance(reference, Path) or path.suffix.lower() in (".yaml", ".yml"):
-        if not path.is_file():
-            raise ValueError(f"Judge preset file not found: {reference}")
-        return AssertJudgePreset.from_yaml_file(path)
-    built_in = ASSERT_JUDGE_PRESETS_PATH / f"{reference}.yaml"
-    if not built_in.is_file():
-        available = ", ".join(sorted(file.stem for file in ASSERT_JUDGE_PRESETS_PATH.glob("*.yaml")))
-        raise ValueError(f"Unknown judge preset '{reference}'. Use a YAML file path or one of: {available}.")
-    return AssertJudgePreset.from_yaml_file(built_in)
+    available = _list_built_in_preset_names()
+    if name not in available:
+        raise ValueError(f"Unknown judge preset. Use one of: {', '.join(available)}.")
+    return AssertJudgePreset.from_yaml_file(ASSERT_JUDGE_PRESETS_PATH / f"{name}.yaml")
+
+
+def load_assert_judge_preset_file(path: str | Path) -> AssertJudgePreset:
+    """
+    Load a judge preset from your own ``judge_preset`` YAML file.
+
+    Args:
+        path (str | Path): The preset file.
+
+    Returns:
+        AssertJudgePreset: The preset.
+
+    Raises:
+        ValueError: If the file doesn't exist or is not a valid judge preset.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError(f"Judge preset file not found: {path}")
+    return AssertJudgePreset.from_yaml_file(path)
 
 
 def resolve_assert_judge_dimensions(config: AssertJudgeConfig) -> tuple[AssertJudgeDimensionSpec, ...]:
     """
     Resolve the ordered dimensions a judge configuration enables.
 
-    Built-ins come first, then each preset's dimensions in list order, then inline dimensions. A later
+    Built-ins come first, then built-in presets, then preset files, then inline dimensions. A later
     definition replaces an earlier one with the same name, and ``disabled_dimensions`` removes names
     from the result.
 
@@ -75,8 +90,10 @@ def resolve_assert_judge_dimensions(config: AssertJudgeConfig) -> tuple[AssertJu
             or the objective dimension is not an enabled boolean dimension.
     """
     resolved: dict[str, AssertJudgeDimensionSpec] = {dimension.value: dimension for dimension in AssertScoringDimension}
-    for reference in config.presets:
-        for dimension in load_assert_judge_preset(reference).dimensions:
+    presets = [load_assert_judge_preset(name) for name in config.presets]
+    presets.extend(load_assert_judge_preset_file(path) for path in config.preset_files)
+    for preset in presets:
+        for dimension in preset.dimensions:
             resolved[dimension.name] = dimension
     for dimension in config.dimensions:
         resolved[dimension.name] = dimension
@@ -89,6 +106,10 @@ def resolve_assert_judge_dimensions(config: AssertJudgeConfig) -> tuple[AssertJu
         raise ValueError("The judge configuration must leave at least one dimension enabled.")
     _validate_objective_dimension(config=config, enabled=enabled)
     return enabled
+
+
+def _list_built_in_preset_names() -> tuple[str, ...]:
+    return tuple(sorted(path.stem for path in ASSERT_JUDGE_PRESETS_PATH.glob("*.yaml")))
 
 
 def get_assert_dimension_name(dimension: AssertJudgeDimensionSpec) -> str:

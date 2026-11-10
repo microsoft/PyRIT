@@ -10,7 +10,8 @@ import json
 import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pydantic import ValidationError
 
@@ -31,6 +32,7 @@ from pyrit.models import (
     ScenarioRunSizeEstimateStatus,
     SeedGroupRequirements,
 )
+from pyrit.models.score.assert_judge import describe_validation_errors
 from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -375,7 +377,8 @@ class AssertPolicy(Scenario):
     the stored user prompt when the group has one. Judges built from each group's taxonomy then
     read the whole conversation once per enabled judge dimension. By default these are policy
     violation (the objective score) and overrefusal (an auxiliary score). ``judge_presets`` adds
-    dimensions from built-in or YAML presets, ``disabled_judge_dimensions`` removes them,
+    dimensions from built-in presets and ``judge_preset_files`` from your own preset YAML files
+    (Python callers only), ``disabled_judge_dimensions`` removes them,
     ``objective_dimension`` picks the boolean dimension used as the objective, and ``judge_samples``
     repeats every judge call and aggregates the verdicts as ASSERT does. Conversations with a
     blocked or errored target reply are not judged and stay undetermined. Results are grouped by
@@ -385,6 +388,7 @@ class AssertPolicy(Scenario):
     VERSION: int = 1
     _JUDGE_PARAMETER_NAMES: ClassVar[tuple[str, ...]] = (
         "judge_presets",
+        "judge_preset_files",
         "disabled_judge_dimensions",
         "judge_samples",
         "objective_dimension",
@@ -458,11 +462,20 @@ class AssertPolicy(Scenario):
             Parameter(
                 name="judge_presets",
                 description=(
-                    "Judge presets whose dimensions are added to the built-in policy_violation and overrefusal: "
-                    "built-in names such as safety-extended or tool-use, or paths to judge_preset YAML files. "
-                    "Later presets replace earlier dimensions with the same name."
+                    "Built-in judge presets, such as safety-extended or tool-use, whose dimensions are added to "
+                    "the built-in policy_violation and overrefusal. Later presets replace earlier dimensions "
+                    "with the same name."
                 ),
                 param_type=list[str],
+                default=None,
+            ),
+            Parameter(
+                name="judge_preset_files",
+                description=(
+                    "Your own judge_preset YAML files, applied after judge_presets. Python callers only; the "
+                    "server API doesn't read files named by its callers."
+                ),
+                param_type=list[Path],
                 default=None,
             ),
             Parameter(
@@ -491,15 +504,36 @@ class AssertPolicy(Scenario):
     @classmethod
     def _common_scenario_parameter_names(cls) -> frozenset[str]:
         """
-        Keep judge settings out of the scenario parameters.
-
-        The scenario identity already includes every resolved judge, so preset file locations
-        don't affect resume while their contents do.
+        Exclude judge settings from the generic identity parameters; ``_get_identity_params`` adds them.
 
         Returns:
             frozenset[str]: The common parameter names plus the judge settings.
         """
         return super()._common_scenario_parameter_names() | frozenset(cls._JUDGE_PARAMETER_NAMES)
+
+    def _get_identity_params(self) -> dict[str, Any]:
+        """
+        Record judge settings that differ from the defaults.
+
+        Default settings add nothing, so runs from before judge settings existed still resume.
+        Preset files are not recorded: they can't be restored through the API, and every resolved
+        judge, including its dimension content, is already part of the identity.
+
+        Returns:
+            dict[str, Any]: The scenario parameters plus non-default judge settings.
+        """
+        params = super()._get_identity_params()
+        config = self._get_judge_config()
+        defaults = AssertJudgeConfig()
+        if config.presets:
+            params["judge_presets"] = list(config.presets)
+        if config.disabled_dimensions:
+            params["disabled_judge_dimensions"] = list(config.disabled_dimensions)
+        if config.samples != defaults.samples:
+            params["judge_samples"] = config.samples
+        if config.objective_dimension != defaults.objective_dimension:
+            params["objective_dimension"] = config.objective_dimension
+        return params
 
     def _validate_runtime_configuration(self) -> None:
         super()._validate_runtime_configuration()
@@ -514,12 +548,13 @@ class AssertPolicy(Scenario):
         try:
             return AssertJudgeConfig(
                 presets=tuple(self.params.get("judge_presets") or ()),
+                preset_files=tuple(Path(path) for path in self.params.get("judge_preset_files") or ()),
                 disabled_dimensions=tuple(self.params.get("disabled_judge_dimensions") or ()),
                 samples=self.params["judge_samples"],
                 objective_dimension=self.params["objective_dimension"],
             )
         except ValidationError as error:
-            raise ValueError(f"Invalid ASSERT judge settings: {error}") from error
+            raise ValueError(f"Invalid ASSERT judge settings: {describe_validation_errors(error)}") from None
 
     def _has_no_datasets(self) -> bool:
         return self._dataset_config.source_kind is DatasetSourceKind.MEMORY and not self._dataset_config.dataset_names
@@ -623,11 +658,14 @@ class AssertPolicy(Scenario):
         boolean_judges = [judge for judge in judges if isinstance(judge, TrueFalseScorer)]
         if len(boolean_judges) == len(judges):
             # Keeps the identity of runs that use only boolean dimensions, including the defaults.
+            # The OR composite's identity doesn't depend on judge order.
             self._objective_scorer = TrueFalseCompositeScorer(
                 aggregator=TrueFalseScoreAggregator.OR, scorers=boolean_judges
             )
         else:
-            self._objective_scorer = _AssertJudgeSetScorer(judges=judges)
+            # Sorted by policy so the identity doesn't depend on the order groups are read.
+            ordered = [judge for _, policy in sorted(self._judges_by_policy.items()) for judge in policy.all]
+            self._objective_scorer = _AssertJudgeSetScorer(judges=ordered)
         self._objective_scorer_identifier = self._objective_scorer.get_identifier()
 
     def _get_scoring(self, group: AttackSeedGroup) -> _GroupScoring:

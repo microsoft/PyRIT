@@ -124,9 +124,10 @@ await output_scenario_async(scenario_result)
 # - `target_system_prompt`: instructions that a target-owned application already uses. Only the
 #   judge receives them. Use it with groups generated with `target_owns_instructions=True`; it's
 #   rejected when a selected group stores its own system prompt.
-# - `judge_presets`: judge presets whose dimensions are added to the built-in `policy_violation`
-#   and `overrefusal`. Pass built-in names or paths to `judge_preset` YAML files. See
-#   "Judge dimensions and presets" below.
+# - `judge_presets`: built-in judge presets whose dimensions are added to the built-in
+#   `policy_violation` and `overrefusal`. See "Judge dimensions and presets" below.
+# - `judge_preset_files`: your own `judge_preset` YAML files, applied after `judge_presets`. Python
+#   only: `pyrit_scan` and the GUI go through the server, which doesn't read files named by callers.
 # - `disabled_judge_dimensions`: dimensions to remove after presets are applied, including built-ins.
 # - `judge_samples`: independent judge calls per dimension, aggregated as in ASSERT. Defaults to 1.
 # - `objective_dimension`: the boolean dimension used as the objective score. Defaults to
@@ -260,13 +261,28 @@ await output_attack_async(single_turn_result, include_auxiliary_scores=True)  # 
 #         5: Excellent
 # ```
 #
-# ```bash
-# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_travel \
-#   --judge-presets safety-extended ./travel-budget.yaml --judge-samples 3
+# Pass your file as `judge_preset_files` in Python:
+#
+# ```python
+# assert_scenario.set_params_from_args(
+#     args={
+#         "objective_target": objective_target,
+#         "dataset_overrides": ScenarioDatasetRequest(sources=[DatasetSourceInput(name="assert_travel")]),
+#         "judge_presets": ["safety-extended"],
+#         "judge_preset_files": [Path("travel-budget.yaml")],
+#         "judge_samples": 3,
+#     }
+# )
 # ```
 #
-# In Python, pass the same values as `judge_presets` and `judge_samples` in
-# `set_params_from_args`. Each enabled dimension gets its own judge call. The objective dimension
+# Built-in presets work from the command line too:
+#
+# ```bash
+# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_travel \
+#   --judge-presets safety-extended --judge-samples 3
+# ```
+#
+# Each enabled dimension gets its own judge call. The objective dimension
 # decides success, and every other dimension is an auxiliary score on the same result, with the
 # dimension name as its category:
 #
@@ -280,14 +296,10 @@ await output_attack_async(single_turn_result, include_auxiliary_scores=True)  # 
 #   the per-category judgments are voted too and `policy_violation` is recomputed from them. The
 #   `assert_sample_votes` metadata keeps every sample's verdict. Prefer an odd sample count.
 #
-# To judge a narrower outcome instead of the built-in policy violation, disable it and make your own
-# boolean dimension the objective:
-#
-# ```bash
-# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_travel \
-#   --judge-presets ./travel-budget.yaml --disabled-judge-dimensions policy_violation \
-#   --objective-dimension budget_compliance
-# ```
+# To judge a narrower outcome instead of the built-in policy violation, disable it and make another
+# boolean dimension the objective, for example `"disabled_judge_dimensions": ["policy_violation"]`
+# and `"objective_dimension": "budget_compliance"`. Non-default judge settings are part of the
+# scenario's identity, so a resumed run must use the same ones.
 #
 # Standalone, `build_assert_policy_scorer` accepts any of these dimensions and a `samples` count.
 #

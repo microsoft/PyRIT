@@ -106,7 +106,7 @@ def test_preset_from_yaml_file(tmp_path: Path) -> None:
     [
         ("- not a mapping\n", "YAML mapping"),
         ("kind: judge_preset\nname: empty\n", "at least one dimension"),
-        ("kind: behavior\nname: wrong\nbuiltin_dimensions: [overrefusal]\n", "Invalid judge preset"),
+        ("kind: behavior\nname: wrong\nbuiltin_dimensions: [overrefusal]\n", "kind: Input should be"),
         ("kind: judge_preset\nname: unknown\nbuiltin_dimensions: [refusal]\n", "Unknown built-in"),
     ],
 )
@@ -136,6 +136,9 @@ def test_config_defaults_match_assert() -> None:
         {"samples": 0},
         {"samples": True},
         {"presets": ("grounding", "grounding")},
+        {"presets": ("../safety-core",)},
+        {"presets": ("safety-core.yaml",)},
+        {"preset_files": ("a.yaml", "a.yaml")},
         {"disabled_dimensions": ("overrefusal", "overrefusal")},
         {"dimensions": [{"name": "a", "description": "d", "rubric": "r"}] * 2},
     ],
