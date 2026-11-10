@@ -850,6 +850,9 @@ export function useChatSend({
           }
           setViewedAttackId(currentAttackResultId)
           setViewedConversationId(currentConversationId)
+          // Hold the created conversation so committing its route during the
+          // first send does not fetch over the optimistic transcript (#3663).
+          markConversationLoaded(currentConversationId)
         }
         // Update sending tracker to use real ID instead of the pending key
         dispatch({ type: 'send-conversation-created', from: PENDING_SEND_CONVERSATION_ID, to: currentConversationId })

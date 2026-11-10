@@ -68,6 +68,7 @@ function renderSend(initial: HarnessOptions = {}) {
   const callbacks = {
     onConversationCreated: jest.fn(),
     onCreatedDestination: jest.fn(),
+    markConversationLoaded: jest.fn(),
     clearSentDraft: jest.fn(),
     restoreSendDraft: jest.fn(),
     refreshPanel: jest.fn(),
@@ -130,7 +131,7 @@ function renderSend(initial: HarnessOptions = {}) {
         invalidateConversationLoads: jest.fn(),
         claimConversationRead: () => 1,
         isLatestConversationRead: () => true,
-        markConversationLoaded: jest.fn(),
+        markConversationLoaded: callbacks.markConversationLoaded,
         getViewedConversationId: () => viewed.conversationId,
         setViewedConversationId: (id: string | null) => { viewed.conversationId = id },
         getLoadedConversationId: () => viewed.conversationId,
@@ -263,6 +264,27 @@ describe('useChatSend', () => {
     expect(result.current.tracking.isSendInFlight(PENDING_SEND_CONVERSATION_ID)).toBe(false)
     expect(result.current.tracking.isSendInFlight('created')).toBe(true)
     expect([...result.current.tracking.state.sending]).toEqual(['created'])
+  })
+
+  it('holds the created conversation as loaded so committing its route mid-send keeps the first prompt', async () => {
+    api.createAttack.mockResolvedValue({ attack_result_id: 'created-attack', conversation_id: 'created' } as never)
+    const acceptance = deferred<MessageSendStatus>()
+    api.submitMessageSend.mockReturnValue(acceptance.promise)
+    const { result, callbacks } = renderSend({ attackResultId: null, conversationId: null, activeConversationId: null })
+
+    await act(async () => { void result.current.send.send('first prompt', undefined, []) })
+
+    // The loader must already hold the created conversation when the route
+    // commits; otherwise it fetches the empty server transcript over the
+    // optimistic prompt while the first send is still in flight (#3663).
+    expect(callbacks.markConversationLoaded).toHaveBeenCalledWith('created')
+    expect(callbacks.markConversationLoaded.mock.invocationCallOrder[0])
+      .toBeLessThan(api.submitMessageSend.mock.invocationCallOrder[0])
+    expect(result.current.tracking.isSendInFlight('created')).toBe(true)
+    expect(result.current.messages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'first prompt' }),
+      expect.objectContaining({ role: 'assistant', isLoading: true }),
+    ])
   })
 
   it('blocks resending after unknown delivery and refreshes without resubmitting', async () => {
