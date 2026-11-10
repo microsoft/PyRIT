@@ -8,12 +8,12 @@ import {
 } from './scenarioLaunchRequest'
 
 const OBJECTIVE: Parameter = {
-  name: 'objective', description: 'The objective.', param_type: 'str', choices: null, default: null, required: false,
-} as unknown as Parameter
+  name: 'objective', description: 'The objective.', type_name: 'str | None', choices: null, default: null, required: false,
+}
 const HISTORY: Parameter = {
-  name: 'prepended_conversation_id', description: 'History.', param_type: 'str', choices: null, default: null,
+  name: 'prepended_conversation_id', description: 'History.', type_name: 'str | None', choices: null, default: null,
   required: false,
-} as unknown as Parameter
+}
 
 function makeScenario(overrides: Partial<RegisteredScenario> = {}): RegisteredScenario {
   return {
