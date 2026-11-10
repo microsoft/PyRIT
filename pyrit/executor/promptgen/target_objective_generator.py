@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import math
 import uuid
@@ -31,6 +32,7 @@ from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from jsonschema.protocols import Validator
 
@@ -136,8 +138,12 @@ class TargetObjectiveGenerator(
         """
         if isinstance(count, bool) or not isinstance(count, int) or count < 1:
             raise ValueError("count must be a positive integer.")
-        prompt = SeedPrompt.from_yaml_file(cls.DEFAULT_SYSTEM_PROMPT_PATH).value
-        characters = len(prompt) + len(instructions) + sum(len(category) for category in harm_categories) + 100
+        characters = (
+            len(_load_default_prompt_text(cls.DEFAULT_SYSTEM_PROMPT_PATH))
+            + len(instructions)
+            + sum(len(category) for category in harm_categories)
+            + 100
+        )
         tokens = PromptGenerationEstimate.tokens_from_characters(characters) + count * cls.OUTPUT_TOKENS_PER_OBJECTIVE
         stage = PromptGenerationStageEstimate(
             stage="objectives",
@@ -270,3 +276,14 @@ class TargetObjectiveGenerator(
         ):
             raise ValueError("response_json_schema must require an objectives array with string items.")
         return Draft202012Validator(schema)
+
+
+@functools.cache
+def _load_default_prompt_text(path: Path) -> str:
+    """
+    Read the bundled prompt once, so estimates don't read files on the request path.
+
+    Returns:
+        str: The prompt text.
+    """
+    return SeedPrompt.from_yaml_file(path).value

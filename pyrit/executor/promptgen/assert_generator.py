@@ -232,6 +232,10 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         ``on_checkpoint`` receives the progress after each stage and each batch of seed groups,
         so a caller can store it and resume after an interruption.
 
+        This returns progress rather than a result, so it runs setup and teardown but not the strategy
+        events or retry collection of ``execute_async``. Resuming requires the same target for each
+        role that already produced work; ``build_result`` attributes work to those recorded targets.
+
         Args:
             checkpoint (AssertGenerationCheckpoint): The progress to continue from.
             stop_after (AssertGenerationStage | None): The last stage to run. Defaults to every stage.
@@ -253,6 +257,9 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
     def build_result(self, *, checkpoint: AssertGenerationCheckpoint) -> AssertGeneratorResult:
         """
         Package a complete checkpoint as native seed groups, without model calls.
+
+        The result names the targets recorded in the checkpoint, which produced its work, rather than
+        this generator's targets.
 
         Args:
             checkpoint (AssertGenerationCheckpoint): Progress with every requested seed group.
@@ -280,10 +287,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
                 assignments=[content.assignment for content in checkpoint.groups],
             ),
             generation_conversation_ids=checkpoint.conversation_ids,
-            generation_targets={
-                self.GENERATION_ROLE: self._target.get_identifier().model_dump(mode="json"),
-                self.RESEARCH_ROLE: self._research_target.get_identifier().model_dump(mode="json"),
-            },
+            generation_targets=dict(checkpoint.targets),
         )
 
     @classmethod
@@ -291,8 +295,9 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         """
         Estimate the remaining model calls and tokens of a checkpoint without calling a target.
 
-        Seed-group calls are exact once the taxonomy and dimensions exist. Before that, they're
-        bounded: one call per distinct category and dimension combination, up to five groups each.
+        Seed-group calls are exact once the taxonomy and dimensions exist, because the batch plan is
+        then known. Before that, they range from one call per five remaining groups (every group shares
+        an assignment) to one call per remaining group (every group has its own assignment).
 
         Args:
             checkpoint (AssertGenerationCheckpoint): The progress to estimate from. Use
@@ -311,10 +316,24 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
             * cls.CATEGORY_OUTPUT_TOKENS
             * PromptGenerationEstimate.CHARACTERS_PER_TOKEN
         )
+        dimensions_chars = (
+            len(json.dumps([item.model_dump(mode="json") for item in checkpoint.dimensions]))
+            if checkpoint.dimensions is not None
+            else len(json.dumps([item.model_dump(mode="json") for item in config.dimensions]))
+            + sum(config.dimension_level_count for item in config.dimensions if not item.levels)
+            * cls.LEVEL_OUTPUT_TOKENS
+            * PromptGenerationEstimate.CHARACTERS_PER_TOKEN
+        )
+        system_prompt_chars = len(config.target_system_prompt or "")
         stages = cls._estimate_policy_stages(checkpoint=checkpoint, request_characters=request)
         group_stage, exact = cls._estimate_groups(
             checkpoint=checkpoint,
-            input_characters=len(_load_stage_prompts()["seed_groups"]) + request + taxonomy_chars + 600,
+            input_characters=len(_load_stage_prompts()["seed_groups"])
+            + request
+            + taxonomy_chars
+            + dimensions_chars
+            + system_prompt_chars
+            + 600,
         )
         if group_stage is not None:
             stages.append(group_stage)
@@ -378,36 +397,64 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
     ) -> AssertGenerationCheckpoint:
         if stage == AssertGenerationStage.SEED_GROUPS:
             return await self._generate_groups_async(
-                context=context, checkpoint=checkpoint, on_checkpoint=on_checkpoint
+                context=context,
+                checkpoint=checkpoint,
+                producer=self._require_producer(checkpoint=checkpoint, role=self.GENERATION_ROLE),
+                on_checkpoint=on_checkpoint,
             )
         if stage == AssertGenerationStage.SYSTEMATIZATION:
+            producer = self._require_producer(checkpoint=checkpoint, role=self.RESEARCH_ROLE)
             systematization, conversation_id = await self._systematize_async(context=context)
             updated = _update_checkpoint(
                 checkpoint,
                 fields={"systematization": systematization},
                 provenance={"systematization_conversation_id": conversation_id},
+                producer=producer,
             )
         elif stage == AssertGenerationStage.TAXONOMY:
             if checkpoint.systematization is None:
                 raise ValueError("The taxonomy needs a systematization.")
+            producer = self._require_producer(checkpoint=checkpoint, role=self.GENERATION_ROLE)
             taxonomy, conversation_id = await self._generate_taxonomy_async(
                 context=context, systematization=checkpoint.systematization
             )
             updated = _update_checkpoint(
-                checkpoint, fields={"taxonomy": taxonomy}, provenance={"taxonomy_conversation_id": conversation_id}
+                checkpoint,
+                fields={"taxonomy": taxonomy},
+                provenance={"taxonomy_conversation_id": conversation_id},
+                producer=producer,
             )
         else:
             if checkpoint.taxonomy is None:
                 raise ValueError("Dimensions need a taxonomy.")
+            calls_model = not all(dimension.levels for dimension in checkpoint.config.dimensions)
+            producer = self._require_producer(checkpoint=checkpoint, role=self.RESEARCH_ROLE) if calls_model else None
             dimensions, dimensions_id = await self._resolve_dimensions_async(
                 context=context, taxonomy=checkpoint.taxonomy
             )
             updated = _update_checkpoint(
-                checkpoint, fields={"dimensions": dimensions}, provenance={"dimensions_conversation_id": dimensions_id}
+                checkpoint,
+                fields={"dimensions": dimensions},
+                provenance={"dimensions_conversation_id": dimensions_id},
+                producer=producer,
             )
         if on_checkpoint is not None:
             await on_checkpoint(updated)
         return updated
+
+    def _require_producer(
+        self, *, checkpoint: AssertGenerationCheckpoint, role: str
+    ) -> tuple[str, dict[str, JsonValue]]:
+        target = self._research_target if role == self.RESEARCH_ROLE else self._target
+        identifier: dict[str, JsonValue] = target.get_identifier().model_dump(mode="json")
+        recorded = checkpoint.targets.get(role)
+        if recorded is not None and recorded.get("hash") != identifier.get("hash"):
+            raise ValueError(
+                f"This checkpoint's {role} work was produced by a different target "
+                f"({recorded.get('class_name')} {recorded.get('hash')!s:.8}). Resume with the same {role} "
+                "target, or start a new generation."
+            )
+        return role, identifier
 
     async def _teardown_async(self, *, context: AssertGeneratorContext) -> None:
         for target, conversation_id in context._conversations:
@@ -488,12 +535,14 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
         *,
         context: AssertGeneratorContext,
         checkpoint: AssertGenerationCheckpoint,
+        producer: tuple[str, dict[str, JsonValue]],
         on_checkpoint: Callable[[AssertGenerationCheckpoint], Awaitable[None]] | None,
     ) -> AssertGenerationCheckpoint:
         taxonomy, dimensions = _require_policy(checkpoint)
         batches = _plan_batches(checkpoint=checkpoint, batch_size=self._BATCH_SIZE)
         done = checkpoint.completed_batches
-        if done > len(batches) or sum(count for _, count in batches[:done]) != len(checkpoint.groups):
+        planned = [assignment for assignment, count in batches[:done] for _ in range(count)]
+        if done > len(batches) or [group.assignment for group in checkpoint.groups] != planned:
             raise ValueError("The checkpoint's seed groups don't match the planned coverage assignments.")
         for assignment, count in batches[done:]:
             contents = await self._generate_batch_async(
@@ -510,6 +559,7 @@ class AssertGenerator(PromptGeneratorStrategy[AssertGeneratorContext, AssertGene
                     "groups": (*checkpoint.groups, *contents),
                     "completed_batches": checkpoint.completed_batches + 1,
                 },
+                producer=producer,
             )
             if on_checkpoint is not None:
                 await on_checkpoint(checkpoint)
@@ -772,10 +822,14 @@ def _update_checkpoint(
     *,
     fields: dict[str, Any],
     provenance: dict[str, str | None] | None = None,
+    producer: tuple[str, dict[str, JsonValue]] | None = None,
 ) -> AssertGenerationCheckpoint:
     data = {**checkpoint.model_dump(), **fields}
     if provenance:
         data["provenance"] = {**checkpoint.provenance.model_dump(), **provenance}
+    if producer is not None:
+        role, identifier = producer
+        data["targets"] = {**checkpoint.targets, role: identifier}
     return AssertGenerationCheckpoint.model_validate(data)
 
 

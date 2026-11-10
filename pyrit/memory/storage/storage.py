@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import aiofiles
 
@@ -217,6 +217,9 @@ class AzureBlobStorageIO(StorageIO):
         """
         Create an asynchronous ContainerClient for Azure Storage.
 
+        This must not await anything: ``_acquire_client_async`` relies on creation finishing without
+        yielding to the event loop, so concurrent first operations share one client.
+
         If a SAS token is provided via the
         AZURE_STORAGE_ACCOUNT_SAS_TOKEN environment variable or the init sas_token parameter, it will be used
         for authentication. Otherwise, ``DefaultAzureCredential`` is used directly, which requires the caller
@@ -260,6 +263,9 @@ class AzureBlobStorageIO(StorageIO):
     async def _acquire_client_async(self) -> AsyncContainerClient:
         """
         Open the shared container client if needed and count this operation as a user.
+
+        Creation doesn't yield to the event loop, so no other operation can observe the client as
+        missing while it's being created.
 
         Returns:
             AsyncContainerClient: The shared client, open until the last user releases it.
@@ -352,9 +358,10 @@ class AzureBlobStorageIO(StorageIO):
         """
         Resolve a blob name from either a full blob URL or a relative blob path.
 
-        When a full URL is provided the blob name is extracted from it. The container
-        name embedded in the URL is intentionally discarded — operations always run
-        against the container configured in the constructor.
+        When a full URL is provided the blob name is extracted from it and percent-decoded
+        once, so URLs from ``list_files_async`` resolve to their blobs. The container name
+        embedded in the URL is intentionally discarded — operations always run against the
+        container configured in the constructor.
 
         Backslashes are normalized to forward slashes so that ``Path`` objects
         created on Windows still produce valid blob names.
@@ -370,7 +377,7 @@ class AzureBlobStorageIO(StorageIO):
         try:
             # parse_blob_url validates scheme + netloc internally
             _, blob_name = self.parse_blob_url(path_str)
-            return blob_name
+            return unquote(blob_name)
         except ValueError:
             return path_str
 
@@ -394,7 +401,8 @@ class AzureBlobStorageIO(StorageIO):
             directory (Path | str): Blob URL or relative path of the virtual directory.
 
         Returns:
-            list[str]: Full blob URLs in name order, excluding blobs in nested directories.
+            list[str]: Full blob URLs in name order, excluding blobs in nested directories. Blob names
+                are percent-encoded, so names with reserved characters such as ``#`` or ``?`` round-trip.
         """
         client = await self._acquire_client_async()
         directory_name = self._resolve_blob_name(directory).strip("/")
@@ -408,7 +416,8 @@ class AzureBlobStorageIO(StorageIO):
         container_url = (
             f"{parsed.scheme}://{parsed.netloc}/{path_parts[0]}" if path_parts else self._container_url.rstrip("/")
         )
-        return sorted(f"{container_url}/{name}" for name in names if "/" not in name[len(prefix) :])
+        direct = sorted(name for name in names if "/" not in name[len(prefix) :])
+        return [f"{container_url}/{quote(name, safe='/')}" for name in direct]
 
     async def read_file_async(self, path: Path | str) -> bytes:
         """

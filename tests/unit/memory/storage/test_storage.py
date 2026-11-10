@@ -690,3 +690,47 @@ async def test_blob_storage_keeps_shared_client_open_for_concurrent_operations_a
     assert await read == b"data"
     client.close.assert_awaited_once()
     assert storage._client_async is None
+
+
+async def test_blob_storage_listed_names_with_reserved_characters_round_trip_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container")
+    names = ["records/report#1.json", "records/report?draft.json", "records/a b%41.json"]
+    blobs = {name: MagicMock() for name in names}
+    for blob in blobs.values():
+        stream = AsyncMock()
+        stream.readall = AsyncMock(return_value=b"data")
+        blob.download_blob = AsyncMock(return_value=stream)
+    client = _blob_listing(*names)
+    client.get_blob_client = Mock(side_effect=lambda blob: blobs[blob])
+    client.delete_blob = AsyncMock()
+    storage._client_async = client
+
+    files = await storage.list_files_async("records")
+
+    assert files == [
+        "https://account.blob.core.windows.net/container/records/a%20b%2541.json",
+        "https://account.blob.core.windows.net/container/records/report%231.json",
+        "https://account.blob.core.windows.net/container/records/report%3Fdraft.json",
+    ]
+    assert [storage._resolve_blob_name(file) for file in files] == sorted(names)
+    for file in files:
+        storage._client_async = client
+        assert await storage.read_file_async(file) == b"data"
+    storage._client_async = client
+    await storage.delete_file_async(files[1])
+    client.delete_blob.assert_awaited_once_with("records/report#1.json")
+
+
+async def test_blob_storage_creates_one_client_for_concurrent_first_operations_async() -> None:
+    storage = AzureBlobStorageIO(container_url="https://account.blob.core.windows.net/container", sas_token="token")
+    client = MagicMock()
+    client.close = AsyncMock()
+    with patch("azure.storage.blob.aio.ContainerClient.from_container_url", return_value=client) as create:
+        acquired = await asyncio.gather(storage._acquire_client_async(), storage._acquire_client_async())
+
+    assert acquired == [client, client]
+    create.assert_called_once()
+    await storage._release_client_async()
+    client.close.assert_not_awaited()
+    await storage._release_client_async()
+    client.close.assert_awaited_once()

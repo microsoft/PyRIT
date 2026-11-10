@@ -4,6 +4,7 @@
 import json
 import math
 from collections.abc import Iterator
+from itertools import product
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -17,6 +18,7 @@ from unit.assert_mocks import (
     make_assert_taxonomy,
 )
 
+from pyrit.executor.core import StrategyEvent
 from pyrit.executor.promptgen import AssertGenerator, AssertGeneratorResult
 from pyrit.models import (
     AssertDimension,
@@ -25,6 +27,7 @@ from pyrit.models import (
     AssertGenerationStage,
     AssertGroupMetadata,
     AssertTaxonomy,
+    ComponentIdentifier,
     Message,
     PromptGenerationEstimate,
 )
@@ -433,7 +436,7 @@ class TestCheckpointRejection:
         send.assert_not_called()
         assert [group.objective.value for group in result.seed_groups] == [group.objective for group in groups]
         assert result.generation_conversation_ids == checkpoint.conversation_ids
-        assert set(result.generation_targets) == {AssertGenerator.GENERATION_ROLE, AssertGenerator.RESEARCH_ROLE}
+        assert result.generation_targets == checkpoint.targets
         assert result.coverage.sample_size == 2
 
 
@@ -578,3 +581,142 @@ class TestEstimateMatchesGeneration:
 def test_estimate_round_trips_through_json(checkpoint: AssertGenerationCheckpoint) -> None:
     estimate = AssertGenerator.estimate(checkpoint=checkpoint)
     assert PromptGenerationEstimate.model_validate_json(estimate.model_dump_json()) == estimate
+
+
+_OTHER_TARGET = ComponentIdentifier(class_name="OtherTarget", class_module="tests.other", params={"model_name": "x"})
+
+
+@pytest.mark.usefixtures("patch_central_database", "no_retry_wait")
+class TestCheckpointIntegrity:
+    async def test_resume_rejects_a_different_producer_before_calls_async(self) -> None:
+        target = make_assert_generation_target()
+        stopped, _ = await _advance_async(
+            generator=AssertGenerator(target=target),
+            target=target,
+            checkpoint=AssertGenerationCheckpoint(config=_described_config()),
+            stop_after=AssertGenerationStage.TAXONOMY,
+        )
+        assert set(stopped.targets) == {AssertGenerator.RESEARCH_ROLE, AssertGenerator.GENERATION_ROLE}
+
+        other = make_assert_generation_target()
+        with (
+            patch.object(other, "get_identifier", return_value=_OTHER_TARGET),
+            patch.object(other, "_send_prompt_to_target_async") as send,
+            pytest.raises(ValueError, match="research work was produced by a different target"),
+        ):
+            await AssertGenerator(target=other).advance_async(checkpoint=stopped)
+        send.assert_not_called()
+
+    async def test_resume_with_an_equivalent_target_continues_async(self) -> None:
+        target = make_assert_generation_target()
+        stopped, _ = await _advance_async(
+            generator=AssertGenerator(target=target),
+            target=target,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config()),
+            stop_after=AssertGenerationStage.DIMENSIONS,
+        )
+        equivalent = make_assert_generation_target()
+        complete, stages = await _advance_async(
+            generator=AssertGenerator(target=equivalent), target=equivalent, checkpoint=stopped
+        )
+        assert set(stages) == {"seed_groups"}
+        assert complete.next_stage is None
+
+    async def test_build_result_attributes_work_to_the_recorded_producers_async(self) -> None:
+        target = make_assert_generation_target()
+        complete, _ = await _advance_async(
+            generator=AssertGenerator(target=target),
+            target=target,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config()),
+        )
+        packager = make_assert_generation_target()
+        with patch.object(packager, "get_identifier", return_value=_OTHER_TARGET):
+            result = AssertGenerator(target=packager).build_result(checkpoint=complete)
+        assert result.generation_targets == complete.targets
+        assert result.generation_targets[AssertGenerator.GENERATION_ROLE]["hash"] == target.get_identifier().hash
+
+    async def test_resume_rejects_groups_with_unplanned_assignments_async(self) -> None:
+        target = make_assert_generation_target()
+        generator = AssertGenerator(target=target)
+        on_checkpoint = AsyncMock()
+        await _advance_async(
+            generator=generator,
+            target=target,
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config(group_count=12)),
+            on_checkpoint=on_checkpoint,
+        )
+        partial = next(saved for saved in _saved_checkpoints(on_checkpoint) if saved.completed_batches == 1)
+        assert partial.taxonomy is not None and partial.dimensions is not None
+        first = partial.groups[0]
+        levels = partial.taxonomy.get_coverage_levels(partial.dimensions)
+        other = next(
+            assignment
+            for assignment in (dict(zip(levels, values, strict=True)) for values in product(*levels.values()))
+            if assignment != first.assignment
+        )
+        altered = AssertGenerationCheckpoint.model_validate(
+            {
+                **partial.model_dump(),
+                "groups": [{**first.model_dump(), "assignment": other}, *[g.model_dump() for g in partial.groups[1:]]],
+            }
+        )
+
+        with (
+            patch.object(target, "_send_prompt_to_target_async") as send,
+            pytest.raises(ValueError, match="don't match the planned coverage assignments"),
+        ):
+            await generator.advance_async(checkpoint=altered)
+        send.assert_not_called()
+
+    def test_checkpoint_rejects_another_format_version(self) -> None:
+        data = AssertGenerationCheckpoint(config=make_assert_config()).model_dump(mode="json")
+        assert data["schema_version"] == AssertGenerationCheckpoint.SCHEMA_VERSION
+        with pytest.raises(ValueError, match="format version 2.*Start a new generation"):
+            AssertGenerationCheckpoint.model_validate({**data, "schema_version": 2})
+
+    async def test_only_execute_async_emits_strategy_events_async(self) -> None:
+        target = make_assert_generation_target()
+        generator = AssertGenerator(target=target)
+        with (
+            patch.object(target, "_send_prompt_to_target_async", side_effect=assert_generation_response_async),
+            patch.object(generator, "_handle_event_async", new_callable=AsyncMock) as events,
+        ):
+            await generator.advance_async(checkpoint=AssertGenerationCheckpoint(config=make_assert_config()))
+            advanced = [call.kwargs["event"] for call in events.await_args_list]
+            events.reset_mock()
+            await generator.execute_async(config=make_assert_config())
+        executed = [call.kwargs["event"] for call in events.await_args_list]
+        assert set(advanced) == {
+            StrategyEvent.ON_PRE_SETUP,
+            StrategyEvent.ON_POST_SETUP,
+            StrategyEvent.ON_PRE_TEARDOWN,
+            StrategyEvent.ON_POST_TEARDOWN,
+        }
+        assert {StrategyEvent.ON_PRE_VALIDATE, StrategyEvent.ON_PRE_EXECUTE, StrategyEvent.ON_POST_EXECUTE} <= set(
+            executed
+        )
+
+
+def _seed_group_stage(estimate: PromptGenerationEstimate) -> Any:
+    return next(stage for stage in estimate.stages if stage.stage == AssertGenerationStage.SEED_GROUPS.value)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"target_system_prompt": "x" * 40_000},
+        {"dimensions": [{"name": "channel", "description": "y" * 40_000}]},
+    ],
+)
+def test_estimate_counts_the_seed_group_payload(changes: dict[str, Any]) -> None:
+    described = {"dimensions": [{"name": "channel", "description": "Where the user asks."}]}
+    plain = _seed_group_stage(
+        AssertGenerator.estimate(checkpoint=AssertGenerationCheckpoint(config=make_assert_config(**described)))
+    )
+    heavy = _seed_group_stage(
+        AssertGenerator.estimate(
+            checkpoint=AssertGenerationCheckpoint(config=make_assert_config(**{**described, **changes}))
+        )
+    )
+    added = PromptGenerationEstimate.tokens_from_characters(39_000) * plain.max_calls
+    assert heavy.max_tokens - plain.max_tokens >= added

@@ -607,3 +607,14 @@ def test_estimate_does_not_call_a_target() -> None:
 def test_estimate_rejects_invalid_count(count: Any) -> None:
     with pytest.raises(ValueError, match="count must be a positive integer"):
         TargetObjectiveGenerator.estimate(instructions="Test", count=count)
+
+
+def test_estimate_reads_the_bundled_prompt_once() -> None:
+    from pyrit.executor.promptgen.target_objective_generator import _load_default_prompt_text
+
+    _load_default_prompt_text.cache_clear()
+    with patch.object(SeedPrompt, "from_yaml_file", wraps=SeedPrompt.from_yaml_file) as load:
+        TargetObjectiveGenerator.estimate(instructions="First.", count=1)
+        estimate = TargetObjectiveGenerator.estimate(instructions="Second.", count=1)
+    assert load.call_count == 1
+    assert estimate.high_tokens > 0

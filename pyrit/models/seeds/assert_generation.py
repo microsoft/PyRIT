@@ -7,11 +7,20 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import Enum, StrEnum
 from itertools import combinations
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StrictBool,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -250,7 +259,7 @@ class AssertSystematization(_AssertModel):
         return self
 
 
-class AssertGenerationStage(str, Enum):
+class AssertGenerationStage(StrEnum):
     """ASSERT generation stages, in execution order."""
 
     SYSTEMATIZATION = "systematization"
@@ -426,16 +435,34 @@ class AssertGenerationCheckpoint(_AssertModel):
     The completed stages of one ASSERT generation request.
 
     A checkpoint lets generation stop after any stage for review, accept a revised taxonomy and
-    dimensions, and resume after an interruption without repeating finished model calls.
+    dimensions, and resume after an interruption without repeating finished model calls. It records
+    the target that produced each role's work, so packaging attributes it correctly and resuming
+    can't silently mix models.
     """
 
+    SCHEMA_VERSION: ClassVar[int] = 1
+
+    schema_version: Annotated[int, Field(strict=True)] = SCHEMA_VERSION
     config: AssertGenerationConfig
+    targets: dict[_Name, dict[str, JsonValue]] = Field(
+        default_factory=dict, description="Identifier of the target that produced each role's completed work"
+    )
     systematization: AssertSystematization | None = None
     taxonomy: AssertTaxonomy | None = None
     dimensions: tuple[AssertDimension, ...] | None = None
     provenance: AssertGenerationProvenance = Field(default_factory=AssertGenerationProvenance)
     completed_batches: Annotated[int, Field(strict=True, ge=0)] = 0
     groups: tuple[AssertGeneratedGroupContent, ...] = ()
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: int) -> int:
+        if value != cls.SCHEMA_VERSION:
+            raise ValueError(
+                f"This checkpoint was saved in format version {value}, but this version of PyRIT reads version "
+                f"{cls.SCHEMA_VERSION}. Start a new generation instead of resuming it."
+            )
+        return value
 
     @model_validator(mode="after")
     def _validate_progress(self) -> Self:
