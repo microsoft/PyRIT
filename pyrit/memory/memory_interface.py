@@ -5198,8 +5198,8 @@ class MemoryInterface(abc.ABC):
         Insert a list of seeds into the memory storage.
 
         Seeds already present in storage are skipped by execution identity: value hash, dataset,
-        seed type, data type, role (``None`` counts as ``user``), response schema, and behavioral
-        inputs. Non-execution metadata such as harm categories or descriptions is not part of that
+        seed type, data type, role (``None`` counts as ``user``), general-technique flag, response schema,
+        and behavioral inputs. Non-execution metadata such as harm categories or descriptions is not part of that
         identity, so a metadata-only edit does not create a duplicate and sending a seed standalone
         or inside a singleton group deduplicates the same way. Retained multi-seed groups keep their
         complete membership; they are compared as complete groups by full member identity, including
@@ -5357,6 +5357,7 @@ class MemoryInterface(abc.ABC):
                 "seed_type": entry.seed_type,
                 "data_type": entry.data_type,
                 "role": entry.role or "user",
+                "is_general_technique": entry.is_general_technique,
                 "response_json_schema": getattr(seed, "response_json_schema", None),
                 "behavioral_parameters": SeedIdentifier.get_behavioral_parameters(seed),
             },
