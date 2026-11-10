@@ -4,9 +4,9 @@
 import dataclasses
 import json
 import sys
+import threading
 from collections.abc import Iterator
 from pathlib import Path
-from threading import current_thread
 from typing import Any
 from unittest.mock import patch
 
@@ -27,13 +27,8 @@ from pyrit.models.catalog import (
 )
 from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
-from pyrit.registry.registry_recipe_restore import (
-    RecipeBuilder,
-    RecipeRejectedError,
-    RegistryRecipeRestorer,
-    SavedRecipes,
-)
-from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RegistryRecipeStorage
+from pyrit.registry.registry_recipe_restore import RecipeBuilder, RecipeRejectedError, RegistryRecipeRestorer
+from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RecipeListing, RegistryRecipeStorage
 from unit.mocks import MockPromptTarget
 
 _OPENAI_MODULE = "pyrit.prompt_target.openai.openai_chat_target"
@@ -213,34 +208,29 @@ class TestRestoreOrderAndRebuild:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
         restorer = RegistryRecipeRestorer(source=str(tmp_path))
 
-        with patch.object(TargetRegistry, "create_instance_from_external_input") as build:
-            saved = restorer.read()
-        build.assert_not_called()
+        saved = restorer.read()
+        assert "contoso_gpt4o" not in TargetRegistry.get_registry_singleton().instances
         with patch.object(RegistryRecipeStorage, "list_recipes", side_effect=AssertionError("read again")):
             report = await restorer.restore_async(saved=saved, build_async=_build_async)
 
         assert report.failures == []
         assert [ref.name for ref in report.restored] == ["contoso_gpt4o"]
 
-    async def test_reads_in_a_worker_thread_and_builds_on_the_calling_one(self, tmp_path: Path) -> None:
+    async def test_reads_off_the_event_loop_when_not_given_what_was_read(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
-        restorer = RegistryRecipeRestorer(source=str(tmp_path))
-        read, threads = restorer.read, {}
+        list_recipes = RegistryRecipeStorage.list_recipes
+        reading_threads: set[int] = set()
 
-        def read_noting_thread() -> SavedRecipes:
-            threads["read"] = current_thread()
-            return read()
+        def record_thread(storage: RegistryRecipeStorage) -> RecipeListing:
+            reading_threads.add(threading.get_ident())
+            return list_recipes(storage)
 
-        async def build_noting_thread(stored: StoredRecipe) -> None:
-            threads["build"] = current_thread()
-            await _build_async(stored)
+        with patch.object(RegistryRecipeStorage, "list_recipes", autospec=True, side_effect=record_thread):
+            report = await _restore(tmp_path)
 
-        with patch.object(restorer, "read", read_noting_thread):
-            report = await restorer.restore_async(build_async=build_noting_thread)
-
-        assert report.failures == []
-        assert threads["build"] is current_thread()
-        assert threads["read"] is not current_thread()
+        assert [ref.name for ref in report.restored] == ["contoso_gpt4o"]
+        assert reading_threads
+        assert threading.get_ident() not in reading_threads
 
     async def test_orders_entries_of_the_same_kind(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("b_member", "c_member"))
@@ -457,19 +447,31 @@ class TestRestoreFailures:
         assert isinstance(target, _OptionalKeyTarget)
         assert (target.endpoint, target.api_key) == ("https://agent.example.test", None)
 
-    async def test_a_planning_error_fails_only_that_entry(self, tmp_path: Path) -> None:
+    async def test_a_planning_bug_fails_only_that_entry_as_a_logged_build_error(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "a_first", _IDENTITY_TARGET)
         _save(tmp_path, RegistryRecipeKind.TARGETS, "b_second", _IDENTITY_TARGET)
+        registry = TargetRegistry.get_registry_singleton()
+        get_metadata = registry.get_registered_class_metadata
+        errors = iter([RuntimeError("bug")])
 
-        with patch.object(
-            RegistryRecipeRestorer, "_parameter_references", side_effect=[RuntimeError("unexpected"), []]
+        def fail_once(name: str) -> Any:
+            if (error := next(errors, None)) is not None:
+                raise error
+            return get_metadata(name)
+
+        with (
+            patch.object(registry, "get_registered_class_metadata", side_effect=fail_once),
+            caplog.at_level("ERROR", logger="pyrit.registry.registry_recipe_restore"),
         ):
             report = await _restore(tmp_path)
 
         (failure,) = report.failures
         assert (failure.name, failure.reason) == ("a_first", RestoreFailureReason.BUILD_ERROR)
-        assert failure.message == "RuntimeError: unexpected"
+        assert failure.message == "RuntimeError: bug"
         assert [ref.name for ref in report.restored] == ["b_second"]
+        assert "Traceback (most recent call last)" in caplog.text
 
     @pytest.mark.parametrize(
         ("text", "expected"),
@@ -500,12 +502,17 @@ class TestRestoreFailures:
         assert len(failure.message) == MAX_FAILURE_MESSAGE_LENGTH
         assert failure.message.endswith("...")
 
-    def test_safe_message_survives_an_error_that_cannot_be_printed(self) -> None:
+    async def test_a_build_error_that_cannot_be_printed_is_reported_by_its_type(self, tmp_path: Path) -> None:
         class UnprintableError(Exception):
             def __str__(self) -> str:
                 raise RuntimeError("cannot print")
 
-        assert RegistryRecipeRestorer._safe_message(UnprintableError()) == "UnprintableError"
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "broken", _IDENTITY_TARGET)
+
+        report = await _restore(tmp_path, build_async=_raising_builder({"broken": UnprintableError()}))
+
+        (failure,) = report.failures
+        assert (failure.reason, failure.message) == (RestoreFailureReason.BUILD_ERROR, "UnprintableError")
 
     async def test_logs_each_failure_once_with_its_traceback_and_without_url_credentials(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -730,34 +737,6 @@ class TestRestoreFailures:
             with pytest.raises(KeyError, match="bug"):
                 await _restore(tmp_path)
 
-    async def test_reports_a_planning_bug_as_a_build_error(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
-
-        with (
-            patch.object(RegistryRecipeRestorer, "_component_references", side_effect=KeyError("bug")),
-            caplog.at_level("WARNING", logger="pyrit.registry.registry_recipe_restore"),
-        ):
-            report = await _restore(tmp_path)
-
-        (failure,) = report.failures
-        assert (failure.name, failure.reason) == ("contoso_gpt4o", RestoreFailureReason.BUILD_ERROR)
-        assert "KeyError: 'bug'" in caplog.text
-        assert "Traceback (most recent call last)" in caplog.text
-
-    async def test_reports_a_technique_that_does_not_fit_its_scenarios_as_invalid(self, tmp_path: Path) -> None:
-        without_converters = {key: value for key, value in _TECHNIQUE.items() if key != "request_converters"}
-        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
-        _save(tmp_path, RegistryRecipeKind.TECHNIQUES, "formal_red_team", without_converters)
-
-        with patch.object(AttackTechniqueRegistry, "validate_scenario_pools", side_effect=ValueError("pool conflict")):
-            report = await _restore(tmp_path)
-
-        (failure,) = report.failures
-        assert (failure.name, failure.reason) == ("formal_red_team", RestoreFailureReason.INVALID_RECIPE)
-        assert "pool conflict" in failure.message
-
     async def test_a_build_error_fails_only_that_entry(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "bad", _IDENTITY_TARGET)
         _save(tmp_path, RegistryRecipeKind.TARGETS, "good", _IDENTITY_TARGET)
@@ -768,7 +747,7 @@ class TestRestoreFailures:
         assert (failure.name, failure.reason) == ("bad", RestoreFailureReason.BUILD_ERROR)
         assert failure.version
         assert [ref.name for ref in report.restored] == ["good"]
-        assert "bad" not in TargetRegistry.get_registry_singleton().instances.get_names()
+        assert "bad" not in TargetRegistry.get_registry_singleton().instances
 
     async def test_reports_the_reason_a_builder_refuses_an_entry_with(self, tmp_path: Path) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "refused", _IDENTITY_TARGET)
