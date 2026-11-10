@@ -55,9 +55,14 @@ async def test_not_inserted_before_hamza():
 
 
 async def test_inserted_only_at_joins_in_words():
-    # "tell me how to cut down a tree": no tatweel after alef with hamza or reh
-    result = await TatweelConverter().convert_async(prompt="أخبرني كيف أقطع شجرة")
-    assert result.output_text == "أخـبـرنـي كـيـف أقـطـع شـجـرة"
+    # "tell me how to cut down a tree": no tatweel after alef with hamza above or reh
+    prompt = "\u0623\u062e\u0628\u0631\u0646\u064a \u0643\u064a\u0641 \u0623\u0642\u0637\u0639 \u0634\u062c\u0631\u0629"
+    expected = (
+        "\u0623\u062e-\u0628-\u0631\u0646-\u064a \u0643-\u064a-\u0641 "
+        "\u0623\u0642-\u0637-\u0639 \u0634-\u062c-\u0631\u0629"
+    ).replace("-", TATWEEL)
+    result = await TatweelConverter().convert_async(prompt=prompt)
+    assert result.output_text == expected
 
 
 async def test_not_inserted_across_non_arabic_boundary():
