@@ -69,6 +69,11 @@ def test_redact_url_credentials_removes_user_name_and_password() -> None:
         ("to wss://user:SECRET@host/p#part failed", "to wss://host/p failed"),
         ("first http://a/b?x=1 then https://c/d", "first http://a/b then https://c/d"),
         ("bad https://[x?sig=SECRET", "bad <URL hidden>"),
+        ("endpoint_https://user:SECRET@host/v1", "endpoint_https://host/v1"),
+        (
+            "404 for https://graph.example/users/alex@contoso.com/mail?x=1",
+            "404 for https://graph.example/users/alex@contoso.com/mail",
+        ),
         ("host/path?api-version=1&sig=SECRET&se=2030", "host/path?api-version=1&sig=<hidden>&se=2030"),
         ("could not be coerced to float: 'hot'", "could not be coerced to float: 'hot'"),
     ],
