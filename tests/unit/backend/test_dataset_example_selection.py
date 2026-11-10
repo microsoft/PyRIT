@@ -497,6 +497,26 @@ async def test_objective_count_does_not_reject_the_selection(
     assert estimate.dataset_size.model_dump() == {"kind": "bounded", "value": 1}
 
 
+async def test_exact_selection_keeps_the_explicit_scoring_target(sqlite_instance: MemoryInterface) -> None:
+    group = uuid4()
+    await _store(sqlite_instance, _prompt("body", prompt_group_id=group, sequence=1, role="user"))
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[group], dataset_name=DATASET)
+    scoring_target = MockPromptTarget()
+    with patch.object(ScenarioConfigurationResolver, "resolve_target", return_value=scoring_target) as resolve_target:
+        resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
+            scenario_name="test.exact",
+            scenario_class=_ExactScenario,
+            scoring_target_name="rubric-target",
+            example_selection=selection,
+            memory=sqlite_instance,
+        )
+
+    resolve_target.assert_called_once_with(target_name="rubric-target")
+    assert resolved["scoring_target"] is scoring_target
+    assert isinstance(resolved["dataset_config"], ExactExampleDatasetConfiguration)
+    assert "dataset_overrides" not in resolved
+
+
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize("objective_count", [0, 2])
 async def test_launch_build_reports_unsupported_without_hiding_the_example(
@@ -697,16 +717,21 @@ async def test_launch_request_round_trip_keeps_selection_and_resume_goes_stale(
     request_model = RunScenarioRequest(
         scenario_name="test.exact",
         target_name="target",
+        scoring_target_name="rubric-target",
         example_selection=selection,
     )
     with (
         patch.object(ScenarioRegistry, "get_registry_singleton", return_value=registry),
         patch.object(service, "_run_initializers_async", new_callable=AsyncMock),
-        patch.object(service._configuration_resolver, "resolve_target", return_value=MockPromptTarget()),
+        patch.object(type(service._configuration_resolver), "resolve_target", return_value=MockPromptTarget()),
     ):
         await service._prepare_run_async(request=request_model)
         saved = registry.create_and_initialize_async.call_args.kwargs["initial_metadata"][_LAUNCH_REQUEST_METADATA_KEY]
         assert saved["example_selection"]["examples"][0]["fingerprint"] == selection.examples[0].fingerprint
+        assert saved["scoring_target_name"] == "rubric-target"
+        init_kwargs = registry.create_and_initialize_async.call_args.kwargs
+        assert isinstance(init_kwargs["dataset_config"], ExactExampleDatasetConfiguration)
+        assert init_kwargs["scoring_target"] is not None
         stored = MagicMock()
         stored.id = uuid4()
         stored.metadata = {_LAUNCH_REQUEST_METADATA_KEY: saved}
@@ -715,6 +740,7 @@ async def test_launch_request_round_trip_keeps_selection_and_resume_goes_stale(
         stored.operation_id = None
         restored = service._restore_launch_request(stored=stored)
     assert restored.example_selection == selection
+    assert restored.scoring_target_name == "rubric-target"
     await _mutate(sqlite_instance, seed.id, value="SECRET_REPLACEMENT_2757")
     with pytest.raises(DatasetExampleSelectionError, match="stale") as caught:
         await ScenarioConfigurationResolver.resolve_configuration_async(

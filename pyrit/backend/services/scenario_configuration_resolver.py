@@ -15,16 +15,18 @@ from pyrit.backend.services.dataset_example_selection import (
     selection_conflicts_with_datasets,
 )
 from pyrit.models import DatasetExampleSelectionError
+from pyrit.models.scenario_readiness import ScenarioConfigurationIssue, ScenarioReadiness
 from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario import ExactExampleDatasetConfiguration
-from pyrit.scenario.core import resolve_technique_tokens
+from pyrit.scenario.core import override_default_adversarial_target, resolve_technique_tokens
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 from pyrit.score import TrueFalseScorer
 
 if TYPE_CHECKING:
     from pyrit.converter import Converter
     from pyrit.memory import MemoryInterface
-    from pyrit.models import DatasetExampleSelection, ScenarioDatasetRequest
+    from pyrit.models import DatasetExampleSelection, ScenarioDatasetRequest, ScenarioRunSizeEstimateRequest
+    from pyrit.models.catalog import RunScenarioRequest
     from pyrit.models.component_spec import RegisteredComponentReference
     from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
@@ -33,6 +35,123 @@ if TYPE_CHECKING:
 
 class ScenarioConfigurationResolver:
     """Resolve registry-backed scenario inputs for launch and estimation."""
+
+    @classmethod
+    def create_configured_scenario(
+        cls, *, scenario_name: str, request: RunScenarioRequest | ScenarioRunSizeEstimateRequest
+    ) -> Scenario:
+        """
+        Build configuration only, sharing the launch parameter and reference rules.
+
+        Returns:
+            Scenario: Configured, uninitialized scenario.
+        """
+        scenario_class = cls.resolve_scenario_class(scenario_name=scenario_name)
+        params = cls.resolve_configuration(
+            scenario_name=scenario_name,
+            scenario_class=scenario_class,
+            objective_target=cls.resolve_target(target_name=request.target_name) if request.target_name else None,
+            scoring_target_name=request.scoring_target_name,
+            techniques=request.techniques,
+            technique_override=request.technique_override,
+            datasets=request.dataset_request,
+            include_baseline=request.include_baseline,
+        )
+        return ScenarioRegistry.get_registry_singleton()._create_and_configure(
+            scenario_name,
+            params={**(request.scenario_params or {}), **params},
+            constructor_kwargs=cls.resolve_constructor_kwargs(
+                scenario_class=scenario_class,
+                objective_scorer=request.objective_scorer,
+            ),
+        )
+
+    @classmethod
+    def resolve_readiness(
+        cls, *, scenario_name: str, request: RunScenarioRequest | ScenarioRunSizeEstimateRequest
+    ) -> ScenarioReadiness:
+        """
+        Preview exactly the roles a configured run requires, without executing work.
+
+        Returns:
+            ScenarioReadiness: Effective bindings and actionable issues.
+        """
+        issues, updates, target = cls.resolve_named_roles(scenario_name=scenario_name, request=request)
+        with override_default_adversarial_target(target):
+            try:
+                scenario = cls.create_configured_scenario(
+                    scenario_name=scenario_name, request=request.model_copy(update=updates)
+                )
+                readiness = scenario.get_readiness()
+            except ValueError as exc:
+                readiness = ScenarioReadiness(
+                    issues=[
+                        ScenarioConfigurationIssue(
+                            role="configuration",
+                            component=scenario_name,
+                            reason=str(exc),
+                            remediation="Correct the selected scenario parameters, datasets, or techniques.",
+                        )
+                    ]
+                )
+        invalid_roles = {issue.role for issue in issues}
+        readiness.bindings = [binding for binding in readiness.bindings if binding.role not in invalid_roles]
+        readiness.issues = issues + [issue for issue in readiness.issues if issue.role not in invalid_roles]
+        return readiness
+
+    @classmethod
+    def resolve_named_roles(
+        cls, *, scenario_name: str, request: RunScenarioRequest | ScenarioRunSizeEstimateRequest
+    ) -> tuple[list[ScenarioConfigurationIssue], dict[str, Any], PromptTarget | None]:
+        """
+        Validate all explicit references before resolving any scenario defaults.
+
+        Returns:
+            tuple: Issues, invalid request-field replacements, and explicit generation target.
+        """
+        issues: list[ScenarioConfigurationIssue] = []
+        updates: dict[str, Any] = {}
+        target = None
+        for field, role in (
+            ("target_name", "objective_target"),
+            ("scoring_target_name", "scoring_target"),
+            ("adversarial_target_name", "adversarial_target"),
+        ):
+            name = getattr(request, field)
+            if name is None:
+                continue
+            try:
+                resolved = cls.resolve_target(target_name=name)
+                if role == "adversarial_target":
+                    validate_default_adversarial_target(resolved)
+                    target = resolved
+            except ValueError as exc:
+                issues.append(
+                    ScenarioConfigurationIssue(
+                        role=role,
+                        component=name,
+                        reason=str(exc),
+                        remediation="Select an available compatible target.",
+                    )
+                )
+                updates[field] = None
+        if request.objective_scorer is not None:
+            try:
+                cls.resolve_constructor_kwargs(
+                    scenario_class=cls.resolve_scenario_class(scenario_name=scenario_name),
+                    objective_scorer=request.objective_scorer,
+                )
+            except ValueError as exc:
+                issues.append(
+                    ScenarioConfigurationIssue(
+                        role="objective_scorer",
+                        component=request.objective_scorer.registry_name,
+                        reason=str(exc),
+                        remediation="Select the current registered scorer and review its identity.",
+                    )
+                )
+                updates["objective_scorer"] = None
+        return issues, updates, target
 
     @staticmethod
     def resolve_constructor_kwargs(
@@ -122,6 +241,7 @@ class ScenarioConfigurationResolver:
         scenario_name: str,
         scenario_class: type[Scenario],
         objective_target: Any | None = None,
+        scoring_target_name: str | None = None,
         techniques: list[str] | None = None,
         technique_override: TechniqueOverride | None = None,
         datasets: ScenarioDatasetRequest | None = None,
@@ -148,6 +268,8 @@ class ScenarioConfigurationResolver:
             ValueError: If techniques or dataset overrides are invalid.
         """
         resolved: dict[str, Any] = {}
+        if scoring_target_name is not None:
+            resolved["scoring_target"] = cls.resolve_target(target_name=scoring_target_name)
         if objective_target is not None:
             resolved["objective_target"] = objective_target
         if max_concurrency is not None:
@@ -277,6 +399,7 @@ class ScenarioConfigurationResolver:
         scenario_name: str,
         scenario_class: type[Scenario],
         objective_target: Any | None = None,
+        scoring_target_name: str | None = None,
         techniques: list[str] | None = None,
         technique_override: TechniqueOverride | None = None,
         datasets: ScenarioDatasetRequest | None = None,
@@ -336,6 +459,7 @@ class ScenarioConfigurationResolver:
             scenario_name=scenario_name,
             scenario_class=scenario_class,
             objective_target=objective_target,
+            scoring_target_name=scoring_target_name,
             techniques=techniques,
             technique_override=technique_override,
             datasets=datasets_for_named_mode,

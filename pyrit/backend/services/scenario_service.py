@@ -274,6 +274,7 @@ class ScenarioService:
                 datasets=request.dataset_request,
                 example_selection=request.example_selection,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 include_baseline=request.include_baseline,
                 reject_exact_selection=True,
             )
@@ -554,6 +555,7 @@ class ScenarioService:
                 scenario_name=scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
