@@ -46,13 +46,7 @@ from pyrit.models.catalog import (
     SavedEntryOwner,
 )
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import (
-    AttackTechniqueRegistry,
-    ConverterRegistry,
-    SavedEntryUnavailableError,
-    ScorerRegistry,
-    TargetRegistry,
-)
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_OWNER_METADATA_KEY,
     RegistryNameTakenError,
@@ -294,7 +288,7 @@ async def test_replacing_a_saved_entry_needs_the_lock_an_edit_holds(tmp_path: Pa
             recipe=recipe,
             recipes_source=str(tmp_path),
             register=register,
-            replacing=SavedEntryReplacement(version="v1", previous=recipe),
+            replacing=SavedEntryReplacement(version="v1", previous=recipe, running=True),
         )
 
     register.assert_not_called()
@@ -506,7 +500,7 @@ async def test_the_old_entry_is_released_only_when_nothing_could_use_it(tmp_path
         release.assert_awaited_once_with(old)
 
 
-async def test_an_edit_that_fixes_an_entry_that_failed_to_restore_registers_it(tmp_path: Path) -> None:
+async def test_an_edit_that_fixes_an_entry_that_failed_to_restore_only_saves_it(tmp_path: Path) -> None:
     broken = {**_SAVED_CHAT, "params": {**_SAVED_CHAT["params"], "endpoint": "https://api.example.test/v1"}}
     _write(tmp_path, TARGETS, "saved_chat", broken)
     assert [failure.name for failure in (await _restore(tmp_path)).failures] == ["saved_chat"]
@@ -522,12 +516,13 @@ async def test_an_edit_that_fixes_an_entry_that_failed_to_restore_registers_it(t
     )
 
     assert edited.running is False
-    assert isinstance(instances.get("saved_chat"), OpenAIChatTarget)
-    TargetRegistry.reset_registry_singleton()
+    # The next apply or start restores it into the registries as they are, so the edit must not have registered it.
+    assert instances.get("saved_chat") is None
     assert (await _restore(tmp_path)).failures == []
+    assert isinstance(instances.get("saved_chat"), OpenAIChatTarget)
 
 
-async def test_an_edit_that_doesnt_fix_an_entry_that_failed_to_restore_keeps_its_name_held(tmp_path: Path) -> None:
+async def test_an_edit_that_doesnt_fix_an_entry_that_failed_to_restore_leaves_its_file(tmp_path: Path) -> None:
     broken = {**_SAVED_CHAT, "params": {**_SAVED_CHAT["params"], "endpoint": "https://api.example.test/v1"}}
     _write(tmp_path, TARGETS, "saved_chat", broken)
     assert len((await _restore(tmp_path)).failures) == 1
@@ -538,8 +533,7 @@ async def test_an_edit_that_doesnt_fix_an_entry_that_failed_to_restore_keeps_its
     with pytest.raises(ValueError):
         await _edit(tmp_path, TARGETS, "saved_chat", version=details.version, recipe=details.recipe)
 
-    with pytest.raises(SavedEntryUnavailableError):
-        instances.get("saved_chat")
+    assert instances.get("saved_chat") is None
     assert _file(tmp_path, TARGETS, "saved_chat").read_bytes() == before
 
 
@@ -628,12 +622,13 @@ async def test_a_name_a_startup_entry_took_cant_be_edited_into_coming_back(tmp_p
     assert _file(tmp_path, CONVERTERS, "cat_replace").read_bytes() == before
 
 
-async def test_an_edit_of_an_entry_whose_name_a_startup_entry_took_keeps_the_name_held(tmp_path: Path) -> None:
+async def test_an_edit_of_an_entry_whose_name_a_startup_entry_took_leaves_the_startup_entry(tmp_path: Path) -> None:
     await _save_replace(tmp_path)
     ConverterRegistry.reset_registry_singleton()
     instances = ConverterRegistry.get_registry_singleton().instances
+    startup = SearchReplaceConverter(pattern="fish", replace="dog")
     with registration_origin(RegistryEntryOrigin.CONFIGURATION):
-        instances.register(SearchReplaceConverter(pattern="fish", replace="dog"), name="cat_replace")
+        instances.register(startup, name="cat_replace")
     failures = (await _restore(tmp_path)).failures
     assert [failure.reason for failure in failures] == [RestoreFailureReason.NAME_CLASH]
     details = await _read(tmp_path, CONVERTERS, "cat_replace")
@@ -647,8 +642,7 @@ async def test_an_edit_of_an_entry_whose_name_a_startup_entry_took_keeps_the_nam
             recipe={**details.recipe, "params": {"pattern": "cat", "replace": "bird"}},
         )
 
-    with pytest.raises(SavedEntryUnavailableError):
-        instances.get("cat_replace")
+    assert instances.get("cat_replace") is startup
 
 
 @pytest.mark.parametrize(

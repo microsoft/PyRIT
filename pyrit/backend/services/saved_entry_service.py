@@ -149,9 +149,8 @@ class SavedEntryService:
         Change a saved entry's settings, rebuilding it through the API that creates one.
 
         The running entry is removed while it's rebuilt and put back if the edit fails. Registered entries that hold
-        it keep the old object until the next apply or restart. An entry that couldn't be restored is registered
-        once its new settings work, which frees its name. The name, the class or attack type, and who saved it stay
-        the same.
+        it keep the old object until the next apply or restart. An entry that hadn't been restored is only saved; the
+        next apply or restart restores it. The name, the class or attack type, and who saved it stay the same.
 
         Args:
             kind (RegistryRecipeKind): The kind of entry.
@@ -194,18 +193,11 @@ class SavedEntryService:
                     f"Saved {singular} '{name}' changed since it was read. Look at it again before changing it."
                 )
             instances = REGISTRIES_BY_KIND[kind].get_registry_singleton().instances
-            held = next(
-                (unavailable for unavailable in instances.get_unavailable_entries() if unavailable.name == name), None
-            )
-            # A held name isn't listed, so this looks up only an entry that was registered.
-            entry = instances.get_entry(name) if name in instances.get_names() else None
+            entry = instances.get_entry(name)
             if entry is not None and registry_entry_origin(entry.metadata) is not RegistryEntryOrigin.SAVED:
                 entry = None
             if entry is not None:
                 instances.unregister(name, expected_entry=entry)
-            if held is not None:
-                # The rebuilt entry takes the name that its failed restore held.
-                instances.clear_unavailable(name)
             try:
                 await _rebuild_async(
                     kind=kind,
@@ -214,15 +206,13 @@ class SavedEntryService:
                     changed=request.recipe,
                     caller=caller,
                     recipes_source=recipes_source,
-                    replacing=SavedEntryReplacement(version=stored.version, previous=stored.recipe),
+                    replacing=SavedEntryReplacement(
+                        version=stored.version, previous=stored.recipe, running=entry is not None
+                    ),
                 )
             except BaseException:
                 _put_back(kind=kind, entry=entry)
-                if held is not None:
-                    instances.mark_unavailable(held)
                 raise
-            if held is not None and runtime is not None:
-                runtime.forget_restore_failure(SavedEntryRef(kind=kind, name=name))
             # Listed after the rebuild, since a request that finished during it may have registered an entry that
             # holds the old one.
             holders = _holders(kind=kind, entry=entry) if entry is not None else []

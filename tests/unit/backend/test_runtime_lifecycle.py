@@ -1739,7 +1739,7 @@ async def test_fixing_the_file_and_applying_restores_the_entry_async(runtime: Ru
 
 
 @pytest.mark.usefixtures("patch_central_database", "startup_chat")
-async def test_an_edit_that_fixes_an_entry_that_couldnt_be_restored_registers_it_async(
+async def test_an_edit_that_fixes_an_entry_that_couldnt_be_restored_comes_back_on_apply_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     # The cached service holds the registry it was made with, so it's made again with this test's.
@@ -1753,7 +1753,7 @@ async def test_an_edit_that_fixes_an_entry_that_couldnt_be_restored_registers_it
         document={**_RESTORABLE_TARGET, "params": {**_RESTORABLE_TARGET["params"], **unreachable}},
     )
     await _start_with_recipes_async(runtime, recipes=recipes)
-    assert [failure["name"] for failure in runtime.status()["restore_failures"]] == ["ghost"]
+    assert runtime.state == "failed"
     # The fixture skips the management setup that names the storage source.
     runtime.app.state.registry_recipes_source = str(recipes)
     runtime.app.include_router(saved_entries.router, prefix="/api")
@@ -1770,6 +1770,16 @@ async def test_an_edit_that_fixes_an_entry_that_couldnt_be_restored_registers_it
     get_target_service.cache_clear()
 
     assert (edit.status_code, edit.json()["running"]) == (200, False)
+    assert runtime.state == "failed"
+    assert [failure["name"] for failure in runtime.status()["restore_failures"]] == ["ghost"]
+    assert TargetRegistry.get_registry_singleton().instances.get("ghost") is None
+
+    config = await runtime._load_async()
+    config.apply_prepared_reinitialization_async.side_effect = lambda **_: TargetRegistry.reset_registry_singleton()
+    lifecycle_module.close_services_async.side_effect = _forget_registry_services_async
+    await apply_async(runtime)
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
     assert runtime.status()["restore_failures"] == []
     assert isinstance(TargetRegistry.get_registry_singleton().instances.get("ghost"), OpenAIChatTarget)
 

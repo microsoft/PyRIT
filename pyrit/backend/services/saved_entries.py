@@ -64,16 +64,19 @@ class SavedEntryReplacement:
     """
     A saved entry an edit rebuilds, so its recipe is overwritten instead of created.
 
-    The edit holds ``hold_saved_entry_lock_async()``, and before the entry is rebuilt it has removed the running entry
-    or released the name that a failed restore held.
+    The edit holds ``hold_saved_entry_lock_async()``, and before the entry is rebuilt it has removed the running
+    entry.
 
     Attributes:
         version (str): The version of the recipe the edit read.
         previous (ComponentRecipe | TechniqueRecipe): That recipe, written back if the new entry can't be registered.
+        running (bool): Whether the entry was running, so the rebuilt one is registered in its place. One that
+            wasn't, such as an entry that failed to restore, is only saved, and the next apply or start restores it.
     """
 
     version: str
     previous: ComponentRecipe | TechniqueRecipe
+    running: bool
 
 
 # Whether the running task holds the lock, so it can't wait on it a second time.
@@ -451,7 +454,7 @@ async def _replace_then_register_async(
     replacing: SavedEntryReplacement,
 ) -> None:
     """
-    Overwrite the recipe an edit read, then register the rebuilt entry.
+    Overwrite the recipe an edit read, then register the rebuilt entry if the old one was running.
 
     The old recipe is put back if registering fails.
 
@@ -478,6 +481,8 @@ async def _replace_then_register_async(
             error.reason,
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
+    if not replacing.running:
+        return
     try:
         register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
     except Exception as error:
