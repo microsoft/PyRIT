@@ -296,7 +296,7 @@ class TestLeakReplay:
         scenario = LeakReplay()
         await _initialize_async(
             scenario=scenario,
-            seeds={name: corpus_seeds[LITERATURE] for name in names},
+            seeds=dict.fromkeys(names, corpus_seeds[LITERATURE]),
             dataset_config=_config(names=names),
         )
 
