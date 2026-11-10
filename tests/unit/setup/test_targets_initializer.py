@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import os
+from collections.abc import Generator
 from threading import get_ident
 from unittest.mock import patch
 
@@ -11,6 +12,22 @@ from pyrit.prompt_target import LiteLLMDecisionTarget, OpenAIChatTarget
 from pyrit.registry import TargetRegistry
 from pyrit.setup.initializers import TargetInitializer
 from pyrit.setup.initializers.targets import TARGET_CONFIGS, generate_rr_name, get_behavioral_key
+
+TARGET_ENV_VARS: frozenset[str] = frozenset(
+    var
+    for config in TARGET_CONFIGS
+    for var in (config.endpoint_var, config.key_var, config.model_var, config.underlying_model_var)
+    if var
+)
+
+
+@pytest.fixture(autouse=True)
+def isolated_target_environment() -> Generator[None, None, None]:
+    """Hide ambient target variables so each test registers only what it configures, then restore the environment."""
+    with patch.dict("os.environ"):
+        for var in TARGET_ENV_VARS:
+            os.environ.pop(var, None)
+        yield
 
 
 async def test_target_registration_runs_off_loop_async() -> None:
@@ -62,20 +79,10 @@ class TestTargetInitializerInitialize:
     def setup_method(self) -> None:
         """Reset registry before each test."""
         TargetRegistry.reset_registry_singleton()
-        # Clear all target-related env vars
-        self._clear_env_vars()
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
         TargetRegistry.reset_registry_singleton()
-        self._clear_env_vars()
-
-    def _clear_env_vars(self) -> None:
-        """Clear all environment variables used by TARGET_CONFIGS."""
-        for config in TARGET_CONFIGS:
-            for var in [config.endpoint_var, config.key_var, config.model_var, config.underlying_model_var]:
-                if var and var in os.environ:
-                    del os.environ[var]
 
     async def test_initialize_runs_without_error_no_env_vars(self):
         """Test that initialize runs without errors when no env vars are set."""
@@ -349,11 +356,6 @@ class TestTargetInitializerTags:
         assert registry.instances.get("azure_openai_gpt4o_temp9") is not None
         assert registry.instances.get("azure_openai_gpt4o_temp0") is None
 
-        # Clean up
-        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
-        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
-        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
-
     async def test_default_tag_excludes_scorer_targets(self) -> None:
         """Test that tags=['default'] registers default-tagged targets including temp9."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
@@ -368,11 +370,6 @@ class TestTargetInitializerTags:
         assert registry.instances.get("azure_openai_gpt4o") is not None
         assert registry.instances.get("azure_openai_gpt4o_temp9") is not None
         assert registry.instances.get("azure_openai_gpt4o_temp0") is None
-
-        # Clean up
-        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
-        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
-        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
 
     async def test_scorer_tag_only_registers_scorer_targets(self) -> None:
         """Test that tags=['scorer'] only registers scorer-tagged targets (temp0)."""
@@ -389,11 +386,6 @@ class TestTargetInitializerTags:
         assert registry.instances.get("azure_openai_gpt4o_temp9") is None
         assert registry.instances.get("azure_openai_gpt4o_temp0") is not None
 
-        # Clean up
-        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
-        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
-        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
-
     async def test_multiple_tags_registers_matching(self) -> None:
         """Test that multiple tags register targets matching any tag."""
         os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"] = "https://test.openai.azure.com"
@@ -407,11 +399,6 @@ class TestTargetInitializerTags:
         registry = TargetRegistry.get_registry_singleton()
         assert registry.instances.get("azure_openai_gpt4o") is not None
         assert registry.instances.get("azure_openai_gpt4o_temp9") is not None
-
-        # Clean up
-        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
-        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
-        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
 
     async def test_all_tag_registers_all_targets(self) -> None:
         """Test that tags=['all'] registers both default and scorer targets."""
@@ -427,11 +414,6 @@ class TestTargetInitializerTags:
         assert registry.instances.get("azure_openai_gpt4o") is not None
         assert registry.instances.get("azure_openai_gpt4o_temp9") is not None
 
-        # Clean up
-        del os.environ["AZURE_OPENAI_GPT4O_ENDPOINT"]
-        del os.environ["AZURE_OPENAI_GPT4O_KEY"]
-        del os.environ["AZURE_OPENAI_GPT4O_MODEL"]
-
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTargetInitializerDefaultObjectiveTarget:
@@ -444,8 +426,6 @@ class TestTargetInitializerDefaultObjectiveTarget:
     def teardown_method(self) -> None:
         """Clean up after each test."""
         TargetRegistry.reset_registry_singleton()
-        for var in ["OPENAI_CHAT_ENDPOINT", "OPENAI_CHAT_KEY", "OPENAI_CHAT_MODEL"]:
-            os.environ.pop(var, None)
 
     async def test_openai_chat_registered_with_default_tag(self) -> None:
         """Test that openai_chat target is tagged as DEFAULT_OBJECTIVE_TARGET."""
@@ -502,15 +482,6 @@ class TestTargetInitializerConfigTagPropagation:
     def teardown_method(self) -> None:
         """Clean up after each test."""
         TargetRegistry.reset_registry_singleton()
-        for var in [
-            "OBJECTIVE_SCORER_CHAT_ENDPOINT",
-            "OBJECTIVE_SCORER_CHAT_KEY",
-            "OBJECTIVE_SCORER_CHAT_MODEL",
-            "OPENAI_CHAT_ENDPOINT",
-            "OPENAI_CHAT_KEY",
-            "OPENAI_CHAT_MODEL",
-        ]:
-            os.environ.pop(var, None)
 
     async def test_register_target_propagates_config_tags(self) -> None:
         """
@@ -556,16 +527,13 @@ class TestTargetInitializerConfigTagPropagation:
 
         os.environ["EMPTY_TAGS_ENDPOINT"] = "https://example.com"
 
-        try:
-            mock_registry = MagicMock()
-            with patch.object(TargetRegistry, "get_registry_singleton", return_value=mock_registry):
-                init = TargetInitializer()
-                init._register_target(config)
+        mock_registry = MagicMock()
+        with patch.object(TargetRegistry, "get_registry_singleton", return_value=mock_registry):
+            init = TargetInitializer()
+            init._register_target(config)
 
-            mock_registry.instances.register.assert_called_once()
-            mock_registry.instances.add_tags.assert_not_called()
-        finally:
-            os.environ.pop("EMPTY_TAGS_ENDPOINT", None)
+        mock_registry.instances.register.assert_called_once()
+        mock_registry.instances.add_tags.assert_not_called()
 
     async def test_register_target_default_objective_tag_still_applied(self) -> None:
         """
@@ -604,20 +572,12 @@ class TestTargetInitializerAdversarialChatVariants:
     """Tests for the ``ADVERSARIAL_CHAT_{SINGLETURN,MULTITURN,REASONING}_*`` env-driven variants."""
 
     def setup_method(self) -> None:
-        """Reset registry and clear variant env vars."""
+        """Reset registry."""
         TargetRegistry.reset_registry_singleton()
-        self._clear_variant_env_vars()
 
     def teardown_method(self) -> None:
-        """Reset registry and clear variant env vars."""
+        """Reset registry."""
         TargetRegistry.reset_registry_singleton()
-        self._clear_variant_env_vars()
-
-    @staticmethod
-    def _clear_variant_env_vars() -> None:
-        for _, prefix in ADVERSARIAL_CHAT_VARIANTS:
-            for suffix in ("ENDPOINT", "KEY", "MODEL"):
-                os.environ.pop(f"{prefix}_{suffix}", None)
 
     @staticmethod
     def _set_variant_env_vars(prefix: str) -> None:
@@ -660,21 +620,17 @@ class TestTargetInitializerAdversarialChatVariants:
         os.environ[f"{env_prefix}_ENDPOINT"] = "https://variant.openai.azure.com/openai/v1"
         os.environ[f"{env_prefix}_KEY"] = "test_key"
 
-        try:
-            with caplog.at_level(logging.WARNING, logger="pyrit.setup.initializers.targets"):
-                init = TargetInitializer()
-                await init.initialize_async()
+        with caplog.at_level(logging.WARNING, logger="pyrit.setup.initializers.targets"):
+            init = TargetInitializer()
+            await init.initialize_async()
 
-            registry = TargetRegistry.get_registry_singleton()
-            assert registry_name not in registry.instances
+        registry = TargetRegistry.get_registry_singleton()
+        assert registry_name not in registry.instances
 
-            captured_messages = [r.message for r in caplog.records]
-            assert any(f"{env_prefix}_MODEL" in m for m in captured_messages), (
-                f"Expected a warning naming the missing {env_prefix}_MODEL env var; got: {captured_messages}"
-            )
-        finally:
-            os.environ.pop(f"{env_prefix}_ENDPOINT", None)
-            os.environ.pop(f"{env_prefix}_KEY", None)
+        captured_messages = [r.message for r in caplog.records]
+        assert any(f"{env_prefix}_MODEL" in m for m in captured_messages), (
+            f"Expected a warning naming the missing {env_prefix}_MODEL env var; got: {captured_messages}"
+        )
 
     async def test_double_initialize_async_is_idempotent(self) -> None:
         """Re-running ``initialize_async`` with the same env state produces the same registry contents.
@@ -716,19 +672,12 @@ class TestTargetInitializerAdversarialRoundRobin:
     )
 
     def setup_method(self) -> None:
-        """Reset the registry and adversarial endpoint environment."""
+        """Reset the registry."""
         TargetRegistry.reset_registry_singleton()
-        self._clear_env()
 
     def teardown_method(self) -> None:
-        """Reset the registry and adversarial endpoint environment."""
+        """Reset the registry."""
         TargetRegistry.reset_registry_singleton()
-        self._clear_env()
-
-    def _clear_env(self) -> None:
-        for _, slot_suffix in self.SLOTS:
-            for variable in ("ENDPOINT", "KEY", "MODEL", "UNDERLYING_MODEL"):
-                os.environ.pop(f"ADVERSARIAL_CHAT_{variable}{slot_suffix}", None)
 
     def _set_slots(self, *slot_indexes: int, underlying_model: str = "grok-4.3") -> None:
         for index in slot_indexes:
@@ -881,19 +830,12 @@ class TestTargetInitializerAutoGroup:
     }
 
     def setup_method(self) -> None:
-        """Reset registry and clear env vars before each test."""
+        """Reset registry before each test."""
         TargetRegistry.reset_registry_singleton()
-        self._clear_env_vars()
 
     def teardown_method(self) -> None:
         """Clean up after each test."""
         TargetRegistry.reset_registry_singleton()
-        self._clear_env_vars()
-
-    def _clear_env_vars(self) -> None:
-        all_vars = list(self.UNSAFE1_ENV) + list(self.UNSAFE2_ENV) + list(self.GPT4O_1_ENV) + list(self.GPT4O_2_ENV)
-        for var in all_vars:
-            os.environ.pop(var, None)
 
     async def test_auto_groups_targets_with_same_underlying_model(self) -> None:
         """Test that targets with the same underlying model are auto-grouped into a round-robin."""
@@ -989,15 +931,6 @@ class TestTargetInitializerAutoGroup:
         assert chat_target is not None
         assert response_target is not None
         assert get_behavioral_key(chat_target) != get_behavioral_key(response_target)
-
-        # Clean up
-        for var in [
-            "AZURE_OPENAI_RESPONSES_ENDPOINT",
-            "AZURE_OPENAI_RESPONSES_KEY",
-            "AZURE_OPENAI_RESPONSES_MODEL",
-            "AZURE_OPENAI_RESPONSES_UNDERLYING_MODEL",
-        ]:
-            os.environ.pop(var, None)
 
     async def test_auto_group_disabled_when_false(self) -> None:
         """Test that auto_group=False disables round-robin auto-grouping."""
