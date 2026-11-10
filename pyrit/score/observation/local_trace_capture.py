@@ -36,8 +36,10 @@ class _TargetTraceProcessor(SpanProcessor):
     A trace is captured when its root is the target's ``pyrit.target`` span, or when it enters
     through a propagated remote context. Other local root traces, such as PyRIT's own judge or
     adversarial model calls under instrumentation, are ignored. Only ``pyrit.target`` traces are
-    declared complete, once their root and every span started in them have ended; a span that
-    starts later makes the trace incomplete again.
+    declared complete, once their root and every span started in them have ended. A span that
+    starts in a trace already declared complete withdraws that completion. Bookkeeping, export,
+    and completion share one lock, so completion never precedes a finished span's export, and
+    state is dropped once a trace has no open spans.
     """
 
     def __init__(
@@ -52,7 +54,6 @@ class _TargetTraceProcessor(SpanProcessor):
         self._exporter = exporter
         self._root_span_name = root_span_name
         self._auto_complete = auto_complete
-        self._tracked: set[int] = set()
         self._completable: set[int] = set()
         self._open: dict[int, set[int]] = {}
         self._roots_ended: set[int] = set()
@@ -65,11 +66,12 @@ class _TargetTraceProcessor(SpanProcessor):
             if parent is None or not parent.is_valid:
                 if span.name != self._root_span_name:
                     return
-                self._tracked.add(context.trace_id)
                 self._completable.add(context.trace_id)
-            elif parent.is_remote:
-                self._tracked.add(context.trace_id)
-            elif context.trace_id not in self._tracked:
+            elif (
+                not parent.is_remote
+                and context.trace_id not in self._open
+                and not self._client.reopen(trace_id=f"{context.trace_id:032x}")
+            ):
                 return
             self._open.setdefault(context.trace_id, set()).add(context.span_id)
 
@@ -77,31 +79,26 @@ class _TargetTraceProcessor(SpanProcessor):
         context = span.get_span_context()
         if context is None:
             return
+        trace_id = context.trace_id
         with self._lock:
-            if context.trace_id not in self._tracked:
+            open_spans = self._open.get(trace_id)
+            if open_spans is None or context.span_id not in open_spans:
                 return
-            open_spans = self._open.get(context.trace_id, set())
             open_spans.discard(context.span_id)
             if (span.parent is None or not span.parent.is_valid) and span.name == self._root_span_name:
-                self._roots_ended.add(context.trace_id)
-            complete = (
-                self._auto_complete
-                and context.trace_id in self._completable
-                and context.trace_id in self._roots_ended
-                and not open_spans
-            )
-            if complete:
-                self._open.pop(context.trace_id, None)
-                self._roots_ended.discard(context.trace_id)
-                self._completable.discard(context.trace_id)
-        self._exporter.export((span,))
-        if not complete:
-            return
-        trace_id = f"{context.trace_id:032x}"
-        try:
-            self._client.mark_complete(trace_ids=(trace_id,))
-        except ValueError:
-            logger.debug("Trace %s is not complete; leaving its coverage incomplete.", trace_id)
+                self._roots_ended.add(trace_id)
+            completable = trace_id in self._completable
+            finished = not open_spans and (not completable or trace_id in self._roots_ended)
+            if finished:
+                self._open.pop(trace_id, None)
+                self._roots_ended.discard(trace_id)
+                self._completable.discard(trace_id)
+            self._exporter.export((span,))
+            if finished and completable and self._auto_complete:
+                try:
+                    self._client.mark_complete(trace_ids=(f"{trace_id:032x}",))
+                except ValueError:
+                    logger.debug("Trace %032x is not complete; leaving its coverage incomplete.", trace_id)
 
     def shutdown(self) -> None:
         self._exporter.shutdown()
@@ -124,10 +121,11 @@ class LocalTraceCapture:
     traces entered through a propagated context, are kept; PyRIT's own judge and adversarial
     calls are ignored even when instrumented. With ``auto_complete``, a target trace is declared
     complete when its root span and every span started in that trace have ended, which suits
-    in-process agents. When ``max_spans`` is reached, the oldest complete trace is evicted, so
-    score traces soon after they are recorded. Spans recorded through another provider never
-    reach this capture; call ``instrument()`` to route installed OpenInference instrumentors
-    here, or set ``set_global`` for libraries that only use the global provider.
+    in-process agents. When ``max_spans`` is reached, the oldest complete trace is evicted, or
+    the oldest other trace if none is complete, so score traces soon after they are recorded.
+    Spans recorded through another provider never reach this capture; call ``instrument()`` to
+    route installed OpenInference instrumentors here, or set ``set_global`` for libraries that
+    only use the global provider.
     """
 
     ROOT_SPAN_NAME: ClassVar[str] = "pyrit.target"
@@ -147,7 +145,7 @@ class LocalTraceCapture:
 
         Args:
             source_id (str): Nonsecret identity of this capture. Defaults to "local".
-            max_spans (int): Maximum spans retained before the oldest complete trace is evicted.
+            max_spans (int): Maximum spans, and traces, retained before the oldest trace is evicted.
                 Defaults to 10000.
             auto_complete (bool): Declare target traces complete when all their spans end.
                 Defaults to True.

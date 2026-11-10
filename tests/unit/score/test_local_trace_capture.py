@@ -2,13 +2,16 @@
 # Licensed under the MIT license.
 
 import asyncio
-from collections.abc import Iterator
+import threading
+from collections.abc import Iterator, Sequence
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.context import Context
+from opentelemetry.sdk.trace import ReadableSpan
 
 from pyrit.models import (
     Acquisition,
@@ -21,7 +24,7 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 from pyrit.registry import SourceRegistry
-from pyrit.score import LocalTraceCapture, OtelExecutionTraceSource
+from pyrit.score import InMemoryTraceExporter, LocalTraceCapture, OtelExecutionTraceSource
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -270,3 +273,109 @@ async def test_full_capture_evicts_the_oldest_complete_trace_async() -> None:
     assert evicted.acquisition is Acquisition.UNAVAILABLE
     assert evicted.payload.coverage.reasons == ("trace_evicted", "capture_not_complete")
     assert kept.acquisition is Acquisition.COMPLETE
+
+
+class _DeferringAgentTarget(_AgentTarget):
+    """Keeps its request context so work can start in the request trace after the send returns."""
+
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        self.request_context = otel_context.get_current()
+        return await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+
+
+async def test_span_starting_after_completion_withdraws_it_while_open_async(capture: LocalTraceCapture) -> None:
+    target = _DeferringAgentTarget(capture=capture)
+    trace_id = await _send_async(target)
+    scope = TraceScorable(trace_ids=(trace_id,))
+    assert (await capture.source().acquire_async(scorable=scope)).acquisition is Acquisition.COMPLETE
+
+    late = capture.tracer.start_span("late", context=target.request_context)
+    while_open = await capture.source().acquire_async(scorable=scope)
+    late.end()
+    after = await capture.source().acquire_async(scorable=scope)
+
+    assert while_open.acquisition is Acquisition.PARTIAL
+    assert after.acquisition is Acquisition.PARTIAL
+    assert [step.name for step in after.payload.steps][-1] == "late"
+
+
+async def test_root_ending_during_a_child_export_waits_for_it_async(capture: LocalTraceCapture) -> None:
+    exporting, release = threading.Event(), threading.Event()
+    export = InMemoryTraceExporter.export
+
+    def slow_export(self: InMemoryTraceExporter, spans: Sequence[ReadableSpan]) -> object:
+        if spans[0].name == "child":
+            exporting.set()
+            release.wait(5)
+        return export(self, spans)
+
+    root = capture.tracer.start_span("pyrit.target", context=Context())
+    child = capture.tracer.start_span("child", context=trace.set_span_in_context(root))
+    with patch.object(InMemoryTraceExporter, "export", slow_export):
+        child_thread = threading.Thread(target=child.end)
+        child_thread.start()
+        assert exporting.wait(5)
+        root_thread = threading.Thread(target=root.end)
+        root_thread.start()
+        root_thread.join(0.1)
+        release.set()
+        child_thread.join(5)
+        root_thread.join(5)
+
+    trace_id = f"{root.get_span_context().trace_id:032x}"
+    observation = await capture.source().acquire_async(scorable=TraceScorable(trace_ids=(trace_id,)))
+    assert observation.acquisition is Acquisition.COMPLETE
+    assert [step.name for step in observation.payload.steps] == ["pyrit.target", "child"]
+
+
+class _TwoToolAgentTarget(_AgentTarget):
+    async def _send_prompt_to_target_async(self, *, normalized_conversation: list[Message]) -> list[Message]:
+        with self._tracer.start_as_current_span("search", attributes={"openinference.span.kind": "TOOL"}):
+            pass
+        return await super()._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+
+
+async def test_a_failed_trace_cannot_pin_a_full_capture_async() -> None:
+    capture = LocalTraceCapture(max_spans=2)
+    try:
+        failed = await _send_async(_TwoToolAgentTarget(capture=capture))
+        failed_before = await capture.client.get_spans_async(query=_query(failed))
+        later = await _send_async(_AgentTarget(capture=capture))
+        failed_after = await capture.client.get_spans_async(query=_query(failed))
+        later_result = await capture.client.get_spans_async(query=_query(later))
+    finally:
+        capture.close()
+
+    assert "capture_capacity_exceeded" in failed_before.coverage.reasons
+    assert not failed_after.available
+    assert "trace_evicted" in failed_after.coverage.reasons
+    assert later_result.coverage.complete
+
+
+async def test_remote_traces_and_bookkeeping_stay_bounded_async() -> None:
+    capture = LocalTraceCapture(max_spans=4)
+    try:
+        for index in range(12):
+            remote = trace.NonRecordingSpan(
+                trace.SpanContext(
+                    trace_id=index + 1,
+                    span_id=index + 1,
+                    is_remote=True,
+                    trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
+                )
+            )
+            with capture.tracer.start_as_current_span("agent", context=trace.set_span_in_context(remote, Context())):
+                pass
+        later = await _send_async(_AgentTarget(capture=capture))
+        result = await capture.client.get_spans_async(query=_query(later))
+        oldest = await capture.client.get_spans_async(query=_query(f"{1:032x}"))
+    finally:
+        capture.close()
+
+    assert result.coverage.complete
+    assert oldest.spans == ()
+    assert not oldest.coverage.complete
+    client = capture.client
+    assert len(client._trace_keys) <= 4
+    assert len(client._evicted) <= 4
+    assert set(client._late) | set(client._trace_failures) <= set(client._trace_keys)

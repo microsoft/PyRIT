@@ -107,7 +107,6 @@ class _TraceRendering:
     header: str
     blocks: dict[int, str]
     request_sequences: frozenset[int]
-    trailing: str
     rendered_step_indexes: frozenset[int]
     truncated: bool
 
@@ -265,7 +264,11 @@ class ConversationScorer(MessageScorer, ABC):
         """
         Keep results whose linked execution snapshot matches the evidence acquired now.
 
-        A result made without execution evidence matches only while none is available.
+        Matching is intentionally strict: a stored result is reused only when the evidence acquired
+        now equals the evidence it was judged with. Once the capture is closed or the trace evicted,
+        or in a new process, the evidence differs, so the conversation is judged again with what is
+        available now; earlier results stay in memory unchanged. A result made without execution
+        evidence matches only while none is available.
 
         Returns:
             list[Score]: Results whose execution evidence is unchanged.
@@ -614,16 +617,10 @@ class ConversationScorer(MessageScorer, ABC):
             body = body or self._NO_SPANS_LINE
             fence = f"EXECUTION TRACE {len(emitted)}"
             blocks[link.sequence] = f"[BEGIN {fence}]\n{body}[END {fence}]\n"
-        leftover = [step for step in steps if step.trace_id not in emitted]
-        trailing = ""
-        if leftover:
-            body = self._render_steps(steps=leftover, budget=budget, rendered=rendered, truncated=truncated)
-            trailing = f"[BEGIN UNATTRIBUTED EXECUTION TRACE]\n{body}[END UNATTRIBUTED EXECUTION TRACE]\n"
         return _TraceRendering(
             header=header,
             blocks=blocks,
             request_sequences=frozenset(link.sequence for link in trace.links),
-            trailing=trailing,
             rendered_step_indexes=frozenset(rendered),
             truncated=truncated[0],
         )
@@ -634,7 +631,9 @@ class ConversationScorer(MessageScorer, ABC):
         """
         Render steps depth-first by parent, spending a shared character budget.
 
-        Content is dropped first when the budget runs low; then remaining steps are omitted.
+        Steps unreachable from a root, because their parent links form a cycle, are rendered as
+        roots so no step is hidden. Content is dropped first when the budget runs low; then
+        remaining steps are omitted.
 
         Returns:
             str: The indented step lines.
@@ -645,11 +644,16 @@ class ConversationScorer(MessageScorer, ABC):
             parent = step.parent_span_id if step.parent_span_id in span_ids else None
             children.setdefault(parent, []).append(step)
         ordered: list[tuple[ExecutionStep, int]] = []
-        stack = [(step, 0) for step in reversed(children.get(None, []))]
-        while stack:
-            step, depth = stack.pop()
-            ordered.append((step, depth))
-            stack.extend((child, depth + 1) for child in reversed(children.get(step.span_id, [])))
+        visited: set[int] = set()
+        for start in [*children.get(None, []), *steps]:
+            stack = [(start, 0)]
+            while stack:
+                step, depth = stack.pop()
+                if step.index in visited:
+                    continue
+                visited.add(step.index)
+                ordered.append((step, depth))
+                stack.extend((child, depth + 1) for child in reversed(children.get(step.span_id, [])))
         lines = []
         for position, (step, depth) in enumerate(ordered):
             text = self._render_step(step=step, depth=depth, include_content=True)
@@ -772,7 +776,7 @@ class ConversationScorer(MessageScorer, ABC):
             lines.append(pending)
         if trace_rendering is None:
             return "".join(lines)
-        return trace_rendering.header + "".join(lines) + trace_rendering.trailing
+        return trace_rendering.header + "".join(lines)
 
     async def _score_piece_with_expectation_async(
         self, message_piece: MessagePiece, *, expectation: ScoringExpectation | None

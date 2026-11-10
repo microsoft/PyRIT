@@ -6,6 +6,7 @@
 import json
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -23,6 +24,7 @@ from pyrit.models import (
     MessagePiece,
     MessageScorable,
     ScoringExpectation,
+    TraceSpan,
 )
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration, TargetTraceConfig
@@ -590,3 +592,65 @@ async def test_threshold_over_a_graded_conversation_judge_keeps_trace_evidence_a
         transport.assert_not_awaited()
         assert score.is_undetermined
         assert score.score_metadata[ConversationScorer.EVIDENCE_REQUIREMENT_UNMET_KEY] == "trace_unavailable"
+
+
+async def test_steps_in_a_parent_cycle_are_still_rendered_async(
+    sqlite_instance: MemoryInterface, capture: LocalTraceCapture
+) -> None:
+    judge = MockPromptTarget()
+    conversation_id = await _converse_async(_AgentTarget(capture=capture), "Book Seattle")
+    (link,) = await resolve_conversation_trace_links_async(conversation_id=conversation_id, memory=sqlite_instance)
+    assert link.trace_id is not None
+    now = datetime.now(UTC)
+    for span_id, parent, name in (
+        ("a" * 16, "a" * 16, "self_loop"),
+        ("b" * 16, "c" * 16, "cycle_b"),
+        ("c" * 16, "b" * 16, "cycle_c"),
+    ):
+        capture.client.add_span(
+            TraceSpan(
+                trace_id=link.trace_id, span_id=span_id, parent_span_id=parent, name=name, start_time=now, end_time=now
+            )
+        )
+
+    score, transport = await _score_async(
+        _judge(judge=judge, capture=capture), judge=judge, conversation_id=conversation_id
+    )
+
+    transcript = transport.call_args.kwargs["normalized_conversation"][-1].get_value()
+    assert all(f" {name}" in transcript for name in ("self_loop", "cycle_b", "cycle_c"))
+    assert "  steps: 5\n" in transcript
+    assert score.score_metadata["trace_coverage"] != "complete"
+
+
+@pytest.mark.parametrize("loss", ["closed", "evicted"])
+async def test_lost_traces_rejudge_without_reusing_or_changing_earlier_scores_async(
+    sqlite_instance: MemoryInterface, loss: str
+) -> None:
+    capture = LocalTraceCapture(max_spans=2)
+    judge = MockPromptTarget()
+    try:
+        conversation_id = await _converse_async(_AgentTarget(capture=capture), "Book Seattle")
+        scorer = _judge(judge=judge, capture=capture)
+        first, _ = await _score_async(scorer, judge=judge, conversation_id=conversation_id)
+        if loss == "closed":
+            capture.close()
+        else:
+            await _converse_async(_AgentTarget(capture=capture), "Book Denver")
+        stored = await sqlite_instance.get_scores_async(score_ids=[first.id])
+        anchor = ConversationScorable(conversation_id=conversation_id)
+
+        matches = await scorer.find_matching_scores_async(scores=stored, scorable=anchor, expectation=_EXPECTATION)
+        again, transport = await _score_async(
+            scorer, judge=judge, conversation_id=conversation_id, response=_verdict(False, "Transcript only.")
+        )
+    finally:
+        capture.close()
+
+    assert matches == []
+    transport.assert_awaited_once()
+    assert again.id != first.id
+    assert again.score_metadata["trace_coverage"] == "unavailable"
+    (unchanged,) = await sqlite_instance.get_scores_async(score_ids=[first.id])
+    assert unchanged.get_value() is True
+    assert unchanged.score_metadata["trace_coverage"] == "complete"

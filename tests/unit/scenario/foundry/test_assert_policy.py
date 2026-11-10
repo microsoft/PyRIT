@@ -1330,6 +1330,47 @@ async def test_trace_source_cannot_be_given_twice_async(harness: _Harness, captu
         )
 
 
+@pytest.mark.parametrize("requirement", ["available", "complete"])
+async def test_trace_requirement_without_a_trace_source_is_rejected_async(
+    harness: _Harness, capture: LocalTraceCapture, requirement: str
+) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    with pytest.raises(ValueError, match="trace_requirement needs a trace source"):
+        await harness.initialize_async(
+            harness.scenario(), **_prompt_case(), trace_requirement=requirement, **_datasets("assert_a")
+        )
+    harness.objective = _TracedObjective(capture=capture)
+    with_source = await harness.initialize_async(
+        harness.scenario(trace_source=capture.source()),
+        **_prompt_case(),
+        trace_requirement=requirement,
+        **_datasets("assert_a"),
+    )
+    assert with_source._build_scenario_identifier().params["trace_requirement"] == requirement
+
+
+async def test_resume_after_the_capture_closes_keeps_trace_grounded_scores_async(harness: _Harness) -> None:
+    capture = LocalTraceCapture()
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    harness.objective = _TracedObjective(capture=capture)
+    harness.policy_violation = True
+    args = {**_prompt_case(), **_datasets("assert_a")}
+    scenario = harness.scenario(trace_source=capture.source())
+    result = await harness.run_async(scenario, **args)
+    judged = len(harness.judge_systems)
+    capture.close()
+
+    resumed = await harness.run_async(
+        harness.scenario(trace_source=capture.source(), scenario_result_id=scenario._scenario_result_id), **args
+    )
+
+    assert len(harness.judge_systems) == judged
+    assert resumed.id == result.id
+    policy = await _policy_score_async(resumed)
+    assert policy.get_value() is True
+    assert policy.score_metadata["trace_coverage"] == "complete"
+
+
 async def test_untraced_target_warns_and_judges_the_transcript_async(
     harness: _Harness, capture: LocalTraceCapture, caplog: pytest.LogCaptureFixture
 ) -> None:

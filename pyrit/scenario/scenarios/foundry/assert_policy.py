@@ -515,6 +515,12 @@ class AssertPolicy(Scenario):
             raise ValueError("target_system_prompt must not be blank.")
         if self._trace_source is not None and self.params.get("trace_source"):
             raise ValueError("Pass a trace source either to the constructor or as the trace_source parameter.")
+        if (
+            self._get_trace_requirement() is not TraceEvidenceRequirement.NONE
+            and self._trace_source is None
+            and not self.params.get("trace_source")
+        ):
+            raise ValueError("trace_requirement needs a trace source to acquire execution evidence.")
         self._get_judge_config()
 
     async def _get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:

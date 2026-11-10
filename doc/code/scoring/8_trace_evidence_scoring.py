@@ -143,6 +143,10 @@ print(f"Trace coverage: {score.score_metadata['trace_coverage']}")
 print(f"Cited steps: {score.score_metadata.get('trace_cited_steps', '[]')}")
 
 # %% [markdown]
+# The judge is asked to cite each step it relies on, but whether it does depends on the model;
+# in this run it did not. `trace_cited_steps` records the step IDs the rationale cites, and
+# `trace_citation_warnings` flags cited IDs that do not exist.
+#
 # For comparison, the same judge without the trace sees only the agent's claim:
 
 # %%

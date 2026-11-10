@@ -324,7 +324,7 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 # not only what it said. Give the objective target `trace_config=capture.trace_config()` from a
 # `LocalTraceCapture`, and pass `trace_source=capture.source()` to `AssertPolicy`, or name a
 # registered source with the `trace_source` parameter. Each judge then reads the conversation's
-# model calls, tool calls with arguments and results, and agent steps, and cites them as `[T3]`.
+# model calls, tool calls with arguments and results, and agent steps, and is asked to cite them as `[T3]`.
 # `trace_requirement` sets the evidence a judge needs: `none` (the default) always judges, with whatever
 # traces exist, while `available` and `complete` leave results undetermined without some or complete
 # traces. If the target records no traces, the scenario logs a warning. See

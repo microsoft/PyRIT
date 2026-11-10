@@ -37,8 +37,10 @@ class InMemoryTraceClient:
     Thread-safe local capture with explicit, caller-owned completion.
 
     Capture failures and capacity overflow make only the affected trace incomplete. When the
-    store is full, the oldest complete trace is evicted to make room; a later query for it
-    reports it as evicted. Capacity is therefore a bound on retained evidence, not on a run.
+    store is full, the oldest complete trace is evicted to make room, or, if none is complete,
+    the oldest other trace. A later query for an evicted trace reports it as evicted. Retained
+    spans, traces, and per-trace markers are all bounded by ``max_spans``, so capacity bounds
+    retained evidence, not a run.
     """
 
     def __init__(self, *, source_id: str = "local", max_spans: int = 10000) -> None:
@@ -57,7 +59,7 @@ class InMemoryTraceClient:
         self._complete: dict[str, None] = {}
         self._late: set[str] = set()
         self._trace_failures: dict[str, set[str]] = {}
-        self._evicted: set[str] = set()
+        self._evicted: dict[str, None] = {}
         self._capture_failed = False
         self._closed = False
         self._lock = Lock()
@@ -90,11 +92,29 @@ class InMemoryTraceClient:
             if snapshot.trace_id in self._complete:
                 del self._complete[snapshot.trace_id]
                 self._late.add(snapshot.trace_id)
-            if len(self._spans) >= self._max_spans and not self._evict_oldest_complete():
+            self._trace_keys.setdefault(snapshot.trace_id, [])
+            if not self._make_room(keep=snapshot.trace_id, span_slot=True):
                 self._trace_failures.setdefault(snapshot.trace_id, set()).add("capture_capacity_exceeded")
                 raise TraceAcquisitionError("Local trace capture capacity was exceeded.")
             self._spans[key] = snapshot
-            self._trace_keys.setdefault(snapshot.trace_id, []).append(key)
+            self._trace_keys[snapshot.trace_id].append(key)
+
+    def reopen(self, *, trace_id: str) -> bool:
+        """
+        Withdraw completion because a new span started in a trace already declared complete.
+
+        The trace stays incomplete, since its earlier snapshot may have been scored without that span.
+
+        Returns:
+            bool: Whether the trace is retained in this capture.
+        """
+        with self._lock:
+            if trace_id not in self._trace_keys:
+                return False
+            if trace_id in self._complete:
+                del self._complete[trace_id]
+                self._late.add(trace_id)
+            return True
 
     def mark_complete(self, *, trace_ids: Sequence[str]) -> None:
         """
@@ -133,8 +153,12 @@ class InMemoryTraceClient:
                 self._capture_failed = True
                 self._complete.clear()
                 return
+            if trace_id in self._evicted:
+                return
+            self._trace_keys.setdefault(trace_id, [])
             self._trace_failures.setdefault(trace_id, set()).add("capture_failed")
             self._complete.pop(trace_id, None)
+            self._make_room(keep=trace_id, span_slot=False)
 
     async def get_spans_async(self, *, query: TraceQuery) -> TraceQueryResult:
         """Return an immutable, identity-filtered snapshot and honest coverage."""
@@ -171,20 +195,27 @@ class InMemoryTraceClient:
         with self._lock:
             self._closed = True
 
-    def _evict_oldest_complete(self) -> bool:
+    def _make_room(self, *, keep: str, span_slot: bool) -> bool:
         """
-        Remove the oldest complete trace to make room; the caller holds the lock.
+        Evict traces other than ``keep`` until the requested span slot and every trace fit.
+
+        The caller holds the lock.
 
         Returns:
-            bool: Whether a trace was evicted.
+            bool: Whether there is room.
         """
-        if not self._complete:
-            return False
-        trace_id = next(iter(self._complete))
-        del self._complete[trace_id]
-        for key in self._trace_keys.pop(trace_id, ()):
-            self._spans.pop(key, None)
-        self._evicted.add(trace_id)
+        while (span_slot and len(self._spans) >= self._max_spans) or len(self._trace_keys) > self._max_spans:
+            victim = next(iter(self._complete), None) or next((t for t in self._trace_keys if t != keep), None)
+            if victim is None:
+                return False
+            for key in self._trace_keys.pop(victim):
+                del self._spans[key]
+            self._complete.pop(victim, None)
+            self._late.discard(victim)
+            self._trace_failures.pop(victim, None)
+            self._evicted[victim] = None
+            while len(self._evicted) > self._max_spans:
+                del self._evicted[next(iter(self._evicted))]
         return True
 
     def _check_open(self) -> None:
