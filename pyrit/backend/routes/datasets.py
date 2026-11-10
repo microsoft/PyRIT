@@ -100,6 +100,7 @@ async def upload_dataset_route_async(
     result = await upload_dataset_async(request)
     if isinstance(result, DatasetMutationResponse):
         response.status_code = 200
+    if result.cleanup_location is not None:
         response.headers["Location"] = result.cleanup_location
     return result
 

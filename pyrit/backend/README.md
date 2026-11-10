@@ -269,6 +269,9 @@ retries durable cleanup without replaying the batch.
 Native lease-release errors after commit are logged and likewise return the
 committed `200` result with pending cleanup and its status location; they do not
 hide a committed batch behind a retry-shaped failure.
+The same rule applies to creation: it retains `201` and the saved population,
+adding `cleanup`, `cleanup_location`, and `Location` only when native release
+needs follow-up. Normal create responses keep their original fields.
 
 | Environment variable | Default |
 |---|---|
@@ -286,6 +289,9 @@ For updates, the record limit bounds additions + edits + deletions together,
 and complete affected-group work (including deleted and surviving members).
 The manifest byte limit also bounds the copied affected stored state and submitted
 replacements. Exceeding these work budgets returns `413` without partial changes.
+The multipart file budget allows all three simulation prompt-media slots per
+seed record plus an optional file-valued manifest. Every media part must still
+be referenced, and the total request-byte limit applies to all parts together.
 
 Use the existing `GET /api/datasets`, `/api/datasets/seeds`,
 `/api/datasets/seeds/{example_id}`, and media URLs to browse uploaded datasets.

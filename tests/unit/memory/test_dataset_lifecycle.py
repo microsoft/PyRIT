@@ -8,24 +8,28 @@ import hashlib
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import event, select, update
+from sqlalchemy import event, insert, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from pyrit.backend.models.datasets import DatasetUploadManifest
 from pyrit.backend.services.dataset_upload_service import _validated_seeds
 from pyrit.common import Singleton
-from pyrit.memory import CentralMemory, SeedEntry, SQLiteMemory
+from pyrit.memory import CentralMemory, PromptMemoryEntry, SeedEntry, SQLiteMemory
 from pyrit.memory.dataset_lifecycle import DatasetNameConflictError, entry_references_dataset_assets
 from pyrit.memory.dataset_mutation import DatasetVersionConflictError, dataset_version, editable_seed
-from pyrit.memory.memory_models import DatasetLifecycleEntry, PromptMemoryEntry
+from pyrit.memory.memory_models import DatasetLifecycleEntry
 from pyrit.models import MessagePiece, SeedPrompt, SeedRecord, SeedUnion
 from pyrit.setup import SQLITE, initialize_pyrit_async
 from pyrit.setup.pyrit_initializer import PyRITInitializer
 from unit.async_utils import TEST_WATCHDOG_SECONDS
+
+if TYPE_CHECKING:
+    from sqlalchemy.sql.dml import Insert, Update
 
 
 async def _open_memory_async(path: Path) -> SQLiteMemory:
@@ -328,6 +332,80 @@ async def test_bulk_reference_validation_preserves_unflushed_orm_changes(
             "first": "pending",
             "second": "bulk",
         }
+
+
+@pytest.mark.parametrize("reserved_target", [False, True])
+@pytest.mark.parametrize("operation", ["insert", "update", "upsert"])
+async def test_bulk_seed_write_checks_only_affected_reserved_population(
+    memories: tuple[SQLiteMemory, SQLiteMemory], reserved_target: bool, operation: str
+) -> None:
+    first, second = memories
+    reserved = SeedPrompt(value="reserved original", dataset_name="reserved", added_by="test")
+    unrelated = SeedPrompt(value="unrelated original", dataset_name="unrelated", added_by="test")
+    async with await first.get_session_async() as session:
+        session.add_all([SeedEntry(entry=reserved), SeedEntry(entry=unrelated)])
+        await session.commit()
+    await second.reserve_dataset_mutation_async(dataset_name="reserved", paths=[])
+    target = reserved if reserved_target else unrelated
+    addition = SeedEntry(entry=SeedPrompt(value="bulk replacement", dataset_name=target.dataset_name, added_by="test"))
+    async with await first.get_session_async() as session:
+        statement: Insert | Update = (
+            update(SeedEntry.__table__).where(SeedEntry.id == target.id).values(value="bulk replacement")
+        )
+        if operation == "insert":
+            statement = insert(SeedEntry.__table__).values(
+                **{column.name: getattr(addition, column.name) for column in SeedEntry.__table__.columns}
+            )
+        elif operation == "upsert":
+            existing = await session.get(SeedEntry, target.id)
+            statement = (
+                sqlite_insert(SeedEntry.__table__)
+                .values(**{column.name: getattr(existing, column.name) for column in SeedEntry.__table__.columns})
+                .on_conflict_do_update(index_elements=["id"], set_={"value": "bulk replacement"})
+            )
+        if reserved_target:
+            with pytest.raises(DatasetNameConflictError, match="reserved"):
+                await session.execute(statement)
+        else:
+            await session.execute(statement)
+        await session.commit()
+    async with await second.get_session_async() as session:
+        stored = {entry.id: entry.value for entry in (await session.scalars(select(SeedEntry))).all()}
+    assert stored[reserved.id] == "reserved original"
+    assert stored[unrelated.id] == (
+        "unrelated original" if reserved_target or operation == "insert" else "bulk replacement"
+    )
+    if operation == "insert":
+        assert (addition.id in stored) == (not reserved_target)
+
+
+@pytest.mark.parametrize("operation", ["insert", "update"])
+async def test_bulk_message_write_ignores_unrelated_seed_reservation(
+    memories: tuple[SQLiteMemory, SQLiteMemory], operation: str
+) -> None:
+    first, second = memories
+    await first.add_seeds_to_memory_async(
+        seeds=[SeedPrompt(value="existing", dataset_name="reserved")], added_by="test"
+    )
+    await second.reserve_dataset_mutation_async(dataset_name="reserved", paths=[])
+    entry = PromptMemoryEntry(entry=MessagePiece(role="user", original_value="hello", conversation_id="c"))
+    async with await first.get_session_async() as session:
+        statement: Insert | Update
+        if operation == "update":
+            session.add(entry)
+            await session.commit()
+            statement = (
+                update(PromptMemoryEntry.__table__).where(PromptMemoryEntry.id == entry.id).values(original_value="new")
+            )
+        else:
+            statement = insert(PromptMemoryEntry.__table__).values(
+                **{column.name: getattr(entry, column.name) for column in PromptMemoryEntry.__table__.columns}
+            )
+        await session.execute(statement)
+        await session.commit()
+    async with await second.get_session_async() as session:
+        value = await session.scalar(select(PromptMemoryEntry.original_value).where(PromptMemoryEntry.id == entry.id))
+        assert value == ("new" if operation == "update" else "hello")
 
 
 async def test_deletion_waits_for_reference_writer_then_retains_shared_asset(

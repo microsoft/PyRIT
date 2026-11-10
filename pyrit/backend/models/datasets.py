@@ -112,15 +112,6 @@ class DatasetUploadManifest(BaseModel):
         return value
 
 
-class DatasetUploadResponse(BaseModel):
-    """The actual committed population, immediately available through existing browsing."""
-
-    name: str
-    selection_key: str
-    seed_pieces: int
-    logical_examples: int
-
-
 class DatasetDeletionResponse(BaseModel):
     """Durable status of exact dataset removal and its owned-media cleanup."""
 
@@ -131,6 +122,22 @@ class DatasetDeletionResponse(BaseModel):
     error: str | None = None
 
 
+class _DatasetPopulationResponse(BaseModel):
+    """Counts and selection identity shared by committed create and update results."""
+
+    name: str
+    selection_key: str
+    seed_pieces: int
+    logical_examples: int
+
+
+class DatasetUploadResponse(_DatasetPopulationResponse):
+    """The actual committed population, immediately available through existing browsing."""
+
+    cleanup: DatasetDeletionResponse | None = Field(default=None, exclude_if=lambda value: value is None)
+    cleanup_location: str | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 class DatasetSeedResult(BaseModel):
     """Exact persisted record identity correlated to the manifest's seed index."""
 
@@ -139,7 +146,7 @@ class DatasetSeedResult(BaseModel):
     operation: Literal["added", "updated"]
 
 
-class DatasetMutationResponse(DatasetUploadResponse):
+class DatasetMutationResponse(_DatasetPopulationResponse):
     """A committed batch, even when physical cleanup still needs retrying."""
 
     dataset_exists: bool

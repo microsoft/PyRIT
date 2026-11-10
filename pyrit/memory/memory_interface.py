@@ -5262,11 +5262,16 @@ class MemoryInterface(abc.ABC):
         upload_id: uuid.UUID,
         seeds: Sequence[SeedUnion],
         write_media: Callable[[], Awaitable[None]],
-    ) -> None:
-        """Atomically publish all storage-ready seeds without deduplication or replacement."""
+    ) -> bool:
+        """
+        Atomically publish all storage-ready seeds without deduplication or replacement.
+
+        Returns:
+            bool: Whether native ownership was released after the successful commit.
+        """
         from pyrit.memory.dataset_lifecycle import commit_upload_async
 
-        await commit_upload_async(memory=self, upload_id=upload_id, seeds=seeds, write_media=write_media)
+        return await commit_upload_async(memory=self, upload_id=upload_id, seeds=seeds, write_media=write_media)
 
     async def delete_dataset_async(self, *, dataset_name: str) -> uuid.UUID:
         """

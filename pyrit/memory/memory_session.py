@@ -189,18 +189,24 @@ def _guard_bulk_media_writes(state: ORMExecuteState) -> Any:
         Any: The original SQLAlchemy execution result.
     """
     table = getattr(state.statement, "table", None)
-    if not (state.is_insert or state.is_update or state.is_delete) or getattr(table, "name", None) not in {
+    table_name = getattr(table, "name", None)
+    if not (state.is_insert or state.is_update or state.is_delete) or table_name not in {
         SeedEntry.__tablename__,
         PromptMemoryEntry.__tablename__,
         ScorableContentEntry.__tablename__,
     }:
         return state.invoke_statement()
-    from pyrit.memory.dataset_lifecycle import lock_dataset_lifecycle, validate_stored_dataset_references
+    from pyrit.memory.dataset_lifecycle import (
+        lock_dataset_lifecycle,
+        reserved_seed_state,
+        validate_stored_dataset_references,
+    )
 
     lock_dataset_lifecycle(state.session)
     if state.is_delete:
         return state.invoke_statement()
     with state.session.begin_nested():
+        reserved_seeds = reserved_seed_state(state.session) if table_name == SeedEntry.__tablename__ else None
         result = state.invoke_statement()
-        validate_stored_dataset_references(state.session)
+        validate_stored_dataset_references(state.session, reserved_seeds=reserved_seeds)
     return result

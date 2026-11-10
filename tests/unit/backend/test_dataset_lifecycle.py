@@ -1056,6 +1056,101 @@ async def test_duplicate_names_and_concurrent_uploads(client: AsyncClient, sqlit
     assert (await _upload(client)).status_code == 409
 
 
+@pytest.mark.parametrize("seed_type", ["prompt", "objective", "simulated_conversation"])
+async def test_edit_omitted_seed_type_uses_stored_variant(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, seed_type: str
+) -> None:
+    raw = (
+        _simulation()
+        if seed_type == "simulated_conversation"
+        else {"seed_type": seed_type, "data_type": "text", "value": "original"}
+    )
+    assert (await _upload(client, manifest=_manifest(seeds=[raw]))).status_code == 201
+    snapshot = await _editable_async(client)
+    edit = _editable_rows(snapshot)[0]
+    original_id = edit["id"]
+    edit.pop("seed_type")
+    if seed_type == "simulated_conversation":
+        edit["num_turns"] = 3
+    else:
+        edit["value"] = "replacement"
+    response = await _update_async(client, snapshot=snapshot, seeds=[edit])
+    assert response.status_code == 200, response.text
+    stored = (await _seeds(sqlite_instance))[0]
+    assert str(stored.id) == original_id and stored.seed_type == seed_type
+    assert response.json()["version"] != snapshot["version"]
+    restored = stored.get_seed()
+    if seed_type == "simulated_conversation":
+        assert restored.num_turns == 3
+    else:
+        assert restored.value == "replacement"
+
+
+@pytest.mark.parametrize("mode", ["create", "update"])
+@pytest.mark.parametrize("file_manifest", [False, True])
+async def test_one_simulation_budget_allows_three_media_slots(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, mode: str, file_manifest: bool
+) -> None:
+    snapshot = None
+    if mode == "update":
+        assert (await _upload(client, manifest=_manifest(seeds=[_simulation()]))).status_code == 201
+        snapshot = await _editable_async(client)
+    raw = _simulation(
+        **{
+            field: {"data_type": "binary_path", "value": f"upload:media{index}"}
+            for index, field in enumerate(
+                ("adversarial_chat_system_prompt", "simulated_target_system_prompt", "next_message_system_prompt")
+            )
+        }
+    )
+    manifest = _manifest(seeds=[raw])
+    if snapshot is not None:
+        raw["id"] = _editable_rows(snapshot)[0]["id"]
+        manifest.update(mode="update", expected_version=snapshot["version"])
+    files = {f"media{index}": (f"{index}.bin", bytes([index])) for index in range(3)}
+    if file_manifest:
+        files["manifest"] = ("manifest.json", json.dumps(manifest).encode())
+    with patch.object(DatasetUploadLimits, "from_environment", return_value=DatasetUploadLimits(prompts=1)):
+        response = await _upload(client, manifest=manifest, files=files)
+    assert response.status_code == (201 if mode == "create" else 200), response.text
+    stored = (await _seeds(sqlite_instance))[0].get_seed()
+    for index, field in enumerate(
+        ("adversarial_chat_system_prompt", "simulated_target_system_prompt", "next_message_system_prompt")
+    ):
+        assert Path(getattr(stored, field).value).read_bytes() == bytes([index])
+
+
+@pytest.mark.parametrize("failed_release", [1, 2])
+async def test_create_reports_committed_success_after_native_release_error(
+    client: AsyncClient, sqlite_instance: SQLiteMemory, failed_release: int
+) -> None:
+    original_release = sqlite_instance.release_dataset_upload_async
+    calls = 0
+
+    async def release_async(operation_id: Any) -> None:
+        nonlocal calls
+        calls += 1
+        await original_release(operation_id)
+        if calls == failed_release:
+            raise OSError("private native close failure")
+
+    with patch.object(sqlite_instance, "release_dataset_upload_async", side_effect=release_async):
+        response = await _upload(
+            client,
+            manifest=_manifest(seeds=[{"data_type": "binary_path", "value": "upload:media"}]),
+            files={"media": ("media.bin", b"committed")},
+        )
+    assert response.status_code == 201, response.text
+    result = response.json()
+    assert result["cleanup"]["status"] == "pending" and result["cleanup"]["pending_media"] is None
+    assert response.headers["Location"] == result["cleanup_location"]
+    assert "private native close failure" not in response.text
+    stored = await _seeds(sqlite_instance)
+    assert len(stored) == 1 and Path(stored[0].value).read_bytes() == b"committed"
+    assert (await client.get(result["cleanup_location"])).json()["status"] == "completed"
+    assert (await _upload(client)).status_code == 409
+
+
 def _simulation(**changes: Any) -> dict[str, Any]:
     return {
         "seed_type": "simulated_conversation",

@@ -76,7 +76,7 @@ class _DatasetMultipartParser(MultiPartParser):
             headers=request.headers,
             stream=self._bounded_stream_async(request=request, maximum=limits.request_bytes),
             max_fields=1,
-            max_files=limits.prompts + 1,
+            max_files=3 * limits.prompts + 1,
             max_part_size=limits.manifest_bytes,
         )
         self._manifest_bytes = 0
@@ -179,7 +179,7 @@ def _validated_seeds(
             raise _invalid_manifest(field=field, message="A seed must be an object.")
         if raw.get("is_jinja_template", False) is not False:
             raise _invalid_manifest(field=field, message="Trusted templates are not accepted.")
-        seed_type = raw.get("seed_type", "prompt")
+        seed_type = raw.get("seed_type", record.seed_type if record is not None and not prompt_only else "prompt")
         if prompt_only and seed_type != "prompt":
             raise _invalid_manifest(field=field, message="A nested prompt must be a SeedPrompt.")
         if not (records is not None and prompt_only) and raw.get("dataset_name", manifest.name) not in (
@@ -393,10 +393,15 @@ async def _persist_dataset_async(
                 _bind_uploaded_prompt(prompt=prompt, files=files, paths=paths, hashes=hashes)
         _refresh_seed_values(seeds)
 
+    committed = False
+    release_failed = False
     try:
         if cancelled:
             raise asyncio.CancelledError
-        await memory.commit_dataset_upload_async(upload_id=upload_id, seeds=seeds, write_media=write_media_async)
+        release_failed = not await memory.commit_dataset_upload_async(
+            upload_id=upload_id, seeds=seeds, write_media=write_media_async
+        )
+        committed = True
     except BaseException as error:
         # Cancellation and storage/DB errors take the same compensating cleanup path.
         cleanup = asyncio.create_task(memory.cleanup_dataset_media_async(operation_id=upload_id, abandon_upload=True))
@@ -429,12 +434,28 @@ async def _persist_dataset_async(
         logger.exception("Dataset upload failed for operation %s", upload_id)
         raise DatasetAPIException(status_code=503, message="Dataset upload could not be stored.") from error
     finally:
-        await memory.release_dataset_upload_async(upload_id)
+        try:
+            await memory.release_dataset_upload_async(upload_id)
+        except Exception:
+            if not committed:
+                raise
+            logger.exception("Committed upload native lease release failed: %s", upload_id)
+            release_failed = True
     return DatasetUploadResponse(
         name=manifest.name,
         selection_key=f"dataset:named:{manifest.name}",
         seed_pieces=len(seeds),
         logical_examples=len({seed.prompt_group_id or seed.id for seed in seeds}),
+        cleanup=DatasetDeletionResponse(
+            deletion_id=upload_id,
+            status="pending",
+            deleted_seeds=0,
+            pending_media=None,
+            error="Upload committed; retry cleanup at the status resource.",
+        )
+        if release_failed
+        else None,
+        cleanup_location=f"/api/datasets/deletions/{upload_id}" if release_failed else None,
     )
 
 

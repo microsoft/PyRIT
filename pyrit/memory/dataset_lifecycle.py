@@ -229,12 +229,39 @@ def stored_media_keys(session: Session) -> set[str]:
     return _media_keys(session, [value for value in values if value])
 
 
-def validate_stored_dataset_references(session: Session) -> None:
-    """Validate bulk writes without refreshing or discarding pending ORM changes."""
+def reserved_seed_state(session: Session) -> dict[uuid.UUID, tuple[object, ...]]:
+    """
+    Snapshot only seed rows protected by another staging reservation.
+
+    Returns:
+        dict[uuid.UUID, tuple[object, ...]]: Protected row values keyed by seed identity.
+    """
+    reservations = select(DatasetLifecycleEntry.dataset_name).where(DatasetLifecycleEntry.status == "staging")
+    own_upload = session.info.get("dataset_upload_id")
+    if own_upload is not None:
+        reservations = reservations.where(DatasetLifecycleEntry.id != own_upload)
     with session.no_autoflush:
+        rows = session.execute(
+            select(SeedEntry.id, *SeedEntry.__table__.columns).where(SeedEntry.dataset_name.in_(reservations))
+        )
+        return {row[0]: tuple(row[1:]) for row in rows}
+
+
+def validate_stored_dataset_references(
+    session: Session, *, reserved_seeds: dict[uuid.UUID, tuple[object, ...]] | None = None
+) -> None:
+    """
+    Validate bulk writes without refreshing or discarding pending ORM changes.
+
+    Raises:
+        DatasetNameConflictError: If bulk DML changed a protected seed population.
+    """
+    with session.no_autoflush:
+        if reserved_seeds is not None and reserved_seed_state(session) != reserved_seeds:
+            raise DatasetNameConflictError("The dataset name is reserved by an upload.")
         _validate_dataset_references(
             session=session,
-            dataset_names=set(session.scalars(select(SeedEntry.dataset_name))),
+            dataset_names=set(),
             keys=stored_media_keys(session),
         )
 
@@ -324,9 +351,12 @@ async def commit_upload_async(
     upload_id: uuid.UUID,
     seeds: Sequence[SeedUnion],
     write_media: Callable[[], Awaitable[None]],
-) -> None:
+) -> bool:
     """
     Write staged bytes and all seeds under one reference lock; never deduplicate.
+
+    Returns:
+        bool: Whether native ownership was released after the successful commit.
 
     Raises:
         DatasetNameConflictError: If recovery already released the reservation.
@@ -355,7 +385,12 @@ async def commit_upload_async(
             asset.status = "live"
         operation.status = "completed"
         await session.commit()
-    await memory.release_dataset_upload_async(upload_id)
+    try:
+        await memory.release_dataset_upload_async(upload_id)
+    except Exception:
+        logger.exception("Committed upload native lease release failed: %s", upload_id)
+        return False
+    return True
 
 
 async def delete_dataset_async(*, memory: MemoryInterface, dataset_name: str) -> uuid.UUID:
