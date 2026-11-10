@@ -62,7 +62,7 @@ async function resolvePersistedTarget(target: TargetInfo): Promise<TargetHashRes
       target: {
         ...source, target_registry_name: target.binding.source_name,
         capabilities: target.binding.capabilities ?? source.capabilities,
-        binding: target.binding, reconstructable: true, supports_temperature_override: true,
+        binding: target.binding,
       },
     }
   }
