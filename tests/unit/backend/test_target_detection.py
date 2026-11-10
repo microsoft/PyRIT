@@ -7,7 +7,7 @@ import asyncio
 import base64
 import io
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, MutableSequence
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -734,9 +734,10 @@ async def test_detection_preserves_default_chat_service_history_async(
             entered = asyncio.Event()
             release = asyncio.Event()
             pending: asyncio.Task | None = None
+            result = None
             load_history = sqlite_instance.get_conversation_messages_async
 
-            async def gated_history_async(**kwargs: Any) -> list[Message]:
+            async def gated_history_async(**kwargs: Any) -> MutableSequence[Message]:
                 entered.set()
                 await asyncio.wait_for(release.wait(), timeout=TEST_WATCHDOG_SECONDS)
                 return await load_history(**kwargs)
@@ -763,6 +764,7 @@ async def test_detection_preserves_default_chat_service_history_async(
             assert not source.capabilities.supports_multi_turn
             if not overlap:
                 result = await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            assert result is not None
             assert send.await_count == 2
             assert [message["role"] for message in send.call_args.kwargs["messages"]] == ["user", "assistant", "user"]
             assert result.attack.target is not None
