@@ -17,7 +17,6 @@ from pyrit.backend.models.scorers import (
 )
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models.catalog import ScorerInstance
-from pyrit.registry import SavedEntryUnavailableError
 
 router = APIRouter(prefix="/scorers", tags=["scorers"])
 
@@ -66,8 +65,6 @@ async def create_scorer(
         return await get_scorer_service().create_scorer_async(request=request)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except SavedEntryUnavailableError:
-        raise
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

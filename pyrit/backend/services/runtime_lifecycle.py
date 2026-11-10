@@ -132,16 +132,19 @@ class RuntimeLifecycle:
         self.generation = str(uuid.uuid4())
         self.state, self.outcome, self.message = "ready", "success", "PyRIT is ready."
 
-    async def _restore_saved_entries_async(self, config: ConfigurationLoader) -> None:
+    async def _restore_saved_entries_async(self, config: ConfigurationLoader) -> bool:
         """
         Rebuild saved registry entries after the startup scripts have registered theirs.
 
-        The runtime becomes ready even when some can't be restored. Each one that failed keeps its name,
-        so looking it up or starting a run that uses it fails with the reason instead of finding nothing
-        or something else, and the failures are listed in the runtime status.
+        A failure keeps the runtime not ready, since a scan that would have used a missing entry
+        could quietly fall back to a different one. Fixing or deleting the stored file, then applying
+        or restarting, recovers.
 
         Args:
             config (ConfigurationLoader): The loaded configuration naming the storage source.
+
+        Returns:
+            bool: Whether every saved entry was restored.
         """
         restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
         # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, through
@@ -152,21 +155,28 @@ class RuntimeLifecycle:
             saved=saved, build_async=partial(build_saved_entry_async, upload_directory=config.target_upload_directory)
         )
         self.restore_failures, self.restore_ignored = report.failures, report.ignored
+        if not report.failures:
+            return True
+        self.state, self.outcome = "failed", "restore-failed"
+        next_step = (
+            "apply the configuration or restart the backend"
+            if config.enable_live_reinitialization and self.topology_supported
+            else "restart the backend"
+        )
         unread = sorted({failure.kind.value for failure in report.failures if failure.name is None})
         if unread:
-            logger.warning(
-                "The saved %s couldn't be read, so no saved entries were restored. Check that the backend can "
-                "read registry_recipes_source, then apply or restart; see GET /api/config/runtime.",
-                " and ".join(unread),
+            self.message = (
+                f"The saved {' and '.join(unread)} couldn't be read, so no saved entries were restored. "
+                f"Check that the backend can read registry_recipes_source, then {next_step}."
             )
-        elif report.failures:
+        else:
             count = len(report.failures)
-            logger.warning(
-                "%d saved registry %s couldn't be restored. Fix or delete their files, then apply or restart; "
-                "see GET /api/config/runtime.",
-                count,
-                "entry" if count == 1 else "entries",
+            self.message = (
+                f"{count} saved registry {'entry' if count == 1 else 'entries'} couldn't be restored. "
+                f"Fix or delete the files named in the server log or GET /api/config/runtime, then {next_step}."
             )
+        logger.error("PyRIT isn't ready: %s", self.message)
+        return False
 
     async def startup_async(self) -> None:
         """Keep management alive even when parsing or initialization fails."""
@@ -190,8 +200,8 @@ class RuntimeLifecycle:
                 await config.initialize_pyrit_async(raise_on_initializer_error=True)
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
-            await self._restore_saved_entries_async(config)
-            self._publish(config)
+            if await self._restore_saved_entries_async(config):
+                self._publish(config)
         except Exception:
             self.state, self.outcome = "restart-required", "initialization-failed"
             self.message = "PyRIT setup failed. Repair saved configuration, then restart the backend."
@@ -212,7 +222,7 @@ class RuntimeLifecycle:
                 "outcome": "unsupported",
                 "message": ("Reinitialization requires one backend worker and one replica."),
             }
-        if self.state in ("failed", "restart-required"):
+        if self.state == "restart-required":
             return {**self.status(), "outcome": "restart-required"}
         if (self.apply_task and not self.apply_task.done()) or self.edit_lock.locked() or self.management_operations:
             return {**self.status(), "outcome": "busy"}
@@ -233,7 +243,9 @@ class RuntimeLifecycle:
                 if not config.enable_live_reinitialization:
                     self.outcome = "unsupported"
                     self.message = (
-                        "Set enable_live_reinitialization: true in the saved configuration to use live apply."
+                        "Live apply is off. Restart the backend to restore the saved entries again."
+                        if previous_state == "failed"
+                        else "Set enable_live_reinitialization: true in the saved configuration to use live apply."
                     )
                     return
                 # Type compatibility is checked before contacting environment sources.
@@ -274,8 +286,8 @@ class RuntimeLifecycle:
                     await config.apply_prepared_reinitialization_async(prepared=prepared)
                 await self._management_async(config)
                 self.version = current_version
-                await self._restore_saved_entries_async(config)
-                self._publish(config)
+                if await self._restore_saved_entries_async(config):
+                    self._publish(config)
             except (Exception, asyncio.CancelledError, BaseExceptionGroup) as error:
                 logger.exception(
                     "PyRIT live apply failed phase=%s generation=%s",
