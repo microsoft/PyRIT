@@ -1235,11 +1235,11 @@ class Sandbox(Identifiable, ABC):
     def _schedule_idle_close(self) -> None:
         """Close the session once it has been idle long enough."""
         self._cancel_idle_close()
-        if self.get_capabilities().state_kind is SandboxStateKind.SESSION:
-            return
         if self._session_id is None or self._last_used_at is None:
             return
-        delay = max(self._last_used_at + self._idle_timeout_seconds - time.monotonic(), 0.0)
+        if self.get_capabilities().state_kind is SandboxStateKind.SESSION and not self._closed:
+            return
+        delay = 0.0 if self._closed else max(self._last_used_at + self._idle_timeout_seconds - time.monotonic(), 0.0)
         self._idle_handle = asyncio.get_running_loop().call_later(delay, self._on_idle_timer, self._uses)
 
     def _cancel_idle_close(self) -> None:

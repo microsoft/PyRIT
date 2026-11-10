@@ -27,11 +27,16 @@ from pyrit._code_execution import (
 from pyrit.models.code_execution import _ProgramInvocation
 
 
-def _session_sandbox(*, max_session_seconds: float | None = None) -> FakeSandbox:
+def _session_sandbox(
+    *,
+    max_session_seconds: float | None = None,
+    acquire_timeout_seconds: float = FakeSandbox.DEFAULT_ACQUIRE_TIMEOUT_SECONDS,
+) -> FakeSandbox:
     return FakeSandbox(
         capabilities=FakeSandbox.DEFAULT_CAPABILITIES.model_copy(
             update={"state_kind": SandboxStateKind.SESSION, "max_session_seconds": max_session_seconds}
-        )
+        ),
+        acquire_timeout_seconds=acquire_timeout_seconds,
     )
 
 
@@ -72,6 +77,33 @@ async def test_session_lifetime_refusal_preserves_state_without_renewal_async() 
             await _run_async(sandbox, timeout_seconds=10)
             assert sandbox._session_count == 1 and len(sandbox.runs) == 2
         finally:
+            await sandbox.close_async()
+
+
+async def test_requested_final_close_drains_session_when_owned_work_finishes_async() -> None:
+    sandbox = _session_sandbox(acquire_timeout_seconds=0.01)
+    sandbox.gate = asyncio.Event()
+    closed = asyncio.Event()
+    close_session = sandbox._close_session_async
+
+    async def close_async(*, session_id: str) -> None:
+        await close_session(session_id=session_id)
+        closed.set()
+
+    with patch.object(sandbox, "_close_session_async", side_effect=close_async):
+        running = asyncio.create_task(_run_async(sandbox))
+        try:
+            await asyncio.wait_for(sandbox.run_started.wait(), TEST_WATCHDOG_SECONDS)
+            await sandbox.close_async()
+            assert sandbox._closed and sandbox._lock.locked()
+            assert sandbox.open_sessions == {"fake-session-1"}
+            sandbox.gate.set()
+            await asyncio.wait_for(running, TEST_WATCHDOG_SECONDS)
+            await asyncio.wait_for(closed.wait(), TEST_WATCHDOG_SECONDS)
+            assert sandbox.open_sessions == set() and sandbox._session_id is None
+        finally:
+            sandbox.gate.set()
+            await asyncio.wait_for(asyncio.gather(running, return_exceptions=True), TEST_WATCHDOG_SECONDS)
             await sandbox.close_async()
 
 
