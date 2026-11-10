@@ -43,7 +43,9 @@ Evaluate AI responses with true/false, Likert, classification, and custom scorer
 
 ---
 
-The cards above link to a guide for each component. The rest of this page is the contributor guide: the principles every change follows and what each part of PyRIT owns. It describes the architecture we are building toward. Some code doesn't match yet, and **Framework Plans** list the main gaps. Follow this page rather than copying an exception.
+The cards above link to a guide for each component. The rest of this page is the contributor guide: the principles every change follows and what each part of PyRIT owns. It is a north star for the architecture we are building toward. Some code doesn't match yet, and **Framework Plans** list the main gaps. Follow this page rather than copying an exception.
+
+Update this page rarely. Change it only when maintainers agree to change a principle or a component's responsibility, or when a Framework Plan is done. Don't add a feature's details, examples, or edge cases; they belong in that component's guide.
 
 # Principles
 
@@ -62,7 +64,7 @@ These decisions apply to every change. The [style guide](../contributing/3_style
 ## Docs
 
 - **Keep docs short, and let the code explain itself.** Show how to use something, not how it works inside or how it was built. Prefer clear names and types to comments; comment only to explain why.
-- **Don't center docs on the feature you just built.** Put feature details in that component's guide. Add to shared pages, including this one, only what every reader needs; change this page only when a responsibility changes.
+- **Don't center docs on the feature you just built.** Put feature details in that component's guide, and add to shared pages only what every reader needs.
 - **Keep notebooks runnable.** Notebooks execute in a couple of minutes, and each percent-format `.py` file stays in sync with its `.ipynb` pair.
 
 ## Tests
