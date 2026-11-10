@@ -16,9 +16,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    StrictBool,
-    StrictInt,
-    StrictStr,
     StringConstraints,
     ValidationError,
     field_validator,
@@ -36,72 +33,34 @@ class _AssertJudgeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
 
-class AssertOrdinalGrade(_AssertJudgeModel):
-    """One declared grade of an ordinal judge dimension."""
-
-    value: StrictInt | StrictStr
-    label: _Text
-
-
-class AssertOrdinalScale(_AssertJudgeModel):
-    """
-    An ordered grade scale for a judge dimension.
-
-    Declaration order is grade order. ASSERT's mapping form (``values: {1: Poor, 2: Good}``) is
-    accepted and converted to grades.
-    """
-
-    type: Literal["ordinal"] = "ordinal"
-    values: tuple[AssertOrdinalGrade, ...] = Field(min_length=2)
-
-    @field_validator("values", mode="before")
-    @classmethod
-    def _accept_mapping(cls, values: Any) -> Any:
-        if isinstance(values, Mapping):
-            return tuple({"value": value, "label": label} for value, label in values.items())
-        return values
-
-    @model_validator(mode="after")
-    def _validate_grades(self) -> Self:
-        grades = self.grade_values
-        if len(set(grades)) != len(grades):
-            raise ValueError("Ordinal grade values must be unique.")
-        if len({type(grade) for grade in grades}) != 1:
-            raise ValueError("Ordinal grade values must all be integers or all be strings.")
-        if any(isinstance(grade, str) and not grade.strip() for grade in grades):
-            raise ValueError("Ordinal grade values must not be blank.")
-        return self
-
-    @property
-    def grade_values(self) -> tuple[int | str, ...]:
-        """The declared grade values, in order."""
-        return tuple(grade.value for grade in self.values)
-
-    @property
-    def is_numeric(self) -> bool:
-        """Whether the grades are integers, so a mean is meaningful."""
-        return isinstance(self.values[0].value, int)
-
-
 class AssertJudgeDimension(_AssertJudgeModel):
     """
-    A custom ASSERT judge dimension.
+    A custom ASSERT judge dimension: a boolean bad-event flag.
 
-    Without a ``scale`` the dimension is a boolean bad-event flag: True means the undesirable
-    event occurred. With an ordinal ``scale`` the judge returns one of the declared grades.
-    ``allow_not_applicable`` lets the judge report that the conversation did not exercise the
-    dimension. The built-in ``policy_violation`` and ``overrefusal`` dimensions are judged
-    against the taxonomy and cannot be redefined; disable one and add a differently named
-    dimension to replace it.
+    True means the undesirable event the dimension describes occurred. ASSERT's ordinal ``scale``
+    and ``allow_not_applicable`` options are not supported and are rejected. The built-in
+    ``policy_violation`` and ``overrefusal`` dimensions are judged against the taxonomy and
+    cannot be redefined; disable one and add a differently named dimension to replace it.
     """
 
     BUILT_IN_NAMES: ClassVar[tuple[str, ...]] = ("policy_violation", "overrefusal")
+    UNSUPPORTED_OPTIONS: ClassVar[tuple[str, ...]] = ("scale", "allow_not_applicable")
 
     name: _Identifier
     description: _Text
     rubric: _Text
-    allow_not_applicable: StrictBool = False
-    scale: AssertOrdinalScale | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_unsupported_options(cls, data: Any) -> Any:
+        if isinstance(data, Mapping):
+            unsupported = [option for option in cls.UNSUPPORTED_OPTIONS if option in data]
+            if unsupported:
+                raise ValueError(
+                    f"ASSERT judge dimension option(s) {', '.join(unsupported)} are not supported. PyRIT judge "
+                    "dimensions are boolean bad-event flags; remove these options."
+                )
+        return data
 
     @field_validator("name")
     @classmethod
@@ -113,11 +72,6 @@ class AssertJudgeDimension(_AssertJudgeModel):
                 "differently named dimension."
             )
         return name
-
-    @property
-    def is_ordinal(self) -> bool:
-        """Whether the dimension returns an ordinal grade rather than a boolean flag."""
-        return self.scale is not None
 
 
 class AssertJudgePreset(_AssertJudgeModel):

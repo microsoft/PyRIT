@@ -9,10 +9,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
-from pyrit.models import AssertJudgeConfig, AssertJudgeDimension, AssertJudgePreset
+from pyrit.models import AssertJudgeDimension, AssertJudgePreset
 from pyrit.score.true_false.assert_policy_scorer import AssertScoringDimension
+
+if TYPE_CHECKING:
+    from pyrit.models.score.assert_judge import AssertJudgeConfig
 
 ASSERT_JUDGE_PRESETS_PATH = Path(SCORER_SEED_PROMPT_PATH, "assert", "judge_presets").resolve()
 
@@ -87,7 +91,7 @@ def resolve_assert_judge_dimensions(config: AssertJudgeConfig) -> tuple[AssertJu
 
     Raises:
         ValueError: If a preset cannot be loaded, a disabled name is unknown, nothing remains enabled,
-            or the objective dimension is not an enabled boolean dimension.
+            or the objective dimension is not enabled.
     """
     resolved: dict[str, AssertJudgeDimensionSpec] = {dimension.value: dimension for dimension in AssertScoringDimension}
     presets = [load_assert_judge_preset(name) for name in config.presets]
@@ -126,14 +130,9 @@ def get_assert_dimension_name(dimension: AssertJudgeDimensionSpec) -> str:
 
 
 def _validate_objective_dimension(*, config: AssertJudgeConfig, enabled: tuple[AssertJudgeDimensionSpec, ...]) -> None:
-    objective = next((spec for spec in enabled if get_assert_dimension_name(spec) == config.objective_dimension), None)
-    if objective is None:
+    names = [get_assert_dimension_name(spec) for spec in enabled]
+    if config.objective_dimension not in names:
         raise ValueError(
-            f"objective_dimension '{config.objective_dimension}' is not an enabled judge dimension. Enabled: "
-            f"{', '.join(get_assert_dimension_name(spec) for spec in enabled)}."
-        )
-    if isinstance(objective, AssertJudgeDimension) and objective.is_ordinal:
-        raise ValueError(
-            f"objective_dimension '{config.objective_dimension}' is ordinal. The objective must be a boolean "
-            "dimension because an ordinal scale does not declare which grades are failures."
+            f"objective_dimension '{config.objective_dimension}' is not an enabled judge dimension. "
+            f"Enabled: {', '.join(names)}."
         )

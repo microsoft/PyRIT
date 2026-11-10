@@ -5,20 +5,24 @@ from pathlib import Path
 
 import pytest
 
-from pyrit.models import (
-    AssertJudgeConfig,
-    AssertJudgeDimension,
-    AssertJudgePreset,
-    AssertOrdinalScale,
-)
+from pyrit.models import AssertJudgeDimension, AssertJudgePreset
+from pyrit.models.score.assert_judge import AssertJudgeConfig
 
 _RUBRIC = "true = The event occurred.\nfalse = The event did not occur."
 
 
-def test_dimension_defaults_to_required_boolean_flag() -> None:
+def test_dimension_is_a_boolean_flag() -> None:
     dimension = AssertJudgeDimension(name="harm_actionability", description="Harmful?", rubric=_RUBRIC)
-    assert dimension.is_ordinal is False
-    assert dimension.allow_not_applicable is False
+    assert dimension.model_dump() == {"name": "harm_actionability", "description": "Harmful?", "rubric": _RUBRIC}
+
+
+@pytest.mark.parametrize(
+    "option",
+    [{"scale": {"type": "ordinal", "values": {1: "Bad", 2: "Good"}}}, {"allow_not_applicable": True}],
+)
+def test_dimension_rejects_unsupported_assert_options(option: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="not supported. PyRIT judge dimensions are boolean bad-event flags"):
+        AssertJudgeDimension.model_validate({"name": "quality", "description": "d", "rubric": _RUBRIC, **option})
 
 
 @pytest.mark.parametrize("name", AssertJudgeDimension.BUILT_IN_NAMES)
@@ -40,35 +44,6 @@ def test_dimension_requires_description_and_rubric(field: str) -> None:
         AssertJudgeDimension(**values)
 
 
-def test_scale_accepts_ordered_mapping() -> None:
-    scale = AssertOrdinalScale.model_validate({"type": "ordinal", "values": {1: "Poor", 3: "Fair", 2: "Good"}})
-    assert scale.grade_values == (1, 3, 2)
-    assert scale.is_numeric is True
-    assert [grade.label for grade in scale.values] == ["Poor", "Fair", "Good"]
-
-
-def test_scale_accepts_string_grades() -> None:
-    scale = AssertOrdinalScale.model_validate({"values": {"good": "A", "bad": "B"}})
-    assert scale.grade_values == ("good", "bad")
-    assert scale.is_numeric is False
-
-
-@pytest.mark.parametrize(
-    "values",
-    [
-        {1: "Only one"},
-        {1: "Number", "two": "String"},
-        {True: "Yes", False: "No"},
-        [{"value": 1, "label": "A"}, {"value": 1, "label": "B"}],
-        {1: "A", 2: " "},
-        {"": "A", "b": "B"},
-    ],
-)
-def test_scale_rejects_invalid_grades(values: object) -> None:
-    with pytest.raises(ValueError):
-        AssertOrdinalScale.model_validate({"values": values})
-
-
 def test_preset_accepts_assert_mapping_form() -> None:
     preset = AssertJudgePreset.model_validate(
         {
@@ -76,18 +51,11 @@ def test_preset_accepts_assert_mapping_form() -> None:
             "name": "budget",
             "dimensions": {
                 "budget_overrun": {"description": "Over budget?", "rubric": _RUBRIC},
-                "quality": {
-                    "description": "How good?",
-                    "rubric": "Grade it.",
-                    "allow_not_applicable": True,
-                    "scale": {"type": "ordinal", "values": {1: "Bad", 2: "Good"}},
-                },
+                "verification_skip": {"description": "Skipped checks?", "rubric": _RUBRIC},
             },
         }
     )
-    assert [dimension.name for dimension in preset.dimensions] == ["budget_overrun", "quality"]
-    assert preset.dimensions[1].is_ordinal is True
-    assert preset.dimensions[1].allow_not_applicable is True
+    assert [dimension.name for dimension in preset.dimensions] == ["budget_overrun", "verification_skip"]
 
 
 def test_preset_from_yaml_file(tmp_path: Path) -> None:
@@ -108,6 +76,13 @@ def test_preset_from_yaml_file(tmp_path: Path) -> None:
         ("kind: judge_preset\nname: empty\n", "at least one dimension"),
         ("kind: behavior\nname: wrong\nbuiltin_dimensions: [overrefusal]\n", "kind: Input should be"),
         ("kind: judge_preset\nname: unknown\nbuiltin_dimensions: [refusal]\n", "Unknown built-in"),
+        (
+            (
+                "kind: judge_preset\nname: graded\ndimensions:\n  quality:\n    description: Good?\n"
+                "    rubric: Grade it.\n    scale:\n      type: ordinal\n      values: {1: Bad, 2: Good}\n"
+            ),
+            "dimensions.0: Value error, ASSERT judge dimension option\\(s\\) scale are not supported",
+        ),
     ],
 )
 def test_preset_from_yaml_file_rejects_invalid_presets(tmp_path: Path, content: str, message: str) -> None:

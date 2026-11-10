@@ -272,11 +272,8 @@ if TYPE_CHECKING:
         scoring_expectation_fingerprint,
     )
     from pyrit.models.score.assert_judge import (
-        AssertJudgeConfig,
         AssertJudgeDimension,
         AssertJudgePreset,
-        AssertOrdinalGrade,
-        AssertOrdinalScale,
     )
     from pyrit.models.seeds import (
         AdversarialPrompts,
@@ -356,11 +353,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AssertGenerationConfig": "pyrit.models.seeds.assert_generation",
     "AssertGenerationProvenance": "pyrit.models.seeds.assert_generation",
     "AssertGroupMetadata": "pyrit.models.seeds.assert_generation",
-    "AssertJudgeConfig": "pyrit.models.score.assert_judge",
     "AssertJudgeDimension": "pyrit.models.score.assert_judge",
     "AssertJudgePreset": "pyrit.models.score.assert_judge",
-    "AssertOrdinalGrade": "pyrit.models.score.assert_judge",
-    "AssertOrdinalScale": "pyrit.models.score.assert_judge",
     "AssertPatternRole": "pyrit.models.seeds.assert_generation",
     "AssertReplication": "pyrit.models.seeds.assert_generation",
     "AssertSamplingConfig": "pyrit.models.seeds.assert_generation",

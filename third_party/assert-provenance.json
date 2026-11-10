@@ -16,7 +16,7 @@
         "assert_ai/core/judge_normalization.py",
         "assert_ai/internal_pipeline_prompts/judge_system.md"
       ],
-      "adaptations": "Native true/false conversation scoring; optional category validation and policy flag correction; custom judge dimensions and repeated judge samples through the modules below; no XML citation processing."
+      "adaptations": "Native true/false conversation scoring; optional category validation and policy flag correction; custom boolean judge dimensions; repeated judge samples combined by ASSERT's vote with category re-aggregation; no XML citation processing."
     },
     {
       "path": "pyrit/datasets/score/true_false_question/assert_policy_system_prompt.yaml",
@@ -75,7 +75,7 @@
       "path": "pyrit/models/score/assert_judge.py",
       "adaptation_date": "2026-11-09",
       "sources": ["docs/config/schema.md", "assert_ai/library/judges/README.md"],
-      "adaptations": "Typed judge dimension, ordinal scale, preset, and judge configuration models; built-in dimensions are reserved."
+      "adaptations": "Typed boolean judge dimension, preset, and judge configuration models; built-in dimensions are reserved and ordinal or not-applicable options are rejected."
     },
     {
       "path": "pyrit/score/assert_judge_presets.py",
@@ -84,22 +84,10 @@
       "adaptations": "Preset discovery by name or YAML path and ASSERT's dimension merge order; disabled dimensions apply after presets."
     },
     {
-      "path": "pyrit/score/assert_dimension_scorer.py",
-      "adaptation_date": "2026-11-09",
-      "sources": ["assert_ai/core/judge.py", "assert_ai/internal_pipeline_prompts/judge_system.md"],
-      "adaptations": "One native judge call per custom dimension; ordinal grades normalized to float scores; not-applicable answers are undetermined."
-    },
-    {
-      "path": "pyrit/score/assert_sampled_scorer.py",
-      "adaptation_date": "2026-11-09",
-      "sources": ["assert_ai/core/judge.py"],
-      "adaptations": "Repeated judge samples aggregated per dimension: majority vote with ties as failures, lower-median grades, and category re-aggregation."
-    },
-    {
       "path": "pyrit/datasets/score/assert/dimension_system_prompt.yaml",
       "adaptation_date": "2026-11-09",
       "sources": ["assert_ai/internal_pipeline_prompts/judge_system.md"],
-      "adaptations": "Single-dimension judge prompt with native conversation evidence instead of the XML citation protocol."
+      "adaptations": "Single boolean dimension judge prompt with native conversation evidence instead of the XML citation protocol."
     },
     {
       "path": "pyrit/datasets/score/assert/judge_presets/alignment.yaml",

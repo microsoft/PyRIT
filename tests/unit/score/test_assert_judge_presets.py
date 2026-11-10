@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from pyrit.models import AssertJudgeConfig, AssertJudgeDimension
+from pyrit.models import AssertJudgeDimension
+from pyrit.models.score.assert_judge import AssertJudgeConfig
 from pyrit.score import (
     AssertScoringDimension,
     list_assert_judge_presets,
     load_assert_judge_preset,
     load_assert_judge_preset_file,
-    resolve_assert_judge_dimensions,
 )
-from pyrit.score.assert_judge_presets import get_assert_dimension_name
+from pyrit.score.assert_judge_presets import get_assert_dimension_name, resolve_assert_judge_dimensions
 
 _UPSTREAM_PRESETS = {
     "alignment": ["sycophancy", "verification_skip"],
@@ -34,11 +34,8 @@ def _names(config: AssertJudgeConfig) -> list[str]:
     return [get_assert_dimension_name(dimension) for dimension in resolve_assert_judge_dimensions(config)]
 
 
-def _dimension(name: str, *, ordinal: bool = False, description: str = "Did it happen?") -> AssertJudgeDimension:
-    scale = {"values": {1: "Low", 2: "High"}} if ordinal else None
-    return AssertJudgeDimension.model_validate(
-        {"name": name, "description": description, "rubric": "true = yes\nfalse = no", "scale": scale}
-    )
+def _dimension(name: str, *, description: str = "Did it happen?") -> AssertJudgeDimension:
+    return AssertJudgeDimension(name=name, description=description, rubric="true = yes\nfalse = no")
 
 
 def test_shipped_presets_match_assert_library() -> None:
@@ -138,10 +135,6 @@ def test_custom_objective_can_replace_policy_violation() -> None:
             "at least one dimension",
         ),
         (AssertJudgeConfig(disabled_dimensions=("policy_violation",)), "not an enabled"),
-        (
-            AssertJudgeConfig(dimensions=(_dimension("quality", ordinal=True),), objective_dimension="quality"),
-            "ordinal",
-        ),
         (AssertJudgeConfig(presets=("nope",)), "Unknown judge preset"),
         (AssertJudgeConfig(preset_files=(Path("missing.yaml"),)), "not found"),
     ],

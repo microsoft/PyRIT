@@ -19,7 +19,6 @@ from pyrit.common import apply_defaults
 from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import (
     AssertGroupMetadata,
-    AssertJudgeConfig,
     AttackSeedGroup,
     BoundedDatasetSize,
     ComponentIdentifier,
@@ -32,7 +31,8 @@ from pyrit.models import (
     ScenarioRunSizeEstimateStatus,
     SeedGroupRequirements,
 )
-from pyrit.models.score.assert_judge import describe_validation_errors
+from pyrit.models.score.assert_judge import AssertJudgeConfig, describe_validation_errors
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName, TargetRequirements
 from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -50,20 +50,21 @@ from pyrit.scenario.core.technique_requirements import (
 )
 from pyrit.score import (
     AssertJudgmentMode,
-    FloatScaleScorer,
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
     TrueFalseScorer,
     build_assert_policy_scorer,
+)
+from pyrit.score.assert_judge_presets import (
+    AssertJudgeDimensionSpec,
+    get_assert_dimension_name,
     resolve_assert_judge_dimensions,
 )
-from pyrit.score.assert_judge_presets import AssertJudgeDimensionSpec, get_assert_dimension_name
 from pyrit.score.scorer import _set_snapshot_participation
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.memory import MemoryInterface
     from pyrit.models import ScenarioDatasetSizeEstimate, Scorable, ScorableUnion, Score, ScoringExpectation
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
@@ -106,7 +107,7 @@ class _AssertPlaceholderScorer(TrueFalseScorer):
         raise RuntimeError("AssertPolicy scores each group with its own ASSERT judges, not the placeholder.")
 
 
-class _AssertJudgeGate:
+class _AssertJudgedScorer(TrueFalseScorer):
     """Judge a conversation only when ASSERT would; otherwise record why no verdict was reached."""
 
     SKIP_REASON_KEY: ClassVar[str] = "assert_scoring_skipped"
@@ -117,95 +118,22 @@ class _AssertJudgeGate:
         TARGET_ERROR: "A target reply was an error, so ASSERT does not judge this conversation.",
     }
 
-    def __init__(self, *, scorer: TrueFalseScorer | FloatScaleScorer, dimension_name: str) -> None:
-        self.scorer = scorer
-        self.dimension_name = dimension_name
-
-    def identifier_params(self) -> dict[str, object]:
-        return {"skipped_target_replies": [self.TARGET_INPUT_REFUSED, self.TARGET_ERROR]}
-
-    def scoped(self, *, raise_if_scorer_blocks: bool) -> _AssertJudgeGate | None:
-        scoped = self.scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
-        if scoped is self.scorer:
-            return None
-        return _AssertJudgeGate(
-            scorer=cast("TrueFalseScorer | FloatScaleScorer", scoped), dimension_name=self.dimension_name
-        )
-
-    async def score_async(
-        self, *, wrapper: Scorer, scorable: Scorable, expectation: ScoringExpectation | None
-    ) -> list[Score]:
-        conversation_id = await self._get_conversation_id_async(memory=wrapper._memory, scorable=scorable)
-        reason = (
-            await self._get_skip_reason_async(memory=wrapper._memory, conversation_id=conversation_id)
-            if conversation_id
-            else None
-        )
-        if reason:
-            skipped = wrapper._build_undetermined_score(
-                rationale=self.SKIP_RATIONALES[reason],
-                description="ASSERT does not judge this conversation.",
-                objective=expectation.objective if expectation else None,
-                score_category=[self.dimension_name],
-                score_metadata={self.SKIP_REASON_KEY: reason},
-            )
-            return [self._anchor(wrapper=wrapper, score=skipped, scorable=scorable, child_scores={})]
-        scores = await self.scorer._score_nested_async(
-            scorable=scorable, expectation=self.scorer._select_expectation(expectation=expectation)
-        )
-        return [
-            self._anchor(
-                wrapper=wrapper, score=wrapper._create_wrapper_score(score), scorable=scorable, child_scores={0: score}
-            )
-            for score in scores
-        ]
-
-    @staticmethod
-    def _anchor(*, wrapper: Scorer, score: Score, scorable: Scorable, child_scores: dict[int, Score]) -> Score:
-        score.scorable = cast("ScorableUnion", scorable)
-        score.message_piece_id = wrapper._piece_id_from_scorable(scorable)
-        _set_snapshot_participation(score=score, child_scores=child_scores)
-        return score
-
-    @staticmethod
-    async def _get_conversation_id_async(*, memory: MemoryInterface, scorable: Scorable) -> str | None:
-        if isinstance(scorable, ConversationScorable):
-            return scorable.conversation_id
-        if not isinstance(scorable, MessageScorable):
-            return None
-        pieces = await memory.get_message_pieces_async(prompt_ids=list(scorable.message_piece_ids))
-        conversation_id: str | None = pieces[0].conversation_id if pieces else None
-        return conversation_id
-
-    @classmethod
-    async def _get_skip_reason_async(cls, *, memory: MemoryInterface, conversation_id: str) -> str | None:
-        for piece in await memory.get_message_pieces_async(conversation_id=conversation_id):
-            if piece.api_role != "assistant" or piece.is_simulated:
-                continue
-            if piece.is_blocked():
-                return cls.TARGET_INPUT_REFUSED
-            if piece.has_error() or piece.converted_value_data_type == "error":
-                return cls.TARGET_ERROR
-        return None
-
-
-class _AssertJudgedScorer(TrueFalseScorer):
-    """A gated boolean ASSERT dimension judge."""
-
     def __init__(self, *, scorer: TrueFalseScorer, dimension_name: str) -> None:
         """
-        Wrap one boolean ASSERT conversation judge.
+        Wrap one ASSERT conversation judge.
 
         Args:
             scorer (TrueFalseScorer): The ASSERT conversation judge.
             dimension_name (str): The dimension the judge scores.
         """
-        self._gate = _AssertJudgeGate(scorer=scorer, dimension_name=dimension_name)
+        self._scorer = scorer
+        self._dimension_name = dimension_name
         super().__init__()
 
     def _build_identifier(self) -> ComponentIdentifier:
         return self._create_identifier(
-            params=self._gate.identifier_params(), sub_scorers=[self._gate.scorer.get_identifier()]
+            params={"skipped_target_replies": [self.TARGET_INPUT_REFUSED, self.TARGET_ERROR]},
+            sub_scorers=[self._scorer.get_identifier()],
         )
 
     def get_chat_target(self) -> PromptTarget | None:
@@ -215,7 +143,7 @@ class _AssertJudgedScorer(TrueFalseScorer):
         Returns:
             PromptTarget | None: The wrapped judge's target.
         """
-        return self._gate.scorer.get_chat_target()
+        return self._scorer.get_chat_target()
 
     def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
         """
@@ -227,13 +155,13 @@ class _AssertJudgedScorer(TrueFalseScorer):
         Returns:
             Scorer: ``self`` when the judge is unchanged, otherwise a copy wrapping the updated judge.
         """
-        gate = self._gate.scoped(raise_if_scorer_blocks=raise_if_scorer_blocks)
-        if gate is None:
+        scoped = self._scorer.with_scorer_block_policy(raise_if_scorer_blocks=raise_if_scorer_blocks)
+        if scoped is self._scorer:
             return self
-        return _AssertJudgedScorer(scorer=cast("TrueFalseScorer", gate.scorer), dimension_name=gate.dimension_name)
+        return _AssertJudgedScorer(scorer=cast("TrueFalseScorer", scoped), dimension_name=self._dimension_name)
 
     def _get_child_scorers(self) -> tuple[Scorer, ...]:
-        return (self._gate.scorer,)
+        return (self._scorer,)
 
     async def _filter_matching_scores_by_snapshot_async(
         self,
@@ -253,98 +181,48 @@ class _AssertJudgedScorer(TrueFalseScorer):
         )
 
     async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
-        return await self._gate.score_async(wrapper=self, scorable=scorable, expectation=expectation)
-
-
-class _AssertJudgedGradeScorer(FloatScaleScorer):
-    """A gated ordinal ASSERT dimension judge."""
-
-    def __init__(self, *, scorer: FloatScaleScorer, dimension_name: str) -> None:
-        """
-        Wrap one ordinal ASSERT conversation judge.
-
-        Args:
-            scorer (FloatScaleScorer): The ASSERT conversation judge.
-            dimension_name (str): The dimension the judge scores.
-        """
-        self._gate = _AssertJudgeGate(scorer=scorer, dimension_name=dimension_name)
-        super().__init__()
-
-    def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier(
-            params=self._gate.identifier_params(), sub_scorers=[self._gate.scorer.get_identifier()]
+        conversation_id = await self._get_conversation_id_async(scorable=scorable)
+        reason = await self._get_skip_reason_async(conversation_id=conversation_id) if conversation_id else None
+        if reason:
+            skipped = self._build_undetermined_score(
+                rationale=self.SKIP_RATIONALES[reason],
+                description="ASSERT does not judge this conversation.",
+                objective=expectation.objective if expectation else None,
+                score_category=[self._dimension_name],
+                score_metadata={self.SKIP_REASON_KEY: reason},
+            )
+            return [self._anchor(score=skipped, scorable=scorable, child_scores={})]
+        scores = await self._scorer._score_nested_async(
+            scorable=scorable, expectation=self._scorer._select_expectation(expectation=expectation)
         )
+        return [
+            self._anchor(score=self._create_wrapper_score(score), scorable=scorable, child_scores={0: score})
+            for score in scores
+        ]
 
-    def get_chat_target(self) -> PromptTarget | None:
-        """
-        Return the judge target.
+    def _anchor(self, *, score: Score, scorable: Scorable, child_scores: dict[int, Score]) -> Score:
+        score.scorable = cast("ScorableUnion", scorable)
+        score.message_piece_id = self._piece_id_from_scorable(scorable)
+        _set_snapshot_participation(score=score, child_scores=child_scores)
+        return score
 
-        Returns:
-            PromptTarget | None: The wrapped judge's target.
-        """
-        return self._gate.scorer.get_chat_target()
+    async def _get_conversation_id_async(self, *, scorable: Scorable) -> str | None:
+        if isinstance(scorable, ConversationScorable):
+            return scorable.conversation_id
+        if not isinstance(scorable, MessageScorable):
+            return None
+        pieces = await self._memory.get_message_pieces_async(prompt_ids=list(scorable.message_piece_ids))
+        return pieces[0].conversation_id if pieces else None
 
-    def with_scorer_block_policy(self, *, raise_if_scorer_blocks: bool) -> Scorer:
-        """
-        Apply the blocked-judge policy to the wrapped judge.
-
-        Args:
-            raise_if_scorer_blocks (bool): The policy to apply.
-
-        Returns:
-            Scorer: ``self`` when the judge is unchanged, otherwise a copy wrapping the updated judge.
-        """
-        gate = self._gate.scoped(raise_if_scorer_blocks=raise_if_scorer_blocks)
-        if gate is None:
-            return self
-        return _AssertJudgedGradeScorer(
-            scorer=cast("FloatScaleScorer", gate.scorer), dimension_name=gate.dimension_name
-        )
-
-    def _get_child_scorers(self) -> tuple[Scorer, ...]:
-        return (self._gate.scorer,)
-
-    async def _filter_matching_scores_by_snapshot_async(
-        self,
-        *,
-        scores: Sequence[Score],
-        scorable: Scorable,
-        expectation: ScoringExpectation | None,
-        used_observation_ids: dict[str, set[str]],
-        participation_by_score: dict[str, SnapshotParticipation | None],
-    ) -> list[Score]:
-        return await self._filter_matching_scores_by_children_async(
-            scores=scores,
-            scorable=scorable,
-            expectation=expectation,
-            used_observation_ids=used_observation_ids,
-            participation_by_score=participation_by_score,
-        )
-
-    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
-        return await self._gate.score_async(wrapper=self, scorable=scorable, expectation=expectation)
-
-
-class _AssertJudgeSetScorer(TrueFalseScorer):
-    """Scenario identity for a judge set that includes ordinal judges; it never scores."""
-
-    SUPPORTED_SCORABLE_TYPES: ClassVar[tuple[type[Scorable], ...]] = (MessageScorable, ConversationScorable)
-
-    def __init__(self, *, judges: Sequence[Scorer]) -> None:
-        """
-        Record every judge in the scenario's identity.
-
-        Args:
-            judges (Sequence[Scorer]): Every policy's judges, objective first.
-        """
-        self._judges = tuple(judges)
-        super().__init__()
-
-    def _build_identifier(self) -> ComponentIdentifier:
-        return self._create_identifier(sub_scorers=[judge.get_identifier() for judge in self._judges])
-
-    async def _score_scorable_async(self, *, scorable: Scorable, expectation: ScoringExpectation | None) -> list[Score]:
-        raise RuntimeError("AssertPolicy scores each group with its own ASSERT judges, not the judge set.")
+    async def _get_skip_reason_async(self, *, conversation_id: str) -> str | None:
+        for piece in await self._memory.get_message_pieces_async(conversation_id=conversation_id):
+            if piece.api_role != "assistant" or piece.is_simulated:
+                continue
+            if piece.is_blocked():
+                return self.TARGET_INPUT_REFUSED
+            if piece.has_error() or piece.converted_value_data_type == "error":
+                return self.TARGET_ERROR
+        return None
 
 
 @dataclass(frozen=True)
@@ -352,10 +230,10 @@ class _PolicyJudges:
     """The objective judge and auxiliary judges for one policy."""
 
     objective: TrueFalseScorer
-    auxiliaries: tuple[TrueFalseScorer | FloatScaleScorer, ...]
+    auxiliaries: tuple[TrueFalseScorer, ...]
 
     @property
-    def all(self) -> tuple[TrueFalseScorer | FloatScaleScorer, ...]:
+    def all(self) -> tuple[TrueFalseScorer, ...]:
         return (self.objective, *self.auxiliaries)
 
 
@@ -364,7 +242,7 @@ class _GroupScoring:
     """The judges and display stance for one stored group."""
 
     objective: TrueFalseScorer
-    auxiliaries: tuple[TrueFalseScorer | FloatScaleScorer, ...]
+    auxiliaries: tuple[TrueFalseScorer, ...]
     permissible: bool
 
 
@@ -379,7 +257,7 @@ class AssertPolicy(Scenario):
     violation (the objective score) and overrefusal (an auxiliary score). ``judge_presets`` adds
     dimensions from built-in presets and ``judge_preset_files`` from your own preset YAML files
     (Python callers only), ``disabled_judge_dimensions`` removes them,
-    ``objective_dimension`` picks the boolean dimension used as the objective, and ``judge_samples``
+    ``objective_dimension`` picks the dimension used as the objective, and ``judge_samples``
     repeats every judge call and aggregates the verdicts as ASSERT does. Conversations with a
     blocked or errored target reply are not judged and stay undetermined. Results are grouped by
     technique and by whether the group's assigned category is permissible.
@@ -394,7 +272,6 @@ class AssertPolicy(Scenario):
         "objective_dimension",
     )
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Disabled
-    SUPPORTS_TECHNIQUE_CONVERTERS: ClassVar[bool] = False
 
     @apply_defaults
     def __init__(
@@ -487,15 +364,15 @@ class AssertPolicy(Scenario):
             Parameter(
                 name="judge_samples",
                 description=(
-                    "Independent judge calls per dimension. Boolean verdicts use a majority vote with ties "
-                    "counted as failures, and ordinal grades use the lower median. Prefer an odd number."
+                    "Independent judge calls per dimension, combined by majority vote with ties counted as "
+                    "failures, as in ASSERT. Prefer an odd number."
                 ),
                 param_type=int,
                 default=1,
             ),
             Parameter(
                 name="objective_dimension",
-                description="The enabled boolean judge dimension used as the objective score.",
+                description="The enabled judge dimension used as the objective score.",
                 param_type=str,
                 default=AssertJudgeConfig.DEFAULT_OBJECTIVE_DIMENSION,
             ),
@@ -654,18 +531,12 @@ class AssertPolicy(Scenario):
                     self._judges_by_policy[key] = self._build_judges(
                         judge_target=judge_target, metadata=metadata, system_prompt=system_prompt, mode=mode
                     )
-        judges = [judge for policy_judges in self._judges_by_policy.values() for judge in policy_judges.all]
-        boolean_judges = [judge for judge in judges if isinstance(judge, TrueFalseScorer)]
-        if len(boolean_judges) == len(judges):
-            # Keeps the identity of runs that use only boolean dimensions, including the defaults.
-            # The OR composite's identity doesn't depend on judge order.
-            self._objective_scorer = TrueFalseCompositeScorer(
-                aggregator=TrueFalseScoreAggregator.OR, scorers=boolean_judges
-            )
-        else:
-            # Sorted by policy so the identity doesn't depend on the order groups are read.
-            ordered = [judge for _, policy in sorted(self._judges_by_policy.items()) for judge in policy.all]
-            self._objective_scorer = _AssertJudgeSetScorer(judges=ordered)
+        # The OR composite's identity doesn't depend on judge order. The objective dimension is part of
+        # the identity parameters.
+        self._objective_scorer = TrueFalseCompositeScorer(
+            aggregator=TrueFalseScoreAggregator.OR,
+            scorers=[judge for judges in self._judges_by_policy.values() for judge in judges.all],
+        )
         self._objective_scorer_identifier = self._objective_scorer.get_identifier()
 
     def _get_scoring(self, group: AttackSeedGroup) -> _GroupScoring:
@@ -732,11 +603,11 @@ class AssertPolicy(Scenario):
             _PolicyJudges: The objective judge and the auxiliary judges, in resolved order.
 
         Raises:
-            ValueError: If the objective dimension is not an enabled boolean dimension.
+            ValueError: If the objective dimension is not enabled.
         """
         objective_name = self.params["objective_dimension"]
         objective: TrueFalseScorer | None = None
-        auxiliaries: list[TrueFalseScorer | FloatScaleScorer] = []
+        auxiliaries: list[TrueFalseScorer] = []
         for dimension in self._judge_dimensions:
             name = get_assert_dimension_name(dimension)
             scorer = build_assert_policy_scorer(
@@ -748,16 +619,13 @@ class AssertPolicy(Scenario):
                 judgment_mode=mode,
                 samples=self.params["judge_samples"],
             ).with_scorer_block_policy(raise_if_scorer_blocks=False)
-            if isinstance(scorer, FloatScaleScorer):
-                auxiliaries.append(_AssertJudgedGradeScorer(scorer=scorer, dimension_name=name))
-                continue
             judged = _AssertJudgedScorer(scorer=cast("TrueFalseScorer", scorer), dimension_name=name)
             if name == objective_name:
                 objective = judged
             else:
                 auxiliaries.append(judged)
         if objective is None:
-            raise ValueError(f"objective_dimension '{objective_name}' is not an enabled boolean judge dimension.")
+            raise ValueError(f"objective_dimension '{objective_name}' is not an enabled judge dimension.")
         return _PolicyJudges(objective=objective, auxiliaries=tuple(auxiliaries))
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
@@ -865,6 +733,7 @@ class AssertPolicy(Scenario):
     ) -> AtomicAttack:
         scoring = self._get_scoring(group)
         multi_turn = technique is AssertTechnique.MultiTurn
+        extra = context.technique_converters.get(technique.value)
         attack_technique = factory.create(
             objective_target=context.objective_target,
             attack_scoring_config=AttackScoringConfig(
@@ -872,6 +741,7 @@ class AssertPolicy(Scenario):
                 auxiliary_scorers=list(scoring.auxiliaries),
                 use_score_as_feedback=False,
             ),
+            extra_request_converters=ConverterConfiguration.from_converters(converters=extra) if extra else None,
             seed_group=group if multi_turn else None,
         )
         if not multi_turn:
