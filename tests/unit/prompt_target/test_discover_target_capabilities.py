@@ -130,9 +130,9 @@ class TestDiscoverTargetCapabilitiesAsync:
             model_name="gpt-4o" if supported else "gpt-5",
             endpoint="https://example.test/v1",
             api_key="test-only-key",
+            generation_ranges={"temperature": (0.2, 1)},
         )
         declared = ExtendedCapabilities.model_validate(target.capabilities.model_dump())
-        target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0.2, 1))
         target.apply_capabilities(capabilities=declared)
         with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=_ok_response()):
             result = await discover_target_capabilities_async(
@@ -147,7 +147,7 @@ class TestDiscoverTargetCapabilitiesAsync:
         assert isinstance(target.capabilities, ExtendedCapabilities)
         target.set_model_name(model_name="gpt-5" if supported else "unknown")
         assert target.capabilities.supports_temperature is not supported
-        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 2)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0.2, 1)
 
     async def test_returns_only_supported_when_all_probes_succeed(self) -> None:
         target = MockPromptTarget()

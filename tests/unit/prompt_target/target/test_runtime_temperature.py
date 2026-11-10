@@ -707,8 +707,6 @@ def test_capability_updates_mask_unimplemented_generation_without_mutating_input
             target.validate_request_generation_config(request(0))
         validate.assert_not_called()
     with pytest.raises(ValueError, match="does not implement runtime temperature"):
-        target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0, 1))
-    with pytest.raises(ValueError, match="does not implement runtime temperature"):
         target_type(
             model_name="gpt-4o",
             endpoint="https://example.test/v1",
@@ -742,15 +740,20 @@ def test_send_validation_rejects_unimplemented_generation_even_if_configuration_
 
 
 @pytest.mark.parametrize("supports_temperature", [False, True])
-def test_capability_updates_preserve_opted_in_generation(target: OpenAIChatTarget, supports_temperature: bool) -> None:
-    target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0, 0.8))
+def test_capability_updates_preserve_opted_in_generation(
+    *, patch_central_database: Any, supports_temperature: bool
+) -> None:
+    target = OpenAIChatTarget(
+        model_name="gpt-4o",
+        endpoint="https://example.test/v1",
+        api_key="test-only-key",
+        generation_ranges={"temperature": (0, 0.8)},
+    )
     target.apply_capabilities(
         capabilities=target.capabilities.model_copy(update={"supports_temperature": supports_temperature})
     )
     assert target.capabilities.supports_temperature is supports_temperature
     assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 0.8)
-    target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0, 1))
-    assert target.capabilities.supports_temperature is supports_temperature
     if supports_temperature:
         assert target.validate_request_generation_config(request(0)).temperature == 0
     else:
@@ -1537,8 +1540,7 @@ async def test_declared_bounds_do_not_change_target_identity_async(
         declared = OpenAIChatTarget(**parameters, generation_ranges={"temperature": bounds})
         identifier = declared.get_identifier()
         assert identifier == original.get_identifier()
-        declared._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0.5, 0.7))
-        assert declared.get_identifier() is identifier
+        assert declared.generation_range(capability=CapabilityName.TEMPERATURE) == bounds
         assert original.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 2)
 
 
@@ -1662,18 +1664,26 @@ def test_openai_does_not_reuse_temperature_bounds_for_other_capabilities(
     target: OpenAIChatTarget, capability: CapabilityName
 ) -> None:
     assert target.generation_range(capability=capability) is None
-    with pytest.raises(ValueError, match="does not implement runtime"):
-        target._apply_generation_range(capability=capability, bounds=(1, 4))
     assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 2)
 
 
-async def test_openai_generation_ranges_are_independent_and_reset_to_constructor_declarations_async(
-    *, patch_central_database: Any
+@pytest.mark.parametrize(
+    "ranges",
+    [
+        {"temperature": (0.2, 0.8), "additional_parameter": (2, 3)},
+        {"temperature": (0, 0)},
+        {"additional_parameter": (1, 4)},
+        {},
+    ],
+)
+async def test_openai_generation_ranges_are_independent_and_preserve_constructor_declarations_async(
+    *, patch_central_database: Any, ranges: dict[str, tuple[float, float]]
 ) -> None:
     class ExtendedGenerationTarget(OpenAIChatTarget):
         _SUPPORTED_GENERATION_CAPABILITIES = frozenset({CapabilityName.TEMPERATURE, CapabilityName.JSON_OUTPUT})
 
-    declared_ranges = {"temperature": (0.2, 0.8), "additional_parameter": (2.0, 3.0)}
+    declared_ranges = dict(ranges)
+    expected = {"temperature": (0, 2), **ranges}
     with patch.dict(RequestGenerationConfig.FIELD_CAPABILITIES, additional_parameter=CapabilityName.JSON_OUTPUT):
         target = ExtendedGenerationTarget(
             model_name="gpt-4o",
@@ -1682,14 +1692,12 @@ async def test_openai_generation_ranges_are_independent_and_reset_to_constructor
             generation_ranges=declared_ranges,
         )
         try:
-            assert target.generation_ranges == declared_ranges
+            assert target.generation_ranges == expected
+            assert target.generation_range(capability=CapabilityName.JSON_OUTPUT) == ranges.get("additional_parameter")
             declared_ranges["additional_parameter"] = (8, 9)
-            target._apply_generation_range(capability=CapabilityName.JSON_OUTPUT, bounds=(1, 4))
-            target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0, 0))
-            expected = {"temperature": (0, 0), "additional_parameter": (1, 4)}
             assert target.generation_ranges == expected
             parameters = TargetRegistry.get_registry_singleton().get_reconstruction_parameters(target)
-            assert parameters["generation_ranges"] == expected
+            assert parameters["generation_ranges"] == ranges
             with pytest.raises(ValueError, match="additional_parameter"):
                 ExtendedGenerationTarget(
                     **{**parameters, "generation_ranges": {**expected, "additional_parameter": (4, 1)}}
@@ -1703,15 +1711,8 @@ async def test_openai_generation_ranges_are_independent_and_reset_to_constructor
             snapshot = target.generation_ranges
             snapshot["additional_parameter"] = (8, 9)
             assert target.generation_ranges == expected
-            target._apply_generation_range(capability=CapabilityName.JSON_OUTPUT, bounds=None)
-            assert target.generation_range(capability=CapabilityName.JSON_OUTPUT) is None
-            assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 0)
-            target._apply_generation_range(capability=CapabilityName.JSON_OUTPUT, bounds=(1, 4))
-            target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=None)
-            assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 2)
-            assert target.generation_range(capability=CapabilityName.JSON_OUTPUT) == (1, 4)
             target.set_model_name(model_name="Mistral-Large-3")
-            assert target.generation_ranges == {"temperature": (0.2, 0.8), "additional_parameter": (2, 3)}
+            assert target.generation_ranges == {"temperature": (0, 1), **ranges}
         finally:
             await target.cleanup_target_async()
 
@@ -1726,13 +1727,11 @@ def test_mistral_temperature_range(model: str) -> None:
 
 
 @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
-@pytest.mark.parametrize("applied", [False, True])
 @pytest.mark.parametrize("bounds", [(0, 1), (0.2, 1), (0, 0)])
 async def test_declared_temperature_range_is_enforced_before_io_async(
     *,
     patch_central_database: Any,
     target_type: type[OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget],
-    applied: bool,
     bounds: tuple[float, float],
 ) -> None:
     bodies: list[dict[str, Any]] = []
@@ -1748,13 +1747,10 @@ async def test_declared_temperature_range_is_enforced_before_io_async(
             endpoint="https://example.test/v1",
             api_key="test-only-key",
             temperature=1.5,
-            custom_configuration=None if applied else TargetConfiguration(capabilities=declared),
-            generation_ranges=None if applied else {"temperature": bounds},
+            custom_configuration=TargetConfiguration(capabilities=declared),
+            generation_ranges={"temperature": bounds},
             httpx_client_kwargs={"http_client": client},
         )
-        if applied:
-            target.apply_capabilities(capabilities=declared)
-            target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=bounds)
         assert target.generation_range(capability=CapabilityName.TEMPERATURE) == bounds
         assert "generation_ranges" not in declared.model_dump()
         identifier = target.get_identifier()
@@ -1793,9 +1789,8 @@ async def test_temperature_range_refresh_uses_constructor_declaration_or_model_a
             httpx_client_kwargs={"http_client": client},
         )
         assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (constructor_range or (0, 1))
-        target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0, 0.5))
         target.apply_capabilities(capabilities=TargetCapabilities(supports_temperature=True))
-        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 0.5)
+        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (constructor_range or (0, 1))
         for model, inferred_range in (("gpt-4o", (0, 2)), ("Mistral-Large-3", (0, 1))):
             target.set_model_name(model_name=model)
             bounds = constructor_range or inferred_range
@@ -1803,10 +1798,6 @@ async def test_temperature_range_refresh_uses_constructor_declaration_or_model_a
             assert target.validate_request_generation_config(request(bounds[1])).temperature == bounds[1]
             with pytest.raises(ValueError, match="temperature must be between"):
                 target.validate_request_generation_config(request(bounds[1] + 0.1))
-        target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=None)
-        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 1)
-        target.set_model_name(model_name="Mistral-Large-3")
-        assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (constructor_range or (0, 1))
 
 
 @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])

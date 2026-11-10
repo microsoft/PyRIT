@@ -410,7 +410,7 @@ class TestTemporaryComponents:
                 assert not target_object_to_instance("target", target).capabilities.supports_temperature
 
     @pytest.mark.parametrize("register", [False, True])
-    @pytest.mark.parametrize("declaration", ["constructor", "applied", "inferred"])
+    @pytest.mark.parametrize("declaration", ["constructor", "inferred"])
     @pytest.mark.parametrize("target_type", [OpenAIChatTarget, OpenAICompletionTarget, OpenAIResponseTarget])
     async def test_source_bounds_survive_reconstruction_and_descriptor_serialization_async(
         self,
@@ -425,8 +425,6 @@ class TestTemporaryComponents:
             api_key="test-only-key",
             generation_ranges={"temperature": (0.2, 0.8)} if declaration == "constructor" else None,
         )
-        if declaration == "applied":
-            source._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0.2, 0.8))
         registry = TargetRegistry.get_registry_singleton()
         registry.instances.register(source, name="source")
         copied: PromptTarget | None = None
