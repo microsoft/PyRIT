@@ -92,7 +92,8 @@ Each listed target's `origin` is `saved`, `configuration` (registered by the ser
 launch scripts). A saved target can only use targets that come back after a restart; targets from configuration keep
 their own sign-in.
 
-A saved target records its class and constructor parameters as the API accepted them, so it follows the class's
+A saved target records the create request without its name: the target type, `auth_mode`, and the parameters as the
+API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
 constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
 changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
 restores one. A file that still doesn't match fails to restore with the reason, and its name stays held, so nothing

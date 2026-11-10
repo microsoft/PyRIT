@@ -583,6 +583,7 @@ class TargetService:
                 target_type=request.type,
                 target_cls=target_cls,
                 params=params,
+                auth_mode=request.auth_mode,
                 listed_credential_parameter=listed[0] if listed is not None else None,
             )
         # The key reaches only the target being built; a saved recipe names the credential instead.
@@ -632,6 +633,7 @@ class TargetService:
                     type_name=request.type,
                     target_cls=target_cls,
                     target_obj=target_obj,
+                    auth_mode=request.auth_mode,
                     params=params,
                     server_credential=request.server_credential,
                     owner=owner,
@@ -652,6 +654,7 @@ class TargetService:
         target_type: str,
         target_cls: type[PromptTarget],
         params: dict[str, Any],
+        auth_mode: AuthMode,
         listed_credential_parameter: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -683,6 +686,7 @@ class TargetService:
                 cls=target_cls,
                 parameters=parameters,
                 params=saved_params,
+                auth_mode=auth_mode,
                 listed_credential_parameter=listed_credential_parameter,
             )
         except SavedEntryRefusedError as error:
@@ -719,6 +723,7 @@ class TargetService:
         type_name: str,
         target_cls: type[PromptTarget],
         target_obj: PromptTarget,
+        auth_mode: AuthMode,
         params: dict[str, Any],
         server_credential: str | None,
         owner: SavedEntryOwner | None,
@@ -729,7 +734,8 @@ class TargetService:
 
         The recipe is written only if no saved target has the name, so of two saves under one name
         only one succeeds. If registering then fails, the recipe is deleted again. The recipe names
-        the class by the registry name the request used, which restore looks up.
+        the class by the registry name the request used, which restore looks up, and keeps the auth
+        mode apart from the parameters, as the create request does.
 
         Returns:
             TargetInstance: The saved target.
@@ -741,10 +747,12 @@ class TargetService:
         target = self._build_instance_from_object(
             target_registry_name=name, target_obj=target_obj, origin=RegistryEntryOrigin.SAVED
         )
+        auth_parameters = target_cls.get_auth_mode_parameters(auth_mode=auth_mode)
         recipe = ComponentRecipe(
             class_module=target_cls.__module__,
             class_name=type_name,
-            params=params,
+            auth_mode=auth_mode,
+            params={key: value for key, value in params.items() if key not in auth_parameters},
             server_credential=server_credential,
             owner=owner,
         )

@@ -1,0 +1,98 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT license.
+
+"""Build saved registry entries through the API's own create for each kind."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from pydantic import ValidationError
+
+from pyrit.backend.models import CreateConverterRequest, CreateScorerRequest, CreateTargetRequest
+from pyrit.backend.models.techniques import CreateTechniqueRequest
+from pyrit.backend.services.converter_service import get_converter_service
+from pyrit.backend.services.scorer_service import get_scorer_service
+from pyrit.backend.services.target_service import get_target_service
+from pyrit.backend.services.technique_service import get_technique_service
+from pyrit.models.catalog import RegistryRecipeKind, RestoreFailureReason, TechniqueRecipe
+from pyrit.registry.registry_recipe_restore import RecipeRejectedError
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyrit.models.catalog import ServerCredential, StoredRecipe
+
+
+async def build_saved_entry_async(
+    stored: StoredRecipe, *, upload_directory: str | None, server_credentials: Sequence[ServerCredential] = ()
+) -> None:
+    """
+    Build one saved entry with the create the API uses for its kind, and register it under its name.
+
+    The entry passes the same checks a create request does. Restore runs as the server and can't tell who
+    wrote a saved file, so a target is built as an administrator would build it. A target that
+    uploads files gets this server's upload folder, as it does through the API, and a target that names a
+    server credential gets its key from this server's list, as it does through the API.
+
+    Args:
+        stored (StoredRecipe): The checked recipe to build.
+        upload_directory (str | None): The folder this server lets targets upload files from, or None.
+        server_credentials (Sequence[ServerCredential]): The server credentials an administrator lets saved
+            targets use. Defaults to none.
+
+    Raises:
+        RecipeRejectedError: If the recipe doesn't make a valid create request.
+    """
+    request = _create_request(stored)
+    if isinstance(request, CreateTechniqueRequest):
+        await get_technique_service().create_async(request)
+    elif isinstance(request, CreateTargetRequest):
+        await get_target_service().create_target_async(
+            request=request,
+            upload_directory=upload_directory,
+            is_admin=True,
+            server_credentials=server_credentials,
+        )
+    elif isinstance(request, CreateConverterRequest):
+        await get_converter_service().create_converter_async(request=request)
+    else:
+        await get_scorer_service().create_scorer_async(request=request)
+
+
+def _create_request(
+    stored: StoredRecipe,
+) -> CreateTargetRequest | CreateConverterRequest | CreateScorerRequest | CreateTechniqueRequest:
+    """
+    Turn a saved recipe back into the create request it was saved from.
+
+    Returns:
+        CreateTargetRequest | CreateConverterRequest | CreateScorerRequest | CreateTechniqueRequest: The request.
+
+    Raises:
+        RecipeRejectedError: If the recipe doesn't make a valid request, such as a technique with a reserved name.
+    """
+    recipe = stored.recipe
+    fields: dict[str, Any] = {"name": stored.ref.name}
+    try:
+        if isinstance(recipe, TechniqueRecipe):
+            return CreateTechniqueRequest.model_validate(
+                fields | recipe.model_dump(exclude_unset=True, exclude={"schema_version"})
+            )
+        fields |= {"type": recipe.class_name, "params": recipe.params}
+        if stored.ref.kind is RegistryRecipeKind.TARGETS:
+            if recipe.auth_mode is not None:
+                fields["auth_mode"] = recipe.auth_mode
+            if recipe.server_credential is not None:
+                fields["server_credential"] = recipe.server_credential
+            return CreateTargetRequest.model_validate(fields)
+        if stored.ref.kind is RegistryRecipeKind.CONVERTERS:
+            return CreateConverterRequest.model_validate(fields)
+        return CreateScorerRequest.model_validate(fields)
+    except ValidationError as error:
+        problems = "; ".join(
+            f"{'.'.join(map(str, issue['loc'])) or 'request'}: {issue['msg']}" for issue in error.errors()
+        )
+        raise RecipeRejectedError(
+            reason=RestoreFailureReason.INVALID_RECIPE, message=f"Not a valid create request: {problems}"
+        ) from error

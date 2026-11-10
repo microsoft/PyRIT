@@ -47,6 +47,7 @@ def check_saved_entry_params(
     cls: type,
     parameters: Sequence[Parameter],
     params: Mapping[str, Any],
+    auth_mode: str | None = None,
     listed_credential_parameter: str | None = None,
 ) -> None:
     """
@@ -62,6 +63,7 @@ def check_saved_entry_params(
         cls (type): The class the recipe builds.
         parameters (Sequence[Parameter]): The class's constructor parameters.
         params (Mapping[str, Any]): The recipe's parameter values.
+        auth_mode (str | None): The target recipe's auth mode. None means the API's default, ``"api_key"``.
         listed_credential_parameter (str | None): The parameter a listed server credential fills at every
             start, which isn't left to this server's own settings. Defaults to None.
 
@@ -71,7 +73,7 @@ def check_saved_entry_params(
     _check_class(cls)
     _check_server_headers(cls)
     _check_stored_credentials(parameters=parameters, params=params)
-    _check_server_fallbacks(cls=cls, params=params, provided=listed_credential_parameter)
+    _check_server_fallbacks(cls=cls, params=params, auth_mode=auth_mode, provided=listed_credential_parameter)
     _check_destinations(cls=cls, params=params)
 
 
@@ -148,7 +150,7 @@ def check_saveable_class(cls: type) -> tuple[str, ...]:
     saveable_modes: list[str] = []
     for auth_mode in supported_auth_modes:
         try:
-            _check_server_fallbacks(cls=cls, params={**turned_off, "auth_mode": auth_mode})
+            _check_server_fallbacks(cls=cls, params=turned_off, auth_mode=auth_mode)
         except SavedEntryRefusedError:
             continue
         saveable_modes.append(auth_mode)
@@ -171,7 +173,7 @@ def _check_class(cls: type) -> None:
         SavedEntryRefusedError: If the class needs the server's upload folder or declares why it can't be saved.
     """
     if getattr(cls, "upload_directory_parameter", None) is not None:
-        message = f"'{cls.__name__}' uploads files from a folder the server chooses, which restore can't set yet."
+        message = f"'{cls.__name__}' uploads files from a folder the server chooses, which a saved entry can't use yet."
         raise SavedEntryRefusedError(reason=RestoreFailureReason.UNSUPPORTED_CLASS, message=message)
     reason = getattr(cls, "not_saveable_reason", None)
     if reason is not None:
@@ -215,7 +217,9 @@ def _check_stored_credentials(*, parameters: Sequence[Parameter], params: Mappin
         )
 
 
-def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any], provided: str | None = None) -> None:
+def _check_server_fallbacks(
+    *, cls: type, params: Mapping[str, Any], auth_mode: str | None, provided: str | None = None
+) -> None:
     """
     Refuse values that would let the entry use a credential from this server.
 
@@ -224,7 +228,6 @@ def _check_server_fallbacks(*, cls: type, params: Mapping[str, Any], provided: s
             from the server is left empty in an auth mode that reads it, or holds a value other than the
             one that turns the server's value off.
     """
-    auth_mode = params.get("auth_mode")
     if auth_mode is None:
         auth_mode = "api_key"
     supported_auth_modes = getattr(cls, "supported_auth_modes", None)
