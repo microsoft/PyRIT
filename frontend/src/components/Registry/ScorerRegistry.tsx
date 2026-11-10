@@ -199,7 +199,8 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
           </Text>
           <Text as="p">
             Add the initializer script to <code>initialization_scripts</code> in <Link to="/config">Configuration</Link>.
-            Save, select <strong>Reinitialize PyRIT</strong>, then return here to select your scorer.
+            Save your changes. Select <strong>Reinitialize PyRIT</strong> if available, or restart the backend
+            with the saved configuration. Then return here to select your scorer.
           </Text>
         </section>
       )}

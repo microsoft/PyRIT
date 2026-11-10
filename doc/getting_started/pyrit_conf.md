@@ -237,7 +237,9 @@ initialization_scripts:
   - /absolute/path/to/local_scorer.py
 ```
 
-Choose **Save**, then **Reinitialize PyRIT** to apply the change. Return to
+Choose **Save**. If **Reinitialize PyRIT** is enabled, select it to apply the change.
+Live reinitialization is disabled by default. If the button is unavailable, restart
+the PyRIT backend using the saved configuration. Return to
 **Registry → Scorers** and select `contains-example` as the default objective scorer for chats.
 Use only initializer scripts you trust, since they run as Python code on the backend.
 

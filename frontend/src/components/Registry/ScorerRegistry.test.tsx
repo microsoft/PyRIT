@@ -33,6 +33,7 @@ describe('ScorerRegistry', () => {
     expect(within(guide).getByRole('link', { name: 'local scorer initializer recipe' }))
       .toHaveAttribute('href', expect.stringContaining('#initialization-scripts'))
     expect(within(guide).getByText('Reinitialize PyRIT')).toBeVisible()
+    expect(within(guide).getByText(/if available, or restart the backend/)).toBeVisible()
   })
 
   it('browses existing scorers and saves a personal default without a create action', async () => {
