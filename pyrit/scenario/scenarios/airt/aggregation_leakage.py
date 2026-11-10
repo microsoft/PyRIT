@@ -14,16 +14,17 @@ often a target draws, and discloses, such a conclusion.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pyrit.common import apply_defaults
 from pyrit.common.path import SCORER_SEED_PROMPT_PATH
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
-from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig, AttackScoringConfig
+from pyrit.executor.attack.core.attack_config import AttackScoringConfig
 from pyrit.models import AttackSeedGroup, Parameter, SeedPrompt
+from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.scenario.core.atomic_attack import AtomicAttack
-from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
+from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource, DatasetSourceKind
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.scenario_target_defaults import get_default_adversarial_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -36,7 +37,9 @@ from pyrit.scenario.core.technique_requirements import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from pyrit.converter import Converter
     from pyrit.prompt_target import PromptTarget
+    from pyrit.scenario.core.attack_technique import AttackTechnique
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.score import TrueFalseScorer
 
@@ -177,11 +180,20 @@ class AggregationLeakage(Scenario):
                 name="include_context",
                 description=(
                     "Send the retrieved documents as a system turn before each question. Set to False "
-                    "when the documents are already loaded into the target's own knowledge base, so "
-                    "only the questions are sent."
+                    "only with one explicitly supplied inline seed group and an isolated, externally "
+                    "provisioned target. Requires external_context_isolated=True."
                 ),
                 param_type=bool,
                 default=True,
+            ),
+            Parameter(
+                name="external_context_isolated",
+                description=(
+                    "Confirm that the target contains only the selected case's documents and confidentiality "
+                    "policy, with no positive/control documents or conversation state from another case."
+                ),
+                param_type=bool,
+                default=False,
             ),
             Parameter(
                 name="max_turns",
@@ -229,7 +241,12 @@ class AggregationLeakage(Scenario):
         )
 
     def _build_technique(
-        self, *, technique: str, objective_target: PromptTarget, adversarial_chat: PromptTarget | None
+        self,
+        *,
+        technique: str,
+        objective_target: PromptTarget,
+        adversarial_chat: PromptTarget | None,
+        converters: list[Converter],
     ) -> AttackTechnique:
         """
         Build the attack technique for one technique name.
@@ -238,6 +255,7 @@ class AggregationLeakage(Scenario):
             technique (str): The technique name.
             objective_target (PromptTarget): The target under test.
             adversarial_chat (PromptTarget | None): The adversarial chat for ``red_teaming``.
+            converters (list[Converter]): Additional request converters selected for this technique.
 
         Returns:
             AttackTechnique: The configured technique.
@@ -245,25 +263,44 @@ class AggregationLeakage(Scenario):
         Raises:
             ValueError: If ``technique`` is unknown, or ``red_teaming`` has no adversarial chat.
         """
-        if technique == AggregationLeakageTechnique.PromptSending.value:
-            return AttackTechnique(
-                attack=PromptSendingAttack(
-                    objective_target=objective_target,
-                    attack_scoring_config=self._scorer_config,
-                )
-            )
-        if technique == AggregationLeakageTechnique.RedTeaming.value:
+        is_red_teaming = technique == AggregationLeakageTechnique.RedTeaming.value
+        if is_red_teaming:
             if adversarial_chat is None:
                 raise ValueError("The red_teaming technique requires an adversarial chat target.")
-            return AttackTechnique(
-                attack=RedTeamingAttack(
-                    objective_target=objective_target,
-                    attack_scoring_config=self._scorer_config,
-                    attack_adversarial_config=AttackAdversarialConfig(target=adversarial_chat),
-                    max_turns=cast("int", self.params.get("max_turns", 3)),
-                )
+        elif technique != AggregationLeakageTechnique.PromptSending.value:
+            raise ValueError(f"Unknown AggregationLeakageTechnique: {technique}")
+        factory = AttackTechniqueFactory(
+            name=technique,
+            attack_class=RedTeamingAttack if is_red_teaming else PromptSendingAttack,
+            attack_kwargs={"max_turns": self.params.get("max_turns", 3)} if is_red_teaming else {},
+            adversarial_chat=adversarial_chat,
+            supports_additional_request_converters=True,
+        )
+        return factory.create(
+            objective_target=objective_target,
+            attack_scoring_config=self._scorer_config,
+            extra_request_converters=ConverterConfiguration.from_converters(converters=converters)
+            if converters
+            else None,
+        )
+
+    async def _validate_external_context_async(self, context: ScenarioContext) -> None:
+        """
+        Require an explicitly selected case and confirmation of external target isolation.
+
+        Raises:
+            ValueError: If isolation is unconfirmed or the population is not one inline case.
+        """
+        if not self.params.get("external_context_isolated", False):
+            raise ValueError("include_context=False requires external_context_isolated=True.")
+        if context.dataset_config.source_kind != DatasetSourceKind.INLINE or len(context.seed_groups) != 1:
+            raise ValueError(
+                "include_context=False requires exactly one inline seed group. Provision an isolated target "
+                "with that case's documents and policy; do not combine positive and control evidence."
             )
-        raise ValueError(f"Unknown AggregationLeakageTechnique: {technique}")
+        population = await context.dataset_config.get_attack_seed_groups_async(apply_sampling=False)
+        if len(population) != 1:
+            raise ValueError("include_context=False requires exactly one inline seed group before sampling.")
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
@@ -276,6 +313,8 @@ class AggregationLeakage(Scenario):
             list[AtomicAttack]: The generated atomic attacks.
         """
         include_context = cast("bool", self.params.get("include_context", True))
+        if not include_context:
+            await self._validate_external_context_async(context)
         techniques = sorted({technique.value for technique in context.scenario_techniques})
 
         atomic_attacks: list[AtomicAttack] = []
@@ -293,9 +332,8 @@ class AggregationLeakage(Scenario):
                 continue
             adversarial_chat = (self._adversarial_chat or get_default_adversarial_target()) if is_red_teaming else None
             for dataset_name, groups in context.seed_groups_by_dataset.items():
-                shaped = list(groups) if include_context else [strip_aggregation_context(seed_group=g) for g in groups]
                 compatible = filter_seed_groups(
-                    seed_groups=shaped,
+                    seed_groups=groups,
                     requirements=requirements.seed_group,
                     seed_technique=None,
                     technique_name=technique,
@@ -304,6 +342,13 @@ class AggregationLeakage(Scenario):
                 )
                 if not compatible:
                     continue
+                execution_params: dict[str, Any] = {}
+                if not include_context:
+                    execution_group = strip_aggregation_context(seed_group=compatible[0])
+                    execution_params = {
+                        "prepended_conversation": execution_group.prepended_conversation,
+                        "next_message": execution_group.next_message,
+                    }
                 atomic_attacks.append(
                     AtomicAttack(
                         atomic_attack_name=f"{technique}_{dataset_name}",
@@ -313,11 +358,13 @@ class AggregationLeakage(Scenario):
                             technique=technique,
                             objective_target=context.objective_target,
                             adversarial_chat=adversarial_chat,
+                            converters=context.technique_converters.get(technique, []),
                         ),
                         seed_groups=compatible,
                         adversarial_chat=adversarial_chat,
                         objective_scorer=self._scorer_config.objective_scorer,
                         memory_labels=context.memory_labels,
+                        **execution_params,
                     )
                 )
         return atomic_attacks

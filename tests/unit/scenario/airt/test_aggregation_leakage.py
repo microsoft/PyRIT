@@ -3,12 +3,14 @@
 
 """Tests for the AggregationLeakage scenario and its datasets."""
 
+import codecs
 import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pyrit.common.path import DATASETS_PATH
+from pyrit.converter import ROT13Converter
 from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.models import AttackSeedGroup, ComponentIdentifier, SeedDataset, SeedObjective, SeedPrompt
 from pyrit.prompt_target import PromptTarget
@@ -22,7 +24,7 @@ from pyrit.scenario.scenarios.airt.aggregation_leakage import (
     AGGREGATION_LEAKAGE_MINIMAL_PAIRS_DATASET,
     strip_aggregation_context,
 )
-from pyrit.score import TrueFalseCompositeScorer, TrueFalseQuestion
+from pyrit.score import SubStringScorer, TrueFalseCompositeScorer, TrueFalseQuestion
 from tests.unit.mocks import MockPromptTarget
 
 DATASET_DIR = pathlib.Path(DATASETS_PATH) / "seed_datasets" / "local" / "airt"
@@ -220,7 +222,7 @@ class TestAggregationLeakageAttackGeneration:
         assert all(isinstance(atomic._attack_technique.attack, RedTeamingAttack) for atomic in red_teaming)
         assert all(atomic._attack_technique.attack._max_turns == 5 for atomic in red_teaming)
 
-    async def test_include_context_false_sends_only_questions_async(
+    async def test_include_context_false_requires_isolation_confirmation_async(
         self,
         *,
         mock_objective_scorer: TrueFalseCompositeScorer,
@@ -228,12 +230,10 @@ class TestAggregationLeakageAttackGeneration:
     ) -> None:
         scenario = AggregationLeakage(objective_scorer=mock_objective_scorer)
 
-        await _initialize_async(scenario=scenario, groups_by_dataset=groups_by_dataset, args={"include_context": False})
-
-        groups = [group for atomic in scenario._atomic_attacks for group in atomic.seed_groups]
-        assert len(groups) == 32
-        assert all(group.prepended_conversation is None for group in groups)
-        assert all(group.next_message.message_pieces[0].api_role == "user" for group in groups)
+        with pytest.raises(ValueError, match="external_context_isolated=True"):
+            await _initialize_async(
+                scenario=scenario, groups_by_dataset=groups_by_dataset, args={"include_context": False}
+            )
 
     async def test_include_baseline_raises_async(
         self,
@@ -247,3 +247,112 @@ class TestAggregationLeakageAttackGeneration:
             await _initialize_async(
                 scenario=scenario, groups_by_dataset=groups_by_dataset, args={"include_baseline": True}
             )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "technique", [AggregationLeakageTechnique.PromptSending, AggregationLeakageTechnique.RedTeaming]
+)
+@pytest.mark.parametrize("include_context", [True, False])
+async def test_converters_reach_target_without_changing_planned_context_async(
+    *, technique: AggregationLeakageTechnique, include_context: bool
+) -> None:
+    group = _load_groups(AGGREGATION_LEAKAGE_DATASET)[0]
+    original_id = group.logical_id
+    question = group.next_message.get_value()
+    target = MockPromptTarget()
+    scenario = AggregationLeakage(
+        objective_scorer=SubStringScorer(substring="default"), adversarial_chat=MockPromptTarget()
+    )
+    scenario.set_params_from_args(
+        args={
+            "objective_target": target,
+            "scenario_techniques": [technique],
+            "technique_converters": {technique.value: [ROT13Converter()]},
+            "dataset_config": DatasetAttackConfiguration(seed_groups=[group]),
+            "include_context": include_context,
+            "external_context_isolated": not include_context,
+            "max_turns": 1,
+        }
+    )
+    await scenario.initialize_async()
+    with patch.object(target, "_send_prompt_to_target_async", wraps=target._send_prompt_to_target_async) as send:
+        await scenario.run_async()
+
+    assert target.prompt_sent == [codecs.encode(question, "rot_13")]
+    conversation = send.call_args.kwargs["normalized_conversation"]
+    system_messages = [
+        message.get_value() for message in conversation if message.message_pieces[0].api_role == "system"
+    ]
+    assert system_messages == ([group.prepended_conversation[0].get_value()] if include_context else [])
+    assert group.logical_id == original_id
+    assert scenario._atomic_attacks[0].seed_groups[0].logical_id == original_id
+    assert scenario._atomic_attacks[0].seed_groups[0].prepended_conversation is not None
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_external_context_run_resumes_original_case_and_does_not_repeat_completed_work_async() -> None:
+    group = _load_groups(AGGREGATION_LEAKAGE_DATASET)[0]
+    target = MockPromptTarget()
+    scorer = SubStringScorer(substring="default")
+    args = {
+        "objective_target": target,
+        "dataset_config": DatasetAttackConfiguration(seed_groups=[group]),
+        "include_context": False,
+        "external_context_isolated": True,
+    }
+    scenario = AggregationLeakage(objective_scorer=scorer)
+    scenario.set_params_from_args(args=args)
+    await scenario.initialize_async()
+    result_id = scenario._scenario_result_id
+
+    resumed = AggregationLeakage(objective_scorer=scorer, scenario_result_id=result_id)
+    resumed.set_params_from_args(args=args)
+    await resumed.initialize_async()
+    assert resumed._atomic_attacks[0].seed_groups[0].logical_id == group.logical_id
+    await resumed.run_async()
+    assert target.prompt_sent == [group.next_message.get_value()]
+
+    completed = AggregationLeakage(objective_scorer=scorer, scenario_result_id=result_id)
+    completed.set_params_from_args(args=args)
+    await completed.initialize_async()
+    await completed.run_async()
+    assert len(target.prompt_sent) == 1
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("sample_one", [False, True])
+@pytest.mark.parametrize(
+    "dataset_names",
+    [
+        [AGGREGATION_LEAKAGE_DATASET, AGGREGATION_LEAKAGE_MINIMAL_PAIRS_DATASET],
+        [AGGREGATION_LEAKAGE_DATASET, AGGREGATION_LEAKAGE_MENTION_ONLY_DATASET],
+        [AGGREGATION_LEAKAGE_DATASET, AGGREGATION_LEAKAGE_DATASET],
+    ],
+)
+async def test_external_context_rejects_multiple_cases_async(*, dataset_names: list[str], sample_one: bool) -> None:
+    groups = [_load_groups(name)[0] for name in dataset_names]
+    scenario = AggregationLeakage(objective_scorer=SubStringScorer(substring="default"))
+    scenario.set_params_from_args(
+        args={
+            "objective_target": MockPromptTarget(),
+            "dataset_config": DatasetAttackConfiguration(seed_groups=groups, max_total=1 if sample_one else "all"),
+            "include_context": False,
+            "external_context_isolated": True,
+        }
+    )
+    with pytest.raises(ValueError, match="exactly one inline seed group"):
+        await scenario.initialize_async()
+
+
+@pytest.mark.usefixtures(*FIXTURES)
+async def test_external_context_rejects_named_population_even_if_sampled_to_one_async(
+    *, mock_objective_scorer: TrueFalseCompositeScorer
+) -> None:
+    scenario = AggregationLeakage(objective_scorer=mock_objective_scorer)
+    with pytest.raises(ValueError, match="exactly one inline seed group"):
+        await _initialize_async(
+            scenario=scenario,
+            groups_by_dataset={AGGREGATION_LEAKAGE_DATASET: _load_groups(AGGREGATION_LEAKAGE_DATASET)[:1]},
+            args={"include_context": False, "external_context_isolated": True},
+        )

@@ -323,8 +323,17 @@ await output_scenario_async(scenario_result)
 #   the fact does **not** follow. Their success rates should stay near zero; if they don't, the target or
 #   the scorer is reacting to the topic rather than to the derivation.
 #
-# Set `include_context` to `False` when the documents are already loaded into the target's own knowledge
-# base, so only the questions are sent.
+# With `include_context=False`, supply exactly one explicit case using
+# `DatasetAttackConfiguration(seed_groups=[selected_group])` and set `external_context_isolated=True`.
+# Before running, provision the target with that case's documents and confidentiality policy only.
+# Use a fresh knowledge base/memory scope for each positive or control case, and clear prior conversation
+# state. Do not load the three datasets into one knowledge base: they contain conflicting versions of
+# the same evidence and may ask identical questions. Named datasets and multiple inline cases are rejected
+# in this mode. The flag confirms caller-managed isolation; PyRIT cannot inspect the external knowledge base.
+# Only execution inputs lose the marked context turn; the original seed group remains in the saved plan,
+# so resuming uses the same case. Resume must reconnect to the same externally provisioned evidence.
+#
+# Additional `technique_converters` apply to the questions in both techniques, not to the context turn.
 
 # %%
 from pyrit.scenario.airt import AggregationLeakage, AggregationLeakageTechnique
