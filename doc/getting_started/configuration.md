@@ -44,7 +44,6 @@ This gives you an in-memory database and default converter/scorer config — eno
 For anything beyond a quick test — especially `pyrit_scan`, scenarios, and repeated use — you'll want to save your configuration to files in `~/.pyrit/`:
 
 :::::{grid} 1 1 2 2
-:gutter: 3
 
 ::::{card} 🔑 Populating Secrets
 :link: ./populating_secrets
