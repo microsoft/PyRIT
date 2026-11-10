@@ -8,7 +8,9 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-rou
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
 import { scenariosApi } from '@/services/api'
-import type { ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunPlan, ScenarioRunSummary } from '@/types'
+import type {
+  ScenarioHierarchyNode, ScenarioHierarchyProjection, ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunPlan, ScenarioRunSummary,
+} from '@/types'
 import { scenarioRunAttackRoutePath, scenarioRunRoutePath } from '@/utils/routeParams'
 import { INITIAL_SCENARIO_RUN_PROGRESS_STATE, type ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
 
@@ -19,6 +21,7 @@ jest.mock('@/hooks/useScenarioQueue', () => ({ useScenarioQueue: jest.fn() }))
 jest.mock('@/services/api', () => ({ scenariosApi: {
   cancelRun: jest.fn(), resumeRun: jest.fn(), getLaunchConfiguration: jest.fn(), startRun: jest.fn(), getQueue: jest.fn(),
   getRunHierarchy: jest.fn(() => new Promise(() => {})), getRunHierarchyNode: jest.fn(),
+  getPairedOutcomes: jest.fn(), getPairedOutcomeDetails: jest.fn(),
 } }))
 
 const mockUseScenarioQueue = useScenarioQueue as jest.Mock
@@ -128,6 +131,56 @@ beforeEach(() => {
 })
 
 describe('ScenarioRunPage', () => {
+  it('keeps comparison optional on completed scans and cancels it when collapsed', async () => {
+    const user = userEvent.setup()
+    state = makeState({
+      run: { ...RUN, status: 'COMPLETED' },
+      plan: { ...PLAN, atomic_groups: [
+        { ...PLAN.atomic_groups[0], id: 'baseline', kind: 'baseline' },
+        { ...PLAN.atomic_groups[0], id: 'attack', kind: 'attack' },
+      ] },
+    })
+    jest.mocked(scenariosApi.getPairedOutcomes).mockReturnValue(new Promise(() => {}))
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const disclosure = screen.getByRole('button', { name: 'Compare baseline and attack' })
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('region', { name: 'Paired outcomes', exact: true })).not.toBeInTheDocument()
+    expect(scenariosApi.getPairedOutcomes).not.toHaveBeenCalled()
+    disclosure.focus()
+    await user.keyboard('{Enter}')
+    await user.selectOptions(screen.getByLabelText('Baseline group'), 'baseline')
+    await user.selectOptions(screen.getByLabelText('Attack group'), 'attack')
+    await user.click(screen.getByRole('button', { name: 'Compare outcomes' }))
+    expect(scenariosApi.getPairedOutcomes).toHaveBeenCalledWith(
+      RUN_ID, { baseline_group_id: 'baseline', attack_group_id: 'attack' }, expect.any(AbortSignal),
+    )
+    const signal = jest.mocked(scenariosApi.getPairedOutcomes).mock.calls[0][2]
+    await user.click(disclosure)
+    expect(signal?.aborted).toBe(true)
+    expect(screen.queryByRole('region', { name: 'Paired outcomes', exact: true })).not.toBeInTheDocument()
+    await user.click(disclosure)
+    expect(screen.getByRole('button', { name: 'Compare outcomes' })).toBeDisabled()
+  })
+
+  it('does not use a synthesized legacy plan for comparison', async () => {
+    const user = userEvent.setup()
+    state = makeState({
+      run: { ...RUN, status: 'COMPLETED' },
+      planComplete: false,
+      plan: { ...PLAN, atomic_groups: [
+        { ...PLAN.atomic_groups[0], id: 'baseline', kind: 'baseline' },
+        { ...PLAN.atomic_groups[0], id: 'attack', kind: 'attack' },
+      ] },
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await user.click(screen.getByRole('button', { name: 'Compare baseline and attack' }))
+    expect(screen.getByRole('region', { name: 'Paired outcomes', exact: true })).toHaveTextContent(
+      'Paired outcomes require a saved execution plan.',
+    )
+    expect(screen.queryByLabelText('Baseline group')).not.toBeInTheDocument()
+    expect(scenariosApi.getPairedOutcomes).not.toHaveBeenCalled()
+  })
+
   it('puts conversations and compact results before the saved scenario identity', async () => {
     const user = userEvent.setup()
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
@@ -532,5 +585,106 @@ describe('ScenarioRunPage', () => {
   it('retains history filters and transient suite return navigation', () => {
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} navigationState={{ suiteExecutionId: 'suite', suiteName: 'Review suite' }} />)
     expect(screen.getByRole('link', { name: 'Back to Review suite' })).toHaveAttribute('href', '/scanner/history/suites/executions/suite')
+  })
+
+  it('keeps the newest execution in the latest-100 fallback when it belongs to a later member group', () => {
+    const olderAttempts = Array.from({ length: 100 }, (_, index) => ({
+      ...ATTEMPT, attack_result_id: `attempt-${index + 1}`, conversation_id: `conversation-${index + 1}`,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+    }))
+    const newest = {
+      ...ATTEMPT, attack_result_id: 'attempt-101', conversation_id: 'conversation-101', atomic_group_id: 'group-b',
+      atomic_attack_name: 'SecondAttack', timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, 101)).toISOString(),
+    }
+    state = makeState({
+      results: [...olderAttempts, newest],
+      summary: { ...SUMMARY, techniques: [{ ...SUMMARY.techniques[0], atomic_group_ids: ['group', 'group-b'], atomic_attack_names: ['PromptSendingAttack', 'SecondAttack'] }] },
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText('Showing the latest 100 of 101 executions in this group.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Open details for SecondAttack/ })).toBeInTheDocument()
+  })
+
+  describe('flat-row fallback while result relationships load or fail', () => {
+    const attemptAt = (index: number, atomicGroupId: string): ScenarioProgressResult => ({
+      ...ATTEMPT, attack_result_id: `attempt-${index}`, conversation_id: `conversation-${index}`,
+      atomic_group_id: atomicGroupId, atomic_attack_name: `Attack ${index}`,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    })
+    const cutoffResults = (): ScenarioProgressResult[] => [
+      ...Array.from({ length: 100 }, (_, index) => attemptAt(index + 1, 'group')),
+      attemptAt(101, 'group-b'),
+    ]
+    const twoMemberSummary = { ...SUMMARY, techniques: [{ ...SUMMARY.techniques[0], atomic_group_ids: ['group', 'group-b'] }] }
+    const shownAttacks = (): (string | undefined)[] => within(screen.getByRole('table', { name: 'Direct attack results' }))
+      .getAllByRole('button', { name: /^Open details for / })
+      .map((button) => button.getAttribute('aria-label')?.match(/Attack \d+/)?.[0])
+    const expectLatestHundred = (): void => {
+      expect(screen.getByText('Showing the latest 100 of 101 executions in this group.')).toBeInTheDocument()
+      expect(shownAttacks()).toHaveLength(100)
+      expect(shownAttacks()[0]).toBe('Attack 101')
+      expect(shownAttacks()).not.toContain('Attack 1')
+    }
+
+    it('orders interleaved member groups newest-first while relationships load', () => {
+      state = makeState({
+        results: [attemptAt(1, 'group'), attemptAt(2, 'group-b'), attemptAt(3, 'group'), attemptAt(4, 'group-b')],
+        summary: twoMemberSummary,
+      })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(shownAttacks()).toEqual(['Attack 4', 'Attack 3', 'Attack 2', 'Attack 1'])
+    })
+
+    it('keeps the newest 100 at the cutoff while relationships load', () => {
+      state = makeState({ results: cutoffResults(), summary: twoMemberSummary })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(screen.getByText(/Loading result relationships/)).toBeInTheDocument()
+      expectLatestHundred()
+    })
+
+    it('keeps the newest 100 at the cutoff after relationships fail to load', async () => {
+      jest.mocked(scenariosApi.getRunHierarchy).mockRejectedValueOnce(new Error('Relationship service unavailable'))
+      state = makeState({ results: cutoffResults(), summary: twoMemberSummary })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(await screen.findByText(/Could not load the result relationships/)).toBeInTheDocument()
+      expectLatestHundred()
+    })
+
+    it('keeps a one-member group at its newest 100 while relationships load', () => {
+      state = makeState({ results: Array.from({ length: 101 }, (_, index) => attemptAt(index + 1, 'group')) })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(shownAttacks()).toHaveLength(100)
+      expect(shownAttacks()[0]).toBe('Attack 101')
+      expect(shownAttacks()).not.toContain('Attack 1')
+    })
+
+    it('shows every supplied root without the fallback notice once relationships are ready', async () => {
+      const roots = Array.from({ length: 101 }, (_, index): ScenarioHierarchyNode => ({
+        attack_result_id: `attempt-${index + 1}`, conversation_id: `conversation-${index + 1}`, result_role: 'target_facing',
+        atomic_attack_name: `Attack ${index + 1}`, atomic_group_id: 'group', seed_group_id: 'seed-1', objective: 'First objective',
+        outcome: 'success', execution_time_ms: 5_000, executed_turns: 1,
+        timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+        total_retries: 0, retries: [], retries_truncated: false, child_attack_result_ids: [], child_references_truncated: false,
+        children: [], children_truncated: false, child_offset: 0, unresolved_child_attack_result_ids: [],
+        unresolved_child_references_truncated: false, conversations: [], conversations_truncated: false,
+      }))
+      jest.mocked(scenariosApi.getRunHierarchy).mockResolvedValueOnce({
+        scenario_result_id: RUN_ID, scenario_name: 'TestScenario', scenario_version: 1, status: 'COMPLETED',
+        groups: [{ atomic_group_id: 'group', atomic_attack_name: 'PromptSendingAttack', display_group: 'Direct', roots, counts: COUNTS }],
+        overall_counts: COUNTS,
+        diagnostics: {
+          failed_attacks: [], failed_attacks_count: 0, failed_attacks_truncated: false, attack_retries: [],
+          attack_retries_count: 0, attack_retries_truncated: false, total_retries: 0, rootless_result_ids: [],
+          rootless_results_count: 0, rootless_results_truncated: false,
+        },
+        truncated: false, has_more: false, next_cursor: null,
+      } satisfies ScenarioHierarchyProjection)
+      state = makeState({ results: cutoffResults(), summary: twoMemberSummary })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      await waitFor(() => expect(screen.queryByText(/Loading result relationships/)).not.toBeInTheDocument())
+      expect(screen.queryByText(/Showing the latest/)).not.toBeInTheDocument()
+      expect(shownAttacks()).toHaveLength(101)
+      expect(shownAttacks()[0]).toBe('Attack 1')
+    })
   })
 })

@@ -35,6 +35,7 @@ from pyrit.backend.services.dataset_example_fingerprint import (
 from pyrit.common.pagination import decode_keyset_cursor, encode_keyset_cursor, fingerprint_filters
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory
+from pyrit.memory.analytics_sql import validate_text_search
 from pyrit.models import (
     MEDIA_PATH_DATA_TYPES,
     ConversationStats,
@@ -128,6 +129,7 @@ class DatasetService:
         limit: int = 20,
         cursor: str | None = None,
         search: str | None = None,
+        value_pattern: str | None = None,
         data_types: Sequence[PromptDataType] | None = None,
         harm_categories: Sequence[str] | None = None,
         seed_types: Sequence[SeedType] | None = None,
@@ -144,6 +146,8 @@ class DatasetService:
             cursor (str | None): The ``next_cursor`` of the previous page.
             search (str | None): Literal text that the value of a text prompt or objective must contain,
                 ignoring case. Simulated-conversation configurations are not searched.
+            value_pattern (str | None): A full case-insensitive LIKE pattern instead of search.
+                '%' and '_' are wildcards; '/' escapes the next character.
             data_types (Sequence[PromptDataType] | None): Match examples with a member of any of these data types.
             harm_categories (Sequence[str] | None): Match examples with a member in any of these harm categories.
             seed_types (Sequence[SeedType] | None): Match examples with a member of any of these seed types.
@@ -155,6 +159,7 @@ class DatasetService:
             ValueError: If the selection key or the cursor is not valid.
         """
         dataset_name = self._parse_selection_key(selection_key)
+        validate_text_search(value=search, pattern=value_pattern)
         fingerprint = fingerprint_filters(
             filters={
                 "selection_key": selection_key,
@@ -162,6 +167,7 @@ class DatasetService:
                 "harm_categories": [category.lower() for category in harm_categories] if harm_categories else None,
                 "seed_types": seed_types or None,
                 "search": search or None,
+                "value_pattern": value_pattern,
             }
         )
         after = decode_keyset_cursor(cursor=cursor, fingerprint=fingerprint)
@@ -176,6 +182,7 @@ class DatasetService:
             harm_categories=harm_categories,
             seed_types=seed_types,
             value_search=search,
+            value_pattern=value_pattern,
         )
         next_cursor = (
             encode_keyset_cursor(

@@ -41,7 +41,7 @@ function normalizeProseLine(line: string): string {
 
   while (cursor < line.length) {
     if (line[cursor] !== '`' || isEscaped(line, cursor)) {
-      output.push(line[cursor])
+      output.push(line[cursor] ?? '')
       cursor += 1
       continue
     }
@@ -82,6 +82,9 @@ function openingFence(line: string): MarkdownFence | null {
     return null
   }
   const run = match[1]
+  if (!run) {
+    return null
+  }
   return {
     marker: run[0] === '`' ? '`' : '~',
     length: run.length,
