@@ -20,7 +20,7 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import TypeAdapter, ValidationError
@@ -103,6 +103,10 @@ from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
+from pyrit.setup.initializers import FindingsInitializer
+
+if TYPE_CHECKING:
+    from pyrit.setup.pyrit_initializer import PyRITInitializer
 
 logger = logging.getLogger(__name__)
 
@@ -1609,16 +1613,20 @@ class ScenarioRunService:
         """
         Validate and execute initializers specified in the request.
 
+        Every initializer is built before any runs, so a rejected request changes nothing.
+
         Args:
             request: The run request containing initializer names and args.
 
         Raises:
-            ValueError: If an initializer name is not found in the registry.
+            ValueError: If an initializer name is not found in the registry, or an initializer sets the
+                deployment's finding fields, which only setup from ``.pyrit_conf`` may do.
         """
         if not request.initializers:
             return
 
         initializer_registry = await run_legacy_sync_async(InitializerRegistry.get_registry_singleton)
+        instances: list[PyRITInitializer] = []
         for initializer_name in request.initializers:
             initializer_params = (request.initializer_args or {}).get(initializer_name)
             try:
@@ -1627,6 +1635,13 @@ class ScenarioRunService:
                 )
             except KeyError as e:
                 raise ValueError(f"Initializer not found: {e}") from None
+            if isinstance(instance, FindingsInitializer):
+                raise ValueError(
+                    f"Initializer '{initializer_name}' sets the deployment's finding fields, so it can run only "
+                    "from .pyrit_conf, not for one scenario run."
+                )
+            instances.append(instance)
+        for instance in instances:
             await instance.initialize_async()
 
     async def _initialize_scenario_async(

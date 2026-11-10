@@ -232,7 +232,7 @@ describe('FindingFieldInput', () => {
     expect(optionNames()).toEqual(['System prompt leak', 'Tool misuse'])
   })
 
-  it('offers Not set only on optional fields', async () => {
+  it('offers Not set on every level of optional fields only', async () => {
     const user = userEvent.setup()
     render(<TestWrapper>
       <FieldHarness field={TECHNIQUE} initialValues={{ technique: 'role_play' }} onChange={onChange} />
@@ -240,16 +240,17 @@ describe('FindingFieldInput', () => {
       <FindingFieldInput field={{ ...SURFACE, required: false }} values={{ surface: 'web_chat' }} onChange={onChange} />
     </TestWrapper>)
 
-    await openPicker(user, 'Category')
-    expect(screen.queryByRole('option', { name: 'Not set' })).not.toBeInTheDocument()
-    await user.keyboard('{Escape}')
+    for (const label of ['Category', 'Subcategory']) {
+      await openPicker(user, label)
+      expect(screen.queryByRole('option', { name: 'Not set' })).not.toBeInTheDocument()
+      await user.keyboard('{Escape}')
+    }
 
-    await openPicker(user, 'Surface')
-    expect(screen.getByRole('option', { name: 'Not set' })).toBeInTheDocument()
-    await user.keyboard('{Escape}')
-    await openPicker(user, 'Component')
-    expect(screen.queryByRole('option', { name: 'Not set' })).not.toBeInTheDocument()
-    await user.keyboard('{Escape}')
+    for (const label of ['Surface', 'Component']) {
+      await openPicker(user, label)
+      expect(screen.getByRole('option', { name: 'Not set' })).toBeInTheDocument()
+      await user.keyboard('{Escape}')
+    }
 
     await pick(user, 'Technique', 'Not set')
     expect(onChange).toHaveBeenLastCalledWith({ technique: '' })
@@ -352,6 +353,25 @@ describe('FindingFieldInput', () => {
     expect(onChange).toHaveBeenLastCalledWith({ surface: '', component: '', capability: '' })
     expect(screen.getByRole('combobox', { name: 'Surface' })).toHaveValue('')
     expect(screen.getByRole('combobox', { name: 'Component' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Capability' })).toBeDisabled()
+  })
+
+  it('returns an optional lower level to Not set and keeps the levels above it', async () => {
+    const user = userEvent.setup()
+    render(<TestWrapper>
+      <FieldHarness field={{ ...SURFACE, required: false }}
+        initialValues={{ surface: 'web_chat', component: 'plugins', capability: 'email' }} onChange={onChange} />
+    </TestWrapper>)
+
+    await pick(user, 'Capability', 'Not set')
+    expect(onChange).toHaveBeenLastCalledWith({ capability: '' })
+    expect(screen.getByRole('combobox', { name: 'Component' })).toHaveValue('Plugins')
+    expect(screen.getByRole('combobox', { name: 'Capability' })).toHaveValue('')
+
+    await pick(user, 'Capability', 'Email')
+    await pick(user, 'Component', 'Not set')
+    expect(onChange).toHaveBeenLastCalledWith({ component: '', capability: '' })
+    expect(screen.getByRole('combobox', { name: 'Surface' })).toHaveValue('Web chat')
     expect(screen.getByRole('combobox', { name: 'Capability' })).toBeDisabled()
   })
 

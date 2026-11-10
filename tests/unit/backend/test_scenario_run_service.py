@@ -35,6 +35,7 @@ from pyrit.memory import (
 )
 from pyrit.memory.memory_models import ScenarioResultEntry
 from pyrit.models import (
+    DEFAULT_FINDING_FIELDS,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     SCENARIO_SUITE_EXECUTION_METADATA_KEY,
     AtomicAttackIdentifier,
@@ -43,6 +44,8 @@ from pyrit.models import (
     AttackSeedGroup,
     AttackTechniqueIdentifier,
     ComponentIdentifier,
+    FindingField,
+    FindingFields,
     Operation,
     RetryEvent,
     ScenarioAttackResultDelta,
@@ -73,6 +76,9 @@ from pyrit.scenario.core import (
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides
 from pyrit.scenario.scenarios.airt import Jailbreak, Scam
+from pyrit.setup.finding_fields import get_active_finding_fields
+from pyrit.setup.initializers import FindingsInitializer
+from pyrit.setup.pyrit_initializer import PyRITInitializer
 from unit.async_utils import wait_for_completion_async
 from unit.mocks import (
     MockPromptTarget,
@@ -1727,6 +1733,29 @@ class TestScenarioRunServiceStartRun:
 
         assert response.status == ScenarioRunState.IN_PROGRESS
         assert mock_init_instance.initialize_async.await_count == 2
+
+    @pytest.mark.usefixtures("reset_finding_fields")
+    async def test_start_run_rejects_a_findings_initializer_before_running_any(self, mock_all_registries) -> None:
+        """A run that names a FindingsInitializer runs no initializers and leaves the finding fields alone."""
+
+        class ContosoFindingFields(FindingsInitializer):
+            def get_finding_fields(self) -> FindingFields:
+                return FindingFields(
+                    severity=FindingField(key="severity", label="Severity", type="choice", options=[("high", "High")])
+                )
+
+        service = ScenarioRunService()
+        target_initializer = MagicMock(spec=PyRITInitializer)
+        mock_all_registries["initializer_registry"].create_and_configure.side_effect = [
+            target_initializer,
+            ContosoFindingFields(),
+        ]
+
+        with pytest.raises(ValueError, match="'contoso_findings' sets the deployment's finding fields"):
+            await service.start_run_async(request=_make_request(initializers=["target", "contoso_findings"]))
+
+        target_initializer.initialize_async.assert_not_awaited()
+        assert get_active_finding_fields() is DEFAULT_FINDING_FIELDS
 
     async def test_start_run_passes_scenario_result_id_for_resume(self, mock_all_registries) -> None:
         """Test that scenario_result_id is passed to the registry for resumption."""

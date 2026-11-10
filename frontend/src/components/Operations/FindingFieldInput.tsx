@@ -171,7 +171,7 @@ function ChoiceFieldInput({
         return (
           <ChoiceLevelPicker key={level.key} label={level.label} hint={state.hint} required={state.required}
             disabled={disabled || state.unavailable} options={state.options} selected={state.selected}
-            offerNotSet={depth === 0 && !field.required} offerOther={allowOther}
+            offerNotSet={!field.required} offerOther={allowOther}
             onSelect={(optionValue: string) => { select(depth, optionValue) }} />
         )
       })}
