@@ -146,12 +146,13 @@ class RegistryRecipeRestorer:
         with itself by name. If any registry's folder can't be read, nothing is built, since entries
         in the other folders may name entries in the unread one.
 
-        Each failure is logged once, with the error behind it, if any, and URL credentials removed.
+        Each failure is logged once as an error, with the error behind it, if any, and URL credentials removed.
 
         Args:
             build_async (RecipeBuilder): Builds one checked entry and registers it under its name. It raises
                 ``RecipeRejectedError`` to report a reason; any other error is reported as a build error.
-            saved (SavedRecipes | None): What ``read`` returned. Defaults to reading now, in a worker thread.
+            saved (SavedRecipes | None): What ``read`` returned. Defaults to reading now, in a worker thread,
+                so a slow store doesn't hold the event loop.
 
         Returns:
             RegistryRestoreReport: What was restored, what failed and why, and which files were ignored.
@@ -179,7 +180,7 @@ class RegistryRecipeRestorer:
         return report
 
     def _log_failures(self, *, failures: Sequence[RestoreFailure], causes: Mapping[_FailureKey, BaseException]) -> None:
-        """Log each failure once, with the error behind it, if any, and URL credentials removed."""
+        """Log each failure once as an error, with the error behind it, if any, and URL credentials removed."""
         for failure in failures:
             subject = (
                 f"the saved {failure.kind.value}"
@@ -189,9 +190,9 @@ class RegistryRecipeRestorer:
             summary = f"Couldn't restore {subject} ({failure.reason.value}): {failure.message}"
             cause = causes.get((failure.kind, failure.name))
             if cause is None:
-                logger.warning(summary)
+                logger.error(summary)
             else:
-                logger.warning(f"{summary}\n{redact_urls(''.join(traceback.format_exception(cause))).rstrip()}")
+                logger.error(f"{summary}\n{redact_urls(''.join(traceback.format_exception(cause))).rstrip()}")
 
     def _plan_all(
         self,
