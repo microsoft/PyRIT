@@ -64,7 +64,12 @@ from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import ConverterRegistry, TargetRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SAVED_ENTRY_OWNER_METADATA_KEY
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    RegistryNameTakenError,
+    registration_origin,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -2345,8 +2350,8 @@ def _saved_converter(source: Path, name: str) -> dict[str, Any]:
 def startup_and_launch_targets(patch_central_database: MagicMock) -> Iterator[None]:
     TargetRegistry.reset_registry_singleton()
     targets = TargetRegistry.get_registry_singleton().instances
-    targets.register(MockPromptTarget(), name="startup_chat")
-    targets.mark_configuration_entries()
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        targets.register(MockPromptTarget(), name="startup_chat")
     targets.register(MockPromptTarget(), name="launch_chat")
     yield
     TargetRegistry.reset_registry_singleton()
@@ -2549,12 +2554,19 @@ class TestPersistConverter:
         assert upload_service._registry.instances.get("base64_converter") is None
         assert (tmp_path / "converters" / "base64_converter.json").read_bytes() == before
 
-    @pytest.mark.parametrize("error", [PermissionError("denied"), OSError("disk full"), AzureError("unreachable")])
+    @pytest.mark.parametrize(
+        ("error", "reason"),
+        [
+            (PermissionError(13, "Permission denied", "/srv/recipes/converters/x.json"), "Permission denied"),
+            (OSError("disk full"), "OSError"),
+            (AzureError("unreachable"), "AzureError"),
+        ],
+    )
     async def test_reports_storage_failures_as_unavailable(
-        self, upload_service: ConverterService, tmp_path: Path, error: Exception
+        self, upload_service: ConverterService, tmp_path: Path, error: Exception, reason: str
     ) -> None:
         with (
-            patch.object(RegistryRecipeStorage, "create_recipe", side_effect=error),
+            patch.object(RegistryRecipeStorage, "_save_local_conditional", side_effect=error),
             patch("pyrit.backend.services.saved_entries.logger") as log,
             pytest.raises(SavedEntryStorageError, match="Saved converters can't be written right now."),
         ):
@@ -2566,25 +2578,29 @@ class TestPersistConverter:
         message = log.error.call_args.args[0] % log.error.call_args.args[1:]
         assert message == (
             f"Saved converter 'base64_converter' couldn't be written to {tmp_path / 'converters'} "
-            f"({type(error).__name__}). If the write reached storage anyway, the converter is restored at the next "
-            "start."
+            f"({reason}). If the write reached storage anyway, the converter is restored at the next start."
         )
 
     @pytest.mark.parametrize(
         ("error", "raised"),
         [
-            (ValueError("Instance 'base64_converter' already exists"), SavedEntryConflictError),
+            (RegistryNameTakenError("Instance 'base64_converter' already exists"), SavedEntryConflictError),
+            (ValueError("Instance name 'base64_converter' is reserved"), ValueError),
             (RuntimeError("x"), RuntimeError),
         ],
     )
     async def test_deletes_the_saved_file_when_the_converter_cant_be_registered(
         self, upload_service: ConverterService, tmp_path: Path, error: Exception, raised: type[Exception]
     ) -> None:
-        with patch.object(upload_service._registry.instances, "register", side_effect=error), pytest.raises(raised):
+        with (
+            patch.object(upload_service._registry.instances, "register", side_effect=error),
+            pytest.raises(raised) as refusal,
+        ):
             await upload_service.create_converter_async(
                 request=_persist("base64_converter", "Base64Converter"), recipes_source=str(tmp_path)
             )
 
+        assert type(refusal.value) is raised
         assert not (tmp_path / "converters" / "base64_converter.json").exists()
 
     async def test_two_saves_of_one_name_save_one_converter(
@@ -2627,8 +2643,8 @@ class TestPersistConverter:
         self, upload_service: ConverterService
     ) -> None:
         instances = upload_service._registry.instances
-        instances.register(Base64Converter(), name="startup_base64")
-        instances.mark_configuration_entries()
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            instances.register(Base64Converter(), name="startup_base64")
         await upload_service.create_converter_async(
             request=CreateConverterRequest(name="launch_base64", type="Base64Converter")
         )
@@ -2641,8 +2657,8 @@ class TestPersistConverter:
         self, upload_service: ConverterService, tmp_path: Path
     ) -> None:
         instances = upload_service._registry.instances
-        instances.register(Base64Converter(), name="startup_base64")
-        instances.mark_configuration_entries()
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            instances.register(Base64Converter(), name="startup_base64")
         saved = await upload_service.create_converter_async(
             request=_persist("saved_base64", "Base64Converter"), recipes_source=str(tmp_path)
         )

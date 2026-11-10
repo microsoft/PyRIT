@@ -62,7 +62,7 @@ from pyrit.models import ConverterIdentifier, MessagePiece, Parameter, PromptDat
 from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry import ConverterRegistry
-from pyrit.registry.instance_registry import registry_entry_origin
+from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 from pyrit.registry.registry import Reconstructable
 
 _OWNED_ARTIFACT_PATHS_KEY = "owned_artifact_paths"
@@ -400,10 +400,8 @@ class ConverterService:
         )
         try:
             self._registry.instances.validate_name_available(name)
-        except ValueError as error:
-            if name in self._registry.instances:
-                raise SavedEntryConflictError(str(error)) from error
-            raise
+        except RegistryNameTakenError as error:
+            raise SavedEntryConflictError(str(error)) from error
         converter_obj = await construct_component_async(
             self._registry.create_instance_from_external_input, request.type, params=params
         )
