@@ -165,6 +165,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
     const groupedAttempts = new Map<string, ScenarioProgressResult[]>()
     for (let index = state.results.length - 1; index >= 0; index -= 1) {
       const attempt = state.results[index]
+      if (!attempt) continue
       const existing = groupedAttempts.get(attempt.atomic_group_id)
       if (existing) {
         existing.push(attempt)
@@ -206,6 +207,14 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
       const trigger = detailsTriggerRef.current ?? detailsTrigger.current
       const focusTarget = trigger?.isConnected ? trigger : atomicGroupsToggleRef.current ?? overviewTarget.current
       focusTarget?.focus()
+    })
+  }
+
+  const closeObjective = (): void => {
+    setObjective(null)
+    requestAnimationFrame(() => {
+      const trigger = objectiveTrigger.current
+      if (trigger?.isConnected) trigger.focus()
     })
   }
 
@@ -430,8 +439,10 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
                 ) : (
                   <div className={styles.displayGroupList}>
                     {displayGroups.map((group) => {
+                      // Merge member groups newest-first so the row cap keeps the group's latest executions.
                       const attempts = (group.atomic_group_ids ?? [])
                         .flatMap((atomicGroupId) => attemptsByGroupId.get(atomicGroupId) ?? [])
+                        .sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp))
                       const defaultExpanded = displayGroups.length <= AUTO_EXPAND_GROUP_LIMIT
                       const expanded = expandedGroupChoices.get(group.id) ?? defaultExpanded
                       const panelId = `atomic-group-${group.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
@@ -587,7 +598,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
           </DialogBody>
         </DialogSurface>
       </Dialog>
-      <ObjectiveDetailsDialog objective={objective} onClose={() => { setObjective(null) }}
+      <ObjectiveDetailsDialog objective={objective} onClose={closeObjective}
         attempts={objective ? attemptsBySeed.get(objective.id) ?? [] : []}
         onOpenAttempt={openDetails} scenarioResultId={scenarioResultId} />
     </main>

@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -52,6 +52,7 @@ from pyrit.backend.routes import (
 )
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
+from pyrit.backend.services.staged_media import staged_media_store
 
 # Check for development mode from environment variable
 DEV_MODE = os.getenv("PYRIT_DEV_MODE", "false").lower() == "true"
@@ -85,9 +86,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # don't emit noise and don't perform filesystem side effects.
     setup_frontend()
 
+    upload_cleanup = asyncio.create_task(staged_media_store.run_cleanup_async())
     try:
         yield
     finally:
+        upload_cleanup.cancel()
+        with suppress(asyncio.CancelledError):
+            await upload_cleanup
         await runtime.shutdown_async()
 
 
