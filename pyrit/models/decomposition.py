@@ -151,7 +151,12 @@ class DecompositionTree:
 
         Returns:
             DecompositionNode: The node.
+
+        Raises:
+            ValueError: If the node is not in the tree.
         """
+        if node_id not in self._nodes:
+            raise ValueError(f"Decomposition node {node_id} is missing.")
         return self._nodes[node_id]
 
     def get_children(self, node_id: UUID) -> tuple[UUID, ...]:
@@ -163,7 +168,11 @@ class DecompositionTree:
 
         Returns:
             tuple[UUID, ...]: The children's IDs, in the order supplied.
+
+        Raises:
+            ValueError: If the node is not in the tree.
         """
+        self.get_node(node_id)
         return tuple(self._children[node_id])
 
     def walk(self, root_id: UUID) -> Iterator[tuple[UUID, int]]:
@@ -175,7 +184,11 @@ class DecompositionTree:
 
         Yields:
             tuple[UUID, int]: Each node's ID and its depth below ``root_id``.
+
+        Raises:
+            ValueError: If the root is not in the tree.
         """
+        self.get_node(root_id)
         stack = [(root_id, 0)]
         while stack:
             node_id, depth = stack.pop()
@@ -191,6 +204,9 @@ class DecompositionTree:
 
         Returns:
             tuple[UUID, ...]: The IDs, depth-first with parents before children.
+
+        Raises:
+            ValueError: If the root is not in the tree.
         """
         return tuple(node_id for node_id, _ in self.walk(root_id))
 
