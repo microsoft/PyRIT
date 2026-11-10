@@ -13,6 +13,7 @@ import httpx
 import pytest
 from mcp.types import Tool as MCPToolDefinition
 from openai.types.chat import ChatCompletion
+from PIL import Image
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
@@ -35,6 +36,7 @@ from pyrit.prompt_target import (
 from pyrit.prompt_target.common.discover_target_capabilities import (
     _CAPABILITY_PROBES,
     DEFAULT_TEST_ASSETS,
+    CapabilityDiscoveryError,
     _create_test_message,
     _discover_capability_flags_async,
     _discover_input_modalities_async,
@@ -89,6 +91,129 @@ def _error_response(*, conversation_id: str = "probe") -> list[Message]:
             ]
         )
     ]
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("error", [ConnectionError("offline"), TimeoutError(), RuntimeError("authentication failed")])
+async def test_strict_discovery_does_not_apply_inconclusive_results(error: Exception) -> None:
+    target = MockPromptTarget()
+    original = target.configuration
+    with patch.object(target, "send_prompt_async", new_callable=AsyncMock, side_effect=error):
+        with pytest.raises(CapabilityDiscoveryError):
+            await discover_target_capabilities_async(target=target, raise_on_error=True, apply=True, retries=0)
+    assert target.configuration is original
+    # Strict mode is scoped to the call, not leaked to later best-effort callers.
+    with patch.object(target, "send_prompt_async", new_callable=AsyncMock, side_effect=error):
+        await discover_target_capabilities_async(target=target, retries=0)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_strict_discovery_preserves_declared_input_when_asset_is_missing() -> None:
+    target = MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(
+                input_modalities=frozenset({frozenset({"text"}), frozenset({"image_path"})})
+            )
+        )
+    )
+    result = await discover_target_capabilities_async(
+        target=target,
+        capabilities=[],
+        test_modalities={frozenset({"image_path"})},
+        test_assets={"image_path": "missing-probe.png"},
+        raise_on_error=True,
+    )
+    assert result.input_modalities == target.capabilities.input_modalities
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("status_code", [400, 401, 403, 422, 429, 500])
+async def test_strict_discovery_rejects_operational_http_errors(status_code: int) -> None:
+    target = MockPromptTarget()
+    original = target.configuration
+    request = httpx.Request("POST", "https://example.test")
+    error = httpx.HTTPStatusError(
+        "Probe failed", request=request, response=httpx.Response(status_code=status_code, request=request)
+    )
+    with patch.object(target, "send_prompt_async", new_callable=AsyncMock, side_effect=error):
+        with pytest.raises(CapabilityDiscoveryError):
+            await discover_target_capabilities_async(target=target, raise_on_error=True, apply=True, retries=0)
+    assert target.configuration is original
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("status_code", [None, 400, 422])
+async def test_strict_discovery_treats_request_rejection_as_unsupported(status_code: int | None) -> None:
+    target = MockPromptTarget(
+        custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(supports_json_output=True))
+    )
+    request = httpx.Request("POST", "https://example.test")
+    error = (
+        ValueError("JSON output is not supported")
+        if status_code is None
+        else httpx.HTTPStatusError(
+            "Unsupported request", request=request, response=httpx.Response(status_code=status_code, request=request)
+        )
+    )
+
+    async def send_async(*, message: Message) -> list[Message]:
+        if message.message_pieces[0].prompt_metadata.get("response_format") == "json":
+            raise error
+        return _ok_response()
+
+    with (
+        patch.object(target, "send_prompt_async", new_callable=AsyncMock, side_effect=send_async),
+        patch("pyrit.prompt_target.common.discover_target_capabilities._supports_chat_probes", return_value=True),
+    ):
+        result = await discover_target_capabilities_async(
+            target=target,
+            capabilities=[CapabilityName.JSON_OUTPUT],
+            test_modalities=set(),
+            raise_on_error=True,
+            retries=0,
+            apply=True,
+        )
+    assert not result.supports_json_output
+    assert not target.capabilities.supports_json_output
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_strict_discovery_uses_declared_nontext_input_for_control() -> None:
+    target = MockPromptTarget(
+        custom_configuration=TargetConfiguration(
+            capabilities=TargetCapabilities(input_modalities=frozenset({frozenset({"image_path"})}))
+        )
+    )
+    with patch.object(target, "send_prompt_async", new_callable=AsyncMock, return_value=_ok_response()) as send:
+        result = await discover_target_capabilities_async(
+            target=target, capabilities=[], test_modalities=set(), raise_on_error=True
+        )
+    send.assert_called_once()
+    message = send.call_args.kwargs["message"]
+    assert [piece.original_value_data_type for piece in message.message_pieces] == ["image_path"]
+    assert result.input_modalities == target.capabilities.input_modalities
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_strict_discovery_rejects_general_value_error_without_applying_results() -> None:
+    target = MockPromptTarget()
+    original = target.configuration
+    with patch.object(
+        target, "send_prompt_async", new_callable=AsyncMock, side_effect=ValueError("Invalid API settings")
+    ):
+        with pytest.raises(CapabilityDiscoveryError, match="control request"):
+            await discover_target_capabilities_async(target=target, raise_on_error=True, apply=True, retries=0)
+    assert target.configuration is original
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_strict_discovery_rejects_blocked_response_without_changing_capabilities() -> None:
+    target = MockPromptTarget()
+    original = target.configuration
+    with patch.object(target, "send_prompt_async", new_callable=AsyncMock, return_value=_error_response()):
+        with pytest.raises(CapabilityDiscoveryError):
+            await discover_target_capabilities_async(target=target, raise_on_error=True, apply=True)
+    assert target.configuration is original
 
 
 @pytest.mark.usefixtures("patch_central_database")
@@ -583,6 +708,89 @@ class TestToolCallHistoryDiscovery:
     def _target() -> OpenAIChatTarget:
         return OpenAIChatTarget(model_name="unknown", endpoint="https://example.invalid", api_key="not-a-key")
 
+    @pytest.mark.parametrize("status_code", [None, 400, 422])
+    @pytest.mark.parametrize("include_text", [False, True])
+    @pytest.mark.parametrize("explicit_modalities", [False, True])
+    async def test_strict_rejection_removes_tested_declarations_async(
+        self, *, status_code: int | None, include_text: bool, explicit_modalities: bool
+    ) -> None:
+        target = self._target()
+        modalities: set[frozenset[PromptDataType]] = (
+            {frozenset({"text", "function_call"})} if include_text else self.MODALITIES
+        )
+        untested: frozenset[frozenset[PromptDataType]] = frozenset(
+            {frozenset({"text"}), frozenset({"text", "image_path"})}
+        )
+        target.apply_capabilities(
+            capabilities=TargetCapabilities(input_modalities=untested | modalities, supports_streaming_audio=True)
+        )
+        request = httpx.Request("POST", "https://example.invalid")
+        error = (
+            ValueError("unsupported history")
+            if status_code is None
+            else httpx.HTTPStatusError(
+                "unsupported history",
+                request=request,
+                response=httpx.Response(status_code=status_code, request=request),
+            )
+        )
+        with patch.object(
+            target,
+            "_send_prompt_to_target_async",
+            new_callable=AsyncMock,
+            side_effect=[_ok_response(), error, _ok_response()],
+        ) as send:
+            result = await discover_target_capabilities_async(
+                target=target,
+                capabilities=[],
+                test_modalities=modalities if explicit_modalities else None,
+                test_assets={"image_path": "missing-probe.png"},
+                raise_on_error=True,
+                retries=0,
+                apply=True,
+            )
+        assert send.await_count == (2 if explicit_modalities else 3)
+        assert result.input_modalities == untested
+        assert target.capabilities == result
+        assert result.supports_streaming_audio
+
+    async def test_strict_operational_tool_error_does_not_apply_async(self) -> None:
+        target = self._target()
+        target.apply_capabilities(
+            capabilities=TargetCapabilities(input_modalities=frozenset({frozenset({"text"})} | self.MODALITIES))
+        )
+        original = target.configuration
+        with patch.object(
+            target,
+            "_send_prompt_to_target_async",
+            new_callable=AsyncMock,
+            side_effect=[_ok_response(), ConnectionError("offline")],
+        ):
+            with pytest.raises(CapabilityDiscoveryError):
+                await discover_target_capabilities_async(
+                    target=target,
+                    capabilities=[],
+                    test_modalities=self.MODALITIES,
+                    raise_on_error=True,
+                    retries=0,
+                    apply=True,
+                )
+        assert target.configuration is original
+
+    async def test_strict_unavailable_adapter_retains_declarations_async(self) -> None:
+        declared = frozenset({frozenset({"text"})} | self.MODALITIES)
+        target = _RealValidationTarget(
+            custom_configuration=TargetConfiguration(capabilities=TargetCapabilities(input_modalities=declared))
+        )
+        with patch.object(
+            target, "_send_prompt_to_target_async", new_callable=AsyncMock, return_value=_ok_response()
+        ) as send:
+            result = await discover_target_capabilities_async(
+                target=target, capabilities=[], test_modalities=self.MODALITIES, raise_on_error=True, retries=0
+            )
+        assert result.input_modalities == declared
+        send.assert_awaited_once()
+
     async def test_probes_real_chat_payload_and_applies_only_when_requested(self) -> None:
         target = self._target()
         original = target.configuration
@@ -982,14 +1190,21 @@ def _set_input_modalities(
 
 @pytest.fixture
 def image_asset(tmp_path: Path) -> str:
-    """Create a tiny placeholder file usable as an image_path asset."""
+    """Create a decodable image probe."""
     asset = tmp_path / "test_image.png"
-    asset.write_bytes(b"\x89PNG\r\n\x1a\n")
+    Image.new("RGB", (16, 16), color="green").save(asset)
     return str(asset)
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestCreateTestMessage:
+    def test_packaged_image_is_decodable(self) -> None:
+        with Image.open(DEFAULT_TEST_ASSETS["image_path"]) as image:
+            image.verify()
+        with Image.open(DEFAULT_TEST_ASSETS["image_path"]) as image:
+            image.load()
+            assert image.width > 0 and image.height > 0
+
     def test_default_assets_exist_for_packaged_modalities(self) -> None:
         msg = _create_test_message(
             modalities=frozenset({"audio_path", "image_path"}),

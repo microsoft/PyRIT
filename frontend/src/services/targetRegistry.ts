@@ -22,6 +22,7 @@ export async function buildTemperatureTarget(target: TargetInstance, temperature
     binding: {
       version: 1, source_name: sourceName, source_hash: sourceHash,
       temperature, effective_hash: built.identifier.hash,
+      capabilities: built.capabilities,
     },
   }
 }

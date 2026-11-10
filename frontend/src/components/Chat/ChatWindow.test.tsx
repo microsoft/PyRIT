@@ -4029,7 +4029,7 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1));
     const binding = {
       version: 1, source_name: source.target_registry_name, source_hash: source.identifier.hash,
-      temperature: 0.8, effective_hash: "private-hash",
+      temperature: 0.8, effective_hash: "private-hash", capabilities: source.capabilities,
     };
     expect(targetsApi.buildTarget).toHaveBeenCalledWith("OpenAIChatTarget", {
       source_name: source.target_registry_name, source_hash: source.identifier.hash,
