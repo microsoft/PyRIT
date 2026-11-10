@@ -757,8 +757,9 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
     ``MemoryInterface._persist_target_identifier``). ``ConversationEntry`` references a
     row here via ``target_identifier_hash``. The promoted scalar columns (``endpoint`` /
     ``model_name`` / ``underlying_model_name`` / ``temperature`` / ``top_p`` /
-    ``max_requests_per_minute`` / ``supported_auth_modes``) are surfaced for querying;
-    ``identifier_json`` remains the source of truth on reload. Inner targets of a
+    ``max_requests_per_minute`` / ``http_request_fingerprint`` / ``supported_auth_modes``)
+    are surfaced for querying; ``identifier_json`` remains the source of truth on reload.
+    Inner targets of a
     multi-target are linked via ``TargetIdentifierChildren`` (and also live inline in
     ``identifier_json``).
     """
@@ -781,6 +782,7 @@ class TargetIdentifierEntry(ComponentIdentifierEntry[TargetIdentifier]):
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
     top_p: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_requests_per_minute: Mapped[int | None] = mapped_column(INTEGER, nullable=True)
+    http_request_fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
     supported_auth_modes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     #: Ordered child-edge rows (``parent_hash -> child_hash``) for this target.
@@ -2361,7 +2363,7 @@ class AttackResultEntry(Base):
         # Deserialize retry events from JSON
         retry_events = []
         if self.retry_events_json:
-            from pyrit.models.retry_event import RetryEvent
+            from pyrit.models import RetryEvent
 
             retry_events = [RetryEvent.model_validate(evt_dict) for evt_dict in json.loads(self.retry_events_json)]
 

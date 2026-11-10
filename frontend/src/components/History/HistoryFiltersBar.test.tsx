@@ -34,8 +34,6 @@ describe('HistoryFiltersBar', () => {
   const defaultProps = {
     filters: { ...DEFAULT_HISTORY_FILTERS },
     onFiltersChange: jest.fn(),
-    attackTypeOptions: [] as string[],
-    converterOptions: [] as string[],
     operatorOptions: [] as string[],
     operationOptions: [] as FilterOption[],
     otherLabelOptions: [] as string[],
@@ -56,8 +54,10 @@ describe('HistoryFiltersBar', () => {
     expect(screen.getByTestId('operator-filter')).toBeInTheDocument()
     expect(screen.getByTestId('operation-filter')).toBeInTheDocument()
     expect(screen.getByTestId('label-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('attack-type-filter')).toBeInTheDocument()
-    expect(screen.getByTestId('converter-filter')).toBeInTheDocument()
+    expect(screen.queryByTestId('attack-type-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-filter')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('converter-match-mode-toggle')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('combobox')).toHaveLength(4)
     expect(screen.getByTestId('scanner-attack-filter-row')).toContainElement(
       screen.getByRole('switch', { name: 'Include scanner attacks' }),
     )
@@ -116,31 +116,6 @@ describe('HistoryFiltersBar', () => {
     })
   })
 
-  it('should call onFiltersChange when attack type filter is selected', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      attackTypeOptions: ['CrescendoAttack', 'ManualAttack'],
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    const dropdown = screen.getByTestId('attack-type-filter')
-    fireEvent.click(dropdown)
-
-    const option = await screen.findByText('CrescendoAttack')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ attackTypes: ['CrescendoAttack'] })
-    )
-  })
-
   it('should call onFiltersChange when outcome filter is selected', async () => {
     const onFiltersChange = jest.fn()
 
@@ -158,31 +133,6 @@ describe('HistoryFiltersBar', () => {
 
     expect(onFiltersChange).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'failure' })
-    )
-  })
-
-  it('should call onFiltersChange when converter filter is selected', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    const dropdown = screen.getByTestId('converter-filter')
-    fireEvent.click(dropdown)
-
-    const option = await screen.findByText('ROT13Converter')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: ['ROT13Converter'] })
     )
   })
 
@@ -412,118 +362,6 @@ describe('HistoryFiltersBar', () => {
     expect(screen.getByTestId('reset-filters-btn')).toBeInTheDocument()
   })
 
-  it('should set hasConverters=false and clear converter list when "(No converters)" sentinel is selected', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    fireEvent.click(screen.getByTestId('converter-filter'))
-    const option = await screen.findByText('(No converters)')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: [], hasConverters: false })
-    )
-  })
-
-  it('should replace sentinel with real converter when user picks a converter while sentinel is active', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-      filters: { ...DEFAULT_HISTORY_FILTERS, hasConverters: false as boolean | undefined },
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    fireEvent.click(screen.getByTestId('converter-filter'))
-    const option = await screen.findByText('ROT13Converter')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: ['ROT13Converter'], hasConverters: undefined })
-    )
-  })
-
-  it('should replace real converters with sentinel when user picks sentinel while real converters are active', async () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-      filters: { ...DEFAULT_HISTORY_FILTERS, converter: ['Base64Converter'] },
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    fireEvent.click(screen.getByTestId('converter-filter'))
-    const option = await screen.findByText('(No converters)')
-    fireEvent.click(option)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converter: [], hasConverters: false })
-    )
-  })
-
-  it('should not render the match-mode toggle when fewer than two converters are selected', () => {
-    const props = {
-      ...defaultProps,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-      filters: { ...DEFAULT_HISTORY_FILTERS, converter: ['Base64Converter'] },
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    expect(screen.queryByTestId('converter-match-mode-toggle')).not.toBeInTheDocument()
-  })
-
-  it('should render the match-mode toggle and emit "all" when flipped with two converters selected', () => {
-    const onFiltersChange = jest.fn()
-    const props = {
-      ...defaultProps,
-      onFiltersChange,
-      converterOptions: ['Base64Converter', 'ROT13Converter'],
-      filters: { ...DEFAULT_HISTORY_FILTERS, converter: ['Base64Converter', 'ROT13Converter'] },
-    }
-
-    render(
-      <TestWrapper>
-        <HistoryFiltersBar {...props} />
-      </TestWrapper>
-    )
-
-    const toggle = screen.getByTestId('converter-match-mode-toggle')
-    expect(toggle).toBeInTheDocument()
-
-    fireEvent.click(toggle)
-
-    expect(onFiltersChange).toHaveBeenCalledWith(
-      expect.objectContaining({ converterMatchMode: 'all' })
-    )
-  })
-
   it('should display "name (+N)" when multiple values are selected in a multi-select Combobox', () => {
     const props = {
       ...defaultProps,
@@ -591,7 +429,7 @@ describe('HistoryFiltersBar', () => {
   it('should keep the outcome Dropdown display label after a sibling filter changes', () => {
     const props = {
       ...defaultProps,
-      attackTypeOptions: ['PromptSendingAttack'],
+      operatorOptions: ['alice'],
       filters: { ...DEFAULT_HISTORY_FILTERS, outcome: 'success' },
     }
 
@@ -608,7 +446,7 @@ describe('HistoryFiltersBar', () => {
       <TestWrapper>
         <HistoryFiltersBar
           {...props}
-          filters={{ ...props.filters, attackTypes: ['PromptSendingAttack'] }}
+          filters={{ ...props.filters, operator: ['alice'] }}
         />
       </TestWrapper>
     )

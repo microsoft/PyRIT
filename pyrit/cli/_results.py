@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from pyrit.cli._cli_args import ScenarioResultView
 
 if TYPE_CHECKING:
-    from pyrit.output.sink import Sink
+    from pyrit.output import Sink
 
 #: Default cap on how many attacks the transcript-fetching views (``conversations``
 #: and ``full``) render when the user gives neither ``--attack-result-ids`` nor
@@ -143,7 +143,7 @@ def resolve_output_sink(*, output_path: str | None, output_format: str) -> Sink 
         )
     from pathlib import Path
 
-    from pyrit.output.sink import FileSink
+    from pyrit.output import FileSink
 
     path = Path(output_path)
     if not path.parent.exists():

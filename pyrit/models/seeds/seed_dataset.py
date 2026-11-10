@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.common.utils import combine_list
+from pyrit.common import combine_list
 from pyrit.models.literals import SeedType  # noqa: TC001  (runtime-required by Pydantic field annotations)
 from pyrit.models.seeds.attack_seed_group import AttackSeedGroup
 from pyrit.models.seeds.seed import (  # AwareDatetimeUTC is runtime-required by Pydantic
@@ -170,7 +170,7 @@ class SeedDataset(BaseModel):
         return data
 
     @classmethod
-    def from_yaml_file(cls, file: str | Path) -> SeedDataset:
+    def from_yaml_file(cls, file: str | Path, *, default_dataset_name: str | None = None) -> SeedDataset:
         """
         Create a SeedDataset from a YAML file, marking nested seeds as trusted templates.
 
@@ -180,6 +180,8 @@ class SeedDataset(BaseModel):
 
         Args:
             file: The input file path.
+            default_dataset_name: Dataset name used when the YAML declares neither
+                ``dataset_name`` nor ``name``.
 
         Returns:
             SeedDataset: The loaded dataset.
@@ -192,7 +194,7 @@ class SeedDataset(BaseModel):
         # it at the top of this module would create a circular import.
         from pyrit.models.seeds.yaml_seed_loader import load_seed_dataset_from_yaml
 
-        return load_seed_dataset_from_yaml(file)
+        return load_seed_dataset_from_yaml(file, default_dataset_name=default_dataset_name)
 
     def get_values(
         self,

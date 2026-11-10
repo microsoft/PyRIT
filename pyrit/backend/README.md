@@ -30,6 +30,23 @@ API keys do not authenticate incoming GUI users.
 
 ## API Endpoints
 
+### Memory text search
+
+Text searches are case-insensitive literal substrings by default. Wildcards require
+an explicit full LIKE pattern: `%` matches any number of characters, `_` matches
+one, and `/` escapes the next character. Brackets, `*` and backslashes are literal.
+Patterns are not automatically wrapped in `%`; a dangling `/` is invalid.
+
+`GET /api/datasets/seeds` accepts `search` for literals or `value_pattern` for
+patterns. `GET /api/operations/{operation_id}/findings` accepts `title` or
+`title_pattern`. `POST /api/analytics/attacks/facets` accepts `search` or `search_pattern`.
+Supplying both companion filters is invalid. An explicit empty pattern matches
+empty text, whereas an empty literal query retains its no-filter behavior.
+Dataset cursors are bound to the pattern and search mode as well as other filters.
+Existing UI search boxes remain literal. Unicode lowercasing is used rather than
+full case folding; SQL Server's locale, accent and character semantics depend on
+its database collation.
+
 ### Health & Status
 - `GET /api/health` - Health check
 - `GET /api/version` - Version information
@@ -37,6 +54,36 @@ API keys do not authenticate incoming GUI users.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+
+### Manual attack creation
+
+`POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
+for example `{"target_registry_name": "my-target", "objective": "Evaluate the response"}`.
+An omitted, null, or empty objective creates a chat without a goal. The objective
+never sets the strategy type, and there is no separate attack display-name field.
+Objective edits use `PATCH /api/attacks/{attack_result_id}` without changing the
+strategy identifier. New attacks copied from conversations or saved through
+`POST /api/attacks/save-conversation` also use `ManualAttack`; their automated
+source results keep their original strategy types.
+New and edited manual objectives are marked as non-placeholder, so even the literal
+`"Manual attack via GUI"` is preserved in summaries. Unmarked historical manual
+placeholders retain their legacy empty-summary behavior.
+
+Until PyRIT 1.4, `name` remains a deprecated input alias for `objective`, with
+the same text validation. When `objective` is omitted or null, `name` supplies
+the goal. If both are non-null they must match exactly, including empty strings;
+conflicts return 422 rather than silently discarding either value.
+
+This fixes new results, not existing malformed identifiers. Older manual results
+may have their initial objective stored as the strategy class name. History,
+attack-type filters/options, and analytics still use those persisted class names.
+Manual editing and scoring remain available because they recognize the
+`pyrit.backend` strategy module, not the malformed class name. Objective edits
+do not repair identifiers. Any historical repair requires a separate, audited
+migration scoped to verified backend-created manual results, creating corrected
+content-addressed identifiers and relinking affected results rather than mutating
+shared identifiers. Do not infer manual status from objective text or GUI labels,
+or reclassify automated results.
 
 ### Saved conversations
 
@@ -300,6 +347,19 @@ find `python` (for example, `<worktree>\.venv\Scripts\python.exe` on Windows).
 Stop these test-owned servers after the run.
 
 ### Request Limits
+
+Attachments upload in the background while editing remains available, with up to three
+uploads at a time. Send and Save reuse completed uploads; failures expose Retry and
+removal controls. Unused uploads expire after 24 hours, including across restarts.
+Only media used in a message or conversion enters permanent results storage.
+
+`POST /api/media/uploads` accepts `data_type`, base64 `content`, and `mime_type`.
+It returns **201** with an opaque `value` and `expires_at` (UTC Unix seconds).
+Retained drafts refresh uploads one hour before that expiration without changing their
+references. Older backends without `expires_at` use a 23-hour refresh interval.
+The shared local staging directory has a **1 GiB** quota; uploads exceeding it receive
+**507** and can be retried after unused uploads expire. Expired bytes are reclaimed
+before admitting new uploads. Renewing existing bytes does not consume extra quota.
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
 API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,
