@@ -12,14 +12,12 @@ composite ``inner_targets`` (full instances, not bare identifiers), and a curate
 ``target_specific_params`` view of the non-promoted constructor params.
 """
 
-from collections.abc import Mapping
 from typing import Any
 
 from pyrit.models import TargetIdentifier
-from pyrit.models.catalog import TargetInstance, TargetOrigin
+from pyrit.models.catalog import RegistryEntryOrigin, TargetInstance
 from pyrit.prompt_target import CapabilityName, PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry import Reconstructable
 from pyrit.registry.resolution import derive_parameters
 
@@ -57,27 +55,8 @@ def _target_specific_params(target_identifier: TargetIdentifier) -> dict[str, An
     return {**extra, **explicit_specific} or None
 
 
-def target_origin(metadata: Mapping[str, Any]) -> TargetOrigin:
-    """
-    Tell where a registered target comes from by its entry metadata.
-
-    Args:
-        metadata: The target's registry entry metadata.
-
-    Returns:
-        TargetOrigin: Saved when rebuilt from a saved recipe, configuration when the server's startup scripts
-            registered it, and temporary otherwise, such as a target created through the API without saving it
-            or one a scan's launch scripts registered.
-    """
-    if SAVED_ENTRY_METADATA_KEY in metadata:
-        return TargetOrigin.SAVED
-    if metadata.get(CONFIGURATION_ENTRY_METADATA_KEY):
-        return TargetOrigin.CONFIGURATION
-    return TargetOrigin.TEMPORARY
-
-
 def target_object_to_instance(
-    target_registry_name: str, target_obj: PromptTarget, *, origin: TargetOrigin | None = None
+    target_registry_name: str, target_obj: PromptTarget, *, origin: RegistryEntryOrigin | None = None
 ) -> TargetInstance:
     """
     Build a TargetInstance DTO from a registry target object.

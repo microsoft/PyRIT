@@ -46,13 +46,14 @@ class ComponentType(str, Enum):
     Each member maps one-to-one to a registry singleton that resolves references
     of that family by name (``TARGET`` → ``TargetRegistry``, ``CONVERTER`` →
     ``ConverterRegistry``, ``SCORER`` → ``ScorerRegistry``, ``SCENARIO`` →
-    ``ScenarioRegistry``).
+    ``ScenarioRegistry``, ``SOURCE`` → ``SourceRegistry``).
     """
 
     TARGET = "target"
     CONVERTER = "converter"
     SCORER = "scorer"
     SCENARIO = "scenario"
+    SOURCE = "source"
 
 
 class ParameterDestination(str, Enum):

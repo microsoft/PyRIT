@@ -48,6 +48,8 @@ export default function ScenarioTechniqueSection({
   const styles = useScenarioDetailStyles()
   const identityStyles = useRegistryIdentityRowStyles()
   const identityId = useId()
+  const techniqueLimitDescriptionId = `${identityId}-technique-limit`
+  const baselineUnavailableId = `${identityId}-baseline-unavailable`
   const [expandedIdentities, setExpandedIdentities] = useState<Set<string>>(new Set())
   const toggleIdentity = (name: string): void => {
     setExpandedIdentities((current: Set<string>) => {
@@ -69,6 +71,12 @@ export default function ScenarioTechniqueSection({
           ? 'Select exactly one technique. Baseline comparison is optional and separate.'
           : 'Select individual techniques, or use a tag to select or clear all techniques with that tag.'}
       </Text>}
+      {supportsTechniques && !singleTechnique && maxConcreteTechniques != null && (
+        <Text id={techniqueLimitDescriptionId} size={200} className={styles.hint}>
+          Select at most {maxConcreteTechniques} concrete techniques.
+          {' '}Clear a selected technique or choose a smaller tag.
+        </Text>
+      )}
       {selectionError && (
         <Text className={styles.errorText} role="alert">
           {selectionError}
@@ -103,6 +111,9 @@ export default function ScenarioTechniqueSection({
       <div className={styles.techniqueList} role="group" aria-label="Techniques">
         {techniques.map((technique) => {
           const selected = isSelected(technique)
+          const limited = !technique.isBaseline && !selected
+            && maxConcreteTechniques != null
+            && selectedTechniques.length >= maxConcreteTechniques
           const expanded = expandedIdentities.has(technique.name)
           const regionId = `${identityId}-${encodeURIComponent(technique.name)}`
           return (
@@ -122,9 +133,9 @@ export default function ScenarioTechniqueSection({
               className={styles.selectionControl}
               label={technique.name}
               checked={selected}
-              disabled={disabled || technique.disabled || (!technique.isBaseline && !selected
-                && maxConcreteTechniques != null
-                && selectedTechniques.length >= maxConcreteTechniques)}
+              disabled={disabled || technique.disabled || limited}
+              aria-describedby={technique.disabled ? baselineUnavailableId
+                : limited ? techniqueLimitDescriptionId : undefined}
               onChange={(_, data) => onTechniqueChange(technique, data.checked === true)}
               data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
             />}
@@ -155,6 +166,8 @@ export default function ScenarioTechniqueSection({
                         appearance="outline"
                         checked={tagSelected}
                         disabled={disabled || tagMembers.length === 0 || (!tagSelected && exceedsLimit)}
+                        aria-describedby={tagMembers.length === 0 ? baselineUnavailableId
+                          : !tagSelected && exceedsLimit ? techniqueLimitDescriptionId : undefined}
                         onClick={() => onTagChange(tag)}
                         aria-label={`${tagSelected ? 'Clear' : 'Select'} ${techniqueSetName(tag)} techniques`}
                       >
@@ -165,7 +178,7 @@ export default function ScenarioTechniqueSection({
                 </div>
               )}
               {technique.disabled && (
-                <Text size={200} className={styles.hint}>
+                <Text id={baselineUnavailableId} size={200} className={styles.hint}>
                   This scenario does not support a baseline comparison.
                 </Text>
               )}

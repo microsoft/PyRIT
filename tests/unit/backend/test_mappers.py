@@ -29,7 +29,6 @@ from pyrit.backend.mappers.attack_mappers import (
     _resolve_media_url,
     _sign_blob_url_async,
 )
-from pyrit.backend.mappers.target_mappers import target_origin
 from pyrit.backend.models import AddMessageRequest, MessagePieceRequest, ScoreView
 from pyrit.backend.models._media import build_filename, infer_mime_type
 from pyrit.message_normalizer import HistorySquashNormalizer
@@ -44,7 +43,7 @@ from pyrit.models import (
     PromptDataType,
     Score,
 )
-from pyrit.models.catalog import TargetOrigin
+from pyrit.models.catalog import RegistryEntryOrigin
 from pyrit.prompt_target import (
     CapabilityName,
     PromptTarget,
@@ -53,7 +52,6 @@ from pyrit.prompt_target import (
     TextTarget,
     WebsocketTarget,
 )
-from pyrit.registry.instance_registry import CONFIGURATION_ENTRY_METADATA_KEY, SAVED_ENTRY_METADATA_KEY
 from unit.mocks import MockPromptTarget
 
 # ============================================================================
@@ -1562,27 +1560,12 @@ def test_target_instance_reports_effective_history_replay(mode: str) -> None:
         assert not result.capabilities.supports_editable_history
 
 
-class TestTargetOrigin:
-    @pytest.mark.parametrize(
-        ("metadata", "origin"),
-        [
-            ({SAVED_ENTRY_METADATA_KEY: "targets"}, TargetOrigin.SAVED),
-            ({SAVED_ENTRY_METADATA_KEY: "targets", CONFIGURATION_ENTRY_METADATA_KEY: True}, TargetOrigin.SAVED),
-            ({CONFIGURATION_ENTRY_METADATA_KEY: True}, TargetOrigin.CONFIGURATION),
-            ({}, TargetOrigin.TEMPORARY),
-            ({"supports_tool_calls": True}, TargetOrigin.TEMPORARY),
-        ],
-    )
-    def test_tells_where_a_registered_target_comes_from(
-        self, metadata: dict[str, object], origin: TargetOrigin
-    ) -> None:
-        assert target_origin(metadata) is origin
-
+class TestTargetInstanceOrigin:
     @pytest.mark.usefixtures("patch_central_database")
     def test_carries_the_origin_onto_the_instance(self) -> None:
-        result = target_object_to_instance("t-1", MockPromptTarget(), origin=TargetOrigin.SAVED)
+        result = target_object_to_instance("t-1", MockPromptTarget(), origin=RegistryEntryOrigin.SAVED)
 
-        assert result.origin is TargetOrigin.SAVED
+        assert result.origin is RegistryEntryOrigin.SAVED
         assert target_object_to_instance("t-1", MockPromptTarget()).origin is None
 
 

@@ -75,6 +75,9 @@ class OpenAITarget(PromptTarget):
         {"endpoint", "auth_mode", "api_key", "headers", "httpx_client_kwargs"}
     )
 
+    # The OpenAI SDK adds these headers to every client it creates.
+    server_header_variables: ClassVar[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS",)
+
     model_name_environment_variable: str
     endpoint_environment_variable: str
     api_key_environment_variable: str
