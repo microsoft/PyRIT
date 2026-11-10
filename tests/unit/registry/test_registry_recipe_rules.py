@@ -40,9 +40,14 @@ def isolated_target_registry() -> Iterator[None]:
 
 
 def _check(class_name: str, params: dict[str, Any]) -> None:
+    """Check a target recipe; an ``auth_mode`` key stands for the recipe's top-level auth mode."""
     registry = TargetRegistry.get_registry_singleton()
     cls = registry.get_class(class_name)
-    check_saved_entry_params(cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=params)
+    values = dict(params)
+    auth_mode = values.pop("auth_mode", None)
+    check_saved_entry_params(
+        cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=values, auth_mode=auth_mode
+    )
 
 
 def test_check_saved_entry_params_accepts_a_target_that_takes_no_credentials() -> None:
@@ -400,7 +405,7 @@ def test_check_saveable_class_lists_the_auth_modes_a_saved_target_can_use(
         (
             "HTTPXAPITarget",
             RestoreFailureReason.UNSUPPORTED_CLASS,
-            "'HTTPXAPITarget' uploads files from a folder the server chooses, which restore can't set yet.",
+            "'HTTPXAPITarget' uploads files from a folder the server chooses, which a saved entry can't use yet.",
         ),
         (
             "HuggingFaceChatTarget",
@@ -443,12 +448,13 @@ def test_check_saveable_class_agrees_with_the_check_a_save_runs() -> None:
             saveable_auth_modes = ()
 
         for auth_mode in cls.supported_auth_modes:
-            entry = {**params, "auth_mode": auth_mode}
             if auth_mode in saveable_auth_modes:
-                check_saved_entry_params(cls=cls, parameters=metadata.parameters, params=entry)
+                check_saved_entry_params(cls=cls, parameters=metadata.parameters, params=params, auth_mode=auth_mode)
             else:
                 with pytest.raises(SavedEntryRefusedError):
-                    check_saved_entry_params(cls=cls, parameters=metadata.parameters, params=entry)
+                    check_saved_entry_params(
+                        cls=cls, parameters=metadata.parameters, params=params, auth_mode=auth_mode
+                    )
 
 
 @pytest.mark.parametrize("class_name", _OPENAI_CLASSES)
@@ -468,8 +474,12 @@ def test_check_saveable_class_refuses_an_openai_class_while_the_server_sets_sdk_
 def _component_refusal(registry_class: Any, class_name: str, params: dict[str, Any]) -> SavedEntryRefusedError:
     registry = registry_class.get_registry_singleton()
     cls = registry.get_class(class_name)
+    values = dict(params)
+    auth_mode = values.pop("auth_mode", None)
     with pytest.raises(SavedEntryRefusedError) as refusal:
-        check_saved_entry_params(cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=params)
+        check_saved_entry_params(
+            cls=cls, parameters=registry.get_class_metadata(cls).parameters, params=values, auth_mode=auth_mode
+        )
     return refusal.value
 
 
