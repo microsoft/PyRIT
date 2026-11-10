@@ -1443,10 +1443,7 @@ async def test_restore_failures_explain_every_reason_without_its_details_async(r
     assert response.status_code == 200
     messages = {item["reason"]: item["message"] for item in response.json()["items"]}
     assert set(messages) == {reason.value for reason in RestoreFailureReason}
-    assert all(message and message != "detail" for message in messages.values())
-    assert messages["unsupported_credential"] == (
-        "It holds a credential, or would use one of this server's, which a saved entry can't do."
-    )
+    assert messages == {reason.value: reason.explanation for reason in RestoreFailureReason}
 
 
 async def test_restore_failures_need_sign_in_when_it_is_on_async(runtime: RuntimeLifecycle) -> None:

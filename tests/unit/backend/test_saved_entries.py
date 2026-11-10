@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -160,3 +161,21 @@ class TestSaveThenRegister:
 
         assert type(refusal.value) is raised
         assert not (tmp_path / "converters" / "formal.json").exists()
+
+    async def test_leaves_a_recipe_that_another_writer_replaced_when_registering_fails(self, tmp_path: Path) -> None:
+        theirs = ComponentRecipe(class_module="pyrit.converter", class_name="ROT13Converter")
+
+        def register(_metadata: dict[str, Any]) -> None:
+            (tmp_path / "converters" / "formal.json").write_text(theirs.model_dump_json(), encoding="utf-8")
+            raise RuntimeError("register failed")
+
+        with pytest.raises(RuntimeError, match="register failed"):
+            await save_then_register_async(
+                kind=RegistryRecipeKind.CONVERTERS,
+                name="formal",
+                recipe=ComponentRecipe(class_module="pyrit.converter", class_name="Base64Converter"),
+                recipes_source=str(tmp_path),
+                register=register,
+            )
+
+        assert json.loads((tmp_path / "converters" / "formal.json").read_text())["class_name"] == "ROT13Converter"

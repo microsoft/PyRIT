@@ -689,13 +689,13 @@ def test_delete_of_a_changed_suite_is_a_conflict(client: TestClient, service: Ma
     )
 
 
-@pytest.mark.parametrize(
-    "error",
-    [AzureError("key=secret"), TimeoutError("Timed out waiting to write 'secret.lock'")],
-)
-def test_a_delete_storage_failure_is_unavailable(client: TestClient, service: MagicMock, error: Exception) -> None:
-    """Test that blob failures and local lock timeouts during delete map to a sanitized 503."""
-    service.delete_suite_async = AsyncMock(side_effect=error)
+def test_a_delete_storage_failure_is_unavailable(client: TestClient, service: MagicMock) -> None:
+    """Test that a storage failure during delete maps to a sanitized 503."""
+    service.delete_suite_async = AsyncMock(
+        side_effect=DocumentStorageUnavailableError(
+            label="Scenario suite", source="/srv/secret-suites", reason="Permission denied"
+        )
+    )
 
     response = client.delete(f"/api/scenario-suites/{SUITE_NAME}", params={"expected_version": "suite-v1"})
 

@@ -532,14 +532,12 @@ class TestDeletePreset:
 
         assert response.status_code == 404
 
-    @pytest.mark.parametrize(
-        "error",
-        [AzureError("key=secret"), TimeoutError("Timed out waiting to write 'secret.lock'")],
-    )
-    def test_a_delete_storage_failure_is_unavailable(
-        self, *, client: TestClient, service: MagicMock, error: Exception
-    ) -> None:
-        service.delete_preset_async = AsyncMock(side_effect=error)
+    def test_a_delete_storage_failure_is_unavailable(self, *, client: TestClient, service: MagicMock) -> None:
+        service.delete_preset_async = AsyncMock(
+            side_effect=DocumentStorageUnavailableError(
+                label="Scenario preset", source="/srv/secret-presets", reason="Permission denied"
+            )
+        )
 
         response = client.delete(f"/api/scenario-presets/{PRESET_NAME}", params={"expected_version": "v1"})
 

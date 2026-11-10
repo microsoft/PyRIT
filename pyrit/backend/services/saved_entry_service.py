@@ -18,8 +18,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from azure.core.exceptions import AzureError
-
 from pyrit.backend.models.saved_entries import SavedEntryResponse
 from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.saved_entries import REGISTRIES_BY_KIND, SavedEntryStorageError, saved_entry_lock
@@ -32,7 +30,7 @@ from pyrit.models.catalog import (
     SavedEntryRef,
     StoredRecipe,
 )
-from pyrit.registry.file_document_storage import DocumentConflictError
+from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
@@ -137,7 +135,8 @@ class SavedEntryService:
         Delete a saved entry's file and remove the entry it restored, so it doesn't come back.
 
         The running entry is removed before its file is deleted, so no request can pick it up in between, and is
-        put back if the file can't be deleted. A startup entry that has the same name stays.
+        put back if the file can't be deleted. A startup entry that has the same name stays. Deleting an entry that
+        couldn't be restored frees its name, which brings back a startup entry it hid.
 
         Args:
             kind (RegistryRecipeKind): The kind of entry.
@@ -180,7 +179,9 @@ class SavedEntryService:
             if users:
                 raise SavedEntryInUseError(_in_use_message(singular=singular, name=name, users=users))
             instances = REGISTRIES_BY_KIND[kind].get_registry_singleton().instances
-            entry = instances.get_entry(name)
+            held = any(unavailable.name == name for unavailable in instances.get_unavailable_entries())
+            # A held name isn't listed, so this looks up only an entry that was registered.
+            entry = instances.get_entry(name) if name in instances.get_names() else None
             if entry is not None and registry_entry_origin(entry.metadata) is not RegistryEntryOrigin.SAVED:
                 entry = None
             if entry is not None:
@@ -198,16 +199,18 @@ class SavedEntryService:
             except DocumentConflictError as error:
                 _put_back(kind=kind, entry=entry)
                 raise SavedEntryInUseError(_changed_message(singular=singular, name=name)) from error
-            except (OSError, AzureError, TimeoutError) as error:
+            except DocumentStorageUnavailableError as error:
                 _put_back(kind=kind, entry=entry)
                 logger.error(
                     "Saved %s '%s' couldn't be deleted from %s (%s).",
                     singular,
                     name,
                     storage.display_source,
-                    type(error).__name__,
+                    error.reason,
                 )
                 raise SavedEntryStorageError(f"Saved {kind.value} can't be deleted right now.") from error
+            if held:
+                instances.clear_unavailable(name)
             if entry is not None and not _registered_anywhere(entry.instance):
                 await release_component_async(entry.instance)
             if runtime is not None:
@@ -247,13 +250,13 @@ async def _read_async(
     """
     try:
         stored = await asyncio.to_thread(storage.read_recipe, name)
-    except (AzureError, TimeoutError) as error:
+    except DocumentStorageUnavailableError as error:
         logger.error(
             "Saved %s '%s' couldn't be read from %s (%s).",
             _singular(kind),
             name,
             storage.display_source,
-            type(error).__name__,
+            error.reason,
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be read right now.") from error
     if stored is None:
@@ -287,8 +290,8 @@ async def _saved_users_async(*, kind: RegistryRecipeKind, name: str, recipes_sou
 
     try:
         return await asyncio.to_thread(scan)
-    except (OSError, AzureError, TimeoutError) as error:
-        logger.error("Saved entries couldn't be read to check what uses '%s' (%s).", name, type(error).__name__)
+    except DocumentStorageUnavailableError as error:
+        logger.error("Saved entries couldn't be read to check what uses '%s' (%s).", name, error.reason)
         raise SavedEntryStorageError("Saved entries can't be read right now.") from error
 
 

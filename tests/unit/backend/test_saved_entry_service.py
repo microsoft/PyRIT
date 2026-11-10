@@ -40,9 +40,15 @@ from pyrit.models.catalog import (
     RestoreFailureReason,
     SavedEntryOwner,
 )
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
-from pyrit.registry.file_document_storage import DocumentConflictError
-from pyrit.registry.instance_registry import registry_entry_origin
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    SavedEntryUnavailableError,
+    ScorerRegistry,
+    TargetRegistry,
+)
+from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
+from pyrit.registry.instance_registry import registration_origin, registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.async_utils import TEST_WATCHDOG_SECONDS
@@ -196,8 +202,8 @@ async def test_a_delete_needs_the_version_it_read_and_keeps_a_file_that_changed(
 
 async def test_a_name_without_a_saved_file_isnt_found_and_its_startup_entry_stays(tmp_path: Path) -> None:
     instances = ConverterRegistry.get_registry_singleton().instances
-    instances.register(SearchReplaceConverter(pattern="cat", replace="dog"), name="startup_replace")
-    instances.mark_configuration_entries()
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        instances.register(SearchReplaceConverter(pattern="cat", replace="dog"), name="startup_replace")
 
     for name in ("startup_replace", "never_saved"):
         with pytest.raises(SavedEntryNotFoundError) as refusal:
@@ -211,14 +217,31 @@ async def test_deleting_a_saved_file_whose_name_a_startup_entry_took_keeps_that_
     ConverterRegistry.reset_registry_singleton()
     instances = ConverterRegistry.get_registry_singleton().instances
     startup = SearchReplaceConverter(pattern="fish", replace="dog")
-    instances.register(startup, name="cat_replace")
-    instances.mark_configuration_entries()
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        instances.register(startup, name="cat_replace")
     assert [failure.reason for failure in _restore(tmp_path)] == [RestoreFailureReason.NAME_CLASH]
+    with pytest.raises(SavedEntryUnavailableError):
+        instances.get("cat_replace")
 
     await _delete(tmp_path, CONVERTERS, "cat_replace", version=await _version(tmp_path, CONVERTERS, "cat_replace"))
 
     assert not (tmp_path / "converters" / "cat_replace.json").exists()
     assert instances.get("cat_replace") is startup
+
+
+async def test_deleting_an_entry_that_couldnt_be_restored_frees_its_name(tmp_path: Path) -> None:
+    _write(tmp_path, CONVERTERS, "ghost", {"class_module": "nowhere", "class_name": "Nope", "params": {}})
+    assert [failure.reason for failure in _restore(tmp_path)] == [RestoreFailureReason.UNKNOWN_CLASS]
+    instances = ConverterRegistry.get_registry_singleton().instances
+    admin = _caller(BEN_OID, admin=True)
+
+    await _delete(
+        tmp_path, CONVERTERS, "ghost", version=await _version(tmp_path, CONVERTERS, "ghost", admin), caller=admin
+    )
+
+    assert "ghost" not in instances
+    assert instances.get("ghost") is None
+    instances.register(SearchReplaceConverter(pattern="cat", replace="dog"), name="ghost")
 
 
 async def test_an_entry_another_saved_entry_names_isnt_deleted(tmp_path: Path) -> None:
@@ -454,7 +477,11 @@ async def test_a_file_that_doesnt_say_who_saved_it_needs_an_administrator(
 
 
 @pytest.mark.parametrize(
-    "error", [OSError("disk"), DocumentConflictError(name="cat_replace", expected_version="a", actual_version="b")]
+    "error",
+    [
+        DocumentStorageUnavailableError(label="Converter", source="/srv/recipes", reason="No space left on device"),
+        DocumentConflictError(name="cat_replace", expected_version="a", actual_version="b"),
+    ],
 )
 async def test_an_entry_whose_file_cant_be_deleted_is_put_back(tmp_path: Path, error: Exception) -> None:
     await _save_replace(tmp_path)
