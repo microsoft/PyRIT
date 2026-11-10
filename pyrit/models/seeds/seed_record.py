@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from pyrit.models.decomposition import DecompositionPath
 from pyrit.models.literals import ChatMessageRole, PromptDataType, SeedType
 from pyrit.models.score.condition import ConditionTuple
 from pyrit.models.seeds.seed_origin import SeedOrigin
@@ -40,3 +41,5 @@ class SeedRecord(BaseModel):
     parameters: list[str] | None
     conditions: ConditionTuple | None
     response_json_schema: JsonSchemaDefinition | None
+    parent_objective_id: UUID | None = None
+    paths: tuple[DecompositionPath, ...] = ()

@@ -559,14 +559,11 @@ class TestTechniqueInitializerRegistration:
         assert first_names == second_names
         assert first_factory is second_factory
 
-    async def test_falls_back_to_default_target_when_registry_empty(self):
-        """With no 'adversarial_chat' in TargetRegistry, lazy resolution at create()-time
-        falls back to OpenAIChatTarget(temperature=1.2).
-        """
-        fallback_target = MagicMock(spec=PromptTarget)
+    async def test_requires_explicit_target_only_when_technique_is_built_async(self):
+        """Technique discovery is independent of targets; execution requires its declared role."""
         with patch(
-            "pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget",
-            return_value=fallback_target,
+            "pyrit.prompt_target.OpenAIChatTarget",
+            side_effect=AssertionError("Implicit provider construction"),
         ) as mock_openai:
             init = TechniqueInitializer()
             await init.initialize_async()
@@ -576,10 +573,10 @@ class TestTechniqueInitializerRegistration:
             registry = AttackTechniqueRegistry.get_registry_singleton()
             factories = registry.get_factories()
             for name in PERSONA_CRESCENDO_TECHNIQUE_NAMES:
-                config = factories[name]._build_adversarial_config()
-                assert config.target is fallback_target
+                with pytest.raises(ValueError, match="adversarial_chat.*not configured"):
+                    factories[name]._build_adversarial_config()
 
-            mock_openai.assert_any_call(temperature=1.2)
+            mock_openai.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, Saved
 from pyrit.scenario import Scenario
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.initialization import reset_setup_registries
+from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, make_scenario_result
 
 _RESTORED_REGISTRIES = (TargetRegistry, ConverterRegistry, ScorerRegistry, AttackTechniqueRegistry)
@@ -749,7 +750,7 @@ async def test_shutdown_drains_disconnected_requests_before_closing_async(
     @runtime.app.post(path)
     async def retained_write_async() -> dict[str, bool]:
         entered.set()
-        assert await asyncio.to_thread(release.wait, 5)
+        assert await asyncio.to_thread(release.wait, TEST_WATCHDOG_SECONDS)
         events.append("request-settled")
         if child_fails:
             raise failure
@@ -769,14 +770,14 @@ async def test_shutdown_drains_disconnected_requests_before_closing_async(
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
         request = asyncio.create_task(client.post(path))
         try:
-            await asyncio.wait_for(entered.wait(), timeout=5)
+            await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
             request.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await request
             children = list(runtime.operations | runtime.management_operations)
             assert len(children) == 1
             shutdown = asyncio.create_task(shutdown_async())
-            await asyncio.wait_for(shutdown_entered.wait(), timeout=5)
+            await asyncio.wait_for(shutdown_entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
             lifecycle_module.close_services_async.assert_not_awaited()
             assert not shutdown.done()
             assert runtime.state == "ready"
@@ -801,20 +802,20 @@ async def test_shutdown_drains_disconnected_requests_before_closing_async(
                     shutdown.cancel()
                     barrier = asyncio.Event()
                     asyncio.get_running_loop().call_soon(barrier.set)
-                    await asyncio.wait_for(barrier.wait(), timeout=5)
+                    await asyncio.wait_for(barrier.wait(), timeout=TEST_WATCHDOG_SECONDS)
                     assert not shutdown.done()
                     assert children[0].cancelling() == 0
                     lifecycle_module.close_services_async.assert_not_awaited()
             release.set()
             if child_fails:
                 with pytest.raises(ValueError, match="retained request failed") as error:
-                    await asyncio.wait_for(shutdown, timeout=5)
+                    await asyncio.wait_for(shutdown, timeout=TEST_WATCHDOG_SECONDS)
                 assert error.value is failure
             elif cancel_shutdown:
                 with pytest.raises(asyncio.CancelledError):
-                    await asyncio.wait_for(shutdown, timeout=5)
+                    await asyncio.wait_for(shutdown, timeout=TEST_WATCHDOG_SECONDS)
             else:
-                await asyncio.wait_for(shutdown, timeout=5)
+                await asyncio.wait_for(shutdown, timeout=TEST_WATCHDOG_SECONDS)
             assert events == ["request-settled", "resources-closed"]
             assert all(task.done() for task in children)
             assert not runtime.operations and not runtime.management_operations
