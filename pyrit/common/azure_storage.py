@@ -7,7 +7,9 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 # A scheme followed by "://" and everything up to whitespace, so a quote can't end a URL before its query.
-_URL_IN_TEXT = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://\S+")
+# A scheme starts only where one can't continue from the character before it, such as after "_" or a
+# space, so each run of scheme characters is scanned once and long text stays fast.
+_URL_IN_TEXT = re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://\S+")
 # The signature of a SAS token, which can also appear in text without a scheme.
 _SAS_SIGNATURE = re.compile(r"(?i)\bsig=[^&\s]+")
 
