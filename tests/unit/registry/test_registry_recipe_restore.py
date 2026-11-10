@@ -416,7 +416,7 @@ class TestRestoreFailures:
         assert (failure.name, failure.reason) == (name, RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
         assert f"'{left_out if left_out != 'auth_mode' else 'api_key'}' is empty" in failure.message
         assert "sk-server-key" not in failure.message
-        assert name not in TargetRegistry.get_registry_singleton().instances
+        assert name not in TargetRegistry.get_registry_singleton().instances.get_names()
 
     def test_refuses_a_target_that_signs_in_with_this_servers_account(self, tmp_path: Path) -> None:
         _save(

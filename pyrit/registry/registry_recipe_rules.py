@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from typing import TYPE_CHECKING, Any
@@ -59,6 +60,7 @@ def check_saved_entry_params(*, cls: type, parameters: Sequence[Parameter], para
         SavedEntryRefusedError: If the class can't be saved, or the values hold or would use a credential.
     """
     _check_class(cls)
+    _check_server_headers(cls)
     _check_stored_credentials(parameters=parameters, params=params)
     _check_server_fallbacks(cls=cls, params=params)
     _check_destinations(cls=cls, params=params)
@@ -79,6 +81,22 @@ def _check_class(cls: type) -> None:
         raise SavedEntryRefusedError(
             reason=RestoreFailureReason.UNSUPPORTED_CLASS, message=f"'{cls.__name__}' can't be saved. {reason}"
         )
+
+
+def _check_server_headers(cls: type) -> None:
+    """
+    Refuse a class whose client would send headers this server sets in its environment.
+
+    Raises:
+        SavedEntryRefusedError: If an environment variable the class's client reads headers from is set.
+    """
+    for variable in getattr(cls, "server_header_variables", ()):
+        if os.environ.get(variable):
+            message = (
+                f"This server sets {variable}, and '{cls.__name__}' would send its headers with every request. "
+                "A saved target can't use this server's settings, so it isn't built while that is set."
+            )
+            raise SavedEntryRefusedError(reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL, message=message)
 
 
 def _check_stored_credentials(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
