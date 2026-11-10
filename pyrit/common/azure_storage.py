@@ -69,19 +69,16 @@ def redact_urls(text: str) -> str:
     """
     Remove the user name and password, query parameters, and fragment from every URL in a text.
 
-    A query or user name can hold a credential, such as a SAS token. A password in text isn't always
-    escaped and can hold "/", "?" or "#", so everything before the last "@" after the scheme is treated
-    as the user name and password; an "@" in a path hides the part before it too. A URL that can't be
-    parsed is hidden entirely, and a SAS signature is hidden wherever it appears.
+    A query or user name can hold a credential, such as a SAS token. A URL that can't be parsed is
+    hidden entirely, and a SAS signature is hidden wherever it appears.
 
     Returns:
         str: The text with each URL redacted.
     """
 
     def redact(match: re.Match[str]) -> str:
-        scheme, _, rest = match.group(0).partition("://")
         try:
-            return redact_url_credentials(f"{scheme}://{rest.rpartition('@')[2]}")
+            return redact_url_credentials(match.group(0))
         except ValueError:
             return "<URL hidden>"
 
