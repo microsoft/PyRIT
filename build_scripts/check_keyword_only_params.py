@@ -30,8 +30,9 @@ Exemptions (kept deliberately narrow):
    signature is dictated by a third-party base class and invoked positionally by it. Do NOT
    add to this set for one-off cases.
 4. **Per-line ``# pyrit-keyword-only-exempt`` marker** on any line of the ``def`` header,
-   for one-off third-party callbacks (argparse ``type=``, ``signal`` handlers, ...). Add a
-   short reason after the marker.
+   for one-off third-party callbacks (argparse ``type=``, ``signal`` handlers, ...) or new
+   overrides preserving a baselined PyRIT base method's positional contract. Add a short
+   reason naming the contract after the marker. ``@override`` alone is not an exemption.
 5. **Baseline** (``build_scripts/keyword_only_baseline.txt``): violations that existed when
    the check was introduced. Entries are keyed by ``module:qualname`` (no line numbers) and
    sorted, so the file only changes when a signature is added, fixed, moved or renamed.
@@ -297,8 +298,9 @@ def main(argv: list[str] | None = None) -> int:
             params = ", ".join(violation.positional)
             print(f"  {violation.path}:{violation.line}: {violation.key}({params})")
         print("")
-        print("Add `*,` so that at most one parameter (after self/cls) is positional. If a third-party")
-        print("caller dictates the signature, add `# pyrit-keyword-only-exempt <reason>` to the `def` line.")
+        print("Add `*,` so that at most one parameter (after self/cls) is positional. If a third-party caller")
+        print("or a baselined PyRIT base method requires the positional contract, add")
+        print("`# pyrit-keyword-only-exempt <reason>` to the `def` header and name that contract.")
     if stale:
         print("[ERROR] Baseline entries no longer violate the keyword-only check; remove them from")
         print(f"{args.baseline.as_posix()} (or rerun with --write-baseline):")

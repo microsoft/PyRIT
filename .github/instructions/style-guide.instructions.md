@@ -117,7 +117,9 @@ def process_data(self, data, threshold=0.5):  # Missing all type annotations
 - The `check-keyword-only-params` pre-commit hook (`build_scripts/check_keyword_only_params.py`) flags any `def`
   in `pyrit/` with more than one positional parameter after self/cls. Existing violations are listed in
   `build_scripts/keyword_only_baseline.txt`; never add new code to it. For a signature dictated by a third-party
-  caller, add `# pyrit-keyword-only-exempt <reason>` to the `def` line. See `doc/contributing/3_style_guide.md`.
+  caller or an override preserving a baselined PyRIT base method's positional contract, add
+  `# pyrit-keyword-only-exempt <reason>` to the `def` header and name the contract in the reason.
+  `@override` alone is not an exemption. See `doc/contributing/3_style_guide.md`.
 
 ```python
 # CORRECT

@@ -249,12 +249,54 @@ def test_main_reports_new_violation_with_location(tmp_path: Path, capsys: pytest
     out = capsys.readouterr().out
     assert "pyrit/mod.py:3: pyrit.mod:f(a, b)" in out
     assert "# pyrit-keyword-only-exempt" in out
+    assert "baselined PyRIT base method" in out
 
 
 def test_main_passes_when_violation_is_baselined(tmp_path: Path) -> None:
     _write_module(tmp_path, rel_path="pyrit/mod.py", source="def f(a, b): ...\n")
     (tmp_path / "baseline.txt").write_text("# comment\n\npyrit.mod:f\n", encoding="utf-8")
     assert _run(tmp_path) == 0
+
+
+@pytest.mark.parametrize(
+    ("definition", "method"),
+    [("def", "write_file"), ("async def", "write_file_async")],
+)
+@pytest.mark.parametrize("exempt", [False, True])
+def test_main_checks_new_override_of_baselined_method(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], definition: str, method: str, exempt: bool
+) -> None:
+    _write_module(
+        tmp_path,
+        rel_path="pyrit/base.py",
+        source=f"class LegacyStorage:\n    {definition} {method}(self, path: str, data: bytes) -> None: ...\n",
+    )
+    base_key = f"pyrit.base:LegacyStorage.{method}"
+    baseline = tmp_path / "baseline.txt"
+    baseline.write_text(f"{base_key}\n", encoding="utf-8")
+    marker = f"  # pyrit-keyword-only-exempt LegacyStorage.{method} positional contract" if exempt else ""
+    _write_module(
+        tmp_path,
+        rel_path="pyrit/custom_storage.py",
+        source=f"""
+        from typing_extensions import override
+        from pyrit.base import LegacyStorage
+
+        class CustomStorage(LegacyStorage):
+            @override
+            {definition} {method}(self, path: str, data: bytes) -> None:{marker}
+                ...
+        """,
+    )
+
+    assert _run(tmp_path) == (0 if exempt else 1)
+    assert read_baseline(baseline) == {base_key}
+    out = capsys.readouterr().out
+    if exempt:
+        assert out == ""
+    else:
+        assert f"pyrit.custom_storage:CustomStorage.{method}(path, data)" in out
+        assert base_key not in out
 
 
 def test_main_baseline_is_keyed_by_qualname_not_line(tmp_path: Path) -> None:

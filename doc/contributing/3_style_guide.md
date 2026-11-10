@@ -72,16 +72,27 @@ Exemptions are deliberately narrow. The check skips:
   `dispatch` (Starlette middleware), `process_bind_param` and `process_result_value` (SQLAlchemy
   `TypeDecorator`). Do not add names to this list for one-off cases.
 - **Functions marked `# pyrit-keyword-only-exempt`** on any line of the `def` header. Use the marker only when
-  third-party code calls the function positionally (an argparse `type=` callback, a `signal` handler or a
-  library callback), and give the reason after the marker:
+  third-party code dictates the positional signature (an argparse `type=` callback, a `signal` handler or a
+  library callback), or a new override must preserve a baselined PyRIT base method's positional contract.
+  Give the reason after the marker and name the contract being preserved:
 
 ```python
 def _handle_signal(signum: int, frame: FrameType | None) -> None:  # pyrit-keyword-only-exempt signal handler
     ...
 ```
 
-`@override` is not an exemption: if a PyRIT base method takes several positional parameters, the base method
-and its overrides are in the baseline together and migrate together.
+`@override` alone is not an exemption. Existing implementations stay in the baseline until they can migrate
+together with the base method and its callers. A new implementation uses a marker instead of adding a
+baseline entry or making its signature incompatible with existing positional callers. For example:
+
+```python
+class CustomStorageIO(StorageIO):
+    async def write_file_async(  # pyrit-keyword-only-exempt StorageIO.write_file_async positional contract
+        self, path: Path | str, data: bytes
+    ) -> None: ...
+```
+
+Remove the compatibility marker when the base contract and its callers migrate to keyword-only arguments.
 
 ### Baseline
 
@@ -90,8 +101,8 @@ Functions that already broke the rule when the check was added are listed in
 (for example `pyrit.auth.azure_auth:get_speech_config`). Line numbers are not stored, so moving or editing a
 function does not change the file, but renaming or moving it to another module does. The file is sorted.
 
-- New code must not be added to the baseline. Use `*`, or the exempt marker when a third party sets the
-  signature.
+- New code must not be added to the baseline. Use `*`, or the exempt marker when a third-party contract or
+  a baselined PyRIT base method requires positional compatibility.
 - Many baseline entries are public APIs. Changing them to keyword-only breaks positional callers, so migrate
   them deliberately in separate pull requests, with a deprecation if needed, and not as a side effect of
   unrelated work.
