@@ -146,8 +146,7 @@ class AtomicAttack:
         self._simulated_conversation_adversarial_chat_eval_hash = (
             ObjectiveTargetEvaluationIdentifier(adversarial_chat.get_identifier()).eval_hash
             if adversarial_chat is not None
-            and attack_technique.seed_technique is not None
-            and attack_technique.seed_technique.has_simulated_conversation
+            and any(prepared.seed_group.has_simulated_conversation for prepared in self._prepared_seed_groups.values())
             else None
         )
         self._objective_scorer = objective_scorer
@@ -248,8 +247,8 @@ class AtomicAttack:
         """
         Behavioral eval hash of the adversarial chat that generates simulated conversations.
 
-        ``None`` unless the technique has a simulated conversation and an adversarial chat
-        was supplied. An adversarial chat configured on the attack strategy itself is part
+        ``None`` unless a prepared execution group has a simulated conversation and an
+        adversarial chat was supplied. An adversarial chat configured on the attack strategy itself is part
         of the strategy's identifier instead.
         """
         return self._simulated_conversation_adversarial_chat_eval_hash

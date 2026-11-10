@@ -1349,6 +1349,45 @@ class TestCollectCachedCompletionPairs:
         assert cached == set()
         assert [call.kwargs["technique_eval_hash"] for call in analytics_mock.call_args_list] == ["planned-hash"]
 
+    async def test_dataset_simulation_skips_inner_attack_hash_async(self) -> None:
+        bench = self._make_bench()
+        attack = MagicMock(spec=AttackStrategy)
+        attack.get_identifier.return_value = ComponentIdentifier(class_name="MockAttack", class_module="pyrit.test")
+        candidate = AtomicAttack(
+            atomic_attack_name="attack_a",
+            attack_technique=AttackTechnique(attack=attack),
+            seed_groups=[
+                AttackSeedGroup(
+                    seeds=[
+                        SeedObjective(value="objective"),
+                        SeedSimulatedConversation(
+                            adversarial_chat_system_prompt=SeedPrompt(value="Generate a conversation.")
+                        ),
+                    ]
+                )
+            ],
+            adversarial_chat=MockPromptTarget(),
+        )
+        inner_row = _make_attack_result_with_attribution(outcome=AttackOutcome.SUCCESS, parent_collection="attack_a")
+
+        async def cached_results_async(
+            _memory: MemoryInterface, *, technique_eval_hash: str, objective_target_eval_hash: str
+        ) -> list[MagicMock]:
+            return [inner_row] if technique_eval_hash == "persisted-inner-hash" else []
+
+        with (
+            self._patch_identifier(),
+            patch(self._INNER_HASH_PATH, return_value="persisted-inner-hash") as inner_hash,
+            patch(self._ANALYTICS_PATH, side_effect=cached_results_async) as analytics,
+        ):
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=[candidate])
+
+        assert cached == set()
+        inner_hash.assert_not_called()
+        assert [call.kwargs["technique_eval_hash"] for call in analytics.call_args_list] == [
+            candidate.technique_eval_hash
+        ]
+
     async def test_delegates_with_memory_and_objective_target_hash(self):
         """Each analytics call passes the scenario's memory + the computed objective target hash."""
         bench = self._make_bench()

@@ -1273,6 +1273,84 @@ class TestAtomicAttackSimulatedConversationIdentity:
 
         assert redeployed.technique_eval_hash == baseline.technique_eval_hash
 
+    @pytest.mark.parametrize("static_technique", [False, True])
+    async def test_dataset_simulation_records_consumed_chat_async(
+        self, *, mock_attack: MagicMock, static_technique: bool
+    ) -> None:
+        source = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="simulated objective"),
+                SeedSimulatedConversation(
+                    adversarial_chat_system_prompt=SeedPrompt(value="Generate a conversation."), sequence=1
+                ),
+            ]
+        )
+        technique = AttackTechnique(
+            attack=mock_attack,
+            seed_technique=AttackTechniqueSeedGroup.from_system_prompt("Static system prompt.")
+            if static_technique
+            else None,
+        )
+        sources = [AttackSeedGroup(seeds=[SeedObjective(value="plain objective")]), source]
+
+        def build(chat: OpenAIChatTarget) -> AtomicAttack:
+            return AtomicAttack(
+                atomic_attack_name="same",
+                attack_technique=technique,
+                seed_groups=sources,
+                adversarial_chat=chat,
+            )
+
+        baseline = build(_adversarial_chat())
+        chat = _adversarial_chat(temperature=0.2)
+        changed = build(chat)
+        redeployed = build(_adversarial_chat(max_requests_per_minute=10, endpoint="https://second.example/openai/v1"))
+        assert baseline.simulated_conversation_adversarial_chat_eval_hash is not None
+        assert changed.technique_eval_hash != baseline.technique_eval_hash
+        assert changed.logical_group_id != baseline.logical_group_id
+        assert redeployed.technique_eval_hash == baseline.technique_eval_hash
+        assert redeployed.logical_group_id == baseline.logical_group_id
+
+        executor = MagicMock(spec=AttackExecutor)
+        executor.execute_attack_from_seed_groups_async.return_value = AttackExecutorResult(
+            completed_results=[], incomplete_objectives=[]
+        )
+        await changed.run_async(executor=executor)
+
+        kwargs = executor.execute_attack_from_seed_groups_async.call_args.kwargs
+        assert kwargs["adversarial_chat"] is chat
+        assert [group.has_simulated_conversation for group in kwargs["seed_groups"]] == [False, True]
+        key = AtomicAttackIdentifier.SIMULATED_CONVERSATION_ADVERSARIAL_CHAT_EVAL_HASH_KEY
+        for identifier in kwargs["atomic_attack_identifiers"]:
+            assert identifier.params[key] == changed.simulated_conversation_adversarial_chat_eval_hash
+            stored = AtomicAttackIdentifier.model_validate(identifier.model_dump())
+            assert AtomicAttackEvaluationIdentifier(stored).eval_hash == changed.technique_eval_hash
+
+    def test_adapted_away_dataset_simulation_does_not_identify_chat(self, mock_attack: MagicMock) -> None:
+        source = AttackSeedGroup(
+            seeds=[
+                SeedObjective(value="objective"),
+                SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt(value="Generate a conversation.")),
+            ]
+        )
+        technique = AttackTechnique(
+            attack=mock_attack,
+            requirements=TechniqueRequirements(seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)),
+        )
+        without_chat = AtomicAttack(atomic_attack_name="same", attack_technique=technique, seed_groups=[source])
+        with_chat = AtomicAttack(
+            atomic_attack_name="same",
+            attack_technique=technique,
+            seed_groups=[source],
+            adversarial_chat=_adversarial_chat(),
+        )
+
+        assert source.has_simulated_conversation
+        assert with_chat.seed_group_adaptations == {source.logical_id: "objective_only"}
+        assert with_chat.simulated_conversation_adversarial_chat_eval_hash is None
+        assert with_chat.technique_eval_hash == without_chat.technique_eval_hash
+        assert with_chat.logical_group_id == without_chat.logical_group_id
+
     def test_chat_is_not_identity_without_a_simulated_conversation(self, mock_attack, sample_seed_groups):
         without_chat = AtomicAttack(
             attack_technique=AttackTechnique(attack=mock_attack),
