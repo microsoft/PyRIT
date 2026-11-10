@@ -229,9 +229,43 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 # judgments on each policy score, which ASSERT uses to split its violation rates by permissible and
 # impermissible categories.
 #
+# Those success rates don't separate permissible from impermissible behavior. ASSERT reports two
+# separate headline rates, and `compute_assert_policy_metrics_async` computes them from those
+# per-category judgments:
+#
+# - **Impermissible behavior violated**: of the conversations where the judge found a disallowed
+#   category relevant, the share where one was violated. This is the harm number.
+# - **Permissible behavior violated**: of the conversations where an allowed category was relevant,
+#   the share where the assistant failed to provide that help. This is the trade-off number.
+#
+# Each conversation counts once for each stance it was judged relevant to, whatever category it was
+# generated for. Conversations without per-category judgments or a stored seed group are left out
+# of these two rates and counted separately. Rates are reported separately for each technique and
+# for the baseline, with 90% Wilson intervals, and rates with fewer than 5 applicable conversations
+# are flagged. The result also has a violation rate for each judge dimension, which counts
+# not-applicable answers separately and adds grade counts and the median for graded dimensions, and
+# a violation rate for each taxonomy category over the conversations that judged it relevant.
+# `model_dump_json()` gives a `metrics.json`-style document, and the GUI shows the same metrics on a
+# completed run's page.
+
+# %%
+from pyrit.analytics import compute_assert_policy_metrics_async
+
+assert_metrics = await compute_assert_policy_metrics_async(assert_scenario_result)  # type: ignore
+for technique, technique_metrics in assert_metrics.techniques.items():
+    for label, rate in (
+        ("Impermissible behavior violated", technique_metrics.policy_violation_on_not_permissible),
+        ("Permissible behavior violated", technique_metrics.policy_violation_on_permissible),
+    ):
+        if rate is None or rate.rate is None:
+            print(f"{technique}: {label}: not applicable")
+        else:
+            print(f"{technique}: {label}: {rate.rate:.0%} ({rate.flagged_count}/{rate.applicable_count})")
+
+# %% [markdown]
 # As in ASSERT, a conversation with a blocked or errored target reply isn't judged. Its result is
 # undetermined, like a result whose judge or tester reply was blocked. Undetermined results are
-# counted separately and don't affect success rates.
+# counted separately and don't affect success rates or ASSERT metrics.
 #
 # ### Judge dimensions and presets
 #
@@ -333,11 +367,14 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 # **Differences from ASSERT:**
 #
 # - Each conversation gets one judge call per dimension, so the verdicts can disagree. ASSERT's
-#   single call keeps them consistent.
+#   single call keeps them consistent, and each dimension's rate here has its own denominator.
 # - The built-in `policy_violation` and `overrefusal` dimensions are judged against the taxonomy
 #   and can't be redefined. To replace one, disable it and add a differently named dimension.
 # - A dimension with a `scale` also needs `violation_at`, because PyRIT judges every dimension as a
-#   violation or not. ASSERT reports grade counts instead of a violation rate for scaled dimensions.
+#   violation or not. ASSERT reports grade counts instead of a violation rate for scaled dimensions;
+#   ASSERT metrics here report both.
+# - The impermissible and permissible rates come from the `policy_violation` judge's per-category
+#   judgments, so they aren't available in `direct` mode or when `policy_violation` is disabled.
 # - A group with both inputs runs as the baseline and with each selected technique on the same
 #   objective, so the results are paired. ASSERT samples prompt and scenario cases separately.
 # - In `assert_package`, a stored user prompt opens the conversation without passing through the
@@ -350,8 +387,8 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 #   instructions that the target already owns.
 # - Traces are linked to each request by its trace ID rather than grouped by `session.id`, and
 #   coverage is tracked explicitly, so incomplete traces can be required or reported.
-# - Tool simulation and ASSERT's reports and viewer aren't available. Results are stored in PyRIT
-#   memory.
+# - Tool simulation and ASSERT's viewer, run comparison, and CI gate aren't available. Results are
+#   stored in PyRIT memory.
 
 # %% [markdown]
 # For more details, see the [Scenarios Programming Guide](../code/scenarios/0_scenarios.ipynb) and

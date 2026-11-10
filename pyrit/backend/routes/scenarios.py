@@ -12,6 +12,7 @@ Route structure:
     /api/scenarios/runs          — scenario execution lifecycle
 """
 
+import logging
 import uuid
 from typing import Literal
 
@@ -19,9 +20,11 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 
 from pyrit.analytics import (
+    NotAssertPolicyRunError,
     PairedOutcomeDetailPage,
     PairedOutcomeStatistics,
     PairedOutcomeTransition,
+    compute_assert_policy_metrics_async,
     compute_paired_outcome_statistics,
     get_paired_outcome_details,
 )
@@ -37,6 +40,7 @@ from pyrit.backend.routes.common import parse_label_query_params
 from pyrit.backend.services import get_scenario_run_service, get_scenario_service
 from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError, ScenarioRunNotFoundError
 from pyrit.models import (
+    AssertPolicyMetrics,
     ScenarioHierarchyNode,
     ScenarioHierarchyProjection,
     ScenarioQueueSnapshot,
@@ -47,6 +51,8 @@ from pyrit.models import (
     ScenarioRunState,
 )
 from pyrit.models.catalog import RegisteredScenario, RunScenarioRequest, ScenarioRunSummary
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scenarios", tags=["scenarios"])
 
@@ -642,3 +648,34 @@ async def get_paired_outcomes_async(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+
+
+@router.get(
+    "/runs/{scenario_result_id}/assert-metrics",
+    response_model=AssertPolicyMetrics,
+    responses={
+        400: {"model": ProblemDetail, "description": "Run is not a foundry.assert_policy run"},
+        404: {"model": ProblemDetail, "description": "Run not found"},
+        409: {"model": ProblemDetail, "description": "Run not yet completed"},
+        500: {"model": ProblemDetail, "description": "Saved results could not be read as ASSERT metrics"},
+    },
+)
+async def get_assert_policy_metrics_async(*, scenario_result_id: IdentifierStr) -> AssertPolicyMetrics:
+    """
+    Report ASSERT's metrics for a completed foundry.assert_policy run.
+
+    Returns:
+        AssertPolicyMetrics: Per-technique permissibility split, judge-dimension rates, and category rates.
+    """
+    result = await get_scenario_run_results(scenario_result_id=scenario_result_id)
+    try:
+        return await compute_assert_policy_metrics_async(result)
+    except NotAssertPolicyRunError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+    except ValueError as exc:
+        # Any other ValueError is an internal failure; keep it from the global ValueError-to-400 handler.
+        logger.exception("Could not compute ASSERT metrics for scenario run %s.", scenario_result_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ASSERT metrics could not be computed for this run.",
+        ) from exc
