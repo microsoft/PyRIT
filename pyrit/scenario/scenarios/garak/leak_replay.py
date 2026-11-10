@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.converter import Converter, SearchReplaceConverter
@@ -372,7 +372,7 @@ class LeakReplay(Scenario):
         Returns:
             list[AtomicAttack]: Attacks whose requests carry their masked names.
         """
-        scorer = cast("TrueFalseScorer", self._objective_scorer)
+        scorer = self._objective_scorer
         attacks: list[AtomicAttack] = []
         for population, seed_groups in context.seed_groups_by_dataset.items():
             if not seed_groups:
