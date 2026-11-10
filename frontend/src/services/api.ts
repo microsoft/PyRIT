@@ -72,6 +72,9 @@ import type {
   ScenarioRunProgress,
   ScenarioHierarchyNode,
   ScenarioHierarchyProjection,
+  PairedOutcomeStatistics,
+  PairedOutcomeDetailPage,
+  PairedOutcomeTransition,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -82,6 +85,8 @@ import type {
   AuthAccess,
   BackendScore,
   ManualScoreRequest,
+  MediaUploadRequest,
+  MediaUploadResponse,
   UpdateAttackRequest,
   SaveConversationRequest,
   Finding,
@@ -107,6 +112,12 @@ import type {
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+export const mediaApi = {
+  upload: async (request: MediaUploadRequest): Promise<MediaUploadResponse> => {
+    return (await apiClient.post<MediaUploadResponse>('/media/uploads', request)).data
+  },
+}
 
 const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
 
@@ -776,6 +787,36 @@ export const scenariosApi = {
   ): Promise<ScenarioHierarchyNode> => {
     const response = await apiClient.get<ScenarioHierarchyNode>(
       `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/hierarchy/nodes/${encodeURIComponent(attackResultId)}`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  getPairedOutcomes: async (
+    scenarioResultId: string,
+    params: { baseline_group_id: string; attack_group_id: string },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeStatistics> => {
+    const response = await apiClient.get<PairedOutcomeStatistics>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  getPairedOutcomeDetails: async (
+    scenarioResultId: string,
+    params: {
+      baseline_group_id: string
+      attack_group_id: string
+      transition: PairedOutcomeTransition
+      cursor?: string
+      limit: number
+    },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeDetailPage> => {
+    const response = await apiClient.get<PairedOutcomeDetailPage>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes/details`,
       { params, signal },
     )
     return response.data
