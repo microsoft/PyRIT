@@ -53,6 +53,22 @@ export interface MessageAttachment {
   metadata?: Record<string, unknown>
 }
 
+export interface MediaUploadRequest {
+  data_type: string
+  content: string
+  mime_type: string
+}
+
+export interface MediaUploadResponse {
+  value: string
+  /** UTC Unix timestamp in seconds; absent on older backends. */
+  expires_at?: number
+}
+
+export type AttachmentUploadOutcome =
+  | { status: 'uploaded'; value: string }
+  | { status: 'failed'; detail: string }
+
 export interface ConverterInputPiece {
   id: string
   pieceType: string
@@ -705,7 +721,7 @@ export interface Parameter {
   is_list?: boolean
   /** Structured input variants mapped to their constructor parameters. */
   variants?: Record<string, Parameter[]> | null
-  reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
+  reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | 'source' | null
   /** Whether parameter controls must obscure the entered value. */
   sensitive?: boolean
   /** Whether parameter controls must preserve line breaks in the entered value. */
@@ -2151,6 +2167,68 @@ export interface ScenarioRunPlanSeedPrompt {
   role?: string | null
   sequence: number
   parameters: string[]
+}
+
+export interface PairedOutcomeStatistics {
+  baseline_group_id: string
+  attack_group_id: string
+  planned_pairs: number
+  decided_pairs: number
+  excluded_pairs: number
+  failure_to_success: number
+  success_to_failure: number
+  failure_to_failure: number
+  success_to_success: number
+  baseline_success_rate: number | null
+  attack_success_rate: number | null
+  paired_difference: number | null
+  missing_baseline: number
+  missing_attack: number
+  missing_both: number
+  baseline_errors: number
+  attack_errors: number
+  baseline_undetermined: number
+  attack_undetermined: number
+  unmatched_baseline_seeds: number
+  unmatched_attack_seeds: number
+  unattributed_attempts: number
+}
+
+/** Detail pages use the aggregate's exact pairing, exclusions, and latest top-level outcome. */
+export type PairedOutcomeTransition =
+  | 'failure_to_success'
+  | 'success_to_failure'
+  | 'failure_to_failure'
+  | 'success_to_success'
+
+export interface PairedOutcomeDetailSide {
+  outcome: AttackOutcome
+  attack_result_id: string
+  conversation_id: string
+  timestamp: string
+  outcome_reason: string | null
+  child_conversation?: {
+    attack_result_id: string
+    conversation_id: string
+    outcome: AttackOutcome
+  } | null
+}
+
+export interface PairedOutcomeDetail {
+  seed_group_id: string
+  objective: string
+  seed_prompts: ScenarioRunPlanSeedPrompt[]
+  baseline: PairedOutcomeDetailSide
+  attack: PairedOutcomeDetailSide
+}
+
+export interface PairedOutcomeDetailPage {
+  baseline_group_id: string
+  attack_group_id: string
+  transition: PairedOutcomeTransition
+  pairs: PairedOutcomeDetail[]
+  total_pairs: number
+  next_cursor: string | null
 }
 
 export interface ScenarioRunPlanAtomicGroup {
