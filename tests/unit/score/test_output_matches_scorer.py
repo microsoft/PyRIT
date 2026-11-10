@@ -27,6 +27,7 @@ from pyrit.models import (
     Regex,
     ScoringExpectation,
     SeedObjective,
+    StartsWith,
     TextMatcher,
 )
 from pyrit.score import OutputMatchesScorer
@@ -46,6 +47,16 @@ from pyrit.score.text_matching import match_text
         (Equals(value=" HELLO "), "hello", True),
         (Equals(value=""), "", True),
         (Equals(value="a", ignore_whitespace=False), " a ", False),
+        (StartsWith(value="Iris"), "  IRIS walked in.  ", True),
+        (StartsWith(value="Iris"), "\u0131ris walked in.", False),
+        (StartsWith(value="Sage"), "\u017fage walked in.", False),
+        (StartsWith(value="Kara"), "\u212aara walked in.", True),
+        (StartsWith(value="O.K+"), "O.K+ walked in.", True),
+        (StartsWith(value="O.K+"), "OXKK walked in.", False),
+        (StartsWith(value="Iris", case_sensitive=True), "iris", False),
+        (StartsWith(value="Iris", ignore_whitespace=False), " Iris", False),
+        (StartsWith(value=" Iris "), " Iris ", False),
+        (StartsWith(value=""), "", True),
         (Regex(value=r"^hello$"), " HELLO ", True),
         (Regex(value=r" hello "), "hello", False),
         (Regex(value="HELLO", case_sensitive=True), "hello", False),
@@ -94,18 +105,20 @@ async def test_output_match_scores_pieces_independently_async(
     assert score.get_value() is expected
 
 
-def test_output_condition_round_trip() -> None:
-    seed = SeedObjective(value="Find the answer", conditions=(OutputMatches(matcher=Equals(value="42")),))
+@pytest.mark.parametrize("matcher", [Equals(value="42"), StartsWith(value="Iris")])
+def test_output_condition_round_trip(matcher: TextMatcher) -> None:
+    seed = SeedObjective(value="Find the answer", conditions=(OutputMatches(matcher=matcher),))
     restored = SeedObjective.model_validate_json(seed.model_dump_json())
     assert restored.conditions == seed.conditions
     expectation = ScoringExpectation(conditions=seed.conditions)
     assert ScoringExpectation.model_validate_persisted(expectation.model_dump()) == expectation
 
 
+@pytest.mark.parametrize("matcher", [Contains(value="answer"), StartsWith(value="The")])
 async def test_output_match_persists_typed_expectation_async(
-    patch_central_database: MagicMock, sqlite_instance: MemoryInterface
+    patch_central_database: MagicMock, sqlite_instance: MemoryInterface, matcher: TextMatcher
 ) -> None:
-    expectation = ScoringExpectation(conditions=(OutputMatches(matcher=Contains(value="answer")),))
+    expectation = ScoringExpectation(conditions=(OutputMatches(matcher=matcher),))
     scores = await OutputMatchesScorer().score_async(
         scorable=ContentScorable(value="The ANSWER"), expectation=expectation
     )
