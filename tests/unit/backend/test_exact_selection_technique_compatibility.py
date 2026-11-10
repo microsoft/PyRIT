@@ -79,7 +79,8 @@ async def _conversation_and_objective(memory: MemoryInterface) -> tuple[UUID, UU
     """Store one real conversation group and one separate objective."""
     group = uuid4()
     common = {"dataset_name": DATASET, "added_by": "test", "prompt_group_id": group}
-    lone = SeedObjective(value="separate goal", dataset_name=DATASET, added_by="test")
+    lone_id = uuid4()
+    lone = SeedObjective(id=lone_id, value="separate goal", dataset_name=DATASET, added_by="test")
     await _store(
         memory,
         SeedObjective(value="conversation goal", **common),
@@ -87,7 +88,7 @@ async def _conversation_and_objective(memory: MemoryInterface) -> tuple[UUID, UU
         SeedPrompt(value="second turn", sequence=1, role="user", **common),
         lone,
     )
-    return group, lone.id
+    return group, lone_id
 
 
 async def _resolve(memory: MemoryInterface, *, technique: str, example_ids: list[UUID]) -> dict[str, Any]:
