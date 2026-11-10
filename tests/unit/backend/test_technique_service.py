@@ -46,7 +46,7 @@ from pyrit.models.catalog import (
     SavedEntryOwner,
     TechniqueRecipe,
 )
-from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
 from pyrit.registry import (
     AttackRegistry,
     AttackTechniqueRegistry,
@@ -1310,3 +1310,44 @@ async def test_refuses_to_save_a_technique_whose_attack_type_a_launch_script_add
     )
     assert not (tmp_path / "techniques").exists()
     assert saving_catalog.instances.get("launch_send") is not None
+
+
+class _ServerFileAttack(PromptSendingAttack):
+    """An attack class that a saved technique can't rebuild."""
+
+    not_saveable_reason = "It reads a file only this server has."
+
+
+class _KeyedAttack(PromptSendingAttack):
+    """An attack class that takes a key."""
+
+    def __init__(self, *, objective_target: PromptTarget, api_key: str | None = None) -> None:
+        super().__init__(objective_target=objective_target)
+        self.api_key = api_key
+
+
+@pytest.mark.parametrize(
+    ("attack_class", "type_name", "params", "message"),
+    [
+        (_ServerFileAttack, "server_file_attack", {}, "'_ServerFileAttack' can't be saved. It reads a file only "),
+        (_KeyedAttack, "keyed_attack", {"api_key": "secret"}, "Saved entries can't hold credentials ('api_key')."),
+    ],
+)
+async def test_refuses_to_save_a_technique_that_restore_would_refuse(
+    saving_catalog: AttackTechniqueRegistry,
+    tmp_path: Path,
+    attack_class: type[PromptSendingAttack],
+    type_name: str,
+    params: dict[str, Any],
+    message: str,
+) -> None:
+    AttackRegistry.get_registry_singleton().register_class(attack_class, name=type_name)
+    request = CreateTechniqueRequest(name="checked_send", type=type_name, params=params, persist=True)
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await TechniqueService().create_async(request=request, recipes_source=str(tmp_path))
+
+    assert str(refusal.value).startswith(message)
+    assert str(refusal.value).endswith("It can still be created without saving it.")
+    assert not (tmp_path / "techniques").exists()
+    assert saving_catalog.instances.get("checked_send") is None

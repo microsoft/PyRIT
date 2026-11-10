@@ -29,11 +29,9 @@ from pyrit.models import (
 )
 from pyrit.registry import (
     ResolvedScenarioSuiteEntry,
-    SavedEntryUnavailableError,
     ScenarioPresetRegistry,
     ScenarioSuiteLaunchResolver,
     ScenarioSuiteRegistry,
-    TechniqueSelectionUnavailableError,
 )
 
 if TYPE_CHECKING:
@@ -563,11 +561,9 @@ class ScenarioSuiteExecutionService:
         Returns:
             str: The message to show for the entry.
         """
-        # These name only the launch script, entries and techniques, so they're safe to show.
-        if isinstance(error, (SavedEntryLaunchConflictError, TechniqueSelectionUnavailableError)):
+        # A clash with a saved entry names only the launch script and the entry, so it's safe to show.
+        if isinstance(error, SavedEntryLaunchConflictError):
             return str(error)
-        if isinstance(error, SavedEntryUnavailableError):
-            return error.describe(with_details=False)
         return self.SUBMISSION_FAILURE_MESSAGE
 
 
