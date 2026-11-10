@@ -1,7 +1,7 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useId, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import { MessageBar, MessageBarBody } from '@fluentui/react-components'
+import { Button, MessageBar, MessageBarActions, MessageBarBody, MessageBarTitle } from '@fluentui/react-components'
 
 import { runtimeApi } from '@/services/api'
 import type { RegistryRecipeKind, RestoreFailure, RuntimeReadiness } from '@/types'
@@ -52,11 +52,10 @@ interface RestoreFailures {
 }
 
 // The list is read when the count or the runtime generation changes, rather than on every readiness poll.
-function useRestoreFailures(active: boolean, count: number, generation: string): RestoreFailures {
+function useRestoreFailures(count: number, generation: string): RestoreFailures {
   const [failures, setFailures] = useState<RestoreFailure[]>([])
   const [listFailed, setListFailed] = useState(false)
   useEffect(() => {
-    if (!active) return
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     const load = async (): Promise<void> => {
@@ -79,50 +78,73 @@ function useRestoreFailures(active: boolean, count: number, generation: string):
       cancelled = true
       clearTimeout(retryTimer)
     }
-  }, [active, count, generation])
-  return { failures: active ? failures : [], listFailed: active && listFailed }
+  }, [count, generation])
+  return { failures, listFailed }
 }
 
 function describeFailure(failure: RestoreFailure): string {
   const subject = failure.name === null ? `Saved ${failure.kind}` : `${KIND_LABELS[failure.kind]} ${failure.name}`
-  const dependency = failure.dependency
+  // An administrator's message already names the entry it depends on; the explanation others get doesn't.
+  const dependency = failure.dependency && !failure.message.includes(`'${failure.dependency.name}'`)
     ? ` (${KIND_LABELS[failure.dependency.kind].toLowerCase()} ${failure.dependency.name})`
     : ''
   return `${subject}: ${failure.message}${dependency}`
 }
 
+function RestoreFailuresBanner({ count, generation }: { count: number; generation: string }) {
+  const styles = useRuntimeBannerStyles()
+  const listId = useId()
+  const [expanded, setExpanded] = useState(false)
+  const { failures, listFailed } = useRestoreFailures(count, generation)
+  const techniqueFailed = failures.some((failure) => failure.kind === 'techniques')
+  const entries = count === 1 ? '1 saved entry' : `${count} saved entries`
+  const impact = techniqueFailed
+    ? `${entries} can't be used until fixed, and until then a scan has to name its techniques.`
+    : `${entries} can't be used until fixed.`
+  return (
+    <MessageBar intent="warning" layout="multiline">
+      <MessageBarBody>
+        <MessageBarTitle>Some saved entries couldn&apos;t be restored</MessageBarTitle>
+        {impact} An administrator can fix or delete their files, then apply the configuration or restart the backend.
+        <div
+          id={listId}
+          role="region"
+          aria-label="Saved entries that couldn't be restored"
+          // Focusable so a long list can be scrolled from the keyboard.
+          tabIndex={0}
+          className={styles.failureList}
+          hidden={!expanded}
+        >
+          <ul>
+            {failures.map((failure) => (
+              <li key={`${failure.kind}/${failure.name ?? ''}`}>{describeFailure(failure)}</li>
+            ))}
+          </ul>
+        </div>
+        <div aria-live="polite">
+          {listFailed && `The list of saved entries couldn't be loaded. Trying again.`}
+        </div>
+      </MessageBarBody>
+      <MessageBarActions>
+        <Button
+          size="small"
+          aria-expanded={expanded}
+          aria-controls={listId}
+          onClick={() => { setExpanded((current) => !current) }}
+        >
+          {expanded ? 'Hide details' : 'Show details'}
+        </Button>
+      </MessageBarActions>
+    </MessageBar>
+  )
+}
+
 export function RuntimeBanner() {
   const runtime = useRuntime()
   const failureCount = runtime.restore_failures ?? 0
-  const styles = useRuntimeBannerStyles()
-  const { failures, listFailed } = useRestoreFailures(
-    runtime.ready && failureCount > 0,
-    failureCount,
-    runtime.generation,
-  )
   if (runtime.ready) {
     if (failureCount === 0) return null
-    const techniqueFailed = failures.some((failure) => failure.kind === 'techniques')
-    return (
-      <MessageBar intent="warning">
-        <MessageBarBody>
-          Some saved entries couldn&apos;t be restored, so they can&apos;t be used until an administrator fixes or
-          deletes their saved files, then applies the configuration or restarts the backend.
-          {techniqueFailed && ' Until then, a scan has to name its techniques instead of choosing all, default, or a tag.'}
-          <div aria-live="polite">
-            {failures.length > 0 && (
-              // Focusable so the list can be scrolled from the keyboard.
-              <ul aria-label="Saved entries that couldn't be restored" className={styles.failureList} tabIndex={0}>
-                {failures.map((failure) => (
-                  <li key={`${failure.kind}/${failure.name ?? ''}`}>{describeFailure(failure)}</li>
-                ))}
-              </ul>
-            )}
-            {listFailed && <div>The list of saved entries couldn&apos;t be loaded. Trying again.</div>}
-          </div>
-        </MessageBarBody>
-      </MessageBar>
-    )
+    return <RestoreFailuresBanner count={failureCount} generation={runtime.generation} />
   }
   return (
     <MessageBar intent="warning">

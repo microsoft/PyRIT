@@ -61,13 +61,15 @@ function renderBanner() {
 
 describe('RuntimeBanner', () => {
   beforeEach(() => { jest.clearAllMocks() })
+  afterEach(() => { jest.useRealTimers() })
 
   it('lists the saved entries that could not be restored while the runtime is ready', async () => {
+    const user = userEvent.setup()
     jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
       ready: true,
       state: 'ready',
       generation: 'first',
-      restore_failures: 2,
+      restore_failures: 3,
     })
     jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
       items: [
@@ -76,6 +78,14 @@ describe('RuntimeBanner', () => {
           name: 'pool',
           reason: 'missing_dependency',
           message: 'It uses an entry that does not exist.',
+          version: 'v1',
+          dependency: { kind: 'targets', name: 'gone' },
+        },
+        {
+          kind: 'targets',
+          name: 'named',
+          reason: 'missing_dependency',
+          message: "Uses target 'gone', which doesn't exist.",
           version: 'v1',
           dependency: { kind: 'targets', name: 'gone' },
         },
@@ -92,12 +102,20 @@ describe('RuntimeBanner', () => {
 
     renderBanner()
 
-    const list = await screen.findByRole('list', { name: "Saved entries that couldn't be restored" })
-    expect(await within(list).findByText('Target pool: It uses an entry that does not exist. (target gone)')).toBeInTheDocument()
-    expect(within(list).getByText('Saved converters: The folder could not be read.')).toBeInTheDocument()
-    expect(screen.getByText(/fixes or\s+deletes their saved files, then applies the configuration/)).toBeInTheDocument()
+    expect(await screen.findByText("Some saved entries couldn't be restored")).toBeInTheDocument()
+    expect(screen.getByText(/3 saved entries can't be used until fixed\. An administrator can fix or delete/)).toBeInTheDocument()
     expect(screen.queryByText(/has to name its techniques/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: "Saved entries that couldn't be restored" })).not.toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: 'Show details' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await user.click(toggle)
+
+    const region = screen.getByRole('region', { name: "Saved entries that couldn't be restored" })
+    expect(await within(region).findByText('Target pool: It uses an entry that does not exist. (target gone)')).toBeInTheDocument()
+    expect(within(region).getByText("Target named: Uses target 'gone', which doesn't exist.")).toBeInTheDocument()
+    expect(within(region).getByText('Saved converters: The folder could not be read.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Hide details' })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getAllByRole('button')).toHaveLength(1)
   })
 
   it('says a scan has to name its techniques while a saved technique is broken', async () => {
@@ -163,7 +181,6 @@ describe('RuntimeBanner', () => {
 
     expect(await screen.findByText('Target other: It is broken.')).toBeInTheDocument()
     expect(runtimeApi.getRestoreFailures).toHaveBeenCalledTimes(2)
-    jest.useRealTimers()
   })
 
   it('hides the list once nothing fails any more', async () => {
@@ -178,7 +195,6 @@ describe('RuntimeBanner', () => {
     await act(async () => { jest.advanceTimersByTime(2_000) })
 
     await waitFor(() => expect(screen.queryByText('Target ghost: It is broken.')).not.toBeInTheDocument())
-    jest.useRealTimers()
   })
 
   it('tries again when the list could not be loaded, keeping the last list', async () => {
@@ -199,10 +215,10 @@ describe('RuntimeBanner', () => {
 
     expect(await screen.findByText('Target ghost: It is broken.')).toBeInTheDocument()
     expect(screen.queryByText(/list of saved entries couldn't be loaded/)).not.toBeInTheDocument()
-    jest.useRealTimers()
   })
 
-  it('lets a long list scroll on its own', async () => {
+  it('lets a long list scroll on its own, from the keyboard too', async () => {
+    const user = userEvent.setup()
     jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
       ready: true,
       state: 'ready',
@@ -214,9 +230,10 @@ describe('RuntimeBanner', () => {
     })
 
     renderBanner()
+    await user.click(await screen.findByRole('button', { name: 'Show details' }))
 
-    const list = await screen.findByRole('list', { name: "Saved entries that couldn't be restored" })
-    expect(list).toHaveAttribute('tabindex', '0')
-    expect(within(list).getAllByRole('listitem')).toHaveLength(40)
+    const region = screen.getByRole('region', { name: "Saved entries that couldn't be restored" })
+    expect(region).toHaveAttribute('tabindex', '0')
+    await waitFor(() => expect(within(region).getAllByRole('listitem')).toHaveLength(40))
   })
 })

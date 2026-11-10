@@ -33,6 +33,9 @@ export const useMainLayoutStyles = makeStyles({
       transform: 'translateY(0)',
     },
   },
+  banner: {
+    flexShrink: 0,
+  },
   topBar: {
     minHeight: '60px',
     flexShrink: 0,
