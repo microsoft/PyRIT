@@ -1,3 +1,5 @@
+import { lazy } from 'react'
+import type { ReactElement } from 'react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
@@ -33,6 +35,30 @@ function renderLayout(initialPath = '/registry/targets') {
 }
 
 describe('RegistryLayout', () => {
+  it('keeps the tabs in place while a tab is still loading', async () => {
+    let resolveTab: (module: { default: () => ReactElement }) => void = () => {}
+    const LoadingTab = lazy(() => new Promise<{ default: () => ReactElement }>((resolve) => { resolveTab = resolve }))
+    render(
+      <FluentProvider theme={webLightTheme}>
+        <MemoryRouter initialEntries={['/registry/converters']}>
+          <Routes>
+            <Route path="/registry" element={<RegistryLayout />}>
+              <Route path="converters" element={<LoadingTab />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </FluentProvider>,
+    )
+
+    expect(screen.getByRole('tab', { name: 'Converters' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Loading...')).toBeInTheDocument()
+
+    resolveTab({ default: () => <div>Converter registry content</div> })
+
+    expect(await screen.findByText('Converter registry content')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Converters' })).toBeInTheDocument()
+  })
+
   it('shows target, converter, and scenario preset registry tabs', () => {
     renderLayout()
 

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, useTransition } from 'react'
+import { lazy, Suspense, useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, useTransition } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation, useParams, useSearchParams, matchPath } from 'react-router'
 import { useMsal } from '@azure/msal-react'
 import { Button, MessageBar, MessageBarBody, Spinner } from '@fluentui/react-components'
@@ -8,36 +8,12 @@ import { UserPreferencesProvider, useUserPreferences } from './hooks/useUserPref
 import { RuntimeBanner, RuntimeProvider, useRuntime } from '@/hooks/useRuntime'
 import MainLayout from './components/Layout/MainLayout'
 import PageNotFound from './components/Layout/PageNotFound'
-import ChatWindow from './components/Chat/ChatWindow'
 import AttackNotFound from './components/Chat/AttackNotFound'
 import Home from './components/Home/Home'
-import TargetConfig from './components/Config/TargetConfig'
-import ConverterRegistry from './components/Registry/ConverterRegistry'
-import TechniqueRegistry from './components/Registry/TechniqueRegistry'
-import RegistryLayout from './components/Registry/RegistryLayout'
-import ScorerRegistry from './components/Registry/ScorerRegistry'
-import ScenarioPresetRegistry from './components/Registry/ScenarioPresetRegistry'
 import { useScorerRegistry } from './hooks/useScorerRegistry'
 import type { RegisteredComponentReference, ManualContinuation } from './types'
-import Configuration from './components/Configuration/Configuration'
-import AttackHistory from './components/History/AttackHistory'
-import AnalyticsPage from './components/Analytics/AnalyticsPage'
 import FeatureNavigation from './components/Layout/FeatureNavigation'
-import OperationDetailPage from './components/Operations/OperationDetailPage'
-import OperationsPage from './components/Operations/OperationsPage'
-import ScenarioHistory from './components/History/ScenarioHistory'
-import ScenarioCatalog from './components/Scenarios/ScenarioCatalog'
-import ScenarioDetail from './components/Scenarios/ScenarioDetail'
-import ScenarioRunPage from './components/Scenarios/ScenarioRunPage'
-import ScanConversationRedirect from './components/Scenarios/ScanConversationRedirect'
-import ScenarioQueuePage from './components/Scenarios/ScenarioQueuePage'
-import ScenarioPresetEditor from './components/ScenarioPresets/ScenarioPresetEditor'
 import { presetEditorRoutePath } from './components/ScenarioPresets/presetRoutes'
-import ScenarioSuiteEditor from './components/ScenarioSuites/ScenarioSuiteEditor'
-import ScenarioSuiteExecutionPage from './components/ScenarioSuites/ScenarioSuiteExecutionPage'
-import DatasetCatalog from './components/Datasets/DatasetCatalog'
-import DatasetSelection from './components/Datasets/DatasetSelection'
-import FeedbackDialog from './components/Feedback/FeedbackDialog'
 import type { HistoryFilters } from './components/History/historyFilters'
 import { ConnectionBanner } from './components/ConnectionBanner'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -91,6 +67,32 @@ import {
   findingEvidenceOrigin,
   scenarioRunRoutePath,
 } from './utils/routeParams'
+
+// Screens load on first visit, so the startup bundle carries only the layout and Home.
+const ChatWindow = lazy(() => import('./components/Chat/ChatWindow'))
+const TargetConfig = lazy(() => import('./components/Config/TargetConfig'))
+const ConverterRegistry = lazy(() => import('./components/Registry/ConverterRegistry'))
+const TechniqueRegistry = lazy(() => import('./components/Registry/TechniqueRegistry'))
+const RegistryLayout = lazy(() => import('./components/Registry/RegistryLayout'))
+const ScorerRegistry = lazy(() => import('./components/Registry/ScorerRegistry'))
+const ScenarioPresetRegistry = lazy(() => import('./components/Registry/ScenarioPresetRegistry'))
+const Configuration = lazy(() => import('./components/Configuration/Configuration'))
+const AttackHistory = lazy(() => import('./components/History/AttackHistory'))
+const AnalyticsPage = lazy(() => import('./components/Analytics/AnalyticsPage'))
+const OperationDetailPage = lazy(() => import('./components/Operations/OperationDetailPage'))
+const OperationsPage = lazy(() => import('./components/Operations/OperationsPage'))
+const ScenarioHistory = lazy(() => import('./components/History/ScenarioHistory'))
+const ScenarioCatalog = lazy(() => import('./components/Scenarios/ScenarioCatalog'))
+const ScenarioDetail = lazy(() => import('./components/Scenarios/ScenarioDetail'))
+const ScenarioRunPage = lazy(() => import('./components/Scenarios/ScenarioRunPage'))
+const ScanConversationRedirect = lazy(() => import('./components/Scenarios/ScanConversationRedirect'))
+const ScenarioQueuePage = lazy(() => import('./components/Scenarios/ScenarioQueuePage'))
+const ScenarioPresetEditor = lazy(() => import('./components/ScenarioPresets/ScenarioPresetEditor'))
+const ScenarioSuiteEditor = lazy(() => import('./components/ScenarioSuites/ScenarioSuiteEditor'))
+const ScenarioSuiteExecutionPage = lazy(() => import('./components/ScenarioSuites/ScenarioSuiteExecutionPage'))
+const DatasetCatalog = lazy(() => import('./components/Datasets/DatasetCatalog'))
+const DatasetSelection = lazy(() => import('./components/Datasets/DatasetSelection'))
+const FeedbackDialog = lazy(() => import('./components/Feedback/FeedbackDialog'))
 
 const AUTO_DISMISS_MS = 5_000
 const HISTORY_ATTACKS_PATH = '/attack/history'
@@ -1047,6 +1049,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 </MessageBarBody>
               </MessageBar>
             )}
+            {/* Keyed by view so a switch to a screen that is still loading shows the spinner
+                right away. Otherwise React keeps the old screen until the chunk arrives, and
+                currentView lags behind the URL (the tour reads it to decide where to go). */}
+            <Suspense key={currentView} fallback={<Spinner label="Loading..." />}>
             <Routes>
               <Route
                 path="/"
@@ -1189,8 +1195,10 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
               />
               <Route path="*" element={<PageNotFound />} />
             </Routes>
+            </Suspense>
           </MainLayout>
           {feedbackOpen && (
+            <Suspense fallback={null}>
             <FeedbackDialog
               open={feedbackOpen}
               onClose={() => setFeedbackOpen(false)}
@@ -1200,6 +1208,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
                 target_type: activeTarget ? targetType(activeTarget) : undefined,
               }}
             />
+            </Suspense>
           )}
       </ConnectionHealthProvider>
     </ErrorBoundary>

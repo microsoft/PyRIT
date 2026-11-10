@@ -1,4 +1,5 @@
-import { Tab, TabList, Tooltip } from '@fluentui/react-components'
+import { Suspense } from 'react'
+import { Spinner, Tab, TabList, Tooltip } from '@fluentui/react-components'
 import { Outlet, useLocation, useNavigate } from 'react-router'
 
 import { HELP_DEFINITIONS } from '@/components/helpDefinitions'
@@ -62,7 +63,10 @@ export default function RegistryLayout() {
         </Tooltip>
       </TabList>
       <div className={styles.content}>
-        <Outlet />
+        {/* Tabs load on first visit; keep the tab list in place while one does. */}
+        <Suspense fallback={<Spinner label="Loading..." />}>
+          <Outlet />
+        </Suspense>
       </div>
     </div>
   )

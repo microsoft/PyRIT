@@ -769,7 +769,7 @@ describe("App", () => {
       .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve; }))
       .mockImplementationOnce(() => new Promise((resolve) => { finishSecond = resolve; }));
     renderApp("/registry/targets");
-    await user.click(screen.getByRole("button", { name: "Set detection targets" }));
+    await user.click(await screen.findByRole("button", { name: "Set detection targets" }));
     expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("test_target");
     await user.click(screen.getByRole("button", { name: "Detect capabilities" }));
     expect(detect).toHaveBeenCalledTimes(1);
@@ -782,13 +782,13 @@ describe("App", () => {
     expect(detect).toHaveBeenCalledTimes(2);
     await act(async () => finishSecond(detect.mock.calls[1][0]));
     await user.click(screen.getByTestId("nav-config"));
-    expect(screen.getByLabelText("Adversarial target")).toHaveTextContent("none");
+    expect(await screen.findByLabelText("Adversarial target")).toHaveTextContent("none");
     const results = JSON.parse(screen.getByLabelText("Detection results").textContent!);
     expect(results.test_target.state).toBe("Saved");
     expect(results.second_target.state).toBe("Saved");
     expect(detect).toHaveBeenCalledTimes(2);
     await user.click(screen.getByTestId("nav-chat"));
-    expect(screen.getByTestId("active-target-name")).toHaveTextContent("test_target");
+    expect(await screen.findByTestId("active-target-name")).toHaveTextContent("test_target");
     expect(screen.getByLabelText("Active target multi-turn")).toHaveTextContent("false");
   });
 
@@ -804,7 +804,7 @@ describe("App", () => {
     });
     renderApp(originalPath);
     expect(screen.getByTestId("main-layout")).toHaveAttribute("data-current-view", "analytics");
-    expect(screen.getByLabelText("Analytics URL")).toHaveTextContent(originalPath);
+    expect(await screen.findByLabelText("Analytics URL")).toHaveTextContent(originalPath);
     await user.click(screen.getByRole("button", { name: "Open analytics result" }));
     await screen.findByTestId("chat-window");
     await waitFor(() => expect(mockGetAttack).toHaveBeenCalledWith("analytics-result"));
@@ -902,14 +902,14 @@ describe("App", () => {
     expect(message.closest(`.${fluentProviderClassNames.root}`)).not.toBeNull();
   });
 
-  it("renders the view named by the initial URL", () => {
+  it("renders the view named by the initial URL", async () => {
     renderApp("/registry/targets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("target-config")).toBeInTheDocument();
+    expect(await screen.findByTestId("target-config")).toBeInTheDocument();
   });
 
   it("redirects /registry to the target registry", async () => {
@@ -944,14 +944,14 @@ describe("App", () => {
     expect(screen.getByLabelText("Current URL")).toHaveTextContent(/^\/attack\/chat$/);
   });
 
-  it("renders presets and suites together as a registry section", () => {
+  it("renders presets and suites together as a registry section", async () => {
     renderApp("/registry/scenario-presets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "registry"
     );
-    expect(screen.getByTestId("scenario-preset-registry")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-preset-registry")).toBeInTheDocument();
   });
 
   it("redirects a bookmarked suite library URL to the combined registry section", async () => {
@@ -968,22 +968,22 @@ describe("App", () => {
     );
   });
 
-  it("renders the suite editor as a nested registry route", () => {
+  it("renders the suite editor as a nested registry route", async () => {
     renderApp("/registry/scenario-suites/nightly_suite/edit");
 
-    const editor = screen.getByTestId("scenario-suite-editor");
+    const editor = await screen.findByTestId("scenario-suite-editor");
     expect(editor).toHaveAttribute("data-mode", "edit");
     expect(editor).toHaveTextContent("nightly_suite");
   });
 
-  it("renders transient suite execution progress under the scanner", () => {
+  it("renders transient suite execution progress under the scanner", async () => {
     renderApp("/scanner/history/suites/executions/execution-1");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-suite-execution-page")).toHaveTextContent("execution-1");
+    expect(await screen.findByTestId("scenario-suite-execution-page")).toHaveTextContent("execution-1");
   });
 
   it("passes the globally resolved Operation to the scanner, which launches suites", async () => {
@@ -1000,7 +1000,7 @@ describe("App", () => {
 
     renderApp("/scanner/launch");
 
-    const catalog = screen.getByTestId("scenario-catalog");
+    const catalog = await screen.findByTestId("scenario-catalog");
     await waitFor(() => {
       expect(catalog).toHaveAttribute("data-operation-id", operationId);
       expect(catalog).toHaveAttribute("data-defaults-ready", "true");
@@ -1048,17 +1048,17 @@ describe("App", () => {
     expect(screen.getByRole("tab", { name: "Converters" })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("renders configuration at /config", () => {
+  it("renders configuration at /config", async () => {
     renderApp("/config");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "configuration"
     );
-    expect(screen.getByTestId("configuration")).toBeInTheDocument();
+    expect(await screen.findByTestId("configuration")).toBeInTheDocument();
   });
 
-  it("renders the attack history tab when deep-linked to /attack/history", () => {
+  it("renders the attack history tab when deep-linked to /attack/history", async () => {
     renderApp("/attack/history");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
@@ -1067,27 +1067,27 @@ describe("App", () => {
     );
     expect(screen.getByRole("heading", { level: 1, name: "Attacks" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("attack-history")).toBeInTheDocument();
+    expect(await screen.findByTestId("attack-history")).toBeInTheDocument();
   });
 
-  it("renders the dataset catalog when deep-linked to /datasets", () => {
+  it("renders the dataset catalog when deep-linked to /datasets", async () => {
     renderApp("/datasets");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "datasets"
     );
-    expect(screen.getByTestId("dataset-catalog")).toBeInTheDocument();
+    expect(await screen.findByTestId("dataset-catalog")).toBeInTheDocument();
   });
 
-  it("keeps the dataset selection query on the datasets view", () => {
+  it("keeps the dataset selection query on the datasets view", async () => {
     renderApp("/datasets/detail?selection_key=dataset%3Aunnamed");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "datasets"
     );
-    expect(screen.getByTestId("dataset-selection")).toHaveAttribute(
+    expect(await screen.findByTestId("dataset-selection")).toHaveAttribute(
       "data-location",
       "/datasets/detail?selection_key=dataset%3Aunnamed"
     );
@@ -1115,24 +1115,24 @@ describe("App", () => {
     expect(screen.getByTestId("scenario-catalog")).toBeInTheDocument();
   });
 
-  it("renders the scenario detail view and marks the sidebar current when deep-linked to /scanner/:name", () => {
+  it("renders the scenario detail view and marks the sidebar current when deep-linked to /scanner/:name", async () => {
     renderApp("/scanner/launch/foundry.red_team_agent");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-detail")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-detail")).toBeInTheDocument();
   });
 
-  it("renders the scanner run dashboard and keeps History current when deep-linked to /scanner/history/:id", () => {
+  it("renders the scanner run dashboard and keeps History current when deep-linked to /scanner/history/:id", async () => {
     renderApp("/scanner/history/sr-123");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
       "data-current-view",
       "scenarios"
     );
-    expect(screen.getByTestId("scenario-run-page")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-run-page")).toBeInTheDocument();
   });
 
   it("renders the scanner run dashboard for a direct attack detail link", () => {
@@ -1148,7 +1148,7 @@ describe("App", () => {
     );
   });
 
-  it("renders scanner history in its URL-backed history tab", () => {
+  it("renders scanner history in its URL-backed history tab", async () => {
     renderApp("/scanner/history?operator=alice");
 
     expect(screen.getByTestId("main-layout")).toHaveAttribute(
@@ -1156,7 +1156,7 @@ describe("App", () => {
       "scenarios"
     );
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByTestId("scenario-history")).toBeInTheDocument();
+    expect(await screen.findByTestId("scenario-history")).toBeInTheDocument();
   });
 
   it("switches to the scenarios view via the sidebar", () => {
