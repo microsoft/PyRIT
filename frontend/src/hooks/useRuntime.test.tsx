@@ -4,15 +4,14 @@ import type { ReactNode } from 'react'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AxiosError, AxiosHeaders } from 'axios'
 
 import { runtimeApi } from '@/services/api'
-import type { RestoreFailure, RestoreFailureList, RestoreRetryResult } from '@/types'
+import type { RestoreFailure } from '@/types'
 
 import { RuntimeBanner, RuntimeProvider, useRuntime } from './useRuntime'
 
 jest.mock('@/services/api', () => ({
-  runtimeApi: { getReadiness: jest.fn(), getRestoreFailures: jest.fn(), retryRestore: jest.fn() },
+  runtimeApi: { getReadiness: jest.fn(), getRestoreFailures: jest.fn() },
 }))
 
 function TestWrapper({ children }: { children: ReactNode }) {
@@ -56,11 +55,20 @@ function brokenTarget(name: string): RestoreFailure {
   return { kind: 'targets', name, reason: 'unknown_class', message: 'It is broken.', version: 'v1', dependency: null }
 }
 
+function renderBanner() {
+  render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+}
+
 describe('RuntimeBanner', () => {
   beforeEach(() => { jest.clearAllMocks() })
 
-  it('lists the saved entries that could not be restored and why', async () => {
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
+  it('lists the saved entries that could not be restored while the runtime is ready', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: true,
+      state: 'ready',
+      generation: 'first',
+      restore_failures: 2,
+    })
     jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
       items: [
         {
@@ -82,32 +90,110 @@ describe('RuntimeBanner', () => {
       ],
     })
 
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+    renderBanner()
 
     const list = await screen.findByRole('list', { name: "Saved entries that couldn't be restored" })
     expect(await within(list).findByText('Target pool: It uses an entry that does not exist. (target gone)')).toBeInTheDocument()
     expect(within(list).getByText('Saved converters: The folder could not be read.')).toBeInTheDocument()
-    expect(screen.getByText(/fix or delete these saved files, then select Retry/)).toBeInTheDocument()
+    expect(screen.getByText(/fixes or\s+deletes their saved files, then applies the configuration/)).toBeInTheDocument()
+    expect(screen.queryByText(/has to name its techniques/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('does not ask for restore failures in other states', async () => {
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'restart-required', generation: '' })
+  it('says a scan has to name its techniques while a saved technique is broken', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: true,
+      state: 'ready',
+      generation: 'first',
+      restore_failures: 1,
+    })
+    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
+      items: [{ ...brokenTarget('formal'), kind: 'techniques' }],
+    })
 
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+    renderBanner()
+
+    expect(await screen.findByText(/a scan has to name its techniques/)).toBeInTheDocument()
+  })
+
+  it('shows nothing and asks for no list when every saved entry was restored', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: true,
+      state: 'ready',
+      generation: 'first',
+      restore_failures: 0,
+    })
+
+    renderBanner()
+
+    await waitFor(() => expect(runtimeApi.getReadiness).toHaveBeenCalled())
+    expect(screen.queryByRole('list')).not.toBeInTheDocument()
+    expect(runtimeApi.getRestoreFailures).not.toHaveBeenCalled()
+  })
+
+  it('does not ask for restore failures while the runtime is not ready', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: false,
+      state: 'restart-required',
+      generation: '',
+      restore_failures: 1,
+    })
+
+    renderBanner()
 
     expect(await screen.findByText(/PyRIT runtime: restart-required/)).toBeInTheDocument()
     expect(screen.queryByRole('list')).not.toBeInTheDocument()
     expect(runtimeApi.getRestoreFailures).not.toHaveBeenCalled()
   })
 
-  it('tries again when the list could not be loaded', async () => {
+  it('reads the list again only when the count or the generation changes', async () => {
     jest.useFakeTimers()
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
+    const getReadiness = jest.mocked(runtimeApi.getReadiness)
+    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'first', restore_failures: 1 })
+    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
+
+    renderBanner()
+    expect(await screen.findByText('Target ghost: It is broken.')).toBeInTheDocument()
+    await act(async () => { jest.advanceTimersByTime(4_000) })
+    expect(runtimeApi.getRestoreFailures).toHaveBeenCalledTimes(1)
+
+    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('other')] })
+    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'second', restore_failures: 1 })
+    await act(async () => { jest.advanceTimersByTime(2_000) })
+
+    expect(await screen.findByText('Target other: It is broken.')).toBeInTheDocument()
+    expect(runtimeApi.getRestoreFailures).toHaveBeenCalledTimes(2)
+    jest.useRealTimers()
+  })
+
+  it('hides the list once nothing fails any more', async () => {
+    jest.useFakeTimers()
+    const getReadiness = jest.mocked(runtimeApi.getReadiness)
+    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'first', restore_failures: 1 })
+    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
+
+    renderBanner()
+    expect(await screen.findByText('Target ghost: It is broken.')).toBeInTheDocument()
+    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'second', restore_failures: 0 })
+    await act(async () => { jest.advanceTimersByTime(2_000) })
+
+    await waitFor(() => expect(screen.queryByText('Target ghost: It is broken.')).not.toBeInTheDocument())
+    jest.useRealTimers()
+  })
+
+  it('tries again when the list could not be loaded, keeping the last list', async () => {
+    jest.useFakeTimers()
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: true,
+      state: 'ready',
+      generation: 'first',
+      restore_failures: 1,
+    })
     jest.mocked(runtimeApi.getRestoreFailures)
       .mockRejectedValueOnce(new Error('Network Error'))
       .mockResolvedValue({ items: [brokenTarget('ghost')] })
 
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+    renderBanner()
     expect(await screen.findByText(/list of saved entries couldn't be loaded/)).toBeInTheDocument()
     await act(async () => { jest.advanceTimersByTime(2_000) })
 
@@ -116,288 +202,21 @@ describe('RuntimeBanner', () => {
     jest.useRealTimers()
   })
 
-  it('keeps the last list when a refresh fails', async () => {
-    jest.useFakeTimers()
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    expect(await screen.findByText('Target ghost: It is broken.')).toBeInTheDocument()
-    jest.mocked(runtimeApi.getRestoreFailures).mockRejectedValue(new Error('Network Error'))
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-
-    expect(await screen.findByText(/list of saved entries couldn't be loaded/)).toBeInTheDocument()
-    expect(screen.getByText('Target ghost: It is broken.')).toBeInTheDocument()
-    jest.useRealTimers()
-  })
-
-  it('does not report a list request that fails after a retry started', async () => {
-    jest.useFakeTimers()
-    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    const getRestoreFailures = jest.mocked(runtimeApi.getRestoreFailures)
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    getRestoreFailures.mockResolvedValue({ items: [brokenTarget('ghost')] })
-    let failList: (error: Error) => void = () => {}
-    let finishRetry: (result: RestoreRetryResult) => void = () => {}
-    jest.mocked(runtimeApi.retryRestore).mockImplementation(
-      () => new Promise<RestoreRetryResult>((resolve) => { finishRetry = resolve }),
-    )
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await screen.findByText('Target ghost: It is broken.')
-    getRestoreFailures.mockImplementation(() => new Promise((_resolve, reject) => { failList = reject }))
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
-    await act(async () => { failList(new Error('Network Error')) })
-
-    expect(screen.queryByText(/list of saved entries couldn't be loaded/)).not.toBeInTheDocument()
-    await act(async () => { finishRetry({ state: 'failed', outcome: 'restore-failed', items: [brokenTarget('ghost')] }) })
-    jest.useRealTimers()
-  })
-
-  it('lets a long list scroll on its own so Retry stays in reach', async () => {
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
+  it('lets a long list scroll on its own', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
+      ready: true,
+      state: 'ready',
+      generation: 'first',
+      restore_failures: 40,
+    })
     jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
-      items: Array.from({ length: 40 }, (_, index) => brokenTarget(`entry_${index}`)),
+      items: Array.from({ length: 40 }, (_, index) => brokenTarget(`target_${index}`)),
     })
 
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
+    renderBanner()
 
     const list = await screen.findByRole('list', { name: "Saved entries that couldn't be restored" })
-    expect(within(list).getAllByRole('listitem')).toHaveLength(40)
-    expect(list).toHaveStyle({ maxHeight: '30vh', overflowY: 'auto' })
     expect(list).toHaveAttribute('tabindex', '0')
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
-  })
-
-  it('keeps the list current while the runtime stays failed', async () => {
-    jest.useFakeTimers()
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('first')] })
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    expect(await screen.findByText('Target first: It is broken.')).toBeInTheDocument()
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('second')] })
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-
-    expect(await screen.findByText('Target second: It is broken.')).toBeInTheDocument()
-    expect(screen.queryByText('Target first: It is broken.')).not.toBeInTheDocument()
-    jest.useRealTimers()
-  })
-
-  it('retries and shows what still could not be restored', async () => {
-    const user = userEvent.setup()
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
-      items: [
-        { kind: 'targets', name: 'first', reason: 'unknown_class', message: 'First is broken.', version: 'v1', dependency: null },
-        { kind: 'targets', name: 'second', reason: 'unknown_class', message: 'Second is broken.', version: 'v1', dependency: null },
-      ],
-    })
-    jest.mocked(runtimeApi.retryRestore).mockResolvedValue({
-      state: 'failed',
-      outcome: 'restore-failed',
-      items: [
-        { kind: 'targets', name: 'second', reason: 'unknown_class', message: 'Second is broken.', version: 'v2', dependency: null },
-      ],
-    })
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await screen.findByText('Target first: First is broken.')
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
-      items: [
-        { kind: 'targets', name: 'second', reason: 'unknown_class', message: 'Second is broken.', version: 'v2', dependency: null },
-      ],
-    })
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
-
-    expect(await screen.findByText('Target second: Second is broken.')).toBeInTheDocument()
-    expect(screen.queryByText('Target first: First is broken.')).not.toBeInTheDocument()
-    expect(runtimeApi.retryRestore).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
-  })
-
-  it('shows why a retry was refused', async () => {
-    const user = userEvent.setup()
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [] })
-    jest.mocked(runtimeApi.retryRestore).mockRejectedValue(
-      new AxiosError('Conflict', 'ERR_BAD_REQUEST', undefined, undefined, {
-        status: 409,
-        statusText: 'Conflict',
-        headers: {},
-        config: { headers: new AxiosHeaders() },
-        data: { detail: 'Retrying requires one backend worker and one replica. Restart the backend instead.' },
-      }),
-    )
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await user.click(await screen.findByRole('button', { name: 'Retry' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Retrying requires one backend worker and one replica.')
-  })
-
-  it('checks readiness right after a retry', async () => {
-    jest.useFakeTimers()
-    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    const getReadiness = jest.mocked(runtimeApi.getReadiness)
-    getReadiness.mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
-    jest.mocked(runtimeApi.retryRestore).mockResolvedValue({ state: 'ready', outcome: 'success', items: [] })
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await screen.findByText('Target ghost: It is broken.')
-    const checksBeforeRetry = getReadiness.mock.calls.length
-    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'restored' })
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
-
-    // Well before the next scheduled check, which would otherwise hide a missing refresh.
-    await waitFor(() => expect(getReadiness.mock.calls.length).toBeGreaterThan(checksBeforeRetry), { timeout: 1_000 })
-    await waitFor(() => expect(screen.queryByRole('button', { name: /^Retry/ })).not.toBeInTheDocument())
-    jest.useRealTimers()
-  })
-
-  it('keeps the retry result when an older list arrives later', async () => {
-    jest.useFakeTimers()
-    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    const getRestoreFailures = jest.mocked(runtimeApi.getRestoreFailures)
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    getRestoreFailures.mockResolvedValue({ items: [brokenTarget('first'), brokenTarget('second')] })
-    jest.mocked(runtimeApi.retryRestore).mockResolvedValue({
-      state: 'failed',
-      outcome: 'restore-failed',
-      items: [brokenTarget('second')],
-    })
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await screen.findByText('Target first: It is broken.')
-    let finishOlderRequest: (list: RestoreFailureList) => void = () => {}
-    getRestoreFailures.mockImplementation(() => new Promise((resolve) => { finishOlderRequest = resolve }))
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
-    await waitFor(() => expect(screen.queryByText('Target first: It is broken.')).not.toBeInTheDocument())
-    await act(async () => { finishOlderRequest({ items: [brokenTarget('first'), brokenTarget('second')] }) })
-
-    expect(screen.queryByText('Target first: It is broken.')).not.toBeInTheDocument()
-    expect(screen.getByText('Target second: It is broken.')).toBeInTheDocument()
-    jest.useRealTimers()
-  })
-
-  it('forgets a refused retry once the runtime recovers', async () => {
-    jest.useFakeTimers()
-    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    const getReadiness = jest.mocked(runtimeApi.getReadiness)
-    getReadiness.mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
-    jest.mocked(runtimeApi.retryRestore).mockRejectedValue(new Error('Network Error'))
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await user.click(await screen.findByRole('button', { name: 'Retry' }))
-    expect(await screen.findByRole('alert')).toBeInTheDocument()
-    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'later' })
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-    getReadiness.mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-
-    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    jest.useRealTimers()
-  })
-
-  it('drops a retry answer that arrives after the runtime recovered', async () => {
-    jest.useFakeTimers()
-    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    const getReadiness = jest.mocked(runtimeApi.getReadiness)
-    getReadiness.mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
-    let failRetry: (error: Error) => void = () => {}
-    jest.mocked(runtimeApi.retryRestore).mockImplementation(
-      () => new Promise((_resolve, reject) => { failRetry = reject }),
-    )
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await user.click(await screen.findByRole('button', { name: 'Retry' }))
-    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'recovered' })
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-    await act(async () => { failRetry(new Error('Network Error')) })
-    getReadiness.mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-
-    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    jest.useRealTimers()
-  })
-
-  it('drops a retry result that arrives after the runtime recovered and failed again', async () => {
-    jest.useFakeTimers()
-    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    const getReadiness = jest.mocked(runtimeApi.getReadiness)
-    const getRestoreFailures = jest.mocked(runtimeApi.getRestoreFailures)
-    getReadiness.mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    getRestoreFailures.mockResolvedValue({ items: [brokenTarget('ghost')] })
-    let finishRetry: (result: RestoreRetryResult) => void = () => {}
-    jest.mocked(runtimeApi.retryRestore).mockImplementation(
-      () => new Promise<RestoreRetryResult>((resolve) => { finishRetry = resolve }),
-    )
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await user.click(await screen.findByRole('button', { name: 'Retry' }))
-    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'recovered' })
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-    getReadiness.mockResolvedValue({ ready: false, state: 'failed', generation: 'recovered' })
-    getRestoreFailures.mockResolvedValue({ items: [brokenTarget('current')] })
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-    await act(async () => { finishRetry({ state: 'failed', outcome: 'restore-failed', items: [brokenTarget('ghost')] }) })
-
-    expect(screen.queryByText('Target ghost: It is broken.')).not.toBeInTheDocument()
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-    expect(screen.getByText('Target current: It is broken.')).toBeInTheDocument()
-    jest.useRealTimers()
-  })
-
-  it('drops a retry answer once a new generation shows the runtime recovered between polls', async () => {
-    jest.useFakeTimers()
-    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    const getReadiness = jest.mocked(runtimeApi.getReadiness)
-    getReadiness.mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
-    let failRetry: (error: Error) => void = () => {}
-    jest.mocked(runtimeApi.retryRestore).mockImplementation(
-      () => new Promise((_resolve, reject) => { failRetry = reject }),
-    )
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await user.click(await screen.findByRole('button', { name: 'Retry' }))
-    getReadiness.mockResolvedValue({ ready: false, state: 'failed', generation: 'applied' })
-    await act(async () => { jest.advanceTimersByTime(2_000) })
-    await act(async () => { failRetry(new Error('Network Error')) })
-
-    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    jest.useRealTimers()
-  })
-
-  it('pauses list refreshes while a retry runs', async () => {
-    jest.useFakeTimers()
-    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
-    const getRestoreFailures = jest.mocked(runtimeApi.getRestoreFailures)
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({ ready: false, state: 'failed', generation: '' })
-    getRestoreFailures.mockResolvedValue({ items: [brokenTarget('first'), brokenTarget('second')] })
-    let finishRetry: (result: RestoreRetryResult) => void = () => {}
-    jest.mocked(runtimeApi.retryRestore).mockImplementation(
-      () => new Promise<RestoreRetryResult>((resolve) => { finishRetry = resolve }),
-    )
-
-    render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
-    await screen.findByText('Target first: It is broken.')
-    await user.click(screen.getByRole('button', { name: 'Retry' }))
-    const listReadsBeforeRetryEnds = getRestoreFailures.mock.calls.length
-    await act(async () => { jest.advanceTimersByTime(4_000) })
-    getRestoreFailures.mockResolvedValue({ items: [brokenTarget('second')] })
-    await act(async () => { finishRetry({ state: 'failed', outcome: 'restore-failed', items: [brokenTarget('second')] }) })
-
-    expect(getRestoreFailures.mock.calls.length).toBe(listReadsBeforeRetryEnds)
-    expect(screen.queryByText('Target first: It is broken.')).not.toBeInTheDocument()
-    jest.useRealTimers()
+    expect(within(list).getAllByRole('listitem')).toHaveLength(40)
   })
 })

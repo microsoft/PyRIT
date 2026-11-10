@@ -372,9 +372,6 @@ export const runtimeApi = {
   getRestoreFailures: async (): Promise<RestoreFailureList> => {
     return (await apiClient.get('/restore-failures')).data
   },
-  retryRestore: async (): Promise<RestoreRetryResult> => {
-    return (await apiClient.post('/restore-failures/retry')).data
-  },
 }
 
 export const targetsApi = {
@@ -988,4 +985,4 @@ export const datasetsApi = {
   },
 }
 
-import type { RestoreFailureList, RestoreRetryResult, RuntimeReadiness, RuntimeStatus } from '@/types'
+import type { RestoreFailureList, RuntimeReadiness, RuntimeStatus } from '@/types'

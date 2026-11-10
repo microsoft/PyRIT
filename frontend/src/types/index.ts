@@ -2362,6 +2362,8 @@ export interface RuntimeReadiness {
   ready: boolean
   state: string
   generation: string
+  /** How many saved entries couldn't be restored; the list has the details. */
+  restore_failures?: number
 }
 
 export type RegistryRecipeKind = 'targets' | 'converters' | 'scorers' | 'techniques'
@@ -2384,11 +2386,6 @@ export interface RestoreFailure {
 
 export interface RestoreFailureList {
   items: RestoreFailure[]
-}
-
-export interface RestoreRetryResult extends RestoreFailureList {
-  state: string
-  outcome: string
 }
 
 export interface RuntimeStatus {
