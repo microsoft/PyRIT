@@ -32,7 +32,11 @@ from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryR
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.prompt_target import TextTarget
 from pyrit.registry import DefaultInstanceRegistry, ScorerRegistry, TargetRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SAVED_ENTRY_OWNER_METADATA_KEY
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    registration_origin,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.score import (
@@ -547,7 +551,9 @@ async def test_saves_a_scorer_only_over_a_target_that_comes_back_after_a_restart
 
     with pytest.raises(NotSaveableError) as refusal:
         await service.create_scorer_async(request=request, recipes_source=str(tmp_path))
-    TargetRegistry.get_registry_singleton().instances.mark_configuration_entries()
+    # The startup scripts register the same target again.
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        TargetRegistry.get_registry_singleton().instances.register(TextTarget(), name=chat_target, replace=True)
     saved = await service.create_scorer_async(request=request, recipes_source=str(tmp_path))
 
     assert str(refusal.value) == (
@@ -605,7 +611,7 @@ async def test_a_saved_scorer_file_with_the_name_is_a_conflict_that_leaves_the_f
 
 async def test_reports_scorer_storage_failures_as_unavailable(tmp_path: Path) -> None:
     with (
-        patch.object(RegistryRecipeStorage, "create_recipe", side_effect=OSError("disk full")),
+        patch.object(RegistryRecipeStorage, "_save_local_conditional", side_effect=OSError("disk full")),
         pytest.raises(SavedEntryStorageError, match="Saved scorers can't be written right now."),
     ):
         await ScorerService().create_scorer_async(
@@ -632,8 +638,8 @@ async def test_deletes_the_saved_file_when_the_scorer_cant_be_registered(tmp_pat
 async def test_list_get_and_create_tell_where_each_scorer_comes_from(tmp_path: Path) -> None:
     service = ScorerService()
     instances = ScorerRegistry.get_registry_singleton().instances
-    instances.register(SubStringScorer(substring="startup"), name="a_startup")
-    instances.mark_configuration_entries()
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        instances.register(SubStringScorer(substring="startup"), name="a_startup")
     saved = await service.create_scorer_async(
         request=_persist_scorer("b_saved", "SubStringScorer", _LEAK), recipes_source=str(tmp_path)
     )
@@ -735,9 +741,9 @@ def startup_and_launch_scorers() -> Iterator[tuple[SubStringScorer, SubStringSco
     scorers = ScorerRegistry.get_registry_singleton().instances
     startup, other_startup = SubStringScorer(substring="startup"), SubStringScorer(substring="other")
     launch = SubStringScorer(substring="launch")
-    scorers.register(startup, name="startup_substring")
-    scorers.register(other_startup, name="other_startup_substring")
-    scorers.mark_configuration_entries()
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        scorers.register(startup, name="startup_substring")
+        scorers.register(other_startup, name="other_startup_substring")
     scorers.register(launch, name="launch_substring")
     yield startup, other_startup, launch
     reset_default_values()

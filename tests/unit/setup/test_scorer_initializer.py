@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import logging
 import os
 from threading import get_ident
 from unittest.mock import MagicMock, patch
@@ -11,8 +12,14 @@ from unit.mocks import MockPromptTarget
 from pyrit.prompt_target import LiteLLMDecisionTarget, OpenAIChatTarget
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SavedEntryReplacementError
-from pyrit.score import DecisionScorer, FloatScaleThresholdScorer, LikertScalePaths, SubStringScorer
-from pyrit.setup.initializers import ScorerInitializer
+from pyrit.score import (
+    DecisionScorer,
+    FloatScaleThresholdScorer,
+    LikertScalePaths,
+    ObjectiveScorerMetrics,
+    SubStringScorer,
+)
+from pyrit.setup.initializers import ScorerInitializer, ScorerInitializerTags
 from pyrit.setup.initializers.scorers import (
     GPT4O_TARGET,
     GPT4O_TEMP0_TARGET,
@@ -23,8 +30,22 @@ from pyrit.setup.initializers.scorers import (
     GPT5_1_TARGET,
     GPT5_4_TARGET,
     REFUSAL_GPT5_4,
-    ScorerInitializerTags,
 )
+
+
+def _objective_metrics(
+    *, f1: float, num_responses: int = 100, num_input_responses: int | None = None
+) -> ObjectiveScorerMetrics:
+    return ObjectiveScorerMetrics(
+        num_responses=num_responses,
+        num_input_responses=num_input_responses,
+        num_human_raters=1,
+        accuracy=f1,
+        accuracy_standard_error=0.0,
+        f1_score=f1,
+        precision=f1,
+        recall=f1,
+    )
 
 
 async def test_scorer_registration_runs_off_loop_async() -> None:
@@ -169,6 +190,11 @@ class TestScorerInitializerInitialize:
         assert wrapped._scorer.get_chat_target() is target
         assert wrapped._scorer.get_identifier() == raw.get_identifier()
         assert wrapped._threshold == 0.7
+        assert raw.evaluation_file_mapping is None
+        assert wrapped.evaluation_file_mapping is not None
+        assert [entry.name for entry in registry.instances.get_by_tag(tag="skip_batch_evaluation")] == [
+            "task_achieved_microsoft_decision"
+        ]
         assert len(registry.instances) == 2
         assert len(registry.instances.get_by_tag(tag=ScorerInitializerTags.MICROSOFT_DECISION)) == 2
         for tag in (
@@ -373,13 +399,11 @@ class TestScorerInitializerBestObjective:
         assert ScorerInitializerTags.BEST_OBJECTIVE not in entry.tags
 
     @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash")
-    async def test_best_objective_tags_best_scorer(self, mock_find_metrics) -> None:
+    async def test_best_objective_tags_best_scorer(self, mock_find_metrics: MagicMock) -> None:
         """Test that _tag_best_objective tags the scorer with highest F1."""
         self._register_mock_target(name=GPT4O_TARGET)
 
-        mock_metrics = MagicMock()
-        mock_metrics.f1_score = 0.85
-        mock_find_metrics.return_value = mock_metrics
+        mock_find_metrics.return_value = _objective_metrics(f1=0.85, num_input_responses=100)
 
         init = ScorerInitializer()
         await init.initialize_async()
@@ -407,38 +431,108 @@ class TestScorerInitializerBestObjective:
         else:
             assert len(results) == 0
 
-    @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash")
-    async def test_best_objective_picks_highest_f1(self, mock_find_metrics) -> None:
-        """Test that the scorer with the highest F1 score gets tagged."""
-        self._register_mock_target(name=GPT4O_TARGET)
-        self._register_mock_target(name=GPT4O_TEMP9_TARGET)
-
-        def mock_metrics_by_hash(*, eval_hash: str, file_path=None) -> MagicMock | None:
-            metrics = MagicMock()
-            if "refusal" in eval_hash.lower() if eval_hash else False:
-                metrics.f1_score = 0.5
-                return metrics
-            metrics.f1_score = 0.9
-            return metrics
-
-        mock_find_metrics.side_effect = mock_metrics_by_hash
-
-        init = ScorerInitializer()
-        await init.initialize_async()
-
+    @pytest.mark.parametrize("names", [("lower", "higher"), ("higher", "lower")])
+    def test_best_objective_picks_highest_f1(self, *, names: tuple[str, str], caplog: pytest.LogCaptureFixture) -> None:
         registry = ScorerRegistry.get_registry_singleton()
-        results = registry.instances.get_by_tag(tag=ScorerInitializerTags.BEST_OBJECTIVE)
-        assert len(results) == 1
-        assert ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER in results[0].tags
+        metrics_by_hash = {}
+        for name in names:
+            scorer = SubStringScorer(substring=name)
+            registry.instances.register(scorer, name=name)
+            metrics_by_hash[scorer.get_identifier().eval_hash] = _objective_metrics(
+                f1=0.9 if name == "higher" else 0.8, num_input_responses=100
+            )
+
+        with (
+            patch(
+                "pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash",
+                side_effect=lambda *, eval_hash: metrics_by_hash[eval_hash],
+            ),
+            caplog.at_level(logging.INFO, logger="pyrit.setup.initializers.scorers"),
+        ):
+            ScorerInitializer()._tag_best_objective()
+
+        for tag in (ScorerInitializerTags.BEST_OBJECTIVE, ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER):
+            assert [entry.name for entry in registry.instances.get_by_tag(tag=tag)] == ["higher"]
+        assert "F1=0.9000" in caplog.text
+        assert "configured fallback" not in caplog.text
+
+    @pytest.mark.parametrize(
+        ("num_responses", "num_input_responses"),
+        [(20, 100), (100, None), (0, 0), (-1, -1), (101, 100), (-1, 100), (0, 100), (100, -1)],
+        ids=["partial", "unknown", "zero", "negative", "overfull", "negative-answered", "unanswered", "negative-input"],
+    )
+    def test_best_objective_rejects_incomplete_coverage(
+        self, *, num_responses: int, num_input_responses: int | None
+    ) -> None:
+        registry = ScorerRegistry.get_registry_singleton()
+        incomplete = SubStringScorer(substring="incomplete")
+        complete = SubStringScorer(substring="complete")
+        registry.instances.register(incomplete, name="incomplete")
+        registry.instances.register(complete, name="complete")
+        metrics = _objective_metrics(f1=1.0, num_responses=num_responses, num_input_responses=num_input_responses)
+        metrics_by_hash = {
+            incomplete.get_identifier().eval_hash: metrics,
+            complete.get_identifier().eval_hash: _objective_metrics(f1=0.9, num_input_responses=100),
+        }
+
+        with patch(
+            "pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash",
+            side_effect=lambda *, eval_hash: metrics_by_hash[eval_hash],
+        ):
+            ScorerInitializer()._tag_best_objective()
+
+        for tag in (ScorerInitializerTags.BEST_OBJECTIVE, ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER):
+            assert [entry.name for entry in registry.instances.get_by_tag(tag=tag)] == ["complete"]
+        assert registry.instances.get("incomplete") is incomplete
+        assert metrics.num_responses == num_responses
+        assert metrics.num_input_responses == num_input_responses
+        assert metrics.f1_score == 1.0
+
+    @pytest.mark.parametrize("fallback", [ScorerInitializer.SCALE_AND_REFUSAL, "other_composite", None])
+    @pytest.mark.parametrize("coverage", ["missing", "unknown", "partial", "zero"])
+    def test_best_objective_without_complete_metrics_uses_configured_fallback(
+        self, *, fallback: str | None, coverage: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        registry = ScorerRegistry.get_registry_singleton()
+        registry.instances.register(SubStringScorer(substring="candidate"), name="candidate")
+        if fallback is not None:
+            registry.instances.register(
+                SubStringScorer(substring="other"),
+                name="other_composite",
+                tags=[ScorerInitializerTags.OBJECTIVE_COMPOSITE],
+            )
+            if fallback == ScorerInitializer.SCALE_AND_REFUSAL:
+                registry.instances.register(
+                    SubStringScorer(substring="preferred"),
+                    name=fallback,
+                    tags=[ScorerInitializerTags.OBJECTIVE_COMPOSITE],
+                )
+        metrics = {
+            "missing": None,
+            "unknown": _objective_metrics(f1=1.0),
+            "partial": _objective_metrics(f1=1.0, num_responses=20, num_input_responses=100),
+            "zero": _objective_metrics(f1=1.0, num_responses=0, num_input_responses=0),
+        }[coverage]
+        with patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash", return_value=metrics):
+            ScorerInitializer()._tag_best_objective()
+
+        for tag in (ScorerInitializerTags.BEST_OBJECTIVE, ScorerInitializerTags.DEFAULT_OBJECTIVE_SCORER):
+            assert [entry.name for entry in registry.instances.get_by_tag(tag=tag)] == (
+                [fallback] if fallback is not None else []
+            )
+        assert "No complete-coverage metrics qualified" in caplog.text
+        if fallback is not None:
+            assert fallback in caplog.text
+            assert "configured fallback, not an F1-backed winner" in caplog.text
+        else:
+            assert "no composite scorers available" in caplog.text
 
     @patch("pyrit.setup.initializers.scorers.find_objective_metrics_by_eval_hash")
-    async def test_best_objective_does_not_add_extra_entry(self, mock_find_metrics) -> None:
+    async def test_best_objective_does_not_add_extra_entry(self, mock_find_metrics: MagicMock) -> None:
         """Test that tagging best objective doesn't increase registry count."""
         self._register_mock_target(name=GPT4O_TARGET)
 
-        mock_metrics = MagicMock()
-        mock_metrics.f1_score = 0.85
-        mock_find_metrics.return_value = mock_metrics
+        mock_find_metrics.return_value = _objective_metrics(f1=0.85, num_input_responses=100)
 
         init = ScorerInitializer()
         await init.initialize_async()

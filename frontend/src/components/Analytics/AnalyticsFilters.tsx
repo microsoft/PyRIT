@@ -375,11 +375,12 @@ export default function AnalyticsFilters({ filters, refreshVersion, onChange, dr
           const occurrence = occurrences.get(fingerprint) ?? 0
           occurrences.set(fingerprint, occurrence + 1)
           const label = `${analyticsDimensionLabel(predicate.dimension)} (${predicate.match_mode.toUpperCase()}): ` +
-            predicate.values.map((value: AttackAnalyticsValue) =>
-              labels[analyticsOptionLabelKey(predicate.dimension, value)]
-                ? analyticsOptionLabel({ key: value, label: labels[analyticsOptionLabelKey(predicate.dimension, value)] })
-                : analyticsValueLabel(value),
-            ).join(', ')
+            predicate.values.map((value: AttackAnalyticsValue) => {
+              const optLabel = labels[analyticsOptionLabelKey(predicate.dimension, value)]
+              return optLabel
+                ? analyticsOptionLabel({ key: value, label: optLabel })
+                : analyticsValueLabel(value)
+            }).join(', ')
           return (
             <div key={`${fingerprint}:${occurrence}`} className={styles.chip}>
               <Button appearance="subtle" className={styles.chipLabel}

@@ -16,7 +16,9 @@ from pyrit.backend.models.techniques import (
     TechniqueTypeResponse,
 )
 from pyrit.backend.services.saved_entries import (
+    NotSaveableError,
     SavedEntryConflictError,
+    launch_script_class_reason,
     refuse_temporary_entries,
     save_then_register_async,
 )
@@ -123,7 +125,8 @@ class TechniqueService:
             TechniqueInstance: Safe settings for the admitted factory.
 
         Raises:
-            NotSaveableError: If a technique to save uses a Temporary converter or target.
+            NotSaveableError: If a technique to save has an attack type that a scan's launch script added, or uses a
+                Temporary converter or target.
             SavedEntryConflictError: If a technique to save has the name or a tag of a registered technique.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
@@ -155,10 +158,15 @@ class TechniqueService:
             TechniqueInstance: The saved technique.
 
         Raises:
-            NotSaveableError: If the technique uses a Temporary converter or target.
+            NotSaveableError: If the technique's attack type was added by a scan's launch script, or the technique
+                uses a Temporary converter or target.
             SavedEntryConflictError: If the name or a tag conflicts with a registered technique.
             SavedEntryStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
+        if AttackRegistry.get_registry_singleton().is_temporary_class(request.type):
+            raise NotSaveableError(
+                f"{launch_script_class_reason(request.type)} It can still be created without saving it."
+            )
         refuse_temporary_entries(
             component_type=ComponentType.CONVERTER,
             names=[*(request.request_converters or []), *(request.response_converters or [])],

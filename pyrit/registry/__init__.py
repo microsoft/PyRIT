@@ -27,15 +27,20 @@ if TYPE_CHECKING:
         ScenarioSuiteRegistry,
         ScorerMetadata,
         ScorerRegistry,
+        SourceMetadata,
+        SourceRegistry,
         TargetMetadata,
         TargetRegistry,
     )
+    from pyrit.registry.components.attack_technique_registry import TechniqueSelectionUnavailableError
     from pyrit.registry.discovery import discover_in_directory
     from pyrit.registry.instance_registry import (
         DefaultInstanceRegistry,
         InstanceRegistry,
         RegistryEntry,
+        SavedEntryUnavailableError,
         SupportsInstances,
+        UnavailableEntry,
     )
     from pyrit.registry.registry import InstanceHoldingRegistry, ParamBagRegistry, Registry
     from pyrit.registry.registry_metadata import RegistryMetadata
@@ -69,6 +74,8 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "InitializerMetadata": "pyrit.registry.components",
     "InitializerRegistry": "pyrit.registry.components",
     "RegistryEntry": "pyrit.registry.instance_registry",
+    "SavedEntryUnavailableError": "pyrit.registry.instance_registry",
+    "UnavailableEntry": "pyrit.registry.instance_registry",
     "ScenarioMetadata": "pyrit.registry.components",
     "ScenarioPresetConflictError": "pyrit.registry.scenario_preset_storage",
     "ScenarioPresetMetadata": "pyrit.registry.components",
@@ -90,9 +97,12 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ScenarioRegistry": "pyrit.registry.components",
     "ScorerRegistry": "pyrit.registry.components",
     "ScorerMetadata": "pyrit.registry.components",
+    "SourceRegistry": "pyrit.registry.components",
+    "SourceMetadata": "pyrit.registry.components",
     "TargetRegistry": "pyrit.registry.components",
     "TargetMetadata": "pyrit.registry.components",
     "TagQuery": "pyrit.registry.tag_query",
+    "TechniqueSelectionUnavailableError": "pyrit.registry.components.attack_technique_registry",
 }
 
 __all__ = list(_LAZY_EXPORTS)
