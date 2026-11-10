@@ -33,11 +33,29 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import ConverterRegistry, SavedEntryUnavailableError, TargetRegistry
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    SavedEntryUnavailableError,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.scenario import Scenario
 from pyrit.setup import ConfigurationLoader
 from unit.mocks import MockPromptTarget, make_scenario_result
+
+_RESTORED_REGISTRIES = (TargetRegistry, ConverterRegistry, ScorerRegistry, AttackTechniqueRegistry)
+
+
+@pytest.fixture(autouse=True)
+def fresh_registries() -> Generator[None, None, None]:
+    """Start each test from the registries a new process has, as a real startup or apply does."""
+    for registry in _RESTORED_REGISTRIES:
+        registry.reset_registry_singleton()
+    yield
+    for registry in _RESTORED_REGISTRIES:
+        registry.reset_registry_singleton()
 
 
 @pytest.fixture
