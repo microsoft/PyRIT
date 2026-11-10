@@ -5,11 +5,9 @@
 
 import asyncio
 import os
-import subprocess
 import sys
 import textwrap
 import time
-from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -52,15 +50,18 @@ async def test_quota_serializes_concurrent_stores_before_writing_async(tmp_path:
 
 
 @pytest.mark.parametrize("operation", ["write", "read", "cleanup"])
-def test_stores_share_the_lock_across_processes(tmp_path: Path, operation: str) -> None:
+async def test_stores_share_the_lock_across_processes_async(tmp_path: Path, operation: str) -> None:
     store = StagedMediaStore(tmp_path)
     value = store._write(b"shared bytes")
     path = tmp_path / f"{value}.upload"
     if operation == "cleanup":
         expired_time = time.time() - store.RETENTION_SECONDS
         os.utime(path, (expired_time, expired_time))
-    marker = tmp_path / "lock-attempt"
+    lock_path = tmp_path / ".staging.lock"
+    # The child reports its lock attempt over stdout: a marker file can still be open
+    # in the child when it becomes visible, which Windows reports as a sharing violation.
     script = textwrap.dedent("""
+        import os
         import sys
         from pathlib import Path
         from unittest.mock import patch
@@ -68,15 +69,13 @@ def test_stores_share_the_lock_across_processes(tmp_path: Path, operation: str) 
         from filelock import FileLock
         from pyrit.backend.services.staged_media import StagedMediaStore
         root, operation, token = sys.argv[1:]
-        directory = Path(root)
         acquire = FileLock.acquire
         def observed_acquire(self, *args, **kwargs):
-            marker = directory / "lock-attempt.tmp"
-            marker.write_text(str(self.lock_file))
-            marker.replace(directory / "lock-attempt")
+            sys.stdout.buffer.write(os.fsencode(self.lock_file) + b"\\n")
+            sys.stdout.buffer.flush()
             return acquire(self, *args, **kwargs)
         with patch.object(FileLock, "acquire", observed_acquire):
-            store = StagedMediaStore(directory)
+            store = StagedMediaStore(Path(root))
             if operation == "write":
                 assert store._write(b"shared bytes") == UUID(token)
             elif operation == "read":
@@ -84,32 +83,27 @@ def test_stores_share_the_lock_across_processes(tmp_path: Path, operation: str) 
             else:
                 store._cleanup_expired()
     """)
-    with ExitStack() as cleanup:
-        with FileLock(tmp_path / ".staging.lock"):
-            process = subprocess.Popen(
-                [sys.executable, "-c", script, str(tmp_path), operation, str(value)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-
-            def stop_process() -> None:
-                if process.poll() is None:
-                    process.kill()
-                    process.communicate(timeout=TEST_WATCHDOG_SECONDS)
-
-            cleanup.callback(stop_process)
-            deadline = time.monotonic() + TEST_WATCHDOG_SECONDS
-            while not marker.exists():
-                if process.poll() is not None:
-                    stdout, stderr = process.communicate()
-                    pytest.fail(f"Store did not acquire the shared lock: {stdout} {stderr}")
-                if time.monotonic() >= deadline:
-                    pytest.fail("Store did not attempt the shared lock before the watchdog expired")
-                time.sleep(0.01)
-            assert Path(marker.read_text()) == tmp_path / ".staging.lock"
-        stdout, stderr = process.communicate(timeout=TEST_WATCHDOG_SECONDS)
-        assert process.returncode == 0, f"{stdout} {stderr}"
+    with FileLock(lock_path):
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            script,
+            str(tmp_path),
+            operation,
+            str(value),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        assert process.stdout is not None
+        try:
+            attempted = await asyncio.wait_for(process.stdout.readline(), timeout=TEST_WATCHDOG_SECONDS)
+        except BaseException:
+            process.kill()
+            await asyncio.wait_for(process.communicate(), timeout=TEST_WATCHDOG_SECONDS)
+            raise
+    _, stderr = await asyncio.wait_for(process.communicate(), timeout=TEST_WATCHDOG_SECONDS)
+    assert Path(os.fsdecode(attempted.rstrip())) == lock_path, stderr.decode(errors="replace")
+    assert process.returncode == 0, stderr.decode(errors="replace")
     if operation == "cleanup":
         assert not path.exists()
     else:
