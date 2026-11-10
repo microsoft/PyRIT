@@ -10,12 +10,15 @@ import json
 import os
 import stat
 import threading
+import time
 from contextlib import nullcontext
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai.types.responses import ResponseOutputText
+from unit.async_utils import TEST_WATCHDOG_SECONDS, wait_for_event_async
 
 from pyrit._code_execution import (
     DockerRuntimeProfile,
@@ -25,6 +28,7 @@ from pyrit._code_execution import (
     SandboxExecutionError,
     SandboxInputError,
     SandboxStateKind,
+    docker_client,
 )
 from pyrit._code_execution.docker_client import _ClientOutput, _ContainerState, _InvocationResult
 from pyrit.models import MessagePiece
@@ -32,7 +36,10 @@ from pyrit.models.code_execution import _ProgramInvocation, _SandboxRun
 from pyrit.prompt_target import OpenAIResponseTarget, SandboxToolProvider
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
     from pathlib import Path
+
+_T = TypeVar("_T")
 
 _IMAGE = "python@sha256:" + "c" * 64
 _STARTED = "2026-10-21T00:00:00Z"
@@ -305,6 +312,64 @@ async def test_startup_consumes_shared_deadline_before_capture_async(client: Doc
     assert wait.call_args.kwargs["deadline"] == deadline
 
 
+async def test_deadline_expiry_during_startup_prevents_capture_async(
+    client: DockerSandboxClient, tmp_path: Path
+) -> None:
+    process, control = _process(returncode=None), _control()
+
+    async def start_async(*, argv: list[str]) -> MagicMock:
+        await asyncio.sleep(0)
+        return process
+
+    def timeout_at(deadline: float) -> asyncio.Timeout:
+        return asyncio.timeout_at(0)
+
+    proxy = SimpleNamespace(**vars(asyncio))
+    proxy.timeout_at = timeout_at
+    with (
+        patch.object(docker_client, "asyncio", proxy),
+        patch.object(client, "_start_client_async", side_effect=start_async),
+        patch.object(client, "_wait_for_invocation_async", new_callable=AsyncMock) as wait,
+        patch.object(client, "_control_async", control),
+        pytest.raises(SandboxExecutionError, match="did not finish starting before its deadline"),
+    ):
+        await _run_async(client)
+    wait.assert_not_awaited()
+    process.kill.assert_called_once()
+    process.communicate.assert_awaited_once()
+    assert control.call_args.args[:3] == ("rm", "--force", "--volumes")
+    assert await asyncio.to_thread(lambda: list(tmp_path.iterdir())) == []
+
+
+async def test_capture_and_client_wait_use_remaining_shared_deadline_async(client: DockerSandboxClient) -> None:
+    process = _process(returncode=None)
+    budgets: list[float | None] = []
+
+    async def stopped_async() -> int:
+        process.returncode = 0
+        return 0
+
+    async def wait_for_async(future: Awaitable[_T], *, timeout: float | None) -> _T:
+        budgets.append(timeout)
+        return await asyncio.wait_for(future, timeout=timeout)
+
+    process.wait = AsyncMock(side_effect=stopped_async)
+    proxy = SimpleNamespace(**vars(asyncio))
+    proxy.wait_for = wait_for_async
+    clock = SimpleNamespace(**vars(time))
+    clock.monotonic = MagicMock(side_effect=(101.0, 104.0))
+    with (
+        patch.object(docker_client, "asyncio", proxy),
+        patch.object(docker_client, "time", clock),
+        patch.object(client, "_control_async", _control()),
+    ):
+        result = await client._wait_for_invocation_async(process=process, name="test", stdin=None, deadline=110.0)
+    assert budgets == [9.0, 6.0]
+    assert result.container.exit_code == 0 and not result.timed_out
+    assert result.output.stdout == b"ok"
+
+
+@pytest.mark.parametrize(("before_capture_yields", "after_eof_yields"), [(0, 0), (1, 0), (0, 3), (3, 3)])
 @pytest.mark.parametrize(
     ("eof", "state", "error"),
     [
@@ -315,25 +380,84 @@ async def test_startup_consumes_shared_deadline_before_capture_async(client: Doc
     ],
 )
 async def test_deadline_distinguishes_stalled_capture_client_and_program_async(
-    client: DockerSandboxClient, eof: bool, state: str, error: str | None
+    client: DockerSandboxClient,
+    tmp_path: Path,
+    eof: bool,
+    state: str,
+    error: str | None,
+    before_capture_yields: int,
+    after_eof_yields: int,
 ) -> None:
     process, control = _process(returncode=None, eof=eof), _control(state=state)
+    collecting, captured = asyncio.Event(), asyncio.Event()
+    phases: list[str] = []
+    capture_tasks: list[asyncio.Task[object]] = []
+    collect = client._collect_output_async
+
+    async def collect_async(*, process: asyncio.subprocess.Process, stdin: str | None) -> _ClientOutput:
+        task = asyncio.current_task()
+        assert task is not None
+        capture_tasks.append(task)
+        for _ in range(before_capture_yields):
+            await asyncio.sleep(0)
+        collecting.set()
+        output = await collect(process=process, stdin=stdin)
+        for _ in range(after_eof_yields):
+            await asyncio.sleep(0)
+        captured.set()
+        return output
+
+    async def wait_for_async(future: Awaitable[_T], *, timeout: float | None) -> _T:
+        if not phases:
+            if eof:
+                output = await asyncio.wait_for(future, timeout=TEST_WATCHDOG_SECONDS)
+                assert captured.is_set()
+                phases.append("capture-complete")
+                return output
+            assert isinstance(future, asyncio.Future)
+            await wait_for_event_async(event=collecting, tasks=[future])
+            assert not future.done() and not captured.is_set()
+            phases.append("capture-timeout")
+            return await asyncio.wait_for(future, timeout=0)
+        if eof:
+            assert phases == ["capture-complete"] and captured.is_set()
+            phases.append("client-timeout")
+            return await asyncio.wait_for(future, timeout=0)
+        assert phases == ["capture-timeout"]
+        phases.append("capture-drain")
+        return await asyncio.wait_for(future, timeout=timeout)
+
+    # Change only this module's waits; collection, classification, and cleanup remain real.
+    proxy = SimpleNamespace(**vars(asyncio))
+    proxy.wait_for = wait_for_async
     with (
-        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=process),
+        patch.object(docker_client, "asyncio", proxy),
+        patch.object(client, "_collect_output_async", side_effect=collect_async),
+        patch.object(proxy, "create_subprocess_exec", new_callable=AsyncMock, return_value=process),
         patch.object(client, "_control_async", control),
     ):
         if error is not None:
             with pytest.raises(SandboxExecutionError, match=error):
-                await _run_async(client, timeout_seconds=0.05)
+                await _run_async(client)
         else:
-            event = (await _run_async(client, timeout_seconds=0.05)).events[0]
+            event = (await _run_async(client)).events[0]
             assert event.timed_out is (not eof)
             assert event.exit_code == (0 if eof else None)
             assert event.stdout_truncated and event.stderr_truncated
+            assert event.stdout == "ok" and event.stderr == ""
+    expected_phases = ["capture-complete", "client-timeout"] if eof else ["capture-timeout"]
+    if not eof and state == "running":
+        expected_phases.append("capture-drain")
+    assert phases == expected_phases
+    assert len(capture_tasks) == 1 and capture_tasks[0].done()
     commands = [call.args[0] for call in control.call_args_list]
     assert ("kill" in commands) is (state == "running" and not eof)
+    assert commands.count("kill") == int(state == "running" and not eof)
+    assert commands.count("rm") == 1
     assert commands[-1] == "rm"
     process.kill.assert_called_once()
+    process.communicate.assert_awaited_once()
+    assert await asyncio.to_thread(lambda: list(tmp_path.iterdir())) == []
 
 
 @pytest.mark.parametrize("count", [1, 2])

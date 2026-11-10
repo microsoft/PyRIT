@@ -397,6 +397,16 @@ async def test_unconfirmed_cleanup_is_retained_in_persisted_observation_metadata
     assert len(observation.payload.events) == 1 and observation.payload.events[0].stdout == "9"
 
 
+@pytest.mark.parametrize("state_kind", [SandboxStateKind.ENVIRONMENT, SandboxStateKind.SESSION])
+def test_program_execution_source_rejects_stateful_sandboxes_before_execution(state_kind: SandboxStateKind) -> None:
+    sandbox = FakeSandbox(
+        capabilities=SandboxCapabilities(runtime_profiles=(RuntimeProfile(name=_PROFILE),), state_kind=state_kind)
+    )
+    with pytest.raises(ValueError, match="fresh invocation environments"):
+        ProgramExecutionSource(sandbox=sandbox)
+    assert sandbox.runs == [] and sandbox.open_sessions == set()
+
+
 async def test_sandbox_stopping_early_leaves_passing_runs_undetermined_async() -> None:
     sandbox = _FakeSandbox(outputs={"3": {"stdout": "9"}})
     sandbox.stop_after = 1

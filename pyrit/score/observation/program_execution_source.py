@@ -9,7 +9,7 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING
 
-from pyrit._code_execution import SandboxExecutionError, SandboxInputError
+from pyrit._code_execution import Sandbox, SandboxExecutionError, SandboxInputError, SandboxStateKind
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     Acquisition,
@@ -41,8 +41,9 @@ class ProgramExecutionSource:
     references. A message must contain exactly one text piece; blocked or failed responses
     leave evidence unavailable. Code is not extracted from prose.
 
-    Each acquisition runs the program again and returns a new observation. A sandbox may keep state
-    between calls, so a program can observe what earlier calls left. Program failures are execution
+    Each acquisition runs in fresh invocation environments and returns a new observation. Known stateful
+    ``Sandbox`` implementations are rejected; legacy clients must honor the same fresh-state contract.
+    Program failures are execution
     evidence; infrastructure failures are acquisition errors. A run that stops after some
     invocations leaves partial evidence. Streams retain at most ``max_output_chars`` characters
     with truncation flags. Cleanup warnings remain in ``sandbox_warnings`` metadata, and the
@@ -58,10 +59,14 @@ class ProgramExecutionSource:
             max_output_chars (int): The most characters of each stream retained per invocation.
 
         Raises:
-            ValueError: If the output limit is not positive.
+            ValueError: If the output limit is not positive or the sandbox retains state between calls.
         """
         if max_output_chars < 1:
             raise ValueError("max_output_chars must be positive.")
+        if isinstance(sandbox, Sandbox) and sandbox.get_capabilities().state_kind is not SandboxStateKind.CALL:
+            raise ValueError(
+                "ProgramExecutionSource requires fresh invocation environments; stateful sandboxes are not supported."
+            )
         self._sandbox = sandbox
         self._max_output_chars = max_output_chars
 
@@ -80,7 +85,7 @@ class ProgramExecutionSource:
 
     async def acquire_async(self, *, scorable: ProgramExecutionScorable) -> Observation:
         """
-        Run every invocation afresh and return what the program did.
+        Run every invocation in a fresh environment and return what the program did.
 
         Args:
             scorable (ProgramExecutionScorable): The program, runtime profile, and invocations.
