@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pyrit.prompt_target.a2a_target import A2ATarget
     from pyrit.prompt_target.azure_blob_storage_target import AzureBlobStorageTarget
     from pyrit.prompt_target.azure_ml_chat_target import AzureMLChatTarget
+    from pyrit.prompt_target.claude_chat_target import ClaudeChatTarget
     from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
     from pyrit.prompt_target.common.discover_target_capabilities import discover_target_capabilities_async
     from pyrit.prompt_target.common.mcp_tool_provider import (
@@ -83,6 +84,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "CapabilityName": "pyrit.prompt_target.common.target_capabilities",
     "CapabilityHandlingPolicy": "pyrit.prompt_target.common.target_capabilities",
     "CHAT_TARGET_REQUIREMENTS": "pyrit.prompt_target.common.target_requirements",
+    "ClaudeChatTarget": "pyrit.prompt_target.claude_chat_target",
     "CopilotType": "pyrit.prompt_target.playwright_copilot_target",
     "ConversationNormalizationPipeline": "pyrit.prompt_target.common.conversation_normalization_pipeline",
     "FunctionTool": "pyrit.prompt_target.common.tool_provider",

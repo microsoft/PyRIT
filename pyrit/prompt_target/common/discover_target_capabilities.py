@@ -105,10 +105,11 @@ def _json_enforcing_target_types() -> tuple[type[PromptTarget], ...]:
     Returns:
         tuple[type[PromptTarget], ...]: The target classes that enforce JSON hints.
     """
+    from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
     from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
     from pyrit.prompt_target.openai.openai_response_target import OpenAIResponseTarget
 
-    return (OpenAIChatTarget, OpenAIResponseTarget)
+    return (OpenAIChatTarget, OpenAIResponseTarget, LiteLLMChatTarget)
 
 
 # Every text probe sends a text-only payload. Permissive overrides therefore
@@ -197,7 +198,7 @@ def _disable_probe_tools(*, target: PromptTarget) -> Generator[None, None, None]
                 target._extra_body_parameters["extra_body"] = {
                     key: value for key, value in extra_body.items() if key not in tool_settings
                 }
-        if isinstance(target, OpenAIResponseTarget):
+        if isinstance(target, (OpenAIResponseTarget, LiteLLMChatTarget)):
             stack.callback(setattr, target, "_execute_tools", target._execute_tools)
             stack.callback(setattr, target, "_suppress_tools", target._suppress_tools)
             target._execute_tools = False

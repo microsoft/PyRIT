@@ -133,6 +133,16 @@ _GPT_5 = TargetCapabilities(
     output_modalities=_TEXT_OUTPUT,
 )
 
+_CLAUDE_4 = TargetCapabilities(
+    supports_multi_turn=True,
+    supports_multi_message_pieces=True,
+    supports_system_prompt=True,
+    supports_json_output=True,
+    supports_editable_history=True,
+    input_modalities=_TEXT_IMAGE_INPUT | TOOL_CALL_INPUT_MODALITIES,
+    output_modalities=_TEXT_OUTPUT,
+)
+
 _GPT_REALTIME_1_5 = TargetCapabilities(
     supports_multi_turn=True,
     supports_multi_message_pieces=True,
@@ -176,6 +186,11 @@ _KNOWN_CAPABILITIES: dict[str, TargetCapabilities] = {
     "gpt-realtime-1.5": _GPT_REALTIME_1_5,
     "tts": _TTS,
     "sora-2": _SORA_2,
+    "claude-sonnet-4-6": _CLAUDE_4,
+    "claude-opus-4-6": _CLAUDE_4,
+    "claude-sonnet-4-5": _CLAUDE_4,
+    "claude-haiku-4-5": _CLAUDE_4,
+    "claude-opus-4-5": _CLAUDE_4,
 }
 
 
