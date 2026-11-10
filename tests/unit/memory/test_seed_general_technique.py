@@ -38,19 +38,23 @@ class TestSeedGeneralTechnique:
         assert len(rebuilt_group.seeds) == 1
         assert rebuilt_group.seeds[0].is_general_technique is True
 
-    async def test_seed_simulated_conversation_roundtrip_async(self, sqlite_instance: MemoryInterface) -> None:
+    @pytest.mark.parametrize("is_general_technique", [False, True])
+    async def test_seed_simulated_conversation_roundtrip_async(
+        self, *, sqlite_instance: MemoryInterface, is_general_technique: bool
+    ) -> None:
         seed = SeedSimulatedConversation(
             adversarial_chat_system_prompt=SeedPrompt(value="Generate a conversation."),
             dataset_name="techniques",
+            is_general_technique=is_general_technique,
         )
-        assert seed.is_general_technique is True
+        assert seed.is_general_technique is is_general_technique
 
         await sqlite_instance.add_seeds_to_memory_async(seeds=[seed], added_by="operator")
         identifier_before = SeedIdentifier.from_seed(seed)
 
         [retrieved] = await sqlite_instance.get_seeds_async(dataset_name="techniques")
         assert isinstance(retrieved, SeedSimulatedConversation)
-        assert retrieved.is_general_technique is True
+        assert retrieved.is_general_technique is is_general_technique
 
         identifier_after = SeedIdentifier.from_seed(retrieved)
         assert identifier_before.hash == identifier_after.hash

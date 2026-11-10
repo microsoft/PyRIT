@@ -4,7 +4,8 @@
 """
 Add is_general_technique flag to SeedPromptEntries.
 
-Existing rows default to False. Downgrading removes the column.
+Existing simulated conversations retain True; other rows default to False.
+Downgrading removes the column.
 
 Revision ID: e7a1b3c5d9f0
 Revises: c8d3e5f7a901
@@ -23,9 +24,19 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add is_general_technique storage and default existing rows to False."""
+    """Persist the flag while preserving legacy simulated-conversation defaults."""
     with op.batch_alter_table("SeedPromptEntries") as batch_op:
         batch_op.add_column(sa.Column("is_general_technique", sa.Boolean(), nullable=False, server_default=sa.false()))
+    seeds = sa.table(
+        "SeedPromptEntries",
+        sa.column("seed_type", sa.String()),
+        sa.column("is_general_technique", sa.Boolean()),
+    )
+    op.execute(
+        seeds.update()
+        .where(seeds.c.seed_type == op.inline_literal("simulated_conversation", type_=sa.String()))
+        .values(is_general_technique=op.inline_literal(True, type_=sa.Boolean()))
+    )
 
 
 def downgrade() -> None:
