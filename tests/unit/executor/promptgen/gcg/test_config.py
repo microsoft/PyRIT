@@ -9,7 +9,7 @@ The config module is pure stdlib so it works without the gcg extra installed.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, assert_type
 
 import pytest
 
@@ -253,6 +253,46 @@ def test_data_config_json_round_trip(tmp_path: Path) -> None:
     target = tmp_path / "data.json"
     original.to_json_file(target)
     assert GCGDataConfig.from_json_file(target) == original
+
+
+class _DerivedGCGDataConfig(GCGDataConfig):
+    pass
+
+
+class _DerivedGCGConfig(GCGConfig):
+    pass
+
+
+def test_json_factories_preserve_data_config_subclass(tmp_path: Path) -> None:
+    original = _DerivedGCGDataConfig(train_data="train.csv", n_train_data=2)
+
+    from_json = _DerivedGCGDataConfig.from_json(original.to_json())
+    assert_type(from_json, _DerivedGCGDataConfig)
+    assert isinstance(from_json, _DerivedGCGDataConfig)
+    assert from_json == original
+
+    target = tmp_path / "data.json"
+    original.to_json_file(target)
+    from_file = _DerivedGCGDataConfig.from_json_file(target)
+    assert_type(from_file, _DerivedGCGDataConfig)
+    assert isinstance(from_file, _DerivedGCGDataConfig)
+    assert from_file == original
+
+
+def test_json_factories_preserve_config_subclass(tmp_path: Path) -> None:
+    original = _DerivedGCGConfig(models=[GCGModelConfig(name=_LLAMA_2)])
+
+    from_json = _DerivedGCGConfig.from_json(original.to_json())
+    assert_type(from_json, _DerivedGCGConfig)
+    assert isinstance(from_json, _DerivedGCGConfig)
+    assert from_json.models == original.models
+
+    target = tmp_path / "config.json"
+    original.to_json_file(target)
+    from_file = _DerivedGCGConfig.from_json_file(target)
+    assert_type(from_file, _DerivedGCGConfig)
+    assert isinstance(from_file, _DerivedGCGConfig)
+    assert from_file.models == original.models
 
 
 def test_to_json_is_pretty_printed() -> None:

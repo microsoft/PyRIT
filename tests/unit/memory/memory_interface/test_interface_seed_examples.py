@@ -160,6 +160,62 @@ async def test_get_seed_examples_harm_filter_folds_non_ascii_case(sqlite_instanc
     assert await _ids(sqlite_instance, harm_categories=["Überwachung"]) == [surveillance]
 
 
+async def test_get_seed_examples_value_search_folds_non_ascii_case(sqlite_instance: MemoryInterface):
+    cafe, wildcard = uuid4(), uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="CAFÉ au lait tactics", dataset_name=DATASET, prompt_group_id=cafe),
+        SeedPrompt(value="50%_off coupon", dataset_name=DATASET, prompt_group_id=wildcard),
+    )
+
+    assert await _ids(sqlite_instance, value_search="CAFÉ") == [cafe]
+    assert await _ids(sqlite_instance, value_search="café") == [cafe]
+    assert await _ids(sqlite_instance, value_search="Au Lait") == [cafe]
+    assert await _ids(sqlite_instance, value_search="50%_off") == [wildcard]
+
+
+async def test_get_seed_examples_value_search_matches_greek_final_sigma(sqlite_instance: MemoryInterface):
+    """Verbatim Greek text must match regardless of context sensitive final sigma."""
+    astro = uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="ΑΣΤΡΟ navigation charts", dataset_name=DATASET, prompt_group_id=astro),
+    )
+
+    # 'ΑΣ' lower()s to 'ας' while the stored text lower()s to 'αστρο', so naive
+    # lowering of the two sides separately loses the match; casefold keeps it.
+    assert await _ids(sqlite_instance, value_search="ΑΣ") == [astro]
+    assert await _ids(sqlite_instance, value_search="ασ") == [astro]
+
+
+async def test_get_seed_examples_value_search_casefold_expansions_hold_on_sqlite(
+    sqlite_instance: MemoryInterface,
+):
+    """SQLite's registered casefold maps the sharp s to ss, so both spellings match."""
+    strasse = uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="Straße crossing signs", dataset_name=DATASET, prompt_group_id=strasse),
+    )
+
+    assert await _ids(sqlite_instance, value_search="STRASSE") == [strasse]
+    assert await _ids(sqlite_instance, value_search="straße") == [strasse]
+
+
+async def test_get_seed_examples_value_pattern_preserves_single_character_wildcards(
+    sqlite_instance: MemoryInterface,
+) -> None:
+    sharp_s, double_s = uuid4(), uuid4()
+    await _add(
+        sqlite_instance,
+        SeedPrompt(value="\u00df", dataset_name=DATASET, prompt_group_id=sharp_s),
+        SeedPrompt(value="ss", dataset_name=DATASET, prompt_group_id=double_s),
+    )
+
+    assert await _ids(sqlite_instance, value_pattern="_") == [sharp_s]
+    assert set(await _ids(sqlite_instance, value_search="SS")) == {sharp_s, double_s}
+
+
 async def test_get_seed_examples_keeps_named_and_unnamed_scopes_apart(sqlite_instance: MemoryInterface):
     group = uuid4()
     named = SeedPrompt(value="named", dataset_name=DATASET, prompt_group_id=group)
