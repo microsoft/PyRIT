@@ -59,6 +59,7 @@ import type {
   ScenarioPresetResponse,
   ScenarioSuite,
   LaunchScenarioSuiteRequest,
+  ScenarioSuiteReadinessRequest,
   ScenarioSuiteExecutionSummary,
   ScenarioSuiteListResponse,
   ScenarioSuiteResponse,
@@ -66,6 +67,7 @@ import type {
   UpdateScenarioSuiteRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
+  ScenarioReadiness,
   ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
   ScenarioRunListResponse,
@@ -639,6 +641,10 @@ export const scoresApi = {
 }
 
 export const scorersApi = {
+  listTypes: async (): Promise<{ items: Array<{ scorer_type: string; parameters: import('@/types').Parameter[]; supports_objective_scoring: boolean }> }> =>
+    (await apiClient.get('/scorers/types')).data,
+  createScorer: async (request: { name: string; type: string; params: Record<string, unknown> }): Promise<import('@/types').ScorerInstance> =>
+    (await apiClient.post('/scorers', request)).data,
   listScorers: async (limit = 200, cursor?: string): Promise<{
     items: import('@/types').ScorerInstance[]
     pagination: { has_more: boolean; next_cursor: string | null }
@@ -719,6 +725,12 @@ export const scenariosApi = {
     )
     return response.data
   },
+
+  readiness: async (
+    scenarioName: string, request: ScenarioRunSizeEstimateRequest, signal?: AbortSignal,
+  ): Promise<ScenarioReadiness> => (await apiClient.post(
+    `/scenarios/catalog/${encodeURIComponent(scenarioName)}/readiness`, request, { signal },
+  )).data,
 
   getRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
     const response = await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}`)
@@ -884,6 +896,8 @@ export const scenarioPresetsApi = {
 }
 
 export const scenarioSuitesApi = {
+  readiness: async (name: string, request: ScenarioSuiteReadinessRequest, signal?: AbortSignal): Promise<ScenarioReadiness> =>
+    (await apiClient.post(`/scenario-suites/${encodeURIComponent(name)}/readiness`, request, { signal })).data,
   list: async (signal?: AbortSignal): Promise<ScenarioSuiteListResponse> => {
     const response = await apiClient.get('/scenario-suites', { signal })
     return response.data
