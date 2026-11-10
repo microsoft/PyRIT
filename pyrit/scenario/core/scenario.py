@@ -11,22 +11,27 @@ AtomicAttack instances sequentially, enabling comprehensive security testing cam
 import ast
 import asyncio
 import logging
+import threading
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast, final
 
 from tqdm.auto import tqdm
 
-from pyrit.common import default_values, get_global_default_values
+from pyrit.common import default_values, get_global_default_values, print_deprecation_message
 from pyrit.common.utils import to_sha256
-from pyrit.exceptions import ScenarioPartialFailureException
-from pyrit.executor.attack import AttackExecutor, AttackExecutorResult
+from pyrit.exceptions import ScenarioPartialFailureException, ScenarioRunInProgressException
+from pyrit.exceptions.exceptions_helpers import summarize_exception
+from pyrit.executor.attack import AttackContext, AttackExecutor, AttackExecutorResult
+from pyrit.executor.attack.core.attack_executor import ActiveAttackExecution, _observe_interrupted_executions
 from pyrit.executor.attack.core.attack_preparation import AttackPreparationFailure
 from pyrit.memory import CentralMemory
 from pyrit.models import (
+    SCENARIO_CONVERSATIONS_METADATA_KEY,
     SCENARIO_RUN_PLAN_METADATA_KEY,
     AllAvailableDatasetSize,
     AttackOutcome,
@@ -35,9 +40,16 @@ from pyrit.models import (
     AttackResultSelection,
     AttackSeedGroup,
     BoundedDatasetSize,
+    ComponentType,
+    DatasetFetchPolicy,
     DatasetLimitInput,
     DatasetLimitState,
     IndeterminateDatasetSize,
+    Parameter,
+    RegistryReference,
+    ScenarioDatasetOptions,
+    ScenarioDatasetRequest,
+    ScenarioDatasetSettings,
     ScenarioDatasetSizeCap,
     ScenarioDatasetSizeEstimate,
     ScenarioDatasetSummary,
@@ -56,23 +68,18 @@ from pyrit.models import (
     ScenarioRunState,
     config_hash,
 )
-from pyrit.models.parameter import ComponentType, Parameter, RegistryReference
-from pyrit.models.scenario_dataset import (
-    DatasetFetchPolicy,
-    ScenarioDatasetOptions,
-    ScenarioDatasetRequest,
-    ScenarioDatasetSettings,
-)
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_requirements import TargetRequirements
+from pyrit.prompt_target import PromptTarget, TargetRequirements
 from pyrit.registry import ScorerRegistry
 from pyrit.registry.resolution import resolve_declared_params, resolve_reference_value
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
+    DatasetSource,
+    DatasetSourceKind,
 )
 from pyrit.scenario.core.dataset_overrides import apply_dataset_overrides, project_dataset_settings
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage
+from pyrit.scenario.core.required_data import ScenarioRequiredData
 from pyrit.scenario.core.scenario_context import ScenarioContext
 from pyrit.scenario.core.scenario_target_defaults import get_default_scorer_target
 from pyrit.scenario.core.scenario_technique import ScenarioTechnique
@@ -163,6 +170,16 @@ class Scenario(ABC):
     #: Maximum number of resolved concrete techniques; None leaves the selection unrestricted.
     MAX_CONCRETE_TECHNIQUES: ClassVar[int | None] = None
 
+    #: Active scenario result IDs currently executing in this process.
+    _active_runs: ClassVar[set[str]] = set()
+    _active_runs_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @classmethod
+    def _clear_active_runs(cls) -> None:
+        """Clear active scenario runs. Intended for test isolation."""
+        with cls._active_runs_lock:
+            cls._active_runs.clear()
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """
         Enforce the keyword-only constructor contract on subclasses.
@@ -171,7 +188,7 @@ class Scenario(ABC):
         """
         super().__init_subclass__(**kwargs)
         # Local import to avoid a circular dependency at package init time.
-        from pyrit.common.brick_contract import enforce_keyword_only_init
+        from pyrit.common import enforce_keyword_only_init
 
         enforce_keyword_only_init(cls, base_name="Scenario")
 
@@ -226,7 +243,7 @@ class Scenario(ABC):
             The scenario description is automatically extracted from the class's docstring (__doc__)
             with whitespace normalized for display.
         """
-        from pyrit.registry.registry_metadata import RegistryMetadata
+        from pyrit.registry import RegistryMetadata
 
         description = RegistryMetadata.description_from_docstring(self.__class__)
 
@@ -256,6 +273,8 @@ class Scenario(ABC):
         # this to the caller-supplied config (or the default); defaulting it here means the
         # attribute always exists for context construction.
         self._dataset_config: DatasetAttackConfiguration = default_dataset_config
+        # Datasets the scenario reads in full to build its attacks, apart from dataset_config.
+        self._required_data: ScenarioRequiredData | None = None
 
         self._objective_scorer = objective_scorer
         self._objective_scorer_identifier = objective_scorer.get_identifier()
@@ -267,6 +286,7 @@ class Scenario(ABC):
         self._scenario_registry_name: str | None = None
         self._initial_metadata: dict[str, Any] = {}
         self._active_atomic_groups: dict[str, str] = {}
+        self._active_executor: AttackExecutor | None = None
 
         # Store prepared techniques for use in _build_atomic_attacks_async
         self._scenario_techniques: list[ScenarioTechnique] = []
@@ -324,6 +344,11 @@ class Scenario(ABC):
     def active_atomic_group_names(self) -> tuple[str, ...]:
         """The names of atomic groups currently executing."""
         return tuple(self._active_atomic_groups.values())
+
+    @property
+    def active_executions(self) -> tuple[ActiveAttackExecution, ...]:
+        """Read the shared executor's in-flight attempts without treating them as results."""
+        return self._active_executor.active_executions if self._active_executor is not None else ()
 
     def set_scenario_registry_name(self, *, scenario_registry_name: str) -> None:
         """Record the requested registry name for durable run-plan attribution."""
@@ -474,7 +499,7 @@ class Scenario(ABC):
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency.
-        from pyrit.setup.initializers.scorers import ScorerInitializerTags
+        from pyrit.setup.initializers import ScorerInitializerTags
 
         # first check if the registry has a default objective scorer
         # if available either itself, or its chat target will be used
@@ -684,8 +709,10 @@ class Scenario(ABC):
         return estimate.model_copy(
             update={
                 "dataset_options": self.get_dataset_options(),
-                "dataset_defaults": project_dataset_settings(self._resolved_default_dataset_config),
-                "effective_datasets": project_dataset_settings(self._dataset_config),
+                "dataset_defaults": project_dataset_settings(
+                    self._resolved_default_dataset_config, required_data=self.get_required_data()
+                ),
+                "effective_datasets": project_dataset_settings(self._dataset_config, required_data=self._required_data),
             }
         )
 
@@ -911,15 +938,39 @@ class Scenario(ABC):
         self._dataset_config = (
             dataset_config if dataset_config is not None else self._resolved_default_dataset_config
         ).with_overrides()
+        self._required_data = self.get_required_data()
+        self._move_required_sources_out_of_dataset_config()
         options = self.get_dataset_options()
         raw_overrides = params.get("dataset_overrides")
         if raw_overrides is not None:
+            request = ScenarioDatasetRequest.model_validate(raw_overrides)
+            if self._required_data is not None:
+                self._required_data, request = self._required_data.apply_overrides(
+                    request=request, options=options, population_names=self._dataset_config.dataset_names
+                )
             self._dataset_config = apply_dataset_overrides(
                 config=self._dataset_config,
-                request=ScenarioDatasetRequest.model_validate(raw_overrides),
+                request=request,
                 options=options,
             )
+        self._load_required_data_like_dataset_config()
         self._validate_runtime_configuration()
+
+    def _load_required_data_like_dataset_config(self) -> None:
+        """
+        Read the required data with the population configuration's fetch policy and filters.
+
+        A configuration that names no datasets only limits assembled groups, so its fetch policy
+        and filters describe how the required data is loaded. Required sources keep their own
+        fetch settings. A compound names datasets through its children, not ``sources``, and its
+        parent ``fetch`` isn't the requested one, so it leaves the required data's policy as resolved.
+        """
+        config = self._dataset_config
+        if self._required_data is None or config.dataset_names or config.source_kind is DatasetSourceKind.INLINE:
+            return
+        self._required_data = self._required_data.with_sources(
+            sources=self._required_data.sources, fetch=config.fetch, filters=config.filters
+        )
 
     def _resolve_default_dataset_config(self) -> DatasetAttackConfiguration:
         """
@@ -930,6 +981,68 @@ class Scenario(ABC):
         """
         return self._default_dataset_config
 
+    def get_required_data(self) -> ScenarioRequiredData | None:
+        """
+        Return the datasets this scenario reads in full to build its attacks, if any.
+
+        Required data is prepared and refreshed like ``dataset_config`` sources, and every row
+        that remains after filtering is read, without sampling or size caps. ``dataset_config``
+        then only selects and limits the attack population. Override this when a scenario assembles its population from
+        ingredient datasets such as templates or registries.
+
+        Returns:
+            ScenarioRequiredData | None: The required data, or None when the scenario has none.
+        """
+        return None
+
+    def _move_required_sources_out_of_dataset_config(self) -> None:
+        """
+        Accept a ``dataset_config`` that still lists the scenario's required datasets as sources.
+
+        Before a scenario declared required data, its configuration listed those datasets as
+        sources. When a configuration of the default's class lists exactly the required datasets,
+        their fetch settings, providers, and filters move to the required data and the
+        configuration keeps only its limits. Size limits move too, so they still fail as before. Any other selection
+        is left for the scenario's own validation to reject.
+        """
+        required = self._required_data
+        config = self._dataset_config
+        if required is None or not config.sources or type(config) is not type(self._default_dataset_config):
+            return
+        if sorted(config.dataset_names) != sorted(required.dataset_names):
+            return
+        print_deprecation_message(
+            old_item=f"{type(config).__name__}(sources=<{type(self).__name__} required datasets>)",
+            new_item=(
+                f"{type(config).__name__} without those sources; {type(self).__name__} declares them as required data"
+            ),
+            removed_in="1.4.0",
+        )
+        # The legacy configuration read these datasets as its population, so its own validators
+        # validated the raw template/corpus seeds. Those seeds are now required data, so the
+        # validators move with them; the configuration keeps only its defaults and limits.
+        self._required_data = required.with_sources(
+            sources=[
+                DatasetSource(
+                    name=source.name,
+                    max_size=config.source_limit(source.name),
+                    fetch=source.fetch,
+                    provider=source.provider,
+                )
+                for source in config.sources
+            ],
+            fetch=config.fetch,
+            filters=config.filters,
+            validators=config._user_validators,
+        )
+        stripped = config.with_overrides(sources=[])
+        # Remove the moved validators by identity: a validator may be any callable, including an
+        # unhashable instance, so they can't go in a set.
+        moved = {id(validator) for validator in config._user_validators}
+        stripped._validators = [validator for validator in stripped._validators if id(validator) not in moved]
+        stripped._user_validators = []
+        self._dataset_config = stripped
+
     DATASET_OPTIONS: ClassVar[ScenarioDatasetOptions] = ScenarioDatasetOptions()
 
     def get_dataset_options(self) -> ScenarioDatasetOptions:
@@ -938,7 +1051,12 @@ class Scenario(ABC):
 
     def get_default_dataset_settings(self) -> ScenarioDatasetSettings:
         """Return the default dataset settings for the current parameters, without reading memory."""
-        return project_dataset_settings(self._resolve_default_dataset_config())
+        return project_dataset_settings(self._resolve_default_dataset_config(), required_data=self.get_required_data())
+
+    def get_default_dataset_names(self) -> list[str]:
+        """Return every dataset a default run loads: required data first, then the population sources."""
+        required = self.get_required_data()
+        return [*(required.dataset_names if required else []), *self._default_dataset_config.dataset_names]
 
     async def load_datasets_async(self) -> ScenarioDatasetSettings:
         """
@@ -948,8 +1066,28 @@ class Scenario(ABC):
             ScenarioDatasetSettings: Resolved settings, with the scan's policies unchanged.
         """
         self._resolve_runtime_configuration(require_objective_target=False)
-        await self._dataset_config.prepare_async(fetch=DatasetFetchPolicy.IF_MISSING)
-        return project_dataset_settings(self._dataset_config)
+        await self._prepare_datasets_async(fetch=DatasetFetchPolicy.IF_MISSING)
+        return project_dataset_settings(self._dataset_config, required_data=self._required_data)
+
+    async def _prepare_datasets_async(self, *, fetch: DatasetFetchPolicy | None = None) -> None:
+        """
+        Load or refresh the required data and the population together.
+
+        With required data, both halves are fetched first and the full unsampled assembly runs
+        against all candidates before any write, so a rejected refresh of either half leaves the
+        stored datasets unchanged and earlier runs can still resume.
+
+        Args:
+            fetch (DatasetFetchPolicy | None): Optional policy for this operation only.
+        """
+        if self._required_data is None:
+            await self._dataset_config.prepare_async(fetch=fetch)
+            return
+        await self._required_data.prepare_async(
+            fetch=fetch,
+            population=self._dataset_config,
+            validate_assembly=lambda: self._resolve_seed_groups_by_dataset_async(apply_sampling=False),
+        )
 
     def _validate_runtime_configuration(self) -> None:
         """
@@ -1068,7 +1206,7 @@ class Scenario(ABC):
         # builders check compatibility. Inputs outside the saved run must not affect resume.
         is_resume = self._scenario_result_id is not None
         if not is_resume:
-            await self._dataset_config.prepare_async()
+            await self._prepare_datasets_async()
         seed_groups_by_dataset = await self._resolve_seed_groups_by_dataset_async(apply_sampling=not is_resume)
         if stored_plan is not None:
             planned_seed_ids = {group_id for group in stored_plan.atomic_groups for group_id in group.seed_group_ids}
@@ -1398,7 +1536,9 @@ class Scenario(ABC):
             ScenarioIdentifier: The identifier describing this scenario run.
         """
         techniques = sorted({s.value for s in self._scenario_techniques})
-        datasets = list(self._dataset_config.dataset_names)
+        # Required data first, so moving ingredients out of dataset_config keeps stored identities.
+        required = self._required_data.dataset_names if self._required_data is not None else []
+        datasets = [*required, *self._dataset_config.dataset_names]
         # Persist only the scenario's own custom params. The framework common inputs
         # (objective_target, techniques, dataset config, ...) are captured through the
         # dedicated identity fields below and are often live, non-JSON-serializable
@@ -1678,6 +1818,7 @@ class Scenario(ABC):
                 attack results from all atomic attacks.
 
         Raises:
+            ScenarioRunInProgressException: If this scenario result run is already in progress in this process.
             asyncio.CancelledError: If the scenario task is cancelled. Completed results remain persisted
                 and a later call can resume the unfinished objectives.
             ValueError: If the scenario has no atomic attacks configured. If your scenario
@@ -1705,57 +1846,74 @@ class Scenario(ABC):
         # Type narrowing: create local variable that type checker knows is non-None
         scenario_result_id: str = self._scenario_result_id
 
-        # Implement retry logic
-        last_exception = None
-        for retry_attempt in range(self._max_retries + 1):  # +1 for initial attempt
-            try:
-                return await self._execute_scenario_async()
-            except asyncio.CancelledError:
-                try:
-                    (
-                        await self._memory.update_scenario_run_state_async(
-                            scenario_result_id=scenario_result_id,
-                            scenario_run_state=ScenarioRunState.CANCELLED,
-                            error_message="Scenario run was cancelled",
-                            error_type="CancelledError",
-                        )
-                    )
-                except Exception:
-                    logger.exception(f"Failed to persist cancellation state for scenario '{self._name}'")
-                raise
-            except Exception as e:
-                last_exception = e
-
-                # Get current scenario to check number of tries
-                scenario_results = await self._memory.get_scenario_results_async(
-                    scenario_result_ids=[scenario_result_id]
+        with Scenario._active_runs_lock:
+            if scenario_result_id in Scenario._active_runs:
+                raise ScenarioRunInProgressException(
+                    status_code=409,
+                    message=f"Scenario '{self._name}' execution is already in progress for run '{scenario_result_id}'.",
                 )
-                current_tries = scenario_results[0].number_tries if scenario_results else retry_attempt + 1
+            Scenario._active_runs.add(scenario_result_id)
 
-                # Check if we have more retries available
-                remaining_retries = self._max_retries - retry_attempt
+        try:
+            await self._prepare_run_async()
 
-                if remaining_retries > 0:
+            # Implement retry logic
+            last_exception = None
+            for retry_attempt in range(self._max_retries + 1):  # +1 for initial attempt
+                try:
+                    return await self._execute_scenario_async()
+                except asyncio.CancelledError:
+                    try:
+                        (
+                            await self._memory.update_scenario_run_state_async(
+                                scenario_result_id=scenario_result_id,
+                                scenario_run_state=ScenarioRunState.CANCELLED,
+                                error_message="Scenario run was cancelled",
+                                error_type="CancelledError",
+                            )
+                        )
+                    except Exception:
+                        logger.exception(f"Failed to persist cancellation state for scenario '{self._name}'")
+                    raise
+                except Exception as e:
+                    last_exception = e
+
+                    # Get current scenario to check number of tries
+                    scenario_results = await self._memory.get_scenario_results_async(
+                        scenario_result_ids=[scenario_result_id]
+                    )
+                    current_tries = scenario_results[0].number_tries if scenario_results else retry_attempt + 1
+
+                    # Check if we have more retries available
+                    remaining_retries = self._max_retries - retry_attempt
+
+                    if remaining_retries > 0:
+                        logger.error(
+                            f"Scenario '{self._name}' failed on attempt {current_tries} with error: {str(e)}. "
+                            f"Retrying... ({remaining_retries} retries remaining)",
+                            exc_info=True,
+                        )
+                        # Continue to next iteration for retry
+                        continue
+                    # No more retries, log final failure
                     logger.error(
-                        f"Scenario '{self._name}' failed on attempt {current_tries} with error: {str(e)}. "
-                        f"Retrying... ({remaining_retries} retries remaining)",
+                        f"Scenario '{self._name}' failed after {current_tries} attempts "
+                        f"(initial + {self._max_retries} retries) with error: {str(e)}. Giving up.",
                         exc_info=True,
                     )
-                    # Continue to next iteration for retry
-                    continue
-                # No more retries, log final failure
-                logger.error(
-                    f"Scenario '{self._name}' failed after {current_tries} attempts "
-                    f"(initial + {self._max_retries} retries) with error: {str(e)}. Giving up.",
-                    exc_info=True,
-                )
-                (await self._mark_scenario_failed_async(scenario_result_id=scenario_result_id, error=e))
-                raise
+                    (await self._mark_scenario_failed_async(scenario_result_id=scenario_result_id, error=e))
+                    raise
 
-        # This should never be reached, but just in case
-        if last_exception:
-            raise last_exception
-        raise RuntimeError(f"Scenario '{self._name}' completed unexpectedly without result")
+            # This should never be reached, but just in case
+            if last_exception:
+                raise last_exception
+            raise RuntimeError(f"Scenario '{self._name}' completed unexpectedly without result")
+        finally:
+            with Scenario._active_runs_lock:
+                Scenario._active_runs.discard(scenario_result_id)
+
+    async def _prepare_run_async(self) -> None:  # noqa: B027
+        """Run subclass pre-work while this process owns the run."""
 
     async def _execute_scenario_async(self) -> ScenarioResult:
         """
@@ -1781,15 +1939,9 @@ class Scenario(ABC):
             raise ValueError("self._scenario_result_id is not initialized")
         scenario_result_id: str = self._scenario_result_id
 
-        # Increment number_tries at the start of each run
-        scenario_results = await self._memory.get_scenario_results_async(scenario_result_ids=[scenario_result_id])
-        if scenario_results:
-            current_scenario = scenario_results[0]
-            current_scenario.number_tries += 1
-            await self._memory.update_scenario_result_async(scenario_result=current_scenario)
-            logger.info(f"Scenario '{self._name}' attempt #{current_scenario.number_tries}")
-        else:
-            raise ValueError(f"Scenario result with ID {scenario_result_id} not found")
+        # Increment number_tries atomically at the start of each run
+        current_tries = await self._memory.increment_scenario_number_tries_async(scenario_result_id=scenario_result_id)
+        logger.info(f"Scenario '{self._name}' attempt #{current_tries}")
 
         # Mark scenario as in progress
         (
@@ -1897,7 +2049,7 @@ class Scenario(ABC):
 
     async def _mark_scenario_failed_async(self, *, scenario_result_id: str, error: BaseException) -> None:
         """Mark the scenario run as FAILED, deriving message/type from ``error``."""
-        error_message = str(error)
+        error_message = summarize_exception(error)
         if error.__cause__ is not None:
             error_message = f"{error_message} Caused by {type(error.__cause__).__name__}: {str(error.__cause__)}"
         (
@@ -1941,8 +2093,24 @@ class Scenario(ABC):
         # the narrowed value in a local so the type checker can verify all uses below.
         assert self._max_concurrency is not None, "Scenario not initialized; call initialize_async first."
         max_concurrency: int = self._max_concurrency
+        interrupted: dict[tuple[str, str], dict[str, Any]] = {}
+
+        def record_interrupted(context: AttackContext[Any], started_at: datetime) -> None:
+            attribution = context._attribution
+            if attribution is None or attribution.parent_id != scenario_result_id or context.attack_result_id is None:
+                return
+            for conversation_id in context.objective_conversation_ids:
+                interrupted[(context.attack_result_id, conversation_id)] = {
+                    "attack_result_id": context.attack_result_id,
+                    "conversation_id": conversation_id,
+                    "atomic_attack_name": attribution.parent_collection,
+                    "seed_group_id": attribution.seed_group_id,
+                    "objective": context.objective,
+                    "started_at": started_at.isoformat(),
+                }
 
         shared_executor = AttackExecutor(max_concurrency=max_concurrency)
+        self._active_executor = shared_executor
         pbar = tqdm(
             desc=f"Executing {self._name}",
             unit="attack",
@@ -2007,7 +2175,9 @@ class Scenario(ABC):
         # without losing parallelism for the common case where remaining_attacks fits in
         # the budget.
         worker_count = min(max_concurrency, len(remaining_attacks))
-        workers = [asyncio.create_task(worker_async()) for _ in range(worker_count)]
+        # Workers and nested executors inherit this observation scope, not new scheduler state.
+        with _observe_interrupted_executions(record_interrupted):
+            workers = [asyncio.create_task(worker_async()) for _ in range(worker_count)]
         group = asyncio.gather(*workers)
         try:
             # The supervisor owns cancellation; gather must not forward it ahead of this handler.
@@ -2026,6 +2196,25 @@ class Scenario(ABC):
                 except asyncio.CancelledError as cancellation:
                     caller_cancellation = cancellation
             drain.result()
+            if interrupted:
+                publication = asyncio.create_task(
+                    self._persist_conversation_provenance_async(
+                        scenario_result_id=scenario_result_id, records=interrupted
+                    )
+                )
+                while not publication.done():
+                    try:
+                        await asyncio.shield(publication)
+                    except asyncio.CancelledError as cancellation:
+                        caller_cancellation = cancellation
+                    except Exception:
+                        break
+                try:
+                    publication.result()
+                except Exception:
+                    logger.exception(
+                        "Could not preserve interrupted conversations for scenario %s.", scenario_result_id
+                    )
             if caller_cancellation is not None:
                 raise caller_cancellation from None
             raise
@@ -2043,6 +2232,33 @@ class Scenario(ABC):
                 else ExceptionGroup(f"Multiple atomic attacks failed in scenario '{self._name}'", errors)
             )
             raise final_error
+
+    async def _persist_conversation_provenance_async(
+        self, *, scenario_result_id: str, records: Mapping[tuple[str, str], dict[str, Any]]
+    ) -> None:
+        """
+        Persist SDK-observed conversation links without producing attack outcomes.
+
+        Raises:
+            ValueError: If the scenario or its existing provenance is invalid.
+        """
+        stored = await self._memory.get_scenario_result_header_async(scenario_result_id=scenario_result_id)
+        if stored is None:
+            raise ValueError(f"Scenario result {scenario_result_id} is unavailable for conversation provenance.")
+        previous = stored.metadata.get(SCENARIO_CONVERSATIONS_METADATA_KEY, [])
+        if not isinstance(previous, list) or any(
+            not isinstance(record, dict)
+            or not isinstance(record.get("attack_result_id"), str)
+            or not isinstance(record.get("conversation_id"), str)
+            for record in previous
+        ):
+            raise ValueError("Stored scenario conversation provenance is invalid.")
+        merged = {(record["attack_result_id"], record["conversation_id"]): record for record in previous}
+        merged.update(records)
+        await self._memory.update_scenario_metadata_fields_async(
+            scenario_result_id=scenario_result_id,
+            fields={SCENARIO_CONVERSATIONS_METADATA_KEY: list(merged.values())},
+        )
 
     def _collect_errors_from_outcomes(
         self,

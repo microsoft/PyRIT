@@ -25,9 +25,14 @@ import pytest
 from unit.mocks import get_mock_prompt_normalizer, get_mock_scorer_identifier
 
 from pyrit.converter import Base64Converter, Converter, ConverterResult
-from pyrit.executor.attack import ConversationManager, ConversationState
-from pyrit.executor.attack.component import PrependedConversationConfig
-from pyrit.executor.attack.component.conversation_manager import (
+from pyrit.executor.attack import (
+    AttackContext,
+    AttackParameters,
+    ConversationManager,
+    ConversationState,
+    PrependedConversationConfig,
+)
+from pyrit.executor.attack.component import (
     build_conversation_context_string_async,
     get_adversarial_chat_messages,
     get_prepended_turn_count,
@@ -36,8 +41,6 @@ from pyrit.executor.attack.component.conversation_manager import (
 from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
-from pyrit.executor.attack.core import AttackContext
-from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.message_normalizer import ConversationContextNormalizer, HistorySquashNormalizer
 from pyrit.models import ChatMessageRole, ComponentIdentifier, Message, MessagePiece, PromptDataType, Score
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
@@ -120,8 +123,7 @@ def mock_chat_target() -> MagicMock:
 @pytest.fixture
 def mock_prompt_target() -> MagicMock:
     """Create a mock prompt target (non-chat) for testing."""
-    from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-    from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+    from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 
     target = MagicMock(spec=PromptTarget)
     target.configuration = TargetConfiguration(

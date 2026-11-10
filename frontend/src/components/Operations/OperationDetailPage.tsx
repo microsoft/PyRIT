@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { createSearchParams, Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
   MessageBar, MessageBarBody, Spinner, Text,
@@ -41,6 +41,7 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
   const [params, setParams] = useSearchParams()
   const rawOffset = Number(params.get('offset') ?? 0)
   const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0
+  const historySearch = filtersToSearchParams({ ...DEFAULT_HISTORY_FILTERS, operationId: [operationId] })
   const [operationRevision, setOperationRevision] = useState(0)
   const [operationState, setOperationState] = useState<OperationState | null>(null)
   const operationKey = JSON.stringify([operationId, operationRevision])
@@ -95,7 +96,11 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
   }, [operationId, offset, requestKey, evidenceRevision])
 
   const navigatePage = (nextOffset: number): void => {
-    setParams(nextOffset > 0 ? { offset: String(nextOffset) } : {})
+    // Writing the same query again would push a duplicate history entry for an
+    // identical URL, so a save or delete on the first page must not navigate.
+    const next = createSearchParams(nextOffset > 0 ? { offset: String(nextOffset) } : {})
+    if (next.toString() === params.toString()) return
+    setParams(next)
   }
 
   const save = async (draft: FindingCreate, attempt: FindingSaveAttempt): Promise<void> => {
@@ -260,9 +265,10 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
           </div>
         </>
       )}
-      <Link className={styles.link} to={`/history/attacks?${filtersToSearchParams({
-        ...DEFAULT_HISTORY_FILTERS, operationId: [current.operation.id],
-      })}`}>All execution history</Link>
+      <div className={styles.headerActions}>
+        <Link className={styles.link} to={`/attack/history?${historySearch}`}>Attack history</Link>
+        <Link className={styles.link} to={`/scanner/history?${historySearch}`}>Scanner history</Link>
+      </div>
     </section>
   )
 }

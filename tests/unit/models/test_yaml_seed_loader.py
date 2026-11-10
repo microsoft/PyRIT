@@ -5,11 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from pyrit.models.seeds import (
+from pyrit.models import (
     SeedDataset,
     SeedObjective,
     SeedOrigin,
     SeedPrompt,
+)
+from pyrit.models.seeds import (
     load_seed_dataset_from_yaml,
     load_seed_from_yaml,
     load_seed_prompt_from_yaml_with_required_parameters,

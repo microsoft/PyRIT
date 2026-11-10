@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyrit.backend.mappers.technique_mappers import technique_to_configuration
 from pyrit.backend.models.techniques import TechniqueConfiguration, TechniqueEditResponse
-from pyrit.models.parameter import ComponentType
+from pyrit.models import ComponentType
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, TargetRegistry
 
 if TYPE_CHECKING:

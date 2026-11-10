@@ -46,7 +46,7 @@ from pyrit.score import (
 if TYPE_CHECKING:
     from pyrit.exceptions import ExecutionContext
     from pyrit.memory import MemoryInterface
-    from pyrit.score.true_false.true_false_score_aggregator import TrueFalseAggregatorFunc
+    from pyrit.score import TrueFalseAggregatorFunc
 
 
 class _FirstCondition(Condition):

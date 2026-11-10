@@ -103,7 +103,7 @@ class BrailleConverter(Converter):
             "'": "\u2804",
             ",": "\u2802",
             "-": "\u2824",
-            "/": "\u280c",
+            "/": "\u2838\u280c",
             "!": "\u2816",
             "?": "\u2826",
             "$": "\u2808\u280e",
@@ -144,7 +144,10 @@ class BrailleConverter(Converter):
             "0": "\u281a",
             " ": " ",
         }
-        number_punctuations = [".", ",", "-", "/"]
+        # Symbols that keep numeric mode (UEB rule 6.2.1); a hyphen ends it (rule 6.3.1).
+        # A printed "/" is the solidus, not the numeric fraction line (rule 11.3.3), so
+        # it ends numeric mode too.
+        number_punctuations = [".", ","]
         digit_letters = "abcdefghij"
 
         output = ""

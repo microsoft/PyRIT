@@ -17,12 +17,16 @@ import pytest
 from pyrit._compatibility import COMPATIBILITY_HEADER, INVALID_COMPATIBILITY_TYPE, MISMATCH_COMPATIBILITY_TYPE
 from pyrit.cli._auth import CliAuthenticationError
 from pyrit.cli.api_client import CompatibilityError, PyRITApiClient, ServerNotAvailableError
-from pyrit.models import Operation, ScenarioRunState, TargetCapabilities
+from pyrit.models import (
+    Operation,
+    ScenarioRunListItem,
+    ScenarioRunState,
+    TargetCapabilities,
+)
 from pyrit.models.catalog import (
     RegisteredInitializer,
     RegisteredScenario,
     RunScenarioRequest,
-    ScenarioRunListItem,
     ScenarioRunSummary,
     TargetInstance,
 )
@@ -47,6 +51,20 @@ async def test_list_operations_returns_saved_directory_records_async() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/operations"
         return httpx.Response(200, json={"items": [operation.model_dump(mode="json")]})
+
+    client = PyRITApiClient(base_url="http://localhost:8000")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://localhost:8000") as transport:
+        client._client = transport
+        rows = await client.list_operations_async()
+    assert rows == [operation]
+
+
+async def test_list_operations_accepts_finding_counts_from_list_items_async() -> None:
+    operation = Operation(name="Saved")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        item = {**operation.model_dump(mode="json"), "finding_counts": {"high": 2}}
+        return httpx.Response(200, json={"items": [item]})
 
     client = PyRITApiClient(base_url="http://localhost:8000")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://localhost:8000") as transport:
