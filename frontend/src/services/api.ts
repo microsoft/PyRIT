@@ -82,6 +82,8 @@ import type {
   AuthAccess,
   BackendScore,
   ManualScoreRequest,
+  MediaUploadRequest,
+  MediaUploadResponse,
   UpdateAttackRequest,
   SaveConversationRequest,
   Finding,
@@ -110,6 +112,12 @@ import type {
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+export const mediaApi = {
+  upload: async (request: MediaUploadRequest): Promise<MediaUploadResponse> => {
+    return (await apiClient.post<MediaUploadResponse>('/media/uploads', request)).data
+  },
+}
 
 const operationPath = (operationId: string): string => `/operations/${encodeURIComponent(operationId)}`
 

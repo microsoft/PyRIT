@@ -42,6 +42,7 @@ export default function FindingDialog({
   onSave, onClose,
 }: FindingDialogProps) {
   const styles = useFindingDialogStyles()
+  const [initialDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
   const [draft, setDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
   const [attackResultId, setAttackResultId] = useState('')
   const [error, setError] = useState('')
@@ -67,13 +68,18 @@ export default function FindingDialog({
   }, [optionsRevision])
 
   useEffect(() => {
-    const demonstratedChanged = (draft.demonstrated ?? true) !== (initialValues.demonstrated ?? true)
-    if (!draft.title && !draft.description && !draft.severity_other && !draft.harm_type && !draft.harm_type_other
-      && draft.severity === initialValues.severity && !demonstratedChanged && !attackResultId) return
+    // Clean means the draft still equals its initial values. An edit dialog
+    // opens prefilled, so emptiness can never prove it clean; every watched
+    // field is compared against what the dialog started with.
+    const unchanged = (field: keyof FindingCreate): boolean => draft[field] === initialDraft[field]
+    const demonstratedUnchanged = (draft.demonstrated ?? true) === (initialDraft.demonstrated ?? true)
+    if (unchanged('title') && unchanged('description') && unchanged('severity_other')
+      && unchanged('harm_type') && unchanged('harm_type_other') && unchanged('severity')
+      && demonstratedUnchanged && !attackResultId) return
     const protectDraft = (event: BeforeUnloadEvent): void => { event.preventDefault() }
     window.addEventListener('beforeunload', protectDraft)
     return () => { window.removeEventListener('beforeunload', protectDraft) }
-  }, [draft.title, draft.description, draft.severity_other, draft.harm_type, draft.harm_type_other, draft.severity, draft.demonstrated, initialValues.severity, initialValues.demonstrated, attackResultId])
+  }, [draft, initialDraft, attackResultId])
 
   const save = async (): Promise<void> => {
     if (submitting.current || !canSave) return

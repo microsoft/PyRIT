@@ -1169,7 +1169,14 @@ class MemoryInterface(abc.ABC):
         if top_level_only:
             statement = statement.where(FindingEntry.parent_finding_id.is_(None))
         if title_query or title_pattern is not None:
-            statement = statement.where(text_match(column=FindingEntry.title, value=title_query, pattern=title_pattern))
+            statement = statement.where(
+                text_match(
+                    column=FindingEntry.title,
+                    value=title_query,
+                    pattern=title_pattern,
+                    casefold=title_pattern is None,
+                )
+            )
         order = self._sub_finding_order() if parent_finding_id is not None else self._finding_order()
         statement = statement.order_by(*order).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
@@ -3688,7 +3695,7 @@ class MemoryInterface(abc.ABC):
         *,
         score_ids: Sequence[str] | None = None,
         score_type: str | None = None,
-        score_category: str | None = None,
+        score_category: str | Sequence[str] | None = None,
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
@@ -3700,7 +3707,8 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): Return only scores whose category list contains this category.
+            score_category (str | Sequence[str] | None): Return scores that list this category, or every category
+                of a sequence. Names match whole and case-insensitively.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -3719,13 +3727,10 @@ class MemoryInterface(abc.ABC):
         if score_type:
             conditions.append(ScoreEntry.score_type == score_type)
         if score_category:
-            # score_category is stored as a JSON array, so match by element membership.
-            conditions.append(
-                self._get_condition_json_array_match(
-                    json_column=ScoreEntry.score_category,
-                    property_path="$",
-                    array_to_match=[score_category],
-                )
+            # score_category is stored as a JSON list, so match one whole element of it.
+            categories = [score_category] if isinstance(score_category, str) else list(score_category)
+            self._add_list_conditions(
+                field=ScoreEntry.score_category, conditions=conditions, values=categories, exact=True
             )
         if sent_after:
             conditions.append(ScoreEntry.timestamp >= sent_after)
@@ -5969,7 +5974,12 @@ class MemoryInterface(abc.ABC):
                 and_(
                     SeedEntry.data_type == "text",
                     SeedEntry.seed_type != "simulated_conversation",
-                    text_match(column=SeedEntry.value, value=value_search, pattern=value_pattern),
+                    text_match(
+                        column=SeedEntry.value,
+                        value=value_search,
+                        pattern=value_pattern,
+                        casefold=value_pattern is None,
+                    ),
                 )
             )
 
@@ -10279,7 +10289,7 @@ class MemoryInterface(abc.ABC):
         *,
         score_ids: Sequence[str] | None = None,
         score_type: str | None = None,
-        score_category: str | None = None,
+        score_category: str | Sequence[str] | None = None,
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
@@ -10312,7 +10322,7 @@ class MemoryInterface(abc.ABC):
         *,
         score_ids: Sequence[str] | None = None,
         score_type: str | None = None,
-        score_category: str | None = None,
+        score_category: str | Sequence[str] | None = None,
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
@@ -10324,7 +10334,8 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): Return only scores whose category list contains this category.
+            score_category (str | Sequence[str] | None): Return scores that list this category, or every category
+                of a sequence. Names match whole and case-insensitively.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
