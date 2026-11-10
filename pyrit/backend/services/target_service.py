@@ -112,9 +112,6 @@ class TargetService:
             yield
             return
         capabilities = self.saved_capabilities(target=target, metadata=metadata)
-        if capabilities == target.capabilities:
-            yield
-            return
         with target.capabilities_scope(capabilities):
             yield
 

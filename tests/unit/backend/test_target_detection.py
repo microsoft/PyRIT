@@ -684,11 +684,13 @@ async def test_detection_preserves_existing_binding_and_multi_turn_provider_send
 
 
 @pytest.mark.parametrize(("legacy", "registry_hint"), [(False, True), (True, True), (True, False)])
+@pytest.mark.parametrize("overlap", [False, True])
 async def test_detection_preserves_default_chat_service_history_async(
     detection_service: tuple[TargetService, _DetectableTarget],
     sqlite_instance: SQLiteMemory,
     legacy: bool,
     registry_hint: bool,
+    overlap: bool,
 ) -> None:
     service, _ = detection_service
     source = OpenAIChatTarget(api_key="test-key", endpoint="https://example.test", model_name="test-model")
@@ -729,16 +731,39 @@ async def test_detection_preserves_default_chat_service_history_async(
             )
             await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
             assert len(send.call_args.kwargs["messages"]) == 1
+            request.pieces = [MessagePieceRequest(original_value="Second turn.")]
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            pending: asyncio.Task | None = None
+            load_history = sqlite_instance.get_conversation_messages_async
+
+            async def gated_history_async(**kwargs: Any) -> list[Message]:
+                entered.set()
+                await asyncio.wait_for(release.wait(), timeout=TEST_WATCHDOG_SECONDS)
+                return await load_history(**kwargs)
+
             with patch(
                 "pyrit.backend.services.target_service.discover_target_capabilities_async",
                 new=AsyncMock(return_value=original.model_copy(update={"supports_multi_turn": False})),
             ):
-                await service.detect_capabilities_async(
-                    target_registry_name="default-chat", expected_hash=source.get_identifier().hash
-                )
+                with patch.object(sqlite_instance, "get_conversation_messages_async", side_effect=gated_history_async):
+                    try:
+                        if overlap:
+                            assert source.capabilities == original
+                            pending = asyncio.create_task(
+                                attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+                            )
+                            await asyncio.wait_for(entered.wait(), timeout=TEST_WATCHDOG_SECONDS)
+                        await service.detect_capabilities_async(
+                            target_registry_name="default-chat", expected_hash=source.get_identifier().hash
+                        )
+                    finally:
+                        release.set()
+                        if pending is not None:
+                            result = await pending
             assert not source.capabilities.supports_multi_turn
-            request.pieces = [MessagePieceRequest(original_value="Second turn.")]
-            result = await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
+            if not overlap:
+                result = await attacks.add_message_async(attack_result_id=chat.attack_result_id, request=request)
             assert send.await_count == 2
             assert [message["role"] for message in send.call_args.kwargs["messages"]] == ["user", "assistant", "user"]
             assert result.attack.target is not None
