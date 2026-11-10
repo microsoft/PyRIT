@@ -218,7 +218,7 @@ def test_catalog_describes_scenario_parameters_in_the_form_callers_send() -> Non
         for parameter in summary.model_dump(mode="json")["supported_parameters"]
     }
     assert described == {
-        "words": {"type_name": "list[str]", "is_list": True, "default": None},
+        "words": {"type_name": "list[str] | None", "is_list": True, "default": None},
         "size": {"type_name": "int", "is_list": False, "default": None},
     }
     assert metadata.supported_parameters[0].param_type == Collection[str] | None
