@@ -72,9 +72,13 @@ class SeedGroupRequirements:
             errors.append("A stored user prompt is required.")
         if self.required_adversarial_prompt and seed_group.adversarial_prompts is None:
             errors.append("Stored adversarial prompts are required.")
+        metadata = seed_group.objective.metadata
         for requirement in self.metadata:
+            if metadata is None or requirement.key not in metadata:
+                errors.append(f"Requires valid {requirement.description} ({requirement.name}).")
+                continue
             try:
-                requirement.validator(seed_group.objective.metadata)
+                requirement.validator(metadata)
             except ValueError:
                 errors.append(f"Requires valid {requirement.description} ({requirement.name}).")
         return errors

@@ -5485,55 +5485,48 @@ class MemoryInterface(abc.ABC):
         """
         keys = tuple(dict.fromkeys(metadata_keys))
         objective = SeedEntry.seed_type == "objective"
+
+        def key_present(key: str) -> "ColumnElement[bool]":
+            items = JsonArrayItems(JsonContainer(SeedEntry.prompt_metadata, "$")).table_valued(column("key", Unicode))
+            return select(1).select_from(items).where(items.c.key == key).correlate(SeedEntry).exists()
+
         flags = [
-            func.max(
-                case(
-                    (
-                        and_(
-                            objective,
-                            JsonContainer(SeedEntry.prompt_metadata, f"$.{json.dumps(key, ensure_ascii=False)}").is_not(
-                                None
-                            ),
-                        ),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ).label(f"metadata_{index}")
+            case((and_(objective, key_present(key)), 1), else_=0).label(f"metadata_{index}")
             for index, key in enumerate(keys)
         ]
-        groups = (
+        # SQL Server requires correlated key-presence subqueries to be projected before aggregation.
+        seeds = (
             select(
-                SeedEntry.dataset_name.label("dataset_name"),
-                func.count().label("seed_count"),
-                func.sum(case((objective, 1), else_=0)).label("objective_count"),
-                func.sum(case((and_(SeedEntry.seed_type == "prompt", SeedEntry.role == "user"), 1), else_=0)).label(
-                    "user_prompt_count"
+                SeedEntry.dataset_name,
+                func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id).label("group_id"),
+                SeedEntry.seed_type,
+                SeedEntry.role,
+                case((and_(objective, key_present(AdversarialPrompts.METADATA_KEY)), 1), else_=0).label(
+                    "has_adversarial_prompts"
                 ),
-                func.sum(case((and_(SeedEntry.seed_type == "prompt", SeedEntry.role != "user"), 1), else_=0)).label(
-                    "non_user_prompt_count"
-                ),
-                func.sum(case((SeedEntry.seed_type == "simulated_conversation", 1), else_=0)).label(
-                    "simulated_conversation_count"
-                ),
-                func.max(
-                    case(
-                        (
-                            and_(
-                                objective,
-                                JsonContainer(
-                                    SeedEntry.prompt_metadata, f"$.{json.dumps(AdversarialPrompts.METADATA_KEY)}"
-                                ).is_not(None),
-                            ),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("has_adversarial_prompts"),
                 *flags,
             )
             .where(SeedEntry.dataset_name.is_not(None), SeedEntry.dataset_name != "")
-            .group_by(SeedEntry.dataset_name, func.coalesce(SeedEntry.prompt_group_id, SeedEntry.id))
+            .subquery()
+        )
+        groups = (
+            select(
+                seeds.c.dataset_name,
+                func.count().label("seed_count"),
+                func.sum(case((seeds.c.seed_type == "objective", 1), else_=0)).label("objective_count"),
+                func.sum(case((and_(seeds.c.seed_type == "prompt", seeds.c.role == "user"), 1), else_=0)).label(
+                    "user_prompt_count"
+                ),
+                func.sum(case((and_(seeds.c.seed_type == "prompt", seeds.c.role != "user"), 1), else_=0)).label(
+                    "non_user_prompt_count"
+                ),
+                func.sum(case((seeds.c.seed_type == "simulated_conversation", 1), else_=0)).label(
+                    "simulated_conversation_count"
+                ),
+                func.max(seeds.c.has_adversarial_prompts).label("has_adversarial_prompts"),
+                *(func.max(seeds.c[f"metadata_{index}"]).label(f"metadata_{index}") for index in range(len(keys))),
+            )
+            .group_by(seeds.c.dataset_name, seeds.c.group_id)
             .subquery()
         )
         columns = [

@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 from dataclasses import FrozenInstanceError
+from unittest.mock import Mock
 
 import pytest
 
@@ -65,6 +66,22 @@ def test_default_requirement_identity_remains_unchanged() -> None:
         "try_adapt": False,
         "user_prompts_only": False,
     }
+
+
+def test_named_requirement_distinguishes_a_missing_key_from_a_valid_null() -> None:
+    parser = Mock(return_value=None)
+    requirements = SeedGroupRequirements(
+        metadata=(
+            SeedMetadataRequirement(
+                name="nullable_reference", key="answer", description="reference answer", validator=parser
+            ),
+        )
+    )
+    nullable = AttackSeedGroup(seeds=[SeedObjective(value="objective", metadata={"answer": None})])
+    missing = AttackSeedGroup(seeds=[SeedObjective(value="objective")])
+    assert requirements.check(seed_group=nullable) == []
+    assert requirements.check(seed_group=missing) == ["Requires valid reference answer (nullable_reference)."]
+    parser.assert_called_once()
 
 
 def test_objective_only_accepts_objective_conditions_and_metadata() -> None:

@@ -74,16 +74,41 @@ async def test_group_profiles_do_not_combine_facts_from_different_groups_async(s
     assert not any(profile.metadata_keys and profile.has_user_prompt for profile in profiles)
 
 
+@pytest.mark.parametrize("value", [None, False, 0, "reference", "x" * 5001, {}, []])
+async def test_metadata_key_presence_is_independent_of_payload_shape_async(
+    *, sqlite_instance: SQLiteMemory, value: object
+) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="objective", dataset_name="references", metadata={"answer": value})],
+        added_by="test",
+    )
+    profiles = await sqlite_instance.get_seed_dataset_group_profiles_async(metadata_keys=["answer"])
+    assert len(profiles) == 1
+    assert profiles[0].metadata_keys == ("answer",)
+
+
+@pytest.mark.parametrize("key", ["literal.dot", 'literal"quote', "caf\u00e9"])
+async def test_metadata_presence_matches_literal_keys_async(*, sqlite_instance: SQLiteMemory, key: str) -> None:
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="objective", dataset_name="references", metadata={key: "answer"})],
+        added_by="test",
+    )
+    profiles = await sqlite_instance.get_seed_dataset_group_profiles_async(metadata_keys=[key])
+    assert profiles[0].metadata_keys == (key,)
+
+
 @pytest.mark.parametrize("dialect", [sqlite.dialect(), mssql.dialect()])
-def test_group_profile_query_uses_portable_container_projections(dialect: Dialect) -> None:
+def test_group_profile_query_uses_portable_presence_projections(dialect: Dialect) -> None:
     statement = SQLiteMemory._build_seed_dataset_group_profiles_statement(metadata_keys=["policy"])
     sql = str(statement.compile(dialect=dialect, compile_kwargs={"literal_binds": True}))
     assert "GROUP BY" in sql
     assert "prompt_metadata" in sql
     assert ".value" not in sql
     if dialect.name == "mssql":
+        assert "OPENJSON" in sql
         assert "JSON_QUERY" in sql
         assert "json_extract" not in sql
         assert "JSON_VALUE" not in sql
+        assert "max(CASE" not in sql
     else:
-        assert "json_extract" in sql
+        assert "json_each" in sql

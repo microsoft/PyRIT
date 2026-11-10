@@ -129,6 +129,33 @@ async def test_imported_schema_valid_data_passes_regardless_of_provenance_async(
     }
 
 
+async def test_raw_hints_do_not_reject_a_compatible_filtered_population_async(
+    compatibility_service: ScenarioService,
+) -> None:
+    await _store_imported_async()
+    await CentralMemory.get_memory_instance().add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Excluded ordinary objective", dataset_name="imported", harm_categories=["other"])],
+        added_by="test",
+    )
+    request = _request("imported").model_copy(
+        update={
+            "datasets": ScenarioDatasetRequest(
+                sources=[DatasetSourceInput(name="imported")], filters={"harm_categories": ["public_policy"]}
+            )
+        }
+    )
+    hints = await compatibility_service.assess_datasets_async(scenario_name="test.policy", request=request)
+    assert hints is not None
+    assert (
+        next(item for item in hints.items if item.name == "imported").status is DatasetCompatibilityStatus.NOT_VERIFIED
+    )
+    checked = await compatibility_service.assess_datasets_async(
+        scenario_name="test.policy", request=request, validate_selected=True
+    )
+    assert checked is not None
+    assert checked.selection_compatible is True
+
+
 @pytest.mark.parametrize("metadata", [None, {"assert_generation": {}}])
 async def test_missing_and_malformed_policy_data_are_not_compatible_async(
     *, compatibility_service: ScenarioService, metadata: dict[str, object] | None

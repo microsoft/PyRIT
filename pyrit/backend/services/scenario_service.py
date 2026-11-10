@@ -33,6 +33,7 @@ from pyrit.models.dataset_compatibility import (
 )
 from pyrit.registry import AttackTechniqueRegistry, ScenarioMetadata, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params
+from pyrit.scenario import DatasetAttackConfiguration
 from pyrit.scenario.core import Scenario, override_default_adversarial_target
 from pyrit.scenario.core.dataset_compatibility import assess_candidate_profiles, describe_requirements
 
@@ -401,6 +402,17 @@ class ScenarioService:
             if options.mode is not DatasetSelectionMode.ANY and name not in allowed:
                 continue
             item = assess_candidate_profiles(name=name, profiles=by_name.get(name, []), requirements=requirements)
+            if item.status is DatasetCompatibilityStatus.INCOMPATIBLE and (
+                scenario._dataset_config.filters or type(scenario._dataset_config) is not DatasetAttackConfiguration
+            ):
+                item.status = DatasetCompatibilityStatus.NOT_VERIFIED
+                item.reasons = [
+                    DatasetCompatibilityReason(
+                        code="not_verified",
+                        message="Stored facts do not apply the selected filters or custom grouping. "
+                        "Validate the selected contents.",
+                    )
+                ]
             item.selected = name in selected
             if name not in by_name:
                 item.group_count = None
