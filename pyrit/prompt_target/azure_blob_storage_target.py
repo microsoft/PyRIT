@@ -12,7 +12,7 @@ from azure.storage.blob import ContentSettings
 from azure.storage.blob.aio import ContainerClient as AsyncContainerClient
 
 from pyrit.common import default_values, print_deprecation_message
-from pyrit.memory.storage import SupportedContentType
+from pyrit.memory import SupportedContentType
 from pyrit.models import ComponentIdentifier, Message, construct_response_from_request
 from pyrit.prompt_target.common.prompt_target import AuthMode, PromptTarget
 from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
@@ -103,7 +103,8 @@ class AzureBlobStorageTarget(PromptTarget):
             ValueError: If ``auth_mode`` is set and is not one of ``supported_auth_modes``.
         """
         self._validate_auth_mode(auth_mode)
-        self._blob_content_type: str = blob_content_type.value
+        # Coerce so direct callers may pass a raw MIME string; invalid values raise ValueError.
+        self._blob_content_type: str = SupportedContentType(blob_content_type)
 
         self._container_url: str = default_values.get_required_value(
             env_var_name=self.AZURE_STORAGE_CONTAINER_ENVIRONMENT_VARIABLE, passed_value=container_url

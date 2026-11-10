@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -22,10 +22,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SupportedContentType(Enum):
+class SupportedContentType(StrEnum):
     """
     All supported content types for uploading blobs to provided storage account container.
     See all options here: https://www.iana.org/assignments/media-types/media-types.xhtml.
+
+    Members are plain strings, so they can be used anywhere a MIME-type string is expected.
     """
 
     # TODO, add other media supported types
@@ -188,7 +190,8 @@ class AzureBlobStorageIO(StorageIO):
             ValueError: If container_url is missing.
 
         """
-        self._blob_content_type: str = blob_content_type.value
+        # Coerce so direct callers may pass a raw MIME string; invalid values raise ValueError.
+        self._blob_content_type: str = SupportedContentType(blob_content_type)
         if not container_url:
             raise ValueError("Invalid Azure Storage Account Container URL.")
 
