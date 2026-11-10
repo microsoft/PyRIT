@@ -7,6 +7,7 @@ import os
 import struct
 import uuid
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -70,6 +71,15 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
     SQL_COPT_SS_ACCESS_TOKEN = 1256  # Connection option for access tokens, as defined in msodbcsql.h
     TOKEN_URL = "https://database.windows.net/.default"  # The token URL for any Azure SQL database
     AZURE_SQL_DB_CONNECTION_STRING = "AZURE_SQL_DB_CONNECTION_STRING"
+    # Connection pool sizing for both engines. Async sessions hold a connection for a whole memory
+    # operation, so the pool bounds how many operations can use the database at once before they wait.
+    POOL_SIZE_ENV = "PYRIT_AZURE_SQL_POOL_SIZE"
+    MAX_OVERFLOW_ENV = "PYRIT_AZURE_SQL_MAX_OVERFLOW"
+    POOL_TIMEOUT_ENV = "PYRIT_AZURE_SQL_POOL_TIMEOUT"
+    # Defaults match SQLAlchemy's QueuePool so existing deployments keep their connection count.
+    DEFAULT_POOL_SIZE = 5
+    DEFAULT_MAX_OVERFLOW = 10
+    DEFAULT_POOL_TIMEOUT_SECONDS = 30
 
     # Azure SQL supports up to 2100 parameters per statement
     _MAX_BIND_VARS: int = 2000
@@ -122,6 +132,7 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         self._auth_token: AccessToken | None = None
         self._auth_token_expiry: int | None = None
         self._async_auth: dict[asyncio.AbstractEventLoop, AsyncAzureAuth] = {}
+        self._async_executors: dict[asyncio.AbstractEventLoop, ThreadPoolExecutor] = {}
         self._verbose = verbose
         self._silent = silent
         self._skip_schema_migration = skip_schema_migration
@@ -178,6 +189,16 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
         import aioodbc
 
         url = make_url(self._connection_string).set(drivername="mssql+aioodbc")
+        pool_settings = self._pool_settings()
+        # aioodbc runs every ODBC call on an executor thread for the whole round trip. On the shared
+        # default executor, connections waiting on a SQL lock can occupy every thread while the lock
+        # holder waits for a thread to commit, which hangs the process. One thread per pooled
+        # connection guarantees the holder can always proceed, and keeps SQL from starving other
+        # ``asyncio.to_thread`` work.
+        executor = ThreadPoolExecutor(
+            max_workers=pool_settings["pool_size"] + pool_settings["max_overflow"],
+            thread_name_prefix="pyrit-azure-sql",
+        )
 
         async def connect_async() -> aioodbc.Connection:
             _, params = engine.dialect.create_connect_args(url)
@@ -190,7 +211,9 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             token_bytes = token.token.encode("utf-16-le")
             attrs = dict(params.pop("attrs_before", {}))
             attrs[self.SQL_COPT_SS_ACCESS_TOKEN] = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-            connection: aioodbc.Connection = await aioodbc.connect(dsn=dsn, attrs_before=attrs, **params)
+            connection: aioodbc.Connection = await aioodbc.connect(
+                dsn=dsn, attrs_before=attrs, executor=executor, **params
+            )
             return connection
 
         engine = create_async_engine(
@@ -199,9 +222,12 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             pool_recycle=1800,
             pool_pre_ping=True,
             echo=self._verbose,
+            **pool_settings,
         )
         auth = AsyncAzureAuth(self.TOKEN_URL)
-        self._async_auth[asyncio.get_running_loop()] = auth
+        loop = asyncio.get_running_loop()
+        self._async_auth[loop] = auth
+        self._async_executors[loop] = executor
         return engine
 
     async def dispose_loop_resources_async(self) -> None:
@@ -223,6 +249,10 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
                     await engine.dispose()
         finally:
             self._async_engines.pop(loop, None)
+            executor = self._async_executors.pop(loop, None)
+            if executor is not None:
+                # The pool is disposed above, so no connection can submit work to this executor again.
+                executor.shutdown(wait=False)
             auth = self._async_auth.pop(loop, None)
             if auth is not None:
                 await auth.close_async()
@@ -300,12 +330,48 @@ class AzureSQLMemory(MemoryInterface, metaclass=Singleton):
             # by testing and replacing stale connections.
             # Set pool_recycle to 1800 seconds to prevent connections from being closed due to server timeout.
 
-            engine = create_engine(self._connection_string, pool_recycle=1800, pool_pre_ping=True, echo=has_echo)
+            engine = create_engine(
+                self._connection_string,
+                pool_recycle=1800,
+                pool_pre_ping=True,
+                echo=has_echo,
+                **self._pool_settings(),
+            )
             logger.info(f"Engine created successfully for database: {engine.name}")
             return engine
         except SQLAlchemyError as e:
             logger.exception(f"Error creating the engine for the database: {e}")
             raise
+
+    @classmethod
+    def _pool_settings(cls) -> dict[str, int]:
+        """
+        Read the connection pool bounds for a new engine.
+
+        Returns:
+            dict[str, int]: ``pool_size``, ``max_overflow`` and ``pool_timeout`` keyword arguments.
+
+        Raises:
+            ValueError: If an override is not an integer in range.
+        """
+        return {
+            "pool_size": cls._pool_setting(cls.POOL_SIZE_ENV, cls.DEFAULT_POOL_SIZE, minimum=1),
+            "max_overflow": cls._pool_setting(cls.MAX_OVERFLOW_ENV, cls.DEFAULT_MAX_OVERFLOW, minimum=0),
+            "pool_timeout": cls._pool_setting(cls.POOL_TIMEOUT_ENV, cls.DEFAULT_POOL_TIMEOUT_SECONDS, minimum=1),
+        }
+
+    @staticmethod
+    def _pool_setting(variable: str, default: int, *, minimum: int) -> int:
+        raw = os.environ.get(variable, "").strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+        except ValueError as error:
+            raise ValueError(f"{variable} must be an integer, got {raw!r}.") from error
+        if value < minimum:
+            raise ValueError(f"{variable} must be at least {minimum}, got {value}.")
+        return value
 
     def _enable_azure_authorization(self) -> None:
         """
