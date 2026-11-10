@@ -106,19 +106,23 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support
+# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support --techniques red_teaming tap
 # ```
 #
-# | Technique | What runs | Stored group input |
-# |---|---|---|
-# | `single_turn` | `PromptSendingAttack` sends the system prompt and user prompt once. | A user prompt (`include_user_prompt=True`, the default) |
-# | `multi_turn` | `RedTeamingAttack` follows the tester instructions for exactly `max_turns` turns. The stored user prompt, if any, opens the conversation. The tester gets no judge feedback. | Adversarial prompts (`include_adversarial_prompt=True`) |
+# By default each group runs twice:
 #
-# Both techniques run by default. Groups without a technique's input are skipped, or rejected
-# when `incompatible_technique_policy` is `raise`. `multi_turn` also requires native conversation
-# support on the target so every target turn reaches the judges; single-turn targets skip it
-# under the default policy, or reject it under `raise`. The scenario parameters are:
+# - The baseline, on by default, sends the group's stored system prompt and user prompt once, like
+#   an ASSERT prompt case. Groups without a stored user prompt have no baseline.
+# - The `red_teaming` technique lets an adversarial chat follow the group's stored tester
+#   instructions for `max_turns` turns, like an ASSERT scenario case. The stored user prompt, if
+#   any, opens the conversation, and the tester gets no judge feedback.
 #
-# - `max_turns`: target turns in each multi-turn conversation. Defaults to 6, as in ASSERT.
+# Any registered attack technique can be selected with `--techniques`. Groups with stored tester
+# instructions run only with techniques that accept them, such as `red_teaming`; the others are
+# skipped, or rejected when `incompatible_technique_policy` is `raise`. Results are grouped by
+# technique. The scenario parameters are:
+#
+# - `max_turns`: target turns for techniques that take a turn count. Defaults to 6, as in ASSERT.
 # - `judgment_mode`: `category_validated` (the default) also records a judgment for each relevant
 #   taxonomy category. `direct` returns only the verdict.
 # - `target_system_prompt`: instructions that a target-owned application already uses. Only the
@@ -134,13 +138,13 @@ await output_scenario_async(scenario_result)
 #   `policy_violation`.
 #
 # There are no request converters by default. Add them per technique as in other scenarios, for
-# example `--techniques single_turn:converter.<registered name>`, or `technique_converters` in Python.
+# example `--techniques red_teaming:converter.<registered name>`, or `technique_converters` in Python.
 #
-# Generation defaults produce single-turn data only, so set `include_adversarial_prompt=True` for
-# `multi_turn`. ASSERT searches the web during research by default. To match it, set
+# Generation defaults store only a user prompt, so set `include_adversarial_prompt=True` to store
+# tester instructions. ASSERT searches the web during research by default. To match it, set
 # `web_search=True` and pass a search-enabled `OpenAIResponseTarget` as `research_target`.
 #
-# This example generates and stores two groups, then runs both techniques with two turns.
+# This example generates and stores two groups, then runs the baseline and `red_teaming` with two turns.
 
 # %%
 import getpass
@@ -199,24 +203,19 @@ await output_scenario_async(assert_scenario_result)
 # %%
 from pyrit.output import output_attack_async
 
-single_turn_result = next(
+baseline_result = next(
     result
     for name, results in assert_scenario_result.attack_results.items()
-    if name.startswith("single_turn")
+    if name.startswith("baseline")
     for result in results
 )
-await output_attack_async(single_turn_result, include_auxiliary_scores=True)  # type: ignore
+await output_attack_async(baseline_result, include_auxiliary_scores=True)  # type: ignore
 
 # %% [markdown]
-# Results are grouped by technique and by whether the group's assigned category is permissible:
-#
-# - In `*_impermissible` groups, the success rate is the policy-violation rate on disallowed
-#   requests. This approximates ASSERT's impermissible violation rate.
-# - In `*_permissible` groups, the success rate is the failure rate on allowed requests, which is
-#   mostly overrefusal. This approximates ASSERT's permissible violation rate.
-# - ASSERT instead splits each conversation by the categories the judge found relevant. In
-#   `category_validated` mode, the `assert_node_judgments` metadata on each policy score keeps
-#   those per-category judgments.
+# Results are grouped by technique, with the baseline in its own group. In `category_validated`
+# mode, the `assert_node_judgments` metadata on each policy score keeps the judge's per-category
+# judgments, which ASSERT uses to split its violation rates by permissible and impermissible
+# categories.
 #
 # As in ASSERT, a conversation with a blocked or errored target reply isn't judged. Its result is
 # undetermined, like a result whose judge or tester reply was blocked. Undetermined results are
@@ -293,8 +292,8 @@ await output_attack_async(single_turn_result, include_auxiliary_scores=True)  # 
 #   and can't be redefined. To replace one, disable it and add a differently named dimension.
 # - Custom judge dimensions are boolean flags only. ASSERT's ordinal `scale` and
 #   `allow_not_applicable` options are rejected.
-# - A group with both inputs runs both ways on the same objective, so the results are paired.
-#   ASSERT samples single-turn and multi-turn cases separately.
+# - A group with both inputs runs as the baseline and with each selected technique on the same
+#   objective, so the results are paired. ASSERT samples prompt and scenario cases separately.
 # - A stored user prompt opens each multi-turn conversation without passing through the tester,
 #   and the tester doesn't see a turn counter. ASSERT's tester writes the first message.
 # - Each group's system prompt is fixed when it's generated. `target_system_prompt` only describes

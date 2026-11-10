@@ -18,6 +18,7 @@ from unit.mocks import MockPromptTarget
 from pyrit.analytics import compute_scenario_statistics
 from pyrit.converter import Base64Converter
 from pyrit.datasets import AssertProvider
+from pyrit.executor.attack import PromptSendingAttack, RedTeamingAttack
 from pyrit.executor.promptgen import AssertGeneratorResult
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import (
@@ -37,9 +38,10 @@ from pyrit.models import (
     construct_response_from_request,
 )
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import ScenarioRegistry
-from pyrit.scenario import DatasetAttackConfiguration, DatasetSource, IncompatibleTechniqueError
-from pyrit.scenario.scenarios.foundry import AssertPolicy, AssertTechnique
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry
+from pyrit.scenario import AttackTechniqueFactory, BaselineAttackPolicy, DatasetAttackConfiguration, DatasetSource
+from pyrit.scenario.scenarios.foundry import AssertPolicy
+from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
 from pyrit.score import (
     AssertJudgmentMode,
     AssertSampleMetadata,
@@ -50,6 +52,34 @@ from pyrit.score import (
 )
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
+
+
+@pytest.fixture(autouse=True)
+def technique_registry() -> Generator[None, None, None]:
+    """Register the two techniques these tests run: one-shot prompt sending and red teaming."""
+    AttackTechniqueRegistry.reset_registry_singleton()
+    _build_assert_policy_technique.cache_clear()
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+        [
+            AttackTechniqueFactory(
+                name="prompt_sending", attack_class=PromptSendingAttack, technique_tags=["single_turn"]
+            ),
+            AttackTechniqueFactory(name="red_teaming", attack_class=RedTeamingAttack, technique_tags=["multi_turn"]),
+        ]
+    )
+    yield
+    AttackTechniqueRegistry.reset_registry_singleton()
+    _build_assert_policy_technique.cache_clear()
+
+
+def _technique(name: str) -> Any:
+    return _build_assert_policy_technique()(name)
+
+
+def _prompt_case() -> dict[str, Any]:
+    """Send each group's stored prompts once, like an ASSERT prompt case, without a baseline."""
+    return {"scenario_techniques": [_technique("prompt_sending")], "include_baseline": False}
+
 
 _SYSTEM_A = "You are the support assistant for store A."
 _SYSTEM_B = "You are the support assistant for store B."
@@ -189,10 +219,11 @@ def test_registry_name_and_argument_free_construction() -> None:
     assert ScenarioRegistry.get_registry_singleton().get_class("foundry.assert_policy") is AssertPolicy
     scenario = AssertPolicy()
     assert scenario._objective_scorer_identifier.class_name == "_AssertPlaceholderScorer"
-    assert AssertTechnique.expand({AssertTechnique.default()}) == [
-        AssertTechnique.SingleTurn,
-        AssertTechnique.MultiTurn,
-    ]
+    technique_class = _build_assert_policy_technique()
+    assert scenario._technique_class is technique_class
+    assert [technique.value for technique in technique_class.expand({technique_class.default()})] == ["red_teaming"]
+    assert AssertPolicy.VERSION == 2
+    assert AssertPolicy.BASELINE_ATTACK_POLICY is BaselineAttackPolicy.Enabled
     assert {parameter.name: parameter.default for parameter in AssertPolicy.additional_parameters()} == {
         "max_turns": 6,
         "judgment_mode": AssertJudgmentMode.CATEGORY_VALIDATED,
@@ -269,11 +300,12 @@ async def test_each_unit_uses_its_own_group_judges_async(harness: _Harness, mode
         (group,) = attack.seed_groups
         technique, logical_id = attack.atomic_attack_name.split("__")
         assert logical_id == group.logical_id
-        assert attack.technique_name == technique
+        assert attack.display_group == technique
+        assert attack.technique_name == (None if technique == "baseline" else technique)
         system_prompt = next(prompt.value for prompt in group.prompts if prompt.role == "system")
         taxonomy, context = expected[system_prompt]
         config = attack.attack_technique.attack.get_attack_scoring_config()
-        assert config.use_score_as_feedback is False or technique == AssertTechnique.SingleTurn.value
+        assert config.use_score_as_feedback is False or technique == "baseline"
         for scorer, dimension in (
             (config.objective_scorer, AssertScoringDimension.POLICY_VIOLATION),
             (config.auxiliary_scorers[0], AssertScoringDimension.OVERREFUSAL),
@@ -290,7 +322,7 @@ async def test_each_unit_uses_its_own_group_judges_async(harness: _Harness, mode
             assert _judged(scorer).raise_if_scorer_blocks is False
 
 
-async def test_display_groups_split_each_technique_by_assigned_permissibility_async(harness: _Harness) -> None:
+async def test_default_run_is_the_baseline_and_red_teaming_grouped_by_technique_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(group_count=4))
     scenario = await harness.initialize_async(harness.scenario(), **_datasets("assert_a"))
 
@@ -299,19 +331,15 @@ async def test_display_groups_split_each_technique_by_assigned_permissibility_as
         metadata = AssertGroupMetadata.from_metadata(attack.seed_groups[0].objective.metadata)
         groups.setdefault(attack.display_group, set()).add(metadata.behavior_category)
     assert groups == {
-        "single_turn_permissible": {"public_policy"},
-        "single_turn_impermissible": {"private_disclosure"},
-        "multi_turn_permissible": {"public_policy"},
-        "multi_turn_impermissible": {"private_disclosure"},
+        "baseline": {"public_policy", "private_disclosure"},
+        "red_teaming": {"public_policy", "private_disclosure"},
     }
 
 
 async def test_single_turn_sends_stored_prompts_and_keeps_both_verdicts_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
     harness.overrefusal = True
-    result = await harness.run_async(
-        harness.scenario(), scenario_techniques=[AssertTechnique.SingleTurn], **_datasets("assert_a")
-    )
+    result = await harness.run_async(harness.scenario(), **_prompt_case(), **_datasets("assert_a"))
 
     (attack_result,) = next(iter(result.attack_results.values()))
     assert len(harness.target_requests) == 1
@@ -333,15 +361,10 @@ async def test_single_turn_sends_stored_prompts_and_keeps_both_verdicts_async(ha
     assert "assert_correction_reason" not in policy.score_metadata
 
 
-async def test_single_turn_skips_groups_without_a_user_prompt_async(harness: _Harness) -> None:
+async def test_baseline_skips_groups_without_a_user_prompt_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(include_user_prompt=False))
     scenario = await harness.initialize_async(harness.scenario(), **_datasets("assert_a"))
-    assert {attack.technique_name for attack in scenario._atomic_attacks} == {"multi_turn"}
-
-    with pytest.raises(IncompatibleTechniqueError, match="no user prompt"):
-        await harness.initialize_async(
-            harness.scenario(), incompatible_technique_policy="raise", **_datasets("assert_a")
-        )
+    assert {attack.display_group for attack in scenario._atomic_attacks} == {"red_teaming"}
 
 
 async def test_multi_turn_runs_every_turn_and_judges_once_without_feedback_async(harness: _Harness) -> None:
@@ -350,7 +373,8 @@ async def test_multi_turn_runs_every_turn_and_judges_once_without_feedback_async
     harness.policy_violation = True
     scenario_result = await harness.run_async(
         harness.scenario(),
-        scenario_techniques=[AssertTechnique.MultiTurn],
+        scenario_techniques=[_technique("red_teaming")],
+        include_baseline=False,
         max_turns=3,
         **_datasets("assert_a"),
     )
@@ -380,7 +404,11 @@ async def test_multi_turn_keeps_earlier_target_errors_without_stored_system_prom
 ) -> None:
     await _store_async(name="assert_a", result=_result(group_count=1, target_owns_instructions=True))
     scenario = await harness.initialize_async(
-        harness.scenario(), scenario_techniques=[AssertTechnique.MultiTurn], max_turns=2, **_datasets("assert_a")
+        harness.scenario(),
+        scenario_techniques=[_technique("red_teaming")],
+        include_baseline=False,
+        max_turns=2,
+        **_datasets("assert_a"),
     )
     replies = iter([(error, "Target error."), ("none", _SAFE_REPLY)])
 
@@ -410,11 +438,9 @@ async def test_multi_turn_keeps_earlier_target_errors_without_stored_system_prom
 async def test_blocked_or_errored_target_reply_is_not_judged_async(
     harness: _Harness, error: PromptResponseError, reason: str
 ) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
     harness.target_error = error
-    result = await harness.run_async(
-        harness.scenario(), scenario_techniques=[AssertTechnique.SingleTurn], **_datasets("assert_a")
-    )
+    result = await harness.run_async(harness.scenario(), **_prompt_case(), **_datasets("assert_a"))
 
     (attack_result,) = next(iter(result.attack_results.values()))
     assert attack_result.outcome == AttackOutcome.UNDETERMINED
@@ -426,12 +452,10 @@ async def test_blocked_or_errored_target_reply_is_not_judged_async(
 
 
 async def test_ordinary_refusal_is_still_judged_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
     harness.target_reply = "I can't help with return policies."
     harness.overrefusal = True
-    result = await harness.run_async(
-        harness.scenario(), scenario_techniques=[AssertTechnique.SingleTurn], **_datasets("assert_a")
-    )
+    result = await harness.run_async(harness.scenario(), **_prompt_case(), **_datasets("assert_a"))
 
     (attack_result,) = next(iter(result.attack_results.values()))
     assert len(harness.judge_systems) == 2
@@ -439,14 +463,12 @@ async def test_ordinary_refusal_is_still_judged_async(harness: _Harness) -> None
 
 
 async def test_blocked_judge_reply_is_undetermined_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
 
     async def blocked_judge_async(*, normalized_conversation: list[Message]) -> list[Message]:
         return _reply(normalized_conversation[-1], value="blocked", error="blocked")
 
-    scenario = await harness.initialize_async(
-        harness.scenario(), scenario_techniques=[AssertTechnique.SingleTurn], **_datasets("assert_a")
-    )
+    scenario = await harness.initialize_async(harness.scenario(), **_prompt_case(), **_datasets("assert_a"))
     with (
         harness.patched(),
         patch.object(harness.judge, "_send_prompt_to_target_async", side_effect=blocked_judge_async),
@@ -458,11 +480,9 @@ async def test_blocked_judge_reply_is_undetermined_async(harness: _Harness) -> N
 
 
 async def test_undetermined_results_are_excluded_from_success_rates_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=2))
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=2))
     harness.policy_violation = True
-    scenario = await harness.initialize_async(
-        harness.scenario(), scenario_techniques=[AssertTechnique.SingleTurn], **_datasets("assert_a")
-    )
+    scenario = await harness.initialize_async(harness.scenario(), **_prompt_case(), **_datasets("assert_a"))
     replies = iter([("none", _SAFE_REPLY), ("blocked", "blocked")])
 
     async def target_async(*, normalized_conversation: list[Message]) -> list[Message]:
@@ -472,17 +492,19 @@ async def test_undetermined_results_are_excluded_from_success_rates_async(harnes
     with harness.patched(), patch.object(harness.objective, "_send_prompt_to_target_async", side_effect=target_async):
         result = await scenario.run_async()
 
-    outcomes = compute_scenario_statistics(result).display_groups["single_turn_permissible"].outcomes
+    outcomes = compute_scenario_statistics(result).display_groups["prompt_sending"].outcomes
     assert outcomes is not None
     assert (outcomes.successes, outcomes.undetermined, outcomes.success_rate_decided) == (1, 1, 1.0)
 
 
 async def test_target_system_prompt_is_given_to_the_judge_only_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1, target_owns_instructions=True))
+    await _store_async(
+        name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1, target_owns_instructions=True)
+    )
     owned = "Returns are allowed within 30 days."
     await harness.run_async(
         harness.scenario(),
-        scenario_techniques=[AssertTechnique.SingleTurn],
+        **_prompt_case(),
         target_system_prompt=owned,
         **_datasets("assert_a"),
     )
@@ -503,19 +525,17 @@ async def test_target_system_prompt_is_rejected_for_groups_with_stored_prompts_a
 @pytest.mark.parametrize(
     ("techniques", "baseline", "expected"),
     [
-        ([AssertTechnique.ALL], False, 8),
-        ([AssertTechnique.SingleTurn], False, 4),
-        ([AssertTechnique.MultiTurn], False, 4),
-        ([AssertTechnique.SingleTurn], True, 8),
+        (["red_teaming"], False, 4),
+        (["red_teaming"], True, 8),
     ],
 )
 async def test_estimate_matches_initialized_units_async(
-    harness: _Harness, techniques: list[AssertTechnique], baseline: bool, expected: int
+    harness: _Harness, techniques: list[str], baseline: bool, expected: int
 ) -> None:
     await _store_async(name="assert_a", result=_result(group_count=4))
     scenario = harness.scenario()
     args = {
-        "scenario_techniques": techniques,
+        "scenario_techniques": [_technique(name) for name in techniques],
         "include_baseline": baseline,
         "dataset_overrides": {"sources": [{"name": "assert_a"}], "max_total": 4},
     }
@@ -526,13 +546,15 @@ async def test_estimate_matches_initialized_units_async(
 
 
 async def test_sampling_reads_the_dataset_once_and_judges_the_full_population_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=4))
-    await _store_async(name="assert_b", result=_result(group_count=4, system_prompt=_SYSTEM_B))
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=4))
+    await _store_async(
+        name="assert_b", result=_result(include_adversarial_prompt=False, group_count=4, system_prompt=_SYSTEM_B)
+    )
     memory = CentralMemory.get_memory_instance()
     with patch.object(memory, "get_seeds_async", wraps=memory.get_seeds_async) as reads:
         scenario = await harness.initialize_async(
             harness.scenario(),
-            scenario_techniques=[AssertTechnique.SingleTurn],
+            **_prompt_case(),
             dataset_overrides={"sources": [{"name": "assert_a"}, {"name": "assert_b"}], "max_total": 1},
         )
     assert [call.kwargs["dataset_name"] for call in reads.call_args_list] == ["assert_a", "assert_b"]
@@ -552,7 +574,7 @@ def _group_id(attack: Any) -> str:
 async def test_groups_with_identical_content_keep_their_own_units_and_stances_async(harness: _Harness) -> None:
     result = _duplicate_result()
     await _store_async(name="assert_a", result=result)
-    args = {"incompatible_technique_policy": "skip", "include_baseline": True, **_datasets("assert_a")}
+    args = {"incompatible_technique_policy": "skip", **_datasets("assert_a")}
     scenario = await harness.initialize_async(harness.scenario(), **args)
 
     (logical_id,) = {attack.seed_groups[0].logical_id for attack in scenario._atomic_attacks}
@@ -561,13 +583,9 @@ async def test_groups_with_identical_content_keep_their_own_units_and_stances_as
         AssertGroupMetadata.from_metadata(group.objective.metadata).group_id: group.objective.id
         for group in result.seed_groups
     }
-    names = [f"single_turn__{logical_id}__{seed_ids[f'group_{index}']}" for index in range(3)]
-    assert set(by_name) == {*names, *(name.replace("single_turn", "baseline", 1) for name in names)}
-    assert {_group_id(by_name[name]): by_name[name].display_group for name in names} == {
-        "group_0": "single_turn_permissible",
-        "group_1": "single_turn_permissible",
-        "group_2": "single_turn_impermissible",
-    }
+    names = [f"red_teaming__{logical_id}__{seed_ids[f'group_{index}']}" for index in range(3)]
+    assert set(by_name) == {*names, *(name.replace("red_teaming", "baseline", 1) for name in names)}
+    assert {_group_id(by_name[name]) for name in names} == {"group_0", "group_1", "group_2"}
 
     first = by_name[names[0]]
     first.set_scenario_result_id(scenario._scenario_result_id)
@@ -582,6 +600,7 @@ async def test_sampled_identical_content_resumes_the_same_stored_group_async(har
     await _store_async(name="assert_a", result=_duplicate_result())
     args = {
         "incompatible_technique_policy": "skip",
+        "include_baseline": False,
         "dataset_overrides": {"sources": [{"name": "assert_a"}], "max_total": 1},
     }
     with patch(
@@ -590,7 +609,7 @@ async def test_sampled_identical_content_resumes_the_same_stored_group_async(har
         original = await harness.initialize_async(harness.scenario(), **args)
     (planned,) = original._atomic_attacks
     assert _group_id(planned) == "group_2"
-    assert planned.display_group == "single_turn_impermissible"
+    assert planned.display_group == "red_teaming"
 
     resumed = await harness.initialize_async(harness.scenario(scenario_result_id=original._scenario_result_id), **args)
     (restored,) = resumed._atomic_attacks
@@ -601,7 +620,12 @@ async def test_sampled_identical_content_resumes_the_same_stored_group_async(har
 async def test_sampled_resume_keeps_the_sampled_batch_when_generation_ids_collide_async(harness: _Harness) -> None:
     config = make_assert_config(group_count=1, include_adversarial_prompt=False)
     batches = [
-        make_assert_result(config=config, duplicate_text=True, system_prompt=_SYSTEM_A, taxonomy=taxonomy)
+        make_assert_result(
+            config=config,
+            duplicate_text=True,
+            system_prompt=_SYSTEM_A,
+            taxonomy=taxonomy,
+        )
         for taxonomy in (make_assert_taxonomy(), _taxonomy_b())
     ]
     for batch in batches:
@@ -611,7 +635,7 @@ async def test_sampled_resume_keeps_the_sampled_batch_when_generation_ids_collid
     assert {AssertGroupMetadata.from_metadata(group.objective.metadata).group_id for group in groups} == {"group_0"}
     later = max(groups, key=lambda group: str(group.objective.id))
     args = {
-        "scenario_techniques": [AssertTechnique.SingleTurn],
+        **_prompt_case(),
         "dataset_overrides": {"sources": [{"name": "assert_a"}], "max_total": 1},
     }
 
@@ -639,84 +663,33 @@ async def test_repeated_stored_objective_seed_is_rejected_async(harness: _Harnes
         await harness.initialize_async(harness.scenario(), dataset_config=config)
 
 
-async def test_baseline_sends_only_the_objective_with_the_group_judges_async(harness: _Harness) -> None:
+async def test_baseline_sends_the_stored_prompts_with_the_group_judges_async(harness: _Harness) -> None:
     await _store_async(name="assert_a", result=_result(group_count=1))
+    harness.overrefusal = True
     result = await harness.run_async(
-        harness.scenario(),
-        include_baseline=True,
-        scenario_techniques=[AssertTechnique.SingleTurn],
-        **_datasets("assert_a"),
+        harness.scenario(), scenario_techniques=[_technique("red_teaming")], max_turns=1, **_datasets("assert_a")
     )
 
-    sent = sorted(([message.api_role for message in request] for request in harness.target_requests), key=len)
-    assert sent == [["user"], ["system", "user"]]
-    baseline_request = next(request for request in harness.target_requests if len(request) == 1)
-    assert baseline_request[0].get_value() == "Clarify the return policy for item 0."
-    assert len(harness.judge_systems) == 4
     (baseline_name,) = [name for name in result.attack_results if name.startswith("baseline__")]
     assert result.display_group_map[baseline_name] == "baseline"
-
-
-@pytest.mark.parametrize("target_owns_instructions", [False, True])
-async def test_single_turn_target_skips_only_multi_turn_async(
-    harness: _Harness, target_owns_instructions: bool
-) -> None:
-    await _store_async(
-        name="assert_a", result=_result(group_count=1, target_owns_instructions=target_owns_instructions)
-    )
-    harness.objective.apply_capabilities(
-        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
-    )
-    scenario = await harness.initialize_async(
-        harness.scenario(), incompatible_technique_policy="skip", **_datasets("assert_a")
-    )
-    assert {attack.technique_name for attack in scenario._atomic_attacks} == {"single_turn"}
-    with harness.patched():
-        await scenario.run_async()
-    assert len(harness.target_requests) == 1
-    assert harness.adversarial_requests == []
-    assert len(harness.judge_systems) == 2
-
-
-async def test_single_turn_target_rejects_multi_turn_under_raise_policy_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1, target_owns_instructions=True))
-    harness.objective.apply_capabilities(
-        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
-    )
-    with pytest.raises(IncompatibleTechniqueError, match="natively support 'supports_multi_turn'"):
-        await harness.initialize_async(
-            harness.scenario(),
-            scenario_techniques=[AssertTechnique.MultiTurn],
-            incompatible_technique_policy="raise",
-            **_datasets("assert_a"),
-        )
-    assert harness.target_requests == harness.adversarial_requests == harness.judge_systems == []
-
-
-@pytest.mark.parametrize("include_baseline", [False, True])
-async def test_single_turn_target_cannot_run_only_multi_turn_async(harness: _Harness, include_baseline: bool) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1, target_owns_instructions=True))
-    harness.objective.apply_capabilities(
-        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
-    )
-    with pytest.raises(IncompatibleTechniqueError, match="no usable selected techniques"):
-        await harness.initialize_async(
-            harness.scenario(),
-            scenario_techniques=[AssertTechnique.MultiTurn],
-            incompatible_technique_policy="skip",
-            include_baseline=include_baseline,
-            **_datasets("assert_a"),
-        )
-    assert harness.target_requests == harness.adversarial_requests == harness.judge_systems == []
+    (baseline,) = result.attack_results[baseline_name]
+    assert baseline.outcome == AttackOutcome.FAILURE
+    baseline_requests = [
+        request
+        for request in harness.target_requests
+        if [message.api_role for message in request] == ["system", "user"]
+    ]
+    assert [request[-1].get_value() for request in baseline_requests] == ["Explain the return policy for item 0."] * 2
+    assert len(harness.judge_systems) == 4
+    scores = {score.score_category[0]: score.get_value() for score in await _scores_for_async(baseline)}
+    assert scores == {"policy_violation": False, "overrefusal": True}
 
 
 async def test_judge_wrapper_anchors_scores_on_the_scored_evidence_async(
     sqlite_instance: MemoryInterface, harness: _Harness
 ) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
-    scenario = await harness.initialize_async(
-        harness.scenario(), scenario_techniques=[AssertTechnique.SingleTurn], **_datasets("assert_a")
-    )
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    scenario = await harness.initialize_async(harness.scenario(), **_prompt_case(), **_datasets("assert_a"))
     policy = scenario._atomic_attacks[0].attack_technique.attack.get_attack_scoring_config().objective_scorer
     assert policy.get_chat_target() is harness.judge
     assert policy.with_scorer_block_policy(raise_if_scorer_blocks=False) is policy
@@ -754,8 +727,8 @@ async def test_judge_wrapper_anchors_scores_on_the_scored_evidence_async(
 
 
 async def test_resume_skips_completed_units_without_using_the_placeholder_async(harness: _Harness) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=2))
-    args = {"scenario_techniques": [AssertTechnique.SingleTurn], **_datasets("assert_a")}
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=2))
+    args = {**_prompt_case(), **_datasets("assert_a")}
     with patch(
         "pyrit.scenario.scenarios.foundry.assert_policy._AssertPlaceholderScorer._score_scorable_async",
         new_callable=AsyncMock,
@@ -827,11 +800,11 @@ async def test_stored_seed_rows_are_unchanged_by_a_run_async(
 
 
 async def test_python_provider_source_runs_without_a_stored_dataset_async(harness: _Harness) -> None:
-    provider = AssertProvider(dataset_name="assert_inline", result=_result(group_count=1))
-    config = DatasetAttackConfiguration(sources=[DatasetSource(name="assert_inline", provider=provider)])
-    scenario = await harness.initialize_async(
-        harness.scenario(), scenario_techniques=[AssertTechnique.SingleTurn], dataset_config=config
+    provider = AssertProvider(
+        dataset_name="assert_inline", result=_result(include_adversarial_prompt=False, group_count=1)
     )
+    config = DatasetAttackConfiguration(sources=[DatasetSource(name="assert_inline", provider=provider)])
+    scenario = await harness.initialize_async(harness.scenario(), **_prompt_case(), dataset_config=config)
     assert scenario.atomic_attack_count == 1
 
 
@@ -912,11 +885,11 @@ async def test_unsupported_assert_dimension_options_are_rejected_async(tmp_path:
 
 
 async def test_custom_dimensions_are_judged_and_sampled_async(harness: _Harness, tmp_path: Path) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
     harness.policy_violation = True
     result = await harness.run_async(
         harness.scenario(),
-        scenario_techniques=[AssertTechnique.SingleTurn],
+        **_prompt_case(),
         judge_preset_files=[_write_preset(tmp_path)],
         judge_samples=3,
         **_datasets("assert_a"),
@@ -984,27 +957,20 @@ async def test_estimate_counts_judge_calls_per_conversation_async() -> None:
     assert "Each conversation gets 12 judge calls" in (estimate.note or "")
 
 
-@pytest.mark.parametrize("technique", [AssertTechnique.SingleTurn, AssertTechnique.MultiTurn])
-async def test_technique_converters_apply_to_target_requests_async(
-    harness: _Harness, technique: AssertTechnique
-) -> None:
-    await _store_async(name="assert_a", result=_result(group_count=1))
-    default = await harness.initialize_async(
-        harness.scenario(), scenario_techniques=[technique], **_datasets("assert_a")
+@pytest.mark.parametrize("technique", ["prompt_sending", "red_teaming"])
+async def test_technique_converters_apply_to_target_requests_async(harness: _Harness, technique: str) -> None:
+    await _store_async(
+        name="assert_a", result=_result(group_count=1, include_adversarial_prompt=technique != "prompt_sending")
     )
-    unconverted = await harness.initialize_async(
-        harness.scenario(), scenario_techniques=[technique], technique_converters={}, **_datasets("assert_a")
-    )
+    args = {"scenario_techniques": [_technique(technique)], "include_baseline": False, **_datasets("assert_a")}
+    default = await harness.initialize_async(harness.scenario(), **args)
+    unconverted = await harness.initialize_async(harness.scenario(), technique_converters={}, **args)
     assert ScenarioEvaluationIdentifier(unconverted._build_scenario_identifier()).eval_hash == (
         ScenarioEvaluationIdentifier(default._build_scenario_identifier()).eval_hash
     )
 
     await harness.run_async(
-        harness.scenario(),
-        scenario_techniques=[technique],
-        technique_converters={technique.value: [Base64Converter()]},
-        max_turns=1,
-        **_datasets("assert_a"),
+        harness.scenario(), technique_converters={technique: [Base64Converter()]}, max_turns=1, **args
     )
 
     (sent,) = harness.target_requests

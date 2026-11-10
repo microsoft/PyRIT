@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 from collections import Counter
@@ -16,7 +17,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 from pydantic import ValidationError
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
 from pyrit.models import (
     AssertGroupMetadata,
     AttackSeedGroup,
@@ -29,25 +30,16 @@ from pyrit.models import (
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
-    SeedGroupRequirements,
 )
 from pyrit.models.score.assert_judge import AssertJudgeConfig, describe_validation_errors
 from pyrit.prompt_normalizer import ConverterConfiguration
-from pyrit.prompt_target import CapabilityName, TargetRequirements
-from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target
+from pyrit.registry import AttackTechniqueRegistry
+from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target, resolve_technique_factories
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
-from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSourceKind
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-from pyrit.scenario.core.technique_requirements import (
-    IncompatibleTechniqueError,
-    IncompatibleTechniquePolicy,
-    TechniqueRequirements,
-    check_target_compatibility,
-    filter_seed_groups,
-)
+from pyrit.scenario.core.technique_requirements import check_target_compatibility, filter_seed_groups
 from pyrit.score import (
     AssertJudgmentMode,
     TrueFalseCompositeScorer,
@@ -67,32 +59,32 @@ if TYPE_CHECKING:
 
     from pyrit.models import ScenarioDatasetSizeEstimate, Scorable, ScorableUnion, Score, ScoringExpectation
     from pyrit.prompt_target import PromptTarget
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
+    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import Scorer
     from pyrit.score.scorer import SnapshotParticipation
 
 logger = logging.getLogger(__name__)
 
 
-class AssertTechnique(ScenarioTechnique):
-    """How stored ASSERT groups reach the target."""
+@AttackTechniqueRegistry.cache_scenario_technique_class
+def _build_assert_policy_technique() -> type[ScenarioTechnique]:
+    """
+    Build the technique class from every registered attack technique.
 
-    ALL = ("all", {"all"})
-    SingleTurn = (
-        "single_turn",
-        {"single_turn"},
-        "Send the group's stored system and user prompts once, like an ASSERT prompt case.",
-    )
-    MultiTurn = (
-        "multi_turn",
-        {"multi_turn"},
-        "Let an adversarial chat follow the group's tester instructions, like an ASSERT scenario case.",
-    )
+    ``red_teaming`` is the default: it follows each group's stored tester instructions, like an
+    ASSERT scenario case. The baseline sends each group's stored prompts, like an ASSERT prompt case.
 
-    @classmethod
-    def get_aggregate_tags(cls) -> set[str]:
-        """Return the aggregate technique tags."""
-        return {"all"}
+    Returns:
+        type[ScenarioTechnique]: The dynamically generated technique enum class.
+    """
+    registry = AttackTechniqueRegistry.get_registry_singleton()
+    return AttackTechniqueRegistry.build_technique_class_from_factories(
+        class_name="AssertPolicyTechnique",
+        factories=list(registry.get_factories_or_raise().values()),
+        default_names={"red_teaming"},
+    )
 
 
 class _AssertPlaceholderScorer(TrueFalseScorer):
@@ -250,9 +242,10 @@ class AssertPolicy(Scenario):
     """
     Run stored ASSERT seed groups against a target and judge each conversation against its policy.
 
-    ``single_turn`` sends each group's stored system and user prompts once. ``multi_turn`` lets an
-    adversarial chat follow the group's tester instructions for ``max_turns`` turns, opening with
-    the stored user prompt when the group has one. Judges built from each group's taxonomy then
+    The baseline sends each group's stored system and user prompts once, like an ASSERT prompt
+    case. Any registered attack technique can run too; the default, ``red_teaming``, lets an
+    adversarial chat follow the group's stored tester instructions for ``max_turns`` turns, like an
+    ASSERT scenario case. Judges built from each group's taxonomy then
     read the whole conversation once per enabled judge dimension. By default these are policy
     violation (the objective score) and overrefusal (an auxiliary score). ``judge_presets`` adds
     dimensions from built-in presets and ``judge_preset_files`` from your own preset YAML files
@@ -260,10 +253,11 @@ class AssertPolicy(Scenario):
     ``objective_dimension`` picks the dimension used as the objective, and ``judge_samples``
     repeats every judge call and aggregates the verdicts as ASSERT does. Conversations with a
     blocked or errored target reply are not judged and stay undetermined. Results are grouped by
-    technique and by whether the group's assigned category is permissible.
+    technique.
     """
 
-    VERSION: int = 1
+    #: Version 2 runs registered attack techniques instead of ``single_turn``/``multi_turn``.
+    VERSION: int = 2
     _JUDGE_PARAMETER_NAMES: ClassVar[tuple[str, ...]] = (
         "judge_presets",
         "judge_preset_files",
@@ -271,7 +265,7 @@ class AssertPolicy(Scenario):
         "judge_samples",
         "objective_dimension",
     )
-    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Disabled
+    BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
     @apply_defaults
     def __init__(
@@ -285,8 +279,8 @@ class AssertPolicy(Scenario):
         Initialize the scenario.
 
         Args:
-            adversarial_chat (PromptTarget | None): The tester for multi-turn groups. Defaults to the
-                registered adversarial target, resolved when attacks are built.
+            adversarial_chat (PromptTarget | None): The adversarial chat for techniques that use one and
+                don't set their own. Defaults to the registered adversarial target.
             judge_target (PromptTarget | None): The ASSERT judge. Defaults to the registered scorer
                 target, resolved when the selected groups are read.
             scenario_result_id (str | None): Existing result to resume.
@@ -298,7 +292,7 @@ class AssertPolicy(Scenario):
         self._repeated_ids: set[str] = set()
         super().__init__(
             version=self.VERSION,
-            technique_class=AssertTechnique,
+            technique_class=_build_assert_policy_technique(),
             default_dataset_config=DatasetAttackConfiguration(max_per_dataset="all", max_total="all"),
             objective_scorer=_AssertPlaceholderScorer(),
             scenario_result_id=scenario_result_id,
@@ -316,7 +310,7 @@ class AssertPolicy(Scenario):
         return [
             Parameter(
                 name="max_turns",
-                description="Target turns in each multi-turn conversation. ASSERT's default is 6.",
+                description="Target turns for techniques that take a turn count. ASSERT's default is 6.",
                 param_type=int,
                 default=6,
             ),
@@ -448,9 +442,9 @@ class AssertPolicy(Scenario):
         if self._include_baseline:
             components.append(ScenarioRunSizeComponent(label="Baseline", count=count, is_baseline=True))
         note = (
-            "At most one unit per selected group for each technique; groups without that technique's stored "
-            f"inputs are skipped. Each conversation gets {self._count_judge_calls()} judge calls, and multi-turn "
-            f"units make up to {self.params['max_turns']} target and adversarial calls."
+            "At most one unit per selected group for each technique; groups a technique can't use are skipped. "
+            f"Each conversation gets {self._count_judge_calls()} judge calls, and techniques that take a turn "
+            f"count make up to {self.params['max_turns']} target turns."
         )
         if self._has_no_datasets():
             datasets = []
@@ -629,111 +623,63 @@ class AssertPolicy(Scenario):
         return _PolicyJudges(objective=objective, auxiliaries=tuple(auxiliaries))
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
-        factories = self._build_technique_factories()
         attacks = self._build_baselines(context=context) if context.include_baseline else []
-        for technique in cast("tuple[AssertTechnique, ...]", context.scenario_techniques):
-            factory = factories[technique]
+        for name, factory in resolve_technique_factories(context=context).items():
             if not check_target_compatibility(
                 target=context.objective_target,
                 attack_class=factory.attack_class,
                 requirements=factory.requirements,
-                technique_name=technique.value,
+                technique_name=name,
                 policy=context.incompatible_technique_policy,
             ):
                 continue
+            factory = self._apply_turn_limit(factory)
             for dataset_name, groups in context.seed_groups_by_dataset.items():
-                selected = self._select_groups(
-                    technique=technique, factory=factory, dataset_name=dataset_name, groups=groups, context=context
+                selected = filter_seed_groups(
+                    seed_groups=groups,
+                    requirements=factory.requirements.seed_group,
+                    seed_technique=factory.seed_technique,
+                    technique_name=name,
+                    dataset_name=dataset_name,
+                    policy=context.incompatible_technique_policy,
+                    validate_group=factory.validate_group_adversarial_prompts,
                 )
                 for group in sorted(selected, key=self._get_generation_order):
                     attacks.append(
                         await asyncio.to_thread(
-                            self._build_unit,
-                            context=context,
-                            technique=technique,
-                            factory=factory,
-                            group=group,
-                            name=self._get_unit_name(prefix=technique.value, group=group),
+                            self._build_unit, context=context, technique_name=name, factory=factory, group=group
                         )
                     )
         return attacks
 
-    def _build_technique_factories(self) -> dict[AssertTechnique, AttackTechniqueFactory]:
-        return {
-            AssertTechnique.SingleTurn: AttackTechniqueFactory(
-                name=AssertTechnique.SingleTurn.value,
-                attack_class=PromptSendingAttack,
-                description=AssertTechnique.SingleTurn.description,
-                technique_tags=["single_turn"],
-            ),
-            AssertTechnique.MultiTurn: AttackTechniqueFactory(
-                name=AssertTechnique.MultiTurn.value,
-                attack_class=RedTeamingAttack,
-                description=AssertTechnique.MultiTurn.description,
-                technique_tags=["multi_turn"],
-                requirements=TechniqueRequirements(
-                    objective_target=TargetRequirements(native_required=frozenset({CapabilityName.MULTI_TURN}))
-                ),
-                attack_kwargs={"max_turns": self.params["max_turns"], "score_last_turn_only": True},
-                adversarial_chat=self._adversarial_chat,
-                use_score_as_feedback=False,
-            ),
-        }
-
-    @staticmethod
-    def _select_groups(
-        *,
-        technique: AssertTechnique,
-        factory: AttackTechniqueFactory,
-        dataset_name: str,
-        groups: list[AttackSeedGroup],
-        context: ScenarioContext,
-    ) -> list[AttackSeedGroup]:
+    def _apply_turn_limit(self, factory: AttackTechniqueFactory) -> AttackTechniqueFactory:
         """
-        Keep groups that store the inputs a technique needs, under the incompatibility policy.
+        Apply ``max_turns`` to techniques whose attack takes a turn count.
+
+        Such attacks also judge only the final turn, so each conversation is judged once, as in ASSERT.
 
         Returns:
-            list[AttackSeedGroup]: Groups the technique can run.
-
-        Raises:
-            IncompatibleTechniqueError: If a group lacks the inputs and the policy is RAISE.
+            AttackTechniqueFactory: The factory, with the turn settings its attack accepts.
         """
-        single_turn = technique is AssertTechnique.SingleTurn
-        if single_turn:
-            compatible = [group for group in groups if any(prompt.role == "user" for prompt in group.prompts)]
-        else:
-            compatible = [group for group in groups if group.adversarial_prompts is not None]
-        missing = len(groups) - len(compatible)
-        if missing:
-            needed = "user prompt" if single_turn else "adversarial prompts"
-            message = f"Technique '{technique.value}', dataset '{dataset_name}': {missing} group(s) have no {needed}."
-            if context.incompatible_technique_policy is IncompatibleTechniquePolicy.RAISE:
-                raise IncompatibleTechniqueError(message)
-            logger.warning("Skipping %s", message)
-        if single_turn:
-            return compatible
-        return filter_seed_groups(
-            seed_groups=compatible,
-            requirements=factory.requirements.seed_group,
-            seed_technique=None,
-            technique_name=technique.value,
-            dataset_name=dataset_name,
-            policy=context.incompatible_technique_policy,
-            validate_group=factory.validate_group_adversarial_prompts,
-        )
+        accepted = inspect.signature(factory.attack_class.__init__).parameters
+        if "max_turns" not in accepted:
+            return factory
+        attack_kwargs: dict[str, Any] = {"max_turns": self.params["max_turns"]}
+        if "score_last_turn_only" in accepted:
+            attack_kwargs["score_last_turn_only"] = True
+        return factory.with_attack_kwargs(attack_kwargs=attack_kwargs)
 
     def _build_unit(
         self,
         *,
         context: ScenarioContext,
-        technique: AssertTechnique,
+        technique_name: str,
         factory: AttackTechniqueFactory,
         group: AttackSeedGroup,
-        name: str,
     ) -> AtomicAttack:
         scoring = self._get_scoring(group)
-        multi_turn = technique is AssertTechnique.MultiTurn
-        extra = context.technique_converters.get(technique.value)
+        extra = context.technique_converters.get(technique_name)
+        adversarial_chat = self._adversarial_chat if factory.adversarial_chat is None else None
         attack_technique = factory.create(
             objective_target=context.objective_target,
             attack_scoring_config=AttackScoringConfig(
@@ -741,40 +687,36 @@ class AssertPolicy(Scenario):
                 auxiliary_scorers=list(scoring.auxiliaries),
                 use_score_as_feedback=False,
             ),
+            adversarial_chat=adversarial_chat,
             extra_request_converters=ConverterConfiguration.from_converters(converters=extra) if extra else None,
-            seed_group=group if multi_turn else None,
+            seed_group=group,
         )
-        if not multi_turn:
-            # Keep the stored group so single- and multi-turn results share its logical ID and resume.
-            # The prompt case doesn't use the group's tester prompts; this records that on the technique.
-            attack_technique = AttackTechnique(
-                attack=attack_technique.attack,
-                requirements=attack_technique.requirements,
-                adversarial_prompts=group.adversarial_prompts,
-            )
-        stance = "permissible" if scoring.permissible else "impermissible"
         return AtomicAttack(
-            atomic_attack_name=name,
-            display_group=f"{technique.value}_{stance}",
-            technique_name=technique.value,
+            atomic_attack_name=self._get_unit_name(prefix=technique_name, group=group),
+            display_group=technique_name,
+            technique_name=technique_name,
             attack_technique=attack_technique,
             seed_groups=[group],
-            adversarial_chat=factory.resolve_adversarial_chat() if multi_turn else None,
+            adversarial_chat=adversarial_chat or factory.resolve_adversarial_chat(),
             objective_scorer=scoring.objective,
             memory_labels=context.memory_labels,
         )
 
     def _build_baselines(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """
-        Send each group's objective alone, judged by that group's policy.
+        Send each group's stored system and user prompts once, judged by that group's judges.
 
-        The stored prompts already run as ``single_turn``, so the baseline is the plain request.
+        This is ASSERT's prompt case. Groups without a stored user prompt are skipped.
 
         Returns:
-            list[AtomicAttack]: One baseline unit per selected group.
+            list[AtomicAttack]: One baseline unit per group with a stored user prompt.
         """
+        groups = sorted(context.seed_groups, key=self._get_generation_order)
+        prompted = [group for group in groups if any(prompt.role == "user" for prompt in group.prompts)]
+        if len(prompted) < len(groups):
+            logger.warning("Baseline: skipping %d group(s) without a stored user prompt.", len(groups) - len(prompted))
         baselines = []
-        for group in sorted(context.seed_groups, key=self._get_generation_order):
+        for group in prompted:
             scoring = self._get_scoring(group)
             attack = PromptSendingAttack(
                 objective_target=context.objective_target,
@@ -786,12 +728,9 @@ class AssertPolicy(Scenario):
                 AtomicAttack(
                     atomic_attack_name=self._get_unit_name(prefix="baseline", group=group),
                     display_group="baseline",
-                    attack_technique=AttackTechnique(
-                        attack=attack,
-                        requirements=TechniqueRequirements(
-                            seed_group=SeedGroupRequirements(objective_only=True, try_adapt=True)
-                        ),
-                    ),
+                    # Keep the stored group so baseline and technique results share its logical ID and resume.
+                    # The prompt case doesn't use the group's tester prompts; this records that on the technique.
+                    attack_technique=AttackTechnique(attack=attack, adversarial_prompts=group.adversarial_prompts),
                     seed_groups=[group],
                     objective_scorer=scoring.objective,
                     memory_labels=context.memory_labels,

@@ -3,7 +3,7 @@
 
 """Saved GUI and API launches of foundry.assert_policy resume with their judge settings."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 from unittest.mock import patch
 
@@ -12,12 +12,15 @@ import pytest
 from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.scenario_run_service import _LAUNCH_REQUEST_METADATA_KEY
 from pyrit.datasets import AssertProvider
+from pyrit.executor.attack import RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest
 from pyrit.models.catalog import RunScenarioRequest
-from pyrit.registry import ScenarioRegistry, TargetRegistry
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
 from pyrit.registry.resolution import reject_non_external_params
+from pyrit.scenario import AttackTechniqueFactory
 from pyrit.scenario.scenarios.foundry import AssertPolicy
+from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
 from unit.assert_mocks import make_assert_config, make_assert_result
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
@@ -33,6 +36,18 @@ _JUDGE_PARAMS: dict[str, Any] = {
     "judge_samples": 3,
     "objective_dimension": "harm_actionability",
 }
+
+
+@pytest.fixture(autouse=True)
+def technique_registry() -> Iterator[None]:
+    AttackTechniqueRegistry.reset_registry_singleton()
+    _build_assert_policy_technique.cache_clear()
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+        [AttackTechniqueFactory(name="red_teaming", attack_class=RedTeamingAttack, technique_tags=["multi_turn"])]
+    )
+    yield
+    AttackTechniqueRegistry.reset_registry_singleton()
+    _build_assert_policy_technique.cache_clear()
 
 
 @pytest.fixture
