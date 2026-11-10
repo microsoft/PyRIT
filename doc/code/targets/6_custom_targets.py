@@ -194,7 +194,7 @@ async def travel_agent_async(*, message: str, history: list[dict[str, str]]) -> 
 # The target turns the normalized conversation into the agent's arguments and wraps the reply in a
 # response message. The agent is stateless: it receives the full history on every call. The target
 # therefore declares `supports_multi_turn` and `supports_editable_history`. Multi-turn attacks, such as
-# the default `red_teaming` technique of `foundry.assert_policy`, can then hold a conversation with it.
+# the default `assert_package` technique of `foundry.assert_policy`, can then hold a conversation with it.
 # If your agent keeps its own conversation state instead, declare only `supports_multi_turn`.
 #
 # If the agent function is synchronous, call it with `await asyncio.to_thread(...)` so that it does
