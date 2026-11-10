@@ -141,8 +141,8 @@ sandbox, it also:
   reset or operator `recover_async`;
 - resets only after the running call finishes, closing the session first, and records the outcome.
 
-A `session` sandbox uses the same serialization and cancellation rules, but never automatically closes
-or replaces its session. A reset is attempted before closing, so a refused reset preserves its state.
+A `session` sandbox uses the same serialization and cancellation rules, but does not idle-close or renew
+its session. A reset is attempted before closing, so a refused reset preserves its state.
 The provider only shares the sandbox; it does not release, reset or recover it between model calls.
 
 A `call` sandbox's calls run in their callers' tasks, so the adapter cleans up when a caller gives up.
