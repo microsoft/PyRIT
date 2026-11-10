@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
+import { MemoryRouter } from 'react-router'
 
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import { readUserPreferences } from '@/utils/userPreferences'
@@ -21,6 +22,18 @@ const scorers: ScorerInstance[] = [
 
 describe('ScorerRegistry', () => {
   beforeEach(() => { window.localStorage.clear() })
+
+  it('offers a local scorer recipe and a route to configuration when empty', () => {
+    render(<MemoryRouter><FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="alice">
+      <ScorerRegistry scorers={[]} loading={false} error={null} onRefresh={jest.fn()} />
+    </UserPreferencesProvider></FluentProvider></MemoryRouter>)
+
+    const guide = screen.getByRole('region', { name: 'Register your first scorer' })
+    expect(within(guide).getByRole('link', { name: 'Configuration' })).toHaveAttribute('href', '/config')
+    expect(within(guide).getByRole('link', { name: 'local scorer initializer recipe' }))
+      .toHaveAttribute('href', expect.stringContaining('#initialization-scripts'))
+    expect(within(guide).getByText('Reinitialize PyRIT')).toBeVisible()
+  })
 
   it('browses existing scorers and saves a personal default without a create action', async () => {
     const user = userEvent.setup()
