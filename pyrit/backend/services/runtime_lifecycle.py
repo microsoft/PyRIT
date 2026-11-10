@@ -34,7 +34,7 @@ from pyrit.setup.environment_loading import resolve_environment_async
 from pyrit.setup.initialization import validate_reinitialization_memory
 
 if TYPE_CHECKING:
-    from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure, SavedEntryRef
+    from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure
 
 logger = logging.getLogger(__name__)
 
