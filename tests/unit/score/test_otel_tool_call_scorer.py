@@ -553,3 +553,35 @@ async def test_tool_observation_and_score_roll_back_together_async(sqlite_instan
 
     assert sqlite_instance._query_entries(ScoreEntry) == []
     assert (await sqlite_instance.get_observations_async(observation_ids=[observation.id])) == []
+
+
+@pytest.mark.parametrize("tamper", ["anchor", "payload_scope"])
+async def test_scorer_rejects_source_that_changes_scope_or_payload_async(tamper: str) -> None:
+    client = InMemoryTraceClient()
+    client.add_span(_span())
+    source = OtelTraceSource(trace_client=client)
+    scope = TraceScorable(trace_ids=("1" * 32,))
+    other_scope = TraceScorable(trace_ids=("3" * 32,))
+    observation = await source.acquire_async(scorable=scope)
+    tampered = (
+        observation.model_copy(update={"scorable": other_scope})
+        if tamper == "anchor"
+        else observation.model_copy(update={"payload": observation.payload.model_copy(update={"scope": other_scope})})
+    )
+    scorer = OtelToolCallScorer(source=source)
+
+    with patch.object(source, "acquire_async", new_callable=AsyncMock, return_value=tampered):
+        with pytest.raises(RuntimeError) as error:
+            await scorer.score_async(scorable=scope, expectation=_expectation("lookup"))
+
+    assert isinstance(error.value.__cause__, ValueError)
+    expected = "evidence anchor" if tamper == "anchor" else "incompatible evidence"
+    assert expected in str(error.value.__cause__)
+    client.close()
+
+
+def test_score_observation_rejects_non_tool_event_evidence() -> None:
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=InMemoryTraceClient()))
+
+    with pytest.raises(NonReplayableObservationError, match="stored tool-event observation"):
+        scorer._score_observation(observation=object(), evidence=object(), expectation=_expectation("lookup"))  # type: ignore[arg-type]
