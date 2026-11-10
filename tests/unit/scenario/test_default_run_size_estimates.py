@@ -43,7 +43,6 @@ from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.scenario.scenarios.foundry import FoundryComposite, FoundryTechnique, RedTeamAgent
 from pyrit.scenario.scenarios.garak import (
     ApiKey,
-    ApiKeyDatasetConfiguration,
     Encoding,
     Exploitation,
     FigStep,
@@ -227,13 +226,12 @@ async def test_configuration_only_checks_are_shared_before_dataset_reads_async(
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.parametrize(
     "configuration_class",
-    [ApiKeyDatasetConfiguration, PromptInjectDatasetConfiguration, LatentInjectionDatasetConfiguration],
+    [PromptInjectDatasetConfiguration, LatentInjectionDatasetConfiguration],
 )
 def test_ingredient_configurations_require_uncapped_sources(
     configuration_class: type[DatasetAttackConfiguration],
 ) -> None:
     scenario_class = {
-        ApiKeyDatasetConfiguration: ApiKey,
         PromptInjectDatasetConfiguration: PromptInject,
         LatentInjectionDatasetConfiguration: LatentInjection,
     }[configuration_class]
