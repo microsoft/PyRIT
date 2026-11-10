@@ -441,6 +441,13 @@ uses them:
 - `HTTPXAPITarget`, which uploads local files, can be created through the API only when
   `target_upload_directory` is set in `.pyrit_conf`; it then uploads files only from that
   folder, and callers cannot supply their own.
+- A copy of a registered target or converter, made from its `source`, keeps the source's
+  connection: it can't change the parameters its type reports as `copy_locked` (for OpenAI
+  targets the endpoint, `auth_mode`, key, headers, and HTTP client settings; for the Azure
+  Speech converters the region, key, and resource ID), and trying returns **400**. So a copy
+  can't take its source's credentials, or a token for an identity its source was set up with,
+  to another endpoint or resource. This rule covers copies only: creating a new target can
+  still send this server's key to an endpoint the caller chooses, as described below.
 
 Targets that need a setting the API does not allow can be registered in Python or with an
 initializer.

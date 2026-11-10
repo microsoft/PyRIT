@@ -276,11 +276,26 @@ class TestTemporaryComponents:
             await source.cleanup_target_async()
 
     @pytest.mark.parametrize("auth_mode", ["none", "identity", "api_key"])
-    def test_source_takes_its_auth_mode_only_from_source_params(self, auth_mode: str) -> None:
+    def test_a_copy_uses_its_sources_auth_mode(self, auth_mode: str) -> None:
         source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
 
-        with pytest.raises(ValidationError, match="including auth_mode"):
+        with pytest.raises(ValidationError, match="a copy uses its source's auth mode"):
             CreateTargetRequest(type="OpenAIChatTarget", source=source, register=False, auth_mode=auth_mode)
+
+    @pytest.mark.parametrize(
+        ("fields", "message"),
+        [
+            ({}, "source requires register=false"),
+            ({"register": False, "params": {"temperature": 0.8}}, "a copy takes its overrides in source.params"),
+        ],
+    )
+    def test_a_copy_is_unregistered_and_takes_overrides_in_its_source(
+        self, fields: dict[str, object], message: str
+    ) -> None:
+        source = SourceInstanceSpec(source_name="source", source_hash="hash", params={})
+
+        with pytest.raises(ValidationError, match=message):
+            CreateTargetRequest(type="OpenAIChatTarget", source=source, **fields)
 
     async def test_no_key_source_stays_no_key_async(self) -> None:
         source = OpenAIChatTarget(endpoint="http://localhost:11434/v1", model_name="llama3", auth_mode="none")
