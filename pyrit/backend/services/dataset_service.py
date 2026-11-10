@@ -386,7 +386,7 @@ class DatasetService:
                 or any(
                     seed.data_type == "text"
                     and seed.seed_type != "simulated_conversation"
-                    and search.lower() in seed.value.lower()
+                    and search.casefold() in seed.value.casefold()
                     for seed in members
                 )
             )

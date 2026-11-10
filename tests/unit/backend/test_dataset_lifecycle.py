@@ -150,6 +150,35 @@ async def test_text_upload_browsing_metadata_groups_and_exact_delete(
     assert [entry.dataset_name for entry in await _seeds(sqlite_instance)] == ["abother"]
 
 
+@pytest.mark.parametrize(
+    ("value", "search", "value_pattern", "expected"),
+    [
+        ("Stra\u00dfe", "STRASSE", None, 1),
+        ("\u03bf\u03c2", "\u03bf\u03c3", None, 1),
+        ("Stra\u00dfe", None, "STRASSE", 0),
+        ("\u03bf\u03c2", None, "\u03bf\u03c3", 0),
+    ],
+)
+async def test_editable_unicode_search_matches_ordinary_browsing(
+    client: AsyncClient, value: str, search: str | None, value_pattern: str | None, expected: int
+) -> None:
+    created = await _upload(client, manifest=_manifest(seeds=[{"data_type": "text", "value": value}]))
+    assert created.status_code == 201, created.text
+    params: dict[str, str | bool] = {"selection_key": "dataset:named:upload"}
+    if search is not None:
+        params["search"] = search
+    if value_pattern is not None:
+        params["value_pattern"] = value_pattern
+    ordinary = await client.get(f"{URL}/seeds", params=params)
+    editable = await client.get(f"{URL}/seeds", params={**params, "editable": True})
+    assert ordinary.status_code == editable.status_code == 200
+    assert ordinary.json()["total"] == expected
+    assert editable.json()["total"] == expected
+    assert [item["example_id"] for item in ordinary.json()["items"]] == [
+        item["example_id"] for item in editable.json()["items"]
+    ]
+
+
 async def test_atomic_mixed_batch_exact_ids_counts_provenance_and_omitted_rows(
     client: AsyncClient, sqlite_instance: SQLiteMemory
 ) -> None:

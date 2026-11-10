@@ -164,7 +164,8 @@ datasets for content tokens.
 Editable and ordinary lists share the same literal `search` and explicit
 `value_pattern` filters, including filter-bound pagination. Patterns match the
 whole text value, ignoring case: `%` and `_` are wildcards and `/` escapes the
-next character. Supply only one search mode; simulation configurations are not searched.
+next character. Literal search uses Unicode casefolding; explicit patterns retain
+Unicode lowercasing. Supply only one search mode; simulation configurations are not searched.
 
 ```json
 {
