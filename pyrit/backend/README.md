@@ -71,7 +71,6 @@ is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITI
 | saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** |
 | uses a Temporary target | **400** |
 | takes a name that a target or a saved file already has | **409** |
-| takes the name of a saved entry that couldn't be restored | **409** |
 | can't be written to storage | **503** |
 
 A request refused with **400** can be sent again without `persist`. When storage can't be written, the server log names
@@ -86,8 +85,8 @@ A saved target records the create request without its name: the target type, `au
 API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
 constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
 changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
-restores one. A file that still doesn't match fails to restore with the reason, and its name stays held, so nothing
-else stands in for it.
+restores one. A file that still doesn't match fails to restore with the reason, and the backend stays not ready until
+the file is fixed or deleted, so nothing runs without the saved target.
 
 ### Manual attack creation
 

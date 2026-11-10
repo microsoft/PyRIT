@@ -61,8 +61,7 @@ from pyrit.backend.services.target_service import SavedTargetConflictError, Save
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
-from pyrit.models.catalog import RestoreFailureReason, SavedEntryOwner, TargetInstance
-from pyrit.registry import SavedEntryUnavailableError, UnavailableEntry
+from pyrit.models.catalog import SavedEntryOwner, TargetInstance
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -1841,30 +1840,6 @@ class TestConverterRoutes:
             )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_preview_conversion_with_a_held_converter_is_a_conflict(self, client: TestClient) -> None:
-        """Test that a converter whose saved entry couldn't be restored is named, not reported as a server error."""
-        entry = UnavailableEntry(
-            kind="converter", name="formal", reason=RestoreFailureReason.BUILD_ERROR, message="ValueError: boom"
-        )
-        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
-            mock_service = MagicMock()
-            mock_service.preview_conversion_async = AsyncMock(
-                side_effect=SavedEntryUnavailableError(entry=entry, name="formal")
-            )
-            mock_get_service.return_value = mock_service
-
-            response = client.post(
-                "/api/converters/preview",
-                json={
-                    "original_value": "test",
-                    "original_value_data_type": "text",
-                    "converter_ids": ["formal"],
-                },
-            )
-
-            assert response.status_code == status.HTTP_409_CONFLICT
-            assert "'formal' couldn't be restored" in response.json()["detail"]
 
     def test_preview_conversion_internal_error(self, client: TestClient) -> None:
         """Test preview conversion with internal error returns 500."""
