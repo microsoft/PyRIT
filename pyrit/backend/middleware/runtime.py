@@ -36,6 +36,7 @@ class RuntimeAdmissionMiddleware:
             in (
                 "/api/health",
                 "/api/runtime",
+                "/api/restore-failures",
                 "/api/version",
                 "/api/auth/config",
                 "/api/auth/access",
@@ -44,14 +45,16 @@ class RuntimeAdmissionMiddleware:
         ):
             await self.app(scope, receive, send)
             return
-        management = path == "/api/config" or path.startswith(("/api/config/", "/api/initializers"))
+        management = path == "/api/config" or path.startswith(
+            ("/api/config/", "/api/initializers", "/api/saved-entries/")
+        )
         apply_route = path.startswith("/api/config/runtime")
         write = management and scope["method"] not in ("GET", "HEAD", "OPTIONS") and not apply_route
         if (
             runtime.is_stopping
             or (write and (runtime.edit_lock.locked() or (runtime.apply_task and not runtime.apply_task.done())))
             or (path.startswith("/api/initializers") and runtime.edit_lock.locked())
-            or (path.startswith("/api/initializers") and runtime.state == "initializing")
+            or (path.startswith(("/api/initializers", "/api/saved-entries/")) and runtime.state == "initializing")
             or (not management and runtime.state != "ready")
         ):
             await JSONResponse(

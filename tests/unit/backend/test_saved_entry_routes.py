@@ -13,7 +13,7 @@ from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.main import app
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.models.saved_entries import SavedEntryResponse, SavedEntryUpdateResponse
-from pyrit.backend.routes import saved_entries
+from pyrit.backend.routes import converters, saved_entries
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
@@ -143,7 +143,28 @@ def test_the_caller_follows_the_sign_in_setting(
     assert get.call_args.kwargs["caller"] == caller
 
 
-async def test_deleting_a_saved_entry_waits_for_the_runtime_like_the_rest_of_the_api() -> None:
+async def test_a_saved_entry_can_be_deleted_while_the_runtime_isnt_ready() -> None:
+    failed_app = FastAPI()
+    failed_app.state.authentication_policy = AuthenticationPolicy(mode="local")
+    runtime = RuntimeLifecycle(app=failed_app, source=ConfigurationFileService(config_file_value=None))
+    runtime.state = "failed"
+    failed_app.state.runtime_lifecycle = runtime
+    failed_app.add_middleware(RuntimeAdmissionMiddleware)
+    failed_app.include_router(saved_entries.router, prefix="/api")
+    failed_app.include_router(converters.router, prefix="/api")
+
+    with patch.object(SavedEntryService, "delete_saved_entry_async", AsyncMock()) as delete:
+        transport = httpx.ASGITransport(app=failed_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
+            deleted = await http.delete("/api/saved-entries/converters/ghost?expected_version=v1")
+            listed = await http.get("/api/converters")
+
+    assert deleted.status_code == 204
+    delete.assert_awaited_once()
+    assert listed.status_code == 503
+
+
+async def test_deleting_a_saved_entry_waits_while_the_runtime_is_starting() -> None:
     starting_app = FastAPI()
     starting_app.state.authentication_policy = AuthenticationPolicy(mode="local")
     runtime = RuntimeLifecycle(app=starting_app, source=ConfigurationFileService(config_file_value=None))

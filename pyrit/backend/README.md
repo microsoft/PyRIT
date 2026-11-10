@@ -70,12 +70,11 @@ is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITI
 | names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
 | would save a key, or use one of this server's keys or address settings | **400** not-saveable |
 | gives an address that can carry a credential | **400** not-saveable |
-| saves a target type that can't be saved, or one that only a scan's launch scripts added | **400** not-saveable |
+| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** not-saveable |
 | saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** not-saveable |
 | uses a Temporary target | **400** not-saveable |
 | gives an address that isn't a full http(s) or ws(s) address, where this server's address setting would apply | **400** |
 | takes a name that a target or a saved file already has | **409** |
-| takes the name of a saved entry that couldn't be restored | **409** |
 | can't be written to storage | **503** |
 
 A not-saveable **400** has `"type": "/errors/not-saveable"`, and the request can be sent again without `persist`; the
@@ -93,8 +92,8 @@ A saved target records the create request without its name: the target type, `au
 API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
 constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
 changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
-restores one. A file that still doesn't match fails to restore with the reason, and its name stays held, so nothing
-else stands in for it.
+restores one. A file that still doesn't match fails to restore with the reason, and the backend stays not ready until
+the file is fixed or deleted, so nothing runs without the saved target.
 
 ### Converters and scorers
 
@@ -121,7 +120,8 @@ refuses a saved converter (**409**); delete it with `DELETE /api/saved-entries/c
 ### Saved entries
 
 Saved targets, converters, scorers, and techniques are addressed by their saved files, where `kind` is `targets`,
-`converters`, `scorers`, or `techniques`.
+`converters`, `scorers`, or `techniques`. These routes answer while the runtime isn't ready, so an entry that keeps it
+from starting can be deleted.
 
 - `GET /api/saved-entries/{kind}/{name}` - The file's `version`, why it can't be used if it can't (`problem`), who
   saved it (`saved_by`, `saved_by_me`), whether the caller may change or delete it (`can_change`), and, for a caller
@@ -145,11 +145,11 @@ Saved targets, converters, scorers, and techniques are addressed by their saved 
   administrator. `expected_version` is required (**422**) unless the file can't be read. **409** when the file
   changed since that version, another saved entry names this one (they're listed), a registered entry of any origin
   holds it (they're listed; a Temporary one is gone after the next restart or configuration apply), or a request, run,
-  send, or estimate is in progress. **503** when storage can't be read or written. Deleting an entry that couldn't be
-  restored takes it off `GET /api/restore-failures` and frees its name right away, which brings back a startup entry
-  with the same name. Saving and deleting take turns, and a save checks again that the entries it names still come
-  back after a restart (**409** otherwise). A save whose entry then can't be registered deletes its file again, unless
-  another writer has replaced the file since.
+  send, or estimate is in progress. **503** when storage can't be read or written, or while the runtime is starting.
+  Deleting an entry that couldn't be restored takes it off `GET /api/restore-failures`; apply the configuration or
+  restart the backend to finish recovering. Saving and deleting take turns, and a save checks again that the entries
+  it names still come back after a restart (**409** otherwise). A save whose entry then can't be registered deletes
+  its file again, unless another writer has replaced the file since.
 
 ### Manual attack creation
 

@@ -53,14 +53,17 @@ interface RestoreFailures {
   forget: (failure: RestoreFailure) => void
 }
 
-// The list is read when the count or the runtime generation changes, rather than on every readiness poll.
-function useRestoreFailures(count: number, generation: string): RestoreFailures {
+// A later apply or restart can fail again with the same count and generation, so the list is read on every
+// poll while the banner shows.
+function useRestoreFailures(): RestoreFailures {
   const [failures, setFailures] = useState<RestoreFailure[]>([])
   const [listFailed, setListFailed] = useState(false)
   useEffect(() => {
     let cancelled = false
-    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    let fetching = false
     const load = async (): Promise<void> => {
+      if (fetching) return
+      fetching = true
       try {
         const list = await runtimeApi.getRestoreFailures()
         if (!cancelled) {
@@ -68,19 +71,19 @@ function useRestoreFailures(count: number, generation: string): RestoreFailures 
           setListFailed(false)
         }
       } catch {
-        // Keep the last list and say it couldn't be refreshed; try again shortly.
-        if (!cancelled) {
-          setListFailed(true)
-          retryTimer = setTimeout(() => { void load() }, POLL_INTERVAL_MS)
-        }
+        // Keep the last list and say it couldn't be refreshed; the next poll tries again.
+        if (!cancelled) setListFailed(true)
+      } finally {
+        fetching = false
       }
     }
     void load()
+    const timer = setInterval(() => { void load() }, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
-      clearTimeout(retryTimer)
+      clearInterval(timer)
     }
-  }, [count, generation])
+  }, [])
   // A deleted entry is gone from the server's list too, so it leaves this one without waiting for the next refresh.
   const forget = (deleted: RestoreFailure): void => {
     setFailures((current) => current.filter((failure) => (
@@ -99,22 +102,21 @@ function describeFailure(failure: RestoreFailure): string {
   return `${subject}: ${failure.message}${dependency}`
 }
 
-function RestoreFailuresBanner({ count, generation }: { count: number; generation: string }) {
+function RestoreFailuresBanner({ count }: { count: number }) {
   const styles = useRuntimeBannerStyles()
   const listId = useId()
   const [expanded, setExpanded] = useState(false)
-  const { failures, listFailed, forget } = useRestoreFailures(count, generation)
-  const techniqueFailed = failures.some((failure) => failure.kind === 'techniques')
-  const entries = count === 1 ? '1 saved entry' : `${count} saved entries`
-  const impact = techniqueFailed
-    ? `${entries} can't be used until fixed or deleted, and until then a scan has to name its techniques.`
-    : `${entries} can't be used until fixed or deleted.`
+  const { failures, listFailed, forget } = useRestoreFailures()
+  const summary = count === 1
+    ? "1 saved entry couldn't be restored, so new runs and sends are unavailable until it's fixed or deleted."
+    : `${count} saved entries couldn't be restored, so new runs and sends are unavailable until they're fixed or deleted.`
   return (
     <MessageBar intent="warning" layout="multiline">
       <MessageBarBody>
         <MessageBarTitle>Some saved entries couldn&apos;t be restored</MessageBarTitle>
-        {impact} Whoever saved an entry, or an administrator, can delete it from the details; an administrator can
-        also fix its file, then apply the configuration or restart the backend.
+        {summary} Drafts are preserved.
+        Whoever saved an entry, or an administrator, can delete it from the details, and an administrator can fix
+        its file. Then apply the configuration or restart the backend.
         <div
           id={listId}
           role="region"
@@ -160,10 +162,19 @@ function RestoreFailuresBanner({ count, generation }: { count: number; generatio
 
 export function RuntimeBanner() {
   const runtime = useRuntime()
+  if (runtime.ready) return null
   const failureCount = runtime.restore_failures ?? 0
-  if (runtime.ready) {
-    if (failureCount === 0) return null
-    return <RestoreFailuresBanner count={failureCount} generation={runtime.generation} />
+  if (runtime.state === 'failed' && failureCount > 0) return <RestoreFailuresBanner count={failureCount} />
+  if (runtime.state === 'failed') {
+    // Deleting every entry that couldn't be restored leaves the runtime failed until it restores again.
+    return (
+      <MessageBar intent="warning">
+        <MessageBarBody>
+          PyRIT isn&apos;t ready, so new runs and sends are unavailable. Drafts are preserved. An administrator can
+          apply the configuration or restart the backend.
+        </MessageBarBody>
+      </MessageBar>
+    )
   }
   return (
     <MessageBar intent="warning">
