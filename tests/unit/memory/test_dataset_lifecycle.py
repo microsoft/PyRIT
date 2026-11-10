@@ -389,13 +389,14 @@ async def test_bulk_message_write_ignores_unrelated_seed_reservation(
     )
     await second.reserve_dataset_mutation_async(dataset_name="reserved", paths=[])
     entry = PromptMemoryEntry(entry=MessagePiece(role="user", original_value="hello", conversation_id="c"))
+    entry_id = entry.id
     async with await first.get_session_async() as session:
         statement: Insert | Update
         if operation == "update":
             session.add(entry)
             await session.commit()
             statement = (
-                update(PromptMemoryEntry.__table__).where(PromptMemoryEntry.id == entry.id).values(original_value="new")
+                update(PromptMemoryEntry.__table__)                .where(PromptMemoryEntry.id == entry_id).values(original_value="new")
             )
         else:
             statement = insert(PromptMemoryEntry.__table__).values(
@@ -404,7 +405,7 @@ async def test_bulk_message_write_ignores_unrelated_seed_reservation(
         await session.execute(statement)
         await session.commit()
     async with await second.get_session_async() as session:
-        value = await session.scalar(select(PromptMemoryEntry.original_value).where(PromptMemoryEntry.id == entry.id))
+        value = await session.scalar(select(PromptMemoryEntry.original_value).where(PromptMemoryEntry.id == entry_id))
         assert value == ("new" if operation == "update" else "hello")
 
 
