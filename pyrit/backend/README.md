@@ -89,7 +89,8 @@ launch scripts). A saved target can only use targets that come back after a rest
 their own sign-in. A saved target's `saved_by` is the name of the user who saved it (null when it was saved with sign-in
 off), and `saved_by_me` says whether that's the signed-in user asking. The user's object ID isn't returned.
 
-A saved target records its class and constructor parameters as the API accepted them, so it follows the class's
+A saved target records the create request without its name: the target type, `auth_mode`, and the parameters as the
+API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
 constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
 changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
 restores one. A file that still doesn't match fails to restore with the reason, and its name stays held, so nothing

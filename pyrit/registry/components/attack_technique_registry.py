@@ -183,6 +183,10 @@ class TechniqueSelectionUnavailableError(Exception):
         self.names = tuple(names)
 
 
+class TechniqueAdmissionError(ValueError):
+    """A technique can't be registered for a reason of its own, such as a name a scenario can't use."""
+
+
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
     """Factory storage with an atomic runtime-admission path."""
 
@@ -196,8 +200,9 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         Raises:
             SavedEntryUnavailableError: If the name, in any letter case, is held for a saved technique
                 that couldn't be restored.
-            TechniqueSelectorConflictError: If the name or a tag conflicts with a registered technique.
-            ValueError: If the technique can't be registered for another reason, such as a scenario pool it breaks.
+            TechniqueSelectorConflictError: If the name or a tag conflicts with another technique's name or tag.
+            TechniqueAdmissionError: If a tag repeats the technique's own name, a selector can't become a scenario
+                member, or the factory doesn't fit the scenarios it would join.
         """
         from pyrit.registry.components.scenario_registry import ScenarioRegistry
 
@@ -216,8 +221,9 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         Raises:
             SavedEntryUnavailableError: If the name, in any letter case, is held for a saved technique
                 that couldn't be restored.
-            TechniqueSelectorConflictError: If the name or a tag conflicts with a registered technique.
-            ValueError: If the technique can't be registered for another reason, such as a scenario pool it breaks.
+            TechniqueSelectorConflictError: If the name or a tag conflicts with another technique's name or tag.
+            TechniqueAdmissionError: If a tag repeats the technique's own name, a selector can't become a scenario
+                member, or the factory doesn't fit the scenarios it would join.
         """
         from pyrit.registry.components.scenario_registry import ScenarioRegistry
 
@@ -234,8 +240,9 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         Raises:
             SavedEntryUnavailableError: If the name, in any letter case, is held for a saved technique
                 that couldn't be restored.
-            TechniqueSelectorConflictError: If the name or a tag conflicts with a registered technique.
-            ValueError: If the technique can't be registered for another reason, such as a scenario pool it breaks.
+            TechniqueSelectorConflictError: If the name or a tag conflicts with another technique's name or tag.
+            TechniqueAdmissionError: If a tag repeats the technique's own name, a selector can't become a scenario
+                member, or the factory doesn't fit the scenarios it would join.
         """
         held = {entry.name.casefold(): entry for entry in self.get_unavailable_entries() if entry.name is not None}
         if (held_entry := held.get(factory.name.casefold())) is not None:
@@ -261,23 +268,28 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
         for tag in factory.technique_tags:
             folded = tag.casefold()
+            if folded == folded_name:
+                raise TechniqueAdmissionError(f"Tag '{tag}' repeats the technique's name")
             if folded in held:
                 record_held_name_refusal(entry=held[folded], name=tag)
             elif folded in names:
                 _record_saved_entry_refusal(self.get_entry(names[folded]))
-            if folded in names or folded == folded_name:
+            if folded in names:
                 raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
             if folded in tags and tags[folded] != tag:
                 _record_saved_techniques_with_tag(entries=entries, folded_tag=folded)
                 raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
-        _validate_generated_member_collisions(
-            class_name="ScenarioTechnique",
-            factories=[factory],
-            aggregate_tags=set(factory.technique_tags) - {"all", "default"},
-        )
-        AttackTechniqueRegistry.get_registry_singleton().validate_scenario_pools(
-            {**{entry.name: entry.instance for entry in entries}, factory.name: factory}
-        )
+        try:
+            _validate_generated_member_collisions(
+                class_name="ScenarioTechnique",
+                factories=[factory],
+                aggregate_tags=set(factory.technique_tags) - {"all", "default"},
+            )
+            AttackTechniqueRegistry.get_registry_singleton().validate_scenario_pools(
+                {**{entry.name: entry.instance for entry in entries}, factory.name: factory}
+            )
+        except ValueError as error:
+            raise TechniqueAdmissionError(str(error)) from error
 
 
 class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechniqueMetadata]):

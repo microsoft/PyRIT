@@ -25,6 +25,7 @@ from pyrit.models.catalog import (
     StoredRecipe,
     TechniqueRecipe,
 )
+from pyrit.models.catalog.registry_recipe import RECIPE_SCHEMA_VERSION
 from pyrit.registry.file_document_storage import FileDocumentStorage
 
 if TYPE_CHECKING:
@@ -44,14 +45,33 @@ def shorten_text(text: str, *, limit: int) -> str:
     return text if len(text) <= limit else f"{text[: limit - 3]}..."
 
 
-def _escape_invalid_text(value: str) -> str:
+def escape_unprintable(text: str) -> str:
     """
-    Escape what can't be written as UTF-8, such as the bytes of a file name that isn't UTF-8.
+    Write each character that can't be shown as it is as a backslash escape.
+
+    That covers a new line or a terminal escape in a stored key, which would otherwise start a new log line or
+    change a terminal's colors, and the bytes of a file name that isn't UTF-8.
 
     Returns:
-        str: The text, with each such character written as a backslash escape.
+        str: The text, on one line and safe to encode as UTF-8.
     """
-    return value.encode("utf-8", "backslashreplace").decode("utf-8")
+    if text.isprintable():
+        return text
+    return "".join(
+        character if character.isprintable() else character.encode("unicode_escape").decode("ascii")
+        for character in text
+    )
+
+
+def safe_failure_text(text: str) -> str:
+    """
+    Make text that can repeat stored content safe for a failure report: escaped, then shortened.
+
+    Returns:
+        str: The text, at most ``MAX_FAILURE_MESSAGE_LENGTH`` characters long.
+    """
+    # Escaping never makes text shorter, so what's past the cap can't show and needn't be escaped.
+    return shorten_text(escape_unprintable(text[: MAX_FAILURE_MESSAGE_LENGTH + 1]), limit=MAX_FAILURE_MESSAGE_LENGTH)
 
 
 @dataclass(frozen=True)
@@ -141,7 +161,7 @@ class RegistryRecipeStorage(FileDocumentStorage):
             self._failure(
                 name=issue.name,
                 reason=RestoreFailureReason.UNREADABLE_RECIPE,
-                message=_escape_invalid_text(issue.message),
+                message=issue.message,
             )
             for issue in listing.unreadable
         ]
@@ -155,8 +175,8 @@ class RegistryRecipeStorage(FileDocumentStorage):
         ignored = tuple(
             IgnoredRecipeFile(
                 kind=self._kind,
-                file_name=_escape_invalid_text(issue.file_name),
-                message=_escape_invalid_text(issue.message),
+                file_name=escape_unprintable(issue.file_name),
+                message=safe_failure_text(issue.message),
             )
             for issue in listing.ignored
         )
@@ -214,7 +234,7 @@ class RegistryRecipeStorage(FileDocumentStorage):
         Returns:
             bytes: The document.
         """
-        current = recipe.model_copy(update={"schema_version": type(recipe).CURRENT_SCHEMA_VERSION})
+        current = recipe.model_copy(update={"schema_version": RECIPE_SCHEMA_VERSION})
         return current.model_dump_json(indent=2, exclude_none=True).encode("utf-8")
 
     def _parse_recipe(self, *, name: str, content: bytes) -> StoredRecipe | RestoreFailure:
@@ -245,21 +265,24 @@ class RegistryRecipeStorage(FileDocumentStorage):
             return self._failure(name=name, version=version, reason=invalid, message=too_deep)
         model = TechniqueRecipe if self._kind is RegistryRecipeKind.TECHNIQUES else ComponentRecipe
         schema_version = payload.get("schema_version")
-        current = model.CURRENT_SCHEMA_VERSION
-        if isinstance(schema_version, int) and schema_version > current:
-            message = f"Saved by a newer PyRIT (format version {schema_version}; this one reads up to {current})."
+        if isinstance(schema_version, int) and schema_version > RECIPE_SCHEMA_VERSION:
+            message = (
+                f"Saved by a newer PyRIT (format version {schema_version}; "
+                f"this one reads up to {RECIPE_SCHEMA_VERSION})."
+            )
             return self._failure(
                 name=name, version=version, reason=RestoreFailureReason.NEWER_SCHEMA_VERSION, message=message
             )
         try:
             recipe = model.model_validate(payload)
+            return StoredRecipe(ref=SavedEntryRef(kind=self._kind, name=name), recipe=recipe, version=version)
         except ValidationError as error:
+            # pydantic stops at a fixed depth and reports it as a recursion error, though a JSON file can't hold a loop.
+            if any(issue["type"] == "recursion_loop" for issue in error.errors()):
+                return self._failure(name=name, version=version, reason=invalid, message=too_deep)
             return self._failure(
                 name=name, version=version, reason=invalid, message=self._describe_validation_error(error)
             )
-        except RecursionError:
-            return self._failure(name=name, version=version, reason=invalid, message=too_deep)
-        return StoredRecipe(ref=SavedEntryRef(kind=self._kind, name=name), recipe=recipe, version=version)
 
     def _failure(
         self, *, name: str, reason: RestoreFailureReason, message: str, version: str | None = None
@@ -267,10 +290,14 @@ class RegistryRecipeStorage(FileDocumentStorage):
         """
         Build a failure for one entry in this registry's folder.
 
+        The message can repeat stored content, such as a key name or a version number, so it's escaped and shortened.
+
         Returns:
             RestoreFailure: The failure.
         """
-        return RestoreFailure(kind=self._kind, name=name, reason=reason, message=message, version=version)
+        return RestoreFailure(
+            kind=self._kind, name=name, reason=reason, message=safe_failure_text(message), version=version
+        )
 
     @staticmethod
     def _describe_validation_error(error: ValidationError) -> str:
@@ -278,13 +305,15 @@ class RegistryRecipeStorage(FileDocumentStorage):
         Summarize a validation error, naming each field and what's wrong with it, without the stored values.
 
         A field's location can repeat a stored key, such as an unknown one, so each part of a location
-        is shortened, and so is the whole summary.
+        is escaped and shortened. ``_failure`` shortens the whole summary.
 
         Returns:
-            str: The summary, at most ``MAX_FAILURE_MESSAGE_LENGTH`` characters long.
+            str: The summary.
         """
         problems = []
         for issue in error.errors():
-            location = ".".join(shorten_text(str(part), limit=_MAX_LOCATION_PART_LENGTH) for part in issue["loc"])
+            location = ".".join(
+                shorten_text(escape_unprintable(str(part)), limit=_MAX_LOCATION_PART_LENGTH) for part in issue["loc"]
+            )
             problems.append(f"{location or 'document'}: {issue['msg']}")
-        return shorten_text("Not a valid saved recipe: " + "; ".join(problems), limit=MAX_FAILURE_MESSAGE_LENGTH)
+        return "Not a valid saved recipe: " + "; ".join(problems)

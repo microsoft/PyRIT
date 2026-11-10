@@ -61,6 +61,10 @@ SAVED_ENTRY_OWNER_METADATA_KEY = "saved_entry_owner"
 
 _saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
 _registration_origin: ContextVar[RegistryEntryOrigin | None] = ContextVar("_registration_origin", default=None)
+# The kind, name, and owner of the saved entry being rebuilt in this context, so registering that name marks the entry.
+_saved_entry_registration: ContextVar[tuple[str, str, SavedEntryOwner | None] | None] = ContextVar(
+    "_saved_entry_registration", default=None
+)
 
 
 class RegistryNameTakenError(ValueError):
@@ -295,6 +299,28 @@ def record_saved_entry_refusals() -> Generator[list[tuple[str, str]], None, None
         yield refusals
     finally:
         _saved_entry_refusals.reset(token)
+
+
+@contextmanager
+def saved_entry_registration(
+    *, kind: str, name: str, owner: SavedEntryOwner | None = None
+) -> Generator[None, None, None]:
+    """
+    Mark the entry registered under ``name`` in this context as rebuilt from a saved recipe.
+
+    Args:
+        kind (str): The saved recipe kind, such as ``"targets"``.
+        name (str): The saved entry's name.
+        owner (SavedEntryOwner | None): Who saved the entry, or None when nobody was signed in.
+
+    Yields:
+        None: Control returns to the caller while the mark applies.
+    """
+    token = _saved_entry_registration.set((kind, name, owner))
+    try:
+        yield
+    finally:
+        _saved_entry_registration.reset(token)
 
 
 @runtime_checkable
@@ -535,8 +561,7 @@ class DefaultInstanceRegistry(Generic[T]):
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
             ValueError: If the name is reserved.
-            RegistryNameTakenError: If the name is already registered and ``replace``
-                is False.
+            RegistryNameTakenError: If the name is already registered and ``replace`` is False.
             SavedEntryReplacementError: If ``replace`` would replace an entry rebuilt
                 from a saved recipe.
             SavedEntryUnavailableError: If the name belongs to a saved entry that
@@ -554,6 +579,10 @@ class DefaultInstanceRegistry(Generic[T]):
         entry_metadata = dict(metadata or {})
         if _registration_origin.get() is RegistryEntryOrigin.CONFIGURATION:
             entry_metadata[CONFIGURATION_ENTRY_METADATA_KEY] = True
+        restoring = _saved_entry_registration.get()
+        if restoring is not None and restoring[1] == name:
+            entry_metadata[SAVED_ENTRY_METADATA_KEY] = restoring[0]
+            entry_metadata[SAVED_ENTRY_OWNER_METADATA_KEY] = restoring[2]
         entry = RegistryEntry(
             name=name,
             instance=instance,
@@ -597,8 +626,8 @@ class DefaultInstanceRegistry(Generic[T]):
 
         Raises:
             ValueError: If the name is reserved.
-            RegistryNameTakenError: If the name is already registered.
             SavedEntryUnavailableError: If the name belongs to a saved entry that couldn't be restored.
+            RegistryNameTakenError: If the name is already registered.
         """
         with self._lock:
             if name in self._reserved_names:
