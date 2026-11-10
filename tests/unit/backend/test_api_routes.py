@@ -12,6 +12,7 @@ import uuid
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NotRequired, get_type_hints
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
 
@@ -64,7 +65,8 @@ from pyrit.backend.services.target_service import (
 from pyrit.memory import MemoryInterface
 from pyrit.memory.memory_interface import AttackStateConflictError
 from pyrit.models import AttackOutcome, ConverterIdentifier, MessagePiece, Score, TargetCapabilities, TargetIdentifier
-from pyrit.models.catalog import SavedEntryOwner, TargetInstance
+from pyrit.models.catalog import RestoreFailureReason, SavedEntryOwner, TargetInstance
+from pyrit.registry import SavedEntryUnavailableError, UnavailableEntry
 
 
 def _make_message_view(*, role: str = "user", value: str = "hello", sequence: int = 1) -> MessageView:
@@ -277,6 +279,23 @@ class TestAttackRoutes:
             response = client.post("/api/attacks", json={"objective": "", "name": "Legacy objective"})
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
         service.assert_not_called()
+
+    def test_create_attack_half_branch_spec_is_a_bad_request(self, client: TestClient) -> None:
+        """A half provided branching spec answers 400 like the conversation endpoint, not 404."""
+        with patch("pyrit.backend.routes.attacks.get_attack_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.create_attack_async = AsyncMock(
+                side_effect=ValueError("Both source_conversation_id and cutoff_index must be provided together")
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/attacks",
+                json={"source_conversation_id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301"},
+            )
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "must be provided together" in response.json()["detail"]
 
     def test_create_attack_target_not_found(self, client: TestClient) -> None:
         """Test attack creation with non-existent target."""
@@ -1461,6 +1480,18 @@ class TestTargetRoutes:
 
         assert mock_get_service.return_value.create_target_async.call_args.kwargs["owner"] == owner
 
+    def test_create_target_records_no_owner_when_not_saving(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch("pyrit.backend.routes.targets._saved_entry_owner") as saved_entry_owner,
+        ):
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}})
+
+        assert mock_get_service.return_value.create_target_async.call_args.kwargs["owner"] is None
+        saved_entry_owner.assert_not_called()
+
     @pytest.mark.parametrize(
         ("fields", "message"),
         [
@@ -1846,6 +1877,30 @@ class TestConverterRoutes:
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_preview_conversion_with_a_held_converter_is_a_conflict(self, client: TestClient) -> None:
+        """Test that a converter whose saved entry couldn't be restored is named, not reported as a server error."""
+        entry = UnavailableEntry(
+            kind="converter", name="formal", reason=RestoreFailureReason.BUILD_ERROR, message="ValueError: boom"
+        )
+        with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.preview_conversion_async = AsyncMock(
+                side_effect=SavedEntryUnavailableError(entry=entry, name="formal")
+            )
+            mock_get_service.return_value = mock_service
+
+            response = client.post(
+                "/api/converters/preview",
+                json={
+                    "original_value": "test",
+                    "original_value_data_type": "text",
+                    "converter_ids": ["formal"],
+                },
+            )
+
+            assert response.status_code == status.HTTP_409_CONFLICT
+            assert "'formal' couldn't be restored" in response.json()["detail"]
+
     def test_preview_conversion_internal_error(self, client: TestClient) -> None:
         """Test preview conversion with internal error returns 500."""
         with patch("pyrit.backend.routes.converters.get_converter_service") as mock_get_service:
@@ -1888,19 +1943,18 @@ class TestVersionRoutes:
 
         assert response.json()["default_operation"] == "op_proposed"
 
-    def test_get_version_with_build_info(self, client: TestClient) -> None:
+    @pytest.mark.parametrize("commit", ["abc123", None])
+    def test_get_version_with_build_info(self, *, client: TestClient, commit: str | None) -> None:
         """Test getting version with build info from Docker."""
+        build_info: version_routes.BuildInfo = {
+            "source": "git" if commit is not None else "pypi",
+            "commit": commit,
+            "modified": False,
+            "display": "1.0.0-test",
+        }
         # Create a temp file to simulate Docker build info
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(
-                {
-                    "source": "git",
-                    "commit": "abc123",
-                    "modified": False,
-                    "display": "1.0.0-test",
-                },
-                f,
-            )
+            json.dump(build_info, f)
             temp_path = f.name
 
         try:
@@ -1915,18 +1969,14 @@ class TestVersionRoutes:
 
                 # Mock open to return our temp file content
                 with patch("builtins.open", create=True) as mock_open:
-                    mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(
-                        {
-                            "source": "git",
-                            "commit": "abc123",
-                            "modified": False,
-                            "display": "1.0.0-test",
-                        }
-                    )
+                    mock_open.return_value.__enter__.return_value.read.return_value = json.dumps(build_info)
 
                     response = client.get("/api/version")
 
             assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            for key, value in build_info.items():
+                assert data[key] == value
             to_thread_mock.assert_any_await(version_routes._load_build_info, mock_path_instance)
         finally:
             os.unlink(temp_path)
@@ -1947,6 +1997,39 @@ class TestVersionRoutes:
         assert "version" in data
         assert data["source"] is None
         assert data["commit"] is None
+
+    def test_build_info_keys_are_not_required(self) -> None:
+        """The BuildInfo contract keeps absent keys distinguishable from nullable values."""
+        assert get_type_hints(version_routes.BuildInfo, include_extras=True) == {
+            "source": NotRequired[str],
+            "commit": NotRequired[str | None],
+            "modified": NotRequired[bool],
+            "display": NotRequired[str],
+        }
+        assert version_routes.BuildInfo.__required_keys__ == frozenset()
+        assert version_routes.BuildInfo.__optional_keys__ == {"source", "commit", "modified", "display"}
+        assert version_routes.BuildInfo() == {}
+
+    def test_get_version_build_info_absent_display_falls_back(self, client: TestClient) -> None:
+        """A build-info file without `display` falls back to the package version."""
+        to_thread_mock = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+        with (
+            patch("pyrit.backend.routes.version.Path") as mock_path_class,
+            patch("pyrit.backend.routes.version.asyncio.to_thread", new=to_thread_mock),
+            patch.object(version_routes, "_load_build_info", return_value={"source": "git"}),
+        ):
+            mock_path_instance = MagicMock()
+            mock_path_instance.exists.return_value = True
+            mock_path_class.return_value = mock_path_instance
+
+            response = client.get("/api/version")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["source"] == "git"
+        assert data["commit"] is None
+        assert data["modified"] is None
+        assert data["display"] == data["version"]
 
 
 class TestScoreRoutes:

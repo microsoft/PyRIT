@@ -441,7 +441,9 @@ async def test_mismatched_arguments_reach_model_as_tool_error(*, arguments: str,
             assert [message.api_role for message in result] == ["assistant", "tool", "assistant"]
             assert send.await_count == 2
             await send.call_args.kwargs["api_call"]()
-            assert json.loads(create.call_args.kwargs["input"][-1]["output"]) == {
+            output = json.loads(create.call_args.kwargs["input"][-1]["output"])
+            assert output.pop("message")
+            assert output == {
                 "error": "malformed_arguments",
                 "function": "record_async",
                 "raw_arguments": arguments,

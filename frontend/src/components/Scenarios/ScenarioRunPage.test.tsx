@@ -8,7 +8,9 @@ import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-rou
 import { useScenarioQueue } from '@/hooks/useScenarioQueue'
 import { useScenarioRunProgress } from '@/hooks/useScenarioRunProgress'
 import { scenariosApi } from '@/services/api'
-import type { ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunPlan, ScenarioRunSummary } from '@/types'
+import type {
+  ScenarioHierarchyNode, ScenarioHierarchyProjection, ScenarioProgressResult, ScenarioProgressSummary, ScenarioRunPlan, ScenarioRunSummary,
+} from '@/types'
 import { scenarioRunAttackRoutePath, scenarioRunRoutePath } from '@/utils/routeParams'
 import { INITIAL_SCENARIO_RUN_PROGRESS_STATE, type ScenarioRunProgressState } from '@/utils/scenarioRunProgress'
 
@@ -214,6 +216,41 @@ describe('ScenarioRunPage', () => {
     expect(await screen.findByRole('button', { name: 'Close attack details' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Close attack details' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'First objective' })).toHaveFocus())
+  })
+
+  it('restores focus to the objective opener when the objective dialog closes', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const objective = screen.getByRole('button', { name: 'First objective' })
+    await user.click(objective)
+    const dialog = within(await screen.findByRole('dialog'))
+    await user.click(dialog.getByRole('button', { name: 'Close', exact: true }))
+    await waitFor(() => expect(objective).toHaveFocus())
+  })
+
+  it('restores focus to the objective opener after Escape and on reopening', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    const objective = screen.getByRole('button', { name: 'First objective' })
+    await user.click(objective)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(objective).toHaveFocus())
+    await user.click(objective)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(objective).toHaveFocus())
+  })
+
+  it('restores focus to the technique opener when attack details are dismissed with Escape', async () => {
+    const user = userEvent.setup()
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    await expand(user)
+    const details = screen.getAllByRole('button', { name: /^Open details for PromptSendingAttack:/ })[0]
+    await user.click(details)
+    await screen.findByRole('dialog')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(details).toHaveFocus())
   })
 
   it('shows per-group and per-objective success rates without restoring paired outcomes', () => {
@@ -497,5 +534,106 @@ describe('ScenarioRunPage', () => {
   it('retains history filters and transient suite return navigation', () => {
     render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} navigationState={{ suiteExecutionId: 'suite', suiteName: 'Review suite' }} />)
     expect(screen.getByRole('link', { name: 'Back to Review suite' })).toHaveAttribute('href', '/scanner/history/suites/executions/suite')
+  })
+
+  it('keeps the newest execution in the latest-100 fallback when it belongs to a later member group', () => {
+    const olderAttempts = Array.from({ length: 100 }, (_, index) => ({
+      ...ATTEMPT, attack_result_id: `attempt-${index + 1}`, conversation_id: `conversation-${index + 1}`,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+    }))
+    const newest = {
+      ...ATTEMPT, attack_result_id: 'attempt-101', conversation_id: 'conversation-101', atomic_group_id: 'group-b',
+      atomic_attack_name: 'SecondAttack', timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, 101)).toISOString(),
+    }
+    state = makeState({
+      results: [...olderAttempts, newest],
+      summary: { ...SUMMARY, techniques: [{ ...SUMMARY.techniques[0], atomic_group_ids: ['group', 'group-b'], atomic_attack_names: ['PromptSendingAttack', 'SecondAttack'] }] },
+    })
+    render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+    expect(screen.getByText('Showing the latest 100 of 101 executions in this group.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Open details for SecondAttack/ })).toBeInTheDocument()
+  })
+
+  describe('flat-row fallback while result relationships load or fail', () => {
+    const attemptAt = (index: number, atomicGroupId: string): ScenarioProgressResult => ({
+      ...ATTEMPT, attack_result_id: `attempt-${index}`, conversation_id: `conversation-${index}`,
+      atomic_group_id: atomicGroupId, atomic_attack_name: `Attack ${index}`,
+      timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+    })
+    const cutoffResults = (): ScenarioProgressResult[] => [
+      ...Array.from({ length: 100 }, (_, index) => attemptAt(index + 1, 'group')),
+      attemptAt(101, 'group-b'),
+    ]
+    const twoMemberSummary = { ...SUMMARY, techniques: [{ ...SUMMARY.techniques[0], atomic_group_ids: ['group', 'group-b'] }] }
+    const shownAttacks = (): (string | undefined)[] => within(screen.getByRole('table', { name: 'Direct attack results' }))
+      .getAllByRole('button', { name: /^Open details for / })
+      .map((button) => button.getAttribute('aria-label')?.match(/Attack \d+/)?.[0])
+    const expectLatestHundred = (): void => {
+      expect(screen.getByText('Showing the latest 100 of 101 executions in this group.')).toBeInTheDocument()
+      expect(shownAttacks()).toHaveLength(100)
+      expect(shownAttacks()[0]).toBe('Attack 101')
+      expect(shownAttacks()).not.toContain('Attack 1')
+    }
+
+    it('orders interleaved member groups newest-first while relationships load', () => {
+      state = makeState({
+        results: [attemptAt(1, 'group'), attemptAt(2, 'group-b'), attemptAt(3, 'group'), attemptAt(4, 'group-b')],
+        summary: twoMemberSummary,
+      })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(shownAttacks()).toEqual(['Attack 4', 'Attack 3', 'Attack 2', 'Attack 1'])
+    })
+
+    it('keeps the newest 100 at the cutoff while relationships load', () => {
+      state = makeState({ results: cutoffResults(), summary: twoMemberSummary })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(screen.getByText(/Loading result relationships/)).toBeInTheDocument()
+      expectLatestHundred()
+    })
+
+    it('keeps the newest 100 at the cutoff after relationships fail to load', async () => {
+      jest.mocked(scenariosApi.getRunHierarchy).mockRejectedValueOnce(new Error('Relationship service unavailable'))
+      state = makeState({ results: cutoffResults(), summary: twoMemberSummary })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(await screen.findByText(/Could not load the result relationships/)).toBeInTheDocument()
+      expectLatestHundred()
+    })
+
+    it('keeps a one-member group at its newest 100 while relationships load', () => {
+      state = makeState({ results: Array.from({ length: 101 }, (_, index) => attemptAt(index + 1, 'group')) })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      expect(shownAttacks()).toHaveLength(100)
+      expect(shownAttacks()[0]).toBe('Attack 101')
+      expect(shownAttacks()).not.toContain('Attack 1')
+    })
+
+    it('shows every supplied root without the fallback notice once relationships are ready', async () => {
+      const roots = Array.from({ length: 101 }, (_, index): ScenarioHierarchyNode => ({
+        attack_result_id: `attempt-${index + 1}`, conversation_id: `conversation-${index + 1}`, result_role: 'target_facing',
+        atomic_attack_name: `Attack ${index + 1}`, atomic_group_id: 'group', seed_group_id: 'seed-1', objective: 'First objective',
+        outcome: 'success', execution_time_ms: 5_000, executed_turns: 1,
+        timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, index + 1)).toISOString(),
+        total_retries: 0, retries: [], retries_truncated: false, child_attack_result_ids: [], child_references_truncated: false,
+        children: [], children_truncated: false, child_offset: 0, unresolved_child_attack_result_ids: [],
+        unresolved_child_references_truncated: false, conversations: [], conversations_truncated: false,
+      }))
+      jest.mocked(scenariosApi.getRunHierarchy).mockResolvedValueOnce({
+        scenario_result_id: RUN_ID, scenario_name: 'TestScenario', scenario_version: 1, status: 'COMPLETED',
+        groups: [{ atomic_group_id: 'group', atomic_attack_name: 'PromptSendingAttack', display_group: 'Direct', roots, counts: COUNTS }],
+        overall_counts: COUNTS,
+        diagnostics: {
+          failed_attacks: [], failed_attacks_count: 0, failed_attacks_truncated: false, attack_retries: [],
+          attack_retries_count: 0, attack_retries_truncated: false, total_retries: 0, rootless_result_ids: [],
+          rootless_results_count: 0, rootless_results_truncated: false,
+        },
+        truncated: false, has_more: false, next_cursor: null,
+      } satisfies ScenarioHierarchyProjection)
+      state = makeState({ results: cutoffResults(), summary: twoMemberSummary })
+      render(<Wrapper path={scenarioRunRoutePath(RUN_ID)} />)
+      await waitFor(() => expect(screen.queryByText(/Loading result relationships/)).not.toBeInTheDocument())
+      expect(screen.queryByText(/Showing the latest/)).not.toBeInTheDocument()
+      expect(shownAttacks()).toHaveLength(101)
+      expect(shownAttacks()[0]).toBe('Attack 1')
+    })
   })
 })
