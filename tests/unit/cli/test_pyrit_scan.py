@@ -1295,13 +1295,14 @@ class TestScenarioParamCoercion:
             parser.parse_args(["--dry-run", "on"])
         assert "invalid value" in capsys.readouterr().err
 
-    def test_list_int_param_coerces_each_value(self):
+    @pytest.mark.parametrize("type_name", ["list[int]", "list[int] | None", "list[int | None] | None"])
+    def test_list_int_param_coerces_each_value(self, type_name: str) -> None:
         from argparse import ArgumentParser
 
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[_sp(name="sample_ids", description="...", param_type="list[int]", is_list=True)],
+            params=[_sp(name="sample_ids", description="...", param_type=type_name, is_list=True)],
         )
 
         parsed = parser.parse_args(["--sample-ids", "1", "2", "3"])

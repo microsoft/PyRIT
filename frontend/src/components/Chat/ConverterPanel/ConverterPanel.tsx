@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { DragEvent, ReactNode } from 'react'
+import type { DragEvent, ReactNode, RefObject } from 'react'
 
 import {
   Button,
@@ -50,6 +50,7 @@ const PIECE_TYPE_LABELS: Record<string, string> = {
 const MIN_PANEL_WIDTH = 480
 const MAX_PANEL_WIDTH = 1200
 const DEFAULT_PANEL_WIDTH = 560
+const PANEL_RESIZE_STEP = 16
 
 interface ValuePreviewProps {
   dataType: string
@@ -69,6 +70,7 @@ interface ConverterPanelProps {
   controller: ChatConverterController
   selectedMessageCount?: number
   onApply?: (updates: PieceConversionUpdates) => void
+  resizeBoundaryRef?: RefObject<HTMLDivElement | null>
 }
 
 interface SelectedConverter extends ConverterInstance {
@@ -163,6 +165,7 @@ export default function ConverterPanel({
   controller,
   selectedMessageCount,
   onApply,
+  resizeBoundaryRef,
 }: ConverterPanelProps) {
   const { generation, ready } = useRuntime()
   const styles = useConverterPanelStyles()
@@ -202,6 +205,27 @@ export default function ConverterPanel({
   const discardTemporarySettings = controller.discardTemporarySettings
   useEffect(() => () => discardTemporarySettings?.(), [discardTemporarySettings])
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
+  const [maxPanelWidth, setMaxPanelWidth] = useState(MAX_PANEL_WIDTH)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const minPanelWidth = Math.min(MIN_PANEL_WIDTH, maxPanelWidth)
+  const visiblePanelWidth = Math.max(minPanelWidth, Math.min(maxPanelWidth, panelWidth))
+  useEffect(() => {
+    const boundary = resizeBoundaryRef?.current ?? panelRef.current?.parentElement
+    if (!boundary) return
+    const updateMaxWidth = (width: number): void => {
+      if (width <= 0) return
+      const maximum = Math.min(MAX_PANEL_WIDTH, width)
+      const minimum = Math.min(MIN_PANEL_WIDTH, maximum)
+      setMaxPanelWidth(maximum)
+      setPanelWidth((current: number) => Math.max(minimum, Math.min(maximum, current)))
+    }
+    updateMaxWidth(boundary.clientWidth)
+    const observer = new ResizeObserver((entries: ResizeObserverEntry[]) => {
+      for (const entry of entries) updateMaxWidth(entry.contentRect.width)
+    })
+    observer.observe(boundary)
+    return () => observer.disconnect()
+  }, [resizeBoundaryRef])
   const isResizing = useRef(false)
   const draggedConverterIndex = useRef<number | null>(null)
   const applyResult = (applied: PieceConversionUpdates | void): void => {
@@ -365,10 +389,27 @@ export default function ConverterPanel({
     document.body.style.userSelect = 'none'
   }, [])
 
+  const handleResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>): void => {
+    const nextWidth: Record<string, (width: number) => number> = {
+      ArrowLeft: (width) => width - PANEL_RESIZE_STEP,
+      ArrowRight: (width) => width + PANEL_RESIZE_STEP,
+      Home: () => minPanelWidth,
+      End: () => maxPanelWidth,
+    }
+    const resize = nextWidth[event.key]
+    if (!resize) return
+    event.preventDefault()
+    setPanelWidth((width: number) => {
+      const current = Math.max(minPanelWidth, Math.min(maxPanelWidth, width))
+      return Math.max(minPanelWidth, Math.min(maxPanelWidth, resize(current)))
+    })
+  }, [minPanelWidth, maxPanelWidth])
+
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent): void => {
       if (!isResizing.current) return
-      setPanelWidth(Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, event.clientX)))
+      const left = panelRef.current?.getBoundingClientRect().left ?? 0
+      setPanelWidth(Math.max(minPanelWidth, Math.min(maxPanelWidth, event.clientX - left)))
     }
     const handleMouseUp = (): void => {
       if (!isResizing.current) return
@@ -382,10 +423,10 @@ export default function ConverterPanel({
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [])
+  }, [minPanelWidth, maxPanelWidth])
 
   return (
-    <div className={styles.resizeContainer} style={{ width: panelWidth }}>
+    <div ref={panelRef} className={styles.resizeContainer} style={{ width: visiblePanelWidth }}>
       <aside className={styles.root} data-testid="converter-panel">
         <div className={styles.header}>
           <div className={styles.headerTitle}>
@@ -604,9 +645,18 @@ export default function ConverterPanel({
           )}
         </div>
       </aside>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- focusable separator is the WAI-ARIA window splitter pattern (jsx-a11y#577) */}
       <div
         className={styles.resizeHandle}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize converters panel"
+        aria-valuenow={visiblePanelWidth}
+        aria-valuemin={minPanelWidth}
+        aria-valuemax={maxPanelWidth}
+        tabIndex={0}
         onMouseDown={handleMouseDown}
+        onKeyDown={handleResizeKeyDown}
         data-testid="converter-panel-resize"
       />
       <CreateConverterDialog

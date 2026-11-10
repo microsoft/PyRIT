@@ -225,6 +225,7 @@ export default function ScenarioRunPreviewDialog({
           </DialogContent>
           <DialogActions>
             <Button
+              className={styles.touchTarget}
               appearance="secondary"
               disabled={submitting}
               onClick={onCancel}
@@ -232,6 +233,7 @@ export default function ScenarioRunPreviewDialog({
               Cancel
             </Button>
             <Button
+              className={styles.touchTarget}
               appearance="primary"
               disabled={confirmDisabled}
               onClick={onConfirm}

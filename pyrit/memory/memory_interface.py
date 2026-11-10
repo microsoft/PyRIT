@@ -1084,7 +1084,14 @@ class MemoryInterface(abc.ABC):
         if operation_id is not None:
             statement = statement.where(FindingEntry.operation_id == operation_id)
         if title_query or title_pattern is not None:
-            statement = statement.where(text_match(column=FindingEntry.title, value=title_query, pattern=title_pattern))
+            statement = statement.where(
+                text_match(
+                    column=FindingEntry.title,
+                    value=title_query,
+                    pattern=title_pattern,
+                    casefold=title_pattern is None,
+                )
+            )
         statement = statement.order_by(*self._finding_order()).limit(limit).offset(offset)
         async with await self.get_session_async() as session:
             return [entry.get_finding() for entry in (await session.scalars(statement)).all()]
@@ -3539,7 +3546,7 @@ class MemoryInterface(abc.ABC):
         *,
         score_ids: Sequence[str] | None = None,
         score_type: str | None = None,
-        score_category: str | None = None,
+        score_category: str | Sequence[str] | None = None,
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
@@ -3551,7 +3558,8 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): Return only scores whose category list contains this category.
+            score_category (str | Sequence[str] | None): Return scores that list this category, or every category
+                of a sequence. Names match whole and case-insensitively.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -3570,13 +3578,10 @@ class MemoryInterface(abc.ABC):
         if score_type:
             conditions.append(ScoreEntry.score_type == score_type)
         if score_category:
-            # score_category is stored as a JSON array, so match by element membership.
-            conditions.append(
-                self._get_condition_json_array_match(
-                    json_column=ScoreEntry.score_category,
-                    property_path="$",
-                    array_to_match=[score_category],
-                )
+            # score_category is stored as a JSON list, so match one whole element of it.
+            categories = [score_category] if isinstance(score_category, str) else list(score_category)
+            self._add_list_conditions(
+                field=ScoreEntry.score_category, conditions=conditions, values=categories, exact=True
             )
         if sent_after:
             conditions.append(ScoreEntry.timestamp >= sent_after)
@@ -4913,7 +4918,8 @@ class MemoryInterface(abc.ABC):
 
         Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
         one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
-        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds. A get_seed_groups
+        preview shows such ungrouped matches as single-seed groups even though this method does not remove them.
 
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
@@ -5646,7 +5652,12 @@ class MemoryInterface(abc.ABC):
                 and_(
                     SeedEntry.data_type == "text",
                     SeedEntry.seed_type != "simulated_conversation",
-                    text_match(column=SeedEntry.value, value=value_search, pattern=value_pattern),
+                    text_match(
+                        column=SeedEntry.value,
+                        value=value_search,
+                        pattern=value_pattern,
+                        casefold=value_pattern is None,
+                    ),
                 )
             )
 
@@ -6028,9 +6039,14 @@ class MemoryInterface(abc.ABC):
         if seeds:
             related_prompt_group_ids = {seed.prompt_group_id for seed in seeds if seed.prompt_group_id}
             if related_prompt_group_ids:
-                seeds = self._dispatch_memory_operation(
-                    "get_seeds", self._execute_get_seeds, prompt_group_ids=list(related_prompt_group_ids)
-                )
+                # Seeds without a group can't be found by group ID, so keep them as matched.
+                ungrouped_seeds = [seed for seed in seeds if not seed.prompt_group_id]
+                seeds = [
+                    *self._dispatch_memory_operation(
+                        "get_seeds", self._execute_get_seeds, prompt_group_ids=list(related_prompt_group_ids)
+                    ),
+                    *ungrouped_seeds,
+                ]
 
         # Deduplicate seeds to ensure we don't have duplicate prompts in the groups
         if seeds:
@@ -9955,7 +9971,7 @@ class MemoryInterface(abc.ABC):
         *,
         score_ids: Sequence[str] | None = None,
         score_type: str | None = None,
-        score_category: str | None = None,
+        score_category: str | Sequence[str] | None = None,
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
@@ -9988,7 +10004,7 @@ class MemoryInterface(abc.ABC):
         *,
         score_ids: Sequence[str] | None = None,
         score_type: str | None = None,
-        score_category: str | None = None,
+        score_category: str | Sequence[str] | None = None,
         sent_after: datetime | None = None,
         sent_before: datetime | None = None,
         identifier_filters: Sequence[IdentifierFilter] | None = None,
@@ -10000,7 +10016,8 @@ class MemoryInterface(abc.ABC):
         Args:
             score_ids (Sequence[str] | None): A list of score IDs to filter by.
             score_type (str | None): The type of the score to filter by.
-            score_category (str | None): Return only scores whose category list contains this category.
+            score_category (str | Sequence[str] | None): Return scores that list this category, or every category
+                of a sequence. Names match whole and case-insensitively.
             sent_after (datetime | None): Filter for scores sent after this datetime.
             sent_before (datetime | None): Filter for scores sent before this datetime.
             identifier_filters (Sequence[IdentifierFilter] | None): A sequence of IdentifierFilter objects that
@@ -10992,7 +11009,8 @@ class MemoryInterface(abc.ABC):
 
         Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
         one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
-        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds. A get_seed_groups
+        preview shows such ungrouped matches as single-seed groups even though this method does not remove them.
 
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
