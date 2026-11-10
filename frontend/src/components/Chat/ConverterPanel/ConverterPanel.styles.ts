@@ -7,7 +7,7 @@ export const useConverterPanelStyles = makeStyles({
     flexDirection: 'row',
     height: '100%',
     flexShrink: 0,
-    maxWidth: 'calc(100vw - 56px)',
+    maxWidth: '100%',
   },
   root: {
     display: 'flex',

@@ -499,7 +499,7 @@ class Scenario(ABC):
 
     def _get_default_objective_scorer(self) -> TrueFalseScorer:
         # Deferred import to avoid circular dependency.
-        from pyrit.setup.initializers.scorers import ScorerInitializerTags
+        from pyrit.setup.initializers import ScorerInitializerTags
 
         # first check if the registry has a default objective scorer
         # if available either itself, or its chat target will be used
