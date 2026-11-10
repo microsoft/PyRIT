@@ -194,6 +194,7 @@ def test_remove_seeds_metadata_only_matches_scalar_json_types(
     session.query.return_value = query
     query.filter.return_value = query
     query.delete.return_value = 1
+    query.first.return_value = None
 
     with patch.object(uninitialized_memory_interface, "_get_session", return_value=session):
         if remove_groups:
@@ -204,7 +205,7 @@ def test_remove_seeds_metadata_only_matches_scalar_json_types(
             removed = uninitialized_memory_interface._execute_remove_seeds_from_memory(metadata={"payload": value})
 
     assert removed == 1
-    condition = query.filter.call_args.args[0]
+    condition = query.filter.call_args_list[-1 if remove_groups else 0].args[0]
     compiled = condition.compile(dialect=mssql.dialect())
     assert "[metadata_0].[type] IN (1, 2, 3)" in str(compiled)
     assert compiled.params["md_key_0"] == "payload"
