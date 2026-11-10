@@ -3,16 +3,33 @@
 
 import importlib
 from io import StringIO
+from pathlib import Path
+from types import ModuleType
 from unittest.mock import patch
 
 import pytest
 import sqlalchemy as sa
+from alembic import command
+from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy.orm import Session
 
 from pyrit.memory.memory_models import SeedEntry
 from pyrit.models import AttackTechniqueSeedGroup, SeedIdentifier, SeedObjective, SeedPrompt, SeedSimulatedConversation
+
+
+def _config_for(connection: sa.Connection) -> Config:
+    config = Config()
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic"))
+    config.attributes["connection"] = connection
+    return config
+
+
+def _backfill_migration() -> ModuleType:
+    return importlib.import_module(
+        "pyrit.memory.alembic.versions.a8f3c1d9e620_preserve_legacy_simulation_technique_flags"
+    )
 
 
 def test_seed_is_general_technique_migration_preserves_legacy_rows() -> None:
@@ -32,9 +49,14 @@ def test_seed_is_general_technique_migration_preserves_legacy_rows() -> None:
                     "(3, 'objective', 'objective')"
                 )
             )
-            operations = Operations(MigrationContext.configure(connection))
+            operations = Operations(
+                MigrationContext.configure(connection, opts={"pyrit_applied_revisions": {"e7a1b3c5d9f0"}})
+            )
             with patch.object(migration, "op", operations):
                 migration.upgrade()
+            backfill = _backfill_migration()
+            with patch.object(backfill, "op", operations):
+                backfill.upgrade()
             rows = connection.execute(
                 sa.text('SELECT id, value, is_general_technique FROM "SeedPromptEntries" ORDER BY id')
             ).fetchall()
@@ -55,6 +77,8 @@ def test_seed_is_general_technique_migration_preserves_legacy_rows() -> None:
             assert "is_general_technique" in columns
             assert not columns["is_general_technique"]["nullable"]
 
+            with patch.object(backfill, "op", operations):
+                backfill.downgrade()
             with patch.object(migration, "op", operations):
                 migration.downgrade()
             assert connection.execute(sa.text('SELECT id, value FROM "SeedPromptEntries" ORDER BY id')).fetchall() == [
@@ -84,7 +108,6 @@ def test_seed_is_general_technique_migration_preserves_legacy_rows() -> None:
 def test_seed_migration_preserves_legacy_reconstruction(
     seed: SeedPrompt | SeedObjective | SeedSimulatedConversation,
 ) -> None:
-    migration = importlib.import_module("pyrit.memory.alembic.versions.e7a1b3c5d9f0_add_seed_is_general_technique")
     entry = SeedEntry(entry=seed)
     legacy_table = sa.Table(
         "SeedPromptEntries",
@@ -103,10 +126,10 @@ def test_seed_migration_preserves_legacy_reconstruction(
     engine = sa.create_engine("sqlite:///:memory:")
     try:
         with engine.begin() as connection:
-            legacy_table.create(connection)
+            config = _config_for(connection)
+            command.upgrade(config, "c8d3e5f7a901")
             connection.execute(legacy_table.insert().values(values))
-            with patch.object(migration, "op", Operations(MigrationContext.configure(connection))):
-                migration.upgrade()
+            command.upgrade(config, "head")
             with Session(bind=connection) as session:
                 stored = session.get(SeedEntry, seed.id)
                 assert stored is not None
@@ -124,12 +147,58 @@ def test_seed_migration_preserves_legacy_reconstruction(
         engine.dispose()
 
 
+@pytest.mark.parametrize("starting_revision", ["e7a1b3c5d9f0", "f4b8c2e6a190"])
+@pytest.mark.parametrize("is_general_technique", [False, True])
+def test_seed_backfill_preserves_existing_explicit_flags(*, starting_revision: str, is_general_technique: bool) -> None:
+    seed = SeedSimulatedConversation(
+        adversarial_chat_system_prompt=SeedPrompt(value="Generate a conversation."),
+        is_general_technique=is_general_technique,
+        added_by="operator",
+    )
+    entry = SeedEntry(entry=seed)
+    values = {
+        attribute.columns[0].name: getattr(entry, attribute.key) for attribute in sa.inspect(SeedEntry).column_attrs
+    }
+    engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, starting_revision)
+            connection.execute(sa.insert(SeedEntry).values(**values))
+            command.upgrade(config, "head")
+            command.upgrade(config, "head")
+            with Session(bind=connection) as session:
+                stored = session.get(SeedEntry, seed.id)
+                assert stored is not None
+                restored = stored.get_seed()
+                assert restored.is_general_technique is is_general_technique
+                assert SeedIdentifier.from_seed(restored).hash == SeedIdentifier.from_seed(seed).hash
+    finally:
+        engine.dispose()
+
+
+def test_seed_backfill_requires_provenance() -> None:
+    migration = _backfill_migration()
+    context = MigrationContext.configure(dialect_name="sqlite")
+    with patch.object(migration, "op", Operations(context)):
+        with pytest.raises(RuntimeError, match="requires revision provenance"):
+            migration.upgrade()
+
+
 def test_seed_is_general_technique_migration_uses_sql_server_bit() -> None:
     migration = importlib.import_module("pyrit.memory.alembic.versions.e7a1b3c5d9f0_add_seed_is_general_technique")
     output = StringIO()
-    context = MigrationContext.configure(dialect_name="mssql", opts={"as_sql": True, "output_buffer": output})
+    context = MigrationContext.configure(
+        dialect_name="mssql",
+        opts={"as_sql": True, "output_buffer": output, "pyrit_applied_revisions": {"e7a1b3c5d9f0"}},
+    )
     with patch.object(migration, "op", Operations(context)):
         migration.upgrade()
+    backfill = _backfill_migration()
+    with patch.object(backfill, "op", Operations(context)):
+        backfill.upgrade()
+        backfill.downgrade()
+    with patch.object(migration, "op", Operations(context)):
         migration.downgrade()
     sql = output.getvalue()
     assert "ADD is_general_technique BIT NOT NULL DEFAULT 0" in sql
