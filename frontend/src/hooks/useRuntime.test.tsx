@@ -60,18 +60,17 @@ function renderBanner() {
   render(<TestWrapper><RuntimeProvider><RuntimeBanner /></RuntimeProvider></TestWrapper>)
 }
 
+function failedRuntime(count: number) {
+  return { ready: false, state: 'failed', generation: 'first', restore_failures: count }
+}
+
 describe('RuntimeBanner', () => {
   beforeEach(() => { jest.clearAllMocks() })
   afterEach(() => { jest.useRealTimers() })
 
-  it('lists the saved entries that could not be restored while the runtime is ready', async () => {
+  it('should list the saved entries that could not be restored while the runtime is not ready', async () => {
     const user = userEvent.setup()
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
-      ready: true,
-      state: 'ready',
-      generation: 'first',
-      restore_failures: 3,
-    })
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue(failedRuntime(3))
     jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
       items: [
         {
@@ -104,8 +103,12 @@ describe('RuntimeBanner', () => {
     renderBanner()
 
     expect(await screen.findByText("Some saved entries couldn't be restored")).toBeInTheDocument()
-    expect(screen.getByText(/3 saved entries can't be used until fixed or deleted\. Whoever saved an entry, or an administrator, can delete it/)).toBeInTheDocument()
-    expect(screen.queryByText(/has to name its techniques/)).not.toBeInTheDocument()
+    expect(screen.getByText(new RegExp(
+      "3 saved entries couldn't be restored, so new runs and sends are unavailable until they're fixed or deleted\\. "
+      + 'Drafts are preserved\\. Whoever saved an entry, or an administrator, can delete it from the details, and '
+      + 'an administrator can fix its file\\. Then apply the configuration or restart the backend\\.',
+    ))).toBeInTheDocument()
+    expect(screen.queryByText(/PyRIT runtime: failed/)).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: "Saved entries that couldn't be restored" })).not.toBeInTheDocument()
     const toggle = screen.getByRole('button', { name: 'Show details' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
@@ -123,14 +126,9 @@ describe('RuntimeBanner', () => {
     ])
   })
 
-  it('deletes a saved entry from the list and drops it there at once', async () => {
+  it('should delete a saved entry from the list and drop it there at once', async () => {
     const user = userEvent.setup()
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
-      ready: true,
-      state: 'ready',
-      generation: 'first',
-      restore_failures: 2,
-    })
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue(failedRuntime(2))
     jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost'), brokenTarget('kept')] })
     jest.mocked(savedEntriesApi.get).mockResolvedValue({
       kind: 'targets', name: 'ghost', version: 'v1', problem: 'unknown_class',
@@ -153,23 +151,30 @@ describe('RuntimeBanner', () => {
     expect(within(list).getByRole('button', { name: 'Delete saved target kept' })).toBeInTheDocument()
   })
 
-  it('says a scan has to name its techniques while a saved technique is broken', async () => {
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
-      ready: true,
-      state: 'ready',
-      generation: 'first',
-      restore_failures: 1,
-    })
-    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
-      items: [{ ...brokenTarget('formal'), kind: 'techniques' }],
-    })
+  it('should speak of one entry when one could not be restored', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue(failedRuntime(1))
+    jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
 
     renderBanner()
 
-    expect(await screen.findByText(/a scan has to name its techniques/)).toBeInTheDocument()
+    expect(await screen.findByText(
+      /1 saved entry couldn't be restored, so new runs and sends are unavailable until it's fixed or deleted\./,
+    )).toBeInTheDocument()
   })
 
-  it('shows nothing and asks for no list when every saved entry was restored', async () => {
+  it('should say to apply or restart once every entry that failed is deleted', async () => {
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue(failedRuntime(0))
+
+    renderBanner()
+
+    expect(await screen.findByText(
+      /PyRIT isn't ready.*An administrator can apply the configuration or restart the backend\./,
+    )).toBeInTheDocument()
+    expect(screen.queryByText("Some saved entries couldn't be restored")).not.toBeInTheDocument()
+    expect(runtimeApi.getRestoreFailures).not.toHaveBeenCalled()
+  })
+
+  it('should show nothing and ask for no list while the runtime is ready', async () => {
     jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
       ready: true,
       state: 'ready',
@@ -179,12 +184,12 @@ describe('RuntimeBanner', () => {
 
     renderBanner()
 
-    await waitFor(() => expect(runtimeApi.getReadiness).toHaveBeenCalled())
+    await waitFor(() => expect(screen.queryByText(/PyRIT runtime/)).not.toBeInTheDocument())
     expect(screen.queryByRole('list')).not.toBeInTheDocument()
     expect(runtimeApi.getRestoreFailures).not.toHaveBeenCalled()
   })
 
-  it('does not ask for restore failures while the runtime is not ready', async () => {
+  it('should show the general runtime bar and ask for no list when restore did not fail', async () => {
     jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
       ready: false,
       state: 'restart-required',
@@ -199,29 +204,25 @@ describe('RuntimeBanner', () => {
     expect(runtimeApi.getRestoreFailures).not.toHaveBeenCalled()
   })
 
-  it('reads the list again only when the count or the generation changes', async () => {
+  it('should read the list on every poll while the runtime stays failed', async () => {
     jest.useFakeTimers()
-    const getReadiness = jest.mocked(runtimeApi.getReadiness)
-    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'first', restore_failures: 1 })
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue(failedRuntime(1))
     jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
 
     renderBanner()
     expect(await screen.findByText('Target ghost: It is broken.')).toBeInTheDocument()
-    await act(async () => { jest.advanceTimersByTime(4_000) })
-    expect(runtimeApi.getRestoreFailures).toHaveBeenCalledTimes(1)
 
     jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('other')] })
-    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'second', restore_failures: 1 })
     await act(async () => { jest.advanceTimersByTime(2_000) })
 
     expect(await screen.findByText('Target other: It is broken.')).toBeInTheDocument()
-    expect(runtimeApi.getRestoreFailures).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('Target ghost: It is broken.')).not.toBeInTheDocument()
   })
 
-  it('hides the list once nothing fails any more', async () => {
+  it('should stop reading the list once the runtime is ready', async () => {
     jest.useFakeTimers()
     const getReadiness = jest.mocked(runtimeApi.getReadiness)
-    getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'first', restore_failures: 1 })
+    getReadiness.mockResolvedValue(failedRuntime(1))
     jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({ items: [brokenTarget('ghost')] })
 
     renderBanner()
@@ -229,37 +230,35 @@ describe('RuntimeBanner', () => {
     getReadiness.mockResolvedValue({ ready: true, state: 'ready', generation: 'second', restore_failures: 0 })
     await act(async () => { jest.advanceTimersByTime(2_000) })
 
-    await waitFor(() => expect(screen.queryByText('Target ghost: It is broken.')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText("Some saved entries couldn't be restored")).not.toBeInTheDocument())
+    const calls = jest.mocked(runtimeApi.getRestoreFailures).mock.calls.length
+    await act(async () => { jest.advanceTimersByTime(4_000) })
+    expect(runtimeApi.getRestoreFailures).toHaveBeenCalledTimes(calls)
   })
 
-  it('tries again when the list could not be loaded, keeping the last list', async () => {
+  it('should keep the last list and try again on the next poll when the list could not be loaded', async () => {
     jest.useFakeTimers()
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
-      ready: true,
-      state: 'ready',
-      generation: 'first',
-      restore_failures: 1,
-    })
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue(failedRuntime(1))
     jest.mocked(runtimeApi.getRestoreFailures)
+      .mockResolvedValueOnce({ items: [brokenTarget('ghost')] })
       .mockRejectedValueOnce(new Error('Network Error'))
       .mockResolvedValue({ items: [brokenTarget('ghost')] })
 
     renderBanner()
-    expect(await screen.findByText(/list of saved entries couldn't be loaded/)).toBeInTheDocument()
+    expect(await screen.findByText('Target ghost: It is broken.')).toBeInTheDocument()
     await act(async () => { jest.advanceTimersByTime(2_000) })
 
-    expect(await screen.findByText('Target ghost: It is broken.')).toBeInTheDocument()
-    expect(screen.queryByText(/list of saved entries couldn't be loaded/)).not.toBeInTheDocument()
+    expect(await screen.findByText(/list of saved entries couldn't be loaded/)).toBeInTheDocument()
+    expect(screen.getByText('Target ghost: It is broken.')).toBeInTheDocument()
+    await act(async () => { jest.advanceTimersByTime(2_000) })
+
+    await waitFor(() => expect(screen.queryByText(/list of saved entries couldn't be loaded/)).not.toBeInTheDocument())
+    expect(screen.getByText('Target ghost: It is broken.')).toBeInTheDocument()
   })
 
-  it('lets a long list scroll on its own, from the keyboard too', async () => {
+  it('should let a long list scroll on its own, from the keyboard too', async () => {
     const user = userEvent.setup()
-    jest.mocked(runtimeApi.getReadiness).mockResolvedValue({
-      ready: true,
-      state: 'ready',
-      generation: 'first',
-      restore_failures: 40,
-    })
+    jest.mocked(runtimeApi.getReadiness).mockResolvedValue(failedRuntime(40))
     jest.mocked(runtimeApi.getRestoreFailures).mockResolvedValue({
       items: Array.from({ length: 40 }, (_, index) => brokenTarget(`target_${index}`)),
     })

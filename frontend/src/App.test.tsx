@@ -819,7 +819,7 @@ describe("App", () => {
   it("shows saved entries that couldn't be restored inside the app's layout and theme", async () => {
     const { runtimeApi } = jest.requireMock("./services/api");
     runtimeApi.getReadiness.mockResolvedValueOnce({
-      ready: true, state: "ready", generation: "first", restore_failures: 1,
+      ready: false, state: "failed", generation: "first", restore_failures: 1,
     });
     renderApp();
 
