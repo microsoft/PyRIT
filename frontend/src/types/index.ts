@@ -53,6 +53,22 @@ export interface MessageAttachment {
   metadata?: Record<string, unknown>
 }
 
+export interface MediaUploadRequest {
+  data_type: string
+  content: string
+  mime_type: string
+}
+
+export interface MediaUploadResponse {
+  value: string
+  /** UTC Unix timestamp in seconds; absent on older backends. */
+  expires_at?: number
+}
+
+export type AttachmentUploadOutcome =
+  | { status: 'uploaded'; value: string }
+  | { status: 'failed'; detail: string }
+
 export interface ConverterInputPiece {
   id: string
   pieceType: string
@@ -175,8 +191,13 @@ export interface ChatDraftHandoffContextValue {
   preserveDraft: (
     state: Omit<ChatDraftContextState, 'savedAt' | 'sequence'>,
     expectedSequence?: number,
+    retainedImportId?: string,
   ) => void
-  clearPreservedDraft: (expectedSequence?: number) => void
+  clearPreservedDraft: (
+    expectedSequence?: number,
+    targetAttackId?: string | null,
+    targetConversationId?: string | null,
+  ) => void
   /** Pass the sequence captured before preparing an import to reject stale async results. */
   stagePendingImport: (
     payload: Omit<PendingImportPayload, 'id' | 'sequence' | 'stagedAt'>,
@@ -193,6 +214,10 @@ export interface ChatDraftHandoffContextValue {
     currentConversationId?: string | null,
     expectedSequence?: number,
   ) => ChatDraftContent | null
+  getPreservedDraft: (
+    currentAttackId?: string | null,
+    currentConversationId?: string | null,
+  ) => ChatDraftContextState | null
   isDraftDirty: (draft?: Partial<ChatDraftContent> | null) => boolean
 }
 
@@ -696,7 +721,7 @@ export interface Parameter {
   is_list?: boolean
   /** Structured input variants mapped to their constructor parameters. */
   variants?: Record<string, Parameter[]> | null
-  reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | null
+  reference_type?: 'target' | 'converter' | 'scorer' | 'scenario' | 'source' | null
   /** Whether parameter controls must obscure the entered value. */
   sensitive?: boolean
   /** Whether parameter controls must preserve line breaks in the entered value. */

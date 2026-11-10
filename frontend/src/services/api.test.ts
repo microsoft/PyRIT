@@ -23,6 +23,7 @@ import {
   apiClient,
   authApi,
   healthApi,
+  mediaApi,
   initializersApi,
   versionApi,
   configurationApi,
@@ -47,6 +48,14 @@ import type { FindingExportRequest } from "@/types";
 import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
+  it("should stage media without creating or sending a message", async () => {
+    const request = { data_type: "image_path", content: "aW1hZ2U=", mime_type: "image/png" };
+    const response = { value: "/stored/image.png" };
+    jest.mocked(apiClient.post).mockResolvedValueOnce({ data: response });
+    expect(await mediaApi.upload(request)).toEqual(response);
+    expect(apiClient.post).toHaveBeenCalledWith("/media/uploads", request);
+  });
+
   describe("operationsApi", () => {
     it("reads canonical harm categories without copying the taxonomy into the frontend", async () => {
       const options = { harm_types: ["Malware", "Other"] };
