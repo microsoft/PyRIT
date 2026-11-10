@@ -31,8 +31,7 @@ from pyrit.backend.models import (
 from pyrit.backend.models.attacks import SaveConversationRequest
 from pyrit.backend.models.message_sends import MessageSendRequest, MessageSendState
 from pyrit.backend.routes.targets import router
-from pyrit.backend.services import TargetService
-from pyrit.backend.services.attack_service import AttackService
+from pyrit.backend.services import AttackService, TargetService
 from pyrit.backend.services.manual_send_scheduler import ManualSendScheduler
 from pyrit.backend.services.message_send_service import MessageSendService
 from pyrit.memory import SQLiteMemory
