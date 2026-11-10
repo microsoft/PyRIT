@@ -25,6 +25,8 @@ from pyrit.models import (
     Score,
     ScoringExpectation,
     ToolCallRequirement,
+    ToolEventsObservationPayload,
+    ToolExecution,
     ToolsCalled,
     TraceCoverage,
     TraceQuery,
@@ -42,6 +44,7 @@ from pyrit.score import (
     OtelTraceSource,
     TraceAcquisitionError,
 )
+from pyrit.score.true_false.otel_tool_call_scorer import match_tools_called
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -553,3 +556,111 @@ async def test_tool_observation_and_score_roll_back_together_async(sqlite_instan
 
     assert sqlite_instance._query_entries(ScoreEntry) == []
     assert (await sqlite_instance.get_observations_async(observation_ids=[observation.id])) == []
+
+
+def _exhaustive(*names: str) -> ScoringExpectation:
+    return ScoringExpectation(
+        conditions=(ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names), exhaustive=True),)
+    )
+
+
+def _tool_payload(*names: str, complete: bool) -> ToolEventsObservationPayload:
+    now = datetime.now(tz=UTC)
+    events = tuple(
+        ToolExecution(name=name, trace_id="1" * 32, span_id=f"{index + 1:016x}", start_time=now, end_time=now)
+        for index, name in enumerate(names)
+    )
+    return ToolEventsObservationPayload(
+        scope=TraceScorable(trace_ids=("1" * 32,)),
+        events=events,
+        coverage=TraceCoverage(complete=complete, reasons=() if complete else ("source_coverage_incomplete",)),
+    )
+
+
+@pytest.mark.parametrize(
+    ("required", "observed", "complete", "expected"),
+    [
+        (("lookup",), ("lookup",), True, True),
+        (("lookup",), ("lookup",), False, None),
+        (("lookup",), ("lookup", "delete"), False, False),
+        (("lookup",), ("lookup", "delete"), True, False),
+        (("lookup",), ("delete",), False, False),
+        (("lookup",), (), True, False),
+        (("lookup",), (), False, None),
+        (("lookup", "send"), ("send", "lookup"), True, True),
+        ((), (), True, True),
+        ((), (), False, None),
+        ((), ("delete",), False, False),
+    ],
+)
+def test_exhaustive_match_needs_complete_evidence_to_confirm_but_one_extra_call_to_refute(
+    required: tuple[str, ...], observed: tuple[str, ...], complete: bool, expected: bool | None
+) -> None:
+    condition = _exhaustive(*required).conditions[0]
+    acquisition = Acquisition.COMPLETE if complete else Acquisition.PARTIAL
+    payload = _tool_payload(*observed, complete=complete)
+
+    assert match_tools_called(condition=condition, payload=payload, acquisition=acquisition) is expected
+
+
+@pytest.mark.parametrize("acquisition", [Acquisition.ERROR, Acquisition.UNAVAILABLE])
+def test_exhaustive_match_is_undetermined_without_evidence(acquisition: Acquisition) -> None:
+    condition = _exhaustive("lookup").conditions[0]
+    payload = _tool_payload(complete=False)
+
+    assert match_tools_called(condition=condition, payload=payload, acquisition=acquisition) is None
+
+
+def test_subset_match_still_ignores_other_tools() -> None:
+    condition = _expectation("lookup").conditions[0]
+    payload = _tool_payload("lookup", "delete", complete=True)
+
+    assert match_tools_called(condition=condition, payload=payload, acquisition=Acquisition.COMPLETE) is True
+
+
+@pytest.mark.parametrize(
+    ("names", "complete", "expected", "rationale"),
+    [
+        (("lookup",), True, True, "exactly the required tools: lookup"),
+        (("lookup", "delete"), False, False, "outside the required set: delete"),
+        (("lookup",), False, None, "cannot establish exactly the required tools"),
+    ],
+)
+async def test_exhaustive_scoring_and_offline_replay_async(
+    sqlite_instance: SQLiteMemory,
+    names: tuple[str, ...],
+    complete: bool,
+    expected: bool | None,
+    rationale: str,
+) -> None:
+    client = InMemoryTraceClient()
+    for index, name in enumerate(names):
+        client.add_span(_span(name=name, span_id=f"{index + 1:016x}"))
+    scope = TraceScorable(trace_ids=("1" * 32,))
+    if complete:
+        client.mark_complete(trace_ids=scope.trace_ids)
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+
+    score = (await scorer.score_async(scorable=scope, expectation=_exhaustive("lookup")))[0]
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    client.close()
+    replay = (await scorer.score_observation_async(observation=observation, expectation=_exhaustive("lookup")))[0]
+
+    for result in (score, replay):
+        assert rationale in result.score_rationale
+        if expected is None:
+            assert result.is_undetermined
+        else:
+            assert result.get_value() is expected
+
+
+async def test_exhaustive_condition_with_no_tools_confirms_that_nothing_ran_async() -> None:
+    client = InMemoryTraceClient()
+    scope = TraceScorable(trace_ids=("1" * 32,))
+    client.mark_complete(trace_ids=scope.trace_ids)
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+
+    score = (await scorer.score_async(scorable=scope, expectation=_exhaustive()))[0]
+
+    assert score.get_value() is True
+    assert "no tool execution" in score.score_rationale

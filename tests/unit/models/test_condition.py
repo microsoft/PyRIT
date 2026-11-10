@@ -145,6 +145,48 @@ def test_tools_called_requires_nonempty_unique_names(names: list[str]) -> None:
         ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names))
 
 
+def test_subset_tools_called_keeps_its_stored_form_and_fingerprint() -> None:
+    expectation = ScoringExpectation(
+        objective="x", conditions=(ToolsCalled(tools=(ToolCallRequirement(name="lookup"),)), MatchesObjective())
+    )
+
+    assert expectation.conditions[0].model_dump(mode="json") == {
+        "condition_type": "tools_called",
+        "tools": [{"name": "lookup"}],
+    }
+    # Computed on main before ``exhaustive`` existed: stored subset expectations must still match.
+    assert scoring_expectation_fingerprint(expectation) == (
+        "09c38ed6d8ab39e973e8ffa1c30690079eaee0acd4df463665eaf3f62d8d482c"
+    )
+
+
+@pytest.mark.parametrize("names", [(), ("lookup",), ("lookup", "send")])
+def test_exhaustive_tools_called_round_trips(names: tuple[str, ...]) -> None:
+    condition = ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names), exhaustive=True)
+    expectation = ScoringExpectation(conditions=(condition,))
+
+    assert condition.model_dump(mode="json")["exhaustive"] is True
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+    assert ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json")) == expectation
+    assert scoring_expectation_fingerprint(expectation) != scoring_expectation_fingerprint(
+        ScoringExpectation(conditions=(condition.model_copy(update={"exhaustive": False}),))
+    )
+
+
+@pytest.mark.parametrize("value", [1, "true", "yes", None])
+def test_exhaustive_flag_is_strict(value: object) -> None:
+    with pytest.raises(ValidationError):
+        ToolsCalled.model_validate({"tools": [{"name": "lookup"}], "exhaustive": value})
+
+
+def test_explicit_false_exhaustive_flag_loads_as_a_subset_match() -> None:
+    condition = Condition.model_validate(
+        {"condition_type": "tools_called", "tools": [{"name": "lookup"}], "exhaustive": False}
+    )
+
+    assert condition == ToolsCalled(tools=(ToolCallRequirement(name="lookup"),))
+
+
 @pytest.mark.parametrize("field", ["arguments", "count", "order", "success"])
 def test_tool_call_requirement_rejects_unsupported_matching_fields(field: str) -> None:
     with pytest.raises(ValidationError, match="Extra inputs"):

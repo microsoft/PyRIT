@@ -175,24 +175,35 @@ class ToolCallRequirement(BaseModel):
 
 
 class ToolsCalled(Condition):
-    """Require every named tool to have an execution attempt, regardless of success."""
+    """
+    Require every named tool to have an execution attempt, regardless of success.
+
+    By default this is a subset match: other tools may also have run. ``exhaustive`` asks for
+    an exact match instead, so the named tools ran and no other tool did. An exhaustive
+    condition with no tools asks that no tool ran at all.
+
+    An exhaustive match can be disproved by one observed execution of an unnamed tool, but
+    confirming it needs evidence complete enough to rule out every other tool.
+    """
 
     condition_type: Literal["tools_called"] = "tools_called"
     tools: tuple[ToolCallRequirement, ...]
+    #: Left out of serialization while false, so subset conditions keep their stored form and fingerprint.
+    exhaustive: bool = Field(default=False, strict=True, exclude_if=lambda value: value is False)
 
     @model_validator(mode="after")
     def _validate_tools(self) -> ToolsCalled:
         """
-        Require a nonempty set of distinct exact names.
+        Require distinct exact names, and at least one unless the match is exhaustive.
 
         Returns:
             ToolsCalled: The validated condition.
 
         Raises:
-            ValueError: If there are no tools or an exact name repeats.
+            ValueError: If a subset match names no tools or an exact name repeats.
         """
-        if not self.tools:
-            raise ValueError("ToolsCalled requires at least one tool.")
+        if not self.tools and not self.exhaustive:
+            raise ValueError("ToolsCalled requires at least one tool unless exhaustive is set.")
         names = [tool.name for tool in self.tools]
         if len(set(names)) != len(names):
             raise ValueError("ToolsCalled requires each tool name once.")

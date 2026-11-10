@@ -441,3 +441,61 @@ async def test_scores_the_response_target_tool_loop_async(
         "missing_function": "lookup",
         "available_functions": [],
     }
+
+
+async def _score_exhaustive(message: Message, *names: str):
+    expectation = ScoringExpectation(
+        conditions=(ToolsCalled(tools=tuple(ToolCallRequirement(name=name) for name in names), exhaustive=True),)
+    )
+    scores = await MessageToolCallScorer().score_async(
+        scorable=MessageScorable.from_message(message), expectation=expectation
+    )
+    assert len(scores) == 1
+    return scores[0]
+
+
+async def test_exhaustive_stored_execution_of_an_unnamed_tool_is_false_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_responses_call("call_1", "lookup"))
+    await conversation.output_async("call_1")
+    await conversation.call_async(_responses_call("call_2", "delete"))
+    await conversation.output_async("call_2")
+    reply = await conversation.reply_async()
+
+    score = await _score_exhaustive(reply, "lookup")
+
+    assert score.status == ScoreStatus.COMPLETE
+    assert score.get_value() is False
+    assert "outside the required set: delete" in score.score_rationale
+
+
+@pytest.mark.parametrize("names", [("lookup",), ()])
+async def test_exhaustive_match_is_never_true_from_stored_messages_async(
+    sqlite_instance: SQLiteMemory, names: tuple[str, ...]
+) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    if names:
+        await conversation.call_async(_responses_call("call_1", "lookup"))
+        await conversation.output_async("call_1")
+    reply = await conversation.reply_async()
+
+    score = await _score_exhaustive(reply, *names)
+
+    assert score.status == ScoreStatus.UNDETERMINED
+    assert score.score_value is None
+
+
+async def test_exhaustive_ignores_unnamed_calls_that_did_not_run_async(sqlite_instance: SQLiteMemory) -> None:
+    conversation = await _Conversation.create_async(memory=sqlite_instance)
+    await conversation.call_async(_responses_call("call_1", "delete"))
+    await conversation.output_async(
+        "call_1", {"error": "function_not_found", "missing_function": "delete", "available_functions": []}
+    )
+    await conversation.call_async(_responses_call("call_2", "send"))
+    await conversation.add_async("simulated_assistant", "function_call", _responses_call("call_3", "wipe"))
+    await conversation.output_async("call_3")
+    reply = await conversation.reply_async()
+
+    score = await _score_exhaustive(reply)
+
+    assert score.status == ScoreStatus.UNDETERMINED
