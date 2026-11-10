@@ -3,13 +3,16 @@
 
 import os
 import uuid
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from pyrit.datasets.seed_datasets.remote import (
     _VLSUMultimodalDataset,
 )
+from pyrit.datasets.seed_datasets.remote._image_cache import fetch_and_cache_image_async
 from pyrit.datasets.seed_datasets.remote.vlsu_multimodal_dataset import (
     VLSUCategory,
 )
@@ -441,6 +444,71 @@ class TestVLSUMultimodalDataset:
             assert seed.metadata["category"] == "C15: Human Exploitation"
             assert seed.metadata["corrected_combined_category"] == "C15: Human Exploitation"
 
+    async def test_second_load_reuses_cached_image(self):
+        """Loading the same row again reuses its cached image instead of downloading it again."""
+        row_uuid = "1dd0750e-a083-43c3-9014-f96bf1c61738"
+        mock_data = [
+            {
+                "prompt": "Text that becomes unsafe with image",
+                "web_path": "https://example.com/image.jpg",
+                "combined_category": "C1: Slurs, Hate Speech, Hate Symbols",
+                "text_category": "C1: Slurs, Hate Speech, Hate Symbols",
+                "image_category": "C1: Slurs, Hate Speech, Hate Symbols",
+                "uuid": row_uuid,
+                "consensus_text_grade": "safe",
+                "image_grade": "safe",
+                "consensus_combined_grade": "unsafe",
+            }
+        ]
+        dataset_loader = _VLSUMultimodalDataset()
+        download = AsyncMock(return_value=httpx.Response(200, content=b"image bytes"))
+
+        with (
+            patch.object(dataset_loader, "_fetch_from_url", return_value=mock_data),
+            patch("pyrit.datasets.seed_datasets.remote._image_cache.make_request_and_raise_if_error_async", download),
+        ):
+            first = await dataset_loader.fetch_dataset_async(cache=False)
+            second = await dataset_loader.fetch_dataset_async(cache=False)
+
+        first_image = next(seed for seed in first.seeds if seed.data_type == "image_path")
+        second_image = next(seed for seed in second.seeds if seed.data_type == "image_path")
+        assert first_image.value == second_image.value
+        assert first_image.value.endswith(f"ml_vlsu_{row_uuid}.png")
+        download.assert_awaited_once()
+
+    @pytest.mark.parametrize("bad_uuid", ["", "not-a-uuid", "a/vlsu_victim"])
+    async def test_rows_without_a_valid_uuid_get_separate_images(self, bad_uuid):
+        """Rows without a valid uuid get random image names, so they can't share or overwrite a cached image."""
+        victim_path = await fetch_and_cache_image_async(filename="vlsu_victim.png", image_bytes=b"existing image")
+        mock_data = [
+            {
+                "prompt": f"Text {index}",
+                "web_path": f"https://example.com/image_{index}.jpg",
+                "combined_category": "C1: Slurs, Hate Speech, Hate Symbols",
+                "text_category": "C1: Slurs, Hate Speech, Hate Symbols",
+                "image_category": "C1: Slurs, Hate Speech, Hate Symbols",
+                "uuid": bad_uuid,
+                "consensus_text_grade": "safe",
+                "image_grade": "safe",
+                "consensus_combined_grade": "unsafe",
+            }
+            for index in range(2)
+        ]
+        dataset_loader = _VLSUMultimodalDataset()
+        download = AsyncMock(return_value=httpx.Response(200, content=b"image bytes"))
+
+        with (
+            patch.object(dataset_loader, "_fetch_from_url", return_value=mock_data),
+            patch("pyrit.datasets.seed_datasets.remote._image_cache.make_request_and_raise_if_error_async", download),
+        ):
+            dataset = await dataset_loader.fetch_dataset_async(cache=False)
+
+        image_paths = {seed.value for seed in dataset.seeds if seed.data_type == "image_path"}
+        assert len(image_paths) == 2
+        assert victim_path not in image_paths
+        assert download.await_count == 2
+        assert Path(victim_path).read_bytes() == b"existing image"
+
 
 async def test_fetch_and_save_image_raises_when_memory_not_configured():
     """Test that _fetch_and_save_image_async raises RuntimeError when serializer memory is not configured."""
@@ -458,7 +526,7 @@ async def test_fetch_and_save_image_raises_when_memory_not_configured():
     ):
         loader = _VLSUMultimodalDataset()
         with pytest.raises(RuntimeError, match="Serializer memory is not properly configured"):
-            await loader._fetch_and_save_image_async(group_id="test_group", image_url="https://example.com/img.png")
+            await loader._fetch_and_save_image_async(image_id="test_group", image_url="https://example.com/img.png")
 
 
 async def test_fetch_and_save_image_returns_cached_path():
@@ -481,7 +549,7 @@ async def test_fetch_and_save_image_returns_cached_path():
     ):
         loader = _VLSUMultimodalDataset()
         result = await loader._fetch_and_save_image_async(
-            group_id="test_group", image_url="https://example.com/img.png"
+            image_id="test_group", image_url="https://example.com/img.png"
         )
 
     expected_path = str(Path("/results") / "images" / "ml_vlsu_test_group.png")
