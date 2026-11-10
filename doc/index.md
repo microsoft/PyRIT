@@ -80,7 +80,6 @@ PyRIT offers flexible installation options to suit different needs. Choose the p
 ::::
 
 :::::{grid} 1 1 2 2
-:gutter: 3
 
 ::::{card} 🐋 User Docker Installation
 :link: getting_started/install_docker
@@ -129,7 +128,6 @@ Install from source in editable mode:
 After installing, configure PyRIT with your AI endpoint credentials and initialize the framework. PyRIT reads from `~/.pyrit/` by default. For more details, see the [Configure PyRIT](getting_started/configuration) page.
 
 :::::{grid} 1 1 2 2
-:gutter: 3
 
 ::::{card} 🔑 Populating Secrets
 :link: getting_started/populating_secrets
@@ -149,7 +147,6 @@ Set up `.pyrit_conf` + `.env` for persistent config. Enables initializers that r
 ### Step 3: Use It!
 
 :::::{grid} 1 1 3 3
-:gutter: 3
 
 ::::{card} 🔍 PyRIT Scanner
 :link: scanner/0_scanner
