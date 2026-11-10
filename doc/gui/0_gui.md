@@ -236,6 +236,31 @@ Load data through PyRIT; the visible catalog checks for changes each minute. See
 
 ![Datasets page with stored dataset summaries](images/datasets.png)
 
+### Generate datasets
+
+**Generate dataset** creates a new dataset with one of PyRIT's
+[prompt generators](../code/executor/7_promptgen.ipynb):
+
+- **ASSERT policy dataset**: write a policy, such as "Explain published return
+  policies. Do not disclose another customer's private order details.", or start
+  from a bundled ASSERT behavior. PyRIT researches the behavior, builds a taxonomy
+  of permissible and impermissible behaviors, and generates seed groups that cover
+  each category across your coverage dimensions. Select **Pause to review** to edit
+  the taxonomy and dimension levels before seed groups are generated.
+- **ASSERT suite**: generate one dataset per behavior for a bundled application
+  context, or for behaviors you choose, with shared settings.
+- **Objective dataset**: generate distinct attack objectives from instructions.
+
+Before you start, the form checks the request and targets and estimates the model
+calls and tokens without calling a target. Generation runs in the background; you
+can leave the page, cancel, or retry. Retry resumes from the last completed stage,
+including after a backend restart. Generations are stored with the memory's
+results, next to media output. Each completed generation stores a new dataset; to
+change a dataset, edit its policy and regenerate it under a new name. When an ASSERT
+dataset is ready, **Run foundry.assert_policy** opens the scanner with it selected.
+To list the datasets you generated, set the catalog's **Origins** filter to
+**Generated**.
+
 ## History
 
 History is next to the feature that produced the results, not a separate sidebar

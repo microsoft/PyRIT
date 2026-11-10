@@ -102,10 +102,23 @@ interface InitialFormInput {
   seededTechniques?: string[]
   /** A saved run to start from. Its values win over the preset's. Seeds initial state only. */
   initialRun?: RunScenarioRequest
+  /**
+   * Stored datasets a link preselected. When non-empty they replace the dataset sources from
+   * the saved run or preset; that request's other dataset settings, such as limits, still apply.
+   */
+  datasetNames?: readonly string[]
 }
 
 function defaultTargetName(target: TargetInstance | null, available: TargetInstance[]): string {
   return target && available.some((candidate) => sameTarget(candidate, target)) ? target.target_registry_name : ''
+}
+
+function initialDatasetEdits(
+  base: ScenarioDatasetRequest,
+  datasetNames: readonly string[] | undefined,
+): ScenarioDatasetRequest {
+  if (!datasetNames || datasetNames.length === 0) return base
+  return { ...base, sources: datasetNames.map((name) => ({ name })) }
 }
 
 export function initialScenarioLaunchForm({
@@ -120,6 +133,7 @@ export function initialScenarioLaunchForm({
   preset = null,
   seededTechniques,
   initialRun,
+  datasetNames,
 }: InitialFormInput): ScenarioLaunchFormState {
   return {
     targetName: initialRun ? initialRun.target_name ?? '' : defaultTargetName(defaultObjectiveTarget, targets),
@@ -129,7 +143,7 @@ export function initialScenarioLaunchForm({
     selectedTechniques: seededTechniques ?? defaultTechniques,
     baselineChecked: scenario.baseline_policy !== 'forbidden'
       && (initialRun?.include_baseline ?? preset?.preset.include_baseline ?? scenario.include_baseline_by_default),
-    datasetEdits: initialRun?.datasets ?? preset?.preset.datasets ?? {},
+    datasetEdits: initialDatasetEdits(initialRun?.datasets ?? preset?.preset.datasets ?? {}, datasetNames),
     datasetError: null,
     maxConcurrency: initialRun?.max_concurrency ?? DEFAULT_MAX_CONCURRENCY,
     maxRetries: initialRun?.max_retries ?? DEFAULT_MAX_RETRIES,

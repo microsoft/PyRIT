@@ -111,7 +111,8 @@ print(f"Stored {len(assert_result.seed_groups)} seed groups.")
 # approximate token range without calling a target.
 #
 # The bundled ASSERT behavior library (`list_assert_behavior_presets`) and suites
-# (`list_assert_suite_presets`) provide ready-made behavior descriptions.
+# (`list_assert_suite_presets`) provide ready-made behavior descriptions. The GUI runs this flow
+# from **Datasets > Generate dataset**.
 
 # %%
 from pyrit.datasets import get_assert_behavior_preset

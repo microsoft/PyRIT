@@ -32,6 +32,7 @@ import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import TargetSelect from '@/components/Config/TargetSelect'
 import TechniqueEditor from '@/components/Techniques/TechniqueEditor'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
+import { type RequestedDatasetsState, useRequestedDatasets } from '@/hooks/useRequestedDatasets'
 import { useRuntime } from '@/hooks/useRuntime'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
 import { useRunTechniqueEditor } from '@/hooks/useRunTechniqueEditor'
@@ -43,6 +44,7 @@ import { useScenarioRunEstimate } from '@/hooks/useScenarioRunEstimate'
 import ParameterField from '@/components/Parameters/ParameterField'
 import SingleStepSpinButton from '@/components/Parameters/SingleStepSpinButton'
 import type { ParameterFormValue } from '@/components/Parameters/parameterForm'
+import GenerateDatasetLinks from '@/components/PromptGeneration/GenerateDatasetLinks'
 import { PRESET_QUERY_PARAM, presetScannerRoutePath } from '@/components/ScenarioPresets/presetRoutes'
 import type { ViewName } from '@/components/Sidebar/Navigation'
 import { attacksApi } from '@/services/api'
@@ -63,7 +65,7 @@ import type {
 } from '@/types'
 import { findRegisteredScorer } from '@/utils/scorerPresentation'
 import { newDraftMessage, toConversationDraft } from '@/utils/conversationDraft'
-import { routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
+import { datasetNamesFromSearchParams, routerPathParamValue, scenarioRunRoutePath } from '@/utils/routeParams'
 import { targetModelName } from '@/utils/targetIdentity'
 
 import { useScenarioDetailStyles } from './ScenarioDetail.styles'
@@ -144,13 +146,15 @@ export default function ScenarioDetail(props: ScenarioDetailProps) {
   const conversationIds = searchParams.getAll('prepended_conversation_id')
   const initialConversationId = conversationIds.length === 1 ? (conversationIds[0]?.trim() ?? '') : ''
   const presetName = searchParams.get(PRESET_QUERY_PARAM)?.trim() ?? ''
+  const datasetNames = datasetNamesFromSearchParams(searchParams)
   if (presetName && props.sourceRunId) return <ScenarioDetailStateFrame>
     <MessageBar intent="error"><MessageBarBody>Choose a saved run or a preset, not both.</MessageBarBody></MessageBar>
   </ScenarioDetailStateFrame>
-  // A new scenario, conversation, preset, or saved-run link starts a fresh configuration form.
-  return <ScenarioDetailContent key={JSON.stringify([encodedScenarioName, initialConversationId, presetName, props.sourceRunId])}
+  // A new scenario, conversation, preset, dataset, or saved-run link starts a fresh configuration form.
+  return <ScenarioDetailContent
+    key={JSON.stringify([encodedScenarioName, initialConversationId, presetName, props.sourceRunId, datasetNames])}
     encodedScenarioName={encodedScenarioName} initialConversationId={initialConversationId}
-    presetName={presetName} {...props} />
+    presetName={presetName} datasetNames={datasetNames} {...props} />
 }
 
 interface ScenarioDetailContentProps extends ScenarioDetailProps {
@@ -158,6 +162,8 @@ interface ScenarioDetailContentProps extends ScenarioDetailProps {
   initialConversationId: string
   /** The saved preset that pre-fills the form, or empty for none. */
   presetName: string
+  /** Stored datasets a link asked to preselect, before they are checked against the catalog. */
+  datasetNames: string[]
 }
 
 interface ScenarioDetailStateFrameProps {
@@ -184,6 +190,7 @@ function ScenarioDetailContent({
   encodedScenarioName,
   initialConversationId,
   presetName,
+  datasetNames,
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
@@ -199,13 +206,14 @@ function ScenarioDetailContent({
   const decodedScenarioName = routerPathParamValue(encodedScenarioName)
   const { status: scenarioStatus, scenario, error: scenarioError, retry: retryScenario } = useScenarioDetail(decodedScenarioName)
   const { status: presetStatus, preset, error: presetError, retry: retryPreset } = useScenarioPreset(presetName)
+  const requestedDatasets = useRequestedDatasets(datasetNames)
 
   const handleRetry = (): void => {
     retryScenario()
     retryPreset()
   }
 
-  if (scenarioStatus === 'loading' || presetStatus === 'loading') {
+  if (scenarioStatus === 'loading' || presetStatus === 'loading' || requestedDatasets.loading) {
     return (
       <section className={styles.root} data-testid="scenario-detail" aria-label="Scenario detail">
         <div className={styles.centeredState}>
@@ -312,6 +320,7 @@ function ScenarioDetailContent({
       initialRun={initialRun}
       sourceRunId={sourceRunId}
       initialConversationId={initialConversationId}
+      requestedDatasets={requestedDatasets}
       targets={targets}
       defaultObjectiveTarget={defaultObjectiveTarget}
       defaultAdversarialTarget={defaultAdversarialTarget}
@@ -333,6 +342,8 @@ interface ScenarioLaunchFormProps extends ScorerPickerData {
   /** Seeds the initial form state only; edits are never written back to the preset. */
   preset?: ScenarioPresetResponse | null
   initialConversationId: string
+  /** Stored datasets from the link, checked against the catalog; known names replace the preset's sources. */
+  requestedDatasets?: RequestedDatasetsState
   targets: TargetInstance[]
   defaultObjectiveTarget: TargetInstance | null
   defaultAdversarialTarget: TargetInstance | null
@@ -349,6 +360,7 @@ function ScenarioLaunchForm({
   scenario,
   preset = null,
   initialConversationId,
+  requestedDatasets,
   targets,
   defaultObjectiveTarget,
   defaultAdversarialTarget,
@@ -411,6 +423,8 @@ function ScenarioLaunchForm({
   const adversarialTargets = targets.filter(
     (target: TargetInstance) => target.capabilities?.supports_multi_turn === true,
   )
+  const ignoredDatasetNames = requestedDatasets?.unknown ?? []
+  const unsupportedDatasetNames = supportsDatasets ? [] : requestedDatasets?.known ?? []
 
   const formRules = useMemo<ScenarioLaunchFormRules>(() => ({
     techniqueNames: techniqueOptions.map((technique) => technique.name),
@@ -434,6 +448,7 @@ function ScenarioLaunchForm({
       preset,
       seededTechniques: techniqueSeed.techniques,
       initialRun,
+      datasetNames: requestedDatasets?.known,
     }),
   )
   const {
@@ -840,6 +855,22 @@ function ScenarioLaunchForm({
                 <MessageBarBody role="alert">{requestResult.error}</MessageBarBody>
               </MessageBar>
             )}
+            {ignoredDatasetNames.length > 0 && (
+              <MessageBar intent="warning" data-testid="requested-datasets-warning">
+                <MessageBarBody>
+                  {requestedDatasets?.error
+                    ? `The requested datasets could not be checked, so they were not preselected: ${requestedDatasets.error}`
+                    : `These requested datasets were not found and were ignored: ${ignoredDatasetNames.join(', ')}.`}
+                </MessageBarBody>
+              </MessageBar>
+            )}
+            {unsupportedDatasetNames.length > 0 && (
+              <MessageBar intent="warning" data-testid="requested-datasets-unsupported">
+                <MessageBarBody>
+                  This scenario does not take datasets, so these were ignored: {unsupportedDatasetNames.join(', ')}.
+                </MessageBarBody>
+              </MessageBar>
+            )}
             {(staleSelection || (targetName && unavailableSelection)) && (
               <MessageBar intent="warning">
                 <MessageBarBody>
@@ -979,6 +1010,7 @@ function ScenarioLaunchForm({
                   Seed examples used by this scan. Limits and filters control which examples are selected.
                 </ContextualHelpLabel>
               </Text>
+              <GenerateDatasetLinks scenarioName={scenario.scenario_name} />
               <ScenarioDatasetTable
                 request={datasetEdits} defaults={datasetDefaults} effective={effectiveDatasets}
                 options={supportsDatasets ? datasetOptions : { ...datasetOptions, mode: 'fixed', supports_overrides: false }}

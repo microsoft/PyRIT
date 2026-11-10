@@ -4,6 +4,9 @@ import {
   catalogPathFromNavigationState,
   DATASET_DETAIL_PATH,
   datasetDetailPath,
+  datasetNamesFromSearchParams,
+  namedDatasetSelectionKey,
+  scenarioLaunchRoutePath,
   routerPathParamValue,
   scenarioRunAttackRoutePath,
   scenarioRunProvenance,
@@ -155,5 +158,33 @@ describe('isDatasetsPath and isChatPath', () => {
     expect(isChatPath('/datasets')).toBe(false)
     expect(isChatPath('/attack/history')).toBe(false)
     expect(isChatPath('')).toBe(false)
+  })
+})
+
+describe('scenario dataset links', () => {
+  it('builds a launch path with one repeatable dataset parameter per name', () => {
+    expect(scenarioLaunchRoutePath('foundry.assert_policy')).toBe('/scanner/launch/foundry.assert_policy')
+    expect(scenarioLaunchRoutePath('foundry/x', ['a&b', 'c d'])).toBe(
+      '/scanner/launch/foundry%2Fx?dataset=a%26b&dataset=c+d',
+    )
+  })
+
+  it('reads distinct, trimmed dataset names and skips blanks', () => {
+    const params = new URLSearchParams('dataset=a&dataset=%20b%20&dataset=&dataset=a&preset=p')
+    expect(datasetNamesFromSearchParams(params)).toEqual(['a', 'b'])
+    expect(datasetNamesFromSearchParams(new URLSearchParams())).toEqual([])
+  })
+
+  it('round-trips names through the launch path', () => {
+    const path = scenarioLaunchRoutePath('scenario', ['returns_policy', 'x+y'])
+    const search = new URL(path, 'http://localhost').searchParams
+    expect(datasetNamesFromSearchParams(search)).toEqual(['returns_policy', 'x+y'])
+  })
+
+  it('builds the catalog selection key for a named dataset', () => {
+    expect(namedDatasetSelectionKey('returns_policy')).toBe('dataset:named:returns_policy')
+    expect(datasetDetailPath(namedDatasetSelectionKey('a&b'))).toBe(
+      '/datasets/detail?selection_key=dataset%3Anamed%3Aa%26b',
+    )
   })
 })

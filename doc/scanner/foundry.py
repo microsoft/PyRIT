@@ -100,7 +100,9 @@ await output_scenario_async(scenario_result)
 # judges each conversation against the group's own policy. Its registry name is
 # `foundry.assert_policy`. There's no default dataset: generate groups with `AssertGenerator`
 # (see [Prompt Generators](../code/executor/7_promptgen.ipynb)), store them with `AssertProvider`,
-# and pass the stored dataset name.
+# and pass the stored dataset name. In the GUI, **Datasets > Generate dataset** turns a written
+# policy or a bundled ASSERT behavior into a stored dataset, with an optional taxonomy review, and
+# then opens this scenario with the dataset selected.
 #
 # **CLI example:**
 #

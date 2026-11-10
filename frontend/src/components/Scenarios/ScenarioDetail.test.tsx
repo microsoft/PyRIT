@@ -9,6 +9,7 @@ import {
   attacksApi,
   convertersApi,
   datasetsApi,
+  promptGeneratorsApi,
   scenarioPresetsApi,
   scenariosApi,
   targetsApi,
@@ -42,6 +43,7 @@ jest.mock('@/services/api', () => ({
     harm_categories: ['cyber', 'violence', 'other'], has_unlabeled_harm_categories: false,
   })) }) },
   scenarioPresetsApi: { get: jest.fn() },
+  promptGeneratorsApi: { list: jest.fn().mockResolvedValue({ items: [] }) },
   scenariosApi: {
     estimateRun: jest.fn(),
     getScenario: jest.fn(),
@@ -3194,6 +3196,106 @@ describe('ScenarioDetail', () => {
       expect(mockGetPreset).toHaveBeenNthCalledWith(1, 'first')
       expect(mockGetPreset).toHaveBeenNthCalledWith(2, 'second')
       expect(mockStartRun).not.toHaveBeenCalled()
+    })
+
+    it('should replace the preset dataset sources with datasets from the link', async () => {
+      const user = userEvent.setup()
+      mockGetPreset.mockResolvedValue(makePresetResponse({
+        datasets: { sources: [{ name: 'harmbench' }], max_total: 5 },
+      }))
+      renderDetail(`${PRESET_PATH}&dataset=ds_b`)
+
+      expect(await screen.findByTestId('preset-seed-banner')).toBeInTheDocument()
+      expect(screen.getByText('ds_b (unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('harmbench (unknown)')).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ sources: [{ name: 'ds_b' }], max_total: 5 })
+    })
+  })
+
+  describe('dataset links', () => {
+    const SCENARIO_PATH = '/scanner/launch/foundry.red_team_agent'
+
+    it('preselects the stored datasets a link names and ignores unknown ones', async () => {
+      const user = userEvent.setup()
+      renderDetail(`${SCENARIO_PATH}?dataset=ds_a&dataset=missing_set&dataset=ds_b&dataset=ds_a`)
+
+      expect(await screen.findByTestId('requested-datasets-warning'))
+        .toHaveTextContent('These requested datasets were not found and were ignored: missing_set.')
+      expect(screen.getByRole('button', { name: 'Remove ds_a' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Remove ds_b' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Remove harmbench' })).not.toBeInTheDocument()
+      expect(datasetsApi.listDatasets).toHaveBeenCalledWith({ loaded_only: false }, expect.any(AbortSignal))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0].datasets).toEqual({ sources: [{ name: 'ds_a' }, { name: 'ds_b' }] })
+    })
+
+    it('keeps the scenario datasets when the catalog cannot check the link', async () => {
+      jest.mocked(datasetsApi.listDatasets).mockRejectedValueOnce(new Error('Catalog offline'))
+      renderDetail(`${SCENARIO_PATH}?dataset=ds_a`)
+
+      expect(await screen.findByTestId('requested-datasets-warning'))
+        .toHaveTextContent('The requested datasets could not be checked, so they were not preselected: Catalog offline')
+      expect(screen.queryByRole('button', { name: 'Remove ds_a' })).not.toBeInTheDocument()
+    })
+
+    it('says when the scenario does not take datasets', async () => {
+      mockGetScenario.mockResolvedValue(makeScenario({
+        default_datasets: [],
+        supported_parameter_names: ['objective_target', 'scenario_techniques', 'include_baseline'],
+      }))
+      renderDetail(`${SCENARIO_PATH}?dataset=ds_a`)
+
+      expect(await screen.findByTestId('requested-datasets-unsupported'))
+        .toHaveTextContent('This scenario does not take datasets, so these were ignored: ds_a.')
+    })
+
+    it('starts a fresh form when a link names different datasets', async () => {
+      const user = userEvent.setup()
+      render(<FluentProvider theme={webLightTheme}><UserPreferencesProvider accountKey="local">
+        <MemoryRouter initialEntries={[`${SCENARIO_PATH}?dataset=ds_a`]}>
+          <Link to={`${SCENARIO_PATH}?dataset=ds_b`}>Use ds_b</Link>
+          <Routes><Route path="/scanner/launch/:scenarioName" element={
+            <ScenarioDetail targets={[]} defaultObjectiveTarget={null} defaultAdversarialTarget={null}
+              labels={{ operator: 'roakey' }} defaultsReady onNavigate={jest.fn()} />
+          } /></Routes>
+        </MemoryRouter>
+      </UserPreferencesProvider></FluentProvider>)
+
+      expect(await screen.findByText('ds_a (unknown)')).toBeInTheDocument()
+      await user.click(screen.getByRole('link', { name: 'Use ds_b' }))
+
+      expect(await screen.findByText('ds_b (unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('ds_a (unknown)')).not.toBeInTheDocument()
+    })
+
+    it('links to generators whose datasets this scenario runs', async () => {
+      jest.mocked(promptGeneratorsApi.list).mockResolvedValueOnce({ items: [{
+        name: 'assert',
+        display_name: 'ASSERT policy dataset',
+        description: 'Policy datasets.',
+        stages: [],
+        target_roles: [],
+        follow_up_scenario: 'foundry.red_team_agent',
+      }, {
+        name: 'target_objective',
+        display_name: 'Objective dataset',
+        description: 'Objectives.',
+        stages: [],
+        target_roles: [],
+        follow_up_scenario: null,
+      }] })
+      renderDetail(SCENARIO_PATH)
+
+      const link = await screen.findByRole('link', { name: 'Generate an ASSERT policy dataset' })
+      expect(link).toHaveAttribute('href', '/datasets/generate/new?generator=assert')
+      expect(screen.queryByRole('link', { name: /Objective dataset/ })).not.toBeInTheDocument()
     })
   })
 })
