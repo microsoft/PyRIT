@@ -8,6 +8,7 @@ Tests for backend target service.
 import asyncio
 import json
 import os
+from functools import partial
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -19,11 +20,13 @@ from azure.core.exceptions import AzureError
 from pyrit.backend.models import CreateTargetRequest
 from pyrit.backend.services import TargetService, get_target_service
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.models import ComponentIdentifier
 from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryEntryOrigin,
     RegistryRecipeKind,
+    RegistryRestoreReport,
     SavedEntryOwner,
     TargetInstance,
 )
@@ -1778,6 +1781,13 @@ def _saved_document(source: Path, name: str) -> dict[str, Any]:
     return json.loads((source / "targets" / f"{name}.json").read_text())
 
 
+async def _restore(source: Path) -> RegistryRestoreReport:
+    """Restore the saved targets through the API's create, as startup does."""
+    get_target_service.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(source)).restore_async(build_async=build_async)
+
+
 async def _saved_by_as_each_caller(
     service: TargetService, *, caller_oids: list[str | None]
 ) -> list[tuple[str | None, bool]]:
@@ -1806,12 +1816,13 @@ class TestSaveTarget:
             "schema_version": 1,
             "class_module": "pyrit.prompt_target.openai.openai_chat_target",
             "class_name": "OpenAIChatTarget",
-            "params": {"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o", "auth_mode": "identity", "headers": "{}"},
+            "auth_mode": "identity",
+            "params": {"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o", "headers": "{}"},
             "owner": {"oid": owner.oid, "name": "Ada"},
         }
         saved_hash = service.get_target_object(target_registry_name="contoso_gpt4o").get_identifier().hash
         TargetRegistry.reset_registry_singleton()
-        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+        report = await _restore(tmp_path)
         assert report.failures == []
         restored = TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o")
         assert restored is not None
@@ -1826,7 +1837,8 @@ class TestSaveTarget:
 
         assert target.origin is RegistryEntryOrigin.SAVED
         document = _saved_document(tmp_path, "local_llm")
-        assert document["params"]["auth_mode"] == "none"
+        assert document["auth_mode"] == "none"
+        assert "auth_mode" not in document["params"]
         assert "owner" not in document
 
     @pytest.mark.parametrize(
@@ -2012,7 +2024,7 @@ class TestSaveTarget:
         assert _saved_document(tmp_path, "aliased")["class_name"] == "contoso_text"
         TargetRegistry.reset_registry_singleton()
         TargetRegistry.get_registry_singleton().register_class(AliasedTextTarget, name="contoso_text")
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
 
     async def test_refuses_to_save_a_target_whose_class_a_launch_script_added(self, tmp_path: Path) -> None:
         class LaunchScriptTextTarget(TextTarget):
@@ -2119,7 +2131,7 @@ class TestSaveTarget:
         )
         before_restart = await _saved_by_as_each_caller(TargetService(), caller_oids=callers)
         TargetRegistry.reset_registry_singleton()
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
         after_restart = await _saved_by_as_each_caller(TargetService(), caller_oids=callers)
 
         assert (created.saved_by, created.saved_by_me) == ("Ada", True)

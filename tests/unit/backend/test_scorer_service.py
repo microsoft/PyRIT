@@ -7,6 +7,7 @@ import asyncio
 import json
 import threading
 from collections.abc import Callable, Iterator
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -16,6 +17,7 @@ import pytest
 from pyrit.backend.models import CreateScorerRequest
 from pyrit.backend.services.chat_scoring_service import ChatScoringService
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.common import REQUIRED_VALUE, apply_defaults, reset_default_values, set_default_value
@@ -28,7 +30,13 @@ from pyrit.models import (
     ScoringExpectation,
     TargetIdentifier,
 )
-from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RegistryRestoreReport,
+    SavedEntryOwner,
+)
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.prompt_target import TextTarget
 from pyrit.registry import DefaultInstanceRegistry, ScorerRegistry, TargetRegistry
@@ -504,6 +512,13 @@ async def test_decision_scorer_unknown_parameter_does_not_list_its_question_path
     assert "decision_question_path" not in str(error.value)
 
 
+async def _restore(source: Path) -> RegistryRestoreReport:
+    """Restore the saved scorers through the API's create, as startup does."""
+    get_scorer_service.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(source)).restore_async(build_async=build_async)
+
+
 def _persist_scorer(name: str, scorer_type: str, params: dict[str, Any]) -> CreateScorerRequest:
     return CreateScorerRequest(name=name, type=scorer_type, params=params, persist=True)
 
@@ -537,7 +552,7 @@ async def test_saves_a_scorer_that_restore_rebuilds(tmp_path: Path) -> None:
     assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "scorers", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
     saved_hash = entry.instance.get_identifier().hash
     ScorerRegistry.reset_registry_singleton()
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
     restored = ScorerRegistry.get_registry_singleton().instances.get("leak_substring")
     assert restored is not None
     assert restored.get_identifier().hash == saved_hash
