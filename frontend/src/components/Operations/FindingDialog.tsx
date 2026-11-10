@@ -206,11 +206,11 @@ export default function FindingDialog({
                 placeholder="Not set" value={harmOpen ? harmSearch : draft.harm_type ?? ''}
                 selectedOptions={[draft.harm_type ?? '']}
                 onOpenChange={(_, data) => { setHarmOpen(data.open); setHarmSearch('') }}
-                onChange={event => { clearFieldError('harm_type'); setHarmSearch(event.target.value); setHarmOpen(true) }}
+                onChange={event => { setHarmSearch(event.target.value); setHarmOpen(true) }}
                 onOptionSelect={(_, data) => {
-                  clearFieldError('harm_type')
                   const harmType = data.optionValue
                   if (harmType !== '' && !harmTypes?.includes(harmType ?? '')) return
+                  if ((harmType || null) !== draft.harm_type) clearFieldError('harm_type')
                   setDraft(value => ({
                     ...value, harm_type: harmType || null,
                     harm_type_other: harmType === 'Other' ? (value.harm_type === 'Other' ? value.harm_type_other : '') : null,
@@ -252,7 +252,10 @@ export default function FindingDialog({
               validationMessage={activeFieldErrors.attack_result_id}>
               <Input value={attackResultId} disabled={saving} name="attack_result_id" autoComplete="off"
                 aria-invalid={Boolean(activeFieldErrors.attack_result_id)}
-                onChange={(_, data) => { clearFieldError('attack_result_id'); setAttackResultId(data.value) }} />
+                onChange={(_, data) => {
+                  if (data.value.trim() !== attackResultId.trim()) clearFieldError('attack_result_id')
+                  setAttackResultId(data.value)
+                }} />
             </Field>}
             <div className={styles.actions}>
               <Button className={styles.button} disabled={saving} onClick={onClose}>Cancel</Button>

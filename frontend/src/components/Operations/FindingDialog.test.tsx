@@ -304,6 +304,77 @@ describe('FindingDialog', () => {
 })
 
 describe('FindingDialog server field validation', () => {
+  it('keeps harm errors while searching, dismissing, or reselecting the rejected category', async () => {
+    const user = userEvent.setup()
+    const message = 'Category is not allowed'
+    const onSave = jest.fn().mockRejectedValueOnce(validationError([
+      { field: 'body.harm_type', message },
+    ])).mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog
+      initialValues={{ title: 'Existing', severity: 'low', harm_type: 'Malware' }}
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    const picker = screen.getByRole('combobox', { name: 'Harm-type' })
+    const saveButton = screen.getByRole('button', { name: 'Save finding' })
+    await waitFor(() => expect(saveButton).toBeEnabled())
+    await user.click(saveButton)
+    expect(await screen.findByText(message)).toBeInTheDocument()
+
+    await user.type(picker, 'mal')
+    expect(picker).toHaveAttribute('aria-invalid', 'true')
+    expect(saveButton).toBeDisabled()
+    await user.keyboard('{Escape}')
+    expect(picker).toHaveValue('Malware')
+    fireEvent.submit(saveButton.closest('form')!)
+    expect(onSave).toHaveBeenCalledTimes(1)
+
+    await user.click(picker)
+    await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Malware', exact: true }))
+    expect(screen.getByText(message)).toBeInTheDocument()
+    expect(saveButton).toBeDisabled()
+    fireEvent.submit(saveButton.closest('form')!)
+    expect(onSave).toHaveBeenCalledTimes(1)
+
+    await user.click(picker)
+    await user.click(within(await screen.findByRole('listbox')).getByRole('option', { name: 'Hate Speech', exact: true }))
+    expect(screen.queryByText(message)).not.toBeInTheDocument()
+    expect(saveButton).toBeEnabled()
+    await user.click(saveButton)
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ harm_type: 'Hate Speech' }), ATTEMPT)
+  })
+
+  it('keeps evidence errors for whitespace-only edits and allows a changed trimmed ID', async () => {
+    const user = userEvent.setup()
+    const onSave = jest.fn().mockRejectedValueOnce(validationError([
+      { field: 'body.attack_result_id', message: UUID_MESSAGE },
+    ])).mockResolvedValue(undefined)
+    render(<FluentProvider theme={webLightTheme}><FindingDialog evidenceField
+      initialValues={{ title: 'Existing', severity: 'low' }}
+      onSave={onSave} onClose={jest.fn()} /></FluentProvider>)
+    const evidence = screen.getByRole('textbox', { name: 'Evidence attack ID' })
+    const saveButton = screen.getByRole('button', { name: 'Save finding' })
+    await user.type(evidence, 'not-a-uuid')
+    await user.click(saveButton)
+    expect(await screen.findByText(UUID_MESSAGE)).toBeInTheDocument()
+
+    for (const value of ['not-a-uuid ', '  not-a-uuid ', 'not-a-uuid']) {
+      fireEvent.change(evidence, { target: { value } })
+      expect(evidence).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByText(UUID_MESSAGE)).toBeInTheDocument()
+      expect(saveButton).toBeDisabled()
+      fireEvent.submit(saveButton.closest('form')!)
+      expect(onSave).toHaveBeenCalledTimes(1)
+    }
+
+    const corrected = '123e4567-e89b-12d3-a456-426614174000'
+    fireEvent.change(evidence, { target: { value: `  ${corrected}  ` } })
+    expect(screen.queryByText(UUID_MESSAGE)).not.toBeInTheDocument()
+    expect(saveButton).toBeEnabled()
+    await user.click(saveButton)
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    expect(onSave).toHaveBeenLastCalledWith(expect.any(Object), { id: expect.any(String), attackResultId: corrected })
+  })
+
   it('shows the server explanation on the invalid control and guards resubmission until corrected', async () => {
     const user = userEvent.setup()
     const onSave = jest.fn()
