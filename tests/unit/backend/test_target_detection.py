@@ -4,8 +4,14 @@
 """Tests for automatic target capability detection."""
 
 import asyncio
+import base64
+import io
+import uuid
 from collections.abc import Iterator
 from contextlib import ExitStack
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -13,12 +19,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
+from PIL import Image
 
 from pyrit.backend.routes.targets import router
 from pyrit.backend.services import TargetService
-from pyrit.models import Message, TargetCapabilities
-from pyrit.prompt_target import OpenAIChatTarget, RoundRobinTarget, TargetConfiguration
-from pyrit.prompt_target.common.discover_target_capabilities import CapabilityDiscoveryError
+from pyrit.models import Conversation, Message, TargetCapabilities
+from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
+from pyrit.prompt_target import OpenAIChatTarget, OpenAITTSTarget, RoundRobinTarget, TargetConfiguration
+from pyrit.prompt_target.common.discover_target_capabilities import DEFAULT_TEST_ASSETS, CapabilityDiscoveryError
 from pyrit.registry import TargetRegistry
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
@@ -372,7 +380,7 @@ async def test_detection_applies_private_result_and_releases_probe(
     await rebuilt.cleanup_target_async()
 
 
-async def test_detection_uses_real_probes_to_find_new_input_support(
+async def test_detection_preserves_declarations_without_verified_adapter_probes(
     detection_service: tuple[TargetService, _DetectableTarget],
 ) -> None:
     service, target = detection_service
@@ -380,8 +388,8 @@ async def test_detection_uses_real_probes_to_find_new_input_support(
     result = await service.detect_capabilities_async(
         target_registry_name="test-target", expected_hash=target.get_identifier().hash
     )
-    assert frozenset({"image_path"}) in result.capabilities.input_modalities
-    assert frozenset({"text", "audio_path"}) in result.capabilities.input_modalities
+    assert frozenset({"image_path"}) not in result.capabilities.input_modalities
+    assert frozenset({"text", "audio_path"}) not in result.capabilities.input_modalities
     assert result.capabilities.output_modalities == frozenset({frozenset({"text"})})
 
 
@@ -575,4 +583,150 @@ def test_detection_route_returns_updated_target(
             f"/api/targets/{target_name}/detect-capabilities", json={"expected_hash": target.get_identifier().hash}
         )
     assert response.status_code == 200
-    assert response.json()["capabilities"]["supports_json_output"] is True
+    assert response.json()["capabilities"] == target.capabilities.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("snapshot_capabilities", [False, True])
+async def test_detection_preserves_existing_binding_and_multi_turn_provider_send_async(
+    detection_service: tuple[TargetService, _DetectableTarget], snapshot_capabilities: bool
+) -> None:
+    service, _ = detection_service
+    source = OpenAIChatTarget(api_key="test-key", endpoint="https://example.test", model_name="test-model")
+    service._registry.instances.register(source, name="chat")
+    original = source.capabilities
+    private = await service.build_from_source_async(
+        SourceInstanceSpec(source_name="chat", source_hash=source.get_identifier().hash, params={"temperature": 0.7})
+    )
+    binding = TargetBinding(
+        source_name="chat",
+        source_hash=source.get_identifier().hash,
+        effective_hash=private.get_identifier().hash,
+        temperature=0.7,
+        capabilities=original if snapshot_capabilities else None,
+    )
+    await private.cleanup_target_async()
+    completion = ChatCompletion(
+        id="chat-result",
+        created=0,
+        model="test-model",
+        object="chat.completion",
+        choices=[Choice(index=0, finish_reason="stop", message=ChatCompletionMessage(role="assistant", content="ok"))],
+    )
+    restored = None
+    try:
+        with patch(
+            "pyrit.backend.services.target_service.discover_target_capabilities_async",
+            new=AsyncMock(return_value=original.model_copy(update={"supports_multi_turn": False})),
+        ):
+            await service.detect_capabilities_async(
+                target_registry_name="chat", expected_hash=source.get_identifier().hash
+            )
+        assert not source.capabilities.supports_multi_turn
+        restored = await service.resolve_binding_async(TargetBinding.from_metadata(binding.to_metadata()))
+        assert restored.capabilities == original
+        assert restored.get_identifier().hash == binding.effective_hash
+        with patch.object(restored._client.chat.completions, "create", new=AsyncMock(return_value=completion)) as send:
+            first = Message.from_prompt(role="user", prompt="First turn.")
+            first.get_piece().conversation_id = str(uuid.uuid4())
+            [response] = await restored.send_prompt_async(message=first)
+            await restored._memory.add_conversation_to_memory_async(
+                conversation=Conversation(
+                    conversation_id=first.get_piece().conversation_id,
+                    target_identifier=restored.get_identifier(),
+                )
+            )
+            await restored._memory.add_message_to_memory_async(request=first)
+            response.get_piece().sequence = 1
+            await restored._memory.add_message_to_memory_async(request=response)
+            second = Message.from_prompt(role="user", prompt="Second turn.")
+            second.get_piece().conversation_id = first.get_piece().conversation_id
+            await restored.send_prompt_async(message=second)
+        assert len(send.call_args.kwargs["messages"]) == 3
+        new_binding = binding.model_copy(update={"capabilities": source.capabilities})
+        with patch(
+            "pyrit.backend.services.target_service.discover_target_capabilities_async",
+            new=AsyncMock(return_value=original),
+        ):
+            await service.detect_capabilities_async(
+                target_registry_name="chat", expected_hash=source.get_identifier().hash
+            )
+        newer = await service.resolve_binding_async(new_binding)
+        try:
+            assert not newer.capabilities.supports_multi_turn
+            assert source.capabilities.supports_multi_turn
+        finally:
+            await newer.cleanup_target_async()
+    finally:
+        if restored is not None:
+            await restored.cleanup_target_async()
+        await source.cleanup_target_async()
+
+
+async def test_detection_does_not_promote_untransmitted_tts_features_async(
+    detection_service: tuple[TargetService, _DetectableTarget],
+) -> None:
+    service, _ = detection_service
+    source = OpenAITTSTarget(api_key="test-key", endpoint="https://example.test", model_name="tts-1")
+    service._registry.instances.register(source, name="tts")
+    original = source.capabilities
+    speech = AsyncMock(return_value=SimpleNamespace(content=b"test-audio"))
+    try:
+        with patch("openai.resources.audio.speech.AsyncSpeech.create", new=speech):
+            result = await service.detect_capabilities_async(
+                target_registry_name="tts", expected_hash=source.get_identifier().hash
+            )
+        assert result.capabilities == original
+        assert source.capabilities == original
+        speech.assert_awaited_once()
+        assert set(speech.call_args.kwargs) == {"model", "voice", "input", "response_format", "speed"}
+        assert speech.call_args.kwargs["response_format"] == "mp3"
+    finally:
+        await source.cleanup_target_async()
+
+
+@pytest.mark.parametrize("corrupt", [False, True])
+async def test_detection_preserves_vision_and_sends_only_valid_image_probes_async(
+    detection_service: tuple[TargetService, _DetectableTarget], tmp_path: Path, corrupt: bool
+) -> None:
+    service, _ = detection_service
+    source = OpenAIChatTarget(api_key="test-key", endpoint="https://example.test", model_name="test-model")
+    service._registry.instances.register(source, name="vision")
+    vision = frozenset({"text", "image_path"})
+    assert vision in source.capabilities.input_modalities
+    asset = tmp_path / "probe.png"
+    asset.write_bytes(b"corrupt image" if corrupt else Path(DEFAULT_TEST_ASSETS["image_path"]).read_bytes())
+    images = 0
+
+    async def create_async(**kwargs: Any) -> ChatCompletion:
+        nonlocal images
+        for message in kwargs["messages"]:
+            content = message.get("content")
+            for part in content if isinstance(content, list) else []:
+                if part.get("type") == "image_url":
+                    payload = part["image_url"]["url"].split(",", 1)[1]
+                    with Image.open(io.BytesIO(base64.b64decode(payload))) as image:
+                        image.verify()
+                    images += 1
+        return ChatCompletion(
+            id="vision-result",
+            created=0,
+            model="test-model",
+            object="chat.completion",
+            choices=[
+                Choice(index=0, finish_reason="stop", message=ChatCompletionMessage(role="assistant", content="ok"))
+            ],
+        )
+
+    try:
+        with (
+            patch.dict(DEFAULT_TEST_ASSETS, {"image_path": str(asset)}),
+            patch("openai.resources.chat.completions.AsyncCompletions.create", side_effect=create_async),
+        ):
+            result = await service.detect_capabilities_async(
+                target_registry_name="vision", expected_hash=source.get_identifier().hash
+            )
+        assert vision in result.capabilities.input_modalities
+        assert vision in source.capabilities.input_modalities
+        assert images == 0 if corrupt else images > 0
+    finally:
+        await source.cleanup_target_async()

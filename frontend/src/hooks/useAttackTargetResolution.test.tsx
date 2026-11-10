@@ -78,12 +78,19 @@ describe('useAttackTargetResolution', () => {
   })
 
   it('reconstructs a saved temperature without selecting the registered default', async () => {
+    const capabilities = {
+      supports_multi_turn: true, supports_system_prompt: true,
+      supports_json_output: false, supports_json_schema: false,
+      supported_input_modalities: ['text'], supported_output_modalities: ['text'],
+    }
     const binding = {
       version: 1 as const, source_name: 'target', source_hash: 'source-hash',
       temperature: 0.8, effective_hash: 'effective-hash',
+      capabilities,
     }
     jest.mocked(targetsApi.buildTarget).mockResolvedValue({
       identifier: { class_name: 'OpenAIChatTarget', hash: 'effective-hash', temperature: 0.8 },
+      capabilities: { ...capabilities, supports_multi_turn: false },
     })
     const savedTarget: TargetInfo = {
       ...targetInfo, target_type: 'OpenAIChatTarget', identifier_hash: 'effective-hash', binding,
@@ -94,6 +101,7 @@ describe('useAttackTargetResolution', () => {
       attackTargetSource: 'persisted',
     }))
     await waitFor(() => expect(result.current.activeTarget?.binding).toEqual(binding))
+    expect(result.current.activeTarget?.capabilities).toEqual(capabilities)
     expect(targetsApi.getTarget).not.toHaveBeenCalled()
     expect(targetsApi.buildTarget).toHaveBeenCalledWith('OpenAIChatTarget', {
       source_name: 'target', source_hash: 'source-hash', params: { temperature: 0.8 },

@@ -13,6 +13,7 @@ import httpx
 import pytest
 from mcp.types import Tool as MCPToolDefinition
 from openai.types.chat import ChatCompletion
+from PIL import Image
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
 
@@ -160,7 +161,10 @@ async def test_strict_discovery_treats_request_rejection_as_unsupported(status_c
             raise error
         return _ok_response()
 
-    with patch.object(target, "send_prompt_async", new_callable=AsyncMock, side_effect=send_async):
+    with (
+        patch.object(target, "send_prompt_async", new_callable=AsyncMock, side_effect=send_async),
+        patch("pyrit.prompt_target.common.discover_target_capabilities._supports_chat_probes", return_value=True),
+    ):
         result = await discover_target_capabilities_async(
             target=target,
             capabilities=[CapabilityName.JSON_OUTPUT],
@@ -1186,14 +1190,21 @@ def _set_input_modalities(
 
 @pytest.fixture
 def image_asset(tmp_path: Path) -> str:
-    """Create a tiny placeholder file usable as an image_path asset."""
+    """Create a decodable image probe."""
     asset = tmp_path / "test_image.png"
-    asset.write_bytes(b"\x89PNG\r\n\x1a\n")
+    Image.new("RGB", (16, 16), color="green").save(asset)
     return str(asset)
 
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestCreateTestMessage:
+    def test_packaged_image_is_decodable(self) -> None:
+        with Image.open(DEFAULT_TEST_ASSETS["image_path"]) as image:
+            image.verify()
+        with Image.open(DEFAULT_TEST_ASSETS["image_path"]) as image:
+            image.load()
+            assert image.width > 0 and image.height > 0
+
     def test_default_assets_exist_for_packaged_modalities(self) -> None:
         msg = _create_test_message(
             modalities=frozenset({"audio_path", "image_path"}),

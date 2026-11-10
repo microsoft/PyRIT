@@ -332,6 +332,8 @@ Use `raise_on_error=True` when you apply results automatically. This shared disc
 
 Provider HTTP 400/422 statuses survive LiteLLM's generic error wrapping, so strict checks can distinguish feature rejections from operational failures.
 
+Strict discovery only probes features with a verified adapter contract (OpenAI Chat, Responses, and LiteLLM). Other adapters, such as text-to-speech, receive a control request but retain their declared capabilities: accepting a text request does not prove that the adapter transmitted history, JSON constraints, or media. Image probe assets are checked for integrity and decodability before use; invalid or unavailable assets preserve existing declarations.
+
 `RoundRobinTarget` normalizes against its own configuration. During each child dispatch, capability reads use the parent's flags in a task-local scope, so detected support can reach the provider without changing independently registered children. Child configurations, identities, and independent sends retain their own settings; the dispatch scope is restored on success, failure, or cancellation.
 
 ## Multi-Modal Targets

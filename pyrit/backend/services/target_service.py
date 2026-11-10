@@ -17,6 +17,7 @@ import logging
 import uuid
 from functools import lru_cache
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from pyrit.backend.mappers import target_object_to_instance
 from pyrit.backend.models import (
@@ -78,6 +79,7 @@ class TargetService:
         self._registry = TargetRegistry.get_registry_singleton()
         self._detecting: set[str] = set()
         self._detecting_sources: set[int] = set()
+        self._legacy_binding_capabilities: WeakKeyDictionary[PromptTarget, TargetCapabilities] = WeakKeyDictionary()
 
     async def detect_capabilities_async(self, *, target_registry_name: str, expected_hash: str) -> TargetInstance:
         """
@@ -136,6 +138,7 @@ class TargetService:
                     raise FileExistsError(
                         "The target changed during capability detection. Refresh the target registry."
                     )
+                self._legacy_binding_capabilities.setdefault(target, target.capabilities)
                 target.apply_capabilities(capabilities=capabilities)
                 return self._build_instance_from_object(target_registry_name=target_registry_name, target_obj=target)
         finally:
@@ -369,19 +372,27 @@ class TargetService:
             external_input=True,
             allowed_path_params=type(source).caller_path_parameters,
         )
-        if spec.effective_hash and target.get_identifier().hash != spec.effective_hash:
-            await release_component_async(target)
-            raise ValueError("The saved target configuration cannot be reconstructed")
+        if spec.effective_hash:
+            legacy_capabilities = self._legacy_binding_capabilities.get(source)
+            if legacy_capabilities is not None:
+                target.apply_capabilities(capabilities=legacy_capabilities)
+            if target.get_identifier().hash != spec.effective_hash:
+                await release_component_async(target)
+                raise ValueError("The saved target configuration cannot be reconstructed")
         return target
 
     async def resolve_binding_async(self, binding: TargetBinding) -> PromptTarget:
         """
-        Rebuild an attack-owned configuration from its current source.
+        Rebuild an attack-owned target without changing its saved capabilities.
 
         Returns:
             PromptTarget: The caller-owned target.
         """
-        return await self.build_from_source_async(binding.to_spec())
+        source = self._registry.resolve_source(name=binding.source_name, identifier_hash=binding.source_hash)
+        capabilities = binding.capabilities or self._legacy_binding_capabilities.get(source, source.capabilities)
+        target = await self.build_from_source_async(binding.to_spec())
+        target.apply_capabilities(capabilities=capabilities)
+        return target
 
     def _has_required_params(self, *, target_type: str, parameters: tuple[Parameter, ...]) -> bool:
         """

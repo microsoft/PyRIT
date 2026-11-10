@@ -679,12 +679,12 @@ _CAPABILITY_PROBES: dict[CapabilityName, _CapabilityProbe] = {
 }
 
 
-def _supports_tool_history_probe(target: PromptTarget) -> bool:
+def _supports_chat_probes(target: PromptTarget) -> bool:
     """
-    Check whether the adapter has a verified structured-history probe.
+    Check whether the adapter transmits the features exercised by chat probes.
 
     Returns:
-        bool: Whether the structured history can be sent by this adapter.
+        bool: Whether chat features can be sent by this adapter.
     """
     from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
     from pyrit.prompt_target.openai.openai_chat_target import OpenAIChatTarget
@@ -837,7 +837,7 @@ async def _discover_input_modalities_async(
         if tool_modalities:
             for include_text in sorted({"text" in combo for combo in tool_modalities}):
                 combinations = {combo for combo in tool_modalities if ("text" in combo) == include_text}
-                can_probe = _supports_tool_history_probe(target)
+                can_probe = _supports_chat_probes(target)
                 if can_probe and await _probe_tool_calls_async(
                     target=target, timeout_s=per_probe_timeout_s, retries=retries, include_text=include_text
                 ):
@@ -1021,6 +1021,10 @@ async def _discover_target_capabilities_async(
         declared where probing is unavailable or out of scope.
     """
     capabilities_to_probe = list(capabilities) if capabilities is not None else None
+    if _RAISE_ON_PROBE_ERROR.get() and not _supports_chat_probes(target):
+        logger.info("Retaining declared capabilities for %s: no verified chat probes.", type(target).__name__)
+        capabilities_to_probe = []
+        test_modalities = set()
 
     queried_caps = await _discover_capability_flags_async(
         target=target,
@@ -1122,6 +1126,16 @@ def _create_test_message(
             raise ValueError(f"No test asset configured for modality '{modality}'.")
         if not Path(asset_path).is_file():
             raise FileNotFoundError(f"Test asset for modality '{modality}' not found at: {asset_path}")
+        if modality == "image_path":
+            from PIL import Image
+
+            try:
+                with Image.open(asset_path) as image:
+                    image.verify()
+                with Image.open(asset_path) as image:
+                    image.load()
+            except (OSError, SyntaxError) as exc:
+                raise ValueError(f"Invalid image probe asset: {asset_path}") from exc
 
         pieces.append(
             MessagePiece(

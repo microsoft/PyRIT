@@ -183,7 +183,10 @@ recreated after a backend restart or reinitialization. Use
 
 Use **Auto-detect capabilities** to select targets and run live checks. Results
 apply automatically for the current backend session. Checks can incur provider
-charges. See [target capability discovery](../code/targets/0_prompt_targets.md#discovering-live-target-capabilities)
+charges. Manual chat bindings retain their saved capabilities; legacy bindings
+without a snapshot retain the source's pre-detection capabilities for this backend
+session. New temperature bindings snapshot the detected capabilities.
+See [target capability discovery](../code/targets/0_prompt_targets.md#discovering-live-target-capabilities)
 for shared behavior.
 
 ![Registry page with registered targets and component tabs](images/registry.png)
