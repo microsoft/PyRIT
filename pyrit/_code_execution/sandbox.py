@@ -30,6 +30,7 @@ from pyrit._code_execution.client import (
     SandboxInputError,
     SandboxRevisionChangedError,
     SandboxSessionLostError,
+    SandboxStateLostError,
     SandboxUnavailableError,
 )
 from pyrit.models import Identifiable
@@ -52,12 +53,13 @@ class SandboxStateKind(str, Enum):
     """
     Whether a sandbox keeps state between calls, which decides how PyRIT shares it.
 
-    ``ENVIRONMENT``: state lives in the machine and survives closing a session, so callers share one
-    session and take turns. ``CALL``: nothing persists between calls, so there are no sessions and
-    calls run concurrently.
+    ``ENVIRONMENT`` state survives closing a session. ``SESSION`` state lasts only until that session
+    ends, so PyRIT never silently closes or replaces it. Both serialize callers through one session.
+    ``CALL`` retains nothing between calls and runs them concurrently without sessions.
     """
 
     ENVIRONMENT = "environment"
+    SESSION = "session"
     CALL = "call"
 
 
@@ -134,7 +136,7 @@ class SandboxCapabilities(BaseModel):
             raise ValueError("file_runtime_profile_name must name one of the runtime profiles.")
         stateful = (self.file_runtime_profile_name, self.max_session_seconds, self.supports_reset or None)
         if self.state_kind is SandboxStateKind.CALL and any(value is not None for value in stateful):
-            raise ValueError("File tools, session limits and reset need an environment sandbox.")
+            raise ValueError("File tools, session limits and reset need a stateful sandbox.")
         return self
 
     def get_runtime_profile(self, name: str) -> RuntimeProfile:
@@ -330,7 +332,7 @@ class Sandbox(Identifiable, ABC):
     Base class for sandboxes: a subclass adapts one infrastructure, and this class enforces the rules.
 
     Adapters implement ``_build_identifier`` (static configuration only, never session ids or secrets),
-    ``_get_capabilities`` and ``_execute_async``. ``environment`` sandboxes also implement
+    ``_get_capabilities`` and ``_execute_async``. Stateful sandboxes also implement
     ``_open_session_async`` and ``_close_session_async`` (closing twice must be safe), and may implement
     ``_get_status_async`` and ``_reset_async``. Adapters raise ``SandboxInputError`` for bad input,
     ``SandboxBusyError`` when work can't start right now, ``SandboxSessionLostError`` when the session is
@@ -346,8 +348,15 @@ class Sandbox(Identifiable, ABC):
     work finishes and holds the lock until it does. Runs that have not started when their caller gives up,
     such as one waiting out a busy sandbox, never start. A busy open is retried with backoff, a lost
     session is reopened and the call retried once, and after an uncertain failure the session is closed
-    before the next call. If a close or a reset can't be confirmed, the sandbox is quarantined: calls are
-    refused until ``release_async``, which retries the close, or ``reset_async``. ``close_async`` is final.
+    before the next call. A failed close is retried by ``release_async``. Uncertain run cleanup or reset
+    requires a successful reset or explicit operator ``recover_async``; normal release does not lift that
+    quarantine. ``close_async`` is final.
+
+    A ``session`` sandbox also serializes calls, but closing loses its state. It has no automatic idle
+    close or renewal: callers must explicitly release or reset it. A lost session raises
+    ``SandboxStateLostError`` without replacement; uncertain execution also blocks further use until
+    explicit recovery or reset. A session-scoped reset is attempted before closing, so refusal does not
+    first discard the state it refused to reset.
 
     A ``call`` sandbox shares nothing between calls, so its calls run concurrently in the caller's task,
     and its adapter cleans up when a call is cancelled.
@@ -377,8 +386,10 @@ class Sandbox(Identifiable, ABC):
 
         Args:
             acquire_timeout_seconds (float): How long a call may wait for its turn and for a busy
-                sandbox, in total. Defaults to 300 seconds.
-            idle_timeout_seconds (float): How long an unused session stays open. Defaults to 600 seconds.
+                sandbox before its first invocation. Later invocations get their own acquisition budget.
+                Defaults to 300 seconds.
+            idle_timeout_seconds (float): How long an unused environment session stays open. Session-owned
+                state is never evicted automatically. Defaults to 600 seconds.
             owner (str | None): The name sessions are opened under. Defaults to a random
                 ``pyrit-`` name for this object.
 
@@ -400,6 +411,7 @@ class Sandbox(Identifiable, ABC):
         self._uses = 0
         self._closed = False
         self._quarantine_reason: str | None = None
+        self._operator_recovery_required = False
         self._unconfirmed_session_ids: list[str] = []
         self._resetting = False
         self._last_reset: SandboxResetRecord | None = None
@@ -548,11 +560,12 @@ class Sandbox(Identifiable, ABC):
 
     async def release_async(self) -> None:
         """
-        End the session if no call is running, and clear a quarantine. The sandbox's state is kept.
+        End the session if no call is running. Only environment-owned state survives release.
 
         Release first closes again every session whose close was not confirmed, which also works after
         ``close_async``; the quarantine stays while any of those closes still fails. Release never opens a
-        session. Once started, it runs to the end even if the caller gives up.
+        session. Uncertain run cleanup, reset or lost session-state quarantine requires explicit operator
+        recovery or a successful reset. Once started, release runs to the end even if the caller gives up.
 
         Raises:
             SandboxBusyError: If a call or reset holds the sandbox.
@@ -563,11 +576,32 @@ class Sandbox(Identifiable, ABC):
             raise SandboxBusyError("A call or reset holds the sandbox; release it after that finishes.")
         await self._await_owned_async(self._spawn(self._release_locked_async()))
 
+    async def recover_async(self) -> None:
+        """
+        Acknowledge operator-confirmed recovery, close old sessions, and clear the quarantine.
+
+        Call only after an operator has confirmed stray work stopped or restored the backend. Session-owned
+        state may be gone; callers must reconstruct it explicitly. Unconfirmed session closes still prevent
+        recovery, and a permanently closed sandbox cannot be reopened.
+
+        Raises:
+            SandboxBusyError: If a call or reset holds the sandbox.
+            SandboxUnavailableError: If the sandbox is closed or a session close still cannot be confirmed.
+        """
+        if self._closed:
+            raise SandboxUnavailableError("The sandbox is closed; recovery cannot reopen it.")
+        if self.get_capabilities().state_kind is SandboxStateKind.CALL:
+            return
+        if not await self._try_lock_async():
+            raise SandboxBusyError("A call or reset holds the sandbox; recover it after that finishes.")
+        await self._await_owned_async(self._spawn(self._release_locked_async(recover=True)))
+
     async def reset_async(self, *, expected_revision: str | None = None) -> None:
         """
         Restore the sandbox's baseline, after the running call finishes.
 
-        The session is closed first. Once started, a reset runs to the end even if the caller gives up.
+        Environment sessions close first. Session-owned state is closed only after the reset succeeds.
+        Once started, a reset runs to the end even if the caller gives up.
         A successful reset clears a quarantine; a session whose close is still unconfirmed is closed again
         at the next release or close.
 
@@ -747,6 +781,8 @@ class Sandbox(Identifiable, ABC):
             try:
                 if request.abandoned():
                     raise _CallerGaveUpError
+                if deadline is not None and index:
+                    deadline = time.monotonic() + self._acquire_timeout_seconds
                 result = await self._invoke_async(request=request, invocation=invocation, deadline=deadline)
                 events.append(self._to_event(index=index, request=request, result=result))
             except _CallerGaveUpError:
@@ -767,7 +803,7 @@ class Sandbox(Identifiable, ABC):
                 if not result.warnings:
                     warnings.append(detail)
                 if deadline is not None:
-                    self._quarantine(reason=f"A run's processes may still be running: {detail}")
+                    self._quarantine(reason=f"A run's processes may still be running: {detail}", requires_recovery=True)
                 if index + 1 < len(request.invocations):
                     reasons = (f"stopped after invocation {index}: {detail}",)
                 break
@@ -818,6 +854,7 @@ class Sandbox(Identifiable, ABC):
             _CallerGaveUpError: If the caller gave up while the session opened; nothing ran.
             SandboxBusyError: If the sandbox could not start the run; nothing ran.
             SandboxSessionLostError: If the session was gone; it is forgotten and nothing ran.
+            SandboxStateLostError: If losing the session also lost its state; replacement is not automatic.
             SandboxExecutionError: If the outcome is uncertain; the session is closed first.
         """
         session_id = await self._ensure_session_async(request=request, deadline=deadline)
@@ -827,10 +864,19 @@ class Sandbox(Identifiable, ABC):
             return await self._call_execute_async(session_id=session_id, request=request, invocation=invocation)
         except (SandboxInputError, SandboxBusyError):
             raise
-        except SandboxSessionLostError:
+        except SandboxSessionLostError as error:
             self._forget_session()
+            if self.get_capabilities().state_kind is SandboxStateKind.SESSION:
+                reason = "The session's state was lost; explicitly recover or reset before starting a new session."
+                self._quarantine(reason=reason, requires_recovery=True)
+                raise SandboxStateLostError(reason) from error
             raise
         except SandboxExecutionError:
+            if self.get_capabilities().state_kind is SandboxStateKind.SESSION:
+                self._quarantine(
+                    reason="The run is uncertain and closing its session discards the state.",
+                    requires_recovery=True,
+                )
             await self._discard_session_async()
             raise
 
@@ -917,10 +963,16 @@ class Sandbox(Identifiable, ABC):
 
         Raises:
             SandboxBusyError: If opening exhausted the acquisition budget or the session's usable lifetime.
+            SandboxUnavailableError: If renewal would discard session-owned state.
         """
         if self._session_id is not None and not self._needs_renewal(timeout_seconds=request.timeout_seconds):
             return self._session_id
         if self._session_id is not None:
+            if self.get_capabilities().state_kind is SandboxStateKind.SESSION:
+                raise SandboxUnavailableError(
+                    "This run cannot fit the session's remaining lifetime without losing its state; "
+                    "use a shorter timeout or explicitly release or reset it."
+                )
             await self._discard_session_async()
         session_id = await self._open_session_with_retry_async(request=request, deadline=deadline)
         if time.monotonic() >= deadline:
@@ -1020,9 +1072,10 @@ class Sandbox(Identifiable, ABC):
             await self._close_or_quarantine_async(session_id=session_id)
         return not self._unconfirmed_session_ids
 
-    def _quarantine(self, *, reason: str) -> None:
-        """Refuse calls until an operator releases or resets the sandbox."""
+    def _quarantine(self, *, reason: str, requires_recovery: bool = False) -> None:
+        """Refuse calls, retaining whether ordinary confirmed-close recovery is insufficient."""
         self._quarantine_reason = reason
+        self._operator_recovery_required |= requires_recovery
         logger.warning("Sandbox %s is quarantined: %s", type(self).__name__, reason)
 
     def _forget_session(self) -> None:
@@ -1031,15 +1084,21 @@ class Sandbox(Identifiable, ABC):
         self._session_opened_at = None
         self._cancel_idle_close()
 
-    async def _release_locked_async(self) -> None:
+    async def _release_locked_async(self, *, recover: bool = False) -> None:
         """
-        Retry each unconfirmed close, clear the quarantine once none remains, and end the session while
-        holding the lock, then release the lock.
+        End the session and retry unconfirmed closes, clearing only a justified quarantine.
+
+        Raises:
+            SandboxUnavailableError: If explicit recovery still has an unconfirmed close.
         """
         try:
-            if await self._retry_unconfirmed_closes_async():
-                self._quarantine_reason = None
+            await self._retry_unconfirmed_closes_async()
             await self._discard_session_async()
+            if not self._unconfirmed_session_ids and (recover or not self._operator_recovery_required):
+                self._quarantine_reason = None
+                self._operator_recovery_required = False
+            if recover and self._quarantine_reason is not None:
+                raise SandboxUnavailableError(f"The sandbox is still quarantined: {self._quarantine_reason}")
         finally:
             self._unlock()
 
@@ -1048,7 +1107,7 @@ class Sandbox(Identifiable, ABC):
         try:
             await self._retry_unconfirmed_closes_async()
             await self._discard_session_async()
-            if not self._unconfirmed_session_ids:
+            if not self._unconfirmed_session_ids and not self._operator_recovery_required:
                 self._quarantine_reason = None
         finally:
             self._lock.release()
@@ -1121,18 +1180,23 @@ class Sandbox(Identifiable, ABC):
         started_at = datetime.now(UTC)
         self._last_reset = SandboxResetRecord(started_at=started_at)
         try:
+            session_owned = self.get_capabilities().state_kind is SandboxStateKind.SESSION
+            if session_owned:
+                await self._call_reset_async(expected_revision=expected_revision)
             await self._retry_unconfirmed_closes_async()
             await self._discard_session_async()
-            await self._call_reset_async(expected_revision=expected_revision)
+            if not session_owned:
+                await self._call_reset_async(expected_revision=expected_revision)
         except Exception as error:
             if not isinstance(error, (SandboxInputError, SandboxBusyError, SandboxRevisionChangedError)):
-                self._quarantine(reason=f"The reset did not finish: {error}")
+                self._quarantine(reason=f"The reset did not finish: {error}", requires_recovery=True)
             self._last_reset = SandboxResetRecord(
                 started_at=started_at, finished_at=datetime.now(UTC), succeeded=False, error=str(error)
             )
             raise
         else:
             self._quarantine_reason = None
+            self._operator_recovery_required = False
             if self._unconfirmed_session_ids:
                 logger.warning(
                     "Sandbox %s was reset, but closing sessions %s is unconfirmed; release and close retry it.",
@@ -1171,6 +1235,8 @@ class Sandbox(Identifiable, ABC):
     def _schedule_idle_close(self) -> None:
         """Close the session once it has been idle long enough."""
         self._cancel_idle_close()
+        if self.get_capabilities().state_kind is SandboxStateKind.SESSION:
+            return
         if self._session_id is None or self._last_used_at is None:
             return
         delay = max(self._last_used_at + self._idle_timeout_seconds - time.monotonic(), 0.0)
@@ -1213,7 +1279,7 @@ class Sandbox(Identifiable, ABC):
             raise SandboxUnavailableError("The sandbox is closed; no new calls start.")
         if self._quarantine_reason is not None:
             raise SandboxUnavailableError(
-                f"The sandbox is quarantined until it is released or reset: {self._quarantine_reason}"
+                f"The sandbox is quarantined until recovery completes: {self._quarantine_reason}"
             )
 
     def _resolve_timeout(self, timeout_seconds: float | None) -> float:
@@ -1367,7 +1433,7 @@ class Sandbox(Identifiable, ABC):
             TypeError: If a needed hook is missing.
         """
         needed = []
-        if capabilities.state_kind is SandboxStateKind.ENVIRONMENT:
+        if capabilities.state_kind is not SandboxStateKind.CALL:
             needed += ["_open_session_async", "_close_session_async"]
         if capabilities.supports_reset:
             needed.append("_reset_async")

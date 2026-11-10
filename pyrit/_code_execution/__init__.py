@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         SandboxInputError,
         SandboxRevisionChangedError,
         SandboxSessionLostError,
+        SandboxStateLostError,
         SandboxUnavailableError,
     )
     from pyrit._code_execution.docker_client import DockerRuntimeProfile, DockerSandboxClient
@@ -43,6 +44,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "SandboxInputError": "pyrit._code_execution.client",
     "SandboxBusyError": "pyrit._code_execution.client",
     "SandboxSessionLostError": "pyrit._code_execution.client",
+    "SandboxStateLostError": "pyrit._code_execution.client",
     "SandboxRevisionChangedError": "pyrit._code_execution.client",
     "SandboxUnavailableError": "pyrit._code_execution.client",
     "DockerRuntimeProfile": "pyrit._code_execution.docker_client",

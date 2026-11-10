@@ -94,7 +94,7 @@ class _LeavesTimedOutRunsRunning(LocalPythonSandbox):
         return b"", b""
 
 
-@pytest.mark.parametrize("state_kind", [SandboxStateKind.ENVIRONMENT, SandboxStateKind.CALL])
+@pytest.mark.parametrize("state_kind", [SandboxStateKind.ENVIRONMENT, SandboxStateKind.SESSION, SandboxStateKind.CALL])
 async def test_contract_passes_for_a_sandbox_that_follows_the_rules_async(
     tmp_path: Path, state_kind: SandboxStateKind
 ) -> None:

@@ -136,8 +136,9 @@ class ProgramExecutionScorer(TrueFalseScorer):
     resource limit fails the case. All cases passing yields true, any proven failure yields
     false, and insufficient evidence leaves the verdict undetermined.
 
-    Every scoring call runs afresh. ``score_observation_async`` replays saved evidence without
-    executing the program.
+    The execution source must run each invocation in a fresh environment; known stateful backends are
+    rejected by ``ProgramExecutionSource``. ``score_observation_async`` replays saved evidence without
+    executing the program. Fresh isolation does not guarantee deterministic program output.
     """
 
     CONDITION_TYPE = ProgramBehaves
