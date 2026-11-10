@@ -16,6 +16,7 @@ from pyrit.backend.services.dataset_example_selection import (
 )
 from pyrit.models import DatasetExampleSelectionError
 from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
+from pyrit.scenario import ExactExampleDatasetConfiguration
 from pyrit.scenario.core import resolve_technique_tokens
 from pyrit.scenario.core.scenario_target_defaults import validate_default_adversarial_target
 from pyrit.score import TrueFalseScorer
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from pyrit.models.component_spec import RegisteredComponentReference
     from pyrit.models.technique_edit import TechniqueOverride
     from pyrit.prompt_target import PromptTarget
-    from pyrit.scenario import DatasetAttackConfiguration, Scenario
+    from pyrit.scenario import AttackTechniqueFactory, DatasetAttackConfiguration, Scenario, ScenarioTechnique
 
 
 class ScenarioConfigurationResolver:
@@ -135,11 +136,15 @@ class ScenarioConfigurationResolver:
 
         Dataset edits pass through unchanged; the scenario applies and validates them.
         An exact selection is supplied as ``dataset_config`` by ``resolve_configuration_async``.
+        Its examples must run unchanged under every selected technique that has a factory:
+        the shared compatibility checks reject a technique that would skip an example or
+        run it only after objective-only adaptation.
 
         Returns:
             dict[str, Any]: Values accepted by ``Scenario.set_params_from_args``.
 
         Raises:
+            DatasetExampleSelectionError: If a selected technique cannot run an exact example unchanged.
             ValueError: If techniques or dataset overrides are invalid.
         """
         resolved: dict[str, Any] = {}
@@ -158,7 +163,8 @@ class ScenarioConfigurationResolver:
             resolved["dataset_config"] = dataset_config
         elif datasets is not None:
             resolved["dataset_overrides"] = datasets
-        if not techniques and technique_override is None:
+        exact_selection = dataset_config if isinstance(dataset_config, ExactExampleDatasetConfiguration) else None
+        if not techniques and technique_override is None and exact_selection is None:
             return resolved
 
         try:
@@ -193,7 +199,44 @@ class ScenarioConfigurationResolver:
                 raise ValueError("A technique edit requires exactly its one selected concrete source technique")
             resolved["local_technique_factory"] = TechniqueEditService.resolve(technique_override)
 
+        if exact_selection is not None:
+            exact_selection.validate_technique_factories(
+                cls._selected_technique_factories(
+                    technique_class=introspection_instance._technique_class,
+                    scenario_techniques=resolved.get("scenario_techniques"),
+                    local_factory=resolved.get("local_technique_factory"),
+                )
+            )
         return resolved
+
+    @staticmethod
+    def _selected_technique_factories(
+        *,
+        technique_class: type[ScenarioTechnique],
+        scenario_techniques: list[ScenarioTechnique] | None,
+        local_factory: AttackTechniqueFactory | None,
+    ) -> dict[str, AttackTechniqueFactory]:
+        """
+        Return the factories behind the run's concrete techniques.
+
+        The scenario's own catalog wins over the global registry, and a run-local edit
+        replaces its source technique. Techniques without a factory declare no shared
+        seed requirements and are left to the scenario.
+
+        Returns:
+            dict[str, AttackTechniqueFactory]: Factories keyed by concrete technique name.
+        """
+        from pyrit.registry import AttackTechniqueRegistry
+
+        selected = technique_class.resolve(scenario_techniques, default=technique_class.default())
+        catalog = dict(AttackTechniqueRegistry.get_registry_singleton().get_factories())
+        catalog.update(getattr(technique_class, "_factory_sources", {}))
+        factories: dict[str, AttackTechniqueFactory] = {}
+        for technique in selected:
+            factory = local_factory if local_factory is not None else catalog.get(technique.value)
+            if factory is not None:
+                factories[technique.value] = factory
+        return factories
 
     @classmethod
     def resolve_techniques_and_converters(

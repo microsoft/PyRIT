@@ -127,6 +127,40 @@ def prepare_seed_group(
     return PreparedSeedGroup(seed_group=execution_group, adaptation=adaptation)
 
 
+def require_unchanged_seed_group(
+    *,
+    seed_group: AttackSeedGroup,
+    requirements: SeedGroupRequirements,
+    seed_technique: AttackTechniqueSeedGroup | None = None,
+    validate_group: Callable[[AttackSeedGroup], None] | None = None,
+) -> None:
+    """
+    Require a group to run exactly as given, with no skip and no adaptation.
+
+    Applies the same preparation as ``filter_seed_groups``. A group that would be
+    skipped, or would run only after objective-only adaptation, fails. Callers that
+    must keep a population unchanged, such as an exact example selection, use this
+    instead of the skip policy.
+
+    Args:
+        seed_group (AttackSeedGroup): The original dataset group.
+        requirements (SeedGroupRequirements): Dataset input constraints.
+        seed_technique (AttackTechniqueSeedGroup | None): Technique-owned seeds to compose.
+        validate_group (Callable | None): Additional technique input validation on the prepared group.
+
+    Raises:
+        IncompatibleTechniqueError: If the group would be skipped or adapted.
+    """
+    prepared = prepare_seed_group(seed_group=seed_group, requirements=requirements, seed_technique=seed_technique)
+    if validate_group is not None:
+        validate_group(prepared.seed_group)
+    if prepared.adaptation is not None:
+        raise IncompatibleTechniqueError(
+            f"Technique would run this group only after {prepared.adaptation} adaptation, "
+            "which drops its dataset prompts."
+        )
+
+
 def check_target_compatibility(
     *,
     target: PromptTarget,

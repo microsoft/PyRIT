@@ -60,11 +60,12 @@ from pyrit.models import (
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit, normalize_dataset_limit
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from pyrit.datasets import SeedDatasetProvider
     from pyrit.memory import MemoryInterface
     from pyrit.memory.memory_interface import PreparedSeedBatch
+    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 
 # Dataset-name label that inline ``seeds`` / ``seed_groups`` carry in by-dataset views, since
 # they have no real dataset name. Inline and named sources are mutually exclusive, so this
@@ -1086,10 +1087,11 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
     """
     Inline population of already resolved dataset examples.
 
-    Sampling is off and the size budget is the example count. Estimate reads that
-    budget and does not build seeds. Launch builds ``SeedPrompt`` and ``SeedObjective``
-    objects from the stored records. A simulated conversation stays stored JSON until
-    that build, which is also when a legacy prompt file is opened.
+    Sampling is off and the size budget is the example count. The scenario estimate reads
+    that budget and does not build seeds. ``SeedPrompt`` and ``SeedObjective`` objects are
+    built from the stored records when the selected techniques are checked and at launch.
+    A simulated conversation stays stored JSON until that build, which is also when a
+    legacy prompt file is opened.
     """
 
     def __init__(self, *, examples: Sequence[tuple[DatasetExampleReference, Sequence[SeedRecord]]]) -> None:
@@ -1163,6 +1165,48 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
         self.validate(ResolvedDataset(seeds=flattened, source_kind=self.source_kind, dataset_names=()))
         return {INLINE_DATASET_NAME: groups}
 
+    def validate_technique_factories(self, factories: Mapping[str, AttackTechniqueFactory]) -> None:
+        """
+        Reject techniques that would skip a selected example or change its content.
+
+        Uses the shared technique compatibility checks. The scenario's skip policy and
+        objective-only adaptation would otherwise run fewer examples, or fewer prompts,
+        than were selected. This builds the selected groups, so call it off the event loop.
+
+        Args:
+            factories: The selected technique factories, keyed by technique name.
+
+        Raises:
+            DatasetExampleSelectionError: If a technique cannot run a selected example unchanged,
+                or the example cannot be built into one group.
+        """
+        from pyrit.scenario.core.technique_requirements import (
+            IncompatibleTechniqueError,
+            require_unchanged_seed_group,
+        )
+
+        if not factories:
+            return
+        groups = self._build_selected_groups()
+        for name, factory in factories.items():
+            for (reference, _), group in zip(self._selected_examples, groups, strict=True):
+                try:
+                    require_unchanged_seed_group(
+                        seed_group=group,
+                        requirements=factory.requirements.seed_group,
+                        seed_technique=factory.seed_technique,
+                        validate_group=factory.validate_group_adversarial_prompts,
+                    )
+                except IncompatibleTechniqueError as exc:
+                    raise DatasetExampleSelectionError(
+                        code="unsupported",
+                        selection_key=reference.selection_key,
+                        example_id=reference.example_id,
+                        detail=(
+                            f"Technique '{name}' cannot run this example unchanged: {_public_group_build_reason(exc)}"
+                        ),
+                    ) from exc
+
     def _build_selected_groups(self) -> list[AttackSeedGroup]:
         """
         Build every selected group off the event loop, in request order.
@@ -1182,9 +1226,9 @@ class ExactExampleDatasetConfiguration(DatasetAttackConfiguration):
         self, *, reference: DatasetExampleReference, members: Sequence[SeedRecord]
     ) -> AttackSeedGroup:
         """
-        Build one attack group when launch asks for it.
+        Build one attack group for the technique check or for launch.
 
-        Resolution and estimates do not call this. A group the scenario models cannot
+        Reference resolution and the scenario estimate do not call this. A group the scenario models cannot
         construct becomes ``unsupported`` here, with the example id and the reason,
         instead of an untyped constructor error.
 
@@ -1249,7 +1293,7 @@ def _seed_from_record(
         DatasetExampleSelectionError: If a non-objective seed has conditions, or a simulated
             conversation cannot be built.
     """
-    if record.seed_type != "objective" and record.conditions not in (None, []):
+    if record.seed_type != "objective" and record.conditions:
         raise DatasetExampleSelectionError(
             code="unsupported",
             selection_key=reference.selection_key,

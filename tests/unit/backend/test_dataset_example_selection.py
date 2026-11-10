@@ -885,6 +885,31 @@ async def test_non_objective_conditions_are_unsupported(sqlite_instance: MemoryI
     assert "body" not in str(caught.value)
 
 
+@pytest.mark.parametrize("stored_conditions", [None, []], ids=["none", "empty-list"])
+@pytest.mark.usefixtures("patch_central_database")
+async def test_non_objective_without_conditions_builds(
+    sqlite_instance: MemoryInterface, stored_conditions: list[object] | None
+) -> None:
+    group = uuid4()
+    objective = _objective("goal", prompt_group_id=group)
+    prompt = _prompt("body", prompt_group_id=group, sequence=1, role="user")
+    await _store(sqlite_instance, objective, prompt)
+    await _mutate(sqlite_instance, prompt.id, conditions=stored_conditions)
+    found = await sqlite_instance.get_seed_examples_by_ids_async(dataset_name=DATASET, example_ids=[group])
+    stored_prompt = next(member for member in found[group] if member.seed_type == "prompt")
+    assert not stored_prompt.conditions
+    selection = await _selection(sqlite_instance, selection_key=NAMED, example_ids=[group], dataset_name=DATASET)
+    resolved = await ScenarioConfigurationResolver.resolve_configuration_async(
+        scenario_name="test.exact",
+        scenario_class=_ExactScenario,
+        example_selection=selection,
+        memory=sqlite_instance,
+    )
+    groups = await resolved["dataset_config"].get_attack_seed_groups_async()
+    assert len(groups) == 1
+    assert [prompt.value for prompt in groups[0].prompts] == ["body"]
+
+
 @pytest.mark.usefixtures("patch_central_database")
 async def test_group_construction_preserves_order_off_the_event_loop(sqlite_instance: MemoryInterface) -> None:
     first, second = _objective("first"), _objective("second")
