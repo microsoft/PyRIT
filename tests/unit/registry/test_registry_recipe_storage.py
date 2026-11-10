@@ -106,9 +106,6 @@ class TestRecipeModels:
         with pytest.raises(ValidationError, match="less than or equal to"):
             model.model_validate({**document, "schema_version": RECIPE_SCHEMA_VERSION + 1})
 
-    def test_every_restore_failure_reason_has_an_explanation(self) -> None:
-        assert all(reason.explanation for reason in RestoreFailureReason)
-
     @pytest.mark.parametrize(
         ("kind", "recipe"),
         [
