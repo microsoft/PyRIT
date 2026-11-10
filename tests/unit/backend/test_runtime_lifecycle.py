@@ -1664,12 +1664,8 @@ async def test_a_target_save_in_flight_makes_apply_busy_async(runtime: RuntimeLi
 _RESTORABLE_TARGET = {
     "class_module": "pyrit.prompt_target.openai.openai_chat_target",
     "class_name": "OpenAIChatTarget",
-    "params": {
-        "auth_mode": "identity",
-        "endpoint": "https://contoso.openai.azure.com/openai/v1",
-        "model_name": "gpt-4o",
-        "headers": "{}",
-    },
+    "auth_mode": "identity",
+    "params": {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o", "headers": "{}"},
 }
 _BROKEN_TARGET = {"class_module": "nowhere", "class_name": "Nope"}
 
@@ -1685,6 +1681,7 @@ async def test_fixing_the_file_and_applying_restores_the_entry_and_releases_its_
     _save_recipe(recipes, kind="targets", name="ghost", document=_RESTORABLE_TARGET)
     config = await runtime._load_async()
     config.apply_prepared_reinitialization_async.side_effect = lambda **_: TargetRegistry.reset_registry_singleton()
+    lifecycle_module.close_services_async.side_effect = _forget_registry_services_async
 
     await apply_async(runtime)
 

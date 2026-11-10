@@ -65,12 +65,8 @@ _SAVED_CHAT = {
     "schema_version": 1,
     "class_module": "pyrit.prompt_target.openai.openai_chat_target",
     "class_name": "OpenAIChatTarget",
-    "params": {
-        "auth_mode": "identity",
-        "endpoint": "https://contoso.openai.azure.com/openai/v1",
-        "model_name": "gpt-4o",
-        "headers": "{}",
-    },
+    "auth_mode": "identity",
+    "params": {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o", "headers": "{}"},
     "owner": {"oid": ADA.oid, "name": "Ada"},
 }
 

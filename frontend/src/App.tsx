@@ -858,6 +858,7 @@ function AppContent({ operatorAlias }: { operatorAlias: string | null }) {
           <Joyride {...tourProps} />
           <ConnectionBannerContainer />
           <MainLayout
+            banner={<RuntimeBanner />}
             currentView={currentView}
             onNavigate={handleNavigate}
             onOpenFeedback={() => setFeedbackOpen(true)}
@@ -1096,8 +1097,6 @@ function App() {
     <RuntimeProvider>
       <UserPreferencesProvider key={accountKey ?? 'account-loading'} accountKey={accountKey}>
         <ThemeProvider>
-          {/* Inside the theme, so the banner and the dialogs it opens are drawn with it. */}
-          <RuntimeBanner />
           <ChatDraftProvider>
             <AppContent operatorAlias={operatorAlias} />
           </ChatDraftProvider>
