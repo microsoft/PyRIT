@@ -6,11 +6,14 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, ClassVar
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
+from pyrit.common import AuthMode  # noqa: TC001 (runtime-required by Pydantic)
 from pyrit.models.request_limits import MAX_IDENTIFIER_LENGTH, MAX_ITEMS, MAX_TEXT_LENGTH
+
+RECIPE_SCHEMA_VERSION = 1
 
 _Identifier = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
 _TechniqueTag = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
@@ -36,31 +39,11 @@ class RegistryRecipeKind(str, Enum):
 class _RegistryRecipe(BaseModel):
     """Fields every saved recipe shares. The entry's name is its document name, so it isn't repeated."""
 
-    CURRENT_SCHEMA_VERSION: ClassVar[int] = 1
-
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
-    # A literal 1 rather than CURRENT_SCHEMA_VERSION: a document saved without this field is a version 1
+    # A literal 1 rather than RECIPE_SCHEMA_VERSION: a document saved without this field is a version 1
     # document and must keep reading as one after the constant is bumped, or a migration would skip it.
-    schema_version: int = Field(1, ge=1, description="Shape of this document")
-
-    @field_validator("schema_version")
-    @classmethod
-    def _validate_schema_version(cls, value: int) -> int:
-        """
-        Reject a document saved by a newer PyRIT than this one.
-
-        Returns:
-            int: The schema version.
-
-        Raises:
-            ValueError: If the document's format is newer than this PyRIT reads.
-        """
-        if value > cls.CURRENT_SCHEMA_VERSION:
-            raise ValueError(
-                f"Format version {value} is newer than this PyRIT reads (up to {cls.CURRENT_SCHEMA_VERSION})"
-            )
-        return value
+    schema_version: int = Field(1, ge=1, le=RECIPE_SCHEMA_VERSION, description="Shape of this document")
 
 
 class SavedEntryOwner(BaseModel):
@@ -79,6 +62,9 @@ class ComponentRecipe(_RegistryRecipe):
         ..., min_length=1, description="Module that defined the class when the entry was saved"
     )
     class_name: _Identifier = Field(..., min_length=1, description="Registered class name")
+    auth_mode: AuthMode | None = Field(
+        None, description="How a saved target signs in, as its create request chose; None for converters and scorers"
+    )
     params: dict[_Identifier, JsonValue] = Field(
         default_factory=dict,
         max_length=MAX_ITEMS,
@@ -91,8 +77,8 @@ class TechniqueRecipe(_RegistryRecipe):
     """
     How to rebuild one saved technique: the fields of its create request, without the name.
 
-    The fields and their limits mirror the technique API's create request, which this library
-    can't import.
+    This is a deliberate copy of the technique API's create request, so a change to the API is also a decision
+    about the saved format. Tests keep the two in step.
     """
 
     type: str = Field(..., min_length=1, max_length=256, description="Registered attack type")
@@ -138,18 +124,23 @@ class StoredRecipe(BaseModel):
     @model_validator(mode="after")
     def _validate_recipe_kind(self) -> StoredRecipe:
         """
-        Reject a technique recipe filed under another registry, or another registry's recipe filed as a technique.
+        Reject a recipe filed under a registry it doesn't fit.
+
+        A technique recipe belongs only under techniques, and only a target has an ``auth_mode``.
 
         Returns:
             StoredRecipe: The stored recipe.
 
         Raises:
-            ValueError: If the recipe's type doesn't match the registry it's filed under.
+            ValueError: If the recipe doesn't fit the registry it's filed under.
         """
         expects_technique = self.ref.kind is RegistryRecipeKind.TECHNIQUES
         if expects_technique != isinstance(self.recipe, TechniqueRecipe):
             expected = TechniqueRecipe if expects_technique else ComponentRecipe
             raise ValueError(f"A saved {self.ref.kind.value} entry needs a {expected.__name__}")
+        has_auth_mode = isinstance(self.recipe, ComponentRecipe) and self.recipe.auth_mode is not None
+        if has_auth_mode and self.ref.kind is not RegistryRecipeKind.TARGETS:
+            raise ValueError(f"Only a saved target has an auth_mode, not a saved {self.ref.kind.value} entry")
         return self
 
 

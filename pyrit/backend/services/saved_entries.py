@@ -77,6 +77,7 @@ async def prepare_saved_params_async(
     type_name: str,
     cls: type,
     params: Mapping[str, Any],
+    auth_mode: str | None = None,
 ) -> dict[str, Any]:
     """
     Turn off the server values an entry to save would read, then refuse what it still can't hold.
@@ -86,6 +87,7 @@ async def prepare_saved_params_async(
         type_name (str): The name the class is registered under.
         cls (type): The class the entry is built from.
         params (Mapping[str, Any]): The entry's constructor parameters.
+        auth_mode (str | None): A target's auth mode from its create request, or None for converters and scorers.
 
     Returns:
         dict[str, Any]: The parameters to build and save the entry with.
@@ -108,7 +110,7 @@ async def prepare_saved_params_async(
         metadata = await asyncio.to_thread(registry.get_class_metadata, cls)
     parameters = metadata.parameters
     try:
-        check_saved_entry_params(cls=cls, parameters=parameters, params=saved_params)
+        check_saved_entry_params(cls=cls, parameters=parameters, params=saved_params, auth_mode=auth_mode)
     except SavedEntryRefusedError as error:
         # The address needs fixing; creating the entry without saving it wouldn't make it usable.
         if error.reason is RestoreFailureReason.INVALID_RECIPE:
