@@ -4913,7 +4913,8 @@ class MemoryInterface(abc.ABC):
 
         Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
         one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
-        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds. A get_seed_groups
+        preview shows such ungrouped matches as single-seed groups even though this method does not remove them.
 
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
@@ -10997,7 +10998,8 @@ class MemoryInterface(abc.ABC):
 
         Only seeds that belong to a group are affected: a matching seed with no prompt_group_id (for example,
         one added individually via add_seeds_to_memory_async rather than as part of a group) is skipped, since
-        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds.
+        it has no group to expand. Use remove_seeds_from_memory to delete ungrouped seeds. A get_seed_groups
+        preview shows such ungrouped matches as single-seed groups even though this method does not remove them.
 
         Only database records are removed. For file-backed seeds (image_path, audio_path, video_path) the
         serialized file on disk is left in place; delete those files separately if they are no longer needed.
