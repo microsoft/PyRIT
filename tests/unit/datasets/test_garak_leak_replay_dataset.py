@@ -10,12 +10,14 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.datasets.seed_datasets.remote import __all__ as remote_exports
-from pyrit.datasets.seed_datasets.remote.garak_leak_replay_dataset import (
-    _GarakLeakReplayDataset,
+from pyrit.datasets.seed_datasets.remote import (
     _GarakLeakReplayGuardianDataset,
     _GarakLeakReplayLiteratureDataset,
     _GarakLeakReplayNYTDataset,
     _GarakLeakReplayPotterDataset,
+)
+from pyrit.datasets.seed_datasets.remote.garak_leak_replay_dataset import (
+    _GarakLeakReplayDataset,
     _read_cloze_tsv,
     _write_cloze_tsv,
 )
