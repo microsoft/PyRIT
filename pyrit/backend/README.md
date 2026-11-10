@@ -89,7 +89,8 @@ launch scripts). A saved target can only use targets that come back after a rest
 their own sign-in. A saved target's `saved_by` is the name of the user who saved it (null when it was saved with sign-in
 off), and `saved_by_me` says whether that's the signed-in user asking. The user's object ID isn't returned.
 
-A saved target records its class and constructor parameters as the API accepted them, so it follows the class's
+A saved target records the create request without its name: the target type, `auth_mode`, and the parameters as the
+API accepted them. Restore sends it through the same create, so it passes the same checks and follows the class's
 constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
 changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
 restores one. A file that still doesn't match fails to restore with the reason, and its name stays held, so nothing
@@ -127,8 +128,9 @@ Saved targets, converters, scorers, and techniques are addressed by their saved 
   who may, what it saves (`recipe`). **404** when no saved file has the name, including a name only a startup entry
   has.
 - `PUT /api/saved-entries/{kind}/{name}` - Change a saved entry: send back the `recipe` GET returned, changed, as
-  `{"expected_version": "<version>", "recipe": {...}}`. A target, converter, or scorer changes its `params`; a
-  technique changes anything its create request takes except its name, attack type, and `persist`. Its name, class or
+  `{"expected_version": "<version>", "recipe": {...}}`. A target changes its `params` and `auth_mode`, and a converter
+  or scorer its `params`; a technique changes anything its create request takes except its name, attack type, and
+  `persist`. Its name, class or
   attack type, and who saved it stay the same, and it stays saved (**422** otherwise). The entry is rebuilt through
   the API that creates one, so the same checks and codes apply, such as the typed **400** for settings that can't be
   saved. The running entry is replaced; registered entries that hold it keep its old settings until the next apply or

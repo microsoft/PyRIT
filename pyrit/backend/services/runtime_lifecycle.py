@@ -7,6 +7,8 @@ import asyncio
 import logging
 import os
 import uuid
+from contextvars import ContextVar
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
@@ -15,6 +17,7 @@ from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
 from pyrit.backend.services.scenario_suite_execution_service import peek_scenario_suite_execution_service
 from pyrit.backend.services.service_lifecycle import (
@@ -37,6 +40,9 @@ if TYPE_CHECKING:
     from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure, SavedEntryRef
 
 logger = logging.getLogger(__name__)
+
+# The admitted request that the running code belongs to, so a request doesn't count itself as work in progress.
+current_operation: ContextVar[asyncio.Task[None] | None] = ContextVar("pyrit_runtime_operation", default=None)
 
 
 class RuntimeLifecycle:
@@ -142,16 +148,26 @@ class RuntimeLifecycle:
             config (ConfigurationLoader): The loaded configuration naming the storage source.
         """
         restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
-        # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, as
-        # the target API builds them, because a constructor such as HuggingFaceChatTarget's starts a task
+        # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, through
+        # the API's create for each kind, because a constructor such as HuggingFaceChatTarget's starts a task
         # on it. A slow constructor holds the loop while it runs.
         saved = await asyncio.to_thread(restorer.read)
-        report = restorer.restore(saved=saved)
+        report = await restorer.restore_async(
+            saved=saved, build_async=partial(build_saved_entry_async, upload_directory=config.target_upload_directory)
+        )
         self.restore_failures, self.restore_ignored = report.failures, report.ignored
-        if report.failures:
+        unread = sorted({failure.kind.value for failure in report.failures if failure.name is None})
+        if unread:
+            logger.warning(
+                "The saved %s couldn't be read, so no saved entries were restored. Check that the backend can "
+                "read registry_recipes_source, then apply or restart; see GET /api/config/runtime.",
+                " and ".join(unread),
+            )
+        elif report.failures:
             count = len(report.failures)
             logger.warning(
-                "%d saved registry %s couldn't be restored. Fix or delete them; see GET /api/config/runtime.",
+                "%d saved registry %s couldn't be restored. Fix or delete their files, then apply or restart; "
+                "see GET /api/config/runtime.",
                 count,
                 "entry" if count == 1 else "entries",
             )
@@ -288,12 +304,12 @@ class RuntimeLifecycle:
 
     def has_active_work(self) -> bool:
         """
-        Return whether a request, run, send, or estimate could still be using a registered entry.
+        Return whether a run, send, estimate, or another request could still be using a registered entry.
 
         Returns:
-            bool: Whether any admitted or background runtime operation remains.
+            bool: Whether any admitted or background runtime operation remains, apart from the caller's request.
         """
-        return self._has_active_work()
+        return self._has_active_work(excluding=current_operation.get())
 
     def forget_restore_failure(self, ref: "SavedEntryRef") -> None:
         """
@@ -306,14 +322,14 @@ class RuntimeLifecycle:
             failure for failure in self.restore_failures if (failure.kind, failure.name) != (ref.kind, ref.name)
         ]
 
-    def _has_active_work(self) -> bool:
-        """Return whether any admitted or background runtime operation remains."""
+    def _has_active_work(self, *, excluding: asyncio.Task[None] | None = None) -> bool:
+        """Return whether any admitted or background runtime operation remains, other than ``excluding``."""
         service = peek_scenario_run_service()
         suite_execution_service = peek_scenario_suite_execution_service()
         return bool(
             (service and service.has_active_work())
             or (suite_execution_service and suite_execution_service.has_active_work())
-            or self.operations
+            or any(operation is not excluding for operation in self.operations)
             or outstanding_estimates()
             or has_active_manual_sends()
             or has_active_analytics_work()

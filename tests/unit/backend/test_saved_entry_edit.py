@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import json
 from collections.abc import Iterator
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -25,6 +26,7 @@ from pyrit.backend.services.saved_entries import (
     hold_saved_entry_lock_async,
     save_then_register_async,
 )
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.saved_entry_service import (
     SavedEntryCaller,
     SavedEntryForbiddenError,
@@ -39,6 +41,7 @@ from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryEntryOrigin,
     RegistryRecipeKind,
+    RegistryRestoreReport,
     RestoreFailureReason,
     SavedEntryOwner,
 )
@@ -68,12 +71,8 @@ _SAVED_CHAT = {
     "schema_version": 1,
     "class_module": "pyrit.prompt_target.openai.openai_chat_target",
     "class_name": "OpenAIChatTarget",
-    "params": {
-        "auth_mode": "identity",
-        "endpoint": "https://contoso.openai.azure.com/openai/v1",
-        "model_name": "gpt-4o",
-        "headers": "{}",
-    },
+    "auth_mode": "identity",
+    "params": {"endpoint": "https://contoso.openai.azure.com/openai/v1", "model_name": "gpt-4o", "headers": "{}"},
     "owner": {"oid": ADA.oid, "name": "Ada"},
 }
 
@@ -108,6 +107,14 @@ def _write(root: Path, kind: RegistryRecipeKind, name: str, document: dict[str, 
     path = _file(root, kind, name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(document if isinstance(document, str) else json.dumps(document), encoding="utf-8")
+
+
+async def _restore(root: Path) -> RegistryRestoreReport:
+    """Restore the saved entries through the API's create, as startup does."""
+    for cache in (get_target_service, get_converter_service, get_scorer_service, get_technique_service):
+        cache.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(root)).restore_async(build_async=build_async)
 
 
 async def _save_replace(root: Path) -> None:
@@ -182,14 +189,14 @@ async def test_the_owner_changes_a_saved_converter_and_a_restart_keeps_the_chang
     assert registry_entry_origin(entry.metadata) is RegistryEntryOrigin.SAVED
     assert entry.metadata[SAVED_ENTRY_OWNER_METADATA_KEY] == ADA
     ConverterRegistry.reset_registry_singleton()
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
     restored = ConverterRegistry.get_registry_singleton().instances.get("cat_replace")
     assert restored.get_identifier().params["replace_list"] == ["bird"]
 
 
 async def test_an_administrator_changes_someone_elses_target_and_it_stays_theirs(tmp_path: Path) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
     admin = _caller(BEN_OID, admin=True)
     details = await _read(tmp_path, TARGETS, "saved_chat", admin)
 
@@ -331,6 +338,7 @@ async def test_an_edit_needs_the_version_it_read_and_the_right_to_change_it(tmp_
         ({"class_name": "ROT13Converter"}, "A saved converter's class can't change."),
         ({"owner": {"oid": BEN_OID, "name": "Ben"}}, "Who saved a saved converter can't change"),
         ({"source": "other"}, "Only the params of a saved converter"),
+        ({"auth_mode": "identity"}, "Only the params of a saved converter"),
         ({"params": None}, "A saved converter's params must be an object."),
     ],
 )
@@ -360,7 +368,7 @@ async def test_settings_a_new_entry_couldnt_save_leave_the_saved_one_as_it_was(t
             "owner": {"oid": ADA.oid, "name": "Ada"},
         },
     )
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
     TargetRegistry.get_registry_singleton().instances.register(MockPromptTarget(), name="launch_chat")
     converters = ConverterRegistry.get_registry_singleton().instances
     old = converters.get("formal_tone")
@@ -383,7 +391,7 @@ async def test_settings_a_new_entry_couldnt_save_leave_the_saved_one_as_it_was(t
 
 async def test_an_entry_that_holds_the_edited_one_keeps_the_old_object_until_a_restart(tmp_path: Path) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
     targets = TargetRegistry.get_registry_singleton().instances
     old = targets.get("saved_chat")
     tone = ToneConverter(converter_target=old, tone="formal")
@@ -407,7 +415,7 @@ async def test_an_entry_that_holds_the_edited_one_keeps_the_old_object_until_a_r
 
 async def test_an_entry_registered_while_the_edit_rebuilds_keeps_the_old_object(tmp_path: Path) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
     old = TargetRegistry.get_registry_singleton().instances.get("saved_chat")
     details = await _read(tmp_path, TARGETS, "saved_chat")
     replace_recipe = RegistryRecipeStorage.replace_recipe
@@ -461,7 +469,7 @@ async def test_a_saved_technique_keeps_its_name_and_stays_saved(tmp_path: Path, 
 
 async def test_a_saved_target_needs_its_params_as_an_object(tmp_path: Path) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
     details = await _read(tmp_path, TARGETS, "saved_chat")
 
     with pytest.raises(SavedEntryRequestError) as refusal:
@@ -474,7 +482,7 @@ async def test_a_saved_target_needs_its_params_as_an_object(tmp_path: Path) -> N
 @pytest.mark.parametrize("held", [False, True])
 async def test_the_old_entry_is_released_only_when_nothing_could_use_it(tmp_path: Path, held: bool) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
     old = TargetRegistry.get_registry_singleton().instances.get("saved_chat")
     runtime = RuntimeLifecycle(app=FastAPI(), source=ConfigurationFileService(config_file_value=None))
     details = await _read(tmp_path, TARGETS, "saved_chat")
@@ -501,9 +509,7 @@ async def test_the_old_entry_is_released_only_when_nothing_could_use_it(tmp_path
 async def test_an_edit_that_fixes_an_entry_that_failed_to_restore_registers_it(tmp_path: Path) -> None:
     broken = {**_SAVED_CHAT, "params": {**_SAVED_CHAT["params"], "endpoint": "https://api.example.test/v1"}}
     _write(tmp_path, TARGETS, "saved_chat", broken)
-    assert [failure.name for failure in RegistryRecipeRestorer(source=str(tmp_path)).restore().failures] == [
-        "saved_chat"
-    ]
+    assert [failure.name for failure in (await _restore(tmp_path)).failures] == ["saved_chat"]
     instances = TargetRegistry.get_registry_singleton().instances
     details = await _read(tmp_path, TARGETS, "saved_chat")
 
@@ -518,13 +524,13 @@ async def test_an_edit_that_fixes_an_entry_that_failed_to_restore_registers_it(t
     assert edited.running is False
     assert isinstance(instances.get("saved_chat"), OpenAIChatTarget)
     TargetRegistry.reset_registry_singleton()
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    assert (await _restore(tmp_path)).failures == []
 
 
 async def test_an_edit_that_doesnt_fix_an_entry_that_failed_to_restore_keeps_its_name_held(tmp_path: Path) -> None:
     broken = {**_SAVED_CHAT, "params": {**_SAVED_CHAT["params"], "endpoint": "https://api.example.test/v1"}}
     _write(tmp_path, TARGETS, "saved_chat", broken)
-    assert len(RegistryRecipeRestorer(source=str(tmp_path)).restore().failures) == 1
+    assert len((await _restore(tmp_path)).failures) == 1
     instances = TargetRegistry.get_registry_singleton().instances
     details = await _read(tmp_path, TARGETS, "saved_chat")
     before = _file(tmp_path, TARGETS, "saved_chat").read_bytes()
@@ -628,7 +634,7 @@ async def test_an_edit_of_an_entry_whose_name_a_startup_entry_took_keeps_the_nam
     instances = ConverterRegistry.get_registry_singleton().instances
     with registration_origin(RegistryEntryOrigin.CONFIGURATION):
         instances.register(SearchReplaceConverter(pattern="fish", replace="dog"), name="cat_replace")
-    failures = RegistryRecipeRestorer(source=str(tmp_path)).restore().failures
+    failures = (await _restore(tmp_path)).failures
     assert [failure.reason for failure in failures] == [RestoreFailureReason.NAME_CLASH]
     details = await _read(tmp_path, CONVERTERS, "cat_replace")
 

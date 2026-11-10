@@ -409,14 +409,16 @@ async def _rebuild_async(
                     f"A saved {singular}'s class can't change. Delete it and save a new one instead."
                 )
         params = changes.pop("params", {})
+        # A target's auth mode sits beside its params, as in the create request; one left out stays as saved.
+        auth_mode = changes.pop("auth_mode", stored.auth_mode) if kind is RegistryRecipeKind.TARGETS else None
         if changes:
+            changeable = "params and auth_mode" if kind is RegistryRecipeKind.TARGETS else "params"
             raise SavedEntryRequestError(
-                f"Only the params of a saved {singular} can change; leave out {sorted(changes)}."
+                f"Only the {changeable} of a saved {singular} can change; leave out {sorted(changes)}."
             )
         if not isinstance(params, dict):
             raise SavedEntryRequestError(f"A saved {singular}'s params must be an object.")
         if kind is RegistryRecipeKind.TARGETS:
-            auth_mode = params.get("auth_mode")
             target = CreateTargetRequest(
                 name=name,
                 type=stored.class_name,

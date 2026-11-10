@@ -10,6 +10,7 @@ import base64
 import codecs
 import json
 from collections.abc import AsyncGenerator, Iterator
+from functools import partial
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ from pyrit.backend.services.saved_entries import (
     SavedEntryRemovalError,
     SavedEntryStorageError,
 )
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.common import apply_defaults, reset_default_values, set_default_value
 from pyrit.converter import (
     Base64Converter,
@@ -59,7 +61,13 @@ from pyrit.converter import (
 )
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, MemoryInterface
 from pyrit.models import ComponentIdentifier, PromptDataType, SeedPrompt
-from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RegistryRestoreReport,
+    SavedEntryOwner,
+)
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import PromptTarget
@@ -2365,6 +2373,13 @@ class TestConverterParamsExtraction:
         assert isinstance(result.identifier.supported_output_types, list)
 
 
+async def _restore(source: Path) -> RegistryRestoreReport:
+    """Restore the saved converters through the API's create, as startup does."""
+    get_converter_service.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(source)).restore_async(build_async=build_async)
+
+
 def _persist(name: str, converter_type: str, params: dict[str, Any] | None = None) -> CreateConverterRequest:
     return CreateConverterRequest(name=name, type=converter_type, params=params or {}, persist=True)
 
@@ -2411,7 +2426,7 @@ class TestPersistConverter:
         assert entry.metadata == {SAVED_ENTRY_METADATA_KEY: "converters", SAVED_ENTRY_OWNER_METADATA_KEY: owner}
         saved_hash = entry.instance.get_identifier().hash
         ConverterRegistry.reset_registry_singleton()
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
         restored = ConverterRegistry.get_registry_singleton().instances.get("caesar_converter")
         assert restored is not None
         assert restored.get_identifier().hash == saved_hash
@@ -2535,7 +2550,7 @@ class TestPersistConverter:
 
         assert _saved_converter(tmp_path, "banner")["params"] == {"text_to_add": "hello"}
         ConverterRegistry.reset_registry_singleton()
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
 
     async def test_a_taken_name_is_a_conflict_only_when_saving(
         self, upload_service: ConverterService, tmp_path: Path
@@ -2734,7 +2749,7 @@ class TestPersistConverterWithADefaultTarget:
         }
         reset_default_values()
         ConverterRegistry.reset_registry_singleton()
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
 
     async def test_names_a_default_target_by_a_name_that_lasts(
         self, upload_service: ConverterService, tmp_path: Path
@@ -2760,7 +2775,7 @@ class TestPersistConverterWithADefaultTarget:
 
         assert _saved_converter(tmp_path, "puzzled")["params"] == left_unset
         ConverterRegistry.reset_registry_singleton()
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
 
     @pytest.mark.parametrize("left_unset", [{}, {"converter_target": None}, {"converter_target": ""}])
     async def test_refuses_a_default_target_that_is_gone_after_a_restart(
