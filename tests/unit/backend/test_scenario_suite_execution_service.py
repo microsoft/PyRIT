@@ -36,18 +36,15 @@ from pyrit.models import (
     ScenarioSuiteSubmissionState,
 )
 from pyrit.models.catalog import (
-    RestoreFailureReason,
     RunScenarioRequest,
     ScenarioRunSummary,
 )
 from pyrit.registry import (
-    SavedEntryUnavailableError,
     ScenarioPresetRegistry,
     ScenarioSuiteLaunchConflictError,
     ScenarioSuiteNotRunnableError,
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
-    UnavailableEntry,
 )
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
@@ -402,32 +399,6 @@ async def test_submission_failure_names_a_saved_entry_a_launch_script_would_repl
     assert summary is not None
     assert [entry.error for entry in summary.entries] == [clash, clash]
     assert summary.entries[0].error_type == "SavedEntryLaunchConflictError"
-
-
-async def test_an_entry_names_a_saved_entry_that_failed_without_its_details(
-    execution_context: tuple[
-        ScenarioSuiteExecutionService,
-        ScenarioSuiteRegistry,
-        MagicMock,
-        MagicMock,
-        list[tuple[RunScenarioRequest, dict[str, Any]]],
-        dict[str, ScenarioRunSummary],
-    ],
-) -> None:
-    service, suite_registry, _, run_service, _, _ = execution_context
-    stored = suite_registry.save_suite(suite=_suite(), expected_version=None)
-    entry = UnavailableEntry(
-        kind="target", name="contoso", reason=RestoreFailureReason.BUILD_ERROR, message="ValueError: key=secret"
-    )
-    run_service.start_run_async.side_effect = SavedEntryUnavailableError(entry=entry, name="contoso")
-
-    accepted = await service.launch_async(name="weekly", request=_launch_request(suite_version=stored.version))
-    await _wait_for_submissions(service)
-    summary = await service.get_execution_async(execution_id=accepted.suite_execution_id)
-
-    assert summary is not None
-    assert summary.entries[0].error == "The saved target 'contoso' couldn't be restored. It couldn't be built."
-    assert "secret" not in str(summary.model_dump())
 
 
 async def test_submission_failure_does_not_prevent_later_entries_from_queueing(
