@@ -33,6 +33,7 @@ export function useTargetRegistry() {
       if (cancelled || pendingUpdates.current !== updates) return
       pendingUpdates.current = null
       setError(toApiError(cause).detail)
+      setLoadedGeneration(generation)
       setLoading(false)
     })
     return () => { cancelled = true }
@@ -61,5 +62,9 @@ export function useTargetRegistry() {
   }, [generation])
 
   const isEmpty = ready && !loading && !error && loadedGeneration === generation && targets.length === 0
-  return { targets, loading, error, isEmpty, refresh, rememberTarget, synchronizeTargets }
+  // A generation change refetches but does not raise the loading flag, so the
+  // previous runtime's targets would stay selectable until the new list lands.
+  // Gate loading on the loaded generation the way the scorer registry does.
+  const registryLoading = loading || !ready || loadedGeneration !== generation
+  return { targets, loading: registryLoading, error, isEmpty, refresh, rememberTarget, synchronizeTargets }
 }
