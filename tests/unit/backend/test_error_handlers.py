@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from pyrit.backend.middleware.error_handlers import register_error_handlers
+from pyrit.backend.middleware import register_error_handlers
 
 
 class TestErrorHandlers:

@@ -6,8 +6,7 @@ import uuid
 
 import pytest
 
-from pyrit.models import MessagePiece, RequestTraceContext
-from pyrit.models.seeds.seed_prompt import SeedPrompt
+from pyrit.models import MessagePiece, RequestTraceContext, SeedPrompt
 
 
 def test_seed_prompt_init_defaults():

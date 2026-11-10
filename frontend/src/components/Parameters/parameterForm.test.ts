@@ -222,6 +222,30 @@ describe('buildParametersFromForm', () => {
     expect(result).toEqual({ ok: false, error: 'days must be an integer.' })
   })
 
+  it('rejects an unsafe integer for an int parameter', () => {
+    const params = [makeParameter({ name: 'seed', type_name: 'int' })]
+    expect(buildParametersFromForm(params, { seed: '9007199254740993' })).toEqual({
+      ok: false,
+      error: 'seed must be a safe integer.',
+    })
+    expect(buildParametersFromForm(params, { seed: '-9007199254740993' })).toEqual({
+      ok: false,
+      error: 'seed must be a safe integer.',
+    })
+  })
+
+  it('accepts safe integer boundary values for an int parameter', () => {
+    const params = [makeParameter({ name: 'seed', type_name: 'int' })]
+    expect(buildParametersFromForm(params, { seed: '9007199254740991' })).toEqual({
+      ok: true,
+      parameters: { seed: 9007199254740991 },
+    })
+    expect(buildParametersFromForm(params, { seed: '-9007199254740991' })).toEqual({
+      ok: true,
+      parameters: { seed: -9007199254740991 },
+    })
+  })
+
   it('coerces a valid float', () => {
     const params = [makeParameter({ name: 'ratio', type_name: 'float' })]
     const result = buildParametersFromForm(params, { ratio: '1.5' })
@@ -296,6 +320,12 @@ describe('buildParametersFromForm', () => {
     const params = [makeParameter({ name: 'days', type_name: 'list[int]', is_list: true })]
     const result = buildParametersFromForm(params, { days: '1, x' })
     expect(result).toEqual({ ok: false, error: 'days must be a number.' })
+  })
+
+  it('rejects an unsafe integer list element for a list[int] parameter', () => {
+    const params = [makeParameter({ name: 'days', type_name: 'list[int]', is_list: true })]
+    const result = buildParametersFromForm(params, { days: '1, 9007199254740993' })
+    expect(result).toEqual({ ok: false, error: 'days must be a safe integer.' })
   })
 
   it('keeps selected multiselect choices', () => {

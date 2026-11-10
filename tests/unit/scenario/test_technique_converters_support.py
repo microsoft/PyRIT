@@ -9,20 +9,19 @@ import pytest
 
 from pyrit.converter import Base64Converter
 from pyrit.models import ComponentIdentifier
-from pyrit.scenario.scenarios.adaptive.adaptive_scenario import AdaptiveScenario
-from pyrit.scenario.scenarios.adaptive.text_adaptive import TextAdaptive
-from pyrit.scenario.scenarios.airt.cyber import Cyber
-from pyrit.scenario.scenarios.airt.psychosocial import Psychosocial
-from pyrit.scenario.scenarios.airt.scam import Scam
-from pyrit.scenario.scenarios.benchmark.adversarial import AdversarialBenchmark
-from pyrit.scenario.scenarios.foundry.red_team_agent import RedTeamAgent
-from pyrit.scenario.scenarios.garak.audio_achilles_heel import AudioAchillesHeel
-from pyrit.scenario.scenarios.garak.doctor import Doctor
-from pyrit.scenario.scenarios.garak.encoding import Encoding
-from pyrit.scenario.scenarios.garak.package_hallucination import PackageHallucination
-from pyrit.scenario.scenarios.garak.system_prompt_extraction import SystemPromptExtraction
-from pyrit.scenario.scenarios.garak.web_injection import WebInjection
-from pyrit.scenario.scenarios.technique.execute import Execute
+from pyrit.scenario.scenarios.adaptive import AdaptiveScenario, TextAdaptive
+from pyrit.scenario.scenarios.airt import Cyber, Psychosocial, Scam
+from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
+from pyrit.scenario.scenarios.foundry import RedTeamAgent
+from pyrit.scenario.scenarios.garak import (
+    AudioAchillesHeel,
+    Doctor,
+    Encoding,
+    PackageHallucination,
+    SystemPromptExtraction,
+    WebInjection,
+)
+from pyrit.scenario.scenarios.technique import Execute
 from pyrit.score import TrueFalseScorer
 
 _IGNORING_SCENARIOS = [

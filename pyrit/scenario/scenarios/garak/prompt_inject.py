@@ -15,14 +15,23 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 from pyrit.common import apply_defaults, forward_init_parameters
 from pyrit.converter import SearchReplaceConverter
 from pyrit.executor.attack import AttackConverterConfig, AttackScoringConfig, PromptSendingAttack
-from pyrit.models import AttackSeedGroup, Parameter, Seed, SeedObjective, SeedPrompt
-from pyrit.models.scenario_dataset import DatasetSelectionMode, ScenarioDatasetOptions
+from pyrit.models import (
+    AttackSeedGroup,
+    DatasetSelectionMode,
+    Parameter,
+    ScenarioDatasetOptions,
+    Seed,
+    SeedObjective,
+    SeedPrompt,
+)
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.dataset_configuration import (
     DatasetAttackConfiguration,
-    DatasetConstraintError,
     DatasetSource,
 )
 from pyrit.scenario.core.dataset_sampling import sample_with_coverage

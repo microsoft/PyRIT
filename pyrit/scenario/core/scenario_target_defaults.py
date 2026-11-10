@@ -6,8 +6,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-from pyrit.prompt_target import OpenAIChatTarget, PromptTarget
-from pyrit.prompt_target.common.target_capabilities import CapabilityName
+from pyrit.prompt_target import CapabilityName, OpenAIChatTarget, PromptTarget
 from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)

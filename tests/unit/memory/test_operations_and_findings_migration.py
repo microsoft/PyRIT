@@ -17,8 +17,10 @@ from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.schema import CreateTable
 
-from pyrit.memory.memory_models import (
+from pyrit.memory import (
     AttackResultEntry,
+)
+from pyrit.memory.memory_models import (
     FindingEntry,
     FindingEvidenceEntry,
     OperationEntry,
@@ -65,6 +67,7 @@ def test_migration_adds_tables_without_changing_existing_ones() -> None:
             assert {name: columns for name, columns in after.items() if name not in ACTIVITY_TABLES} == {
                 name: columns for name, columns in existing.items() if name not in ACTIVITY_TABLES
             }
+            command.upgrade(config, "head")
         run_schema_migrations(engine=engine)
         check_schema_migrations(engine=engine)
     finally:
@@ -89,6 +92,25 @@ def test_migration_downgrades_only_without_operations() -> None:
             with pytest.raises(ValueError, match="operations"):
                 command.downgrade(config, PREVIOUS_REVISION)
             assert connection.scalar(sa.text("SELECT name FROM OperationEntries")) == "Retain"
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize("previous_revision", ["d6de1045cca4", "e7a1b3c5d9f0"])
+def test_general_technique_and_http_fingerprint_migrations_merge(previous_revision: str) -> None:
+    engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, previous_revision)
+            command.upgrade(config, "head")
+            inspector = sa.inspect(connection)
+            assert "is_general_technique" in {column["name"] for column in inspector.get_columns("SeedPromptEntries")}
+            assert "http_request_fingerprint" in {
+                column["name"] for column in inspector.get_columns("TargetIdentifiers")
+            }
+        run_schema_migrations(engine=engine)
+        check_schema_migrations(engine=engine)
     finally:
         engine.dispose()
 
