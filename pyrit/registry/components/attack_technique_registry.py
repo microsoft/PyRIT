@@ -36,7 +36,6 @@ from pyrit.registry.instance_registry import (
     RegistryNameTakenError,
     SavedEntryUnavailableError,
     _record_saved_entry_refusal,
-    record_held_name_refusal,
     refuse_saved_entry,
 )
 from pyrit.registry.registry import Registry
@@ -200,7 +199,6 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         with self._lock:
             held = {entry.name.casefold(): entry for entry in self.get_unavailable_entries() if entry.name is not None}
             if (held_entry := held.get(factory.name.casefold())) is not None:
-                record_held_name_refusal(entry=held_entry, name=factory.name)
                 raise SavedEntryUnavailableError(entry=held_entry, name=factory.name)
             entries = self.get_all_instances()
             # A held name still counts as taken, so no tag can claim it while its saved technique is broken.

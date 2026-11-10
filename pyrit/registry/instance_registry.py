@@ -193,19 +193,6 @@ def _record_saved_entry_refusal(entry: RegistryEntry[Any] | None) -> str | None:
     return kind
 
 
-def record_held_name_refusal(*, entry: UnavailableEntry, name: str) -> None:
-    """
-    Record an attempt to take the name of a saved entry that couldn't be restored, when refusals are being recorded.
-
-    Args:
-        entry (UnavailableEntry): The held saved entry, or folder of them.
-        name (str): The name that was being taken.
-    """
-    refusals = _saved_entry_refusals.get()
-    if refusals is not None:
-        refusals.append((entry.kind, name))
-
-
 @contextmanager
 def record_saved_entry_refusals() -> Generator[list[tuple[str, str]], None, None]:
     """
@@ -504,7 +491,7 @@ class DefaultInstanceRegistry(Generic[T]):
         with self._lock:
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
-            self._raise_if_unavailable(name, taking=True)
+            self._raise_if_unavailable(name)
             if not replace:
                 self.validate_name_available(name)
             else:
@@ -544,7 +531,7 @@ class DefaultInstanceRegistry(Generic[T]):
         with self._lock:
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
-            self._raise_if_unavailable(name, taking=True)
+            self._raise_if_unavailable(name)
             if name in self._registry_items:
                 # Code that catches this error would leave a saved entry standing in, so the clash is recorded.
                 _record_saved_entry_refusal(self._registry_items[name])
@@ -655,13 +642,9 @@ class DefaultInstanceRegistry(Generic[T]):
                 entries.append(self._unavailable_unregistered)
             return entries
 
-    def _raise_if_unavailable(self, name: str, *, taking: bool = False) -> None:
+    def _raise_if_unavailable(self, name: str) -> None:
         """
         Refuse a name held for a saved entry that couldn't be restored.
-
-        Args:
-            name (str): The name being looked up or taken.
-            taking (bool): Whether the name is being registered, rather than looked up. Defaults to False.
 
         Raises:
             SavedEntryUnavailableError: If the name is held.
@@ -670,9 +653,6 @@ class DefaultInstanceRegistry(Generic[T]):
         if entry is None and name not in self._registry_items:
             entry = self._unavailable_unregistered
         if entry is not None:
-            if taking:
-                # Code that catches this error could leave something else in the saved entry's place.
-                record_held_name_refusal(entry=entry, name=name)
             raise SavedEntryUnavailableError(entry=entry, name=name)
 
     def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
