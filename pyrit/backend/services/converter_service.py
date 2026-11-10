@@ -53,6 +53,7 @@ from pyrit.backend.services.saved_entries import (
     NotSaveableError,
     SavedEntryConflictError,
     SavedEntryRemovalError,
+    launch_script_class_reason,
     prepare_saved_params_async,
     save_then_register_async,
 )
@@ -195,6 +196,8 @@ class ConverterService:
         Returns:
             str | None: The reason, or None when a converter of the type can be saved.
         """
+        if self._registry.is_temporary_class(converter_type):
+            return launch_script_class_reason(converter_type)
         try:
             check_saveable_class(self._registry.get_class(converter_type))
         except SavedEntryRefusedError as error:

@@ -2844,3 +2844,22 @@ async def test_types_say_why_a_converter_type_cant_be_saved() -> None:
         "ImageOverlayConverter",
         "TransparencyAttackConverter",
     }
+
+
+class _LaunchScriptCaesarConverter(CaesarConverter):
+    """A converter class that only a scan's launch script registers."""
+
+
+async def test_types_say_a_converter_type_a_launch_script_added_cant_be_saved() -> None:
+    service = ConverterService()
+    with registration_origin(RegistryEntryOrigin.TEMPORARY):
+        service._registry.register_class(_LaunchScriptCaesarConverter)
+
+    types = await service.list_converter_types_async()
+
+    reasons = {item.converter_type: item.not_saveable_reason for item in types.items}
+    assert reasons["_LaunchScriptCaesarConverter"] == (
+        "'_LaunchScriptCaesarConverter' was added by a scan's launch script, so a saved entry of it couldn't be "
+        "restored after a restart."
+    )
+    assert reasons["CaesarConverter"] is None
