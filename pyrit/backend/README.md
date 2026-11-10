@@ -255,6 +255,42 @@ supplied arguments. Helper constructors retain their original call form.
 Live components without captured inputs use `...`; this display is not executable
 or lossless source. The GUI displays identity JSON, not the creation statement.
 
+### Prompt Generations
+
+Prompt generations run PyRIT's prompt generators as background jobs and store each
+result as a new named seed dataset. `GET /api/prompt-generators` describes each
+generator's stages, target roles, and the scenario that runs its datasets. v1
+registers `assert` (`AssertGenerator`, with a reviewable dimensions stage) and
+`target_objective` (`TargetObjectiveGenerator`).
+
+| Endpoint | Result |
+| --- | --- |
+| `POST /api/prompt-generations/preflight` | Validation errors, dataset-name availability, and a call/token estimate; no target is called |
+| `POST /api/prompt-generations` | 201 with a queued generation; 409 if the dataset name is taken |
+| `POST /api/prompt-generations/batch` | 201 with several queued generations that share a generator, targets, settings, and a `group_id`, such as an ASSERT suite |
+| `GET /api/prompt-generations` | Generations newest first |
+| `GET`, `DELETE /api/prompt-generations/{id}` | Read or delete a record; deleting keeps the dataset |
+| `POST /api/prompt-generations/{id}/continue\|retry\|cancel` | Finish a review, resume from the last checkpoint, or cancel |
+| `GET`, `PUT /api/prompt-generations/{id}/review` | Read or save output awaiting review |
+| `GET /api/prompt-generations/{id}/estimate` | Remaining calls from the checkpoint; ASSERT is exact once the taxonomy exists |
+| `GET /api/prompt-generations/from-dataset?selection_key=` | The request recorded in a generated dataset, to edit and regenerate under a new name |
+| `GET /api/prompt-generators/assert/behaviors\|suites` | The bundled ASSERT behavior and suite library |
+
+Generators own model calls, stages, validation, and resumable checkpoints; dataset
+providers package results. `PromptGenerationService` owns admission, one running
+generation at a time by default, persistence of every checkpoint, review pauses,
+cancellation, and dataset-name reservation. Each record is a JSON document at
+`<memory results_path>/prompt_generations/<id>.json`, next to media output.
+
+A single backend instance owns generation records. It reads them once into an
+in-process cache and every write updates both; local files are replaced atomically.
+Don't run two backends against the same results storage. On first use after a
+restart, records that were active become `interrupted`, and retry resumes from the
+last stored checkpoint. Shutdown interrupts running generations but lets a dataset
+save finish. A dataset is saved once, under a name that didn't exist when the
+generation started; retrying a generation whose dataset was already saved completes
+without saving it again.
+
 ### Manual Messages
 
 `POST /api/attacks/{id}/messages` remains synchronous: it waits for the send and returns
