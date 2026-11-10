@@ -82,3 +82,11 @@ Element.prototype.scrollIntoView = jest.fn();
 // Mock URL.createObjectURL and URL.revokeObjectURL for file handling
 global.URL.createObjectURL = jest.fn(() => "blob:mock-url");
 global.URL.revokeObjectURL = jest.fn();
+
+// Tests assert English number formatting, but Intl defaults to the machine's
+// locale. Pin the default so the suite passes on non-English machines too.
+const SystemNumberFormat = Intl.NumberFormat;
+Intl.NumberFormat = new Proxy(SystemNumberFormat, {
+  construct: (target, [locales, options]) => new target(locales ?? "en-US", options),
+  apply: (target, _thisArg, [locales, options]) => target(locales ?? "en-US", options),
+});
