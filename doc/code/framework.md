@@ -249,8 +249,6 @@ These modules support every component.
 
 - Before writing a class that overlaps an existing one, or passing a dict across a boundary, use or extend a model here.
 - Depend only on the standard library, pydantic, and `pyrit.common`; the import-boundary test enforces this. Each model owns its validation.
-- Put data on the narrowest model that owns it (`MessagePiece`, not `Message`), and use explicit typed fields for stable or queried data. For shared metadata, write a small value object with `to_metadata()` and `from_metadata()`, following `JsonResponseConfig`.
-- Describe components with identifiers. With the registry, an identifier can usually recreate its component.
 
 ## [Registry](./registry/0_registry)
 
@@ -350,3 +348,19 @@ The backend is an adapter, not a second library. It owns HTTP and process concer
 
 - Run PyRIT through the backend, and depend only on `pyrit.models`, `pyrit.common`, and `pyrit.output`. Administrative tools such as `pyrit_migrate` are the exception.
 - Keep startup fast. Defer imports until after argument parsing, and never import `pyrit.models` or other heavy modules at module level; the CLI import-guard tests enforce this.
+
+# Conventions
+
+These patterns cut across components. Use them instead of inventing a local variant.
+
+- **Match requirements to capabilities, not types.** Components declare what they need and what they offer: target requirements and capabilities, seed group requirements, scorer condition types and evidence, and converter input and output types. One shared check matches them before any model call, then adapts, skips, or fails according to the caller's policy. Don't branch on concrete classes or class names.
+- **Make identifiers complete and stable.** A component's identifier records every setting that can change its behavior, deterministically, and never a credential; record a digest when a secret changes behavior. Results record the identifiers of what produced them, even on error. Identity is fixed at construction: to change an identity-bearing setting, build a new instance.
+- **Refer to registered components by name and hash.** A saved or sent reference carries the registry name and identifier hash (`RegisteredComponentReference`) and fails if that configuration changed. Build a variant from a registered source plus overrides (`recreate_instance`) and check its identifier; never rebuild a component from an identifier alone.
+- **Resolve defaults in one order.** An explicit argument wins, then an initializer default (`@apply_defaults`), then the environment variable that the class names, read at construction through `default_values`, then a declared default or an error. Don't read `os.environ` anywhere else.
+- **Give data PyRIT acts on a typed field.** If code branches on, filters, sorts, or queries a value, make it a typed field on the narrowest model that owns it (`MessagePiece`, not `Message`). Metadata dicts carry opaque extras for one component, and labels are user tags that PyRIT never interprets.
+- **Let one value object own each metadata key.** A small model in `pyrit.models` declares a namespaced key and is the only code that reads or writes it, through `to_metadata()` and `from_metadata()`; see `ToolExecutionMetadata`. A missing key means unset, and malformed data raises.
+- **Keep shared components free of per-call state.** Registered targets, converters, and scorers serve concurrent callers. Keep per-call data in arguments, the attack context, or memory, not in instance attributes.
+- **Keep helper-model prompts in YAML seeds.** Prompts for judges, converters, and adversarial chat are YAML `SeedPrompt`s that declare their parameters. Render them only through `SeedPrompt`'s sandboxed templates, never with f-strings or `str.format`.
+- **Declare structured output, and parse it once.** Ask for JSON with `JsonResponseConfig`, and let the target enforce or adapt it. Parse with one function that raises `InvalidJsonException`, and retry through `send_json_with_retry_async`, which starts each retry from a clean history.
+- **Store media through serializers.** Write files only through `data_serializer_factory` into results storage, refer to them by the returned path or URL, and read them back the same way. Don't persist base64, temporary files, or paths outside results storage.
+- **Use aware UTC timestamps.** Create them with `datetime.now(tz=UTC)`, keep them in typed fields, and convert to local time only for display.
