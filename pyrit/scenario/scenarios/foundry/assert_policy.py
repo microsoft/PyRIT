@@ -40,7 +40,12 @@ from pyrit.models.score.assert_judge import AssertJudgeConfig, describe_validati
 from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import CapabilityName
 from pyrit.registry import AttackTechniqueRegistry
-from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target, resolve_technique_factories
+from pyrit.scenario.core import (
+    DatasetConstraintError,
+    get_default_scorer_target,
+    resolve_technique_factories,
+    resolve_technique_factories_for_techniques,
+)
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
 from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
@@ -638,6 +643,23 @@ class AssertPolicy(Scenario):
         """
         return SeedGroupRequirements(required_user_prompt=True)
 
+    def _get_dataset_technique_factories(self) -> dict[str, AttackTechniqueFactory]:
+        return resolve_technique_factories_for_techniques(
+            scenario_techniques=self._scenario_techniques,
+            extra_factories={_ASSERT_PACKAGE: _build_assert_package_factory()},
+        )
+
+    def _get_dataset_target_requirements(self, factory: AttackTechniqueFactory) -> TechniqueRequirements:
+        return self._get_target_requirements(factory)
+
+    def _validate_dataset_technique_group(
+        self, *, factory: AttackTechniqueFactory, seed_group: AttackSeedGroup
+    ) -> None:
+        if factory.name == _ASSERT_PACKAGE:
+            self._require_tester_instructions(seed_group)
+        else:
+            super()._validate_dataset_technique_group(factory=factory, seed_group=seed_group)
+
     async def _resolve_seed_groups_by_dataset_async(
         self, *, apply_sampling: bool = True
     ) -> dict[str, list[AttackSeedGroup]]:
@@ -679,6 +701,7 @@ class AssertPolicy(Scenario):
         return selected
 
     def _validate_dataset_assessment_population(self, population: dict[str, list[AttackSeedGroup]]) -> None:
+        self._resolve_trace_evidence()
         groups = [group for dataset_groups in population.values() for group in dataset_groups]
         repeated_seeds = [seed_id for seed_id, count in Counter(g.objective.id for g in groups).items() if count > 1]
         if repeated_seeds:
@@ -841,10 +864,8 @@ class AssertPolicy(Scenario):
                     technique_name=name,
                     dataset_name=dataset_name,
                     policy=context.incompatible_technique_policy,
-                    validate_group=(
-                        self._require_tester_instructions
-                        if name == _ASSERT_PACKAGE
-                        else factory.validate_group_adversarial_prompts
+                    validate_group=lambda group, factory=factory: self._validate_dataset_technique_group(
+                        factory=factory, seed_group=group
                     ),
                 )
                 for group in sorted(selected, key=self._get_generation_order):

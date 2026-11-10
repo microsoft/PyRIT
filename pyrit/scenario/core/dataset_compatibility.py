@@ -16,7 +16,11 @@ from pyrit.models.dataset_compatibility import (
     DatasetTechniqueCompatibility,
 )
 from pyrit.scenario.core.dataset_configuration import DatasetConstraintError
-from pyrit.scenario.core.technique_requirements import IncompatibleTechniqueError, prepare_seed_group
+from pyrit.scenario.core.technique_requirements import (
+    IncompatibleTechniqueError,
+    describe_target_incompatibility,
+    prepare_seed_group,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -103,7 +107,11 @@ def assess_technique_groups(
         tuple[DatasetTechniqueCompatibility, list[AttackSeedGroup]]: Coverage and original usable source groups.
     """
     usable: list[AttackSeedGroup] = []
-    failures: Counter[str] = Counter({error: len(groups) for error in target_errors})
+    failures: Counter[str] = Counter(
+        {describe_target_incompatibility(technique_name=name, errors=target_errors): len(groups)}
+        if target_errors
+        else {}
+    )
     if not target_errors:
         for group in groups:
             try:

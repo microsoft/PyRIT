@@ -131,6 +131,16 @@ def prepare_seed_group(
     return PreparedSeedGroup(seed_group=execution_group, adaptation=adaptation)
 
 
+def describe_target_incompatibility(*, technique_name: str, errors: Sequence[str]) -> str:
+    """
+    Format a known target mismatch consistently for assessment and execution.
+
+    Returns:
+        str: The existing technique-scoped diagnostic.
+    """
+    return f"Technique '{technique_name}' is incompatible with the objective target:\n" + "\n".join(errors)
+
+
 def check_target_compatibility(
     *,
     target: PromptTarget,
@@ -158,7 +168,7 @@ def check_target_compatibility(
     errors = requirements.check_target(target=target, attack_class=attack_class)
     if not errors:
         return True
-    message = f"Technique '{technique_name}' is incompatible with the objective target:\n" + "\n".join(errors)
+    message = describe_target_incompatibility(technique_name=technique_name, errors=errors)
     if policy is IncompatibleTechniquePolicy.RAISE:
         raise IncompatibleTechniqueError(message)
     logger.warning("Skipping %s", message)
