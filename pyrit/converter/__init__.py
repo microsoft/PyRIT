@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from pyrit.converter.json_string_converter import JsonStringConverter
     from pyrit.converter.leetspeak_converter import LeetspeakConverter
     from pyrit.converter.llm_generic_text_converter import LLMGenericTextConverter
+    from pyrit.converter.logic_jailbreak_converter import LogicJailbreakConverter
     from pyrit.converter.lsb_image_stego_converter import (
         LSBImageStegoConverter,
         LSBImageStegoDecodeConverter,
@@ -203,6 +204,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "KeywordSelectionStrategy": "pyrit.converter.text_selection_strategy",
     "LeetspeakConverter": "pyrit.converter.leetspeak_converter",
     "LLMGenericTextConverter": "pyrit.converter.llm_generic_text_converter",
+    "LogicJailbreakConverter": "pyrit.converter.logic_jailbreak_converter",
     "LSBImageStegoConverter": "pyrit.converter.lsb_image_stego_converter",
     "LSBImageStegoDecodeConverter": "pyrit.converter.lsb_image_stego_converter",
     "MaliciousQuestionGeneratorConverter": "pyrit.converter.malicious_question_generator_converter",
