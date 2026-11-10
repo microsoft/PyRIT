@@ -663,6 +663,7 @@ class TargetService:
                 return UnregisteredTarget(
                     identifier=TargetIdentifier.from_component_identifier(target_obj.get_identifier()),
                     capabilities=target_obj.capabilities,
+                    generation_ranges=target_obj.generation_ranges,
                 )
             finally:
                 await release_component_async(target_obj)

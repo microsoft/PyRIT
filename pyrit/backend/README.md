@@ -71,6 +71,17 @@ its database collation.
   configuration and round-robin rotation stay unchanged. The four-minute deadline
   covers the entire operation. Other composite types remain unsupported.
 
+REST target descriptors expose `capabilities.supports_temperature` and a separate
+`generation_ranges` map, such as `{"temperature": [0, 2]}`, populated from the SDK's
+`target.generation_ranges` snapshot. Bounds are inclusive; missing entries mean
+unknown bounds, not lack of support. Clients must not substitute assumed bounds.
+OpenAI SDK constructors accept `generation_ranges={"temperature": (0, 1)}`;
+omitted entries retain inferred bounds, while descriptors include effective bounds.
+Range declarations remain Python-only constructor inputs, not REST `params`
+overrides; reconstruction preserves declarations from the source target.
+Per-send values use
+[`request_generation_config` metadata](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
+
 ### Manual attack creation
 
 `POST /api/attacks` creates a `ManualAttack`. Send its goal in `objective`,
@@ -276,6 +287,11 @@ maps the resulting stored data to the response, including stored target errors.
 All three use the application's `CentralMemory` instance. Both message endpoints use
 the same cached `MessageSendService`; the synchronous facade awaits its execution core
 directly, while the submission endpoint schedules that core and returns a transient handle.
+
+`_pyrit_generation` is server-authored evidence. Saves retain it only from verified,
+unchanged source pieces; edits, new pieces, prepended history, and `send=false`
+appends discard it. This does not strip unrelated metadata or
+[requested generation options](../../doc/code/targets/0_prompt_targets.md#runtime-generation-configuration).
 
 All manual-message service instances share one process-local scheduler. It admits up to
 64 operations (active and waiting), with a semaphore allowing up to 4 to execute at once.
