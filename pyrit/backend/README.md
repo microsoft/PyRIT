@@ -67,7 +67,7 @@ is set to `"{}"` first, so a saved one doesn't send this server's `OPENAI_ADDITI
 | names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
 | would save a key, or use one of this server's keys or address settings | **400** |
 | gives an address that can carry a credential, or, where this server's setting would apply, one that isn't a full http(s) or ws(s) address | **400** |
-| saves a target type that can't be saved, or one that only a scan's launch scripts added | **400** |
+| saves a target type that can't be saved, or one that a scan's launch scripts added or put in place of another | **400** |
 | saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** |
 | uses a Temporary target | **400** |
 | takes a name that a target or a saved file already has | **409** |
