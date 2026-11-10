@@ -3,7 +3,6 @@
 Learn how to use PyRIT's components to build red teaming workflows.
 
 :::::{grid} 1 1 2 3
-:gutter: 3
 
 ::::{card} 📦 Datasets
 :link: ./datasets/0_dataset
