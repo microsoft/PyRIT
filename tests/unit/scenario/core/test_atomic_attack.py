@@ -12,6 +12,7 @@ import pytest
 from pyrit.executor.attack import AttackExecutor, AttackExecutorResult, AttackStrategy, PromptSendingAttack
 from pyrit.memory import SQLiteMemory
 from pyrit.models import (
+    AtomicAttackEvaluationIdentifier,
     AtomicAttackIdentifier,
     AttackIdentifier,
     AttackOutcome,
@@ -24,9 +25,10 @@ from pyrit.models import (
     SeedGroupRequirements,
     SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
     TargetIdentifier,
 )
-from pyrit.prompt_target import CapabilityName, TargetRequirements
+from pyrit.prompt_target import CapabilityName, OpenAIChatTarget, TargetRequirements
 from pyrit.scenario import AtomicAttack, AttackTechnique, IncompatibleTechniqueError, TechniqueRequirements
 from tests.unit.mocks import MockPromptTarget
 
@@ -1209,6 +1211,124 @@ class TestAtomicAttackTechniqueEvalHash:
         )
         assert a1.technique_eval_hash != a2.technique_eval_hash
         assert a1.logical_group_id != a2.logical_group_id
+
+
+def _simulated_conversation_technique(attack: AttackStrategy) -> AttackTechnique:
+    return AttackTechnique(
+        attack=attack,
+        seed_technique=AttackTechniqueSeedGroup(
+            seeds=[
+                SeedSimulatedConversation(adversarial_chat_system_prompt=SeedPrompt(value="Generate a conversation."))
+            ]
+        ),
+    )
+
+
+def _adversarial_chat(
+    *,
+    temperature: float = 1.2,
+    max_requests_per_minute: int | None = None,
+    endpoint: str = "https://first.example/openai/v1",
+) -> OpenAIChatTarget:
+    return OpenAIChatTarget(
+        model_name="adversarial-model",
+        endpoint=endpoint,
+        api_key="test-api-key",
+        temperature=temperature,
+        max_requests_per_minute=max_requests_per_minute,
+    )
+
+
+def _simulated_conversation_atomic_attack(
+    *, attack: AttackStrategy, adversarial_chat: OpenAIChatTarget
+) -> AtomicAttack:
+    return AtomicAttack(
+        attack_technique=_simulated_conversation_technique(attack),
+        seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value="objective")])],
+        atomic_attack_name="same",
+        adversarial_chat=adversarial_chat,
+    )
+
+
+@pytest.mark.usefixtures("patch_central_database")
+class TestAtomicAttackSimulatedConversationIdentity:
+    """The adversarial chat that generates simulated conversations is part of the eval hash."""
+
+    def test_behavioral_chat_settings_change_the_hash(self, mock_attack):
+        baseline = _simulated_conversation_atomic_attack(attack=mock_attack, adversarial_chat=_adversarial_chat())
+        changed = _simulated_conversation_atomic_attack(
+            attack=mock_attack, adversarial_chat=_adversarial_chat(temperature=0.2)
+        )
+
+        assert baseline.simulated_conversation_adversarial_chat_eval_hash is not None
+        assert changed.technique_eval_hash != baseline.technique_eval_hash
+        assert changed.logical_group_id != baseline.logical_group_id
+
+    def test_operational_chat_settings_keep_the_hash(self, mock_attack):
+        baseline = _simulated_conversation_atomic_attack(attack=mock_attack, adversarial_chat=_adversarial_chat())
+        redeployed = _simulated_conversation_atomic_attack(
+            attack=mock_attack,
+            adversarial_chat=_adversarial_chat(max_requests_per_minute=10, endpoint="https://second.example/openai/v1"),
+        )
+
+        assert redeployed.technique_eval_hash == baseline.technique_eval_hash
+
+    def test_chat_is_not_identity_without_a_simulated_conversation(self, mock_attack, sample_seed_groups):
+        without_chat = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+        )
+        with_chat = AtomicAttack(
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=sample_seed_groups,
+            atomic_attack_name="same",
+            adversarial_chat=_adversarial_chat(),
+        )
+
+        assert with_chat.simulated_conversation_adversarial_chat_eval_hash is None
+        assert with_chat.technique_eval_hash == without_chat.technique_eval_hash
+
+    def test_strategy_and_simulated_conversation_chats_are_identified_separately(self):
+        def _atomic(*, strategy_temperature: float, simulation_temperature: float) -> AtomicAttack:
+            attack = MagicMock(spec=AttackStrategy)
+            attack.get_identifier.return_value = AttackIdentifier(
+                class_name="RedTeamingAttack",
+                class_module="pyrit.test",
+                adversarial_chat=TargetIdentifier(
+                    class_name="StrategyChat", class_module="pyrit.test", temperature=strategy_temperature
+                ),
+            )
+            return _simulated_conversation_atomic_attack(
+                attack=attack, adversarial_chat=_adversarial_chat(temperature=simulation_temperature)
+            )
+
+        baseline = _atomic(strategy_temperature=0.2, simulation_temperature=1.2)
+        strategy_changed = _atomic(strategy_temperature=0.7, simulation_temperature=1.2)
+        simulation_changed = _atomic(strategy_temperature=0.2, simulation_temperature=0.7)
+
+        assert strategy_changed.technique_eval_hash != baseline.technique_eval_hash
+        assert simulation_changed.technique_eval_hash != baseline.technique_eval_hash
+        assert strategy_changed.technique_eval_hash != simulation_changed.technique_eval_hash
+
+    async def test_result_identifiers_record_the_chat(self, mock_attack):
+        chat = _adversarial_chat()
+        atomic = _simulated_conversation_atomic_attack(attack=mock_attack, adversarial_chat=chat)
+        executor = MagicMock(spec=AttackExecutor)
+        executor.execute_attack_from_seed_groups_async.return_value = AttackExecutorResult(
+            completed_results=[], incomplete_objectives=[]
+        )
+
+        await atomic.run_async(executor=executor)
+
+        kwargs = executor.execute_attack_from_seed_groups_async.call_args.kwargs
+        assert kwargs["adversarial_chat"] is chat
+        [identifier] = kwargs["atomic_attack_identifiers"]
+        key = AtomicAttackIdentifier.SIMULATED_CONVERSATION_ADVERSARIAL_CHAT_EVAL_HASH_KEY
+        assert identifier.params[key] == atomic.simulated_conversation_adversarial_chat_eval_hash
+        # Persistence recomputes the eval hash from the stored identifier, so it must match the planned hash.
+        stored = AtomicAttackIdentifier.model_validate(identifier.model_dump())
+        assert AtomicAttackEvaluationIdentifier(stored).eval_hash == atomic.technique_eval_hash
 
 
 @pytest.mark.usefixtures("patch_central_database")

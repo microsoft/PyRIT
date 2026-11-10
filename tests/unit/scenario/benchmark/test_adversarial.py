@@ -1166,10 +1166,12 @@ class TestCollectCachedCompletionPairs:
         technique_eval_hash: str | None,
         atomic_attack_name: str = "attack_a",
         inner_attack_eval_hash: str | None = None,
+        simulated_conversation_adversarial_chat_eval_hash: str | None = None,
     ) -> MagicMock:
         candidate = MagicMock()
         candidate.technique_eval_hash = technique_eval_hash
         candidate.atomic_attack_name = atomic_attack_name
+        candidate.simulated_conversation_adversarial_chat_eval_hash = simulated_conversation_adversarial_chat_eval_hash
         candidate.attack_technique.attack._cache_lookup_hash = inner_attack_eval_hash or technique_eval_hash
         return candidate
 
@@ -1324,6 +1326,28 @@ class TestCollectCachedCompletionPairs:
             "planned-hash",
             "persisted-inner-hash",
         }
+
+    async def test_skips_inner_attack_hash_for_simulated_conversation_attacks(self):
+        """Inner-attack rows do not record the simulated-conversation chat, so they cannot match its eval hash."""
+        bench = self._make_bench()
+        candidate = self._make_candidate(
+            technique_eval_hash="planned-hash",
+            inner_attack_eval_hash="persisted-inner-hash",
+            simulated_conversation_adversarial_chat_eval_hash="adversarial-chat-hash",
+        )
+        inner_row = _make_attack_result_with_attribution(outcome=AttackOutcome.SUCCESS, parent_collection="attack_a")
+
+        def _fake_analytics(_memory, *, technique_eval_hash, objective_target_eval_hash):
+            return [inner_row] if technique_eval_hash == "persisted-inner-hash" else []
+
+        with (
+            self._patch_identifier(),
+            patch(self._ANALYTICS_PATH, side_effect=_fake_analytics) as analytics_mock,
+        ):
+            cached = await bench._collect_cached_completion_pairs_async(atomic_attacks=[candidate])
+
+        assert cached == set()
+        assert [call.kwargs["technique_eval_hash"] for call in analytics_mock.call_args_list] == ["planned-hash"]
 
     async def test_delegates_with_memory_and_objective_target_hash(self):
         """Each analytics call passes the scenario's memory + the computed objective target hash."""
