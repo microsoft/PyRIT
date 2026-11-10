@@ -14,7 +14,7 @@ from typing import Any
 from PIL import Image
 
 from pyrit.common.path import CONVERTER_SEED_PROMPT_PATH
-from pyrit.converter import CodeAttackConverter
+from pyrit.converter import CodeAttackConverter, TextToImageConverter
 from pyrit.converter.text_selection_strategy import (
     AllWordsSelectionStrategy,
     ContentWordSelectionStrategy,
@@ -287,6 +287,10 @@ def make_samples(folder: Path) -> dict[str, tuple[Any, ...]]:
             (0, 0, 10, 11),
         ),
         "AddImageTextConverter.font_size": (16, (18, 30), (19, 30), (18, 31)),
+        "TextToImageConverter.font": (
+            "ugly_gerry",
+            TextToImageConverter._UGLY_GERRY_FONT_PATH,
+        ),
         "CodeAttackConverter.template": code_attack_templates,
         "CodeAttackConverter.encoding": tuple(CodeAttackConverter.Encoding),
         "ScientificTranslationConverter.mode": ("academic", "technical"),
