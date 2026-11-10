@@ -167,6 +167,12 @@ allow_custom_initializers: false
 # scenario_presets_source. If a saved entry can't be restored, the backend still
 # starts, lists the failure in its runtime status, and refuses to use that entry's
 # name until the file is fixed or deleted. Defaults to ~/.pyrit/registry_recipes.
+#
+# ⚠️  WARNING: The backend rebuilds every saved entry in this source as an
+# administrator, at startup and live reinitialization. Anyone who can write to this
+# source can make the backend run a model's repository code or use its identity.
+# Restrict write access to trusted administrators, and use a dedicated folder or
+# blob prefix.
 # registry_recipes_source: https://account.blob.core.windows.net/container/registry_recipes
 
 # Upload Folder for API-Created Targets

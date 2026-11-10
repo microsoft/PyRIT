@@ -31,7 +31,11 @@ from pydantic import ValidationError
 
 from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.models.component_spec import SourceInstanceSpec
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, SavedEntryUnavailableError
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    RegistryNameTakenError,
+    SavedEntryUnavailableError,
+)
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
@@ -132,7 +136,7 @@ class AttackTechniqueMetadata(RegistryMetadata):
     """Shared metadata type for the inherited, empty technique class catalog."""
 
 
-class TechniqueSelectorConflictError(ValueError):
+class TechniqueSelectorConflictError(RegistryNameTakenError):
     """A technique's name or tag conflicts with the name or a tag of a registered technique."""
 
 
@@ -164,6 +168,10 @@ class TechniqueSelectionUnavailableError(Exception):
         self.names = tuple(names)
 
 
+class TechniqueAdmissionError(ValueError):
+    """A technique can't be registered for a reason of its own, such as a name a scenario can't use."""
+
+
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
     """Factory storage with an atomic runtime-admission path."""
 
@@ -174,8 +182,9 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         Raises:
             SavedEntryUnavailableError: If the name, in any letter case, is held for a saved technique
                 that couldn't be restored.
-            TechniqueSelectorConflictError: If the name or a tag conflicts with an existing selector.
-            ValueError: If the factory doesn't fit the scenarios it would join.
+            TechniqueSelectorConflictError: If the name or a tag conflicts with another technique's name or tag.
+            TechniqueAdmissionError: If a tag repeats the technique's own name, a selector can't become a scenario
+                member, or the factory doesn't fit the scenarios it would join.
         """
         from pyrit.registry.components.scenario_registry import ScenarioRegistry
 
@@ -200,18 +209,23 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
                 raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
             for tag in factory.technique_tags:
                 folded = tag.casefold()
-                if folded in names or folded == folded_name:
+                if folded == folded_name:
+                    raise TechniqueAdmissionError(f"Tag '{tag}' repeats the technique's name")
+                if folded in names:
                     raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
                 if folded in tags and tags[folded] != tag:
                     raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with tag '{tags[folded]}'")
-            _validate_generated_member_collisions(
-                class_name="ScenarioTechnique",
-                factories=[factory],
-                aggregate_tags=set(factory.technique_tags) - {"all", "default"},
-            )
-            AttackTechniqueRegistry.get_registry_singleton().validate_scenario_pools(
-                {**{entry.name: entry.instance for entry in entries}, factory.name: factory}
-            )
+            try:
+                _validate_generated_member_collisions(
+                    class_name="ScenarioTechnique",
+                    factories=[factory],
+                    aggregate_tags=set(factory.technique_tags) - {"all", "default"},
+                )
+                AttackTechniqueRegistry.get_registry_singleton().validate_scenario_pools(
+                    {**{entry.name: entry.instance for entry in entries}, factory.name: factory}
+                )
+            except ValueError as error:
+                raise TechniqueAdmissionError(str(error)) from error
             self.register(factory, name=factory.name, tags=factory.technique_tags)
 
 
