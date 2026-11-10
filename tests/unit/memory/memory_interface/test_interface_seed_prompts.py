@@ -796,7 +796,7 @@ async def test_get_seed_groups_with_list_filters_matches_decoded_elements(
 
 
 @pytest.mark.parametrize("field", ["authors", "harm_categories", "groups", "parameters"])
-async def test_seed_list_substring_filters_preserve_sqlite_like_semantics(
+async def test_seed_list_filters_require_explicit_patterns_and_ignore_case(
     sqlite_instance: MemoryInterface, field: str
 ) -> None:
     await sqlite_instance.add_seeds_to_memory_async(
@@ -804,10 +804,13 @@ async def test_seed_list_substring_filters_preserve_sqlite_like_semantics(
         added_by="test",
     )
 
-    for needle in ["ann", "a_n", "a%n", "\u00c9THIQUE"]:
+    for needle in ["ann", "\u00c9THIQUE", "\u00e9thique"]:
         result = await sqlite_instance.get_seeds_async(**{field: [needle]})
         assert [seed.value for seed in result] == ["match"]
-    assert await sqlite_instance.get_seeds_async(**{field: ["\u00e9thique"]}) == []
+    for pattern in ["a_n", "a%n"]:
+        assert await sqlite_instance.get_seeds_async(**{field: [pattern]}) == []
+        result = await sqlite_instance.get_seeds_async(**{f"{field}_patterns": [pattern]})
+        assert [seed.value for seed in result] == ["match"]
 
 
 @pytest.mark.parametrize(
@@ -825,8 +828,9 @@ def test_seed_list_substring_filters_decode_json_on_both_dialects(
     assert sql.count(expansion) == 2
     assert sql.count("EXISTS") == 2
     assert " AND " in sql
-    assert needle in compiled.params.values()
-    assert r"\u00e9" in compiled.params.values()
+    assert f"%{needle}%" in compiled.params.values()
+    assert r"%\u00e9%" in compiled.params.values()
+    assert "ESCAPE '/'" in sql
 
 
 async def test_get_seeds_with_substring_filters_groups(sqlite_instance: MemoryInterface):

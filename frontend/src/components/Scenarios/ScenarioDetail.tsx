@@ -142,7 +142,7 @@ export default function ScenarioDetail(props: ScenarioDetailProps) {
   const { scenarioName: encodedScenarioName } = useParams<{ scenarioName: string }>()
   const [searchParams] = useSearchParams()
   const conversationIds = searchParams.getAll('prepended_conversation_id')
-  const initialConversationId = conversationIds.length === 1 ? conversationIds[0].trim() : ''
+  const initialConversationId = conversationIds.length === 1 ? (conversationIds[0]?.trim() ?? '') : ''
   const presetName = searchParams.get(PRESET_QUERY_PARAM)?.trim() ?? ''
   if (presetName && props.sourceRunId) return <ScenarioDetailStateFrame>
     <MessageBar intent="error"><MessageBarBody>Choose a saved run or a preset, not both.</MessageBarBody></MessageBar>
@@ -751,7 +751,7 @@ function ScenarioLaunchForm({
     <div key={parameter.name} className={styles.dynamicParameters}>
       <ParameterField
         parameter={parameter}
-        value={scenarioParamValues[parameter.name]}
+        value={scenarioParamValues[parameter.name] ?? ''}
         disabled={submitting || loadingConversation}
         onChange={updateScenarioParam}
         testIdPrefix="scenario-param"

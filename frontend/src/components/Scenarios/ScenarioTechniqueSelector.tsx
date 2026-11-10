@@ -39,6 +39,7 @@ export default function ScenarioTechniqueSelector({
 }: ScenarioTechniqueSelectorProps) {
   const styles = useScenarioTechniqueSelectorStyles()
   const titleId = useId()
+  const baselineUnavailableId = `${titleId}-baseline-unavailable`
 
   const selectableTechniques = useMemo<SelectableTechnique[]>(
     () => buildSelectableTechniques(techniqueOptions, isBaselineForbidden),
@@ -120,6 +121,7 @@ export default function ScenarioTechniqueSelector({
                 label={technique.name}
                 checked={selected}
                 disabled={disabled || technique.disabled}
+                aria-describedby={technique.disabled ? baselineUnavailableId : undefined}
                 onChange={(_, data) => handleTechniqueChange(technique, data.checked === true)}
                 data-testid={technique.isBaseline ? 'baseline-checkbox' : `technique-${technique.name}`}
               />
@@ -128,7 +130,7 @@ export default function ScenarioTechniqueSelector({
                   <Text size={200} className={styles.hint}>{technique.description}</Text>
                 )}
                 {technique.disabled && (
-                  <Text size={200} className={styles.hint}>
+                  <Text id={baselineUnavailableId} size={200} className={styles.hint}>
                     This scenario does not support a baseline comparison.
                   </Text>
                 )}
