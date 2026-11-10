@@ -137,9 +137,17 @@ export function datasetDetailPath(selectionKey: string): string {
   return `${DATASET_DETAIL_PATH}?${params.toString()}`
 }
 
+const NAMED_DATASET_SELECTION_PREFIX = 'dataset:named:'
+
 /** The selection key the dataset catalog assigns to a named dataset. */
 export function namedDatasetSelectionKey(datasetName: string): string {
-  return `dataset:named:${datasetName}`
+  return `${NAMED_DATASET_SELECTION_PREFIX}${datasetName}`
+}
+
+/** Whether a catalog selection key names a dataset, rather than the unnamed seeds. */
+export function isNamedDatasetSelectionKey(selectionKey: string): boolean {
+  return selectionKey.startsWith(NAMED_DATASET_SELECTION_PREFIX)
+    && selectionKey.length > NAMED_DATASET_SELECTION_PREFIX.length
 }
 
 const CATALOG_PATH_STATE_KEY = 'catalogPath'

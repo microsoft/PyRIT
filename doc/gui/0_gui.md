@@ -245,14 +245,17 @@ Load data through PyRIT; the visible catalog checks for changes each minute. See
   policies. Do not disclose another customer's private order details.", or start
   from a bundled ASSERT behavior. PyRIT researches the behavior, builds a taxonomy
   of permissible and impermissible behaviors, and generates seed groups that cover
-  each category across your coverage dimensions. Select **Pause to review** to edit
-  the taxonomy and dimension levels before seed groups are generated.
+  each category across your coverage dimensions. Select **Pause for review after:
+  Resolve coverage dimensions** to edit the taxonomy and dimension levels before seed
+  groups are generated.
 - **ASSERT suite**: generate one dataset per behavior for a bundled application
   context, or for behaviors you choose, with shared settings.
 - **Objective dataset**: generate distinct attack objectives from instructions.
 
-Before you start, the form checks the request and targets and estimates the model
-calls and tokens without calling a target. Generation runs in the background; you
+Every target role starts with your default adversarial target; a generation opened
+from an earlier one keeps that generation's targets. When web search is on, the
+research target must support web search. Before you start, the form checks the
+request and targets and estimates the model calls and tokens without calling a target. Generation runs in the background; you
 can leave the page, cancel, or retry. Retry resumes from the last completed stage,
 including after a backend restart. Generations are stored with the memory's
 results, next to media output. Each completed generation stores a new dataset; to

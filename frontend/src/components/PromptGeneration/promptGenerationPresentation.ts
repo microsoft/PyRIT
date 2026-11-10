@@ -73,8 +73,10 @@ export function datasetNameFromText(text: string): string {
 /** Suggests the next name for a regenerated dataset: `name` becomes `name_v2`, `name_v2` becomes `name_v3`. */
 export function nextDatasetName(name: string): string {
   const match = VERSION_SUFFIX_PATTERN.exec(name)
-  const next = match ? `${match[1]}_v${Number(match[2]) + 1}` : `${name}_v2`
-  return datasetNameFromText(next)
+  const suffix = `_v${match ? Number(match[2]) + 1 : 2}`
+  const base = datasetNameFromText(match ? match[1] ?? '' : name) || 'dataset'
+  // Shorten the base, not the suffix, so a maximum-length name still gets a new name.
+  return `${base.slice(0, MAX_DATASET_NAME_LENGTH - suffix.length)}${suffix}`
 }
 
 export function generatorDisplayName(
@@ -137,7 +139,10 @@ export type GenerationListRow =
   | { readonly kind: 'generation'; readonly generation: PromptGenerationSummary }
   | { readonly kind: 'group'; readonly groupId: string; readonly label: string; readonly items: PromptGenerationSummary[] }
 
-/** Groups generations that share a group, at the position of the group's newest member. */
+/**
+ * Groups generations that share a group, at the position of the group's newest member. Members are
+ * listed in the order they were requested, which their creation times record.
+ */
 export function generationListRows(items: readonly PromptGenerationSummary[]): GenerationListRow[] {
   const rows: GenerationListRow[] = []
   const groups = new Map<string, PromptGenerationSummary[]>()
@@ -154,6 +159,9 @@ export function generationListRows(items: readonly PromptGenerationSummary[]): G
     const created = [item]
     groups.set(item.group_id, created)
     rows.push({ kind: 'group', groupId: item.group_id, label: item.group_label ?? item.group_id, items: created })
+  }
+  for (const members of groups.values()) {
+    members.sort((left, right) => Date.parse(left.created_at) - Date.parse(right.created_at))
   }
   return rows
 }

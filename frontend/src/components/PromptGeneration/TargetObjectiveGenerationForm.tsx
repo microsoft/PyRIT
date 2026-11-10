@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { Field, Input, Text, Textarea } from '@fluentui/react-components'
 
+import { useGenerationTargetSelection } from '@/hooks/useGenerationTargetSelection'
 import { usePromptGenerationPreflight } from '@/hooks/usePromptGenerationPreflight'
 import { usePromptGenerationSubmit } from '@/hooks/usePromptGenerationSubmit'
 import type { PromptGenerationCreateRequest, TargetObjectiveGenerationRequest } from '@/types'
@@ -9,7 +10,7 @@ import type { PromptGenerationCreateRequest, TargetObjectiveGenerationRequest } 
 import GenerationCommonFields from './GenerationCommonFields'
 import GenerationFormFooter from './GenerationFormFooter'
 import {
-  initialTargetSelection,
+  hasReviewableStage,
   parseWholeNumber,
   preflightProblems,
   readNumberText,
@@ -38,6 +39,7 @@ export default function TargetObjectiveGenerationForm({
   targetsError,
   defaultTarget,
   seed,
+  metadataRefreshing = false,
 }: PromptGenerationFormProps) {
   const styles = usePromptGenerationStyles()
   const [instructions, setInstructions] = useState(() => readString(seed.request?.instructions))
@@ -46,10 +48,11 @@ export default function TargetObjectiveGenerationForm({
     () => readStringList(seed.request?.harm_categories).join(', '),
   )
   const [datasetName, setDatasetName] = useState(seed.datasetName ?? '')
-  const [selectedTargets, setSelectedTargets] = useState(
-    () => initialTargetSelection(descriptor, seed.targets, defaultTarget),
+  const { selection: selectedTargets, choose: setSelectedTargets } = useGenerationTargetSelection(
+    descriptor, seed.targets, defaultTarget,
   )
-  const [pauseForReview, setPauseForReview] = useState(seed.pauseForReview ?? false)
+  // The server rejects a pause for generators without a review step, so it's only sent when one exists.
+  const [pauseForReview, setPauseForReview] = useState(hasReviewableStage(descriptor) && (seed.pauseForReview ?? false))
   const { submitting, error: submitError, submit } = usePromptGenerationSubmit()
 
   const harmCategories = parseHarmCategories(harmCategoriesText)
@@ -155,6 +158,7 @@ export default function TargetObjectiveGenerationForm({
         datasetCount={1}
         submitting={submitting}
         submitError={submitError}
+        metadataRefreshing={metadataRefreshing}
         onGenerate={handleSubmit}
       />
     </form>

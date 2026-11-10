@@ -30,18 +30,14 @@ export function targetSelectionErrors(
   return errors
 }
 
-/** Initial target selection: the seed's choices, else the default target for required roles. */
-export function initialTargetSelection(
+/** The default target for every role of a new generation, or no targets when there is no default. */
+export function defaultTargetSelection(
   descriptor: PromptGeneratorDescriptor,
-  seedTargets: Readonly<Record<string, string>> | undefined,
   defaultTarget: TargetInstance | null,
 ): Record<string, string> {
-  if (seedTargets) return { ...seedTargets }
   const selection: Record<string, string> = {}
   if (!defaultTarget) return selection
-  for (const role of descriptor.target_roles) {
-    if (role.required) selection[role.role] = defaultTarget.target_registry_name
-  }
+  for (const role of descriptor.target_roles) selection[role.role] = defaultTarget.target_registry_name
   return selection
 }
 

@@ -21,7 +21,7 @@ interface NewPromptGenerationPageProps {
   readonly targets: TargetInstance[]
   readonly targetsLoading: boolean
   readonly targetsError: string | null
-  /** Pre-selected for each required target role of a new generation. */
+  /** The default adversarial target, pre-selected for every target role unless the source recorded targets. */
   readonly defaultTarget: TargetInstance | null
 }
 
@@ -146,6 +146,7 @@ function NewPromptGenerationContent({
         targetsError={targetsError}
         defaultTarget={defaultTarget}
         seed={source.seed}
+        metadataRefreshing={generators.refreshing}
       />
     </>
   ), descriptor.description)

@@ -50,8 +50,17 @@ function LocationReadout() {
   return <output aria-label="Current URL">{`${location.pathname}${location.search}`}</output>
 }
 
-function renderForm(seed: PromptGenerationFormSeed = {}, targets: TargetInstance[] = [GPT, SEARCHER]) {
-  render(
+interface FormOptions {
+  readonly defaultTarget?: TargetInstance | null
+  readonly targetsLoading?: boolean
+}
+
+function formTree(
+  seed: PromptGenerationFormSeed,
+  targets: TargetInstance[],
+  { defaultTarget = GPT, targetsLoading = false }: FormOptions,
+) {
+  return (
     <FluentProvider theme={webLightTheme}>
       <MemoryRouter initialEntries={['/datasets/generate/new?generator=assert']}>
         <Routes>
@@ -59,9 +68,9 @@ function renderForm(seed: PromptGenerationFormSeed = {}, targets: TargetInstance
             <AssertGenerationForm
               descriptor={ASSERT_DESCRIPTOR}
               targets={targets}
-              targetsLoading={false}
+              targetsLoading={targetsLoading}
               targetsError={null}
-              defaultTarget={GPT}
+              defaultTarget={defaultTarget}
               seed={seed}
             />
           )} />
@@ -70,8 +79,16 @@ function renderForm(seed: PromptGenerationFormSeed = {}, targets: TargetInstance
         </Routes>
         <LocationReadout />
       </MemoryRouter>
-    </FluentProvider>,
+    </FluentProvider>
   )
+}
+
+function renderForm(
+  seed: PromptGenerationFormSeed = {},
+  targets: TargetInstance[] = [GPT, SEARCHER],
+  options: FormOptions = {},
+) {
+  return render(formTree(seed, targets, options))
 }
 
 async function fillPolicy(user: ReturnType<typeof userEvent.setup>): Promise<void> {
@@ -157,7 +174,7 @@ describe('AssertGenerationForm', () => {
         include_user_prompt: true,
         web_search: false,
       }),
-      targets: { generation: 'gpt' },
+      targets: { generation: 'gpt', research: 'gpt' },
       pause_for_review: false,
     })
     const estimate = screen.getByRole('region', { name: 'Estimate' })
@@ -183,7 +200,7 @@ describe('AssertGenerationForm', () => {
       generator: 'assert',
       dataset_name: 'returns',
       pause_for_review: true,
-      targets: { generation: 'gpt' },
+      targets: { generation: 'gpt', research: 'gpt' },
     }))
   })
 
@@ -196,6 +213,26 @@ describe('AssertGenerationForm', () => {
     expect(await screen.findByTestId('generation-preflight-errors')).toHaveTextContent('Choose a research target.')
     expect(screen.getByTestId('generate-btn')).toBeDisabled()
     expect(mockApi.create).not.toHaveBeenCalled()
+  })
+
+  it('should explain a failed check instead of calculating forever, and check again', async () => {
+    const user = userEvent.setup()
+    mockApi.preflight.mockRejectedValueOnce(new Error('Network unavailable'))
+    renderForm()
+    await fillPolicy(user)
+
+    const failed = await screen.findByTestId('generation-preflight-failed')
+    expect(failed).toHaveTextContent('The request could not be checked')
+    const estimate = screen.getByRole('region', { name: 'Estimate' })
+    expect(estimate).toHaveTextContent('No estimate: the request could not be checked.')
+    expect(estimate).not.toHaveTextContent('Calculating the estimate')
+    const calls = mockApi.preflight.mock.calls.length
+    await user.click(within(failed).getByRole('button', { name: 'Check again' }))
+
+    await waitFor(() => expect(mockApi.preflight.mock.calls.length).toBeGreaterThan(calls))
+    expect(await within(screen.getByRole('region', { name: 'Estimate' })).findByTestId('estimate-calls'))
+      .toBeInTheDocument()
+    expect(screen.queryByTestId('generation-preflight-failed')).not.toBeInTheDocument()
   })
 
   it('blocks a dataset name that is already taken', async () => {
@@ -224,6 +261,18 @@ describe('AssertGenerationForm', () => {
     expect(screen.getByTestId('assert-behavior-name')).toHaveValue('returns')
   })
 
+  it('should name a renamed suite run after its label, keeping edited row names', async () => {
+    const user = userEvent.setup()
+    renderForm({ suite: 'travel_planner' })
+
+    const label = await screen.findByTestId('assert-suite-label')
+    await replaceText(user, screen.getByRole('textbox', { name: 'Dataset name for prompt_injection' }), 'kept_injection')
+    await replaceText(user, label, 'run2')
+
+    expect(screen.getByRole('textbox', { name: 'Dataset name for sycophancy' })).toHaveValue('run2_sycophancy')
+    expect(screen.getByRole('textbox', { name: 'Dataset name for prompt_injection' })).toHaveValue('kept_injection')
+  })
+
   it('generates a suite as one batch, one dataset per behavior', async () => {
     const user = userEvent.setup()
     mockApi.createBatch.mockResolvedValue({ items: [] })
@@ -249,7 +298,7 @@ describe('AssertGenerationForm', () => {
     expect(body).toEqual({
       generator: 'assert',
       label: 'travel_planner',
-      targets: { generation: 'gpt' },
+      targets: { generation: 'gpt', research: 'gpt' },
       pause_for_review: false,
       items: [
         { dataset_name: 'travel_planner_sycophancy', request: expect.objectContaining({
@@ -313,11 +362,73 @@ describe('AssertGenerationForm', () => {
     })
     renderForm({}, [noSearch])
 
-    await user.click(await screen.findByRole('button', { name: 'Advanced settings' }))
+    await user.selectOptions(await screen.findByTestId('generation-target-research'), '')
+    await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
     await user.click(screen.getByRole('switch', { name: 'Research with web search' }))
 
     expect(screen.getByTestId('generation-form-errors'))
       .toHaveTextContent('Web search is on: choose a research target that supports web search')
+  })
+
+  describe('target defaults', () => {
+    it('should preselect the default adversarial target for generation and research', async () => {
+      const user = userEvent.setup()
+      renderForm()
+
+      expect(await screen.findByTestId('generation-target-generation')).toHaveValue('gpt')
+      expect(screen.getByTestId('generation-target-research')).toHaveValue('gpt')
+      await fillPolicy(user)
+      await waitFor(() => expect(lastPreflightBody()?.targets).toEqual({ generation: 'gpt', research: 'gpt' }))
+    })
+
+    it('should preselect the default once a slow target registry loads', async () => {
+      const view = renderForm({}, [], { defaultTarget: null, targetsLoading: true })
+      expect(await screen.findByText('Loading targets...')).toBeInTheDocument()
+
+      view.rerender(formTree({}, [GPT, SEARCHER], { defaultTarget: GPT }))
+
+      expect(await screen.findByTestId('generation-target-generation')).toHaveValue('gpt')
+      expect(screen.getByTestId('generation-target-research')).toHaveValue('gpt')
+    })
+
+    it('should keep the user\'s choices when the default target changes', async () => {
+      const user = userEvent.setup()
+      const view = renderForm()
+      await user.selectOptions(await screen.findByTestId('generation-target-research'), '')
+
+      view.rerender(formTree({}, [GPT, SEARCHER], { defaultTarget: SEARCHER }))
+
+      expect(screen.getByTestId('generation-target-generation')).toHaveValue('gpt')
+      expect(screen.getByTestId('generation-target-research')).toHaveValue('')
+    })
+
+    it('should keep the targets recorded by an earlier generation', async () => {
+      renderForm({ request: SEEDED_REQUEST, datasetName: 'returns_2', targets: { generation: 'searcher' } })
+
+      expect(await screen.findByTestId('generation-target-generation')).toHaveValue('searcher')
+      expect(screen.getByTestId('generation-target-research')).toHaveValue('')
+    })
+
+    it('should leave targets unselected when there is no default', async () => {
+      renderForm({}, [GPT, SEARCHER], { defaultTarget: null })
+
+      expect(await screen.findByTestId('generation-target-generation')).toHaveValue('')
+      expect(screen.getByTestId('generation-target-research')).toHaveValue('')
+    })
+
+    it('should flag a default research target without web search instead of replacing it', async () => {
+      const user = userEvent.setup()
+      renderForm()
+      await fillPolicy(user)
+
+      await user.click(screen.getByRole('button', { name: 'Advanced settings' }))
+      await user.click(screen.getByRole('switch', { name: 'Research with web search' }))
+
+      expect(screen.getByTestId('generation-target-research')).toHaveValue('gpt')
+      expect(screen.getByText(/"gpt" can't be used for this role/)).toBeInTheDocument()
+      expect(screen.getByTestId('generation-form-errors')).toHaveTextContent('Research target: Web search is on')
+      expect(screen.getByTestId('generate-btn')).toBeDisabled()
+    })
   })
 
   it('sends counts and prompt choices', async () => {

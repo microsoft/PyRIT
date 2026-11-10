@@ -32,6 +32,7 @@ import { DismissRegular } from '@fluentui/react-icons'
 
 import SearchableMultiCombobox from '@/components/SearchableMultiCombobox'
 import { type AssertLibraryState, useAssertLibrary } from '@/hooks/useAssertLibrary'
+import { useGenerationTargetSelection } from '@/hooks/useGenerationTargetSelection'
 import { usePromptGenerationPreflight } from '@/hooks/usePromptGenerationPreflight'
 import { type PromptGenerationSubmission, usePromptGenerationSubmit } from '@/hooks/usePromptGenerationSubmit'
 import type {
@@ -59,7 +60,6 @@ import {
 import GenerationCommonFields from './GenerationCommonFields'
 import GenerationFormFooter from './GenerationFormFooter'
 import {
-  initialTargetSelection,
   preflightProblems,
   targetSelectionErrors,
   type TargetRoleFilter,
@@ -141,6 +141,7 @@ function AssertGenerationFormContent({
   targetsError,
   defaultTarget,
   seed,
+  metadataRefreshing = false,
   library,
 }: AssertGenerationFormContentProps) {
   const styles = usePromptGenerationStyles()
@@ -159,8 +160,8 @@ function AssertGenerationFormContent({
     () => (initial.suite?.behaviors ?? []).filter((name) => library.behaviors.some((item) => item.name === name)),
   )
   const [suiteDatasetNames, setSuiteDatasetNames] = useState<Record<string, string>>({})
-  const [selectedTargets, setSelectedTargets] = useState(
-    () => initialTargetSelection(descriptor, seed.targets, defaultTarget),
+  const { selection: selectedTargets, choose: setSelectedTargets } = useGenerationTargetSelection(
+    descriptor, seed.targets, defaultTarget,
   )
   const [pauseForReview, setPauseForReview] = useState(seed.pauseForReview ?? false)
   const { submitting, error: submitError, submit } = usePromptGenerationSubmit()
@@ -176,7 +177,8 @@ function AssertGenerationFormContent({
   const missingSuite = seed.suite && !library.error && !library.suites.some((item) => item.name === seed.suite)
     ? seed.suite : null
   const singleDatasetName = datasetNameTouched ? datasetName : datasetNameFromText(behavior.behaviorName)
-  const suitePrefix = suiteName || suiteLabel
+  // Default dataset names follow the label, so a renamed run of the same suite gets new names.
+  const suitePrefix = suiteLabel
   const suiteItemName = (behaviorName: string): string =>
     suiteDatasetNames[behaviorName] ?? suiteDatasetName(suitePrefix, behaviorName)
   const targetFilters: Record<string, TargetRoleFilter> = settings.webSearch
@@ -658,6 +660,7 @@ function AssertGenerationFormContent({
         datasetCount={mode === 'suite' ? Math.max(suiteBehaviors.length, 1) : 1}
         submitting={submitting}
         submitError={submitError}
+        metadataRefreshing={metadataRefreshing}
         onGenerate={handleSubmit}
       />
     </form>

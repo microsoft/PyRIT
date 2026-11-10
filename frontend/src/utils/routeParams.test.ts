@@ -5,6 +5,7 @@ import {
   DATASET_DETAIL_PATH,
   datasetDetailPath,
   datasetNamesFromSearchParams,
+  isNamedDatasetSelectionKey,
   namedDatasetSelectionKey,
   scenarioLaunchRoutePath,
   routerPathParamValue,
@@ -186,5 +187,11 @@ describe('scenario dataset links', () => {
     expect(datasetDetailPath(namedDatasetSelectionKey('a&b'))).toBe(
       '/datasets/detail?selection_key=dataset%3Anamed%3Aa%26b',
     )
+  })
+
+  it('recognizes named dataset selection keys built by the shared helper', () => {
+    expect(isNamedDatasetSelectionKey(namedDatasetSelectionKey('returns'))).toBe(true)
+    expect(isNamedDatasetSelectionKey('dataset:named:')).toBe(false)
+    expect(isNamedDatasetSelectionKey('dataset:unnamed')).toBe(false)
   })
 })

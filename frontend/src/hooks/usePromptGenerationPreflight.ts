@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import { promptGenerationsApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
@@ -13,10 +13,13 @@ export interface PreflightState {
   /** One result per request, from the latest finished check. */
   readonly results: PromptGenerationPreflightResponse[]
   readonly error: string | null
+  /** Checks the same requests again, such as after a failed check. */
+  readonly retry: () => void
 }
 
 interface PreflightSnapshot {
   readonly key: string
+  readonly attempt: number
   readonly results: PromptGenerationPreflightResponse[]
   readonly error: string | null
 }
@@ -30,6 +33,8 @@ export function usePromptGenerationPreflight(
 ): PreflightState {
   const key = requests === null || requests.length === 0 ? null : JSON.stringify(requests)
   const [snapshot, setSnapshot] = useState<PreflightSnapshot | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback((): void => { setAttempt((value) => value + 1) }, [])
 
   useEffect(() => {
     if (key === null) return
@@ -41,9 +46,9 @@ export function usePromptGenerationPreflight(
           const results = await Promise.all(
             pending.map((request) => promptGenerationsApi.preflight(request, controller.signal)),
           )
-          if (!controller.signal.aborted) setSnapshot({ key, results, error: null })
+          if (!controller.signal.aborted) setSnapshot({ key, attempt, results, error: null })
         } catch (error: unknown) {
-          if (!controller.signal.aborted) setSnapshot({ key, results: [], error: toApiError(error).detail })
+          if (!controller.signal.aborted) setSnapshot({ key, attempt, results: [], error: toApiError(error).detail })
         }
       }
       void checkAsync()
@@ -52,9 +57,11 @@ export function usePromptGenerationPreflight(
       clearTimeout(timer)
       controller.abort()
     }
-  }, [key])
+  }, [key, attempt])
 
-  if (key === null) return { status: 'idle', results: [], error: null }
-  if (snapshot?.key !== key) return { status: 'checking', results: snapshot?.results ?? [], error: null }
-  return { status: snapshot.error ? 'error' : 'ready', results: snapshot.results, error: snapshot.error }
+  if (key === null) return { status: 'idle', results: [], error: null, retry }
+  if (snapshot?.key !== key || snapshot.attempt !== attempt) {
+    return { status: 'checking', results: snapshot?.results ?? [], error: null, retry }
+  }
+  return { status: snapshot.error ? 'error' : 'ready', results: snapshot.results, error: snapshot.error, retry }
 }

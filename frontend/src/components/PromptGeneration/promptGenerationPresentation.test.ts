@@ -43,6 +43,15 @@ describe('promptGenerationPresentation', () => {
     expect(datasetNameFromText('a'.repeat(200))).toHaveLength(128)
     expect(nextDatasetName('returns')).toBe('returns_v2')
     expect(nextDatasetName('returns_v2')).toBe('returns_v3')
+    expect(nextDatasetName('returns_v9')).toBe('returns_v10')
+    const longest = 'a'.repeat(128)
+    expect(nextDatasetName(longest)).toBe(`${'a'.repeat(125)}_v2`)
+    expect(nextDatasetName(`${'b'.repeat(125)}_v9`)).toBe(`${'b'.repeat(124)}_v10`)
+    for (const name of [longest, `${'b'.repeat(125)}_v9`]) {
+      expect(nextDatasetName(name)).toHaveLength(128)
+      expect(nextDatasetName(name)).not.toBe(name)
+      expect(datasetNameError(nextDatasetName(name))).toBeNull()
+    }
   })
 
   it('formats generator, stage, count, and progress text', () => {
@@ -91,5 +100,18 @@ describe('promptGenerationPresentation', () => {
     expect(aggregateGenerationStatus(items)).toBe('awaiting_review')
     expect(aggregateGenerationStatus([items[0]!])).toBe('completed')
     expect(aggregateGenerationStatus([items[3]!])).toBe('failed')
+  })
+
+  it('lists batch members in the order they were requested', () => {
+    const member = (id: string, createdAt: string) => makeGenerationSummary({
+      id, group_id: 'g1', group_label: 'Travel', created_at: createdAt,
+    })
+    const rows = generationListRows([
+      member('third', '2026-11-09T10:00:00.002Z'),
+      member('first', '2026-11-09T10:00:00Z'),
+      member('second', '2026-11-09T10:00:00.001Z'),
+    ])
+    const group = rows[0]
+    expect(group?.kind === 'group' ? group.items.map((item) => item.id) : []).toEqual(['first', 'second', 'third'])
   })
 })

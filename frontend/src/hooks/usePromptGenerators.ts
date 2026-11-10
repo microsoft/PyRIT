@@ -12,13 +12,17 @@ interface GeneratorSnapshot {
 }
 
 export interface PromptGeneratorsState {
+  /** The latest generators, kept while they reload after a runtime change. */
   readonly generators: PromptGeneratorDescriptor[]
+  /** True until the first generators load. */
   readonly loading: boolean
+  /** True while the generators reload, so forms can stay mounted but shouldn't submit yet. */
+  readonly refreshing: boolean
   readonly error: string | null
   readonly retry: () => void
 }
 
-/** Loads the registered prompt generators for the current runtime generation. */
+/** Loads the registered prompt generators for the current runtime generation, keeping the last list while they reload. */
 export function usePromptGenerators(): PromptGeneratorsState {
   const { generation, ready } = useRuntime()
   const [snapshot, setSnapshot] = useState<GeneratorSnapshot | null>(null)
@@ -45,9 +49,11 @@ export function usePromptGenerators(): PromptGeneratorsState {
   }, [])
 
   const current = snapshot?.key === key ? snapshot : null
+  const shown = current ?? (snapshot?.error === null ? snapshot : null)
   return {
-    generators: current?.generators ?? [],
-    loading: current === null,
+    generators: shown?.generators ?? [],
+    loading: shown === null,
+    refreshing: current === null && shown !== null,
     error: current?.error ?? null,
     retry,
   }

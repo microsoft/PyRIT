@@ -22,8 +22,8 @@ export default function GenerationSummaryFacts({ facts, label, testId }: Generat
         <div key={fact.label} className={styles.summaryItem}>
           <dt className={styles.metadataTerm}>{fact.label}</dt>
           <dd className={styles.summaryDefinition}>
-            {fact.value}
-            {fact.detail && <span className={styles.summaryDetail}>{fact.detail}</span>}
+            <span data-testid="summary-fact-value">{fact.value}</span>
+            {fact.detail && <span className={styles.summaryDetail} data-testid="summary-fact-detail">{fact.detail}</span>}
           </dd>
         </div>
       ))}

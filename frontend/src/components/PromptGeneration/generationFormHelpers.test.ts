@@ -3,8 +3,8 @@ import { ASSERT_DESCRIPTOR, makePreflight } from '@/test-utils/promptGenerationF
 
 import {
   asRecord,
+  defaultTargetSelection,
   hasReviewableStage,
-  initialTargetSelection,
   parseWholeNumber,
   preflightProblems,
   readBoolean,
@@ -24,10 +24,9 @@ describe('generationFormHelpers', () => {
       .toEqual(['Generation target: "gone" is not a registered target.', 'Research target: Needs web search.'])
   })
 
-  it('selects the seed targets, else the default target for required roles', () => {
-    expect(initialTargetSelection(ASSERT_DESCRIPTOR, { research: 'r' }, gpt)).toEqual({ research: 'r' })
-    expect(initialTargetSelection(ASSERT_DESCRIPTOR, undefined, gpt)).toEqual({ generation: 'gpt' })
-    expect(initialTargetSelection(ASSERT_DESCRIPTOR, undefined, null)).toEqual({})
+  it('selects the default target for every role, or nothing without a default', () => {
+    expect(defaultTargetSelection(ASSERT_DESCRIPTOR, gpt)).toEqual({ generation: 'gpt', research: 'gpt' })
+    expect(defaultTargetSelection(ASSERT_DESCRIPTOR, null)).toEqual({})
     expect(hasReviewableStage(ASSERT_DESCRIPTOR)).toBe(true)
   })
 

@@ -1,6 +1,15 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 
+import { useRuntime } from '@/hooks/useRuntime'
+
 import { usePolledRecord } from './usePolledRecord'
+
+jest.mock('@/hooks/useRuntime', () => ({
+  ...jest.requireActual('@/hooks/useRuntime'),
+  useRuntime: jest.fn(() => ({ ready: true, state: 'ready', generation: 'first' })),
+}))
+
+const mockUseRuntime = jest.mocked(useRuntime)
 
 interface Job {
   readonly status: 'running' | 'done'
@@ -24,6 +33,7 @@ describe('usePolledRecord', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     jest.useFakeTimers()
+    mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
   })
 
   afterEach(() => {
@@ -104,5 +114,45 @@ describe('usePolledRecord', () => {
 
     expect(result.current.state.loadStatus).toBe('not-found')
     expect(load).not.toHaveBeenCalled()
+  })
+
+  it('should not show the previous key\'s record after the key changes', async () => {
+    let resolveSecond: (job: Job) => void = () => {}
+    load
+      .mockResolvedValueOnce({ status: 'done', step: 1 })
+      .mockImplementationOnce(() => new Promise<Job>((resolve) => { resolveSecond = resolve }))
+    const { result, rerender } = renderHook(
+      ({ recordKey }: { recordKey: string }) => usePolledRecord(recordKey, load, isActive, INTERVAL_MS),
+      { initialProps: { recordKey: 'job-1' } },
+    )
+    await waitFor(() => expect(result.current.state.record?.step).toBe(1))
+
+    rerender({ recordKey: 'job-2' })
+
+    expect(result.current.state).toEqual({ loadStatus: 'loading', record: null, error: null, stale: false })
+    await act(async () => { resolveSecond({ status: 'done', step: 7 }) })
+    expect(result.current.state.record?.step).toBe(7)
+    expect(load).toHaveBeenLastCalledWith('job-2', expect.any(AbortSignal))
+  })
+
+  it('should wait for the runtime and reload when it is replaced', async () => {
+    mockUseRuntime.mockReturnValue({ ready: false, state: 'unavailable', generation: 'first' })
+    load
+      .mockResolvedValueOnce({ status: 'done', step: 1 })
+      .mockResolvedValueOnce({ status: 'done', step: 2 })
+    const { result, rerender } = renderHook(() => usePolledRecord('job-1', load, isActive, INTERVAL_MS))
+    await advance(INTERVAL_MS * 3)
+    expect(load).not.toHaveBeenCalled()
+    expect(result.current.state.loadStatus).toBe('loading')
+
+    mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
+    rerender()
+    await waitFor(() => expect(result.current.state.record?.step).toBe(1))
+
+    mockUseRuntime.mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+    rerender()
+    expect(result.current.state.record).toBeNull()
+    await waitFor(() => expect(result.current.state.record?.step).toBe(2))
+    expect(load).toHaveBeenCalledTimes(2)
   })
 })

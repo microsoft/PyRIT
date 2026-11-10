@@ -17,8 +17,11 @@ export interface PromptGenerationFormProps {
   readonly targets: TargetInstance[]
   readonly targetsLoading: boolean
   readonly targetsError: string | null
+  /** The default adversarial target, pre-selected for every target role of a new generation. */
   readonly defaultTarget: TargetInstance | null
   readonly seed: PromptGenerationFormSeed
+  /** True while generator metadata reloads; the form keeps its input but can't submit. */
+  readonly metadataRefreshing?: boolean
 }
 
 export interface PromptGenerationReviewProps {

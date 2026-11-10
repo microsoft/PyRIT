@@ -42,7 +42,7 @@ describe('usePromptGenerationPreflight', () => {
     const { result } = renderHook(() => usePromptGenerationPreflight(null))
     await advance(PREFLIGHT_DEBOUNCE_MS)
 
-    expect(result.current).toEqual({ status: 'idle', results: [], error: null })
+    expect(result.current).toEqual({ status: 'idle', results: [], error: null, retry: expect.any(Function) })
     expect(mockPreflight).not.toHaveBeenCalled()
   })
 
@@ -61,7 +61,9 @@ describe('usePromptGenerationPreflight', () => {
 
     expect(mockPreflight).toHaveBeenCalledTimes(1)
     expect(mockPreflight).toHaveBeenCalledWith(request('abc'), expect.any(AbortSignal))
-    expect(result.current).toEqual({ status: 'ready', results: [makePreflight()], error: null })
+    expect(result.current).toEqual({
+      status: 'ready', results: [makePreflight()], error: null, retry: expect.any(Function),
+    })
 
     rerender({ requests: [request('abcd'), request('second')] })
     expect(result.current.status).toBe('checking')
@@ -76,6 +78,20 @@ describe('usePromptGenerationPreflight', () => {
     const { result } = renderHook(() => usePromptGenerationPreflight([request('a')]))
     await advance(PREFLIGHT_DEBOUNCE_MS)
 
-    expect(result.current).toEqual({ status: 'error', results: [], error: 'Offline' })
+    expect(result.current).toEqual({ status: 'error', results: [], error: 'Offline', retry: expect.any(Function) })
+  })
+
+  it('checks the same requests again on retry', async () => {
+    mockPreflight.mockRejectedValueOnce(new Error('Offline')).mockResolvedValueOnce(makePreflight())
+    const { result } = renderHook(() => usePromptGenerationPreflight([request('a')]))
+    await advance(PREFLIGHT_DEBOUNCE_MS)
+    expect(result.current.status).toBe('error')
+
+    act(() => { result.current.retry() })
+    expect(result.current.status).toBe('checking')
+    await advance(PREFLIGHT_DEBOUNCE_MS)
+
+    expect(mockPreflight).toHaveBeenCalledTimes(2)
+    expect(result.current.status).toBe('ready')
   })
 })

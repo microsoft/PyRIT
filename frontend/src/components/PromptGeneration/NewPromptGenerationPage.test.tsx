@@ -1,8 +1,9 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 
+import { useRuntime } from '@/hooks/useRuntime'
 import { promptGenerationsApi, promptGeneratorsApi } from '@/services/api'
 import {
   ASSERT_DESCRIPTOR,
@@ -26,6 +27,11 @@ jest.mock('@/services/api', () => ({
   },
 }))
 
+jest.mock('@/hooks/useRuntime', () => ({
+  ...jest.requireActual('@/hooks/useRuntime'),
+  useRuntime: jest.fn(() => ({ ready: true, state: 'ready', generation: 'first' })),
+}))
+
 const mockApi = jest.mocked(promptGenerationsApi)
 const NOT_FOUND = { isAxiosError: true, response: { status: 404, data: { detail: 'Not generated.' } } }
 const CUSTOM_DESCRIPTOR: PromptGeneratorDescriptor = {
@@ -43,8 +49,8 @@ function LocationReadout() {
   return <output aria-label="Current URL">{`${location.pathname}${location.search}`}</output>
 }
 
-function renderPage(path: string) {
-  render(
+function pageTree(path: string) {
+  return (
     <FluentProvider theme={webLightTheme}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
@@ -55,8 +61,12 @@ function renderPage(path: string) {
         </Routes>
         <LocationReadout />
       </MemoryRouter>
-    </FluentProvider>,
+    </FluentProvider>
   )
+}
+
+function renderPage(path: string) {
+  return render(pageTree(path))
 }
 
 describe('NewPromptGenerationPage', () => {
@@ -68,6 +78,26 @@ describe('NewPromptGenerationPage', () => {
     jest.mocked(promptGeneratorsApi.listAssertSuites).mockResolvedValue({ items: [] })
     mockApi.preflight.mockResolvedValue(makePreflight({ estimate: null }))
     mockApi.create.mockResolvedValue(makeGenerationDetail({ id: 'gen-new', status: 'queued' }))
+    jest.mocked(useRuntime).mockReturnValue({ ready: true, state: 'ready', generation: 'first' })
+  })
+
+  it('should keep unsaved input while generators reload after a runtime change', async () => {
+    const user = userEvent.setup()
+    const path = '/datasets/generate/new?generator=target_objective'
+    const view = renderPage(path)
+    await replaceText(user, await screen.findByTestId('objective-instructions'), 'Keep these instructions.')
+    let finish: (response: { items: PromptGeneratorDescriptor[] }) => void = () => {}
+    jest.mocked(promptGeneratorsApi.list).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    jest.mocked(useRuntime).mockReturnValue({ ready: true, state: 'ready', generation: 'second' })
+
+    view.rerender(pageTree(path))
+
+    expect(await screen.findByTestId('generation-metadata-refreshing')).toBeInTheDocument()
+    expect(screen.getByTestId('objective-instructions')).toHaveValue('Keep these instructions.')
+    expect(screen.getByTestId('generate-btn')).toBeDisabled()
+    await act(async () => { finish({ items: [ASSERT_DESCRIPTOR, OBJECTIVE_DESCRIPTOR] }) })
+    expect(screen.queryByTestId('generation-metadata-refreshing')).not.toBeInTheDocument()
+    expect(screen.getByTestId('objective-instructions')).toHaveValue('Keep these instructions.')
   })
 
   it('lets the user choose a generator', async () => {
