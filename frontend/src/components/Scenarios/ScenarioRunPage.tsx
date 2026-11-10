@@ -38,6 +38,7 @@ import {
 import { isTerminalRunState } from '@/utils/scenarioRunProgress'
 
 import AttackExecutionTable from './AttackExecutionTable'
+import PairedOutcomes from './PairedOutcomes'
 import { ObjectiveDetailsDialog } from './ScenarioRunDialogs'
 import { useScenarioRunPageStyles } from './ScenarioRunPage.styles'
 import ScenarioRunTiming from './ScenarioRunTiming'
@@ -93,6 +94,7 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
   const hierarchy = useScenarioResultHierarchy(scenarioResultId, state.run !== null && state.summary !== null)
   const queue = useScenarioQueue()
   const [identityExpanded, setIdentityExpanded] = useState(false)
+  const [pairedExpanded, setPairedExpanded] = useState(false)
   const [objective, setObjective] = useState<ScenarioRunPlanSeedGroup | null>(null)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [cancelling, setCancelling] = useState(false)
@@ -529,6 +531,22 @@ function ScenarioRunContent({ scenarioResultId, attackResultId }: ScenarioRunCon
             })}</TableBody>
           </Table></div>
         </section>
+        {run.status === 'COMPLETED' && (
+          <Accordion collapsible onToggle={(_, data) => { setPairedExpanded(data.openItems.includes('paired')) }}>
+            <AccordionItem value="paired">
+              <AccordionHeader>Compare baseline and attack</AccordionHeader>
+              <AccordionPanel>
+                {pairedExpanded && (
+                  <PairedOutcomes
+                    scenarioResultId={scenarioResultId}
+                    status={run.status}
+                    plan={state.planComplete ? state.plan : null}
+                  />
+                )}
+              </AccordionPanel>
+            </AccordionItem>
+          </Accordion>
+        )}
         <section className={styles.section} aria-labelledby="configuration-heading">
           <Text as="h2" id="configuration-heading" size={500} weight="semibold">Scenario configuration</Text>
           {run.scenario_identity ? <Table size="small" aria-label="Scenario configuration"><TableBody>
