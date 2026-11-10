@@ -388,6 +388,16 @@ class TestParameterSerialization:
         assert dumped["type_name"] == "str"
         assert dumped["choices"] == ["a", "b"]
 
+    @pytest.mark.parametrize("default", [REQUIRED_VALUE, None])
+    def test_required_status_round_trips(self, default: object) -> None:
+        original = Parameter(name="count", description="d", param_type=int, default=default)
+
+        restored = Parameter.model_validate_json(original.model_dump_json())
+
+        assert restored.required is original.required
+        assert restored.default is default
+        assert restored.coerce_value("5") == 5
+
     def test_enum_default_serializes_to_member_value(self) -> None:
         dumped = Parameter(name="speed", description="d", default=_Speed.FAST, param_type=_Speed).model_dump()
 

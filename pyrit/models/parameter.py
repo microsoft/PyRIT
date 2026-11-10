@@ -170,27 +170,29 @@ class Parameter(BaseModel):
     @classmethod
     def _reconstruct_param_type_from_wire(cls, data: Any) -> Any:
         """
-        Rebuild the live ``param_type`` when validating from a serialized payload.
+        Restore live parameter metadata from a serialized payload.
 
         Serialization drops the live ``param_type`` and projects it onto the
         display fields ``type_name`` / ``choices`` / ``is_list``. A client that
         deserializes the wire form (e.g. the CLI consuming the REST catalog) has
         those fields but no live type; this reconstructs a coercion-capable
         ``param_type`` from them so the round-tripped ``Parameter`` can still
-        coerce and validate values. In-process construction (which already
-        supplies a live ``param_type``, or supplies neither) is left untouched.
+        coerce and validate values. The wire form also distinguishes a required
+        default from an optional null default using the ``required`` flag.
 
         Returns:
-            Any: The input unchanged, or a copy with ``param_type`` reconstructed
-                from the serialized display fields.
+            Any: The input unchanged, or a copy with live metadata restored.
         """
         if not isinstance(data, dict):
             return data
         needs_param_type = data.get("param_type") is None and "type_name" in data
         needs_reference = data.get("reference") is None and data.get("reference_type") is not None
-        if not needs_param_type and not needs_reference:
+        needs_required_default = data.get("required") is True and data.get("default") is None
+        if not (needs_param_type or needs_reference or needs_required_default):
             return data
         data = dict(data)
+        if needs_required_default:
+            data["default"] = REQUIRED_VALUE
         if needs_param_type:
             data["param_type"] = _param_type_from_display(
                 type_name=data.get("type_name"),
