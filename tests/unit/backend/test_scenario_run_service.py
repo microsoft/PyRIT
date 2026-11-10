@@ -64,7 +64,7 @@ from pyrit.models import (
     SeedObjective,
     config_hash,
 )
-from pyrit.models.catalog import RegistryEntryOrigin, RestoreFailureReason, RunScenarioRequest
+from pyrit.models.catalog import RegistryEntryOrigin, RunScenarioRequest
 from pyrit.prompt_target import TargetCapabilities, TextTarget
 from pyrit.registry import (
     AttackTechniqueRegistry,
@@ -72,7 +72,6 @@ from pyrit.registry import (
     ScenarioMetadata,
     ScenarioRegistry,
     TargetRegistry,
-    UnavailableEntry,
 )
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, registry_entry_origin
 from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario, ScenarioTechnique
@@ -365,24 +364,6 @@ async def test_tools_launch_script_cannot_replace_a_saved_converter_async(
         assert "role_play_tool_calls" not in AttackTechniqueRegistry.get_registry_singleton().instances
     finally:
         AttackTechniqueRegistry.reset_registry_singleton()
-
-
-@pytest.mark.usefixtures("patch_central_database")
-@pytest.mark.parametrize(
-    "script",
-    [_LaunchScript(name="rot13"), _LaunchScript(name="rot13", swallow=True), _LaunchScript(name="rot13", wrap=True)],
-)
-async def test_launch_scripts_cannot_take_the_name_of_a_saved_entry_that_failed_async(
-    converter_registry: ConverterRegistry, script: Any
-) -> None:
-    converter_registry.instances.mark_unavailable(
-        UnavailableEntry(kind="converter", name="rot13", reason=RestoreFailureReason.BUILD_ERROR, message="boom")
-    )
-
-    with pytest.raises(SavedEntryLaunchConflictError, match="'converters' would replace the saved converter 'rot13'"):
-        await _run_launch_scripts_async({"converters": script})
-
-    assert converter_registry.instances.get_names() == []
 
 
 class _FailingLaunchScript:

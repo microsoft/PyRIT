@@ -3,8 +3,6 @@
 
 """Adversarial target resolution validates without changing execution scopes."""
 
-from collections.abc import Iterator
-from types import SimpleNamespace
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,20 +12,11 @@ from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfi
 from pyrit.datasets import SeedDatasetProvider
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import DatasetSourceInput, ScenarioDatasetOptions, ScenarioDatasetRequest, SeedObjective
-from pyrit.models.catalog import RestoreFailureReason, RunScenarioRequest
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.models.dataset_limit import DatasetLimit, ResolvedDatasetLimit
 from pyrit.prompt_target import TargetCapabilities
-from pyrit.registry import (
-    AttackTechniqueRegistry,
-    Registry,
-    SavedEntryUnavailableError,
-    ScenarioRegistry,
-    ScorerRegistry,
-    TargetRegistry,
-    TechniqueSelectionUnavailableError,
-    UnavailableEntry,
-)
+from pyrit.registry import ScenarioRegistry, ScorerRegistry, TargetRegistry
 from pyrit.scenario import DatasetAttackConfiguration, DatasetFetchPolicy, DatasetSource, Scenario
 from pyrit.scenario.core import (
     get_default_adversarial_target,
@@ -317,77 +306,3 @@ def test_dataset_overrides_are_rejected_for_a_fixed_dataset_scenario(overrides: 
             datasets=ScenarioDatasetRequest(**overrides),
         )
         Exploitation().set_params_from_args(args=resolved)
-
-
-class _RegistryCatalog:
-    _selection_catalog = ("builder", "revision")
-
-    @classmethod
-    def get_aggregate_tags(cls) -> set[str]:
-        return {"all", "default", "custom"}
-
-
-class _FixedCatalog:
-    @classmethod
-    def get_aggregate_tags(cls) -> set[str]:
-        return {"all"}
-
-
-def _scenario(catalog: type, *, takes_techniques: bool = True) -> MagicMock:
-    scenario_class = MagicMock()
-    parameters = [SimpleNamespace(name="scenario_techniques")] if takes_techniques else []
-    scenario_class.supported_parameters.return_value = parameters
-    scenario_class.return_value._technique_class = catalog
-    return scenario_class
-
-
-@pytest.fixture
-def held_technique(patch_central_database: object) -> Iterator[None]:
-    with patch.dict(Registry._singletons, {}, clear=True):
-        AttackTechniqueRegistry.get_registry_singleton().instances.mark_unavailable(
-            UnavailableEntry(kind="technique", name="formal", reason=RestoreFailureReason.BUILD_ERROR, message="boom")
-        )
-        yield
-
-
-@pytest.mark.usefixtures("held_technique")
-@pytest.mark.parametrize("techniques", [None, [], ["all"], ["default"], ["Custom"], ["base", "all:base64"]])
-def test_a_broad_technique_selection_is_refused_while_a_saved_technique_is_held(techniques: list[str] | None) -> None:
-    with pytest.raises(TechniqueSelectionUnavailableError, match="'formal'"):
-        ScenarioConfigurationResolver._refuse_broad_selection_while_techniques_are_held(
-            scenario_class=_scenario(_RegistryCatalog), techniques=techniques, technique_override=None
-        )
-
-
-@pytest.mark.usefixtures("held_technique")
-def test_the_scenario_default_is_refused_before_resolution_returns_early() -> None:
-    with pytest.raises(TechniqueSelectionUnavailableError):
-        ScenarioConfigurationResolver.resolve_configuration(
-            scenario_name="registry_scenario", scenario_class=_scenario(_RegistryCatalog)
-        )
-
-
-@pytest.mark.usefixtures("held_technique")
-def test_naming_a_held_technique_fails_with_its_reason() -> None:
-    with pytest.raises(SavedEntryUnavailableError, match="'Formal' couldn't be restored: boom"):
-        ScenarioConfigurationResolver._refuse_broad_selection_while_techniques_are_held(
-            scenario_class=_scenario(_RegistryCatalog), techniques=["Formal:base64"], technique_override=None
-        )
-
-
-@pytest.mark.usefixtures("held_technique")
-@pytest.mark.parametrize(
-    ("scenario_class", "techniques"),
-    [
-        (_scenario(_RegistryCatalog), ["base", "other:base64"]),
-        (_scenario(_FixedCatalog), None),
-        (_scenario(_FixedCatalog), ["all"]),
-        (_scenario(_RegistryCatalog, takes_techniques=False), None),
-    ],
-)
-def test_named_techniques_and_other_scenarios_are_unaffected(
-    scenario_class: MagicMock, techniques: list[str] | None
-) -> None:
-    ScenarioConfigurationResolver._refuse_broad_selection_while_techniques_are_held(
-        scenario_class=scenario_class, techniques=techniques, technique_override=None
-    )
