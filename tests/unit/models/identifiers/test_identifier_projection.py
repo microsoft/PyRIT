@@ -3,7 +3,7 @@
 
 """Tests for pyrit.models.identifiers.identifier_projection."""
 
-from pyrit.models.identifiers import (
+from pyrit.models import (
     AttackTechniqueIdentifier,
     ComponentIdentifier,
     TargetIdentifier,

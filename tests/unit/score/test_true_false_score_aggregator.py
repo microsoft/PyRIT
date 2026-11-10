@@ -77,6 +77,39 @@ def test_majority_tie_is_false():
     assert res.value is False
 
 
+@pytest.mark.parametrize("aggregator_name", ["MAJORITY", "MAJORITY_RAISE_ON_EMPTY"])
+@pytest.mark.parametrize(
+    "values",
+    [
+        [True, False],
+        [True, True, False, False],
+        [False, False, True],
+        [False, False],
+    ],
+)
+def test_majority_false_description_does_not_claim_a_false_majority(
+    *, aggregator_name: str, values: list[bool]
+) -> None:
+    aggregator = getattr(TrueFalseScoreAggregator, aggregator_name)
+
+    res = aggregator([_mk_score(value, prr_id="1") for value in values])
+
+    assert res.value is False
+    assert res.description == (
+        "Constituent scorers returning True did not reach a strict majority in a MAJORITY composite scorer."
+    )
+
+
+@pytest.mark.parametrize("aggregator_name", ["MAJORITY", "MAJORITY_RAISE_ON_EMPTY"])
+def test_majority_true_description_reports_strict_majority(*, aggregator_name: str) -> None:
+    aggregator = getattr(TrueFalseScoreAggregator, aggregator_name)
+
+    res = aggregator([_mk_score(value, prr_id="1") for value in (True, True, False)])
+
+    assert res.value is True
+    assert res.description == "A strict majority of constituent scorers returned True in a MAJORITY composite scorer."
+
+
 def test_category_deduplication():
     """Test that duplicate categories are deduplicated into a single category."""
     scores = [

@@ -40,6 +40,13 @@ export function scenarioDatasetOptions(scenario: RegisteredScenario): ScenarioDa
   }
 }
 
+export function datasetTotalLimit(
+  request: ScenarioDatasetRequest, defaults: ScenarioDatasetSettings,
+): ScenarioDatasetSettings['max_total'] {
+  return typeof request.max_total === 'number' || request.max_total === 'all'
+    ? request.max_total : defaults.max_total
+}
+
 function explicitDatasetPolicy(value: ScenarioDatasetRequest['fetch']): DatasetFetchPolicy | undefined {
   return value === 'never' || value === 'if_missing' || value === 'always' ? value : undefined
 }

@@ -181,6 +181,7 @@ pyrit.memory.analytics_sql:_mssql_json_items
 pyrit.memory.analytics_sql:_mssql_json_object
 pyrit.memory.analytics_sql:_mssql_json_scalar
 pyrit.memory.analytics_sql:_mssql_resolved_hash
+pyrit.memory.analytics_sql:_mssql_unicode_casefold
 pyrit.memory.analytics_sql:_mssql_unicode_lower
 pyrit.memory.analytics_sql:_mssql_unicode_strip
 pyrit.memory.analytics_sql:_mssql_uuid_hex
@@ -194,6 +195,7 @@ pyrit.memory.analytics_sql:_sqlite_json_items
 pyrit.memory.analytics_sql:_sqlite_json_object
 pyrit.memory.analytics_sql:_sqlite_json_property
 pyrit.memory.analytics_sql:_sqlite_resolved_hash
+pyrit.memory.analytics_sql:_sqlite_unicode_casefold
 pyrit.memory.analytics_sql:_sqlite_unicode_lower
 pyrit.memory.analytics_sql:_sqlite_unicode_strip
 pyrit.memory.analytics_sql:_sqlite_uuid_hex
@@ -285,6 +287,7 @@ pyrit.score.scorer_evaluation.scorer_metrics_io:_append_jsonl_entry
 pyrit.score.scorer_evaluation.scorer_metrics_io:_create_staging_file
 pyrit.score.scorer_evaluation.scorer_metrics_io:_rewrite_jsonl_atomically
 pyrit.score.scorer_prompt_validator:ScorerPromptValidator.validate
+pyrit.score.true_false.regex.markdown_injection:_has_on_one_line
 pyrit.score.true_false.regex.package_hallucination_scorer:PackageHallucinationScorer._resolve_ruby_feature_to_gem
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_mode_then
 pyrit.score.true_false.regex.shell_command_output_scorer:_curl_number_option

@@ -7,9 +7,8 @@ import pathlib
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
-from pyrit.common.apply_defaults import reset_default_values
+from pyrit.common import Singleton, reset_default_values
 from pyrit.common.random_context import configure_random_seed
-from pyrit.common.singleton import Singleton
 from pyrit.memory import AzureSQLMemory, CentralMemory, MemoryInterface, SQLiteMemory
 from pyrit.setup.environment_loading import (
     load_environment_async,
@@ -73,6 +72,7 @@ def reset_setup_registries() -> None:
         ScenarioRegistry,
         ScenarioSuiteRegistry,
         ScorerRegistry,
+        SourceRegistry,
         TargetRegistry,
     )
     from pyrit.scenario.scenarios._dynamic_techniques import reset_dynamic_technique_caches
@@ -87,6 +87,7 @@ def reset_setup_registries() -> None:
         ScenarioRegistry,
         ScenarioSuiteRegistry,
         ScorerRegistry,
+        SourceRegistry,
         TargetRegistry,
     ):
         registry.reset_registry_singleton()
@@ -270,8 +271,7 @@ async def initialize_pyrit_async(
         # available default targets). Supplying any initializer/script means the caller owns
         # setup, so defaults are skipped; load_defaults=False skips them even on a bare call.
         if load_defaults and not all_initializers:
-            from pyrit.setup.initializers.targets import TargetInitializer
-            from pyrit.setup.initializers.techniques import TechniqueInitializer
+            from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
             all_initializers = [TechniqueInitializer(), TargetInitializer()]
 

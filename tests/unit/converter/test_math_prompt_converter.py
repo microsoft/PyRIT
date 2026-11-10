@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from unit.mocks import get_mock_target_identifier
 
-from pyrit.converter import ConverterResult
-from pyrit.converter.math_prompt_converter import MathPromptConverter
+from pyrit.converter import ConverterResult, MathPromptConverter
 from pyrit.models import Message, MessagePiece, SeedPrompt
 from pyrit.prompt_target import PromptTarget
 
