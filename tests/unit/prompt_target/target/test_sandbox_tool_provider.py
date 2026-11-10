@@ -20,6 +20,7 @@ from pyrit._code_execution import (
     RuntimeProfile,
     SandboxBusyError,
     SandboxCapabilities,
+    SandboxCondition,
     SandboxExecutionError,
     SandboxInputError,
     SandboxRegistry,
@@ -87,6 +88,48 @@ async def test_tool_names_select_the_tools_in_order_async(registry: SandboxRegis
     assert list(await _tools_async(provider)) == ["read_file", "run_python"]
     assert provider.identifier["tools"] == ["read_file", "run_python"]
     assert provider.identifier["sandbox"]["params"] == {"name": "fake", "state_kind": "environment"}  # type: ignore[index]
+
+
+@pytest.mark.parametrize("file_runtime", [None, "python"])
+async def test_session_tools_reflect_their_capabilities_and_lifetime_async(file_runtime: str | None) -> None:
+    capabilities = FakeSandbox.DEFAULT_CAPABILITIES.model_copy(
+        update={"state_kind": SandboxStateKind.SESSION, "file_runtime_profile_name": file_runtime}
+    )
+    sandbox = FakeSandbox(capabilities=capabilities)
+    tools = await _tools_async(SandboxToolProvider(sandbox=sandbox))
+    expected = ["run_python", "run_bash"]
+    if file_runtime is not None:
+        expected += ["write_file", "read_file", "list_dir"]
+    assert list(tools) == expected
+    assert "in this session" in tools["run_python"].description
+    assert "ending the session discards them" in tools["run_python"].description
+    assert sandbox.runs == [] and sandbox.open_sessions == set()
+
+
+async def test_named_session_providers_share_state_without_ending_its_lifetime_async(
+    registry: SandboxRegistry,
+) -> None:
+    def handler(run: FakeRun) -> ProcessResult:
+        if run.program == "store":
+            sandbox.state["value"] = "kept"
+        return ProcessResult(exit_code=0, stdout=str(sandbox.state.get("value", "")))
+
+    capabilities = FakeSandbox.DEFAULT_CAPABILITIES.model_copy(update={"state_kind": SandboxStateKind.SESSION})
+    sandbox = FakeSandbox(capabilities=capabilities, handler=handler)
+    registry.register(sandbox, name="session")
+    first = await _tools_async(SandboxToolProvider(sandbox="session"))
+    second = await _tools_async(SandboxToolProvider(sandbox="session"))
+    try:
+        await _call_async(first["run_python"], program="store")
+        result = await _call_async(second["run_python"], program="read")
+        assert result["stdout"] == "kept"
+        assert len({run.session_id for run in sandbox.runs}) == 1
+        assert len(sandbox.open_sessions) == 1
+        assert sandbox.closed_sessions == [] and sandbox.reset_count == 0
+        await sandbox.release_async()
+        assert sandbox.state == {} and sandbox.open_sessions == set()
+    finally:
+        await sandbox.close_async()
 
 
 @pytest.mark.parametrize(("tool_names", "message"), [(["run_ruby"], "does not offer"), (["list_dir"] * 2, "repeat")])
@@ -297,6 +340,48 @@ def _tool_outputs(messages: list[Message]) -> list[tuple[dict[str, Any], bool]]:
             assert execution is not None
             outputs.append((json.loads(json.loads(piece.original_value)["output"]), execution.invoked))
     return outputs
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("failure", ["state-loss", "uncertain-run"])
+async def test_session_infrastructure_failure_does_not_silently_recover_async(failure: str) -> None:
+    capabilities = FakeSandbox.DEFAULT_CAPABILITIES.model_copy(update={"state_kind": SandboxStateKind.SESSION})
+    sandbox = FakeSandbox(capabilities=capabilities)
+    tools = await _tools_async(SandboxToolProvider(sandbox=sandbox))
+    await _call_async(tools["run_python"], program="first run")
+    if failure == "state-loss":
+        sandbox.expire_sessions()
+    else:
+        sandbox.fail_next(hook=FakeSandboxHook.EXECUTE, error=SandboxExecutionError("outcome unknown"))
+    target = _target(SandboxToolProvider(sandbox=sandbox))
+    calls = _function_call("call_failed", "run_python", {"program": "second run"})
+    calls.output.extend(_function_call("call_skipped", "run_python", {"program": "do not run"}).output)
+    try:
+        with patch.object(
+            target._async_client.responses, "create", new_callable=AsyncMock, side_effect=[calls]
+        ) as create:
+            responses = await target.send_prompt_async(
+                message=MessagePiece(role="user", original_value="use the session").to_message()
+            )
+        create.assert_awaited_once()
+        assert _tool_outputs(responses) == [
+            ({"error": "tool_infrastructure_error", "message": "The tool's infrastructure failed."}, True),
+            ({"error": "tool_not_executed", "message": "An earlier tool call failed."}, False),
+        ]
+        assert ToolLoopStop.from_metadata(metadata=responses[-1].get_piece().prompt_metadata) == ToolLoopStop(
+            reason=ToolLoopStopReason.TOOL_INFRASTRUCTURE_ERROR
+        )
+        target.validate_tool_history(responses)
+        assert len(sandbox.runs) == 1 and sandbox.reset_count == 0
+        assert (await sandbox.get_status_async()).condition is SandboxCondition.QUARANTINED
+        await sandbox.release_async()
+        assert (await sandbox.get_status_async()).condition is SandboxCondition.QUARANTINED
+        with pytest.raises(ToolInfrastructureError) as raised:
+            await _call_async(tools["run_python"], program="still refused")
+        assert raised.value.invoked is False
+        assert len(sandbox.runs) == 1 and sandbox.open_sessions == set()
+    finally:
+        await sandbox.close_async()
 
 
 @pytest.mark.usefixtures("patch_central_database")
