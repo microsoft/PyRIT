@@ -35,13 +35,7 @@ from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
 from pyrit.models.catalog import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
-from pyrit.registry import (
-    AttackTechniqueRegistry,
-    ConverterRegistry,
-    SavedEntryUnavailableError,
-    ScorerRegistry,
-    TargetRegistry,
-)
+from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
 from pyrit.scenario import Scenario
 from pyrit.setup import ConfigurationLoader
@@ -1185,7 +1179,7 @@ async def test_startup_logs_each_failure_once_without_url_credentials_async(
     with caplog.at_level(logging.WARNING):
         await _start_with_recipes_async(runtime, recipes=recipes)
 
-    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
     for name in ("unreachable", "broken"):
         assert len([record for record in caplog.records if f"target '{name}' (" in record.getMessage()]) == 1
     assert "can't reach https://contoso.blob.core.windows.net/c" in caplog.text
@@ -1203,12 +1197,16 @@ async def test_startup_says_when_a_saved_folder_couldnt_be_read_async(
     with caplog.at_level(logging.WARNING, logger="pyrit.backend.services.runtime_lifecycle"):
         await _start_with_recipes_async(runtime, recipes=recipes)
 
-    assert (runtime.state, runtime.outcome) == ("ready", "success")
-    assert "The saved targets couldn't be read, so no saved entries were restored" in caplog.text
+    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
+    assert runtime.message == (
+        "The saved targets couldn't be read, so no saved entries were restored. Check that the backend can read "
+        "registry_recipes_source, then apply the configuration or restart the backend."
+    )
+    assert runtime.message in caplog.text
     assert "Fix or delete" not in caplog.text
 
 
-async def test_startup_with_an_unrestorable_entry_is_ready_and_holds_its_name_async(
+async def test_startup_with_an_unrestorable_entry_is_not_ready_async(
     runtime: RuntimeLifecycle, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     recipes = tmp_path / "recipes"
@@ -1217,18 +1215,18 @@ async def test_startup_with_an_unrestorable_entry_is_ready_and_holds_its_name_as
     with caplog.at_level(logging.WARNING, logger="pyrit.backend.services.runtime_lifecycle"):
         await _start_with_recipes_async(runtime, recipes=recipes)
 
-    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
+    assert runtime.message.startswith("1 saved registry entry couldn't be restored. Fix or delete the files")
+    assert runtime.message in caplog.text
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
         health = await client.get("/api/health")
         status = await client.get("/api/config/runtime")
-    assert health.json()["ready"] is True
+    assert health.json()["ready"] is False
     assert status.json()["version"] == runtime.version
+    assert runtime.version is not None
     (failure,) = status.json()["restore_failures"]
     assert (failure["kind"], failure["name"], failure["reason"]) == ("targets", "broken", "unknown_class")
     assert failure["version"]
-    assert "1 saved registry entry couldn't be restored" in caplog.text
-    with pytest.raises(SavedEntryUnavailableError, match="'Nope' is not a registered target class"):
-        TargetRegistry.get_registry_singleton().instances.get("broken")
 
 
 async def test_status_reports_a_recipe_whose_text_is_not_valid_unicode_async(
@@ -1300,7 +1298,7 @@ async def test_fixing_the_file_and_restarting_reaches_ready_async(runtime: Runti
     assert runtime.status()["restore_failures"] == []
 
 
-async def test_apply_with_an_unrestorable_entry_becomes_ready_with_the_new_version_async(
+async def test_apply_with_an_unrestorable_entry_keeps_the_new_version_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     recipes = tmp_path / "recipes"
@@ -1311,10 +1309,62 @@ async def test_apply_with_an_unrestorable_entry_becomes_ready_with_the_new_versi
     await apply_async(runtime)
 
     _, current_version = await runtime.source.read_with_version_async()
-    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
     assert runtime.version == current_version
     assert runtime.status()["restore_failures"][0]["reason"] == "unknown_class"
     config.apply_prepared_reinitialization_async.assert_awaited_once()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_apply_from_failed_restores_again_once_the_file_is_fixed_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_converter_using_startup_chat(recipes)
+    broken = _save_recipe(
+        recipes, kind="targets", name="broken", document={"class_module": "nowhere", "class_name": "Nope"}
+    )
+
+    def register_startup_chat(**_: object) -> None:
+        TargetRegistry.get_registry_singleton().instances.register(startup_chat, name="startup_chat")
+
+    def reinitialize(**_: object) -> None:
+        reset_setup_registries()
+        register_startup_chat()
+
+    await _start_with_recipes_async(runtime, recipes=recipes, initialize=register_startup_chat)
+    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
+    assert runtime.message.endswith("then apply the configuration or restart the backend.")
+    broken.unlink()
+    config = await runtime._load_async()
+    config.apply_prepared_reinitialization_async.side_effect = reinitialize
+    lifecycle_module.close_services_async.side_effect = _forget_registry_services_async
+
+    await apply_async(runtime)
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    assert runtime.restore_failures == []
+    assert ConverterRegistry.get_registry_singleton().instances.get("formal") is not None
+
+
+async def test_apply_from_failed_without_live_apply_says_to_restart_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
+    recipes = tmp_path / "recipes"
+    _save_recipe(recipes, kind="targets", name="broken", document={"class_module": "nowhere", "class_name": "Nope"})
+    config = await runtime._load_async()
+    config.enable_live_reinitialization = False
+
+    await _start_with_recipes_async(runtime, recipes=recipes)
+    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
+    assert runtime.message.endswith("named in the server log or GET /api/config/runtime, then restart the backend.")
+
+    await apply_async(runtime)
+
+    assert (runtime.state, runtime.outcome) == ("failed", "unsupported")
+    assert runtime.message == "Live apply is off. Restart the backend to restore the saved entries again."
+    config.preflight_reinitialization_async.assert_not_awaited()
+    lifecycle_module.close_services_async.assert_not_awaited()
 
 
 async def test_restore_cancellation_propagates_from_startup_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
