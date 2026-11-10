@@ -4,7 +4,7 @@ import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
-import { configurationApi } from '@/services/api'
+import { configurationApi, savedEntriesApi } from '@/services/api'
 import type { RuntimeStatus } from '@/types'
 
 import Reinitialize from './Reinitialize'
@@ -14,6 +14,7 @@ jest.mock('@/services/api', () => ({
     getRuntimeStatus: jest.fn(),
     reinitialize: jest.fn(),
   },
+  savedEntriesApi: { get: jest.fn(), delete: jest.fn() },
 }))
 
 function TestWrapper({ children }: { children: ReactNode }) {
@@ -190,6 +191,57 @@ describe('Reinitialize', () => {
     expect(within(region).getByText("Saved converters: The saved converters couldn't be listed: permission denied"))
       .toBeInTheDocument()
     expect(region).toHaveAttribute('tabindex', '0')
+  })
+
+  it('should let an administrator delete a saved entry that could not be restored', async () => {
+    const user = userEvent.setup()
+    const ghost = {
+      kind: 'targets' as const,
+      name: 'ghost',
+      reason: 'unknown_class',
+      message: "'Nope' is not a registered target class.",
+      version: 'v1',
+      dependency: null,
+    }
+    const folder = {
+      kind: 'converters' as const,
+      name: null,
+      reason: 'unreadable_storage',
+      message: "The saved converters couldn't be listed: permission denied",
+      version: null,
+      dependency: null,
+    }
+    api.getRuntimeStatus.mockResolvedValue({
+      ...ready,
+      state: 'failed',
+      outcome: 'restore-failed',
+      message: "2 saved registry entries couldn't be restored.",
+      restore_failures: [ghost, folder],
+    })
+    jest.mocked(savedEntriesApi.get).mockResolvedValue({
+      kind: 'targets', name: 'ghost', version: 'v1', problem: 'unknown_class',
+      saved_by: null, saved_by_me: false, can_change: true,
+    })
+    jest.mocked(savedEntriesApi.delete).mockResolvedValue()
+    render(
+      <TestWrapper>
+        <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+      </TestWrapper>,
+    )
+
+    const region = await screen.findByRole('region', { name: "Saved entries that couldn't be restored" })
+    // A folder that couldn't be read isn't one saved entry, so it has nothing to delete.
+    expect(within(region).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Delete saved target ghost',
+    ])
+    await user.click(within(region).getByRole('button', { name: 'Delete saved target ghost' }))
+    const dialog = await screen.findByRole('dialog', { name: "Delete saved target 'ghost'?" })
+    await within(dialog).findByText(/deleted for everyone/)
+    api.getRuntimeStatus.mockResolvedValue({ ...ready, state: 'failed', restore_failures: [folder] })
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    expect(savedEntriesApi.delete).toHaveBeenCalledWith('targets', 'ghost', 'v1')
+    await waitFor(() => expect(within(region).queryByText(/Target ghost/)).not.toBeInTheDocument())
   })
 
   it('should show no list when every saved entry was restored', async () => {

@@ -134,10 +134,10 @@ from starting can be deleted.
   changed since that version, another saved entry names this one (they're listed), a registered entry of any origin
   holds it (they're listed; a Temporary one is gone after the next restart or configuration apply), or a request, run,
   send, or estimate is in progress. **503** when storage can't be read or written, or while the runtime is starting.
-  Deleting an entry that couldn't be restored takes it off `GET /api/restore-failures`; apply the configuration or
-  restart the backend to finish recovering. Saving and deleting take turns, and a save checks again that the entries
-  it names still come back after a restart (**409** otherwise). A save whose entry then can't be registered deletes
-  its file again, unless another writer has replaced the file since.
+  Deleting an entry that couldn't be restored takes it off `restore_failures` in `GET /api/config/runtime`; apply the
+  configuration or restart the backend to finish recovering. Saving and deleting take turns, and a save checks again
+  that the entries it names still come back after a restart (**409** otherwise). A save whose entry then can't be
+  registered deletes its file again, unless another writer has replaced the file since.
 
 ### Manual attack creation
 

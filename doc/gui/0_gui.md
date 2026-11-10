@@ -173,8 +173,9 @@ sign-in is off. The dialog says who saved it. An entry that another saved entry
 uses, or that a registered entry holds, isn't deleted until that one is deleted
 or changed, and an entry isn't deleted while a run, send, or request could be
 using it. If the file changed since the dialog read it, **Look again** shows the
-current one. A saved entry that couldn't be restored can also be deleted from the
-banner that lists it; then select **Retry**.
+current one. A saved entry that couldn't be restored keeps PyRIT from becoming
+ready; an administrator can delete it from the list on the **Configuration**
+page, then select **Reinitialize PyRIT** or restart the backend.
 
 **Scenario presets** save a scenario configuration for reuse with a target
 chosen at launch. **Suites** maintain ordered collections of preset definitions.
