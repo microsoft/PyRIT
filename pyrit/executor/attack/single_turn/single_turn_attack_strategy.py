@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pyrit.common.logger import logger
-from pyrit.executor.attack.core.attack_parameters import AttackParameters, AttackParamsT
+from pyrit.executor.attack.core import AttackParamsT
+from pyrit.executor.attack.core.attack_parameters import AttackParameters
 from pyrit.executor.attack.core.attack_strategy import AttackContext, AttackStrategy
 from pyrit.models import AttackResult
 

@@ -4,13 +4,15 @@
 
 import pytest
 
-from pyrit.common.apply_defaults import (
+from pyrit.common import (
     REQUIRED_VALUE,
     DefaultValueScope,
     apply_defaults,
     get_global_default_values,
     reset_default_values,
     set_default_value,
+)
+from pyrit.common.apply_defaults import (
     set_global_variable,
 )
 

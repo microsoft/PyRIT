@@ -12,14 +12,14 @@ import ParameterField from '@/components/Parameters/ParameterField'
 import ConverterChainField from '@/components/Converters/ConverterChainField'
 import ReferenceField from '@/components/Parameters/ReferenceField'
 import { buildParametersFromForm, getInitialFormValues, type ParameterFormValue } from '@/components/Parameters/parameterForm'
-import { convertersApi, targetsApi, techniquesApi } from '@/services/api'
+import { convertersApi, techniquesApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
+import { listRegisteredTargets } from '@/services/targetRegistry'
 import type {
   CreateTechniqueRequest, Parameter, RegistryReferenceOption, TechniqueTypeEntry,
   TechniqueConfiguration, TechniqueChanges, TechniqueEditResponse, SimulationChanges,
   ConverterInstance, ConverterSelection,
 } from '@/types'
-import { fetchAllPages } from '@/utils/fetchAllPages'
 
 import { useTechniqueEditorStyles } from './TechniqueEditor.styles'
 
@@ -140,12 +140,7 @@ export default function TechniqueEditor({
               'adversarial_system_prompt', 'adversarial_seed_prompt', 'adversarial_prompt_template',
             ].includes(field)),
           }] }) : techniquesApi.listTypes(),
-          fetchAllPages(
-            (cursor: string | undefined) => targetsApi.listTargets(200, cursor),
-            undefined,
-            (entry) => entry.target_registry_name,
-            true,
-          ),
+          listRegisteredTargets(),
           convertersApi.listConverters(),
         ])
         if (ignore) return
@@ -288,6 +283,7 @@ export default function TechniqueEditor({
   const inputsDisabled = disabled || submitting
   const displayedError = autoApply && revision > 0 ? editError ?? error : error
   const content = (
+            // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- only keeps Enter in a field from submitting the form
             <div className={styles.form} onKeyDown={(event) => {
               if (autoApply && event.key === 'Enter' && event.target instanceof HTMLInputElement
                 && event.currentTarget.contains(event.target)) event.preventDefault()

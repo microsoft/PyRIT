@@ -83,5 +83,11 @@ export function objectivePreview(objective: string | null, fallbackId: string): 
   if (objective.length <= OBJECTIVE_PREVIEW_LENGTH) {
     return objective
   }
-  return `${objective.slice(0, OBJECTIVE_PREVIEW_LENGTH - 1)}…`
+  let sliceEnd = OBJECTIVE_PREVIEW_LENGTH - 1
+  const lead = objective.charCodeAt(sliceEnd - 1)
+  const trail = objective.charCodeAt(sliceEnd)
+  if (lead >= 0xd800 && lead <= 0xdbff && trail >= 0xdc00 && trail <= 0xdfff) {
+    sliceEnd -= 1
+  }
+  return `${objective.slice(0, sliceEnd)}…`
 }

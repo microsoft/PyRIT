@@ -17,12 +17,16 @@ import pytest
 from pyrit._compatibility import COMPATIBILITY_HEADER, INVALID_COMPATIBILITY_TYPE, MISMATCH_COMPATIBILITY_TYPE
 from pyrit.cli._auth import CliAuthenticationError
 from pyrit.cli.api_client import CompatibilityError, PyRITApiClient, ServerNotAvailableError
-from pyrit.models import Operation, ScenarioRunState, TargetCapabilities
+from pyrit.models import (
+    Operation,
+    ScenarioRunListItem,
+    ScenarioRunState,
+    TargetCapabilities,
+)
 from pyrit.models.catalog import (
     RegisteredInitializer,
     RegisteredScenario,
     RunScenarioRequest,
-    ScenarioRunListItem,
     ScenarioRunSummary,
     TargetInstance,
 )

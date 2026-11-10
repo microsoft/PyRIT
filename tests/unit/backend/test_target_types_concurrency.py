@@ -14,7 +14,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from pyrit.backend.main import app
-from pyrit.backend.services.target_service import TargetService
+from pyrit.backend.services import TargetService
 from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async
 
 

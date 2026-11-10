@@ -12,12 +12,15 @@ import pytest
 from pydantic import ValidationError
 
 from pyrit.common import REQUIRED_VALUE
-from pyrit.models import Parameter, SeedPrompt
-from pyrit.models.parameter import (
+from pyrit.models import (
     ComponentType,
+    Parameter,
     RegistryReference,
-    _is_scalar_param_type,
+    SeedPrompt,
     display_choices,
+)
+from pyrit.models.parameter import (
+    _is_scalar_param_type,
 )
 
 

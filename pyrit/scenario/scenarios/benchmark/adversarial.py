@@ -22,8 +22,8 @@ from pyrit.models import (
     AttackResult,
     BoundedDatasetSize,
     ObjectiveTargetEvaluationIdentifier,
+    Parameter,
     ScenarioDatasetSizeEstimate,
-    ScenarioResult,
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateCondition,
@@ -34,7 +34,6 @@ from pyrit.models import (
     scenario_dataset_size_from_limit,
 )
 from pyrit.models.identifiers import compute_inner_attack_eval_hash
-from pyrit.models.parameter import Parameter
 from pyrit.registry import AttackTechniqueRegistry, TargetRegistry
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSource
 from pyrit.scenario.core.matrix_atomic_attack_builder import (
@@ -53,7 +52,7 @@ if TYPE_CHECKING:
     from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-    from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
+    from pyrit.score import TrueFalseScorer
 
 
 logger = logging.getLogger(__name__)
@@ -685,26 +684,21 @@ class AdversarialBenchmark(Scenario):
 
         return resolved
 
-    async def run_async(self) -> ScenarioResult:
+    async def _prepare_run_async(self) -> None:
         """
-        Persist compatible cached results into this run, then execute uncached objectives.
+        Persist compatible cached results into this run before executing uncached objectives.
 
         Cached results are copied with new result IDs and attributed to the new
         scenario result. This keeps database-backed status, API responses, and
         later artifact exports complete without moving results away from their
         original runs.
-
-        Returns:
-            ScenarioResult: The persisted scenario result containing cached and
-            newly executed objective results.
         """
         try:
-            (await self._persist_precomputed_cached_results_async())
+            await self._persist_precomputed_cached_results_async()
         except Exception as error:
             if self._scenario_result_id:
-                (await self._mark_scenario_failed_async(scenario_result_id=self._scenario_result_id, error=error))
+                await self._mark_scenario_failed_async(scenario_result_id=self._scenario_result_id, error=error)
             raise
-        return await super().run_async()
 
     async def _apply_reusable_cached_results_async(self, *, atomic_attacks: list[AtomicAttack]) -> None:
         """
@@ -935,6 +929,8 @@ class AdversarialBenchmark(Scenario):
         Database queries are deduplicated across both the planned technique
         eval hash and the inner attack eval hash. The latter supports rows
         persisted before an atomic attack enriched them with technique seeds.
+        It is not queried for attacks that generate simulated conversations:
+        the inner attack identity does not record that adversarial chat.
         The skip eligibility decision is then applied per atomic attack using
         a Python-side filter on ``attribution_data["parent_collection"]``.
 
@@ -982,10 +978,9 @@ class AdversarialBenchmark(Scenario):
 
         lookup_hashes_by_name: dict[str, set[str]] = {}
         for attack in atomic_attacks:
-            lookup_hashes = {
-                attack.technique_eval_hash,
-                compute_inner_attack_eval_hash(attack=attack.attack_technique.attack),
-            }
+            lookup_hashes = {attack.technique_eval_hash}
+            if attack.simulated_conversation_adversarial_chat_eval_hash is None:
+                lookup_hashes.add(compute_inner_attack_eval_hash(attack=attack.attack_technique.attack))
             lookup_hashes_by_name[attack.atomic_attack_name] = {value for value in lookup_hashes if value}
 
         # One DB query per unique hash (deduplication), results stored temporarily by hash.

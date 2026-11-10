@@ -20,7 +20,7 @@ from pyrit.models import (
     ScenarioProgressCounts,
     ScenarioRunState,
 )
-from pyrit.models.catalog.scenario import AttackErrorSummary, AttackRetrySummary
+from pyrit.models.catalog import AttackErrorSummary, AttackRetrySummary
 
 
 def test_scenario_orchestration_parent_summary_defaults() -> None:

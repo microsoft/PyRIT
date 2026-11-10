@@ -82,8 +82,12 @@ interface ObjectiveHeaderProps {
   applyStatus?: ApplyScorerStatus | null
 }
 
+/** The only score type whose value answers "was the objective met?". */
+const BOOLEAN_SCORE_TYPE = 'true_false'
+
 function scoreVerdict(score?: BackendScore | null): 'success' | 'failure' | 'undetermined' {
-  if (!score?.score_value) return 'undetermined'
+  // A float_scale or unknown value is a measurement, not a verdict, so it gets none.
+  if (!score?.score_value || score.score_type !== BOOLEAN_SCORE_TYPE) return 'undetermined'
   return score.score_value.toLowerCase() === 'true' ? 'success' : 'failure'
 }
 
@@ -97,9 +101,12 @@ const RESULT_POPOVER_POSITIONING = {
 } as const
 
 function scoreLabel(score?: BackendScore | null): string {
-  const verdict = scoreVerdict(score)
   if (!score) return 'Not set'
-  return verdict === 'undetermined' ? 'Undetermined' : verdict === 'success' ? 'Success' : 'Failure'
+  if (!score.score_value) return 'Undetermined'
+  const verdict = scoreVerdict(score)
+  // Nonboolean scores carry no verdict: show what the scorer recorded, as the message score does.
+  if (verdict === 'undetermined') return score.score_value
+  return verdict === 'success' ? 'Success' : 'Failure'
 }
 
 export default function ObjectiveHeader({
@@ -382,6 +389,7 @@ export default function ObjectiveHeader({
           {showAutomatedDetails && scoringFailed && (
             <MessageBar intent="error">
               <MessageBarBody>
+                {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- scrollable region needs to be keyboard focusable */}
                 <pre className={styles.errorDetails} tabIndex={0} aria-label="Scorer failure details">
                   {`Scorer ${scoringFailure.scorer.registry_name}: ${scoringFailure.error}`}
                 </pre>
@@ -486,6 +494,7 @@ export default function ObjectiveHeader({
                   disabled={isSaving}
                   placeholder="Enter an objective"
                   aria-label="Attack objective"
+                  // eslint-disable-next-line jsx-a11y/no-autofocus -- focus moves into the editor the user just opened
                   autoFocus
                 />
                 <Button appearance="primary" size="small" className={styles.editorAction} onClick={handleSave} disabled={(!draft.trim() && missingObjective) || isSaving}>
