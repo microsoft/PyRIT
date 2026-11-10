@@ -237,15 +237,15 @@ def test_scenario_progress_migration_adds_composite_index():
             engine.dispose()
 
 
-def test_score_piece_index_migration_round_trips():
-    """The head indexes scores by message piece, and downgrading one step drops only that index."""
+def test_score_piece_index_migration_round_trips() -> None:
+    """The score index revision creates the index, and its downgrade drops it."""
     with tempfile.TemporaryDirectory() as temp_dir:
         db_path = os.path.join(temp_dir, "score-piece-index.db")
         engine = create_engine(f"sqlite:///{db_path}")
         try:
             with engine.begin() as connection:
                 config = _config_for(connection)
-                command.upgrade(config, "head")
+                command.upgrade(config, "c4d1e8b72a90")
                 indexes = {
                     index["name"]: index["column_names"] for index in inspect(connection).get_indexes("ScoreEntries")
                 }
@@ -255,6 +255,32 @@ def test_score_piece_index_migration_round_trips():
                 assert "ix_ScoreEntries_prompt_request_response_id" not in indexes
         finally:
             engine.dispose()
+
+
+@pytest.mark.parametrize("starting_revision", ["d6de1045cca4", "5d7f9b1c3e2a", "c4d1e8b72a90"])
+def test_score_piece_index_and_seed_decomposition_migrations_merge(starting_revision: str) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    try:
+        with engine.begin() as connection:
+            config = _config_for(connection)
+            command.upgrade(config, starting_revision)
+
+        run_schema_migrations(engine=engine)
+        run_schema_migrations(engine=engine)
+        check_schema_migrations(engine=engine)
+
+        with engine.connect() as connection:
+            version = connection.execute(text("SELECT version_num FROM pyrit_memory_alembic_version")).scalar_one()
+            assert version == _get_alembic_head_revision(config=config)
+            assert {"parent_objective_id", "paths"} <= {
+                column["name"] for column in inspect(connection).get_columns("SeedPromptEntries")
+            }
+            indexes = {
+                index["name"]: index["column_names"] for index in inspect(connection).get_indexes("ScoreEntries")
+            }
+            assert indexes["ix_ScoreEntries_prompt_request_response_id"] == ["prompt_request_response_id"]
+    finally:
+        engine.dispose()
 
 
 def test_attack_result_score_migration_backfills_automated_score() -> None:
