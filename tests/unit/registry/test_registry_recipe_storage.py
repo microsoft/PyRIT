@@ -21,6 +21,7 @@ from pyrit.models.catalog import (
     StoredRecipe,
     TechniqueRecipe,
 )
+from pyrit.models.catalog.registry_recipe import RECIPE_SCHEMA_VERSION
 from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, _read_regular_file
 from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RegistryRecipeStorage
 
@@ -28,7 +29,8 @@ _TARGET = {
     "schema_version": 1,
     "class_module": "pyrit.prompt_target.openai.openai_chat_target",
     "class_name": "OpenAIChatTarget",
-    "params": {"auth_mode": "identity", "endpoint": "https://contoso.openai.azure.com/openai/v1"},
+    "auth_mode": "identity",
+    "params": {"endpoint": "https://contoso.openai.azure.com/openai/v1"},
 }
 
 
@@ -74,15 +76,31 @@ class TestRegistryRecipeStorageSource:
 
 
 class TestRecipeModels:
-    def test_a_document_without_a_schema_version_is_version_one(self) -> None:
-        document = {key: value for key, value in _TARGET.items() if key != "schema_version"}
+    @pytest.mark.parametrize(
+        ("model", "document"),
+        [
+            (ComponentRecipe, {key: value for key, value in _TARGET.items() if key != "schema_version"}),
+            (TechniqueRecipe, {"type": "RedTeamingAttack"}),
+        ],
+    )
+    def test_schema_version_default_does_not_track_the_current_schema_version(
+        self, model: type[ComponentRecipe] | type[TechniqueRecipe], document: dict[str, object]
+    ) -> None:
+        """
+        A document saved without a version is a version 1 document. If the default tracked the constant, bumping it
+        would relabel such documents as the newest shape, and a migration keyed on the version would skip them.
+        """
+        assert model.model_fields["schema_version"].default == 1
+        assert model.model_validate(document).schema_version == 1
 
-        with patch.object(ComponentRecipe, "CURRENT_SCHEMA_VERSION", 2):
-            assert ComponentRecipe.model_validate(document).schema_version == 1
-
-    def test_rejects_a_schema_version_newer_than_the_model_reads(self) -> None:
-        with pytest.raises(ValidationError, match="newer than this PyRIT reads"):
-            ComponentRecipe.model_validate({**_TARGET, "schema_version": 2})
+    @pytest.mark.parametrize(
+        ("model", "document"), [(ComponentRecipe, _TARGET), (TechniqueRecipe, {"type": "RedTeamingAttack"})]
+    )
+    def test_rejects_a_schema_version_newer_than_this_pyrit_reads(
+        self, model: type[ComponentRecipe] | type[TechniqueRecipe], document: dict[str, object]
+    ) -> None:
+        with pytest.raises(ValidationError, match="less than or equal to"):
+            model.model_validate({**document, "schema_version": RECIPE_SCHEMA_VERSION + 1})
 
     def test_every_restore_failure_reason_has_an_explanation(self) -> None:
         assert all(reason.explanation for reason in RestoreFailureReason)
@@ -99,6 +117,18 @@ class TestRecipeModels:
     ) -> None:
         with pytest.raises(ValidationError, match="entry needs a"):
             StoredRecipe(ref=SavedEntryRef(kind=kind, name="mismatched"), recipe=recipe, version="v1")
+
+    @pytest.mark.parametrize("kind", [RegistryRecipeKind.CONVERTERS, RegistryRecipeKind.SCORERS])
+    def test_only_a_target_has_an_auth_mode(self, kind: RegistryRecipeKind) -> None:
+        recipe = ComponentRecipe.model_validate(_TARGET)
+
+        StoredRecipe(ref=SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="chat"), recipe=recipe, version="v1")
+        with pytest.raises(ValidationError, match="Only a saved target has an auth_mode"):
+            StoredRecipe(ref=SavedEntryRef(kind=kind, name="chat"), recipe=recipe, version="v1")
+
+    def test_rejects_an_auth_mode_the_api_doesnt_offer(self) -> None:
+        with pytest.raises(ValidationError, match="auth_mode"):
+            ComponentRecipe.model_validate({**_TARGET, "auth_mode": "password"})
 
 
 class TestRegistryRecipeStorageListing:
@@ -140,13 +170,22 @@ class TestRegistryRecipeStorageListing:
         assert "sk-secret-value" not in extra.message
 
     def test_reports_a_document_nested_too_deeply(self, tmp_path: Path) -> None:
+        nested: object = "x"
+        for _ in range(300):
+            nested = {"list": [nested]}
         _write(tmp_path / "targets", "deep", "[" * 100_000 + "]" * 100_000)
+        _write(tmp_path / "targets", "deep_params", json.dumps({**_TARGET, "params": {"x": nested}}))
         _write(tmp_path / "targets", "contoso_gpt4o", json.dumps(_TARGET))
 
         listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
 
-        (failure,) = listing.failures
-        assert (failure.name, failure.reason) == ("deep", RestoreFailureReason.INVALID_RECIPE)
+        failures = {failure.name: failure for failure in listing.failures}
+        assert set(failures) == {"deep", "deep_params"}
+        for failure in failures.values():
+            assert (failure.reason, failure.message) == (
+                RestoreFailureReason.INVALID_RECIPE,
+                "Nested too deeply to read.",
+            )
         assert list(listing.recipes) == ["contoso_gpt4o"]
 
     def test_limits_a_technique_description_like_the_create_request(self, tmp_path: Path) -> None:
@@ -242,16 +281,16 @@ class TestRegistryRecipeStorageListing:
 
         assert listing.recipes["friendly"].recipe.params["greeting"] == "caf\u00e9 \U0001f600"
 
-    def test_checks_a_technique_against_the_technique_format_version(self, tmp_path: Path) -> None:
-        _write(tmp_path / "techniques", "next_format", json.dumps({"schema_version": 2, "type": "RedTeamingAttack"}))
-        _write(tmp_path / "targets", "next_format", json.dumps({**_TARGET, "schema_version": 2}))
+    def test_reports_a_newer_technique_format_like_any_other(self, tmp_path: Path) -> None:
+        newer = RECIPE_SCHEMA_VERSION + 1
+        _write(
+            tmp_path / "techniques", "next_format", json.dumps({"schema_version": newer, "type": "RedTeamingAttack"})
+        )
 
-        with patch.object(TechniqueRecipe, "CURRENT_SCHEMA_VERSION", 2):
-            techniques = RegistryRecipeStorage(kind=RegistryRecipeKind.TECHNIQUES, source=str(tmp_path)).list_recipes()
-            targets = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TECHNIQUES, source=str(tmp_path)).list_recipes()
 
-        assert list(techniques.recipes) == ["next_format"]
-        assert targets.failures[0].reason is RestoreFailureReason.NEWER_SCHEMA_VERSION
+        (failure,) = listing.failures
+        assert failure.reason is RestoreFailureReason.NEWER_SCHEMA_VERSION
 
     def test_shortens_what_a_validation_error_repeats(self, tmp_path: Path) -> None:
         long_key = "k" * 10_000
@@ -266,6 +305,33 @@ class TestRegistryRecipeStorageListing:
         assert "k" * 65 not in messages["long_key"]
         assert len(messages["many_keys"]) == MAX_FAILURE_MESSAGE_LENGTH
         assert messages["many_keys"].endswith("...")
+
+    def test_escapes_control_characters_that_a_failure_repeats(self, tmp_path: Path) -> None:
+        _write(tmp_path / "targets", "odd_key", json.dumps({**_TARGET, "\n\x1b[31mFAKE": True}))
+
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        (failure,) = listing.failures
+        assert "\\n\\x1b[31mFAKE" in failure.message
+        assert failure.message.isprintable()
+
+    def test_caps_every_failure_message(self, tmp_path: Path) -> None:
+        _write(tmp_path / "targets", "huge_version", '{"schema_version": ' + "9" * 4_000 + "}")
+
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path)).list_recipes()
+
+        (failure,) = listing.failures
+        assert failure.reason is RestoreFailureReason.NEWER_SCHEMA_VERSION
+        assert len(failure.message) == MAX_FAILURE_MESSAGE_LENGTH
+
+    def test_reports_a_converter_saved_with_an_auth_mode(self, tmp_path: Path) -> None:
+        _write(tmp_path / "converters", "signed_in", json.dumps(_TARGET))
+
+        listing = RegistryRecipeStorage(kind=RegistryRecipeKind.CONVERTERS, source=str(tmp_path)).list_recipes()
+
+        (failure,) = listing.failures
+        assert (failure.name, failure.reason) == ("signed_in", RestoreFailureReason.INVALID_RECIPE)
+        assert "Only a saved target has an auth_mode" in failure.message
 
     def test_a_listing_cannot_be_changed_by_its_reader(self, tmp_path: Path) -> None:
         _write(tmp_path / "targets", "contoso_gpt4o", json.dumps(_TARGET))
