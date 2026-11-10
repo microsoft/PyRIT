@@ -36,7 +36,6 @@ class RuntimeAdmissionMiddleware:
             in (
                 "/api/health",
                 "/api/runtime",
-                "/api/restore-failures",
                 "/api/version",
                 "/api/auth/config",
                 "/api/auth/access",

@@ -13,6 +13,7 @@ import { toApiError } from '@/services/errors'
 import type { RuntimeStatus } from '@/types'
 
 import { useReinitializeStyles } from './Reinitialize.styles'
+import RestoreFailures from './RestoreFailures'
 
 interface ReinitializeProps {
   version: string
@@ -87,6 +88,9 @@ export default function Reinitialize({
             {!status.enabled && ' Reinitialization requires one backend worker and one replica.'}
           </MessageBarBody>
         </MessageBar>
+      )}
+      {status?.restore_failures && status.restore_failures.length > 0 && (
+        <RestoreFailures failures={status.restore_failures} />
       )}
       {pollError && <MessageBar intent="error"><MessageBarBody>{pollError}</MessageBarBody></MessageBar>}
       {applyError && <MessageBar intent="error"><MessageBarBody>{applyError}</MessageBarBody></MessageBar>}

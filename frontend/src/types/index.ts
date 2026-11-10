@@ -2433,7 +2433,7 @@ export interface RuntimeReadiness {
   ready: boolean
   state: string
   generation: string
-  /** How many saved entries couldn't be restored; the list has the details. */
+  /** How many saved entries couldn't be restored; administrators see why in the runtime status. */
   restore_failures?: number
 }
 
@@ -2463,14 +2463,9 @@ export interface RestoreFailure {
   kind: RegistryRecipeKind
   name: string | null
   reason: string
-  /** Full details for administrators; a fixed explanation of the reason for everyone else. */
   message: string
   version: string | null
   dependency: SavedEntryRef | null
-}
-
-export interface RestoreFailureList {
-  items: RestoreFailure[]
 }
 
 export interface RuntimeStatus {
@@ -2481,6 +2476,8 @@ export interface RuntimeStatus {
   applying: boolean
   outcome: string
   message: string
+  /** The saved entries that couldn't be restored; only administrators can read the runtime status. */
+  restore_failures?: RestoreFailure[]
 }
 export type FindingSeverity = 'critical' | 'important' | 'moderate' | 'low' | 'informational' | 'other'
 
