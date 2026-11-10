@@ -10,6 +10,9 @@ from pyrit.executor.promptgen import TargetObjectiveGenerator
 from pyrit.models import SeedDataset, SeedObjective, SeedOrigin
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyrit.executor.promptgen import TargetObjectiveGeneratorResult
     from pyrit.models import SeedPrompt
     from pyrit.prompt_target import PromptTarget
 
@@ -75,15 +78,37 @@ class TargetObjectiveProvider(SeedDatasetProvider):
         result = await self._generator.execute_async(
             instructions=self._instructions, count=self._count, harm_categories=self._harm_categories
         )
+        return self.package_result(dataset_name=self.dataset_name, result=result, harm_categories=self._harm_categories)
+
+    @staticmethod
+    def package_result(
+        *, dataset_name: str, result: TargetObjectiveGeneratorResult, harm_categories: Sequence[str] = ()
+    ) -> SeedDataset:
+        """
+        Package generated objectives as a named dataset.
+
+        Args:
+            dataset_name (str): Destination name, assigned to every seed.
+            result (TargetObjectiveGeneratorResult): The generated objectives.
+            harm_categories (Sequence[str]): Labels for every seed.
+
+        Returns:
+            SeedDataset: Text objectives with generation evidence references and no actor attribution.
+
+        Raises:
+            ValueError: If dataset_name is empty.
+        """
+        if not isinstance(dataset_name, str) or not dataset_name.strip():
+            raise ValueError("dataset_name must be a non-empty string.")
         return SeedDataset(
-            dataset_name=self.dataset_name,
+            dataset_name=dataset_name,
             seeds=[
                 SeedObjective(
                     value=value,
-                    dataset_name=self.dataset_name,
+                    dataset_name=dataset_name,
                     origin=SeedOrigin.GENERATED,
                     is_jinja_template=False,
-                    harm_categories=list(self._harm_categories),
+                    harm_categories=list(harm_categories),
                     metadata={"generation_conversation_id": result.conversation_id},
                 )
                 for value in result.objectives

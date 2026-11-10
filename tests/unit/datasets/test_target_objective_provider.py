@@ -8,7 +8,7 @@ import pytest
 from unit.mocks import MockPromptTarget
 
 from pyrit.datasets import SeedDatasetProvider, TargetObjectiveProvider
-from pyrit.executor.promptgen.target_objective_generator import TargetObjectiveGeneratorResult
+from pyrit.executor.promptgen import TargetObjectiveGeneratorResult
 from pyrit.memory import MemoryInterface
 from pyrit.models import JsonResponseConfig, Message, SeedObjective, SeedOrigin, SeedPrompt
 
@@ -116,3 +116,62 @@ class TestTargetObjectiveProvider:
     def test_rejects_blank_name(self, name: str) -> None:
         with pytest.raises(ValueError, match="dataset_name"):
             TargetObjectiveProvider(dataset_name=name, target=MockPromptTarget(), instructions="Test", count=1)
+
+
+def test_package_result_builds_named_generated_objectives() -> None:
+    result = TargetObjectiveGeneratorResult(objectives=["First goal", "Second goal"], conversation_id=str(uuid4()))
+    dataset = TargetObjectiveProvider.package_result(
+        dataset_name="generated", result=result, harm_categories=("privacy", "fraud")
+    )
+    assert dataset.dataset_name == "generated"
+    assert [seed.value for seed in dataset.seeds] == result.objectives
+    for seed in dataset.seeds:
+        assert isinstance(seed, SeedObjective)
+        assert seed.dataset_name == "generated"
+        assert seed.origin is SeedOrigin.GENERATED
+        assert not seed.is_jinja_template
+        assert seed.harm_categories == ["privacy", "fraud"]
+        assert seed.metadata == {"generation_conversation_id": result.conversation_id}
+
+
+def test_package_result_defaults_to_no_harm_categories() -> None:
+    result = TargetObjectiveGeneratorResult(objectives=["Literal {{ value }}"], conversation_id=str(uuid4()))
+    dataset = TargetObjectiveProvider.package_result(dataset_name="generated", result=result)
+    assert dataset.seeds[0].harm_categories == []
+    assert dataset.seeds[0].value == "Literal {{ value }}"
+
+
+def test_package_result_does_not_share_harm_category_lists() -> None:
+    result = TargetObjectiveGeneratorResult(objectives=["First goal", "Second goal"], conversation_id=str(uuid4()))
+    categories = ["privacy"]
+    dataset = TargetObjectiveProvider.package_result(
+        dataset_name="generated", result=result, harm_categories=categories
+    )
+    categories.append("changed")
+    first, second = dataset.seeds
+    assert first.harm_categories == second.harm_categories == ["privacy"]
+    assert first.harm_categories is not second.harm_categories
+
+
+@pytest.mark.parametrize("name", ["", "  "])
+def test_package_result_rejects_blank_name(name: str) -> None:
+    result = TargetObjectiveGeneratorResult(objectives=["A goal"], conversation_id=str(uuid4()))
+    with pytest.raises(ValueError, match="dataset_name"):
+        TargetObjectiveProvider.package_result(dataset_name=name, result=result)
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_fetch_dataset_async_packages_the_generated_result_async() -> None:
+    provider = TargetObjectiveProvider(
+        dataset_name="generated", target=MockPromptTarget(), instructions="Test", count=1, harm_categories=["test"]
+    )
+    result = TargetObjectiveGeneratorResult(objectives=["A goal"], conversation_id=str(uuid4()))
+    with (
+        patch.object(provider._generator, "execute_async", new_callable=AsyncMock, return_value=result),
+        patch.object(
+            TargetObjectiveProvider, "package_result", wraps=TargetObjectiveProvider.package_result
+        ) as package,
+    ):
+        dataset = await provider.fetch_dataset_async()
+    package.assert_called_once_with(dataset_name="generated", result=result, harm_categories=["test"])
+    assert dataset.seeds[0].value == "A goal"

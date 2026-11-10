@@ -566,3 +566,44 @@ value: |
             second = await generator.execute_async(instructions="Test", count=1)
         assert first.conversation_id != second.conversation_id
         assert not hasattr(generator, "generate_async")
+
+
+def test_estimate_is_one_exact_call() -> None:
+    estimate = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=10)
+    assert estimate.exact_calls
+    assert estimate.min_calls == estimate.max_calls == 1
+    assert [(stage.stage, stage.target_role) for stage in estimate.stages] == [
+        ("objectives", TargetObjectiveGenerator.GENERATION_ROLE)
+    ]
+    assert estimate.stages[0].min_tokens == estimate.stages[0].max_tokens
+    assert 0 < estimate.low_tokens < estimate.high_tokens
+
+
+def test_estimate_tokens_scale_with_count() -> None:
+    one = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=1).stages[0].max_tokens
+    eleven = TargetObjectiveGenerator.estimate(instructions="Test formatting.", count=11).stages[0].max_tokens
+    assert eleven - one == 10 * TargetObjectiveGenerator.OUTPUT_TOKENS_PER_OBJECTIVE
+
+
+def test_estimate_tokens_include_instructions_and_harm_categories() -> None:
+    base = TargetObjectiveGenerator.estimate(instructions="Test", count=1).stages[0].max_tokens
+    longer = TargetObjectiveGenerator.estimate(instructions="Test" + "x" * 400, count=1).stages[0].max_tokens
+    categorized = (
+        TargetObjectiveGenerator.estimate(instructions="Test", count=1, harm_categories=["y" * 400])
+        .stages[0]
+        .max_tokens
+    )
+    assert longer - base == 100
+    assert categorized - base == 100
+
+
+def test_estimate_does_not_call_a_target() -> None:
+    with patch.object(MockPromptTarget, "_send_prompt_to_target_async") as send:
+        TargetObjectiveGenerator.estimate(instructions="Test", count=3)
+    send.assert_not_called()
+
+
+@pytest.mark.parametrize("count", [0, -1, True, 1.5, "2"])
+def test_estimate_rejects_invalid_count(count: Any) -> None:
+    with pytest.raises(ValueError, match="count must be a positive integer"):
+        TargetObjectiveGenerator.estimate(instructions="Test", count=count)

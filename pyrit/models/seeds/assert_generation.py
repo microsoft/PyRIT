@@ -250,13 +250,31 @@ class AssertSystematization(_AssertModel):
         return self
 
 
+class AssertGenerationStage(str, Enum):
+    """ASSERT generation stages, in execution order."""
+
+    SYSTEMATIZATION = "systematization"
+    TAXONOMY = "taxonomy"
+    DIMENSIONS = "dimensions"
+    SEED_GROUPS = "seed_groups"
+
+
 class AssertGenerationProvenance(_AssertModel):
-    """Research stages and the generation batch that produced one seed group."""
+    """Research stages, the generation batch, and any human edits behind one seed group."""
 
     systematization_conversation_id: _Name | None = None
     taxonomy_conversation_id: _Name | None = None
     dimensions_conversation_id: _Name | None = None
     group_generation_conversation_id: _Name | None = None
+    edited_stages: tuple[AssertGenerationStage, ...] = Field(
+        default=(), description="Stages whose generated output a person revised before seed groups were generated."
+    )
+
+    @model_validator(mode="after")
+    def _validate_edits(self) -> Self:
+        if len(set(self.edited_stages)) != len(self.edited_stages):
+            raise ValueError("edited_stages must not repeat a stage.")
+        return self
 
     @property
     def conversation_ids(self) -> tuple[str, ...]:
@@ -352,15 +370,7 @@ class AssertGroupMetadata(_AssertModel):
     def _validate_context(self) -> Self:
         if self.taxonomy.behavior.name != self.config.behavior_name:
             raise ValueError("The taxonomy behavior must match the generation request.")
-        if [item.name for item in self.dimensions] != [item.name for item in self.config.dimensions]:
-            raise ValueError("Resolved dimensions must match the requested dimensions in order.")
-        for requested, resolved in zip(self.config.dimensions, self.dimensions, strict=True):
-            if not resolved.levels:
-                raise ValueError("Every resolved dimension needs explicit levels.")
-            if requested.levels and requested.levels != resolved.levels:
-                raise ValueError("Resolved levels must match explicitly configured dimension levels.")
-            if not requested.levels and len(resolved.levels) != self.config.dimension_level_count:
-                raise ValueError("Generated dimension levels must match dimension_level_count.")
+        _validate_resolved_dimensions(config=self.config, dimensions=self.dimensions)
         levels = self.taxonomy.get_coverage_levels(self.dimensions)
         if set(self.dimension_values) != {dimension.name for dimension in self.dimensions} or any(
             value not in levels[name] for name, value in self.assignment.items()
@@ -396,3 +406,172 @@ class AssertGroupMetadata(_AssertModel):
         if metadata is None or cls.METADATA_KEY not in metadata:
             raise ValueError("The seed has no metadata for ASSERT generation.")
         return cls.model_validate(metadata[cls.METADATA_KEY])
+
+
+class AssertGeneratedGroupContent(_AssertModel):
+    """Model-written content and coverage assignment for one seed group, before it's packaged as seeds."""
+
+    group_id: _Text
+    assignment: dict[_Name, _Name]
+    title: _Text
+    objective: _Text
+    user_prompt: _Text | None = None
+    adversarial_instructions: _Text | None = None
+    system_prompt: str = ""
+    conversation_id: _Name
+
+
+class AssertGenerationCheckpoint(_AssertModel):
+    """
+    The completed stages of one ASSERT generation request.
+
+    A checkpoint lets generation stop after any stage for review, accept a revised taxonomy and
+    dimensions, and resume after an interruption without repeating finished model calls.
+    """
+
+    config: AssertGenerationConfig
+    systematization: AssertSystematization | None = None
+    taxonomy: AssertTaxonomy | None = None
+    dimensions: tuple[AssertDimension, ...] | None = None
+    provenance: AssertGenerationProvenance = Field(default_factory=AssertGenerationProvenance)
+    completed_batches: Annotated[int, Field(strict=True, ge=0)] = 0
+    groups: tuple[AssertGeneratedGroupContent, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_progress(self) -> Self:
+        behavior_name = self.config.behavior_name
+        if self.systematization is not None and self.systematization.behavior != behavior_name:
+            raise ValueError("The systematization behavior must match the generation request.")
+        if self.taxonomy is not None and self.taxonomy.behavior.name != behavior_name:
+            raise ValueError("The taxonomy behavior must match the generation request.")
+        if self.taxonomy is not None and self.systematization is None:
+            raise ValueError("A taxonomy needs the systematization it was converted from.")
+        if self.dimensions is not None and self.taxonomy is None:
+            raise ValueError("Dimensions need the taxonomy they describe.")
+        if (self.groups or self.completed_batches) and (self.taxonomy is None or self.dimensions is None):
+            raise ValueError("Seed groups need a taxonomy and dimensions.")
+        if self.dimensions is not None:
+            _validate_resolved_dimensions(config=self.config, dimensions=self.dimensions)
+        self._validate_groups()
+        return self
+
+    def _validate_groups(self) -> None:
+        if len(self.groups) > self.config.group_count:
+            raise ValueError(f"Requested {self.config.group_count} seed groups, the checkpoint has {len(self.groups)}.")
+        if len({group.group_id for group in self.groups}) != len(self.groups):
+            raise ValueError("Generated group IDs must be unique.")
+        if not self.groups or self.taxonomy is None or self.dimensions is None:
+            return
+        levels = self.taxonomy.get_coverage_levels(self.dimensions)
+        for group in self.groups:
+            if set(group.assignment) != set(levels) or any(
+                value not in levels[name] for name, value in group.assignment.items()
+            ):
+                raise ValueError(f"Invalid coverage assignment for group {group.group_id!r}.")
+
+    @property
+    def next_stage(self) -> AssertGenerationStage | None:
+        """The next stage to run, or None when every requested seed group exists."""
+        if self.systematization is None:
+            return AssertGenerationStage.SYSTEMATIZATION
+        if self.taxonomy is None:
+            return AssertGenerationStage.TAXONOMY
+        if self.dimensions is None:
+            return AssertGenerationStage.DIMENSIONS
+        if len(self.groups) < self.config.group_count:
+            return AssertGenerationStage.SEED_GROUPS
+        return None
+
+    @property
+    def conversation_ids(self) -> tuple[str, ...]:
+        """Every generation conversation the checkpoint refers to, in creation order."""
+        ids = list(self.provenance.conversation_ids)
+        ids.extend(group.conversation_id for group in self.groups)
+        return tuple(dict.fromkeys(ids))
+
+    def with_reviewed_policy(self, *, taxonomy: AssertTaxonomy, dimensions: Sequence[AssertDimension]) -> Self:
+        """
+        Replace the generated taxonomy and dimensions with reviewed versions.
+
+        Edited dimensions become the request's explicit levels, so stored groups describe the
+        dimensions they were generated from. The provenance records which stages a person edited.
+
+        Args:
+            taxonomy (AssertTaxonomy): The reviewed taxonomy. Its behavior name can't change.
+            dimensions (Sequence[AssertDimension]): The reviewed dimensions, each with explicit levels.
+
+        Returns:
+            Self: A checkpoint ready to generate seed groups from the reviewed policy.
+
+        Raises:
+            ValueError: If the policy isn't generated yet, seed groups already exist, or the review is invalid.
+        """
+        if self.taxonomy is None or self.dimensions is None:
+            raise ValueError("Review needs a generated taxonomy and dimensions.")
+        if self.groups or self.completed_batches:
+            raise ValueError("The policy can't change after seed groups have been generated.")
+        reviewed_dimensions = tuple(dimensions)
+        edited = set(self.provenance.edited_stages)
+        config = self.config
+        if taxonomy != self.taxonomy:
+            edited.add(AssertGenerationStage.TAXONOMY)
+        if reviewed_dimensions != self.dimensions:
+            edited.add(AssertGenerationStage.DIMENSIONS)
+            config = AssertGenerationConfig.model_validate(
+                {**config.model_dump(), "dimensions": [item.model_dump() for item in reviewed_dimensions]}
+            )
+        provenance = self.provenance.model_copy(
+            update={"edited_stages": tuple(stage for stage in AssertGenerationStage if stage in edited)}
+        )
+        return type(self).model_validate(
+            {
+                **self.model_dump(),
+                "config": config,
+                "taxonomy": taxonomy,
+                "dimensions": reviewed_dimensions,
+                "provenance": provenance,
+            }
+        )
+
+
+class AssertBehaviorPreset(_AssertModel):
+    """A ready-made behavior description from the bundled ASSERT behavior library."""
+
+    name: _Name
+    version: _Name
+    tags: tuple[_Name, ...] = ()
+    applicable_to: tuple[_Name, ...] = ()
+    summary: _Text
+    description: _Text
+    suggested_judge_presets: tuple[_Name, ...] = ()
+
+
+class AssertSuitePreset(_AssertModel):
+    """An application context and the library behaviors to evaluate in it, one dataset per behavior."""
+
+    name: _Name
+    version: _Name
+    tags: tuple[_Name, ...] = ()
+    applicable_to: tuple[_Name, ...] = ()
+    summary: _Text
+    context: _Text
+    behaviors: tuple[_Name, ...] = Field(min_length=1)
+    suggested_judge_presets: tuple[_Name, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_behaviors(self) -> Self:
+        if len(set(self.behaviors)) != len(self.behaviors):
+            raise ValueError(f"Suite {self.name!r} lists a behavior more than once.")
+        return self
+
+
+def _validate_resolved_dimensions(*, config: AssertGenerationConfig, dimensions: tuple[AssertDimension, ...]) -> None:
+    if [item.name for item in dimensions] != [item.name for item in config.dimensions]:
+        raise ValueError("Resolved dimensions must match the requested dimensions in order.")
+    for requested, resolved in zip(config.dimensions, dimensions, strict=True):
+        if not resolved.levels:
+            raise ValueError("Every resolved dimension needs explicit levels.")
+        if requested.levels and requested.levels != resolved.levels:
+            raise ValueError("Resolved levels must match explicitly configured dimension levels.")
+        if not requested.levels and len(resolved.levels) != config.dimension_level_count:
+            raise ValueError("Generated dimension levels must match dimension_level_count.")

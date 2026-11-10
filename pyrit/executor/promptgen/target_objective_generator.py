@@ -8,7 +8,7 @@ import json
 import math
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from jsonschema import Draft202012Validator, SchemaError, ValidationError
 
@@ -19,10 +19,19 @@ from pyrit.executor.promptgen.core import (
     PromptGeneratorStrategyContext,
     PromptGeneratorStrategyResult,
 )
-from pyrit.models import JsonResponseConfig, JsonSchemaDefinition, Message, SeedPrompt
+from pyrit.models import (
+    JsonResponseConfig,
+    JsonSchemaDefinition,
+    Message,
+    PromptGenerationEstimate,
+    PromptGenerationStageEstimate,
+    SeedPrompt,
+)
 from pyrit.prompt_normalizer import PromptNormalizer, send_json_with_retry_async
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from jsonschema.protocols import Validator
 
     from pyrit.prompt_target import PromptTarget
@@ -54,6 +63,8 @@ class TargetObjectiveGenerator(
 
     DEFAULT_SYSTEM_PROMPT_PATH = EXECUTOR_SEED_PROMPT_PATH / "promptgen" / "target_objective_generator.yaml"
     _CLEANUP_TIMEOUT_SECONDS = 5.0
+    GENERATION_ROLE: ClassVar[str] = "generation"
+    OUTPUT_TOKENS_PER_OBJECTIVE: ClassVar[int] = 60
 
     def __init__(
         self,
@@ -104,6 +115,41 @@ class TargetObjectiveGenerator(
         )
         self._timeout_seconds = timeout_seconds
         self._normalizer = PromptNormalizer()
+
+    @classmethod
+    def estimate(
+        cls, *, instructions: str, count: int, harm_categories: Sequence[str] = ()
+    ) -> PromptGenerationEstimate:
+        """
+        Estimate the model calls and tokens of a request with the bundled prompt, without calling a target.
+
+        Args:
+            instructions (str): What the objectives should cover.
+            count (int): The number of objectives to generate.
+            harm_categories (Sequence[str]): Harm categories to apply.
+
+        Returns:
+            PromptGenerationEstimate: One call and an approximate token range.
+
+        Raises:
+            ValueError: If count isn't a positive integer.
+        """
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise ValueError("count must be a positive integer.")
+        prompt = SeedPrompt.from_yaml_file(cls.DEFAULT_SYSTEM_PROMPT_PATH).value
+        characters = len(prompt) + len(instructions) + sum(len(category) for category in harm_categories) + 100
+        tokens = PromptGenerationEstimate.tokens_from_characters(characters) + count * cls.OUTPUT_TOKENS_PER_OBJECTIVE
+        stage = PromptGenerationStageEstimate(
+            stage="objectives",
+            target_role=cls.GENERATION_ROLE,
+            min_calls=1,
+            max_calls=1,
+            min_tokens=tokens,
+            max_tokens=tokens,
+        )
+        return PromptGenerationEstimate(
+            stages=(stage,), exact_calls=True, notes=("JSON validation retries can add calls.",)
+        )
 
     async def execute_with_context_async(
         self, *, context: TargetObjectiveGeneratorContext

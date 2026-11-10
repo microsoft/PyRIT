@@ -12,6 +12,8 @@ portions to native PyRIT targets, generation strategies, typed seed datasets,
 conversation scorers, and judge presets. Scoring templates are adaptations, not
 verbatim copies of ASSERT's full judge or its XML citation protocol. The tester
 prompt keeps ASSERT's text except for its turn-counter sentence.
+PyRIT also redistributes ASSERT's behavior and scenario library presets, unchanged
+except for added attribution headers, as bundled behavior and suite presets.
 ASSERT is not a runtime dependency.
 
 The provenance inventory in third_party/assert-provenance.json identifies the

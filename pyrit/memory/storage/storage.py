@@ -41,6 +41,10 @@ class StorageIO(ABC):
         """Delete one caller-owned file; custom storage must implement cleanup explicitly."""
         raise NotImplementedError("This storage backend does not support file cleanup")
 
+    async def list_files_async(self, directory: Path | str) -> list[str]:
+        """List files directly inside a directory; custom storage must implement listing explicitly."""
+        raise NotImplementedError("This storage backend does not support listing files")
+
     @abstractmethod
     async def read_file_async(self, path: Path | str) -> bytes:
         """
@@ -80,6 +84,18 @@ class DiskStorageIO(StorageIO):
     async def delete_file_async(self, path: Path | str) -> None:
         """Delete one file, not its containing directory."""
         await asyncio.to_thread(self._convert_to_path(path).unlink, missing_ok=True)
+
+    async def list_files_async(self, directory: Path | str) -> list[str]:
+        """
+        List the files directly inside a local directory.
+
+        Args:
+            directory (Path | str): The directory to list.
+
+        Returns:
+            list[str]: File paths in name order, or an empty list when the directory doesn't exist.
+        """
+        return await asyncio.to_thread(_list_directory_files, self._convert_to_path(directory))
 
     async def read_file_async(self, path: Path | str) -> bytes:
         """
@@ -194,6 +210,7 @@ class AzureBlobStorageIO(StorageIO):
         self._container_url: str = container_url
         self._sas_token = sas_token
         self._client_async: AsyncContainerClient | None = None
+        self._client_users = 0
         self._credential: DefaultAzureCredential | None = None
 
     async def _create_container_client_async(self) -> AsyncContainerClient:
@@ -239,6 +256,25 @@ class AzureBlobStorageIO(StorageIO):
             credential=self._credential,
         )
         return self._client_async
+
+    async def _acquire_client_async(self) -> AsyncContainerClient:
+        """
+        Open the shared container client if needed and count this operation as a user.
+
+        Returns:
+            AsyncContainerClient: The shared client, open until the last user releases it.
+        """
+        if not self._client_async:
+            self._client_async = await self._create_container_client_async()
+        self._client_users += 1
+        return self._client_async
+
+    async def _release_client_async(self) -> None:
+        """Close the shared container client after the last concurrent operation finishes with it."""
+        self._client_users -= 1
+        if self._client_users <= 0:
+            self._client_users = 0
+            await self._close_client_async()
 
     async def _close_client_async(self) -> None:
         """Close the container client and credential, resetting both to None."""
@@ -342,14 +378,37 @@ class AzureBlobStorageIO(StorageIO):
         """Delete one blob created by the caller."""
         from azure.core.exceptions import ResourceNotFoundError
 
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
+        client = await self._acquire_client_async()
         try:
-            await self._client_async.delete_blob(self._resolve_blob_name(path))
+            await client.delete_blob(self._resolve_blob_name(path))
         except ResourceNotFoundError:
             pass
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
+
+    async def list_files_async(self, directory: Path | str) -> list[str]:
+        """
+        List the blobs directly inside a virtual directory of the container.
+
+        Args:
+            directory (Path | str): Blob URL or relative path of the virtual directory.
+
+        Returns:
+            list[str]: Full blob URLs in name order, excluding blobs in nested directories.
+        """
+        client = await self._acquire_client_async()
+        directory_name = self._resolve_blob_name(directory).strip("/")
+        prefix = f"{directory_name}/" if directory_name else ""
+        try:
+            names = [blob.name async for blob in client.list_blobs(name_starts_with=prefix or None)]
+        finally:
+            await self._release_client_async()
+        parsed = urlparse(self._container_url)
+        path_parts = [part for part in parsed.path.split("/") if part]
+        container_url = (
+            f"{parsed.scheme}://{parsed.netloc}/{path_parts[0]}" if path_parts else self._container_url.rstrip("/")
+        )
+        return sorted(f"{container_url}/{name}" for name in names if "/" not in name[len(prefix) :])
 
     async def read_file_async(self, path: Path | str) -> bytes:
         """
@@ -375,13 +434,12 @@ class AzureBlobStorageIO(StorageIO):
             ``file_content = await read_file_async("dir1/dir2/1726627689003831.png")``
 
         """
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
+        client = await self._acquire_client_async()
 
         blob_name = self._resolve_blob_name(path)
 
         try:
-            blob_client = self._client_async.get_blob_client(blob=blob_name)
+            blob_client = client.get_blob_client(blob=blob_name)
 
             # Download the blob
             blob_stream = await blob_client.download_blob()
@@ -391,7 +449,7 @@ class AzureBlobStorageIO(StorageIO):
             logger.exception(f"Failed to read file at {blob_name}: {exc}")
             raise
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
     async def write_file_async(self, path: Path | str, data: bytes) -> None:
         """
@@ -404,8 +462,7 @@ class AzureBlobStorageIO(StorageIO):
             path (Path | str): Full blob URL or relative blob path.
             data (bytes): The data to write.
         """
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
+        await self._acquire_client_async()
         blob_name = self._resolve_blob_name(path)
         content_type = get_mime_type(blob_name) or self._blob_content_type
         try:
@@ -414,7 +471,7 @@ class AzureBlobStorageIO(StorageIO):
             logger.exception(f"Failed to write file at {blob_name}: {exc}")
             raise
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
     async def path_exists_async(self, path: Path | str) -> bool:
         """
@@ -428,17 +485,16 @@ class AzureBlobStorageIO(StorageIO):
         """
         from azure.core.exceptions import ResourceNotFoundError
 
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
+        client = await self._acquire_client_async()
         try:
             blob_name = self._resolve_blob_name(path)
-            blob_client = self._client_async.get_blob_client(blob=blob_name)
+            blob_client = client.get_blob_client(blob=blob_name)
             await blob_client.get_blob_properties()
             return True
         except ResourceNotFoundError:
             return False
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
     async def is_file_async(self, path: Path | str) -> bool:
         """
@@ -452,17 +508,16 @@ class AzureBlobStorageIO(StorageIO):
         """
         from azure.core.exceptions import ResourceNotFoundError
 
-        if not self._client_async:
-            self._client_async = await self._create_container_client_async()
+        client = await self._acquire_client_async()
         try:
             blob_name = self._resolve_blob_name(path)
-            blob_client = self._client_async.get_blob_client(blob=blob_name)
+            blob_client = client.get_blob_client(blob=blob_name)
             blob_properties = await blob_client.get_blob_properties()
             return bool(blob_properties.size > 0)
         except ResourceNotFoundError:
             return False
         finally:
-            await self._close_client_async()
+            await self._release_client_async()
 
     async def create_directory_if_not_exists_async(self, directory_path: Path | str) -> None:  # type: ignore[ty:invalid-method-override]
         """
@@ -476,3 +531,9 @@ class AzureBlobStorageIO(StorageIO):
             f"Directory creation is handled automatically during upload operations in Azure Blob Storage. "
             f"Directory path: {directory_path}"
         )
+
+
+def _list_directory_files(directory: Path) -> list[str]:
+    if not directory.is_dir():
+        return []
+    return sorted(str(path) for path in directory.iterdir() if path.is_file())
