@@ -942,6 +942,32 @@ class TestSeedGroupMetadataIsolation:
         assert derived_items[0] is derived_items
         assert items[0] is items
 
+    def test_derived_messages_preserve_cycles_through_tuples(self) -> None:
+        items: list = []
+        wrapped = (items,)
+        items.append(wrapped)
+        seed = SeedPrompt(value="hello", role="user", metadata={"items": items})
+        group = SeedGroup(seeds=[seed])
+
+        message = group.next_message
+        assert message is not None
+
+        derived_items = message.get_piece().prompt_metadata["items"]
+        assert derived_items is not items
+        assert derived_items[0][0] is derived_items
+        assert items[0][0] is items
+
+    def test_derived_messages_do_not_share_containers_inside_tuples(self) -> None:
+        seed = SeedPrompt(value="hello", role="user", metadata={"wrapped": ({"labels": []},)})
+        group = SeedGroup(seeds=[seed])
+
+        message = group.next_message
+        assert message is not None
+
+        message.get_piece().prompt_metadata["wrapped"][0]["labels"].append("message-only")
+
+        assert seed.metadata == {"wrapped": ({"labels": []},)}
+
     @pytest.mark.parametrize("metadata", [None, {}])
     def test_derived_messages_with_empty_metadata_get_independent_dicts(self, metadata) -> None:
         seed = SeedPrompt(value="hello", role="user", metadata=metadata)

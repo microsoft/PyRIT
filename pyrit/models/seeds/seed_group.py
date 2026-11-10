@@ -47,21 +47,27 @@ PROMPT_ONLY_SEED_KEYS = ("data_type", "role", "sequence", "parameters")
 
 def _copy_containers(value: Any, memo: dict[int, Any] | None = None) -> Any:
     """
-    Copy nested dicts and lists so derived messages do not share containers with seeds.
+    Copy nested dicts, lists and tuples so derived messages do not share containers with seeds.
+
+    Tuples are rebuilt on every call and are not memoized: they are immutable, so
+    sharing is harmless on their own, and a tuple cannot be part of a cycle without a
+    list or dict in the loop, which is memoized before recursion and so terminates.
 
     Any other value is returned as-is, so live objects (clients, locks, handles) are
     neither duplicated nor required to be deep-copyable.
 
     Args:
         value: The metadata value to copy.
-        memo: Previously copied containers, keyed by their identity.
+        memo: Previously copied dicts and lists, keyed by their identity.
 
     Returns:
-        A copy of ``value`` with every nested dict and list rebuilt.
+        A copy of ``value`` with every nested dict, list and tuple rebuilt.
 
     """
     if memo is None:
         memo = {}
+    if isinstance(value, tuple):
+        return tuple(_copy_containers(item, memo) for item in value)
     if isinstance(value, (dict, list)):
         identity = id(value)
         if identity in memo:
