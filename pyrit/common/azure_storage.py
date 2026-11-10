@@ -7,7 +7,9 @@ import re
 from urllib.parse import parse_qs, urlparse
 
 # A scheme followed by "://" and everything up to whitespace, so a quote can't end a URL before its query.
-_URL_IN_TEXT = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://\S+")
+# A scheme starts only where one can't continue from the character before it, such as after "_" or a
+# space, so each run of scheme characters is scanned once and long text stays fast.
+_URL_IN_TEXT = re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://\S+")
 # The signature of a SAS token, which can also appear in text without a scheme.
 _SAS_SIGNATURE = re.compile(r"(?i)\bsig=[^&\s]+")
 
@@ -67,16 +69,19 @@ def redact_urls(text: str) -> str:
     """
     Remove the user name and password, query parameters, and fragment from every URL in a text.
 
-    A query or user name can hold a credential, such as a SAS token. A URL that can't be parsed is
-    hidden entirely, and a SAS signature is hidden wherever it appears.
+    A query or user name can hold a credential, such as a SAS token. A password in text isn't always
+    escaped and can hold "/", "?" or "#", so everything before the last "@" after the scheme is treated
+    as the user name and password; an "@" in a path hides the part before it too. A URL that can't be
+    parsed is hidden entirely, and a SAS signature is hidden wherever it appears.
 
     Returns:
         str: The text with each URL redacted.
     """
 
     def redact(match: re.Match[str]) -> str:
+        scheme, _, rest = match.group(0).partition("://")
         try:
-            return redact_url_credentials(match.group(0))
+            return redact_url_credentials(f"{scheme}://{rest.rpartition('@')[2]}")
         except ValueError:
             return "<URL hidden>"
 
