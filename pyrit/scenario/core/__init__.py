@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         get_default_adversarial_target,
         get_default_scorer_target,
         override_default_adversarial_target,
+        require_registered_default_targets,
     )
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.scenario.core.technique_requirements import (
@@ -85,6 +86,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "get_default_scorer_target": "pyrit.scenario.core.scenario_target_defaults",
     "get_default_adversarial_target": "pyrit.scenario.core.scenario_target_defaults",
     "override_default_adversarial_target": "pyrit.scenario.core.scenario_target_defaults",
+    "require_registered_default_targets": "pyrit.scenario.core.scenario_target_defaults",
     "parse_technique_token": "pyrit.scenario.core.technique_tokens",
     "resolve_technique_factories": "pyrit.scenario.core._technique_resolution",
     "resolve_technique_factories_for_techniques": "pyrit.scenario.core._technique_resolution",

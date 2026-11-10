@@ -216,6 +216,11 @@ Python-only.
 
 Creation does not run an attack. The scenario supplies the objective target and
 scoring configuration; an omitted adversarial target uses the execution default.
+A scan uses the target the server registers as `adversarial_chat` as its default adversarial
+target, and the one registered as `objective_scorer_chat` as its default scorer target. When
+the scan needs one that isn't registered, for example after a misspelled name in a startup
+script, it fails with that reason, usually when it starts (400), instead of using an
+`OpenAIChatTarget` built from the `OPENAI_CHAT_*` environment variables.
 Invalid settings or selector collisions return 400 without registering a factory;
 invalid request shapes return 422. `all` and `default` are reserved selectors;
 `types` is also a reserved name. Names cannot replace inherited `ScenarioTechnique`

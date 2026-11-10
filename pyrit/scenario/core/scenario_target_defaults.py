@@ -11,6 +11,27 @@ from pyrit.registry import TargetRegistry
 
 logger = logging.getLogger(__name__)
 _adversarial_target_override: ContextVar[PromptTarget | None] = ContextVar("adversarial_target_override", default=None)
+_registered_defaults_required: ContextVar[bool] = ContextVar("registered_defaults_required", default=False)
+
+
+@contextmanager
+def require_registered_default_targets() -> Generator[None, None, None]:
+    """
+    Make a missing default chat target an error in this scope, instead of a plain ``OpenAIChatTarget``.
+
+    Outside the scope, a default that ``TargetRegistry`` doesn't hold falls back to an ``OpenAIChatTarget``
+    built from the ``OPENAI_CHAT_*`` environment variables. Code that registers its defaults, such as a
+    server whose startup scripts do, can wrap scenario work in this scope so that a missing or misspelled
+    registration fails instead of quietly using that fallback. Scoped and explicit targets are unaffected.
+
+    Yields:
+        None: While missing defaults are errors.
+    """
+    token = _registered_defaults_required.set(True)
+    try:
+        yield
+    finally:
+        _registered_defaults_required.reset(token)
 
 
 @contextmanager
@@ -67,13 +88,14 @@ def get_default_scorer_target() -> PromptTarget:
 
     First checks the ``TargetRegistry`` for an ``"objective_scorer_chat"`` entry
     (populated by ``TargetInitializer`` from ``OBJECTIVE_SCORER_CHAT_*`` env vars).
-    Falls back to a plain ``OpenAIChatTarget``
+    Falls back to a plain ``OpenAIChatTarget``, except inside ``require_registered_default_targets``.
 
     Returns:
         PromptTarget: The resolved objective scorer chat target.
 
     Raises:
-        ValueError: If the registered target does not support multi-turn.
+        ValueError: If the registered target does not support multi-turn, or none is registered inside
+            ``require_registered_default_targets``.
     """
     return _get_default_chat_target(preferred_target_key="objective_scorer_chat")
 
@@ -85,13 +107,15 @@ def get_default_adversarial_target() -> PromptTarget:
     First checks ``override_default_adversarial_target`` for a scoped default,
     then the ``TargetRegistry`` for an ``"adversarial_chat"`` entry
     (populated by ``TargetInitializer`` from ``ADVERSARIAL_CHAT_*`` env vars).
-    Falls back to a default fallback target with temperature=1.2
+    Falls back to a default fallback target with temperature=1.2, except inside
+    ``require_registered_default_targets``.
 
     Returns:
         PromptTarget: The resolved adversarial chat target.
 
     Raises:
-        ValueError: If the registered target does not support multi-turn.
+        ValueError: If the registered target does not support multi-turn, or none is registered inside
+            ``require_registered_default_targets``.
     """
     scoped_target = _adversarial_target_override.get()
     if scoped_target is not None:
@@ -114,7 +138,7 @@ def _get_default_chat_target(
 
     Resolution order:
     1. ``preferred_target_key`` entry from ``TargetRegistry``
-    2. ``OpenAIChatTarget(...)`` with optional temperature
+    2. ``OpenAIChatTarget(...)`` with optional temperature, unless ``require_registered_default_targets`` is active
 
     Args:
         preferred_target_key (str): TargetRegistry key to resolve first.
@@ -129,6 +153,7 @@ def _get_default_chat_target(
     Raises:
         ValueError: If the resolved target does not satisfy required capabilities.
         ValueError: If the registry entry exists but is not a PromptTarget.
+        ValueError: If the registry has no entry while ``require_registered_default_targets`` is active.
     """
     registry = TargetRegistry.get_registry_singleton()
     target = registry.instances.get(preferred_target_key)
@@ -147,6 +172,11 @@ def _get_default_chat_target(
 
         return target
 
+    if _registered_defaults_required.get():
+        raise ValueError(
+            f"No target is registered as '{preferred_target_key}', so there's no default to use. Register one "
+            "under that name, for example in a startup script, or choose a target explicitly."
+        )
     logger.warning(
         f"TargetRegistry entry '{preferred_target_key}' not found. Falling back to default OpenAIChatTarget."
     )

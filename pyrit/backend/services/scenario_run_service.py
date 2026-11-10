@@ -102,7 +102,11 @@ from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
-from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
+from pyrit.scenario.core import (
+    get_default_adversarial_target,
+    override_default_adversarial_target,
+    require_registered_default_targets,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -405,7 +409,9 @@ class ScenarioRunService:
             target = self._configuration_resolver.resolve_adversarial_target(
                 target_name=request.adversarial_target_name
             )
-            target = target if target is not None else get_default_adversarial_target()
+            if target is None:
+                with require_registered_default_targets():
+                    target = get_default_adversarial_target()
             if target.get_identifier().hash != original_hash:
                 raise ScenarioRunConflictError(
                     "The saved adversarial target changed. Start a new configuration explicitly."
@@ -520,7 +526,9 @@ class ScenarioRunService:
             target = self._configuration_resolver.resolve_adversarial_target(
                 target_name=request.adversarial_target_name
             )
-            target = target if target is not None else get_default_adversarial_target()
+            if target is None:
+                with require_registered_default_targets():
+                    target = get_default_adversarial_target()
             references["adversarial_target_hash"] = target.get_identifier().hash
         return references
 
@@ -969,7 +977,8 @@ class ScenarioRunService:
         adversarial_target = self._configuration_resolver.resolve_adversarial_target(
             target_name=request.adversarial_target_name
         )
-        with override_default_adversarial_target(adversarial_target):
+        # The server's startup scripts register its defaults, so a missing one is an error rather than a fallback.
+        with override_default_adversarial_target(adversarial_target), require_registered_default_targets():
             init_kwargs = await run_legacy_sync_async(
                 self._configuration_resolver.resolve_configuration,
                 scenario_name=request.scenario_name,
@@ -1759,7 +1768,7 @@ class ScenarioRunService:
         handoff_ready = True
 
         try:
-            with override_default_adversarial_target(active.adversarial_target):
+            with override_default_adversarial_target(active.adversarial_target), require_registered_default_targets():
                 await active.scenario.run_async()
 
         except asyncio.CancelledError:

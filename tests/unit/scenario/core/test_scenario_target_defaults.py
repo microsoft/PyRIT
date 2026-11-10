@@ -4,6 +4,7 @@
 """Scoped adversarial defaults work for framework callers without registry mutation."""
 
 import asyncio
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,7 @@ from pyrit.scenario.core import (
     get_default_adversarial_target,
     get_default_scorer_target,
     override_default_adversarial_target,
+    require_registered_default_targets,
     scenario_target_defaults,
 )
 from pyrit.scenario.scenarios.airt import Scam
@@ -138,6 +140,37 @@ class TestScopedAdversarialDefault:
                 create_fallback.assert_not_called()
             assert get_default_adversarial_target() is fallback
             create_fallback.assert_called_once_with(temperature=1.2)
+
+    @pytest.mark.parametrize(
+        ("resolve", "name"),
+        [(get_default_adversarial_target, "adversarial_chat"), (get_default_scorer_target, "objective_scorer_chat")],
+    )
+    def test_a_missing_registration_is_an_error_where_registered_defaults_are_required(
+        self, resolve: Any, name: str
+    ) -> None:
+        registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        registry.instances.get.return_value = None
+        fallback = MockPromptTarget()
+        with (
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=registry),
+            patch.object(scenario_target_defaults, "OpenAIChatTarget", return_value=fallback) as create_fallback,
+        ):
+            with require_registered_default_targets(), pytest.raises(ValueError, match=f"registered as '{name}'"):
+                resolve()
+            create_fallback.assert_not_called()
+            assert resolve() is fallback
+
+    def test_registered_and_scoped_targets_are_used_where_registered_defaults_are_required(self) -> None:
+        registered, scoped = MockPromptTarget(), MockPromptTarget()
+        registry = MagicMock(spec=TargetRegistry.get_registry_singleton())
+        registry.instances.get.return_value = registered
+        with (
+            patch.object(TargetRegistry, "get_registry_singleton", return_value=registry),
+            require_registered_default_targets(),
+        ):
+            assert get_default_scorer_target() is registered
+            with override_default_adversarial_target(scoped):
+                assert get_default_adversarial_target() is scoped
 
     def test_scenario_constructor_prefers_explicit_target(self) -> None:
         scoped, explicit = MockPromptTarget(), MockPromptTarget()

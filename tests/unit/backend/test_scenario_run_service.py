@@ -949,6 +949,28 @@ class TestAdversarialRunScope:
         finally:
             await service.shutdown_async()
 
+    async def test_a_scan_that_needs_an_unregistered_default_target_fails_to_start_async(
+        self, mock_all_registries: dict[str, Any]
+    ) -> None:
+        mock_all_registries["target_registry"].instances.get.side_effect = {"my_target": MockPromptTarget()}.get
+        service = ScenarioRunService()
+
+        async def initialize_async(*args: object, **kwargs: object) -> Any:
+            get_default_adversarial_target()
+            return mock_all_registries["scenario_instance"]
+
+        mock_all_registries["scenario_registry"].create_and_initialize_async.side_effect = initialize_async
+        try:
+            with (
+                patch("pyrit.scenario.core.scenario_target_defaults.OpenAIChatTarget") as fallback,
+                pytest.raises(ValueError, match="No target is registered as 'adversarial_chat'"),
+            ):
+                await service.start_run_async(request=_make_request())
+            fallback.assert_not_called()
+            assert not service._active_tasks
+        finally:
+            await service.shutdown_async()
+
     async def test_cancelled_start_keeps_scope_until_preparation_finishes_async(
         self, mock_all_registries: dict[str, Any]
     ) -> None:
