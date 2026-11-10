@@ -99,6 +99,7 @@ def reset_technique_registry():
 
     adv_target = MagicMock(spec=PromptTarget)
     adv_target.capabilities.includes.return_value = True
+    adv_target.get_identifier.return_value = _mock_target_id("MockAdversarialTarget")
     TargetRegistry.get_registry_singleton().instances.register(adv_target, name="adversarial_chat")
 
     technique_registry = AttackTechniqueRegistry.get_registry_singleton()
