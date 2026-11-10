@@ -18,7 +18,7 @@ interface SearchableMultiComboboxProps {
 /** The first selected choice and how many more, e.g. "alice (+2)". */
 function formatSummary(selected: string[], options: FilterOption[], prefix?: string): string {
   if (selected.length === 0) return ''
-  const first = options.find((option: FilterOption) => option.value === selected[0])?.label ?? selected[0]
+  const first = (options.find((option: FilterOption) => option.value === selected[0])?.label ?? selected[0]) ?? ''
   const summary = selected.length === 1 ? first : `${first} (+${selected.length - 1})`
   return prefix ? `${prefix}: ${summary}` : summary
 }

@@ -15,6 +15,7 @@ import { splitRetiredValues } from '@/utils/findingFields'
 
 import { useFindingExportDialogStyles } from './FindingExportDialog.styles'
 import FindingSeverityBadge from './FindingSeverityBadge'
+import { MAX_EXPORT_FINDINGS } from './findingExportLimits'
 
 const PAGE_SIZE = 100
 const FORMATS: Record<FindingExportFormat, { option: string; name: string; extension: string }> = {
@@ -80,6 +81,7 @@ export default function FindingExportDialog({ operation, fields, orderRevision }
   const selectAllChecked = allSelected ? true : selectedIds.length === 0 ? false : 'mixed'
   const selectedWithRetired = findings.filter(finding => selected.has(finding.id)
     && splitRetiredValues(fields, finding.field_values).retired.length > 0).length
+  const tooMany = selectedIds.length > MAX_EXPORT_FINDINGS
   // A natively disabled button drops keyboard focus out of the dialog, so while an export runs, and while the list
   // reloads or shows nothing selected after a deleted finding, Download stays focusable but unavailable.
   const downloadKeepsFocus = exporting || (selectedIds.length === 0 && (recovering || removedTitles.length > 0))
@@ -101,8 +103,16 @@ export default function FindingExportDialog({ operation, fields, orderRevision }
     let ignore = false
     const loadAllPages = async (): Promise<void> => {
       const loaded = new Map<string, FindingListItem>()
+      const seenOffsets = new Set<number>()
       let offset: number | null = 0
       while (offset !== null) {
+        // A repeated offset means the server is not advancing the page, and
+        // fetching it again would loop forever, so stop with an error the
+        // same way the shared pagination helper treats a cyclic cursor.
+        if (seenOffsets.has(offset)) {
+          throw new Error('The findings page offset did not advance.')
+        }
+        seenOffsets.add(offset)
         const page = await operationsApi.listFindings(operation.id, { limit: PAGE_SIZE, offset })
         if (ignore) return
         // A finding created while pages load shifts later pages, so a page can repeat an earlier row.
@@ -161,7 +171,9 @@ export default function FindingExportDialog({ operation, fields, orderRevision }
 
   const download = async (): Promise<void> => {
     const controller = session.current
-    if (controller === null || controller.signal.aborted || submitting.current || selectedIds.length === 0) return
+    if (controller === null || controller.signal.aborted || submitting.current || selectedIds.length === 0 || tooMany) {
+      return
+    }
     submitting.current = true
     setExporting(true)
     setExportError('')
@@ -268,6 +280,11 @@ export default function FindingExportDialog({ operation, fields, orderRevision }
                 {removedNotice(removedTitles)}
               </MessageBarBody></MessageBar>
             )}
+            {tooMany && (
+              <MessageBar className={styles.messageBar} intent="warning" aria-live="polite"><MessageBarBody>
+                Select at most {MAX_EXPORT_FINDINGS.toLocaleString()} findings to download at once.
+              </MessageBarBody></MessageBar>
+            )}
             <Field label="Format">
               <Select value={format} disabled={exporting} onChange={event => {
                 const value = event.target.value
@@ -282,7 +299,7 @@ export default function FindingExportDialog({ operation, fields, orderRevision }
             <DialogTrigger disableButtonEnhancement>
               <Button className={styles.button}>Cancel</Button>
             </DialogTrigger>
-            <Button appearance="primary" className={styles.button} disabled={selectedIds.length === 0}
+            <Button appearance="primary" className={styles.button} disabled={selectedIds.length === 0 || tooMany}
               disabledFocusable={downloadKeepsFocus} onClick={() => { void download() }}>
               {exporting ? 'Preparing download…' : `Download ${FORMATS[format].name}`}
             </Button>

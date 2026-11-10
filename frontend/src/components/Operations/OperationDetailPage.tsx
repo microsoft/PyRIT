@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { createSearchParams, Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import {
   Button, Dialog, DialogBody, DialogContent, DialogSurface, DialogTitle,
   MessageBar, MessageBarBody, Spinner, Text,
@@ -99,7 +99,11 @@ function OperationDetailContent({ operationId, onOperationChanged }: { operation
   }, [operationId, offset, requestKey, evidenceRevision])
 
   const navigatePage = (nextOffset: number): void => {
-    setParams(nextOffset > 0 ? { offset: String(nextOffset) } : {})
+    // Writing the same query again would push a duplicate history entry for an
+    // identical URL, so a save or delete on the first page must not navigate.
+    const next = createSearchParams(nextOffset > 0 ? { offset: String(nextOffset) } : {})
+    if (next.toString() === params.toString()) return
+    setParams(next)
   }
 
   const save = async (draft: FindingDraft, attempt: FindingSaveAttempt): Promise<void> => {

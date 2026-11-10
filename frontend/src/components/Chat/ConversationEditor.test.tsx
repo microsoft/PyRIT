@@ -1,11 +1,11 @@
 import { useEffect } from 'react'
 
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, Input, webLightTheme } from '@fluentui/react-components'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 
-import { attacksApi, convertersApi } from '@/services/api'
+import { attacksApi, convertersApi, mediaApi } from '@/services/api'
 import { useConversationDraft } from '@/hooks/useConversationDraft'
 import { UserPreferencesProvider } from '@/hooks/useUserPreferences'
 import HelpField from '@/components/HelpField'
@@ -18,6 +18,7 @@ import * as converterPanelModule from './ConverterPanel/ConverterPanel'
 jest.mock('@/services/api', () => ({
   attacksApi: { saveConversation: jest.fn() },
   convertersApi: { listConverters: jest.fn(), listConverterTypes: jest.fn(), previewConversion: jest.fn() },
+  mediaApi: { upload: jest.fn() },
 }))
 
 const source: BackendMessage[] = [{
@@ -43,6 +44,7 @@ function setupEditor(
   newAttackDisabledReason?: string,
   initialConverters?: ChatConverterSnapshot,
   contextualHelp = false,
+  unsavedImport?: boolean,
 ) {
   const onSaved = jest.fn()
   const onExit = jest.fn()
@@ -53,6 +55,7 @@ function setupEditor(
       begin({
         messages, initialObjective: 'Objective', objective: 'Objective', target: target ?? null,
         sourceAttackId: 'source-attack', sourceConversationId: 'source-conversation', labels: { operator: 'owner' },
+        unsavedImport,
       })
     }, [begin])
     const leaveEditor = async (): Promise<boolean> => {
@@ -94,6 +97,7 @@ describe('ConversationEditor', () => {
     jest.mocked(attacksApi.saveConversation).mockImplementation(() => new Promise(() => {}))
     jest.mocked(convertersApi.listConverters).mockResolvedValue({ items: [] })
     jest.mocked(convertersApi.listConverterTypes).mockResolvedValue({ items: [] })
+    jest.mocked(mediaApi.upload).mockResolvedValue({ value: 'pyrit-upload:editor' })
   })
 
   it.each(['note', 'tooltip'] as const)('keeps a dirty editor open when reading and selecting contextual help in a %s', async (role: 'note' | 'tooltip') => {
@@ -432,20 +436,65 @@ describe('ConversationEditor', () => {
     expect(screen.queryByText('Next page')).not.toBeInTheDocument()
   })
 
-  it('uploads a file as a separate ordered piece without persisting its object URL', async () => {
+  it.each(['picker', 'drop'])('should add a file from %s as an ordered piece without persisting its object URL', async (inputMethod: string) => {
     const user = userEvent.setup()
     setupEditor()
     const first = screen.getByRole('region', { name: 'Message 1' })
     const file = new File(['file bytes'], 'sample.txt', { type: 'text/plain' })
-    await user.upload(within(first).getAllByTestId('file-input')[0], file)
+    if (inputMethod === 'picker') await user.upload(within(first).getAllByTestId('file-input')[0], file)
+    else fireEvent.drop(within(first).getAllByTestId('prompt-editor')[0], {
+      dataTransfer: { types: ['Files'], files: [file] },
+    })
     expect(within(first).getAllByText(/sample\.txt/)).toHaveLength(1)
+    await waitFor(() => expect(mediaApi.upload).toHaveBeenCalledTimes(1))
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Save conversation' }))
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))
     await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledTimes(1))
     const pieces = jest.mocked(attacksApi.saveConversation).mock.calls[0][0].messages[0].pieces
     expect(pieces).toHaveLength(3)
-    expect(pieces[2].original_value).toBe(btoa('file bytes'))
+    expect(pieces[2].original_value).toBe('pyrit-upload:editor')
     expect(pieces[2].data_type).toBe('binary_path')
+    expect(mediaApi.upload).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps editing available while Save waits for the existing attachment upload', async () => {
+    const user = userEvent.setup()
+    let finishUpload: (value: { value: string }) => void = () => {}
+    jest.mocked(mediaApi.upload).mockImplementationOnce(() => new Promise((resolve) => { finishUpload = resolve }))
+    setupEditor()
+    const first = screen.getByRole('region', { name: 'Message 1' })
+    await user.upload(within(first).getAllByTestId('file-input')[0], new File(['image'], 'photo.png', { type: 'image/png' }))
+    await waitFor(() => expect(mediaApi.upload).toHaveBeenCalledTimes(1))
+    expect(screen.getByRole('status')).toHaveTextContent('Uploading attachments...')
+    const text = within(first).getAllByPlaceholderText('Type prompt here')[0]
+    await user.type(text, ' edited')
+    expect(text).toHaveValue('First piece edited')
+    await user.click(screen.getByRole('button', { name: 'Save conversation' }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save conversation' }))
+    expect(attacksApi.saveConversation).not.toHaveBeenCalled()
+    await act(async () => { finishUpload({ value: 'pyrit-upload:completed' }) })
+    await waitFor(() => expect(attacksApi.saveConversation).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].messages[0].pieces[2].original_value)
+      .toBe('pyrit-upload:completed')
+    expect(mediaApi.upload).toHaveBeenCalledTimes(1)
+  })
+
+  it('retains the editor draft after upload failure and allows retry or removal', async () => {
+    const user = userEvent.setup()
+    jest.mocked(mediaApi.upload).mockRejectedValueOnce(new Error('Storage unavailable'))
+    setupEditor()
+    const first = screen.getByRole('region', { name: 'Message 1' })
+    await user.upload(within(first).getAllByTestId('file-input')[0], new File(['image'], 'photo.png', { type: 'image/png' }))
+    expect(await screen.findByText(/Upload failed for photo.png: Storage unavailable/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save conversation' })).toBeDisabled()
+    expect(within(first).getAllByPlaceholderText('Type prompt here')[0]).toHaveValue('First piece')
+    await user.click(screen.getByRole('button', { name: 'Retry upload' }))
+    await waitFor(() => expect(screen.queryByText(/Upload failed for photo.png/)).not.toBeInTheDocument())
+    expect(mediaApi.upload).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Save conversation' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Remove photo.png' }))
+    expect(screen.queryByText('photo.png')).not.toBeInTheDocument()
   })
 
   it('does not navigate after a save completes on an unmounted editor', async () => {
@@ -468,6 +517,34 @@ describe('ConversationEditor', () => {
       })
     })
     expect(onSaved).not.toHaveBeenCalled()
+  })
+
+  it('protects untouched imported content from silent discard on cancel and navigation', async () => {
+    const user = userEvent.setup()
+    const { router } = setupEditor(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      true,
+    )
+    expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
+
+    // 1. Clicking Cancel without editing prompts for discard confirmation
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.queryByRole('dialog', { name: 'Discard conversation draft?' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
+
+    // 2. Navigating away without editing blocks navigation and prompts for discard confirmation
+    await act(async () => { await router.navigate('/next') })
+    expect(screen.getByRole('dialog', { name: 'Discard conversation draft?' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.queryByText('Next page')).not.toBeInTheDocument()
+    expect(screen.getByTestId('conversation-editor')).toBeInTheDocument()
   })
 })
 

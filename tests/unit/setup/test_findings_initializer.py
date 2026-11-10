@@ -8,8 +8,7 @@ import pytest
 
 import pyrit.setup.initializers
 from pyrit.models import DEFAULT_FINDING_FIELDS, FindingFields
-from pyrit.registry import InitializerRegistry
-from pyrit.registry.discovery import discover_in_directory
+from pyrit.registry import InitializerRegistry, discover_in_directory
 from pyrit.setup.finding_fields import get_active_finding_fields
 from pyrit.setup.initializers import FindingsInitializer
 from pyrit.setup.pyrit_initializer import PyRITInitializer

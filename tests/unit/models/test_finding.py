@@ -6,7 +6,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.finding import Finding, FindingCreate
+from pyrit.models import Finding, FindingCreate
 
 OPERATION_ID = UUID(int=1)
 

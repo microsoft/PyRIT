@@ -158,8 +158,19 @@ local file input. Use `Path | str` when a component also supports a remote URL.
 For this union, the registry preserves the supplied type: a `Path` stays a `Path`,
 and a string stays a string. It never passes a URL through `Path`. Both union
 orders have the same metadata, `type_name: "Path | str"`, including after a JSON
-round-trip. Optional forms accept `None` in Python; the display type omits `None`,
-as it does for other optional parameters.
+round-trip. Nullable annotations retain ` | None` in `type_name`, for example
+`"int | None"`, `"list[int] | None"`, or `"Path | str | None"`. Registry references
+use `"str | None"` or `"list[str] | None"` for nullable names. Deserialization
+preserves these null values without a separate nullable flag. A plain type name
+from an older payload keeps its existing non-nullable contract. Nullability is
+independent of whether a parameter is required or has a default.
+
+External construction rejects a parameter whose type includes `Path`, because its
+value can name a file on the server. A caller that has made the value safe, as the
+backend does by storing an uploaded file first, passes the name in
+`allowed_path_params` to `create_instance_from_external_input`, or to
+`create_named_instance` or `recreate_instance` with `external_input=True`.
+In-process `create_instance` still accepts paths.
 
 The backend exposes scorer types at `GET /api/scorers/types`, lists registered
 instances at `GET /api/scorers`, retrieves one at `GET /api/scorers/{name}`, and
@@ -172,6 +183,36 @@ Scorer list responses build identifiers only for the requested page. Runtime
 replacement clears the cached scorer service so requests use the new registry.
 
 The backend owns file-upload handling and cleanup, not the registry.
+
+## Source Registry
+
+`SourceRegistry` holds observation sources, the components that acquire the
+evidence a source-backed scorer judges (a conversation, a trace, files on a
+surface). It discovers the source classes exported from
+`pyrit.score.observation` and holds configured instances under `.instances`,
+like the converter, scorer, and target registries. Sources have their own
+namespace rather than sharing the scorer namespace: a source is configured
+independently of the scorer that reads it, and one source can serve several
+scorers.
+
+A scorer's `source` argument is a registry reference, so a scorer can name a
+registered source instead of receiving the object:
+
+```python
+from pyrit.registry import ScorerRegistry, SourceRegistry
+
+SourceRegistry.get_registry_singleton().create_named_instance(
+    name="workspace",
+    type_name="LocalFileSurfaceSource",
+    params={"root": "/path/to/workspace"},
+)
+scorer = ScorerRegistry.get_registry_singleton().create_instance("FileWriteScorer", source="workspace")
+```
+
+A live source object is still accepted and passes through unchanged.
+`ScorerIdentifier` declares `source` in `constructor_references` rather than as
+a promoted field, so stored scorer identities, their hashes, and the memory
+schema are unchanged.
 
 ## Attack Class Registry
 

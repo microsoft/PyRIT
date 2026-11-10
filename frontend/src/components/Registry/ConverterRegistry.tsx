@@ -12,6 +12,8 @@ import {
   DialogTitle,
   Field,
   Input,
+  MessageBar,
+  MessageBarBody,
   Select,
   Spinner,
   Table,
@@ -24,10 +26,11 @@ import {
   mergeClasses,
   useRestoreFocusTarget,
 } from '@fluentui/react-components'
-import { AddRegular, ArrowSyncRegular, DismissRegular, SearchRegular } from '@fluentui/react-icons'
+import { AddRegular, DismissRegular, SearchRegular } from '@fluentui/react-icons'
 
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useRuntime } from '@/hooks/useRuntime'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import { convertersApi } from '@/services/api'
 import { toApiError } from '@/services/errors'
 import type { ConverterInstance } from '@/types'
@@ -74,15 +77,27 @@ export default function ConverterRegistry() {
   const styles = useConverterRegistryStyles()
   const pageStyles = useConverterRegistryPageStyles()
   const [converters, setConverters] = useState<ConverterInstance[]>([])
+  const [hasShownConverters, setHasShownConverters] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [outputFilter, setOutputFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activeGeneration, setActiveGeneration] = useState(generation)
+  if (activeGeneration !== generation) {
+    setActiveGeneration(generation)
+    setConverters([])
+    setHasShownConverters(false)
+    setLoading(true)
+    setError(null)
+  }
   const [createToken, setCreateToken] = useState<DialogToken | null>(null)
   const [converterToRemove, setConverterToRemove] = useState<ConverterInstance | null>(null)
   const [removing, setRemoving] = useState(false)
+  // Deletion errors live in their own state so they can render inside the open
+  // dialog; the page-level `error` banner sits under the dialog's aria-hidden root.
+  const [removeError, setRemoveError] = useState<string | null>(null)
   const [focusRestore, setFocusRestore] = useState<FocusRestore | null>(null)
   // Both dialogs open from state rather than from a DialogTrigger, so mark the
   // opening controls as restore targets the way FeedbackDialog does; that is what
@@ -98,6 +113,8 @@ export default function ConverterRegistry() {
   // and because the restore below has to read it as of the commit it runs in
   // rather than as of the render that requested it.
   const openDialogRef = useRef<DialogToken | null>(null)
+  const listEpoch = useRef({})
+  const mounted = useRef(false)
 
   const openDialog = (dialog: DialogToken['dialog']): DialogToken => {
     const token: DialogToken = { dialog }
@@ -133,34 +150,45 @@ export default function ConverterRegistry() {
     target?.focus()
   }, [focusRestore])
 
-  const loadConverters = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const loadConverters = useCallback(async (pruneRemovedFilters: boolean = false) => {
+    if (!mounted.current) return
+    const epoch = {}
+    listEpoch.current = epoch
     try {
       const response = await convertersApi.listConverters()
+      if (epoch !== listEpoch.current) return
       setConverters(response.items)
-      setTypeFilter((current) => (
-        current && response.items.some((converter) => converter.identifier.class_name === current)
-          ? current
-          : ''
-      ))
-      setOutputFilter((current) => (
-        current && response.items.some((converter) => converter.identifier.supported_output_types?.includes(current))
-          ? current
-          : ''
-      ))
+      if (response.items.length > 0) setHasShownConverters(true)
+      setError(null)
+      // Explicit removal clears obsolete facets; background snapshots preserve the user's view.
+      if (pruneRemovedFilters) {
+        setTypeFilter((current) => (
+          current && response.items.some((converter) => converter.identifier.class_name === current)
+            ? current
+            : ''
+        ))
+        setOutputFilter((current) => (
+          current && response.items.some((converter) => converter.identifier.supported_output_types?.includes(current))
+            ? current
+            : ''
+        ))
+      }
     } catch (err) {
-      setError(toApiError(err).detail)
+      if (epoch === listEpoch.current) setError(toApiError(err).detail)
     } finally {
-      setLoading(false)
+      if (epoch === listEpoch.current) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    mounted.current = true
+    let active = true
     Promise.resolve().then(() => {
-      void loadConverters()
+      if (active) void loadConverters()
     })
+    return () => { active = false; mounted.current = false; listEpoch.current = {} }
   }, [loadConverters, generation])
+  useAutoRefresh(loadConverters, !loading && !removing)
 
   const openCreateDialog = (event: MouseEvent<HTMLButtonElement>) => {
     createTriggerRef.current = event.currentTarget
@@ -176,30 +204,34 @@ export default function ConverterRegistry() {
   const openRemoveDialog = (event: MouseEvent<HTMLButtonElement>, converter: ConverterInstance) => {
     removeTriggerRef.current = event.currentTarget
     openDialog('remove')
+    setRemoveError(null)
     setConverterToRemove(converter)
   }
 
   const dismissRemoveDialog = () => {
     openDialogRef.current = null
     setConverterToRemove(null)
+    setRemoveError(null)
     restoreFocus(removeTriggerRef.current)
   }
 
   const removeConverter = async () => {
     if (!converterToRemove) return
     setRemoving(true)
-    setError(null)
+    setRemoveError(null)
     try {
       await convertersApi.deleteConverter(converterToRemove.converter_id)
+      setConverters((current) => current.filter((item) => item.converter_id !== converterToRemove.converter_id))
       // The row that opened the dialog is about to unmount, so this restores to
       // New Converter. Doing it before the refresh keeps focus off <body> while
       // the list reloads. No token check is needed: Cancel is disabled and the
       // Escape handler is ignored while `removing`, so this dialog is still the
       // one on screen.
       dismissRemoveDialog()
-      await loadConverters()
+      restoreFocus(newConverterRef.current)
+      await loadConverters(true)
     } catch (err) {
-      setError(toApiError(err).detail)
+      setRemoveError(toApiError(err).detail)
     } finally {
       setRemoving(false)
     }
@@ -219,8 +251,13 @@ export default function ConverterRegistry() {
     && (!typeFilter || converter.identifier.class_name === typeFilter)
     && (!outputFilter || converter.identifier.supported_output_types?.includes(outputFilter))
   ))
-  const types = [...new Set(converters.map((converter: ConverterInstance) => converter.identifier.class_name))].sort()
-  const outputs = [...new Set(converters.flatMap((converter: ConverterInstance) => converter.identifier.supported_output_types ?? []))].sort()
+  const types = [...new Set([
+    ...converters.map((converter: ConverterInstance) => converter.identifier.class_name), ...(typeFilter ? [typeFilter] : []),
+  ])].sort()
+  const outputs = [...new Set([
+    ...converters.flatMap((converter: ConverterInstance) => converter.identifier.supported_output_types ?? []),
+    ...(outputFilter ? [outputFilter] : []),
+  ])].sort()
 
   return (
     <div className={styles.root} data-testid="converter-registry">
@@ -234,15 +271,6 @@ export default function ConverterRegistry() {
           <Text className={pageStyles.subtitle}>Browse configured converters and inspect their identity.</Text>
         </div>
         <div className={styles.actions}>
-          <Button
-            className={styles.action}
-            appearance="subtle"
-            icon={<ArrowSyncRegular />}
-            disabled={loading}
-            onClick={() => void loadConverters()}
-          >
-            Refresh
-          </Button>
           <Button
             {...restoreFocusTarget}
             ref={newConverterRef}
@@ -262,9 +290,7 @@ export default function ConverterRegistry() {
         </div>
       )}
       {!loading && error && (
-        <div className={`${styles.state} ${styles.error}`}>
-          <Text>Error: {error}</Text>
-        </div>
+        <MessageBar intent="error"><MessageBarBody>{error}</MessageBarBody></MessageBar>
       )}
       {!loading && !error && converters.length === 0 && (
         <div className={styles.state}>
@@ -280,7 +306,7 @@ export default function ConverterRegistry() {
           </Button>
         </div>
       )}
-      {!loading && !error && converters.length > 0 && (
+      {!loading && (hasShownConverters || converters.length > 0) && (
         <>
         <div className={pageStyles.filters}>
           <Field label="Search converters" className={pageStyles.search}>
@@ -368,7 +394,10 @@ export default function ConverterRegistry() {
           // list, but only the opening it belongs to may clear the dialog state
           // and move focus, so it cannot pull focus out of a dialog the user
           // opened in the meantime or close one they reopened.
-          if (createToken && openDialogRef.current === createToken) closeCreateDialog()
+          if (createToken && openDialogRef.current === createToken) {
+            closeCreateDialog()
+            restoreFocus(newConverterRef.current)
+          }
           void loadConverters()
         }}
       />
@@ -384,6 +413,11 @@ export default function ConverterRegistry() {
               {converterToRemove
                 ? `Remove "${converterToRemove.converter_id}" from the converter registry?`
                 : ''}
+              {removeError && (
+                <div role="alert">
+                  <MessageBar intent="error"><MessageBarBody>{removeError}</MessageBarBody></MessageBar>
+                </div>
+              )}
             </DialogContent>
             <DialogActions>
               <Button disabled={removing} onClick={dismissRemoveDialog}>Cancel</Button>

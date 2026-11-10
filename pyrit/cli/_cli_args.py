@@ -22,20 +22,20 @@ import shlex
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Literal, get_args
 from uuid import UUID
 
+from pyrit.common import print_deprecation_message
 from pyrit.common.cli_helpers import (
     CONFIG_FILE_HELP,
     validate_log_level,
     validate_log_level_argparse,
 )
-from pyrit.common.deprecation import print_deprecation_message
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from pyrit.models.parameter import Parameter
+    from pyrit.models import Parameter
 
 # ---------------------------------------------------------------------------
 # Database type constants
@@ -186,7 +186,7 @@ def parse_dataset_source(value: str) -> Any:
     Raises:
         ValueError: If the token is malformed.
     """
-    from pyrit.models.scenario_dataset import DatasetSourceInput
+    from pyrit.models import DatasetSourceInput
 
     parts = value.split(":")
     if len(parts) > 2 or not parts[0].strip():
@@ -204,7 +204,7 @@ def parse_dataset_fetch(value: str) -> str:
     Raises:
         ValueError: If the policy is unsupported.
     """
-    from pyrit.models.scenario_dataset import DatasetFetchPolicy
+    from pyrit.models import DatasetFetchPolicy
 
     if value not in {policy.value for policy in DatasetFetchPolicy}:
         choices = ", ".join(f"'{policy.value}'" for policy in DatasetFetchPolicy)
@@ -222,7 +222,7 @@ def build_dataset_request_fields(args: dict[str, Any]) -> dict[str, Any]:
     Raises:
         ValueError: If new and deprecated flags are mixed.
     """
-    from pyrit.models.scenario_dataset import ScenarioDatasetRequest
+    from pyrit.models import ScenarioDatasetRequest
 
     new_keys = ("datasets", "max_per_dataset", "max_total", "dataset_fetch")
     new_form = any(args.get(key) is not None for key in new_keys)
@@ -244,7 +244,7 @@ def build_dataset_request_fields(args: dict[str, Any]) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for key in ("dataset_names", "max_dataset_size"):
         if args.get(key) is not None:
-            from pyrit.common.deprecation import print_deprecation_message
+            from pyrit.common import print_deprecation_message
 
             print_deprecation_message(
                 old_item="--" + key.replace("_", "-"),
@@ -510,7 +510,7 @@ ARG_HELP = {
     "scenario_techniques": "List of technique names to run (e.g., base64 rot13). Append one or more "
     "registered converters to a technique with ':converter.<name>' (repeatable), e.g. "
     "role_play_movie_script:converter.translation_spanish:converter.leetspeak. The converter is appended on top of "
-    "the technique's built-in converters. Use --list-converters to see registered converter names",
+    "the technique's built-in converters. Use the list-converters command to see registered converter names",
     "max_concurrency": "Maximum number of concurrent attack executions (must be >= 1)",
     "max_retries": "Maximum number of automatic retries on exception (must be >= 0)",
     "memory_labels": 'Additional labels as JSON string (e.g., \'{"experiment": "test1"}\')',
@@ -529,7 +529,7 @@ ARG_HELP = {
     + ".",
     "target": "Name of a registered target from the TargetRegistry to use as the objective target. "
     "Targets are registered by initializers (e.g., 'target' initializer). "
-    "Use --list-targets to see available target names after initializers have run",
+    "Use the list-targets command to see available target names after initializers have run",
 }
 
 
@@ -914,13 +914,15 @@ def _arg_spec_from_parameter(*, param: Parameter) -> _ArgSpec:
         _ArgSpec: Spec with ``scenario__<name>`` result key and a parser
             that routes through ``pyrit.models.parameter.coerce_value``.
     """
-    from pyrit.models.parameter import Parameter
+    from pyrit.models import Parameter
+    from pyrit.models.parameter import _unwrap_optional
 
-    multi = get_origin(param.param_type) is list
+    param_type = _unwrap_optional(param.param_type)
+    multi = param.is_list
     parser: Callable[[str], Any] | None
     if multi:
         # Per-element coercion via a temporary scalar-typed Parameter.
-        type_args = get_args(param.param_type)
+        type_args = get_args(param_type)
         element_type = type_args[0] if type_args else str
         element_param = Parameter(
             name=param.name,

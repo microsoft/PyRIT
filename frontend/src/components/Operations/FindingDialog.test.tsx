@@ -72,6 +72,12 @@ async function confirmRemoval(user: UserEvent, key: string): Promise<void> {
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Keep it' })).not.toBeInTheDocument())
 }
 
+function requestPageUnload(): Event {
+  const event = new Event('beforeunload', { cancelable: true })
+  fireEvent(window, event)
+  return event
+}
+
 describe('FindingDialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -131,6 +137,93 @@ describe('FindingDialog', () => {
     const category = screen.getByRole('combobox', { name: 'Category' })
     expect(reproduction.compareDocumentPosition(technique) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(reproduction.compareDocumentPosition(category) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+  })
+
+  it('arms the unsaved changes guard for a severity only change in a new finding', async () => {
+    const user = userEvent.setup()
+    renderDialog()
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+
+    await pick(user, 'Severity', 'Critical')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+  })
+
+  it('does not arm the unsaved changes guard for an untouched edit dialog', () => {
+    renderDialog({
+      editing: true, initialValues: { title: 'Existing', severity: 'low', field_values: { description: 'Details' } },
+    })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
+  it.each([
+    ['Title', 'Existing'],
+    ['Description', 'Details'],
+    ['Other Severity', 'Team severity'],
+    ['Other Harm-type', 'Team harm'],
+  ])('protects a %s edit and disarms the guard when its original value is restored', async (label: string, originalValue: string) => {
+    const user = userEvent.setup()
+    renderDialog({
+      editing: true,
+      initialValues: {
+        title: 'Existing', severity: 'Team severity',
+        field_values: { description: 'Details', harm_type: 'Team harm' },
+      },
+    })
+    const field = screen.getByRole('textbox', { name: label })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.type(field, ' edited')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.clear(field)
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.type(field, originalValue)
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
+  it('protects a severity edit and disarms the guard when the original severity is restored', async () => {
+    const user = userEvent.setup()
+    renderDialog({
+      editing: true, initialValues: { title: 'Existing', severity: 'low', field_values: { description: 'Details' } },
+    })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await pick(user, 'Severity', 'Critical')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await pick(user, 'Severity', 'Low')
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
+  it('protects a harm-type edit and disarms the guard when the original category is restored', async () => {
+    const user = userEvent.setup()
+    renderDialog({
+      editing: true,
+      initialValues: { title: 'Existing', severity: 'low', field_values: { description: 'Details', harm_type: 'Malware' } },
+    })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await pick(user, 'Harm-type', 'Hate Speech')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await pick(user, 'Harm-type', 'Malware')
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+  })
+
+  it('protects evidence changes, disarms the guard when cleared, and removes it on unmount', async () => {
+    const user = userEvent.setup()
+    const { unmount } = render(<FluentProvider theme={webLightTheme}><FindingDialog fields={DEFAULT_FINDING_FIELDS_FIXTURE} evidenceField
+      onSave={jest.fn()} onClose={jest.fn()} /></FluentProvider>)
+    const evidence = screen.getByRole('textbox', { name: 'Evidence attack ID' })
+
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.type(evidence, 'attack-1')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    await user.clear(evidence)
+    expect(requestPageUnload().defaultPrevented).toBe(false)
+    await user.type(evidence, 'attack-2')
+    expect(requestPageUnload().defaultPrevented).toBe(true)
+    unmount()
+    expect(requestPageUnload().defaultPrevented).toBe(false)
   })
 
   it('disables save until every required value is filled', async () => {

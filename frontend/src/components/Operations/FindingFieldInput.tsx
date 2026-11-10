@@ -55,11 +55,14 @@ interface LevelState {
  */
 function levelState(field: FindingField, values: Record<string, string>, depth: number, otherChosen: boolean): LevelState {
   const levels = choiceLevels(field)
+  const level = levels[depth]
+  if (level === undefined) throw new RangeError(`Invalid choice depth ${depth} for field ${field.key}.`)
   const fieldOptions = levelOptions(field, values, depth)
   const options = fieldOptions.map((option: FindingFieldOption) => ({ value: option.key, text: option.label }))
-  const value = filled(ownValue(values, levels[depth].key)) ?? ''
+  const value = filled(ownValue(values, level.key)) ?? ''
   const unmatched = !otherChosen && value !== '' && findOption(fieldOptions, value) === undefined
-  const parentBlank = depth > 0 && filled(ownValue(values, levels[depth - 1].key)) === null
+  const parent = levels[depth - 1]
+  const parentBlank = parent !== undefined && filled(ownValue(values, parent.key)) === null
   return {
     options: unmatched ? [{ value, text: value }, ...options] : options,
     selected: otherChosen ? OTHER_VALUE : value,
@@ -77,7 +80,9 @@ function cascadeChanges(
   value: string,
 ): Record<string, string> {
   const levels = choiceLevels(field)
-  const changes: Record<string, string> = { [levels[depth].key]: value }
+  const selectedLevel = levels[depth]
+  if (selectedLevel === undefined) throw new RangeError(`Invalid choice depth ${depth} for field ${field.key}.`)
+  const changes: Record<string, string> = { [selectedLevel.key]: value }
   const next = { ...values, ...changes }
   for (const [lower, level] of levels.entries()) {
     if (lower <= depth) continue
@@ -171,8 +176,8 @@ function ChoiceFieldInput({
         )
       })}
       {otherChosen && <Field label={`${OTHER_TEXT} ${field.label}`} required>
-        <Input value={ownValue(values, field.key) ?? ''} disabled={disabled} name={field.key} autoComplete="off"
-          onChange={(_, data) => {
+        <Input className={styles.input} value={ownValue(values, field.key) ?? ''} disabled={disabled} name={field.key}
+          autoComplete="off" onChange={(_, data) => {
             onOtherBlankChange?.(data.value.trim() === '')
             onChange({ [field.key]: data.value })
           }} />
@@ -182,6 +187,7 @@ function ChoiceFieldInput({
 }
 
 function TextFieldInput({ field, values, disabled, onChange }: FieldControlProps): JSX.Element {
+  const styles = useFindingFieldInputStyles()
   const value = ownValue(values, field.key) ?? ''
   const report = (text: string): void => { onChange({ [field.key]: text }) }
   return (
@@ -189,7 +195,7 @@ function TextFieldInput({ field, values, disabled, onChange }: FieldControlProps
       {field.type === 'multiline'
         ? <Textarea value={value} disabled={disabled} resize="vertical" name={field.key} autoComplete="off"
           onChange={(_, data) => { report(data.value) }} />
-        : <Input value={value} disabled={disabled} name={field.key} autoComplete="off"
+        : <Input className={styles.input} value={value} disabled={disabled} name={field.key} autoComplete="off"
           onChange={(_, data) => { report(data.value) }} />}
     </Field>
   )

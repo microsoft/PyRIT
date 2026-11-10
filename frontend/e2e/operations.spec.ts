@@ -336,7 +336,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   expect(new URL(href!, 'http://localhost').searchParams.getAll('operation_id')).toEqual([operation.id])
   await historyLink.click()
   await expect(page).toHaveURL(/\/attack\/history\?/)
-  await expect(page.getByRole('row', { name: 'Open ManualAttack attack', exact: true })).toHaveCount(7)
+  await expect(page.getByRole('row', { name: /^Open attack: Offline saved history [0-6]$/ })).toHaveCount(7)
   await expect(page.getByRole('combobox', { name: 'All operations' })).toHaveValue(name)
   await page.goto(`/operations/${operation.id}`)
   await page.getByRole('link', { name: 'Scanner history', exact: true }).click()
@@ -349,7 +349,7 @@ test('selects saved operations inline and revisits ID-scoped attack history @see
   await expect(page).toHaveURL(/\/attack\/history\?/)
   expect((await returnedAttacks).ok()).toBeTruthy()
   await expect(page.getByRole('progressbar', { name: 'Loading attacks...' })).toHaveCount(0, { timeout: 30_000 })
-  await expect(page.getByRole('row', { name: 'Open ManualAttack attack', exact: true })).toHaveCount(7)
+  await expect(page.getByRole('row', { name: /^Open attack: Offline saved history [0-6]$/ })).toHaveCount(7)
   await page.goto(`/operations/${operation.id}`)
   await page.reload()
   await expect(historyLink).toBeVisible()
@@ -568,4 +568,35 @@ test('keeps the page usable after removing a retired value and cancelling the ed
   await expect(dialog).toBeVisible()
   await expect(retired.getByText(notes, { exact: true })).toBeVisible()
   await expect(removeButton).toBeVisible()
+})
+
+test.describe('finding dialog on a touch screen', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true })
+
+  test('gives every single-line field a 44px touch target @seeded', async ({ page, request }) => {
+    const version = await (await request.get('/api/version')).json()
+    const headers = { 'PyRIT-Compatibility-ID': version.compatibility_id }
+    const operationResponse = await request.post('/api/operations', {
+      headers, data: { name: `Touch fields ${Date.now()}` },
+    })
+    expect(operationResponse.status()).toBe(201)
+    const operation: Operation = await operationResponse.json()
+
+    await page.goto(`/operations/${operation.id}`)
+    await waitForAppReady(page)
+    await page.getByRole('button', { name: 'New finding' }).click()
+    const dialog = page.getByRole('dialog', { name: 'New finding' })
+    await dialog.getByRole('combobox', { name: 'Harm-type' }).click()
+    await page.getByRole('option', { name: 'Other', exact: true }).click()
+    for (const field of [
+      dialog.getByRole('textbox', { name: 'Title' }),
+      dialog.getByRole('combobox', { name: 'Severity' }),
+      dialog.getByRole('combobox', { name: 'Harm-type' }),
+      dialog.getByRole('textbox', { name: 'Other Harm-type' }),
+      dialog.getByRole('textbox', { name: 'Evidence attack ID' }),
+    ]) {
+      await expect(field).toBeVisible()
+      expect((await field.boundingBox())?.height).toBeGreaterThanOrEqual(44)
+    }
+  })
 })

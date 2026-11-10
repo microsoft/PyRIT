@@ -19,11 +19,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import yaml
 
+from pyrit.common import YamlLoadable, verify_and_resolve_path
 from pyrit.common.path import DEFAULT_CONFIG_PATH
 from pyrit.common.text_helper import is_non_empty_string
-from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_helper import safe_load_yaml
-from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.models import FindingFields, class_name_to_snake_case
 from pyrit.setup.environment_loading import validate_env_akv_strict
 from pyrit.setup.initialization import AZURE_SQL, IN_MEMORY, SQLITE, initialize_pyrit_async, reinitialize_pyrit_async
@@ -742,8 +741,7 @@ class ConfigurationLoader(YamlLoadable):
                 fields. Code that calls ``set_active_finding_fields`` directly isn't checked.
         """
         from pyrit.registry import InitializerRegistry
-        from pyrit.setup.initializers.targets import TargetInitializer
-        from pyrit.setup.initializers.techniques import TechniqueInitializer
+        from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
         registry = await asyncio.to_thread(InitializerRegistry)
         registry.configure_custom_scripts_source(self.custom_initializers_source)
@@ -792,8 +790,7 @@ class ConfigurationLoader(YamlLoadable):
         Returns:
             Initializers constructed under the replacement environment.
         """
-        from pyrit.setup.initializers.targets import TargetInitializer
-        from pyrit.setup.initializers.techniques import TechniqueInitializer
+        from pyrit.setup.initializers import TargetInitializer, TechniqueInitializer
 
         initializers = list(self.resolve_initializers(registry=prepared.initializer_registry))
         initializers.extend(initializer_type() for initializer_type in prepared.script_initializer_types)

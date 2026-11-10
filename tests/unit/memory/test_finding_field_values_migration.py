@@ -20,7 +20,7 @@ from sqlalchemy.schema import CreateTable
 from pyrit.memory.memory_models import FindingEntry
 from pyrit.memory.migration import check_schema_migrations
 
-PREVIOUS_REVISION = "e7c4a2d9f013"
+PREVIOUS_REVISION = "d6de1045cca4"
 REVISION = "d43b1bcf9c56"
 CHECKS = ("ck_findings_severity", "ck_findings_severity_other", "ck_findings_harm_type_other")
 OPERATION_ID = "00000000-0000-0000-0000-000000000001"
@@ -210,7 +210,7 @@ def test_upgrade_compiles_for_sql_server(caplog: pytest.LogCaptureFixture) -> No
         _migration().upgrade()
     ddl = output.getvalue()
     assert "Skipping custom severity trimming" in caplog.text
-    assert _migration().down_revision == "e7c4a2d9f013"
+    assert _migration().down_revision == PREVIOUS_REVISION
     for name in CHECKS:
         assert f"DROP CONSTRAINT {name}" in ddl
     drops = [match.start() for match in re.finditer("DROP CONSTRAINT", ddl)]

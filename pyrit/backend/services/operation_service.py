@@ -4,7 +4,7 @@
 from collections.abc import Sequence
 from uuid import UUID, uuid4
 
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
     EvidenceAvailability,
     FindingCreateRequest,
@@ -192,7 +192,13 @@ class OperationService:
         return saved
 
     async def list_findings_async(
-        self, *, operation_id: UUID, limit: int, offset: int, title_query: str | None = None
+        self,
+        *,
+        operation_id: UUID,
+        limit: int,
+        offset: int,
+        title_query: str | None = None,
+        title_pattern: str | None = None,
     ) -> FindingListResponse:
         """
         Read one page of an operation's findings and whether there is a next page.
@@ -207,6 +213,7 @@ class OperationService:
             offset=offset,
             title_query=title_query,
             severity_order=get_active_finding_fields().severity_order,
+            title_pattern=title_pattern,
         )
         has_more = len(findings) > limit
         page = findings[:limit]

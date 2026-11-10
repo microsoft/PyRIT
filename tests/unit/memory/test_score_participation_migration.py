@@ -60,7 +60,7 @@ def test_private_score_participation_has_unique_head_and_upgrades_current_parent
     config = Config()
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[3] / "pyrit" / "memory" / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["d43b1bcf9c56"]
+    assert len(scripts.get_heads()) == 1
     assert scripts.get_revision("e7c4a2d9f013").down_revision == "c8d3e5f7a901"
     engine = sa.create_engine("sqlite:///:memory:")
     try:

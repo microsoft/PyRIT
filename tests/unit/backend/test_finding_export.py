@@ -18,7 +18,7 @@ from docx.table import Table
 from fastapi.testclient import TestClient
 
 from pyrit.backend.main import app
-from pyrit.backend.models.attacks import ScoreView
+from pyrit.backend.models import ScoreView
 from pyrit.backend.models.operations import (
     EvidenceAvailability,
     FindingEvidenceItem,
@@ -454,6 +454,18 @@ def test_export_rejects_invalid_dashboard_origin(
     response = _client().post(f"/api/operations/{uuid4()}/findings/export", json=body, headers=compatibility_headers)
 
     assert response.status_code == 422
+    assert "content-disposition" not in response.headers
+
+
+@pytest.mark.parametrize(("count", "status_code"), [(1_000, 404), (1_001, 422)])
+def test_export_limits_the_number_of_findings(
+    compatibility_headers: dict[str, str], count: int, status_code: int
+) -> None:
+    finding_ids = [uuid4() for _ in range(count)]
+
+    response = _export(headers=compatibility_headers, operation_id=MISSING_ID, finding_ids=finding_ids)
+
+    assert response.status_code == status_code
     assert "content-disposition" not in response.headers
 
 

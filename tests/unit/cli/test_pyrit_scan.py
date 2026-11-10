@@ -5,6 +5,7 @@
 Unit tests for the pyrit_scan CLI module (thin REST client).
 """
 
+import asyncio
 import logging
 from argparse import Namespace
 from datetime import UTC
@@ -87,6 +88,20 @@ def test_compatibility_failure_exits_without_replay(stage, capsys):
         client.start_scenario_run_async.assert_awaited_once()
         client.get_scenario_run_async.assert_awaited_once()
         assert "server run may still be active" in output
+
+
+def test_run_scenario_cancellation_requests_server_cancellation(capsys):
+    client = _mock_api_client()
+    with (
+        patch("pyrit.cli.api_client.PyRITApiClient", return_value=client),
+        patch("pyrit.cli._server_launcher.ServerLauncher.probe_health_async", new=AsyncMock(return_value=True)),
+        patch.object(pyrit_scan, "_poll_until_terminal_async", new=AsyncMock(side_effect=asyncio.CancelledError)),
+    ):
+        exit_code = pyrit_scan.main(["run", "test_scenario", "--target", "t"])
+
+    assert exit_code == 1
+    client.cancel_scenario_run_async.assert_awaited_once_with(scenario_result_id="test-id-123")
+    assert "Cancellation request sent to server." in capsys.readouterr().out
 
 
 def test_dataset_filter_help_covers_every_request_model_key():
@@ -265,6 +280,16 @@ class TestParseArgs:
     def test_list_with_request_timeout(self):
         args = pyrit_scan.parse_args(["list-scenarios", "--request-timeout", "30"])
         assert args.request_timeout == 30
+
+    def test_list_with_fractional_request_timeout(self):
+        args = pyrit_scan.parse_args(["list-targets", "--request-timeout", "0.5"])
+        assert args.request_timeout == 0.5
+
+    @pytest.mark.parametrize("value", ["0", "-1", "inf", "nan", "slow"])
+    def test_list_rejects_invalid_request_timeout(self, value):
+        with pytest.raises(SystemExit) as exc_info:
+            pyrit_scan.parse_args(["list-targets", "--request-timeout", value])
+        assert exc_info.value.code == 2
 
     def test_start_server_with_startup_timeout(self):
         args = pyrit_scan.parse_args(["start-server", "--startup-timeout", "45.5"])
@@ -1261,13 +1286,14 @@ class TestScenarioParamCoercion:
             parser.parse_args(["--dry-run", "on"])
         assert "invalid value" in capsys.readouterr().err
 
-    def test_list_int_param_coerces_each_value(self):
+    @pytest.mark.parametrize("type_name", ["list[int]", "list[int] | None", "list[int | None] | None"])
+    def test_list_int_param_coerces_each_value(self, type_name: str) -> None:
         from argparse import ArgumentParser
 
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[_sp(name="sample_ids", description="...", param_type="list[int]", is_list=True)],
+            params=[_sp(name="sample_ids", description="...", param_type=type_name, is_list=True)],
         )
 
         parsed = parser.parse_args(["--sample-ids", "1", "2", "3"])
@@ -1961,9 +1987,8 @@ class TestPollStreamsRetryWarnings:
     async def test_poll_prints_retry_warnings_once(self, capsys):
         from datetime import datetime
 
-        from pyrit.models import ScenarioRunState
+        from pyrit.models import RetryEvent, ScenarioRunState
         from pyrit.models.catalog import AttackRetrySummary, ScenarioRunSummary
-        from pyrit.models.retry_event import RetryEvent
 
         now = datetime(2025, 1, 1, tzinfo=UTC)
         retry = RetryEvent(

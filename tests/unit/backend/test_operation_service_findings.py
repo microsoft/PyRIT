@@ -14,6 +14,35 @@ from unit.backend.mocks import read_finding_async
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
 
+@pytest.mark.parametrize(("title_query", "title_pattern"), [("leak", None), (None, "Le_k%")])
+async def test_list_filters_titles_and_pages_in_configured_severity_order(
+    sqlite_instance: SQLiteMemory,
+    retired_value_finding_async: Finding,
+    title_query: str | None,
+    title_pattern: str | None,
+) -> None:
+    finding = retired_value_finding_async
+    await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=finding.operation_id, title="Leak followup", severity="sev2")
+    )
+    await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=finding.operation_id, title="Unrelated", severity="sev1")
+    )
+    pages = [
+        await OperationService().list_findings_async(
+            operation_id=finding.operation_id,
+            limit=1,
+            offset=offset,
+            title_query=title_query,
+            title_pattern=title_pattern,
+        )
+        for offset in (0, 1)
+    ]
+    assert [page.items[0].title for page in pages] == ["Leak", "Leak followup"]
+    assert [page.has_more for page in pages] == [True, False]
+    assert [page.next_offset for page in pages] == [1, None]
+
+
 async def _update_async(
     *,
     finding: Finding,

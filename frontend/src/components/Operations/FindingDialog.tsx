@@ -76,8 +76,8 @@ function sameFinding(left: FindingCreate, right: FindingCreate): boolean {
 }
 
 /** Each field's section heading, shown where the section differs from the field before it. */
-function sectionHeading(slots: FindingField[], index: number): string | null {
-  const section = slots[index].section
+function sectionHeading(field: FindingField, slots: FindingField[], index: number): string | null {
+  const section = field.section
   return section !== null && section !== slots[index - 1]?.section ? section : null
 }
 
@@ -153,11 +153,11 @@ export default function FindingDialog({
             {context ?? <Text>Record a human assessment. No attack is required.</Text>}
             {error && <MessageBar intent="error" aria-live="polite"><MessageBarBody>{error}</MessageBarBody></MessageBar>}
             <Field label="Title" required>
-              <Input value={draft.title} disabled={saving} name="title" autoComplete="off"
+              <Input className={styles.input} value={draft.title} disabled={saving} name="title" autoComplete="off"
                 onChange={(_, data) => { setDraft(value => ({ ...value, title: data.value })) }} />
             </Field>
             {slots.map((field: FindingField, index: number) => {
-              const heading = sectionHeading(slots, index)
+              const heading = sectionHeading(field, slots, index)
               return (
                 <Fragment key={field.key}>
                   {heading !== null && <Text as="h3" size={400} weight="semibold" className={styles.section}>
@@ -175,7 +175,8 @@ export default function FindingDialog({
               onUndo={() => { setRemoved(new Set()) }} />
             {evidenceField && <Field label="Evidence attack ID"
               hint="Optional. Links a saved attack as evidence; the attack is not changed. Its ID is in the attack's address.">
-              <Input value={attackResultId} disabled={saving} name="attack_result_id" autoComplete="off"
+              <Input className={styles.input} value={attackResultId} disabled={saving} name="attack_result_id"
+                autoComplete="off"
                 onChange={(_, data) => { setAttackResultId(data.value) }} />
             </Field>}
             <div className={styles.actions}>

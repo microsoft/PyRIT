@@ -11,16 +11,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pyrit.models import Parameter
-from pyrit.models.catalog.scenario_preset import ScenarioPreset
-from pyrit.models.scenario_dataset import DatasetSourceInput, ScenarioDatasetRequest
-from pyrit.registry.components.converter_registry import ConverterRegistry
-from pyrit.registry.components.scenario_preset_registry import (
+from pyrit.models import DatasetSourceInput, Parameter, ScenarioDatasetRequest, ScenarioPreset
+from pyrit.registry import (
+    ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioPresetConflictError,
     ScenarioPresetNameRegisteredError,
     ScenarioPresetRegistry,
+    ScenarioPresetStorage,
+    ScenarioRegistry,
 )
-from pyrit.registry.components.scenario_registry import ScenarioMetadata, ScenarioRegistry
-from pyrit.registry.scenario_preset_storage import ScenarioPresetConflictError, ScenarioPresetStorage
 from unit.mocks import make_technique_class
 
 SCENARIO_NAME = "foundry.red_team_agent"

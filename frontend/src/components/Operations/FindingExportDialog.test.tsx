@@ -8,6 +8,7 @@ import { DEFAULT_FINDING_FIELDS_FIXTURE } from '@/test-utils/findingFieldsFixtur
 import type { FindingListItem, FindingListResponse, Operation } from '@/types'
 import { downloadFile } from '@/utils/downloadFile'
 import FindingExportDialog from './FindingExportDialog'
+import * as findingExportLimits from './findingExportLimits'
 
 jest.mock('@/services/api', () => ({ operationsApi: { listFindings: jest.fn(), exportFindings: jest.fn() } }))
 jest.mock('@/utils/downloadFile', () => ({ downloadFile: jest.fn() }))
@@ -66,6 +67,8 @@ beforeEach(() => {
   jest.mocked(operationsApi.exportFindings).mockResolvedValue(BLOB)
 })
 
+afterEach(() => { jest.restoreAllMocks() })
+
 describe('FindingExportDialog', () => {
   it('loads every page before enabling download and sends exactly the selected final-page finding', async () => {
     const user = userEvent.setup()
@@ -115,6 +118,34 @@ describe('FindingExportDialog', () => {
     )
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await waitFor(() => expect(screen.getByRole('button', { name: 'Export findings' })).toHaveFocus())
+  })
+
+  it('blocks downloading more findings than one export accepts until the selection fits', async () => {
+    jest.replaceProperty(findingExportLimits, 'MAX_EXPORT_FINDINGS', 2)
+    const user = userEvent.setup()
+    renderDialog()
+    const dialog = await openDialog(user)
+    expect(await within(dialog).findByText('Select at most 2 findings to download at once.')).toBeInTheDocument()
+    const download = within(dialog).getByRole('button', { name: 'Download Word' })
+    expect(download).toBeDisabled()
+
+    await user.click(within(dialog).getByRole('checkbox', { name: BETA.title }))
+    expect(within(dialog).queryByText(/Select at most/)).not.toBeInTheDocument()
+    await user.click(download)
+
+    await waitFor(() => expect(operationsApi.exportFindings).toHaveBeenCalledTimes(1))
+    expect(jest.mocked(operationsApi.exportFindings).mock.calls[0][1].finding_ids).toEqual([ALPHA.id, GAMMA.id])
+  })
+
+  it('stops with an error when the server repeats the same page offset', async () => {
+    ;(operationsApi.listFindings as jest.Mock).mockImplementation(
+      async () => ({ items: [ALPHA], has_more: true, next_offset: 0 }),
+    )
+    const user = userEvent.setup()
+    renderDialog()
+    const dialog = await openDialog(user)
+    expect(await within(dialog).findByText(/did not advance/)).toBeInTheDocument()
+    expect(operationsApi.listFindings).toHaveBeenCalledTimes(1)
   })
 
   it('lists and exports once a finding that a later page repeats', async () => {

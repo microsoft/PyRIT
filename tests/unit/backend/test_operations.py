@@ -15,8 +15,8 @@ from sqlalchemy.exc import IntegrityError
 from pyrit.backend.main import app
 from pyrit.backend.models.operations import EvidenceAvailability, FindingEvidenceCreateRequest
 from pyrit.backend.services.operation_service import FindingNotFoundError, OperationNotFoundError, OperationService
-from pyrit.memory import CentralMemory, SQLiteMemory
-from pyrit.memory.memory_models import AttackResultEntry, Base, PromptMemoryEntry
+from pyrit.memory import AttackResultEntry, CentralMemory, PromptMemoryEntry, SQLiteMemory
+from pyrit.memory.memory_models import Base
 from pyrit.models import (
     DEFAULT_FINDING_FIELDS,
     AttackOutcome,
@@ -69,6 +69,67 @@ def test_operation_description_is_set_on_create_and_edited(compatibility_headers
     assert client.patch(f"/api/operations/{MISSING_ID}", json={"description": "x"}).status_code == 404
     assert TestClient(app).patch(path, json={"description": "x"}).status_code != 200
     assert client.get("/api/operations").json()["items"][0]["description"] == ""
+
+
+def test_operation_description_is_limited(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+
+    created = client.post("/api/operations", json={"name": "Long", "description": "d" * 100_000})
+    path = f"/api/operations/{created.json()['id']}"
+
+    assert created.status_code == 201
+    assert client.post("/api/operations", json={"name": "Too long", "description": "d" * 100_001}).status_code == 422
+    assert client.patch(path, json={"description": "d" * 100_001}).status_code == 422
+    assert client.patch(path, json={"description": "e" * 100_000}).status_code == 200
+    assert [item["name"] for item in client.get("/api/operations").json()["items"]] == ["Long"]
+
+
+@pytest.mark.parametrize("field", ["title", "severity", "description", "harm_type"])
+def test_finding_text_is_limited(compatibility_headers: dict[str, str], field: str) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{client.post('/api/operations', json={'name': 'Limits'}).json()['id']}/findings"
+    nested = field in {"description", "harm_type"}
+
+    def body(value: str) -> dict[str, str | dict[str, str]]:
+        return {
+            "title": value if field == "title" else "Limits",
+            "severity": value if field == "severity" else "low",
+            "field_values": {field: value} if nested else {},
+        }
+
+    created = client.post(path, json=body("x" * 100_000))
+    assert created.status_code == 201
+    finding_path = f"{path}/{created.json()['id']}"
+    updated = client.put(finding_path, json=body("y" * 100_000))
+
+    assert updated.status_code == 200
+    assert updated.json()["field_values" if nested else field] == ({field: "y" * 100_000} if nested else "y" * 100_000)
+    assert client.post(path, json=body("x" * 100_001)).status_code == 422
+    assert client.put(finding_path, json=body("x" * 100_001)).status_code == 422
+    stored = client.get(path).json()["items"][0]
+    assert (stored["field_values"][field] if nested else stored[field]) == "y" * 100_000
+
+
+def test_finding_title_search_is_limited(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    path = f"/api/operations/{client.post('/api/operations', json={'name': 'Search'}).json()['id']}/findings"
+
+    assert client.get(path, params={"title": "_" * 1000}).status_code == 200
+    assert client.get(path, params={"title": "_" * 1001}).status_code == 422
+
+
+async def test_saved_text_over_the_limit_still_loads_async(
+    sqlite_instance: SQLiteMemory, compatibility_headers: dict[str, str]
+) -> None:
+    operation = await sqlite_instance.add_operation_async(Operation(name="Legacy", description="d" * 100_001))
+    await sqlite_instance.add_finding_async(
+        finding=Finding(operation_id=operation.id, title="t" * 100_001, severity="low")
+    )
+    client = TestClient(app, headers=compatibility_headers)
+
+    assert client.get(f"/api/operations/{operation.id}").json()["description"] == "d" * 100_001
+    assert [item["name"] for item in client.get("/api/operations").json()["items"]] == ["Legacy"]
+    assert client.get(f"/api/operations/{operation.id}/findings").json()["items"][0]["title"] == "t" * 100_001
 
 
 def test_operation_rename_keeps_identity_and_rejects_taken_or_invalid_names(
@@ -722,6 +783,22 @@ async def test_finding_search_is_literal_case_insensitive_async(sqlite_instance:
     )
     assert [f.title for f in page.items] == ["100%_Proof"]
     assert page.items[0].evidence_count == 0
+
+
+@pytest.mark.usefixtures("patch_central_database")
+def test_findings_route_forwards_patterns_and_rejects_conflicts(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    operation = client.post("/api/operations", json={"name": "Pattern search"}).json()
+    path = f"/api/operations/{operation['id']}/findings"
+    for title in ("100%_Proof", "100XXProof", "other"):
+        assert client.post(path, json={"title": title, "severity": "low"}).status_code == 201
+    page = client.get(path, params={"title_pattern": "100%proof"})
+    assert page.status_code == 200
+    assert {item["title"] for item in page.json()["items"]} == {"100%_Proof", "100XXProof"}
+    literal = client.get(path, params={"title": "%_proof"})
+    assert [item["title"] for item in literal.json()["items"]] == ["100%_Proof"]
+    for params in ({"title_pattern": "/"}, {"title": "", "title_pattern": "%"}):
+        assert client.get(path, params=params).status_code == 400
 
 
 async def test_concurrent_attach_preserves_one_association_async(

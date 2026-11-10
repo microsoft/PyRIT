@@ -10,9 +10,8 @@ from unittest import mock
 import pytest
 from pydantic import ValidationError
 
-from pyrit.common.apply_defaults import reset_default_values
+from pyrit.common import Singleton, reset_default_values
 from pyrit.common.random_context import get_configured_random_seed
-from pyrit.common.singleton import Singleton
 from pyrit.memory import AzureSQLMemory, CentralMemory, SQLiteMemory
 from pyrit.models import DEFAULT_FINDING_FIELDS, FindingField, FindingFields, MessagePiece
 from pyrit.registry import InitializerRegistry

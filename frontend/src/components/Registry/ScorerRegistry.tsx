@@ -1,11 +1,11 @@
 import { Fragment, useState } from 'react'
 
-import { Button, Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip } from '@fluentui/react-components'
-import { ArrowSyncRegular } from '@fluentui/react-icons'
+import { Divider, mergeClasses, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, Tooltip } from '@fluentui/react-components'
 
 import ChatScorerPicker from '@/components/Chat/ChatScorerPicker'
 import ContextualHelpLabel from '@/components/ContextualHelpLabel'
 import { useUserPreferences } from '@/hooks/useUserPreferences'
+import { useAutoRefresh } from '@/hooks/useAutoRefresh'
 import type { RegisteredComponentReference, ScorerInstance } from '@/types'
 import {
   formatScorerComparisonMetric, scorerComparisonValue, scorerEvidenceLabel, scorerMetricDescription, scorerMetricLabel,
@@ -60,6 +60,7 @@ function MetricCell({ name, value }: { name: string; value: unknown }) {
       ) : (
         <Tooltip relationship="description"
           content={`${scorerMetricDescription(name)} Recorded value: ${String(value)}`}>
+          {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the metric description tooltip */}
           <span className={styles.numeric} tabIndex={0}>{display}</span>
         </Tooltip>
       )}
@@ -161,6 +162,7 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
   const styles = useConverterRegistryStyles()
   const scorerStyles = useScorerRegistryStyles()
   const { preferences, updatePreferences } = useUserPreferences()
+  useAutoRefresh(onRefresh, !loading)
   return (
     <div className={styles.root}>
       <div className={styles.header}>
@@ -171,10 +173,6 @@ export default function ScorerRegistry({ scorers, loading, error, onRefresh }: S
             </ContextualHelpLabel>
           </Text>
           <Text>Browse configured scorers.</Text>
-        </div>
-        <div className={styles.actions}>
-          <Button className={styles.action} appearance="subtle" icon={<ArrowSyncRegular />}
-            onClick={onRefresh} disabled={loading}>Refresh</Button>
         </div>
       </div>
       <div className={scorerStyles.defaultPicker}>
