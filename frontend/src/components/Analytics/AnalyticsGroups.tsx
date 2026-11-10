@@ -42,6 +42,7 @@ export default function AnalyticsGroups({ report, successRate, denominator = 'de
       {drilldownUnavailable && <Text id={reasonId} role="note">
         {report.drilldown_unavailable_reason}
       </Text>}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- scrollable region needs to be keyboard focusable */}
       <section className={styles.groups} aria-label={title} aria-describedby={drilldownDescription} tabIndex={0}>
         {report.groups.map((group: AttackAnalyticsGroup) => {
           const label = analyticsOptionLabel(group)

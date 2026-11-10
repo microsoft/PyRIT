@@ -16,19 +16,24 @@ from unittest.mock import patch
 import pytest
 
 from pyrit.models import ComponentIdentifier, Identifiable
-from pyrit.models.catalog import RegistryEntryOrigin
+from pyrit.models.catalog import RegistryEntryOrigin, RestoreFailureReason
 from pyrit.registry import (
     DefaultInstanceRegistry,
     InstanceRegistry,
     RegistryEntry,
+    SavedEntryUnavailableError,
     SupportsInstances,
     TagQuery,
+    UnavailableEntry,
 )
 from pyrit.registry.instance_registry import (
     CONFIGURATION_ENTRY_METADATA_KEY,
     SAVED_ENTRY_METADATA_KEY,
+    RegistryNameTakenError,
     SavedEntryReplacementError,
+    current_registration_origin,
     record_saved_entry_refusals,
+    registration_origin,
     registry_entry_origin,
 )
 
@@ -98,10 +103,21 @@ class TestRegistration:
     def test_register_rejects_existing_name(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("original"), name="name")
 
-        with pytest.raises(ValueError, match="already exists"):
+        with pytest.raises(RegistryNameTakenError, match="already exists"):
             registry.register(_item("updated"), name="name")
 
         assert registry.get("name") == "original"
+
+    def test_a_reserved_name_is_refused_but_not_as_taken(self):
+        registry: DefaultInstanceRegistry[_TestItem] = DefaultInstanceRegistry(reserved_names={"types"})
+
+        for check in (
+            lambda: registry.register(_item("x"), name="types"),
+            lambda: registry.validate_name_available("types"),
+        ):
+            with pytest.raises(ValueError, match="reserved") as refusal:
+                check()
+            assert not isinstance(refusal.value, RegistryNameTakenError)
 
     def test_register_can_explicitly_replace_existing(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("original"), name="name")
@@ -130,23 +146,46 @@ class TestRegistration:
         assert refusals == [("converters", "name")]
         assert registry.get("other") == "other"
 
-    def test_marks_startup_entries_and_keeps_the_mark_when_one_is_replaced(
-        self, registry: DefaultInstanceRegistry[_TestItem]
-    ):
+    def test_marks_entries_registered_while_the_startup_scripts_run(self, registry: DefaultInstanceRegistry[_TestItem]):
         startup_metadata = {"supports_tool_calls": True}
-        registry.register(_item("startup"), name="startup", metadata=startup_metadata)
-        registry.register(_item("saved"), name="saved", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            registry.register(_item("startup"), name="startup", metadata=startup_metadata)
+            registry.register(_item("replaced"), name="replaced")
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            registry.register(_item("launched"), name="launched")
+        registry.register(_item("swapped in"), name="replaced", replace=True)
+        registry.register(_item("created"), name="created")
 
-        registry.mark_configuration_entries()
-        registry.register(_item("relaunched"), name="startup", replace=True)
-        registry.register(_item("launched"), name="launched", replace=True)
-
-        marked = {
-            entry.name: CONFIGURATION_ENTRY_METADATA_KEY in entry.metadata for entry in registry.get_all_instances()
+        origins = {entry.name: registry_entry_origin(entry.metadata) for entry in registry.get_all_instances()}
+        assert origins == {
+            "created": RegistryEntryOrigin.TEMPORARY,
+            "launched": RegistryEntryOrigin.TEMPORARY,
+            "replaced": RegistryEntryOrigin.TEMPORARY,
+            "startup": RegistryEntryOrigin.CONFIGURATION,
         }
-        assert marked == {"launched": False, "saved": False, "startup": True}
-        assert registry.get("startup") == "relaunched"
         assert startup_metadata == {"supports_tool_calls": True}
+
+    def test_the_registration_origin_ends_with_its_block_even_when_a_script_fails(self):
+        with pytest.raises(RuntimeError, match="script failed"), registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            with registration_origin(RegistryEntryOrigin.TEMPORARY):
+                assert current_registration_origin() is RegistryEntryOrigin.TEMPORARY
+            assert current_registration_origin() is RegistryEntryOrigin.CONFIGURATION
+            raise RuntimeError("script failed")
+
+        assert current_registration_origin() is None
+
+    @pytest.mark.parametrize(
+        ("metadata", "origin"),
+        [
+            ({SAVED_ENTRY_METADATA_KEY: "targets"}, RegistryEntryOrigin.SAVED),
+            ({SAVED_ENTRY_METADATA_KEY: "targets", CONFIGURATION_ENTRY_METADATA_KEY: True}, RegistryEntryOrigin.SAVED),
+            ({CONFIGURATION_ENTRY_METADATA_KEY: True}, RegistryEntryOrigin.CONFIGURATION),
+            ({}, RegistryEntryOrigin.TEMPORARY),
+            ({"supports_tool_calls": True}, RegistryEntryOrigin.TEMPORARY),
+        ],
+    )
+    def test_tells_where_an_entry_comes_from(self, metadata: dict[str, object], origin: RegistryEntryOrigin):
+        assert registry_entry_origin(metadata) is origin
 
     def test_a_caught_duplicate_name_for_a_saved_entry_is_recorded(self, registry: DefaultInstanceRegistry[_TestItem]):
         registry.register(_item("saved"), name="name", metadata={SAVED_ENTRY_METADATA_KEY: "targets"})
@@ -700,6 +739,82 @@ class TestFindDependentsOfTag:
 
         dependents = registry.find_dependents_of_tag(tag="refusal")
         assert [d.name for d in dependents] == ["a_wrapper", "m_wrapper", "z_wrapper"]
+
+
+def _held(name: str | None, *, message: str = "ValueError: boom") -> UnavailableEntry:
+    return UnavailableEntry(kind="target", name=name, reason=RestoreFailureReason.BUILD_ERROR, message=message)
+
+
+class TestUnavailableEntries:
+    """Tests for names held by saved entries that couldn't be restored."""
+
+    def test_a_held_name_fails_lookups_with_the_reason(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        registry.mark_unavailable(_held("broken"))
+
+        with pytest.raises(SavedEntryUnavailableError, match="'broken' couldn't be restored: ValueError: boom"):
+            registry.get("broken")
+        with pytest.raises(SavedEntryUnavailableError):
+            registry.get_entry("broken")
+        assert "broken" in registry
+        assert registry.get("missing") is None
+
+    def test_a_held_name_hides_an_instance_registered_under_it(
+        self, registry: DefaultInstanceRegistry[_TestItem]
+    ) -> None:
+        registry.register(_item("startup"), name="shared")
+        registry.register(_item("other"), name="other")
+        revision = registry.revision
+
+        registry.mark_unavailable(_held("shared"))
+
+        assert registry.revision > revision
+        assert registry.get_names() == ["other"]
+        assert [entry.name for entry in registry.get_all_instances()] == ["other"]
+        assert len(registry) == 1
+        with pytest.raises(SavedEntryUnavailableError):
+            registry.get("shared")
+
+    @pytest.mark.parametrize("replace", [False, True])
+    def test_a_held_name_cant_be_taken(self, registry: DefaultInstanceRegistry[_TestItem], replace: bool) -> None:
+        registry.mark_unavailable(_held("broken"))
+
+        with pytest.raises(SavedEntryUnavailableError):
+            registry.validate_name_available("broken")
+        with pytest.raises(SavedEntryUnavailableError):
+            registry.register(_item("stand_in"), name="broken", replace=replace)
+
+    def test_clearing_a_hold_releases_the_name(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        registry.mark_unavailable(_held("broken"))
+
+        registry.clear_unavailable("broken")
+        registry.register(_item("fixed"), name="broken")
+
+        assert registry.get("broken") == "fixed"
+        assert registry.get_unavailable_entries() == []
+
+    def test_a_held_folder_holds_every_unregistered_name(self, registry: DefaultInstanceRegistry[_TestItem]) -> None:
+        registry.register(_item("startup"), name="startup")
+        folder = _held(None, message="The saved targets couldn't be listed: Permission denied")
+
+        registry.mark_unavailable(folder)
+
+        assert registry.get("startup") == "startup"
+        with pytest.raises(SavedEntryUnavailableError, match="'maybe_saved' may be a saved target"):
+            registry.get("maybe_saved")
+        with pytest.raises(SavedEntryUnavailableError):
+            registry.register(_item("new"), name="maybe_saved")
+        assert registry.get_unavailable_entries() == [folder]
+
+    def test_the_description_hides_the_message_when_asked(self) -> None:
+        entry = _held("broken", message="ValueError: https://host/v1")
+
+        error = SavedEntryUnavailableError(entry=entry, name="broken")
+
+        assert (
+            error.describe(with_details=False)
+            == "The saved target 'broken' couldn't be restored. It couldn't be built."
+        )
+        assert "https://host/v1" in str(error)
 
 
 class TestProtocolConformance:

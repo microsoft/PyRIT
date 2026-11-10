@@ -69,6 +69,8 @@ class OpenAITarget(PromptTarget):
         {"api_key": None, "headers": "{}"}
     )
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({"endpoint": True})
+    # The OpenAI SDK adds these headers to every client it creates.
+    server_header_variables: ClassVar[tuple[str, ...]] = ("OPENAI_CUSTOM_HEADERS",)
 
     model_name_environment_variable: str
     endpoint_environment_variable: str
