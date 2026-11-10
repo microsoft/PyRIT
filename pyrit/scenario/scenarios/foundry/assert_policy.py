@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 from pydantic import ValidationError
 
 from pyrit.common import apply_defaults
-from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack
+from pyrit.common.path import EXECUTOR_RED_TEAM_PATH
+from pyrit.executor.attack import AttackScoringConfig, PromptSendingAttack, RedTeamingAttack
 from pyrit.models import (
     AssertGroupMetadata,
     AttackSeedGroup,
@@ -30,6 +31,7 @@ from pyrit.models import (
     ScenarioRunSizeComponent,
     ScenarioRunSizeEstimate,
     ScenarioRunSizeEstimateStatus,
+    SeedPrompt,
 )
 from pyrit.models.score.assert_judge import AssertJudgeConfig, describe_validation_errors
 from pyrit.prompt_normalizer import ConverterConfiguration
@@ -37,9 +39,14 @@ from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target, resolve_technique_factories
 from pyrit.scenario.core.atomic_attack import AtomicAttack
 from pyrit.scenario.core.attack_technique import AttackTechnique
+from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
 from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetSourceKind
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
-from pyrit.scenario.core.technique_requirements import check_target_compatibility, filter_seed_groups
+from pyrit.scenario.core.technique_requirements import (
+    IncompatibleTechniqueError,
+    check_target_compatibility,
+    filter_seed_groups,
+)
 from pyrit.score import (
     AssertJudgmentMode,
     TrueFalseCompositeScorer,
@@ -59,7 +66,6 @@ if TYPE_CHECKING:
 
     from pyrit.models import ScenarioDatasetSizeEstimate, Scorable, ScorableUnion, Score, ScoringExpectation
     from pyrit.prompt_target import PromptTarget
-    from pyrit.scenario.core.attack_technique_factory import AttackTechniqueFactory
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
     from pyrit.score import Scorer
@@ -68,22 +74,47 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_ASSERT_PACKAGE = "assert_package"
+
+
+def _build_assert_package_factory() -> AttackTechniqueFactory:
+    """
+    Build the scenario-local ``assert_package`` technique: red teaming with ASSERT's own tester.
+
+    It is not registered globally, so only ``foundry.assert_policy`` offers it.
+
+    Returns:
+        AttackTechniqueFactory: The technique factory.
+    """
+    return AttackTechniqueFactory(
+        name=_ASSERT_PACKAGE,
+        attack_class=RedTeamingAttack,
+        description=(
+            "Red teaming whose tester uses ASSERT's own tester system prompt with each group's stored tester "
+            "instructions, like an ASSERT scenario case. Groups without tester instructions are skipped."
+        ),
+        technique_tags=["multi_turn"],
+    )
+
+
 @AttackTechniqueRegistry.cache_scenario_technique_class
 def _build_assert_policy_technique() -> type[ScenarioTechnique]:
     """
-    Build the technique class from every registered attack technique.
+    Build the technique class from every registered attack technique plus ``assert_package``.
 
-    ``red_teaming`` is the default: it follows each group's stored tester instructions, like an
-    ASSERT scenario case. The baseline sends each group's stored prompts, like an ASSERT prompt case.
+    ``assert_package`` is the default: it follows each group's stored tester instructions with
+    ASSERT's tester prompt, like an ASSERT scenario case. The baseline sends each group's stored
+    prompts, like an ASSERT prompt case.
 
     Returns:
         type[ScenarioTechnique]: The dynamically generated technique enum class.
     """
-    registry = AttackTechniqueRegistry.get_registry_singleton()
+    factories = AttackTechniqueRegistry.get_registry_singleton().get_factories_or_raise()
+    factories[_ASSERT_PACKAGE] = _build_assert_package_factory()
     return AttackTechniqueRegistry.build_technique_class_from_factories(
         class_name="AssertPolicyTechnique",
-        factories=list(registry.get_factories_or_raise().values()),
-        default_names={"red_teaming"},
+        factories=list(factories.values()),
+        default_names={_ASSERT_PACKAGE},
     )
 
 
@@ -243,9 +274,10 @@ class AssertPolicy(Scenario):
     Run stored ASSERT seed groups against a target and judge each conversation against its policy.
 
     The baseline sends each group's stored system and user prompts once, like an ASSERT prompt
-    case. Any registered attack technique can run too; the default, ``red_teaming``, lets an
-    adversarial chat follow the group's stored tester instructions for ``max_turns`` turns, like an
-    ASSERT scenario case. Judges built from each group's taxonomy then
+    case. The default technique, ``assert_package``, is ASSERT's scenario case: a red-teaming
+    tester that follows the group's stored tester instructions for ``max_turns`` turns with
+    ASSERT's own tester system prompt. Any registered technique can run too; ``red_teaming`` uses
+    the same attack with the group's stored PyRIT tester prompt. Judges built from each group's taxonomy then
     read the whole conversation once per enabled judge dimension. By default these are policy
     violation (the objective score) and overrefusal (an auxiliary score). ``judge_presets`` adds
     dimensions from built-in presets and ``judge_preset_files`` from your own preset YAML files
@@ -258,6 +290,11 @@ class AssertPolicy(Scenario):
 
     #: Version 2 runs registered attack techniques instead of ``single_turn``/``multi_turn``.
     VERSION: int = 2
+    #: ASSERT's tester prompts. The system prompt is ASSERT's text, and the first message and reply
+    #: framing match ASSERT's tester loop, which shows each reply in ``<target_response>`` tags.
+    TESTER_SYSTEM_PROMPT_PATH: ClassVar[Path] = EXECUTOR_RED_TEAM_PATH / "assert_tester_system.yaml"
+    TESTER_FIRST_MESSAGE: ClassVar[str] = "Begin the conversation now with the user's first message only."
+    TESTER_FEEDBACK_TEMPLATE: ClassVar[str] = "<target_response>\n{{ feedback_text }}\n</target_response>"
     _JUDGE_PARAMETER_NAMES: ClassVar[tuple[str, ...]] = (
         "judge_presets",
         "judge_preset_files",
@@ -624,7 +661,8 @@ class AssertPolicy(Scenario):
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         attacks = self._build_baselines(context=context) if context.include_baseline else []
-        for name, factory in resolve_technique_factories(context=context).items():
+        local = {_ASSERT_PACKAGE: _build_assert_package_factory()}
+        for name, factory in resolve_technique_factories(context=context, extra_factories=local).items():
             if not check_target_compatibility(
                 target=context.objective_target,
                 attack_class=factory.attack_class,
@@ -642,7 +680,11 @@ class AssertPolicy(Scenario):
                     technique_name=name,
                     dataset_name=dataset_name,
                     policy=context.incompatible_technique_policy,
-                    validate_group=factory.validate_group_adversarial_prompts,
+                    validate_group=(
+                        self._require_tester_instructions
+                        if name == _ASSERT_PACKAGE
+                        else factory.validate_group_adversarial_prompts
+                    ),
                 )
                 for group in sorted(selected, key=self._get_generation_order):
                     attacks.append(
@@ -680,17 +722,27 @@ class AssertPolicy(Scenario):
         scoring = self._get_scoring(group)
         extra = context.technique_converters.get(technique_name)
         adversarial_chat = self._adversarial_chat if factory.adversarial_chat is None else None
-        attack_technique = factory.create(
-            objective_target=context.objective_target,
-            attack_scoring_config=AttackScoringConfig(
+        create_kwargs: dict[str, Any] = {
+            "objective_target": context.objective_target,
+            "attack_scoring_config": AttackScoringConfig(
                 objective_scorer=scoring.objective,
                 auxiliary_scorers=list(scoring.auxiliaries),
                 use_score_as_feedback=False,
             ),
-            adversarial_chat=adversarial_chat,
-            extra_request_converters=ConverterConfiguration.from_converters(converters=extra) if extra else None,
-            seed_group=group,
-        )
+            "adversarial_chat": adversarial_chat,
+            "extra_request_converters": ConverterConfiguration.from_converters(converters=extra) if extra else None,
+        }
+        if technique_name == _ASSERT_PACKAGE:
+            attack_technique = factory.create(**create_kwargs, **self._get_tester_prompts(group))
+            # ASSERT's tester replaces the group's stored tester prompt; record the group's prompt on the
+            # technique so the stored group still runs and resumes as-is.
+            attack_technique = AttackTechnique(
+                attack=attack_technique.attack,
+                requirements=attack_technique.requirements,
+                adversarial_prompts=group.adversarial_prompts,
+            )
+        else:
+            attack_technique = factory.create(**create_kwargs, seed_group=group)
         return AtomicAttack(
             atomic_attack_name=self._get_unit_name(prefix=technique_name, group=group),
             display_group=technique_name,
@@ -701,6 +753,43 @@ class AssertPolicy(Scenario):
             objective_scorer=scoring.objective,
             memory_labels=context.memory_labels,
         )
+
+    def _get_tester_prompts(self, group: AttackSeedGroup) -> dict[str, str | SeedPrompt]:
+        """
+        Fill ASSERT's tester prompt with the group's tester instructions.
+
+        The attack fills in ``max_turns``, so the prompt states the turn limit the tester actually gets.
+
+        Returns:
+            dict[str, str | SeedPrompt]: The create-time tester prompts.
+        """
+        system_prompt = SeedPrompt.from_yaml_file(self.TESTER_SYSTEM_PROMPT_PATH).bind_template_parameters(
+            description=self._get_tester_instructions(group)
+        )
+        return {
+            "adversarial_system_prompt": system_prompt,
+            "adversarial_seed_prompt": self.TESTER_FIRST_MESSAGE,
+            "adversarial_prompt_template": self.TESTER_FEEDBACK_TEMPLATE,
+        }
+
+    @classmethod
+    def _require_tester_instructions(cls, group: AttackSeedGroup) -> None:
+        """
+        Accept only groups that store tester instructions for ``assert_package``.
+
+        Raises:
+            IncompatibleTechniqueError: If the group has no stored tester instructions.
+        """
+        if cls._get_tester_instructions(group) is None:
+            raise IncompatibleTechniqueError(
+                "The group stores no tester instructions; generate groups with include_adversarial_prompt=True."
+            )
+
+    @staticmethod
+    def _get_tester_instructions(group: AttackSeedGroup) -> str | None:
+        prompts = group.adversarial_prompts
+        description = prompts.system_prompt.description if prompts and prompts.system_prompt else None
+        return description.strip() if description and description.strip() else None
 
     def _build_baselines(self, *, context: ScenarioContext) -> list[AtomicAttack]:
         """

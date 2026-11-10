@@ -96,6 +96,18 @@
       "adaptations": "Single-dimension judge prompt for flags, ordinal grades, and not-applicable answers, with native conversation evidence instead of the XML citation protocol."
     },
     {
+      "path": "pyrit/datasets/executors/red_teaming/assert_tester_system.yaml",
+      "adaptation_date": "2026-11-10",
+      "sources": ["assert_ai/internal_pipeline_prompts/inference_tester_system.md"],
+      "adaptations": "ASSERT's tester system prompt; the loop description no longer mentions ASSERT's [Turn N/max] counter, and replies are requested as JSON with a next_message field."
+    },
+    {
+      "path": "pyrit/scenario/scenarios/foundry/assert_policy.py",
+      "adaptation_date": "2026-11-10",
+      "sources": ["assert_ai/stages/inference.py"],
+      "adaptations": "The assert_package technique fills ASSERT's tester prompt with each group's tester instructions and reuses ASSERT's opening request and <target_response> framing in PyRIT's red teaming attack."
+    },
+    {
       "path": "pyrit/datasets/score/assert/judge_presets/alignment.yaml",
       "adaptation_date": "2026-11-09",
       "sources": ["assert_ai/library/judges/alignment.yaml"]

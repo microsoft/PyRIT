@@ -106,21 +106,26 @@ await output_scenario_async(scenario_result)
 #
 # ```bash
 # pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support
-# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support --techniques red_teaming tap
+# pyrit_scan run foundry.assert_policy --target openai_chat --datasets assert_support --techniques assert_package red_teaming tap
 # ```
 #
 # By default each group runs twice:
 #
 # - The baseline, on by default, sends the group's stored system prompt and user prompt once, like
 #   an ASSERT prompt case. Groups without a stored user prompt have no baseline.
-# - The `red_teaming` technique lets an adversarial chat follow the group's stored tester
-#   instructions for `max_turns` turns, like an ASSERT scenario case. The stored user prompt, if
-#   any, opens the conversation, and the tester gets no judge feedback.
+# - The `assert_package` technique, the default, is an ASSERT scenario case. It runs PyRIT's red
+#   teaming attack, but its tester uses ASSERT's own tester system prompt filled in with the group's
+#   stored tester instructions and plays that user for `max_turns` turns. The stored user prompt, if
+#   any, opens the conversation, and the tester gets no judge feedback. It's offered only by this
+#   scenario, and it skips groups without stored tester instructions.
 #
-# Any registered attack technique can be selected with `--techniques`. Groups with stored tester
-# instructions run only with techniques that accept them, such as `red_teaming`; the others are
-# skipped, or rejected when `incompatible_technique_policy` is `raise`. Results are grouped by
-# technique. The scenario parameters are:
+# Any registered attack technique can be selected with `--techniques`. For example, `red_teaming`
+# runs the same attack with the group's stored PyRIT tester prompt, a shorter prompt that states the
+# objective alongside the tester instructions. Groups with stored tester instructions run only with
+# techniques that accept them, such as `assert_package` and `red_teaming`; the others are skipped, or
+# rejected when `incompatible_technique_policy` is `raise`. A run fails when no selected technique
+# accepts any group, so for groups generated without tester instructions, select another technique,
+# such as `red_teaming`. Results are grouped by technique. The scenario parameters are:
 #
 # - `max_turns`: target turns for techniques that take a turn count. Defaults to 6, as in ASSERT.
 # - `judgment_mode`: `category_validated` (the default) also records a judgment for each relevant
@@ -138,13 +143,13 @@ await output_scenario_async(scenario_result)
 #   `policy_violation`.
 #
 # There are no request converters by default. Add them per technique as in other scenarios, for
-# example `--techniques red_teaming:converter.<registered name>`, or `technique_converters` in Python.
+# example `--techniques assert_package:converter.<registered name>`, or `technique_converters` in Python.
 #
 # Generation defaults store only a user prompt, so set `include_adversarial_prompt=True` to store
 # tester instructions. ASSERT searches the web during research by default. To match it, set
 # `web_search=True` and pass a search-enabled `OpenAIResponseTarget` as `research_target`.
 #
-# This example generates and stores two groups, then runs the baseline and `red_teaming` with two turns.
+# This example generates and stores two groups, then runs the baseline and `assert_package` with two turns.
 
 # %%
 import getpass
@@ -314,8 +319,12 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 #   violation or not. ASSERT reports grade counts instead of a violation rate for scaled dimensions.
 # - A group with both inputs runs as the baseline and with each selected technique on the same
 #   objective, so the results are paired. ASSERT samples prompt and scenario cases separately.
-# - A stored user prompt opens each multi-turn conversation without passing through the tester,
-#   and the tester doesn't see a turn counter. ASSERT's tester writes the first message.
+# - In `assert_package`, a stored user prompt opens the conversation without passing through the
+#   tester. ASSERT's tester writes the first message; PyRIT's tester does too, with ASSERT's opening
+#   request, only when the group has no stored user prompt.
+# - The `assert_package` tester sees each target reply in ASSERT's `<target_response>` tags but
+#   without ASSERT's `[Turn N/max]` counter, so its prompt doesn't mention the counter. It answers
+#   as JSON with a `next_message` field instead of plain text.
 # - Each group's system prompt is fixed when it's generated. `target_system_prompt` only describes
 #   instructions that the target already owns.
 # - Tool simulation and ASSERT's reports and viewer aren't available. Results are stored in PyRIT
