@@ -90,9 +90,9 @@ export default function FindingDialog({
       await onSave(draft, { id: attempt.current.id, attackResultId: trimmedAttackResultId })
     } catch (cause: unknown) {
       const apiError = toApiError(cause)
-      const evidenceMessages = apiError.fieldErrors.filter(item => item.field.split('.').pop() === 'attack_result_id')
+      const evidenceMessages = apiError.fieldErrors.filter(item => evidenceField && item.field.split('.').pop() === 'attack_result_id')
         .map(item => item.message)
-      const otherMessages = apiError.fieldErrors.filter(item => item.field.split('.').pop() !== 'attack_result_id')
+      const otherMessages = apiError.fieldErrors.filter(item => !evidenceField || item.field.split('.').pop() !== 'attack_result_id')
         .map(item => `${item.field.replace(/^body\./, '')}: ${item.message}`)
       setAttackResultIdError(evidenceMessages.join(' '))
       if (evidenceMessages.length === 0 || otherMessages.length > 0) {
