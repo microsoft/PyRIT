@@ -120,6 +120,15 @@ async function selectConverter(converterId: string) {
   await user.click(await screen.findByTestId(`converter-option-${converterId}`))
 }
 
+async function withAvailablePanelWidth(width: number, test: () => Promise<void>): Promise<void> {
+  const measurement = jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(width)
+  try {
+    await test()
+  } finally {
+    measurement.mockRestore()
+  }
+}
+
 function makePreviewResponse(
   converterIds: string[],
   outputs: string[],
@@ -649,6 +658,101 @@ describe('ConverterPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Close converters' }))
 
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('exposes the resize handle as a focusable separator with the current width', async () => {
+    renderPanel()
+    await screen.findByTestId('converter-panel-list')
+
+    const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+
+    expect(handle).toHaveAttribute('tabindex', '0')
+    expect(handle).toHaveAttribute('aria-orientation', 'vertical')
+    expect(handle).toHaveAttribute('aria-valuenow', '560')
+    expect(handle).toHaveAttribute('aria-valuemin', '480')
+    expect(handle).toHaveAttribute('aria-valuemax', '1200')
+  })
+
+  it('resizes the panel with the keyboard within its bounds', async () => {
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByTestId('converter-panel-list')
+    const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+    const container = screen.getByTestId('converter-panel').parentElement
+
+    handle.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(container).toHaveStyle({ width: '576px' })
+    expect(handle).toHaveAttribute('aria-valuenow', '576')
+
+    await user.keyboard('{ArrowLeft}{ArrowLeft}')
+    expect(container).toHaveStyle({ width: '544px' })
+
+    await user.keyboard('{Home}')
+    expect(container).toHaveStyle({ width: '480px' })
+    await user.keyboard('{ArrowLeft}')
+    expect(container).toHaveStyle({ width: '480px' })
+
+    await user.keyboard('{End}')
+    expect(container).toHaveStyle({ width: '1200px' })
+    await user.keyboard('{ArrowRight}')
+    expect(container).toHaveStyle({ width: '1200px' })
+  })
+
+  it('should shrink immediately after End when the available width is below the maximum', async () => {
+    const user = userEvent.setup()
+    await withAvailablePanelWidth(744, async () => {
+      renderPanel()
+      await screen.findByTestId('converter-panel-list')
+      const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+
+      handle.focus()
+      await user.keyboard('{End}')
+      expect(handle).toHaveAttribute('aria-valuenow', '744')
+      expect(handle).toHaveAttribute('aria-valuemax', '744')
+      await user.keyboard('{ArrowRight}')
+      expect(handle).toHaveAttribute('aria-valuenow', '744')
+      await user.keyboard('{ArrowLeft}')
+      expect(handle).toHaveAttribute('aria-valuenow', '728')
+      expect(screen.getByTestId('converter-panel').parentElement).toHaveStyle({ width: '728px' })
+      expect(handle).toHaveFocus()
+    })
+  })
+
+  it.each([390, 744, 1400])('should keep the announced bounds valid with %s pixels available', async (width: number) => {
+    const user = userEvent.setup()
+    await withAvailablePanelWidth(width, async () => {
+      renderPanel()
+      await screen.findByTestId('converter-panel-list')
+      const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+      const maximum = Math.min(1200, width)
+      const minimum = Math.min(480, maximum)
+
+      expect(handle).toHaveAttribute('aria-valuemin', String(minimum))
+      expect(handle).toHaveAttribute('aria-valuemax', String(maximum))
+      handle.focus()
+      await user.keyboard('{Home}{ArrowLeft}')
+      expect(handle).toHaveAttribute('aria-valuenow', String(minimum))
+      await user.keyboard('{End}{ArrowRight}')
+      expect(handle).toHaveAttribute('aria-valuenow', String(maximum))
+    })
+  })
+
+  it('should keep mouse resizing within the same available-width bounds', async () => {
+    const user = userEvent.setup()
+    await withAvailablePanelWidth(744, async () => {
+      renderPanel()
+      await screen.findByTestId('converter-panel-list')
+      const handle = screen.getByRole('separator', { name: 'Resize converters panel' })
+
+      fireEvent.mouseDown(handle)
+      fireEvent.mouseMove(document, { clientX: 1200 })
+      expect(handle).toHaveAttribute('aria-valuenow', '744')
+      fireEvent.mouseUp(document)
+      handle.focus()
+      await user.keyboard('{ArrowLeft}')
+      expect(handle).toHaveAttribute('aria-valuenow', '728')
+    })
   })
 
   it('keeps the pipeline, outputs, and applied selection when the panel is reopened', async () => {
