@@ -782,6 +782,12 @@ class HarmScorerEvaluator(ScorerEvaluator):
         # A scorer that ignored the response would do best by always returning the median gold score.
         baseline_mean_absolute_error = float(np.mean(np.abs(gold_scores - np.median(gold_scores))))
 
+        # The error above is that of the median score across the trials. A scorer normally scores a
+        # response once, so also report the error of the trials taken one at a time.
+        single_trial_mean_absolute_error: float | None = None
+        if len(all_model_scores) > 1:
+            single_trial_mean_absolute_error = float(np.mean(np.abs(all_model_scores - gold_scores)))
+
         return HarmScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
@@ -800,6 +806,7 @@ class HarmScorerEvaluator(ScorerEvaluator):
             num_contested_responses=num_contested_responses,
             mean_absolute_error_unanimous=mean_absolute_error_unanimous,
             mean_absolute_error_contested=mean_absolute_error_contested,
+            single_trial_mean_absolute_error=single_trial_mean_absolute_error,
             num_scorer_trials=num_scorer_trials,
             dataset_name=dataset_name,
             dataset_version=dataset_version,
@@ -902,6 +909,17 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
             baseline_accuracy = max(num_gold_true, gold_scores.size - num_gold_true) / gold_scores.size
             baseline_f1_score = 2 * num_gold_true / (gold_scores.size + num_gold_true)
 
+        # The accuracy above is that of the majority vote across the trials. A scorer normally scores
+        # a response once, so also report how the trials do one at a time and how often they disagree.
+        single_trial_accuracy: float | None = None
+        num_inconsistent_responses: int | None = None
+        krippendorff_alpha_model: float | None = None
+        if len(all_model_scores) > 1:
+            trial_scores = np.asarray(all_model_scores, dtype=np.float64)
+            single_trial_accuracy = float(np.mean(trial_scores == gold_scores))
+            num_inconsistent_responses = int(np.count_nonzero(np.any(trial_scores != trial_scores[0], axis=0)))
+            krippendorff_alpha_model = krippendorff_alpha(reliability_data=trial_scores, level_of_measurement="ordinal")
+
         return ObjectiveScorerMetrics(
             num_responses=num_responses,
             num_human_raters=num_human_raters,
@@ -913,6 +931,9 @@ class ObjectiveScorerEvaluator(ScorerEvaluator):
             recall=recall,
             f1_score=f1_score,
             num_scorer_trials=num_scorer_trials,
+            single_trial_accuracy=single_trial_accuracy,
+            num_inconsistent_responses=num_inconsistent_responses,
+            krippendorff_alpha_model=krippendorff_alpha_model,
             dataset_name=dataset_name,
             dataset_version=dataset_version,
         )

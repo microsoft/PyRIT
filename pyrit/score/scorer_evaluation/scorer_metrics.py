@@ -216,6 +216,12 @@ class HarmScorerMetrics(ScorerMetrics):
             below this value has not beaten a constant guess on this dataset. It is computed in-sample, so it
             is the best any constant could do here and is a demanding reference. None for results recorded
             before this field existed.
+        single_trial_mean_absolute_error (float, Optional): The mean absolute error of the individual
+            scoring trials, averaged over the trials. `mean_absolute_error` is computed from the median
+            model score across the trials, which is steadier than any one of them, whereas a scorer
+            normally scores a response once; this is the error to expect from that single run. None when
+            there is a single scoring trial, where it would equal `mean_absolute_error`, or for results
+            recorded before this field existed.
     """
 
     mean_absolute_error: float
@@ -234,6 +240,7 @@ class HarmScorerMetrics(ScorerMetrics):
     mean_absolute_error_unanimous: float | None = field(default=None, kw_only=True)
     mean_absolute_error_contested: float | None = field(default=None, kw_only=True)
     baseline_mean_absolute_error: float | None = field(default=None, kw_only=True)
+    single_trial_mean_absolute_error: float | None = field(default=None, kw_only=True)
     _harm_definition_obj: HarmDefinition | None = field(default=None, init=False, repr=False)
 
     def get_harm_definition(self) -> HarmDefinition | None:
@@ -270,7 +277,8 @@ class ObjectiveScorerMetrics(ScorerMetrics):
 
     Args:
         accuracy (float): The accuracy of the model scores when using the majority vote of
-            human scores as the gold label.
+            human scores as the gold label. With several scoring trials, the model score for a
+            response is the majority vote of its trials; see `single_trial_accuracy`.
         f1_score (float): The F1 score of the model scores, an indicator of performance of the
             LLM scorer in its alignment with human scores.
         precision (float): The precision of the model scores, an indicator of the model's accuracy
@@ -289,6 +297,18 @@ class ObjectiveScorerMetrics(ScorerMetrics):
             other constant, always answering false, has an F1 score of 0.0, so this is the best F1 any
             constant could reach. A scorer whose `f1_score` is not above this value has not beaten a constant
             guess on this dataset. None for results recorded before this field existed.
+        single_trial_accuracy (float, Optional): The accuracy of the individual scoring trials, averaged
+            over the trials. `accuracy` describes the majority vote of the trials, which can be right on a
+            response that one of its trials got wrong, whereas a scorer normally scores a response once;
+            this is the accuracy to expect from that single run. None when there is a single scoring
+            trial, where it would equal `accuracy`, or for results recorded before this field existed.
+        num_inconsistent_responses (int, Optional): Number of responses on which the scoring trials did
+            not all return the same verdict. None when there is a single scoring trial or for results
+            recorded before this field existed.
+        krippendorff_alpha_model (float, Optional): Krippendorff's alpha for the model scores across the
+            scoring trials, as reported for harm scorers. This measures how well the scorer agrees with
+            itself from one run to the next. None when there is a single scoring trial or for results
+            recorded before this field existed.
     """
 
     accuracy: float
@@ -298,6 +318,9 @@ class ObjectiveScorerMetrics(ScorerMetrics):
     recall: float
     baseline_accuracy: float | None = field(default=None, kw_only=True)
     baseline_f1_score: float | None = field(default=None, kw_only=True)
+    single_trial_accuracy: float | None = field(default=None, kw_only=True)
+    num_inconsistent_responses: int | None = field(default=None, kw_only=True)
+    krippendorff_alpha_model: float | None = field(default=None, kw_only=True)
 
 
 @dataclass

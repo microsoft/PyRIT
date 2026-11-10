@@ -543,6 +543,85 @@ def test_compute_objective_metrics_f1_baseline_is_zero_without_true_labels(mock_
     assert metrics.baseline_f1_score == 0.0
 
 
+def test_compute_objective_metrics_reports_single_trial_accuracy_behind_a_majority_vote(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    # Every response is true. Each trial gets one response wrong, a different one each time, so the
+    # majority vote is right everywhere although any single run is right two times in three.
+    all_human_scores = np.array([[1, 1, 1]])
+    all_model_scores = np.array([[1, 1, 0], [1, 0, 1], [0, 1, 1]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=3
+    )
+    assert metrics.accuracy == 1.0
+    assert metrics.single_trial_accuracy == pytest.approx(2 / 3)
+    assert metrics.num_inconsistent_responses == 3
+    # Cross-checked against the reference `krippendorff` package.
+    assert metrics.krippendorff_alpha_model == pytest.approx(-1 / 3)
+
+
+def test_compute_objective_metrics_counts_only_the_responses_whose_trials_disagree(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    all_human_scores = np.array([[1, 0, 1, 0]])
+    all_model_scores = np.array([[1, 0, 1, 0], [1, 0, 0, 0], [1, 1, 1, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=3
+    )
+    assert metrics.accuracy == 1.0
+    assert metrics.single_trial_accuracy == pytest.approx(10 / 12)
+    assert metrics.num_inconsistent_responses == 2
+    # Cross-checked against the reference `krippendorff` package.
+    assert metrics.krippendorff_alpha_model == pytest.approx(7 / 18)
+
+
+def test_compute_objective_metrics_consistent_trials_match_the_majority_vote(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    all_human_scores = np.array([[1, 0, 1, 0]])
+    all_model_scores = np.array([[1, 1, 1, 0], [1, 1, 1, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=2
+    )
+    assert metrics.single_trial_accuracy == pytest.approx(metrics.accuracy)
+    assert metrics.num_inconsistent_responses == 0
+    assert metrics.krippendorff_alpha_model == 1.0
+
+
+def test_compute_objective_metrics_trial_consistency_is_none_for_a_single_trial(mock_objective_scorer):
+    evaluator = ObjectiveScorerEvaluator(scorer=mock_objective_scorer)
+    all_human_scores = np.array([[1, 0, 1, 0]])
+    all_model_scores = np.array([[1, 1, 1, 0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.single_trial_accuracy is None
+    assert metrics.num_inconsistent_responses is None
+    assert metrics.krippendorff_alpha_model is None
+
+
+async def test_evaluate_dataset_async_objective_reports_trial_consistency(mock_objective_scorer):
+    def _entry(label: bool) -> ObjectiveHumanLabeledEntry:
+        message = Message(
+            message_pieces=[MessagePiece(role="assistant", original_value="test", original_value_data_type="text")]
+        )
+        return ObjectiveHumanLabeledEntry([message], [label], "Test objective")
+
+    dataset = HumanLabeledDataset(
+        name="test_dataset", metrics_type=MetricsType.OBJECTIVE, entries=[_entry(True), _entry(False)], version="1.0"
+    )
+    evaluator = ObjectiveScorerEvaluator(mock_objective_scorer)
+    # Three trials over two responses. The first response is scored true twice and false once.
+    trials = [[True, False], [False, False], [True, False]]
+    evaluator._score_responses_grouped_async = AsyncMock(
+        side_effect=[[[MagicMock(get_value=lambda value=value: value)] for value in trial] for trial in trials]
+    )
+
+    metrics = await evaluator.evaluate_dataset_async(labeled_dataset=dataset, num_scorer_trials=3)
+
+    assert isinstance(metrics, ObjectiveScorerMetrics)
+    assert metrics.accuracy == 1.0
+    assert metrics.single_trial_accuracy == pytest.approx(5 / 6)
+    assert metrics.num_inconsistent_responses == 1
+
+
 def test_compute_harm_metrics_perfect_agreement(mock_harm_scorer):
     evaluator = HarmScorerEvaluator(mock_harm_scorer)
     # 2 responses, 3 human scores each, all agree, model matches exactly
@@ -607,6 +686,29 @@ def test_compute_harm_metrics_constant_scorer_matches_the_baseline(mock_harm_sco
         all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
     )
     assert metrics.mean_absolute_error == pytest.approx(metrics.baseline_mean_absolute_error)
+
+
+def test_compute_harm_metrics_reports_single_trial_error_behind_the_median(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    # Each trial is off by 0.5 on a different response, so the median across the trials is exact
+    # although any single run has an error of 0.5 on one response in three.
+    all_human_scores = np.array([[0.5, 0.5, 0.5]])
+    all_model_scores = np.array([[1.0, 0.5, 0.5], [0.5, 1.0, 0.5], [0.5, 0.5, 1.0]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=3
+    )
+    assert metrics.mean_absolute_error == 0.0
+    assert metrics.single_trial_mean_absolute_error == pytest.approx(0.5 / 3)
+
+
+def test_compute_harm_metrics_single_trial_error_is_none_for_a_single_trial(mock_harm_scorer):
+    evaluator = HarmScorerEvaluator(scorer=mock_harm_scorer)
+    all_human_scores = np.array([[0.1, 0.2], [0.1, 0.2]])
+    all_model_scores = np.array([[0.2, 0.4]])
+    metrics = evaluator._compute_metrics(
+        all_human_scores=all_human_scores, all_model_scores=all_model_scores, num_scorer_trials=1
+    )
+    assert metrics.single_trial_mean_absolute_error is None
 
 
 def test_compute_harm_metrics_partial_agreement(mock_harm_scorer):
