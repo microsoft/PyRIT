@@ -16,7 +16,7 @@ Deviations from any particular rule can occur depending on context and need.
 
 - Strict rules should be included in the pre-commit hooks. This is currently run as part of the build pipelines. If we want to enforce style, it's best to do here.
 - Use explicit types and return values when possible
-- Comments are highly encouraged. We use docstrings under the function. The docstring format should align with Google guidelines .
+- Prefer self-explanatory code to comments, and comment only to explain why. We use docstrings under the function, in the Google format.
 - Long line lengths are discouraged (>= ~120)
 - Large files are discouraged. If possible put one class per file or at least put only related classes in the same file. Large files should be broken up.
 - Fight indentation and scoping. Lots of scopes makes code more difficult to read and properly write. Use the following to fight indentation: early function exits, logic inversion/continue, exceptions (as appropriate), creating smaller functions, goto's, etc.
