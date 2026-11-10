@@ -2408,8 +2408,10 @@ class TestTreeOfAttacksErrorHandling:
         assert result.last_score is best_score
         assert str(result.last_score.message_piece_id) == str(result.last_response.original_prompt_id)
 
-    async def test_attack_handles_all_nodes_failing(self, attack_builder, helpers, node_factory):
-        """Test attack behavior when all nodes fail."""
+    async def test_attack_reports_error_when_all_nodes_fail_async(
+        self, *, attack_builder: AttackBuilder, helpers: TestHelpers, node_factory: MockNodeFactory
+    ) -> None:
+        """Every branch crashing before a score is an infrastructure error, not a FAILURE."""
         attack = (
             attack_builder.with_default_mocks().with_tree_params(tree_width=2, tree_depth=1).with_threshold(0.8).build()
         )
@@ -2439,10 +2441,12 @@ class TestTreeOfAttacksErrorHandling:
             with patch.object(attack._memory, "get_message_pieces_async", return_value=[]):
                 result = await attack._perform_async(context=context)
 
-        # Should return failure when all nodes fail
-        assert result.outcome == AttackOutcome.FAILURE
-        # The actual message is about not achieving threshold score
-        assert "did not achieve threshold score" in result.outcome_reason.lower()
+        # Nothing was scored and every branch crashed, so this is an error, not a defended target
+        assert result.outcome == AttackOutcome.ERROR
+        assert result.outcome_reason == (
+            "No branch produced a scored response and 2 failed. Last error: Execution failed"
+        )
+        assert result.error_message == "Execution failed"
 
     async def test_attack_continues_after_node_errors(self, attack_builder, node_factory, helpers):
         """Test that attack continues when some nodes have errors."""
@@ -3080,7 +3084,7 @@ _SCENARIOS = [
         id="mixed_errors_and_success",
     ),
     pytest.param(
-        # Scenario: all fail across all 4 depths → failure
+        # Scenario: every branch crashes on depth 1, nothing is ever scored → error
         2,
         4,
         2,
@@ -3089,10 +3093,37 @@ _SCENARIOS = [
             1: [_B(fail=True), _B(json_err=True)],
             # No surviving nodes → all pruned after depth 1
         },
-        AttackOutcome.FAILURE,
+        AttackOutcome.ERROR,
         0.0,
         1,
         id="all_fail_all_depths",
+    ),
+    pytest.param(
+        # Scenario: every branch is off-topic, no branch crashed → still a failure
+        2,
+        4,
+        2,
+        0.7,
+        {1: [_B(off_topic=True), _B(off_topic=True)]},
+        AttackOutcome.FAILURE,
+        0.0,
+        1,
+        id="all_off_topic_is_failure",
+    ),
+    pytest.param(
+        # Scenario: depth 1 is scored, every depth 2 branch crashes → failure keeps the depth 1 score
+        1,
+        2,
+        2,
+        0.7,
+        {
+            1: [_B(score=0.4)],
+            2: [_B(fail=True), _B(fail=True)],
+        },
+        AttackOutcome.FAILURE,
+        0.4,
+        2,
+        id="crash_after_scored_depth_is_failure",
     ),
     pytest.param(
         # Scenario: gradual improvement over 3 depths (width=2, branching=2 → 4 nodes/depth)

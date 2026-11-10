@@ -264,6 +264,9 @@ class TAPAttackContext(MultiTurnAttackContext[Any]):
     best_adversarial_conversation_id: str | None = None
     best_auxiliary_scores: dict[str, Score] = field(default_factory=dict)
 
+    # Errors from branches that failed to execute, in the order they happened
+    node_errors: list[str] = field(default_factory=list)
+
     # Visualization parent for first-level nodes in this execution
     visualization_root_id: str = "root"
 
@@ -2186,6 +2189,9 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 context.tree_visualization[node._vis_node_id].tag += result_string
                 self._logger.debug(f"Node {node_index}/{len(context.nodes)} completed: {result_string}")
 
+                if node.error_message:
+                    context.node_errors.append(node.error_message)
+
                 # Track off-topic or incomplete nodes as pruned conversations
                 if node.off_topic or not node.completed:
                     context.related_conversations.add(
@@ -2492,9 +2498,23 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
                 after execution, including best conversation ID and score.
 
         Returns:
-            TAPAttackResult: The failure result indicating the attack did not achieve its objective.
+            TAPAttackResult: The failure result indicating the attack did not achieve its objective,
+                or an error result when no response was scored and at least one branch failed to execute.
         """
         best_score = context.best_objective_score
+        if best_score is None and context.node_errors:
+            # Nothing was ever scored and branches crashed, so the target was not shown to hold.
+            result = await self._create_attack_result_async(
+                context=context,
+                outcome=AttackOutcome.ERROR,
+                outcome_reason=(
+                    f"No branch produced a scored response and {len(context.node_errors)} failed. "
+                    f"Last error: {context.node_errors[-1]}"
+                ),
+            )
+            result.error_message = context.node_errors[-1]
+            return result
+
         if best_score is not None and attack_outcome_from_score(best_score) is AttackOutcome.UNDETERMINED:
             return await self._create_attack_result_async(
                 context=context,
@@ -2528,7 +2548,7 @@ class TreeOfAttacksWithPruningAttack(AttackStrategy[TAPAttackContext, TAPAttackR
         Args:
             context (TAPAttackContext): The attack context containing the final state
                 after execution, including best conversation ID, score, and tree visualization.
-            outcome (AttackOutcome): The attack outcome (`SUCCESS` or `FAILURE`).
+            outcome (AttackOutcome): The attack outcome.
             outcome_reason (str): Human-readable explanation of the outcome.
 
         Returns:
