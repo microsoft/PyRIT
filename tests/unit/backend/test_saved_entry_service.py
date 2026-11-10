@@ -5,6 +5,7 @@ import asyncio
 import json
 import threading
 from collections.abc import Iterator
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -14,7 +15,7 @@ from fastapi import FastAPI
 
 from pyrit.backend.models import CreateConverterRequest
 from pyrit.backend.models.techniques import CreateTechniqueRequest
-from pyrit.backend.services import ConverterService
+from pyrit.backend.services import ConverterService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.saved_entries import (
@@ -22,6 +23,7 @@ from pyrit.backend.services.saved_entries import (
     SavedEntryStorageError,
     save_then_register_async,
 )
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.saved_entry_service import (
     SavedEntryCaller,
     SavedEntryForbiddenError,
@@ -30,12 +32,14 @@ from pyrit.backend.services.saved_entry_service import (
     SavedEntryService,
     SavedEntryVersionRequiredError,
 )
-from pyrit.backend.services.technique_service import TechniqueService
+from pyrit.backend.services.scorer_service import get_scorer_service
+from pyrit.backend.services.technique_service import TechniqueService, get_technique_service
 from pyrit.converter import SearchReplaceConverter, ToneConverter
 from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryEntryOrigin,
     RegistryRecipeKind,
+    RegistryRestoreReport,
     RestoreFailure,
     RestoreFailureReason,
     SavedEntryOwner,
@@ -95,8 +99,15 @@ def _write(root: Path, kind: RegistryRecipeKind, name: str, document: dict[str, 
     return path
 
 
-def _restore(root: Path) -> list[RestoreFailure]:
-    return RegistryRecipeRestorer(source=str(root)).restore().failures
+async def _restore_report(root: Path) -> RegistryRestoreReport:
+    for factory in (get_target_service, get_converter_service, get_scorer_service, get_technique_service):
+        factory.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(root)).restore_async(build_async=build_async)
+
+
+async def _restore(root: Path) -> list[RestoreFailure]:
+    return (await _restore_report(root)).failures
 
 
 async def _save_replace(root: Path, name: str = "cat_replace") -> None:
@@ -153,7 +164,7 @@ async def test_whoever_saved_a_converter_deletes_it_and_it_doesnt_come_back(tmp_
     assert not (tmp_path / "converters" / "cat_replace.json").exists()
     assert ConverterRegistry.get_registry_singleton().instances.get("cat_replace") is None
     ConverterRegistry.reset_registry_singleton()
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().restored == []
+    assert (await _restore_report(tmp_path)).restored == []
 
 
 @pytest.mark.parametrize(
@@ -219,7 +230,7 @@ async def test_deleting_a_saved_file_whose_name_a_startup_entry_took_keeps_that_
     startup = SearchReplaceConverter(pattern="fish", replace="dog")
     with registration_origin(RegistryEntryOrigin.CONFIGURATION):
         instances.register(startup, name="cat_replace")
-    assert [failure.reason for failure in _restore(tmp_path)] == [RestoreFailureReason.NAME_CLASH]
+    assert [failure.reason for failure in await _restore(tmp_path)] == [RestoreFailureReason.NAME_CLASH]
     with pytest.raises(SavedEntryUnavailableError):
         instances.get("cat_replace")
 
@@ -231,7 +242,7 @@ async def test_deleting_a_saved_file_whose_name_a_startup_entry_took_keeps_that_
 
 async def test_deleting_an_entry_that_couldnt_be_restored_frees_its_name(tmp_path: Path) -> None:
     _write(tmp_path, CONVERTERS, "ghost", {"class_module": "nowhere", "class_name": "Nope", "params": {}})
-    assert [failure.reason for failure in _restore(tmp_path)] == [RestoreFailureReason.UNKNOWN_CLASS]
+    assert [failure.reason for failure in await _restore(tmp_path)] == [RestoreFailureReason.UNKNOWN_CLASS]
     instances = ConverterRegistry.get_registry_singleton().instances
     admin = _caller(BEN_OID, admin=True)
 
@@ -258,7 +269,7 @@ async def test_an_entry_another_saved_entry_names_isnt_deleted(tmp_path: Path) -
         "formal_send",
         {"type": "PromptSendingAttack", "request_converters": ["formal_tone"]},
     )
-    assert _restore(tmp_path) == []
+    assert await _restore(tmp_path) == []
 
     with pytest.raises(SavedEntryInUseError) as target_refusal:
         await _delete(tmp_path, TARGETS, "saved_chat", version=await _version(tmp_path, TARGETS, "saved_chat"))
@@ -283,7 +294,7 @@ async def test_an_entry_another_saved_entry_names_isnt_deleted(tmp_path: Path) -
 
 async def test_an_entry_a_temporary_entry_holds_isnt_deleted(tmp_path: Path) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert _restore(tmp_path) == []
+    assert await _restore(tmp_path) == []
     targets = TargetRegistry.get_registry_singleton().instances
     converters = ConverterRegistry.get_registry_singleton().instances
     converters.register(ToneConverter(converter_target=targets.get("saved_chat"), tone="formal"), name="formal_tone")
@@ -314,7 +325,7 @@ async def test_a_converter_a_temporary_technique_holds_isnt_deleted(tmp_path: Pa
 
 async def test_a_target_a_temporary_technique_holds_through_its_converter_isnt_deleted(tmp_path: Path) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert _restore(tmp_path) == []
+    assert await _restore(tmp_path) == []
     converters = ConverterRegistry.get_registry_singleton().instances
     tone = ToneConverter(
         converter_target=TargetRegistry.get_registry_singleton().instances.get("saved_chat"), tone="formal"
@@ -393,7 +404,7 @@ async def test_a_delete_waits_for_requests_in_flight_to_finish(tmp_path: Path) -
 
 async def test_an_entry_a_request_comes_to_hold_while_the_delete_waits_isnt_deleted(tmp_path: Path) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert _restore(tmp_path) == []
+    assert await _restore(tmp_path) == []
     targets = TargetRegistry.get_registry_singleton().instances
     runtime = _runtime()
     version = await _version(tmp_path, TARGETS, "saved_chat")
@@ -424,7 +435,7 @@ async def test_an_entry_that_failed_to_restore_is_deleted_and_no_longer_listed(t
         {"class_module": "nowhere", "class_name": "Nope", "owner": {"oid": ADA.oid, "name": "Ada"}},
     )
     runtime = _runtime()
-    runtime.restore_failures = _restore(tmp_path)
+    runtime.restore_failures = await _restore(tmp_path)
     assert [failure.name for failure in runtime.restore_failures] == ["ghost"]
 
     # Nothing registered can be using it, so work in progress doesn't stop the delete.
@@ -505,7 +516,7 @@ async def test_an_entry_whose_file_cant_be_deleted_is_put_back(tmp_path: Path, e
 @pytest.mark.parametrize("also_registered", [False, True])
 async def test_a_deleted_entry_is_released_unless_it_is_still_registered(tmp_path: Path, also_registered: bool) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert _restore(tmp_path) == []
+    assert await _restore(tmp_path) == []
     targets = TargetRegistry.get_registry_singleton().instances
     target = targets.get("saved_chat")
     if also_registered:
@@ -557,7 +568,7 @@ async def test_a_save_naming_a_temporary_entry_that_took_a_deleted_ones_name_is_
 
 async def test_a_delete_waits_for_a_save_in_progress_and_then_sees_it(tmp_path: Path) -> None:
     _write(tmp_path, TARGETS, "saved_chat", _SAVED_CHAT)
-    assert _restore(tmp_path) == []
+    assert await _restore(tmp_path) == []
     version = await _version(tmp_path, TARGETS, "saved_chat")
     writing, finish_writing = threading.Event(), threading.Event()
     create_recipe = RegistryRecipeStorage.create_recipe

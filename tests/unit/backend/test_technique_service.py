@@ -10,6 +10,7 @@ import threading
 from collections.abc import AsyncIterator, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -25,6 +26,7 @@ from pyrit.backend.models import PaginationInfo
 from pyrit.backend.models.techniques import CreateTechniqueRequest, TechniqueListResponse
 from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.service_lifecycle import close_services_async
 from pyrit.backend.services.technique_service import TechniqueService, get_technique_service
 from pyrit.converter import Base64Converter, ROT13Converter
@@ -974,7 +976,10 @@ async def test_saves_a_technique_that_restore_rebuilds(saving_catalog: AttackTec
     restarted = AttackTechniqueRegistry.get_registry_singleton()
     with registration_origin(RegistryEntryOrigin.CONFIGURATION):
         restarted.register_from_factories(build_technique_factories())
-    assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+    get_technique_service.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    report = await RegistryRecipeRestorer(source=str(tmp_path)).restore_async(build_async=build_async)
+    assert report.failures == []
 
     restored = restarted.instances.get_entry("base64_send")
     assert restored is not None
