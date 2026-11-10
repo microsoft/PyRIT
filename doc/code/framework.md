@@ -56,10 +56,15 @@ These decisions apply to every change. The [style guide](../contributing/3_style
 - **Give each responsibility one owner.** Put new code in the component that owns the responsibility, as described below. If nothing fits, raise it with the maintainers instead of stretching a component.
 - **Keep logic in the library.** The backend, CLI, and frontend only expose and present library behavior. Implement new behavior and types in the owning library package and `pyrit.models` first, then use them from the surfaces.
 - **Reuse and compose before adding.** Express new capability as a configuration of existing pieces: an attack technique instead of a new attack, a composite of scorers instead of a new scorer type, an existing model instead of a near-copy. Add a class only when composition can't express it.
-- **Fail fast.** Validate inputs and configuration at construction or at the boundary. Raise specific, actionable errors that never expose credentials. Never guess: report an outcome you can't determine as undetermined or as an error, not as false.
+- **Don't over-engineer.** Build what the change needs now, as simply as possible. Don't add options, layers, abstractions, or branches for hypothetical needs or rare edge cases; reject unsupported cases with a clear error instead.
+- **Fail fast.** Validate inputs and configuration at construction or at the boundary, and raise specific, actionable errors. Never guess: report an outcome you can't determine as undetermined or as an error, not as false.
 - **Fail loudly rather than run partially.** If required configuration, persisted state, or initialization is broken, refusing to start or returning 503 until it is fixed is the correct default, not a defect. Don't add fallbacks, partial-availability paths, or opt-in strict modes just to stay up; a different failure boundary needs an explicit requirement. Scope each failure to what actually failed, and leave a supported way to recover.
-- **Choose simplicity over edge cases.** Make the common path simple and correct. Don't add options, branches, or abstractions for hypothetical cases; reject unsupported cases with a clear error.
 - **Write functions that do one thing and read clearly.** Use small functions, descriptive names, and explicit typed parameters. Readable beats clever.
+
+## Security
+
+- **Trust operators with the data.** PyRIT is a red teaming tool, not a consumer app. Operators need everything a test produces: prompts, responses (including harmful content), errors, and scorer rationales. Don't redact, mask, or truncate what operators need; needless redaction breaks tests and causes bugs.
+- **Secure the real boundaries.** Never expose credentials in logs, errors, identifiers, or results. Authenticate shared deployments, and keep server-level powers, such as changing configuration, reading the server's files, or running code on the server, behind explicit administrator or configuration control. Treat target output as data: escape it when rendering, and execute it only in a sandbox.
 
 ## Docs
 
@@ -72,6 +77,10 @@ These decisions apply to every change. The [style guide](../contributing/3_style
 - **Make tests reliable.** A unit test passes or fails the same way on every run: no network, sleeps, timing races, or shared state. Treat a flaky test as a bug: fix the cause, and don't hide it with retries or longer timeouts. Only tests against live services may rerun, and only for the service's nondeterminism.
 - **Test one behavior per test.** Name the test for that behavior, and parametrize instead of copying tests.
 - **Don't over-test.** Test behavior through public interfaces, including failure paths. Skip private details, behavior that belongs to our dependencies, and redundant permutations. Unit tests provide coverage; integration tests prove that real systems work together.
+
+## Pull requests
+
+- **Make each PR one unit of value, end to end.** Like a test, a PR does one thing. Solve one problem completely, with its tests and docs, in the simplest form the next change can build on. Split unrelated work into separate PRs, and handle edge cases when they matter, not up front.
 
 # Architecture
 
