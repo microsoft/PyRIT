@@ -21,9 +21,11 @@ from pyrit.models import (
     Acquisition,
     ComponentIdentifier,
     ContentScorable,
+    Equals,
     MessageScorable,
     Score,
     ScoringExpectation,
+    ToolArgumentRequirement,
     ToolCallRequirement,
     ToolsCalled,
     TraceCoverage,
@@ -196,6 +198,76 @@ async def test_name_matching_is_case_sensitive_and_requires_all_tools_async() ->
     assert (await scorer.score_async(scorable=scope, expectation=_expectation("Lookup", "other")))[
         0
     ].get_value() is False
+
+
+def _argument_expectation(*names: str, to: str = "a@example.com") -> ScoringExpectation:
+    tools = [
+        ToolCallRequirement(
+            name="send_email", arguments=(ToolArgumentRequirement(name="to", matcher=Equals(value=to)),)
+        ),
+        *(ToolCallRequirement(name=name) for name in names),
+    ]
+    return ScoringExpectation(conditions=(ToolsCalled(tools=tuple(tools)),))
+
+
+@pytest.mark.parametrize("complete", [False, True])
+async def test_name_only_trace_evidence_cannot_confirm_an_argument_requirement_async(
+    sqlite_instance: SQLiteMemory, complete: bool
+) -> None:
+    client = InMemoryTraceClient()
+    span = _span(name="send_email")
+    span.attributes["gen_ai.tool.call.arguments"] = '{"to": "a@example.com"}'
+    client.add_span(span)
+    if complete:
+        client.mark_complete(trace_ids=(span.trace_id,))
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+
+    score = (
+        await scorer.score_async(
+            scorable=TraceScorable(trace_ids=(span.trace_id,)), expectation=_argument_expectation()
+        )
+    )[0]
+
+    assert score.is_undetermined
+    assert "send_email(to)" in score.score_rationale
+    observation = (await sqlite_instance.get_observations_async(observation_ids=score.observation_ids))[0]
+    assert "a@example.com" not in observation.model_dump_json()
+    client.close()
+    replay = (await scorer.score_observation_async(observation=observation, expectation=_argument_expectation()))[0]
+    assert replay.is_undetermined
+
+
+@pytest.mark.parametrize(("complete", "expected"), [(False, None), (True, False)])
+async def test_complete_absence_still_refutes_an_argument_requirement_async(
+    complete: bool, expected: bool | None
+) -> None:
+    client = InMemoryTraceClient()
+    client.add_span(_span(name="lookup"))
+    if complete:
+        client.mark_complete(trace_ids=("1" * 32,))
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+
+    score = (
+        await scorer.score_async(
+            scorable=TraceScorable(trace_ids=("1" * 32,)), expectation=_argument_expectation("lookup")
+        )
+    )[0]
+
+    assert score.score_value == (None if expected is None else str(expected).lower())
+    assert "send_email(to), lookup" in score.score_rationale
+
+
+async def test_absent_name_only_tool_refutes_alongside_an_undetermined_argument_requirement_async() -> None:
+    client = InMemoryTraceClient()
+    client.add_span(_span(name="send_email"))
+    client.mark_complete(trace_ids=("1" * 32,))
+    scorer = OtelToolCallScorer(source=OtelTraceSource(trace_client=client))
+    scope = TraceScorable(trace_ids=("1" * 32,))
+
+    assert (await scorer.score_async(scorable=scope, expectation=_argument_expectation("lookup")))[
+        0
+    ].get_value() is False
+    assert (await scorer.score_async(scorable=scope, expectation=_argument_expectation()))[0].is_undetermined
 
 
 @pytest.mark.parametrize(
