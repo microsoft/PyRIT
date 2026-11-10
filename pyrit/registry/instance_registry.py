@@ -51,6 +51,13 @@ SAVED_ENTRY_METADATA_KEY = "saved_recipe_kind"
 
 _saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
 
+# The kind and name of the saved entry being rebuilt in this context, so registering that name marks the entry.
+_saved_entry_registration: ContextVar[tuple[str, str] | None] = ContextVar("_saved_entry_registration", default=None)
+
+
+class RegistryNameTakenError(ValueError):
+    """A name is already registered, so another entry can't take it."""
+
 
 @dataclass(frozen=True)
 class UnavailableEntry:
@@ -215,6 +222,25 @@ def record_saved_entry_refusals() -> Generator[list[tuple[str, str]], None, None
         yield refusals
     finally:
         _saved_entry_refusals.reset(token)
+
+
+@contextmanager
+def saved_entry_registration(*, kind: str, name: str) -> Generator[None, None, None]:
+    """
+    Mark the entry registered under ``name`` in this context as rebuilt from a saved recipe.
+
+    Args:
+        kind (str): The saved recipe kind, such as ``"targets"``.
+        name (str): The saved entry's name.
+
+    Yields:
+        None: Control returns to the caller while the mark applies.
+    """
+    token = _saved_entry_registration.set((kind, name))
+    try:
+        yield
+    finally:
+        _saved_entry_registration.reset(token)
 
 
 @runtime_checkable
@@ -451,8 +477,8 @@ class DefaultInstanceRegistry(Generic[T]):
         Raises:
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
-            ValueError: If the name is reserved or already registered and ``replace``
-                is False.
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered and ``replace`` is False.
             SavedEntryReplacementError: If ``replace`` would replace an entry rebuilt
                 from a saved recipe.
         """
@@ -465,11 +491,15 @@ class DefaultInstanceRegistry(Generic[T]):
 
         if name is None:
             name = instance.get_identifier().unique_name
+        entry_metadata = dict(metadata or {})
+        restoring = _saved_entry_registration.get()
+        if restoring is not None and restoring[1] == name:
+            entry_metadata[SAVED_ENTRY_METADATA_KEY] = restoring[0]
         entry = RegistryEntry(
             name=name,
             instance=instance,
             tags=self._normalize_tags(tags),
-            metadata=metadata or {},
+            metadata=entry_metadata,
         )
         with self._lock:
             if name in self._reserved_names:
@@ -507,8 +537,9 @@ class DefaultInstanceRegistry(Generic[T]):
             name (str): The proposed registry name.
 
         Raises:
-            ValueError: If the name is reserved or already registered.
+            ValueError: If the name is reserved.
             SavedEntryUnavailableError: If the name belongs to a saved entry that couldn't be restored.
+            RegistryNameTakenError: If the name is already registered.
         """
         with self._lock:
             if name in self._reserved_names:
@@ -517,7 +548,7 @@ class DefaultInstanceRegistry(Generic[T]):
             if name in self._registry_items:
                 # Code that catches this error would leave a saved entry standing in, so the clash is recorded.
                 _record_saved_entry_refusal(self._registry_items[name])
-                raise ValueError(f"Instance '{name}' already exists")
+                raise RegistryNameTakenError(f"Instance '{name}' already exists")
 
     def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
         """

@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import uuid
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
@@ -15,6 +16,7 @@ from pyrit.backend.models.initializers import ConfiguredInitializerSetting
 from pyrit.backend.services.analytics_service import get_analytics_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.environment_file_service import EnvironmentFileService
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.scenario_run_service import get_scenario_run_service, peek_scenario_run_service
 from pyrit.backend.services.scenario_suite_execution_service import peek_scenario_suite_execution_service
 from pyrit.backend.services.service_lifecycle import (
@@ -139,16 +141,26 @@ class RuntimeLifecycle:
             config (ConfigurationLoader): The loaded configuration naming the storage source.
         """
         restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
-        # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, as
-        # the target API builds them, because a constructor such as HuggingFaceChatTarget's starts a task
+        # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, through
+        # the API's create for each kind, because a constructor such as HuggingFaceChatTarget's starts a task
         # on it. A slow constructor holds the loop while it runs.
         saved = await asyncio.to_thread(restorer.read)
-        report = restorer.restore(saved=saved)
+        report = await restorer.restore_async(
+            saved=saved, build_async=partial(build_saved_entry_async, upload_directory=config.target_upload_directory)
+        )
         self.restore_failures, self.restore_ignored = report.failures, report.ignored
-        if report.failures:
+        unread = sorted({failure.kind.value for failure in report.failures if failure.name is None})
+        if unread:
+            logger.warning(
+                "The saved %s couldn't be read, so no saved entries were restored. Check that the backend can "
+                "read registry_recipes_source, then apply or restart; see GET /api/config/runtime.",
+                " and ".join(unread),
+            )
+        elif report.failures:
             count = len(report.failures)
             logger.warning(
-                "%d saved registry %s couldn't be restored. Fix or delete them; see GET /api/config/runtime.",
+                "%d saved registry %s couldn't be restored. Fix or delete their files, then apply or restart; "
+                "see GET /api/config/runtime.",
                 count,
                 "entry" if count == 1 else "entries",
             )
