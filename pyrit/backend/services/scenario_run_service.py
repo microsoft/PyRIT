@@ -46,7 +46,10 @@ from pyrit.backend.services.pagination import (
     normalize_label_filters,
 )
 from pyrit.backend.services.saved_conversation_read_service import SavedConversationReadService
-from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
+from pyrit.backend.services.scenario_configuration_resolver import (
+    ScenarioConfigurationResolver,
+    raise_if_a_named_technique_is_held,
+)
 from pyrit.backend.services.scenario_progress_read_model import (
     ScenarioPlanLookup,
     ScenarioProgressReadModel,
@@ -96,11 +99,21 @@ from pyrit.models import (
     TargetIdentifier,
     project_behavioral_identity,
 )
-from pyrit.models.catalog import AttackErrorSummary, AttackRetrySummary, RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.catalog import (
+    AttackErrorSummary,
+    AttackRetrySummary,
+    RegistryEntryOrigin,
+    RunScenarioRequest,
+    ScenarioRunSummary,
+)
 from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
-from pyrit.registry.instance_registry import SavedEntryReplacementError, record_saved_entry_refusals
+from pyrit.registry.instance_registry import (
+    SavedEntryReplacementError,
+    record_saved_entry_refusals,
+    registration_origin,
+)
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
@@ -448,6 +461,7 @@ class ScenarioRunService:
         technique_class = metadata.technique_class
         if not isinstance(technique_class, type):
             return [local_factory] if local_factory is not None else []
+        raise_if_a_named_technique_is_held(request.techniques)
         if configured_techniques is None:
             selectors = (
                 [technique_class(token.partition(":")[0]) for token in request.techniques]
@@ -1217,7 +1231,8 @@ class ScenarioRunService:
             if queued is not None:
                 await self._memory.try_update_scenario_run_state_async(
                     scenario_result_id=scenario_result_id,
-                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED},
+                    # A failed handoff can leave a queued run IN_PROGRESS, but it has no task until the retry starts it.
+                    expected_states={ScenarioRunState.CREATED, ScenarioRunState.QUEUED, ScenarioRunState.IN_PROGRESS},
                     scenario_run_state=ScenarioRunState.CANCELLED,
                     error_message=_USER_CANCELLATION_REASON,
                     error_type="CancelledError",
@@ -1437,6 +1452,10 @@ class ScenarioRunService:
                 SCENARIO_RUN_STARTED_AT_METADATA_KEY: scheduled.started_at.isoformat(),
             },
         )
+        self._launch_scheduled_run_locked(scheduled=scheduled)
+
+    def _launch_scheduled_run_locked(self, *, scheduled: _ActiveTask) -> None:
+        """Make a run persisted as IN_PROGRESS the active run and create its execution task."""
         self._active_scenario_result_id = scheduled.scenario_result_id
         self._active_tasks[scheduled.scenario_result_id] = scheduled
         scheduled.task = asyncio.create_task(self._execute_run_async(scenario_result_id=scheduled.scenario_result_id))
@@ -1457,17 +1476,34 @@ class ScenarioRunService:
                 persisted = await self._memory.get_scenario_result_header_async(
                     scenario_result_id=next_run.scenario_result_id
                 )
-                if persisted is None or persisted.scenario_run_state != ScenarioRunState.QUEUED:
+                if persisted is not None and self._is_start_persisted(run=next_run, persisted=persisted):
+                    self._launch_scheduled_run_locked(scheduled=next_run)
+                elif persisted is None or persisted.scenario_run_state != ScenarioRunState.QUEUED:
                     self._queued_runs.popleft()
                     self._queue_revision += 1
                     continue
-                await self._start_scheduled_run_locked_async(scheduled=next_run)
+                else:
+                    await self._start_scheduled_run_locked_async(scheduled=next_run)
                 self._queued_runs.popleft()
                 self._release_completed_task(scenario_result_id=scenario_result_id)
                 return
             self._active_scenario_result_id = None
             self._release_completed_task(scenario_result_id=scenario_result_id)
             self._queue_revision += 1
+
+    @staticmethod
+    def _is_start_persisted(*, run: _ActiveTask, persisted: ScenarioResult) -> bool:
+        """
+        Check whether an earlier handoff attempt saved this run's start before reporting a failure.
+
+        Returns:
+            bool: True if the row is IN_PROGRESS with the start time this scheduler wrote for the run.
+        """
+        return (
+            run.started_at is not None
+            and persisted.scenario_run_state == ScenarioRunState.IN_PROGRESS
+            and ScenarioRunService._load_started_at(scenario_result=persisted) == run.started_at
+        )
 
     def _release_completed_task(self, *, scenario_result_id: str) -> None:
         """Release executable state while retaining bounded terminal error evidence."""
@@ -1613,7 +1649,7 @@ class ScenarioRunService:
                 raise ValueError(f"Initializer not found: {e}") from None
             # The registries refuse to replace a saved entry; the record also catches a refusal
             # that the script itself caught, which would leave the saved entry in its place.
-            with record_saved_entry_refusals() as refusals:
+            with record_saved_entry_refusals() as refusals, registration_origin(RegistryEntryOrigin.TEMPORARY):
                 try:
                     await instance.initialize_async()
                 except SavedEntryReplacementError as error:

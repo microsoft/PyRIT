@@ -186,7 +186,7 @@ function defaultSupportsNoKey(targetType: string): boolean {
 function getParameterLabel(name: string): string {
   return name
     .split('_')
-    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0].toUpperCase()}${word.slice(1)}`)
+    .map((word) => word.length === 1 ? word.toUpperCase() : `${word[0]?.toUpperCase() ?? ''}${word.slice(1)}`)
     .join(' ')
 }
 
@@ -600,7 +600,7 @@ export default function CreateTargetDialog({ open, onClose, onCreated, existingT
     if (selectedInnerTargets.length === 0) return candidates
     // Otherwise, filter to only targets compatible with the first one
     const firstSelected = availableTargets.find(
-      (t) => t.target_registry_name === selectedInnerTargets[0].registryName,
+      (t) => t.target_registry_name === selectedInnerTargets[0]?.registryName,
     )
     if (!firstSelected) return candidates
     return candidates.filter((t) => isCompatible(firstSelected, t))

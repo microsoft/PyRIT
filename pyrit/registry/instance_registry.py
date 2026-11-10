@@ -14,8 +14,9 @@ instances" (``SupportsInstances``) or just "an instance registry"
 (``InstanceRegistry[T]``) without depending on a concrete class, and a registry
 that does not hold instances simply has no ``.instances`` attribute.
 
-Stored items must implement ``Identifiable`` so per-instance metadata can be
-derived from ``get_identifier()``. This module imports no ``pyrit.backend`` code,
+Stored items must provide ``get_identifier()`` (``SupportsIdentifier``), which
+``Identifiable`` components do and observation sources do structurally, so
+per-instance metadata can be derived from it. This module imports no ``pyrit.backend`` code,
 so it can be reused anywhere (forms, agents, attack strategies).
 """
 
@@ -27,15 +28,25 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.models import ComponentIdentifier, Identifiable
-from pyrit.models.catalog import SavedEntryOwner
+from pyrit.models.catalog import RegistryEntryOrigin, SavedEntryOwner
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator, Mapping
 
+    from pyrit.models import ComponentIdentifier
+    from pyrit.models.catalog import RestoreFailureReason
     from pyrit.registry.tag_query import TagQuery
 
-T = TypeVar("T", bound=Identifiable)  # The type of items stored
+
+class SupportsIdentifier(Protocol):
+    """Anything that reports its behavioral identity, the one capability the instance container needs."""
+
+    def get_identifier(self) -> ComponentIdentifier:
+        """Return the component's identifier."""
+        ...
+
+
+T = TypeVar("T", bound=SupportsIdentifier)  # The type of items stored
 
 #: Entry metadata naming the kind of saved recipe an entry was rebuilt from, such as ``"targets"``.
 SAVED_ENTRY_METADATA_KEY = "saved_recipe_kind"
@@ -49,6 +60,68 @@ CONFIGURATION_ENTRY_METADATA_KEY = "configuration_entry"
 SAVED_ENTRY_OWNER_METADATA_KEY = "saved_entry_owner"
 
 _saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
+_registration_origin: ContextVar[RegistryEntryOrigin | None] = ContextVar("_registration_origin", default=None)
+
+
+class RegistryNameTakenError(ValueError):
+    """A name is already registered, so another entry can't take it."""
+
+
+@dataclass(frozen=True)
+class UnavailableEntry:
+    """
+    A saved entry that couldn't be restored, so its name has no usable instance.
+
+    Attributes:
+        kind (str): What the entry is, such as "target".
+        name (str | None): The entry's name, or None when the whole folder of saved entries of this kind
+            couldn't be listed.
+        reason (RestoreFailureReason): Why it couldn't be restored.
+        message (str): The full explanation, for administrators.
+    """
+
+    kind: str
+    name: str | None
+    reason: RestoreFailureReason
+    message: str
+
+
+class SavedEntryUnavailableError(Exception):
+    """
+    A name belongs to a saved entry that couldn't be restored, so it can't be used or taken.
+
+    Looking the name up raises this instead of finding nothing, so nothing else stands in for the entry.
+    """
+
+    def __init__(self, *, entry: UnavailableEntry, name: str) -> None:
+        """
+        Initialize the error for one name.
+
+        Args:
+            entry (UnavailableEntry): The saved entry, or the folder, that couldn't be restored.
+            name (str): The name that was looked up or registered.
+        """
+        self.entry = entry
+        self.name = name
+        super().__init__(self.describe(with_details=True))
+
+    def describe(self, *, with_details: bool) -> str:
+        """
+        Describe the error, with the full message or with a fixed explanation of the reason.
+
+        Args:
+            with_details (bool): Whether to include the full message, which can quote a server setting.
+
+        Returns:
+            str: The description.
+        """
+        if self.entry.name is None:
+            subject = f"'{self.name}' may be a saved {self.entry.kind} that couldn't be restored"
+        else:
+            subject = f"The saved {self.entry.kind} '{self.name}' couldn't be restored"
+        if with_details:
+            return f"{subject}: {self.entry.message}"
+        return f"{subject}. {self.entry.reason.explanation}"
 
 
 @dataclass
@@ -143,6 +216,69 @@ def _record_saved_entry_refusal(entry: RegistryEntry[Any] | None) -> str | None:
     return kind
 
 
+def record_held_name_refusal(*, entry: UnavailableEntry, name: str) -> None:
+    """
+    Record an attempt to take the name of a saved entry that couldn't be restored, when refusals are being recorded.
+
+    Args:
+        entry (UnavailableEntry): The held saved entry, or folder of them.
+        name (str): The name that was being taken.
+    """
+    refusals = _saved_entry_refusals.get()
+    if refusals is not None:
+        refusals.append((entry.kind, name))
+
+
+def registry_entry_origin(metadata: Mapping[str, Any]) -> RegistryEntryOrigin:
+    """
+    Tell where a registered entry comes from, from its metadata.
+
+    Args:
+        metadata (Mapping[str, Any]): The entry's registry metadata.
+
+    Returns:
+        RegistryEntryOrigin: Saved when rebuilt from a saved recipe, configuration when the server's startup scripts
+            registered it, and temporary otherwise, such as an entry created through the API without saving it or
+            one a scan's launch scripts registered.
+    """
+    if SAVED_ENTRY_METADATA_KEY in metadata:
+        return RegistryEntryOrigin.SAVED
+    if metadata.get(CONFIGURATION_ENTRY_METADATA_KEY):
+        return RegistryEntryOrigin.CONFIGURATION
+    return RegistryEntryOrigin.TEMPORARY
+
+
+@contextmanager
+def registration_origin(origin: RegistryEntryOrigin) -> Generator[None, None, None]:
+    """
+    Mark what code run in this context registers as coming from the server's startup scripts or a scan.
+
+    Entries registered while the startup scripts run are marked as configuration. Classes that first
+    appear while a scan's launch scripts run are temporary, since those scripts don't run at startup.
+
+    Args:
+        origin (RegistryEntryOrigin): ``CONFIGURATION`` for startup scripts, ``TEMPORARY`` for launch scripts.
+
+    Yields:
+        None: Control while the scripts run.
+    """
+    token = _registration_origin.set(origin)
+    try:
+        yield
+    finally:
+        _registration_origin.reset(token)
+
+
+def current_registration_origin() -> RegistryEntryOrigin | None:
+    """
+    Return the origin set by the innermost ``registration_origin`` around the caller, if any.
+
+    Returns:
+        RegistryEntryOrigin | None: The origin, or None outside any.
+    """
+    return _registration_origin.get()
+
+
 @contextmanager
 def record_saved_entry_refusals() -> Generator[list[tuple[str, str]], None, None]:
     """
@@ -167,13 +303,13 @@ class InstanceRegistry(Protocol[T]):
     Typed instance-container capability a registry exposes as ``.instances``.
 
     Holds named, pre-configured instances that callers register and retrieve by
-    name, list, tag, and filter. Stored items must implement ``Identifiable``.
+    name, list, tag, and filter. Stored items must provide ``get_identifier()``.
     ``DefaultInstanceRegistry`` is the concrete default implementation; expressing
     the surface as a protocol lets callers depend on the capability rather than a
     concrete class.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     @property
@@ -194,7 +330,7 @@ class InstanceRegistry(Protocol[T]):
         ...
 
     def get(self, name: str) -> T | None:
-        """Return the instance registered under ``name``, or None."""
+        """Return the instance registered under ``name``, or None; raise if a saved entry holds the name."""
         ...
 
     def validate_name_available(self, name: str) -> None:
@@ -211,10 +347,6 @@ class InstanceRegistry(Protocol[T]):
 
     def get_all_instances(self) -> list[RegistryEntry[T]]:
         """Return all entries sorted by name."""
-        ...
-
-    def mark_configuration_entries(self) -> None:
-        """Mark every entry not rebuilt from a saved recipe as registered by the server's startup scripts."""
         ...
 
     def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
@@ -243,11 +375,23 @@ class InstanceRegistry(Protocol[T]):
         ...
 
     def get_names(self) -> list[str]:
-        """Return the sorted names of registered instances."""
+        """Return the sorted names of registered instances, without names held for saved entries."""
+        ...
+
+    def mark_unavailable(self, entry: UnavailableEntry) -> None:
+        """Hold a name, or every unregistered name, for a saved entry that couldn't be restored."""
+        ...
+
+    def clear_unavailable(self, name: str) -> None:
+        """Release the hold on a saved entry's name."""
+        ...
+
+    def get_unavailable_entries(self) -> list[UnavailableEntry]:
+        """Return the held saved entries, sorted by name."""
         ...
 
     def __contains__(self, name: str) -> bool:
-        """Check whether an instance name is registered."""
+        """Check whether an instance name is registered or held for a saved entry."""
         ...
 
     def __len__(self) -> int:
@@ -275,7 +419,7 @@ class SupportsInstances(Protocol[T]):
         capability is part of the foundation rather than a later additive change.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     instances: InstanceRegistry[T]
@@ -290,7 +434,7 @@ class DefaultInstanceRegistry(Generic[T]):
     that.
 
     Type Parameters:
-        T: The type of instances held (must be ``Identifiable``).
+        T: The type of instances held (must provide ``get_identifier()``).
     """
 
     def __init__(
@@ -320,6 +464,8 @@ class DefaultInstanceRegistry(Generic[T]):
         self._instance_version = 0
         self._instance_type: type[T] | Callable[[], type[T]] | None = instance_type
         self._reserved_names = frozenset(reserved_names or ())
+        self._unavailable: dict[str, UnavailableEntry] = {}
+        self._unavailable_unregistered: UnavailableEntry | None = None
 
     @property
     def revision(self) -> int:
@@ -373,6 +519,9 @@ class DefaultInstanceRegistry(Generic[T]):
         """
         Register a pre-configured instance.
 
+        An entry registered while the server's startup scripts run is marked as configuration
+        (see ``registration_origin``).
+
         Args:
             instance (T): The instance to register.
             name (str | None): The registry name. Defaults to the instance's
@@ -385,10 +534,13 @@ class DefaultInstanceRegistry(Generic[T]):
         Raises:
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
-            ValueError: If the name is reserved or already registered and ``replace``
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered and ``replace``
                 is False.
             SavedEntryReplacementError: If ``replace`` would replace an entry rebuilt
                 from a saved recipe.
+            SavedEntryUnavailableError: If the name belongs to a saved entry that
+                couldn't be restored.
         """
         expected_type = self._resolve_instance_type()
         if expected_type is not None and not isinstance(instance, expected_type):
@@ -399,34 +551,26 @@ class DefaultInstanceRegistry(Generic[T]):
 
         if name is None:
             name = instance.get_identifier().unique_name
+        entry_metadata = dict(metadata or {})
+        if _registration_origin.get() is RegistryEntryOrigin.CONFIGURATION:
+            entry_metadata[CONFIGURATION_ENTRY_METADATA_KEY] = True
         entry = RegistryEntry(
             name=name,
             instance=instance,
             tags=self._normalize_tags(tags),
-            metadata=metadata or {},
+            metadata=entry_metadata,
         )
         with self._lock:
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
+            self._raise_if_unavailable(name, taking=True)
             if not replace:
                 self.validate_name_available(name)
             else:
-                replaced = self._registry_items.get(name)
-                refuse_saved_entry(replaced)
-                # The startup scripts register this name again after a restart, whatever replaced it since.
-                if replaced is not None and CONFIGURATION_ENTRY_METADATA_KEY in replaced.metadata:
-                    entry.metadata = {**entry.metadata, CONFIGURATION_ENTRY_METADATA_KEY: True}
+                refuse_saved_entry(self._registry_items.get(name))
             self._registry_items[name] = entry
             self._metadata_cache = None
             self._instance_version += 1
-
-    def mark_configuration_entries(self) -> None:
-        """Mark every entry that wasn't rebuilt from a saved recipe as one the server's startup scripts registered."""
-        with self._lock:
-            for entry in self._registry_items.values():
-                if SAVED_ENTRY_METADATA_KEY not in entry.metadata:
-                    entry.metadata = {**entry.metadata, CONFIGURATION_ENTRY_METADATA_KEY: True}
-            self._metadata_cache = None
 
     def get(self, name: str) -> T | None:
         """
@@ -437,6 +581,9 @@ class DefaultInstanceRegistry(Generic[T]):
 
         Returns:
             T | None: The instance, or None if not found.
+
+        Raises:
+            SavedEntryUnavailableError: If the name belongs to a saved entry that couldn't be restored.
         """
         entry = self.get_entry(name)
         return entry.instance if entry is not None else None
@@ -449,15 +596,18 @@ class DefaultInstanceRegistry(Generic[T]):
             name (str): The proposed registry name.
 
         Raises:
-            ValueError: If the name is reserved or already registered.
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered.
+            SavedEntryUnavailableError: If the name belongs to a saved entry that couldn't be restored.
         """
         with self._lock:
             if name in self._reserved_names:
                 raise ValueError(f"Instance name '{name}' is reserved")
+            self._raise_if_unavailable(name, taking=True)
             if name in self._registry_items:
                 # Code that catches this error would leave a saved entry standing in, so the clash is recorded.
                 _record_saved_entry_refusal(self._registry_items[name])
-                raise ValueError(f"Instance '{name}' already exists")
+                raise RegistryNameTakenError(f"Instance '{name}' already exists")
 
     def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
         """
@@ -490,29 +640,99 @@ class DefaultInstanceRegistry(Generic[T]):
 
         Returns:
             RegistryEntry[T] | None: The entry, or None if not found.
+
+        Raises:
+            SavedEntryUnavailableError: If the name belongs to a saved entry that couldn't be restored.
         """
         with self._lock:
+            self._raise_if_unavailable(name)
             return self._registry_items.get(name)
 
     def get_all_instances(self) -> list[RegistryEntry[T]]:
         """
-        Get all registered entries sorted by name.
+        Get all registered entries sorted by name, leaving out names of saved entries that couldn't be restored.
 
         Returns:
             list[RegistryEntry[T]]: The entries sorted by name.
         """
         with self._lock:
-            return [self._registry_items[name] for name in sorted(self._registry_items)]
+            return [
+                self._registry_items[name] for name in sorted(self._registry_items) if name not in self._unavailable
+            ]
 
     def get_names(self) -> list[str]:
         """
-        Get a sorted list of all registered instance names.
+        Get a sorted list of the registered instance names, leaving out names held for saved entries.
 
         Returns:
             list[str]: The instance names sorted alphabetically.
         """
         with self._lock:
-            return sorted(self._registry_items)
+            return [name for name in sorted(self._registry_items) if name not in self._unavailable]
+
+    def mark_unavailable(self, entry: UnavailableEntry) -> None:
+        """
+        Hold a name for a saved entry that couldn't be restored, so using or taking it fails with the reason.
+
+        An instance registered under the same name, such as one from a startup script, is hidden until the
+        hold is cleared. An entry without a name holds every name that isn't registered, because the
+        saved entries of this kind couldn't be listed.
+
+        Args:
+            entry (UnavailableEntry): The saved entry, or the folder, that couldn't be restored.
+        """
+        with self._lock:
+            if entry.name is None:
+                self._unavailable_unregistered = entry
+            else:
+                self._unavailable[entry.name] = entry
+            self._metadata_cache = None
+            self._instance_version += 1
+
+    def clear_unavailable(self, name: str) -> None:
+        """
+        Release the hold on a name, once its saved entry was fixed or deleted.
+
+        Args:
+            name (str): The entry's name.
+        """
+        with self._lock:
+            if self._unavailable.pop(name, None) is not None:
+                self._metadata_cache = None
+                self._instance_version += 1
+
+    def get_unavailable_entries(self) -> list[UnavailableEntry]:
+        """
+        List the held names of saved entries that couldn't be restored, and a held folder last.
+
+        Returns:
+            list[UnavailableEntry]: The held entries, sorted by name.
+        """
+        with self._lock:
+            entries = [self._unavailable[name] for name in sorted(self._unavailable)]
+            if self._unavailable_unregistered is not None:
+                entries.append(self._unavailable_unregistered)
+            return entries
+
+    def _raise_if_unavailable(self, name: str, *, taking: bool = False) -> None:
+        """
+        Refuse a name held for a saved entry that couldn't be restored.
+
+        Args:
+            name (str): The name being looked up or taken.
+            taking (bool): Whether the name is being registered, rather than looked up. Defaults to False.
+
+        Raises:
+            SavedEntryUnavailableError: If the name is held.
+        """
+        entry = self._unavailable.get(name)
+        if entry is None and name not in self._registry_items:
+            entry = self._unavailable_unregistered
+        if entry is not None:
+            if taking:
+                # Code that catches this error could leave something else in the saved entry's place.
+                record_held_name_refusal(entry=entry, name=name)
+            raise SavedEntryUnavailableError(entry=entry, name=name)
 
     def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
         """
@@ -654,7 +874,7 @@ class DefaultInstanceRegistry(Generic[T]):
 
     def _build_metadata(self, instance: T) -> ComponentIdentifier:
         """
-        Build metadata for an item via its ``Identifiable`` interface.
+        Build metadata for an item via its ``get_identifier()``.
 
         Args:
             instance (T): The item.
@@ -666,23 +886,22 @@ class DefaultInstanceRegistry(Generic[T]):
 
     def __contains__(self, name: str) -> bool:
         """
-        Check if an instance name is registered.
+        Check if an instance name is registered or held for a saved entry that couldn't be restored.
 
         Returns:
-            bool: True if the instance name is registered, False otherwise.
+            bool: True if the instance name is registered or held, False otherwise.
         """
         with self._lock:
-            return name in self._registry_items
+            return name in self._registry_items or name in self._unavailable
 
     def __len__(self) -> int:
         """
-        Get the count of registered instances.
+        Get the count of registered instances that can be used.
 
         Returns:
             int: The number of registered instances.
         """
-        with self._lock:
-            return len(self._registry_items)
+        return len(self.get_names())
 
     def __iter__(self) -> Iterator[str]:
         """

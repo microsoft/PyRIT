@@ -15,6 +15,28 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
 
+class ToolInfrastructureError(Exception):
+    """
+    A tool could not run because its own infrastructure failed, not because of the model's call.
+
+    For example, the sandbox a code-execution tool runs in became unreachable, or a call's outcome is
+    unknown. Targets with a bounded tool loop, such as ``OpenAIResponseTarget``, end the turn with an
+    error response instead of asking the model to fix a failure that isn't its own. ``invoked`` is False
+    when the tool knows nothing ran, so the call is not recorded as invoked.
+    """
+
+    def __init__(self, message: str, *, invoked: bool = True) -> None:
+        """
+        Initialize the error.
+
+        Args:
+            message (str): What failed.
+            invoked (bool): Whether the tool may have run. Defaults to True, since the outcome is unknown.
+        """
+        super().__init__(message)
+        self.invoked = invoked
+
+
 class Tool(ABC):
     """A tool that a target can advertise and execute."""
 
