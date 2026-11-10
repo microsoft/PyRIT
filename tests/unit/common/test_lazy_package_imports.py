@@ -539,6 +539,7 @@ def test_observation_acquisition_and_scorer_do_not_load_otel_sdk() -> None:
             InMemoryTraceClient, ObservationSource, OtelTraceSource, TraceAcquisitionError, TraceClient,
         )
         from pyrit.score import OtelToolCallScorer
+        from pyrit.score.observation import OtlpJsonTraceClient
         assert not any(name.startswith("opentelemetry.sdk") for name in sys.modules)
         try:
             from pyrit.score.observation import InMemoryTraceExporter
@@ -558,6 +559,7 @@ def test_observation_acquisition_and_scorer_do_not_load_otel_sdk() -> None:
         "NonReplayableObservationError",
         "ObservationSource",
         "OtelTraceSource",
+        "OtlpJsonTraceClient",
         "TraceAcquisitionError",
         "TraceClient",
     ],

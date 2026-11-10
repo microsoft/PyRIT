@@ -297,7 +297,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   uses live request traces, not injected message content.
 - Target-backed scorers over text evidence persist an `Observation` that references and hashes the retained SCORE-conversation response. The observation and its first score are committed atomically.
 - Trace sources acquire and normalize execution evidence for
-  `TraceScorable` IDs through an injected `TraceClient`. `OtelToolCallScorer`
+  `TraceScorable` IDs through an injected `TraceClient`. `OtlpJsonTraceClient`
+  reads OTLP/JSON from a remote trace backend and never reports complete coverage.
+  `OtelToolCallScorer`
   matches tool names against the saved snapshot; incomplete absence is
   undetermined, not false. For a `MessageScorable`, the scoring layer resolves
   outbound request trace links, regardless of chat role, through the scored response.
