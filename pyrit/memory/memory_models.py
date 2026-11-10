@@ -2563,9 +2563,10 @@ class ScenarioResultEntry(Base):
         # Return empty attack_results - will be populated by memory_interface
         attack_results: dict[str, list[AttackResult]] = {}
 
-        base_identifier = ComponentIdentifier.model_validate(
-            {**self.scenario_identifier, "pyrit_version": stored_version}
-        )
+        # Rows from v0.13 and v0.14 kept scenario_init_data, which was always null for built-in
+        # scenarios, and the v1.0 rename carried that null over into scenario_identifier.
+        stored_identifier = self.scenario_identifier or {"class_name": self.scenario_name}
+        base_identifier = ComponentIdentifier.model_validate({**stored_identifier, "pyrit_version": stored_version})
         scenario_identifier = ScenarioIdentifier.from_component_identifier(
             base_identifier.with_eval_hash(ScenarioEvaluationIdentifier(base_identifier).eval_hash)
         )
