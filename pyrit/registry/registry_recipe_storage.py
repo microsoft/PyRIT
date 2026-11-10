@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from pydantic import ValidationError
@@ -25,14 +27,42 @@ from pyrit.models.catalog import (
 )
 from pyrit.registry.file_document_storage import FileDocumentStorage
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+MAX_FAILURE_MESSAGE_LENGTH = 1_024
+_MAX_LOCATION_PART_LENGTH = 64
+
+
+def shorten_text(text: str, *, limit: int) -> str:
+    """
+    Cut text that's longer than *limit*, marking the cut.
+
+    Returns:
+        str: The text, at most *limit* characters long.
+    """
+    return text if len(text) <= limit else f"{text[: limit - 3]}..."
+
+
+def _escape_invalid_text(value: str) -> str:
+    """
+    Escape what can't be written as UTF-8, such as the bytes of a file name that isn't UTF-8.
+
+    Returns:
+        str: The text, with each such character written as a backslash escape.
+    """
+    return value.encode("utf-8", "backslashreplace").decode("utf-8")
+
 
 @dataclass(frozen=True)
 class RecipeListing:
     """Every saved recipe of one kind, with the ones that couldn't be read or parsed."""
 
-    recipes: dict[str, StoredRecipe] = field(default_factory=dict)
+    recipes: Mapping[str, StoredRecipe] = field(default_factory=lambda: MappingProxyType({}))
     failures: tuple[RestoreFailure, ...] = ()
     ignored: tuple[IgnoredRecipeFile, ...] = ()
+    # The error behind each recipe that couldn't be read, by name, for the log only.
+    causes: Mapping[str, BaseException] = field(default_factory=lambda: MappingProxyType({}), compare=False, repr=False)
 
 
 class RegistryRecipeStorage(FileDocumentStorage):
@@ -97,19 +127,25 @@ class RegistryRecipeStorage(FileDocumentStorage):
         """
         Read every saved recipe of this kind and report the ones that can't be used.
 
+        Text from the OS, such as a file name that isn't UTF-8, is escaped here so a report can be sent as JSON.
+
         Returns:
             RecipeListing: Parsed recipes keyed by name, plus the failures and ignored files.
 
         Raises:
-            OSError: If the local folder can't be listed.
-            AzureError: If the Blob container can't be listed.
+            DocumentStorageUnavailableError: If the folder or container can't be listed.
         """
         listing = self._list_documents_with_issues()
         recipes: dict[str, StoredRecipe] = {}
         failures = [
-            self._failure(name=issue.name, reason=RestoreFailureReason.UNREADABLE_RECIPE, message=issue.message)
+            self._failure(
+                name=issue.name,
+                reason=RestoreFailureReason.UNREADABLE_RECIPE,
+                message=_escape_invalid_text(issue.message),
+            )
             for issue in listing.unreadable
         ]
+        causes = {issue.name: issue.error for issue in listing.unreadable if issue.error is not None}
         for name, content in listing.documents.items():
             parsed = self._parse_recipe(name=name, content=content)
             if isinstance(parsed, RestoreFailure):
@@ -117,10 +153,19 @@ class RegistryRecipeStorage(FileDocumentStorage):
             else:
                 recipes[name] = parsed
         ignored = tuple(
-            IgnoredRecipeFile(kind=self._kind, file_name=issue.file_name, message=issue.message)
+            IgnoredRecipeFile(
+                kind=self._kind,
+                file_name=_escape_invalid_text(issue.file_name),
+                message=_escape_invalid_text(issue.message),
+            )
             for issue in listing.ignored
         )
-        return RecipeListing(recipes=recipes, failures=tuple(failures), ignored=ignored)
+        return RecipeListing(
+            recipes=MappingProxyType(recipes),
+            failures=tuple(failures),
+            ignored=ignored,
+            causes=MappingProxyType(causes),
+        )
 
     def _parse_recipe(self, *, name: str, content: bytes) -> StoredRecipe | RestoreFailure:
         """
@@ -131,22 +176,31 @@ class RegistryRecipeStorage(FileDocumentStorage):
         """
         version = self._compute_version(content)
         invalid = RestoreFailureReason.INVALID_RECIPE
+        too_deep = "Nested too deeply to read."
         try:
-            payload = json.loads(content.decode("utf-8"))
+            # Recipes can be written by hand, and Windows tools often start a file with a byte-order mark.
+            payload = json.loads(content.decode("utf-8-sig"))
         except ValueError:
             return self._failure(name=name, version=version, reason=invalid, message="Not valid UTF-8 JSON.")
         except RecursionError:
-            return self._failure(name=name, version=version, reason=invalid, message="Nested too deeply to read.")
+            return self._failure(name=name, version=version, reason=invalid, message=too_deep)
         if not isinstance(payload, dict):
             return self._failure(name=name, version=version, reason=invalid, message="Not a JSON object.")
+        try:
+            json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        except UnicodeEncodeError:
+            message = "Has a \\u escape that isn't a character (an unpaired surrogate)."
+            return self._failure(name=name, version=version, reason=invalid, message=message)
+        except RecursionError:
+            return self._failure(name=name, version=version, reason=invalid, message=too_deep)
+        model = TechniqueRecipe if self._kind is RegistryRecipeKind.TECHNIQUES else ComponentRecipe
         schema_version = payload.get("schema_version")
-        current = ComponentRecipe.CURRENT_SCHEMA_VERSION
+        current = model.CURRENT_SCHEMA_VERSION
         if isinstance(schema_version, int) and schema_version > current:
             message = f"Saved by a newer PyRIT (format version {schema_version}; this one reads up to {current})."
             return self._failure(
                 name=name, version=version, reason=RestoreFailureReason.NEWER_SCHEMA_VERSION, message=message
             )
-        model = TechniqueRecipe if self._kind is RegistryRecipeKind.TECHNIQUES else ComponentRecipe
         try:
             recipe = model.model_validate(payload)
         except ValidationError as error:
@@ -154,7 +208,7 @@ class RegistryRecipeStorage(FileDocumentStorage):
                 name=name, version=version, reason=invalid, message=self._describe_validation_error(error)
             )
         except RecursionError:
-            return self._failure(name=name, version=version, reason=invalid, message="Nested too deeply to read.")
+            return self._failure(name=name, version=version, reason=invalid, message=too_deep)
         return StoredRecipe(ref=SavedEntryRef(kind=self._kind, name=name), recipe=recipe, version=version)
 
     def _failure(
@@ -171,12 +225,16 @@ class RegistryRecipeStorage(FileDocumentStorage):
     @staticmethod
     def _describe_validation_error(error: ValidationError) -> str:
         """
-        Summarize a validation error without echoing the stored values.
+        Summarize a validation error, naming each field and what's wrong with it, without the stored values.
+
+        A field's location can repeat a stored key, such as an unknown one, so each part of a location
+        is shortened, and so is the whole summary.
 
         Returns:
-            str: One line per problem, naming the field and what's wrong with it.
+            str: The summary, at most ``MAX_FAILURE_MESSAGE_LENGTH`` characters long.
         """
-        problems = [
-            f"{'.'.join(str(part) for part in issue['loc']) or 'document'}: {issue['msg']}" for issue in error.errors()
-        ]
-        return "Not a valid saved recipe: " + "; ".join(problems)
+        problems = []
+        for issue in error.errors():
+            location = ".".join(shorten_text(str(part), limit=_MAX_LOCATION_PART_LENGTH) for part in issue["loc"])
+            problems.append(f"{location or 'document'}: {issue['msg']}")
+        return shorten_text("Not a valid saved recipe: " + "; ".join(problems), limit=MAX_FAILURE_MESSAGE_LENGTH)
