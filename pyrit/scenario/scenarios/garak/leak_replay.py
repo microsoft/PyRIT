@@ -158,16 +158,22 @@ class LeakReplayDatasetConfiguration(DatasetAttackConfiguration):
         Check the corpus selection without reading its contents.
 
         Raises:
-            DatasetConstraintError: If sources are inline or capped, or the cap cannot cover
-                every technique and corpus.
+            DatasetConstraintError: If sources are inline, capped, or have colliding population
+                names, or the cap cannot cover every technique and corpus.
         """
         super().validate_configuration()
         if not self.sources:
             raise DatasetConstraintError("LeakReplay requires named corpus datasets; inline seeds are not supported.")
         if any(self.source_limit(source.name) != "all" for source in self.sources):
             raise DatasetConstraintError("LeakReplay corpus sources must be uncapped; use max_total.")
+        population_names = self.population_names()
+        if len(population_names) != len(set(population_names)):
+            raise DatasetConstraintError(
+                "LeakReplay population names must be unique; corpus names collide after removing "
+                f"the {self.DATASET_PREFIX} prefix."
+            )
         cap = self.max_total
-        populations = len(self.population_names())
+        populations = len(population_names)
         if cap != "all" and cap < populations:
             raise DatasetConstraintError(
                 f"LeakReplay max_total ({cap}) must be at least the number of technique and corpus "

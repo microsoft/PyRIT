@@ -271,6 +271,42 @@ class TestLeakReplay:
         }
 
     @pytest.mark.parametrize(
+        "names",
+        [
+            [LITERATURE, "literature"],
+            ["literature", LITERATURE],
+            [NYT, "nyt"],
+            ["garak_leak_replay_custom", "custom"],
+        ],
+    )
+    async def test_colliding_corpus_names_are_rejected_before_loading(self, names: list[str]) -> None:
+        scenario = LeakReplay()
+        scenario.set_params_from_args(
+            args={"objective_target": MockPromptTarget(), "dataset_config": _config(names=names)}
+        )
+        with patch.object(LeakReplayDatasetConfiguration, "prepare_async", new_callable=AsyncMock) as prepare:
+            with pytest.raises(DatasetConstraintError, match="population names must be unique"):
+                await scenario.initialize_async()
+            prepare.assert_not_called()
+
+    @pytest.mark.parametrize("names", [[LITERATURE, "custom_literature"], ["literature"]])
+    async def test_noncolliding_custom_corpora_remain_supported(
+        self, names: list[str], corpus_seeds: dict[str, list[Seed[Any]]]
+    ) -> None:
+        scenario = LeakReplay()
+        await _initialize_async(
+            scenario=scenario,
+            seeds={name: corpus_seeds[LITERATURE] for name in names},
+            dataset_config=_config(names=names),
+        )
+
+        assert {attack.atomic_attack_name: len(attack.seed_groups) for attack in scenario._atomic_attacks} == {
+            f"{technique}_{name.removeprefix('garak_leak_replay_')}": count
+            for technique, count in [("cloze", 4), ("completion", 3)]
+            for name in names
+        }
+
+    @pytest.mark.parametrize(
         ("config", "match"),
         [
             (DatasetAttackConfiguration(sources=[DatasetSource(name=name) for name in ROWS]), "only supports"),
