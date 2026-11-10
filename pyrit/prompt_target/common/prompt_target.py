@@ -109,6 +109,14 @@ class PromptTarget(Identifiable):
     # unaffected.
     server_credential_parameter: ClassVar[str | None] = None
 
+    # Targets that resolve a token-provider callable before every request, and send its value
+    # exactly as they would send the same value passed as a string, name that constructor
+    # parameter (e.g. ``"api_key"``). The backend then stores a credential submitted at
+    # creation for its caller and gives the registered target a provider that returns each
+    # caller's own credential, so a shared target never carries one user's secret. Direct
+    # Python use is unaffected.
+    caller_credential_parameter: ClassVar[str | None] = None
+
     def __init_subclass__(cls, **kwargs: object) -> None:
         """
         Validate that subclasses follow the keyword-only ``__init__`` contract.

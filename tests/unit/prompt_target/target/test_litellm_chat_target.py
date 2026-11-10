@@ -16,6 +16,12 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
+from pyrit.auth import (
+    CallerCredentialRequiredError,
+    CallerCredentialStore,
+    caller_principal_scope,
+    create_caller_credential_provider,
+)
 from pyrit.exceptions import (
     EmptyResponseException,
     PyritException,
@@ -1072,6 +1078,95 @@ async def test_resolve_api_key_async_callable(patch_central_database, litellm_st
 
     t = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=provider)
     assert await t._resolve_api_key_async() == "atok"
+
+
+async def test_send_prompt_uses_each_callers_own_credential(patch_central_database, litellm_stub):
+    store = CallerCredentialStore()
+    store.set_credential(principal="alice", credential_id="shared", credential="alice-key")
+    provider = create_caller_credential_provider(store=store, credential_id="shared", component_name="shared")
+    t = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=provider)
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
+
+    with caller_principal_scope("alice"):
+        await t.send_prompt_async(message=_user_message("hi"))
+    with patch.dict("os.environ", {"LITELLM_API_KEY": "server-key"}), caller_principal_scope("bob"):
+        with pytest.raises(CallerCredentialRequiredError):
+            await t.send_prompt_async(message=_user_message("hi"))
+
+    litellm_stub.acompletion.assert_awaited_once()
+    assert litellm_stub.acompletion.call_args.kwargs["api_key"] == "alice-key"
+
+
+@pytest.mark.parametrize("model", ["vertex_ai/gemini-2.5-flash", "bedrock/model", "azure/model", "gpt-4o"])
+def test_token_provider_rejects_ambient_provider(patch_central_database, litellm_stub, model: str) -> None:
+    with pytest.raises(ValueError, match="openai/"):
+        LiteLLMChatTarget(model_name=model, api_key=lambda: "caller-key")
+
+
+@pytest.mark.parametrize("override", [None, "static-key"])
+async def test_token_provider_key_wins_over_passthrough_async(
+    patch_central_database, litellm_stub, override: str | None
+) -> None:
+    target = LiteLLMChatTarget(
+        model_name="openai/gpt-4o", api_key=lambda: "caller-key", extra_body_parameters={"api_key": override}
+    )
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
+    await target.send_prompt_async(message=_user_message())
+    kwargs = litellm_stub.acompletion.call_args.kwargs
+    assert kwargs["api_key"] == "caller-key"
+    assert kwargs["custom_llm_provider"] == "openai"
+    assert kwargs["model"] == "gpt-4o"
+
+
+@pytest.mark.parametrize(
+    "passthrough",
+    [
+        {"model": "vertex_ai/gemini-2.5-flash"},
+        {"custom_llm_provider": "vertex_ai"},
+        {"fallbacks": ["vertex_ai/gemini-2.5-flash"]},
+        {"provider_specific_header": {"custom_llm_provider": "openai", "extra_headers": {"Authorization": "static"}}},
+        {"extra_headers": {"aUtHoRiZaTiOn": "static"}},
+        {"headers": {"X-API-Key": "static"}},
+    ],
+)
+async def test_token_provider_rejects_authentication_overrides_async(
+    patch_central_database, litellm_stub, passthrough: dict[str, object]
+) -> None:
+    litellm_stub.acompletion = AsyncMock(return_value=_mock_response("ok"))
+    with pytest.raises(ValueError, match="token provider"):
+        target = LiteLLMChatTarget(
+            model_name="openai/gpt-4o", api_key=lambda: "caller-key", extra_body_parameters=passthrough
+        )
+        await target.send_prompt_async(message=_user_message())
+    litellm_stub.acompletion.assert_not_awaited()
+
+
+@pytest.mark.parametrize("value", [None, "", "  "])
+async def test_token_provider_rejects_empty_key_without_fallback_async(
+    patch_central_database, litellm_stub, value: str | None
+) -> None:
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=AsyncMock(return_value=value))
+    with pytest.raises(ValueError, match="nonempty API key"):
+        await target.send_prompt_async(message=_user_message())
+    litellm_stub.acompletion.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("model_fallbacks", ["vertex_ai/gemini-2.5-flash"]),
+        ("model_alias_map", {"gpt-4o": "vertex_ai/gemini-2.5-flash"}),
+        ("headers", {"Authorization": "static-key"}),
+    ],
+)
+async def test_token_provider_rejects_global_authentication_overrides_async(
+    patch_central_database, litellm_stub, name: str, value: object
+) -> None:
+    target = LiteLLMChatTarget(model_name="openai/gpt-4o", api_key=lambda: "caller-key")
+    with patch.object(litellm_stub, name, value, create=True):
+        with pytest.raises(ValueError, match="token provider"):
+            await target.send_prompt_async(message=_user_message())
+    litellm_stub.acompletion.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

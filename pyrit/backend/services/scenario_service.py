@@ -12,6 +12,7 @@ from collections import OrderedDict
 from functools import lru_cache
 from time import monotonic
 
+from pyrit.auth import caller_principal_context
 from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.models.datasets import ScenarioDatasetLoadResponse
 from pyrit.backend.services.dataset_service import get_dataset_service
@@ -226,11 +227,13 @@ class ScenarioService:
                 self._configured_estimate_tasks = tasks
             task = tasks.get(estimate_key)
             if task is None:
+                # Estimates are shared by every caller with the same request and never act for one caller.
                 task = asyncio.create_task(
                     self._run_configured_estimate_with_capacity_async(
                         scenario_name=scenario_name,
                         request=request,
-                    )
+                    ),
+                    context=caller_principal_context(None),
                 )
                 tasks[estimate_key] = task
 
@@ -330,7 +333,8 @@ class ScenarioService:
                             self._compute_default_run_size_estimate_async(
                                 scenario_name=metadata.registry_name,
                                 cache_key=cache_key,
-                            )
+                            ),
+                            context=caller_principal_context(None),
                         )
                         tasks[cache_key] = task
 

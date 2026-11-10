@@ -267,6 +267,97 @@ class PyRITApiClient:
         payload = await self._get_json_async(path="/api/targets", params={"limit": limit})
         return [TargetInstance.model_validate(item) for item in payload.get("items", [])]
 
+    async def get_target_async(self, *, target_registry_name: str) -> TargetInstance | None:
+        """
+        Get one registered target.
+
+        Returns:
+            TargetInstance | None: The target as seen by this caller, or ``None`` if it is not registered.
+
+        Raises:
+            httpx.HTTPStatusError: For non-404 HTTP error responses.
+        """
+        from pyrit.models.catalog import TargetInstance
+
+        resp = await self._send_async(method="GET", path=self._target_path(target_registry_name))
+        if resp.status_code == 404:
+            return None
+        self._raise_for_status(resp)
+        return TargetInstance.model_validate(resp.json())
+
+    async def set_target_credential_async(self, *, target_registry_name: str, credential: str) -> TargetInstance:
+        """
+        Set or replace this caller's own credential for a personal target.
+
+        Args:
+            target_registry_name: The registry name of the target.
+            credential: The caller's credential. It is sent only in the request body.
+
+        Returns:
+            TargetInstance: The target as seen by this caller.
+        """
+        from pyrit.models.catalog import TargetInstance
+
+        self._require_secure_credential_transport()
+        resp = await self._send_async(
+            method="PUT",
+            path=f"{self._target_path(target_registry_name)}/credentials",
+            json={"credential": credential},
+        )
+        self._raise_for_status(resp)
+        return TargetInstance.model_validate(resp.json())
+
+    async def remove_target_credential_async(self, *, target_registry_name: str) -> None:
+        """Remove this caller's own credential for a personal target."""
+        resp = await self._send_async(method="DELETE", path=f"{self._target_path(target_registry_name)}/credentials")
+        self._raise_for_status(resp)
+
+    async def create_personal_target_async(
+        self,
+        *,
+        name: str,
+        source: TargetInstance,
+        params: dict[str, Any] | None = None,
+        credential: str | None = None,
+    ) -> TargetInstance:
+        """
+        Register a personal copy of a target that uses each caller's own credential.
+
+        The copy keeps the source's configuration, such as settings an initializer made, but never its
+        credential.
+
+        Args:
+            name: Registry name for the copy.
+            source: The registered target to copy.
+            params: Constructor overrides for the copy. Defaults to None.
+            credential: This caller's credential for the copy. Defaults to None, which leaves it unset.
+
+        Returns:
+            TargetInstance: The copy as seen by this caller.
+        """
+        from pyrit.models.catalog import TargetInstance
+
+        overrides = dict(params or {})
+        if credential is not None:
+            self._require_secure_credential_transport()
+            overrides["api_key"] = credential
+        resp = await self._send_async(
+            method="POST",
+            path="/api/targets",
+            json={
+                "name": name,
+                "type": source.identifier.class_name,
+                "requires_caller_credential": True,
+                "source": {
+                    "source_name": source.target_registry_name,
+                    "source_hash": source.identifier.hash,
+                    "params": overrides,
+                },
+            },
+        )
+        self._raise_for_status(resp)
+        return TargetInstance.model_validate(resp.json())
+
     # ------------------------------------------------------------------
     # Datasets
     # ------------------------------------------------------------------
@@ -566,6 +657,53 @@ class PyRITApiClient:
         if parsed.scheme == "https":
             return True
         return parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+
+    def _require_secure_credential_transport(self) -> None:
+        """
+        Refuse to send a target credential where it is not protected in transit.
+
+        Raises:
+            CliAuthenticationError: If the backend is neither HTTPS nor on this machine.
+        """
+        from pyrit.cli._auth import CliAuthenticationError
+
+        if not self._uses_secure_auth_transport():
+            raise CliAuthenticationError(
+                "Refusing to send a target credential over a non-HTTPS connection. Use HTTPS for remote backends."
+            )
+
+    @staticmethod
+    def _target_path(target_registry_name: str) -> str:
+        """
+        Build the URL path of one target.
+
+        Returns:
+            str: The target path with its name URL-encoded.
+        """
+        from urllib.parse import quote
+
+        return f"/api/targets/{quote(target_registry_name, safe='')}"
+
+    async def _send_async(self, *, method: str, path: str, json: dict[str, Any] | None = None) -> Any:
+        """
+        Send a request, mapping connection failures to ``ServerNotAvailableError``.
+
+        Returns:
+            Any: The ``httpx.Response``.
+
+        Raises:
+            ServerNotAvailableError: On connection failure.
+        """
+        import httpx
+
+        try:
+            return await self._get_client().request(method, path, json=json)
+        except httpx.ConnectError as exc:
+            raise ServerNotAvailableError(
+                f"Cannot connect to PyRIT server at {self._base_url}.\n"
+                "Hint: Use '--start-server' to launch a local backend, "
+                "or pass '--server-url <url>'."
+            ) from exc
 
     async def _add_authorization_header_async(self, request: Any) -> None:
         """Attach a current bearer token to protected backend requests."""

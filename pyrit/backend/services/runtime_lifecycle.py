@@ -48,6 +48,7 @@ class RuntimeLifecycle:
         self.message = ""
         self.operations: set[asyncio.Task[None]] = set()
         self.management_operations: set[asyncio.Task[None]] = set()
+        self.target_cleanup_active = False
         self.apply_task: asyncio.Task[None] | None = None
         self._shutdown_task: asyncio.Task[None] | None = None
         self.topology_supported = all(
@@ -242,6 +243,18 @@ class RuntimeLifecycle:
             finally:
                 logger.info("PyRIT apply outcome=%s generation=%s", self.outcome, self.generation)
 
+    def begin_target_cleanup(self) -> bool:
+        """
+        Close admission only when no operation can still use a target being deleted.
+
+        Returns:
+            bool: Whether exclusive target cleanup was admitted.
+        """
+        if self._has_active_work() or self.management_operations or self.edit_lock.locked():
+            return False
+        self.target_cleanup_active = True
+        return True
+
     def _has_active_work(self) -> bool:
         """Return whether any admitted or background runtime operation remains."""
         service = peek_scenario_run_service()
@@ -250,6 +263,7 @@ class RuntimeLifecycle:
             (service and service.has_active_work())
             or (suite_execution_service and suite_execution_service.has_active_work())
             or self.operations
+            or self.target_cleanup_active
             or outstanding_estimates()
             or has_active_manual_sends()
             or has_active_analytics_work()

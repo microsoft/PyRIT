@@ -3,17 +3,26 @@
 
 """Tests for the Entra ID auth middleware."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from pyrit.auth import get_caller_principal
 from pyrit.backend.authentication_policy import AuthenticationPolicy
-from pyrit.backend.middleware.auth import AuthenticatedUser, AuthenticationError, EntraAuthMiddleware, require_admin
+from pyrit.backend.middleware.auth import (
+    AuthenticatedUser,
+    AuthenticationError,
+    EntraAuthMiddleware,
+    caller_principal,
+    require_admin,
+)
 
 
 def _make_middleware() -> EntraAuthMiddleware:
@@ -310,3 +319,77 @@ async def test_dispatch_maps_authentication_error_to_json_response() -> None:
     assert isinstance(response, JSONResponse)
     assert response.status_code == 401
     assert json.loads(response.body) == {"detail": "Invalid or expired token"}
+
+
+def test_caller_principal_uses_tenant_and_object_id_only() -> None:
+    request = _request_with_policy(_entra_policy())
+    request.state.user = AuthenticatedUser(oid="user-oid", name="Same Name", email="same@example.com", groups=[])
+
+    assert caller_principal(request) == "entra:test-tenant:user-oid"
+
+
+@pytest.mark.parametrize("user", [None, AuthenticatedUser(oid="", name="No ID", email="", groups=[])])
+def test_caller_principal_requires_verified_entra_user(user: AuthenticatedUser | None) -> None:
+    request = _request_with_policy(_entra_policy())
+    request.state.user = user
+
+    assert caller_principal(request) is None
+
+
+def test_caller_principal_is_shared_in_local_mode() -> None:
+    assert caller_principal(_request_with_policy(AuthenticationPolicy(mode="local"))) == "local"
+
+
+async def test_dispatch_scopes_downstream_work_to_the_authenticated_caller() -> None:
+    middleware = _make_middleware()
+    request = _request_with_policy(_entra_policy())
+    user = AuthenticatedUser(oid="user-oid", name="User", email="user@example.com", groups=["allowed-group"])
+    seen: list[str | None] = []
+
+    async def call_next_async(_: Request) -> JSONResponse:
+        seen.append(get_caller_principal())
+        return JSONResponse({})
+
+    with patch.object(middleware, "_authenticate_request_async", new_callable=AsyncMock, return_value=user):
+        await middleware.dispatch(request, call_next_async)
+
+    assert seen == ["entra:test-tenant:user-oid"]
+    assert get_caller_principal() is None
+
+
+async def test_dispatch_scopes_local_mode_to_the_local_caller() -> None:
+    middleware = _make_middleware()
+    request = _request_with_policy(AuthenticationPolicy(mode="local"))
+    seen: list[str | None] = []
+
+    async def call_next_async(_: Request) -> JSONResponse:
+        seen.append(get_caller_principal())
+        return JSONResponse({})
+
+    await middleware.dispatch(request, call_next_async)
+
+    assert seen == ["local"]
+    assert get_caller_principal() is None
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected"),
+    [(AuthenticationPolicy(mode="local"), "local"), (_entra_policy(), "entra:test-tenant:user-oid")],
+)
+def test_middleware_scopes_routes_and_the_tasks_they_start(policy: AuthenticationPolicy, expected: str) -> None:
+    app = FastAPI()
+    app.state.authentication_policy = policy
+    app.add_middleware(EntraAuthMiddleware)
+
+    async def read_principal_async() -> str | None:
+        return get_caller_principal()
+
+    @app.get("/api/principal")
+    async def principal_async() -> dict[str, str | None]:
+        return {"route": get_caller_principal(), "task": await asyncio.create_task(read_principal_async())}
+
+    user = AuthenticatedUser(oid="user-oid", name="User", email="user@example.com", groups=["allowed-group"])
+    with patch.object(EntraAuthMiddleware, "_authenticate_request_async", new_callable=AsyncMock, return_value=user):
+        response = TestClient(app).get("/api/principal", headers={"Authorization": "Bearer token"})
+
+    assert response.json() == {"route": expected, "task": expected}

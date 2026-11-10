@@ -234,6 +234,9 @@ def print_target_list(*, items: list[TargetInstance]) -> None:
             print(f"    Model: {model}")
         if identifier.endpoint:
             print(f"    Endpoint: {identifier.endpoint}")
+        if tgt.requires_caller_credential:
+            state = "set" if tgt.caller_credential_configured else "not set (use set-target-credential)"
+            print(f"    Personal: your credential is {state}")
     print("\n" + "=" * 80)
     print(f"\nTotal targets: {len(items)}")
 

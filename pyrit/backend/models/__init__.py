@@ -82,7 +82,7 @@ if TYPE_CHECKING:
         ScorerTypeEntry,
         ScorerTypeResponse,
     )
-    from pyrit.backend.models.targets import CreateTargetRequest, TargetListResponse
+    from pyrit.backend.models.targets import CreateTargetRequest, SetTargetCredentialRequest, TargetListResponse
 
 _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "DEFAULT_MEDIA_EXTENSIONS": "pyrit.backend.models._media",
@@ -143,6 +143,7 @@ _LAZY_EXPORTS: dict[str, str | tuple[str, str | None]] = {
     "ListRegisteredInitializersResponse": "pyrit.backend.models.initializers",
     "RegisterInitializerRequest": "pyrit.backend.models.initializers",
     "CreateTargetRequest": "pyrit.backend.models.targets",
+    "SetTargetCredentialRequest": "pyrit.backend.models.targets",
     "TargetListResponse": "pyrit.backend.models.targets",
 }
 

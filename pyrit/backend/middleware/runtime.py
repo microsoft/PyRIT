@@ -6,6 +6,7 @@
 import asyncio
 from typing import TYPE_CHECKING
 
+from starlette._utils import get_route_path
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -26,7 +27,7 @@ class RuntimeAdmissionMiddleware:
             await self.app(scope, receive, send)
             return
         runtime: RuntimeLifecycle | None = getattr(scope["app"].state, "runtime_lifecycle", None)
-        path = scope["path"]
+        path = get_route_path(scope)
         if (
             runtime is None
             or not path.startswith("/api/")
@@ -47,6 +48,7 @@ class RuntimeAdmissionMiddleware:
         write = management and scope["method"] not in ("GET", "HEAD", "OPTIONS") and not apply_route
         if (
             runtime.is_stopping
+            or runtime.target_cleanup_active
             or (write and (runtime.edit_lock.locked() or (runtime.apply_task and not runtime.apply_task.done())))
             or (path.startswith("/api/initializers") and runtime.edit_lock.locked())
             or (path.startswith("/api/initializers") and runtime.state == "initializing")
@@ -61,6 +63,14 @@ class RuntimeAdmissionMiddleware:
             await self.app(scope, receive, send)
             return
 
+        target_delete = scope["method"] == "DELETE" and path.startswith("/api/targets/") and path.count("/") == 3
+        if target_delete and not runtime.begin_target_cleanup():
+            await JSONResponse(
+                {"detail": "Targets cannot be deleted while runtime work is active. Wait for it to finish and retry."},
+                status_code=409,
+            )(scope, receive, send)
+            return
+
         async def execute_async() -> None:
             try:
                 if write:
@@ -71,6 +81,8 @@ class RuntimeAdmissionMiddleware:
             finally:
                 runtime.operations.discard(task)
                 runtime.management_operations.discard(task)
+                if target_delete:
+                    runtime.target_cleanup_active = False
 
         task = asyncio.create_task(execute_async())
         task.add_done_callback(lambda completed: completed.exception() if not completed.cancelled() else None)

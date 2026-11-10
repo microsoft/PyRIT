@@ -20,6 +20,7 @@ import pytest
 import pyrit.backend.services.scenario_configuration_resolver as _resolver_mod
 import pyrit.backend.services.scenario_progress_read_model as _progress_mod
 import pyrit.backend.services.scenario_run_service as _svc_mod
+from pyrit.auth import caller_principal_scope, get_caller_principal
 from pyrit.backend.services import ScenarioRunService
 from pyrit.backend.services.scenario_progress_read_model import ScenarioPlanLookup, ScenarioProgressReadModel
 from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError
@@ -1301,6 +1302,62 @@ class TestScenarioRunServiceStartRun:
         release_queued.set()
         await asyncio.wait_for(queued_task, timeout=1)
         assert started == ["run-1", "run-2"]
+
+    async def test_queued_run_uses_its_own_admitted_caller_async(self, mock_all_registries) -> None:
+        """A run started by another caller's handoff resolves caller credentials for its own admitting caller."""
+        service = ScenarioRunService()
+        mock_memory = mock_all_registries["memory"]
+        records: dict[str, MagicMock] = {}
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        finished = asyncio.Event()
+        started: list[tuple[str, str | None]] = []
+
+        async def _create_scenario(*args: object, **kwargs: object) -> MagicMock:
+            run_id = f"run-{len(records) + 1}"
+            record = _make_db_scenario_result(result_id=run_id, run_state=ScenarioRunState.CREATED)
+            records[run_id] = record
+            scenario = MagicMock()
+            scenario._scenario_result_id = run_id
+            scenario.active_atomic_group_ids = set()
+
+            async def _run() -> None:
+                started.append((run_id, get_caller_principal()))
+                if run_id == "run-1":
+                    first_started.set()
+                    await release_first.wait()
+                else:
+                    finished.set()
+                record.scenario_run_state = ScenarioRunState.COMPLETED
+
+            scenario.run_async = AsyncMock(side_effect=_run)
+            return scenario
+
+        def _update_state(*, scenario_result_id: str, scenario_run_state: ScenarioRunState, **_: object) -> None:
+            records[scenario_result_id].scenario_run_state = scenario_run_state
+
+        def _get_results(*, scenario_result_ids: list[str] | None = None) -> list[MagicMock]:
+            return [records[run_id] for run_id in scenario_result_ids or records if run_id in records]
+
+        mock_all_registries["scenario_registry"].create_and_initialize_async = AsyncMock(side_effect=_create_scenario)
+        mock_memory.get_scenario_results_async = AsyncMock(side_effect=_get_results)
+        mock_memory.get_scenario_result_header_async = AsyncMock(
+            side_effect=lambda *, scenario_result_id: records.get(scenario_result_id)
+        )
+        mock_memory.update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
+        mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=_update_state)
+        mock_memory.update_scenario_run_state_and_metadata_fields_async = AsyncMock(side_effect=_update_state)
+
+        with caller_principal_scope("alice"):
+            await service.start_run_async(request=_make_request())
+        await asyncio.wait_for(first_started.wait(), timeout=1)
+        with caller_principal_scope("bob"):
+            queued = await service.start_run_async(request=_make_request())
+        release_first.set()
+        await asyncio.wait_for(finished.wait(), timeout=1)
+
+        assert queued.status == ScenarioRunState.QUEUED
+        assert started == [("run-1", "alice"), ("run-2", "bob")]
 
     async def test_start_run_forwards_include_baseline(self, mock_all_registries) -> None:
         service = ScenarioRunService()

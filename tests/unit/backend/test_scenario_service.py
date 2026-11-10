@@ -17,6 +17,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
+from pyrit.auth import caller_principal_scope, get_caller_principal
 from pyrit.backend.main import app
 from pyrit.backend.models import ListRegisteredScenariosResponse, PaginationInfo
 from pyrit.backend.routes.scenarios import estimate_scenario_run_size
@@ -667,6 +668,33 @@ class TestScenarioServiceListScenarios:
 
         assert result == estimate
         prepare.assert_not_awaited()
+
+    async def test_shared_default_estimate_never_acts_for_the_requesting_caller_async(self) -> None:
+        """A single-flight estimate is shared by callers, so caller credentials are never in scope."""
+        metadata = _make_scenario_metadata()
+        estimate = ScenarioRunSizeEstimate(
+            total_attack_count=1,
+            components=[ScenarioRunSizeComponent(label="Default sweep", count=1)],
+        )
+        seen: list[str | None] = []
+
+        async def estimate_async() -> ScenarioRunSizeEstimate:
+            seen.append(get_caller_principal())
+            return estimate
+
+        scenario = MagicMock()
+        scenario.get_default_run_size_estimate_async = AsyncMock(side_effect=estimate_async)
+
+        with patch.object(ScenarioService, "__init__", lambda self: None):
+            service = ScenarioService()
+            service._registry = MagicMock()
+            service._registry.create_instance.return_value = scenario
+
+            with caller_principal_scope("alice"):
+                result = await service._get_default_run_size_estimate_async(metadata=metadata)
+
+        assert result == estimate
+        assert seen == [None]
 
     async def test_concurrent_estimate_reads_share_one_task_async(self, *, estimate_watchdog_seconds: float) -> None:
         """Concurrent catalog readers share one atomic single-flight estimate."""

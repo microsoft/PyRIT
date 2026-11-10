@@ -555,6 +555,7 @@ class OpenAIResponseTarget(OpenAITarget):
 
         search_config = web_search_config or self._get_web_search_config(conversation[-1])
         self._apply_web_search_config(body=body_parameters, config=search_config)
+        self._validate_request_headers(body=body_parameters)
         # Filter out None values
         return {k: v for k, v in body_parameters.items() if v is not None}
 

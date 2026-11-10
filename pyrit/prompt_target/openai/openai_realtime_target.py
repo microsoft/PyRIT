@@ -150,6 +150,10 @@ class RealtimeTarget(OpenAITarget):
     #: of truth for both atomic (send_text/send_audio) and streaming session paths.
     SAMPLE_RATE_HZ: ClassVar[int] = 24000
 
+    # The key is resolved once when a conversation's websocket opens and that connection is reused,
+    # so a shared target cannot switch to each caller's own credential per request.
+    caller_credential_parameter: ClassVar[str | None] = None
+
     @forward_init_parameters
     def __init__(
         self,

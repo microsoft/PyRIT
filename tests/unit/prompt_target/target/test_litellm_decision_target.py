@@ -206,6 +206,19 @@ class TestLiteLLMDecisionTarget:
         token_provider.assert_awaited_once()
         assert decision_sdk.adecisions.call_args.kwargs["api_key"] == "current-test-key"
 
+    @pytest.mark.parametrize("header", ["Authorization", "aPi-KeY", "X-API-Key"])
+    def test_token_provider_rejects_static_authentication_headers(self, decision_sdk: MagicMock, header: str) -> None:
+        with pytest.raises(ValueError, match="authentication headers"):
+            LiteLLMDecisionTarget(
+                model_name=MODEL,
+                api_key=AsyncMock(return_value="current-test-key"),
+                headers={header: "static-key"},
+            )
+        decision_sdk.adecisions.assert_not_awaited()
+
+    def test_decision_api_does_not_inherit_chat_personal_credentials(self) -> None:
+        assert LiteLLMDecisionTarget.caller_credential_parameter is None
+
     async def test_concurrent_requests_keep_separate_state_async(
         self, *, target: LiteLLMDecisionTarget, decision_sdk: MagicMock
     ) -> None:
