@@ -31,7 +31,7 @@ from pyrit.scenario.scenarios.benchmark import AdversarialBenchmark
 from pyrit.scenario.scenarios.garak import Doctor
 from pyrit.scenario.scenarios.technique import Execute
 from pyrit.score import SubStringScorer
-from pyrit.setup.initializers.scorers import ScorerInitializerTags
+from pyrit.setup.initializers import ScorerInitializerTags
 from pyrit.setup.initializers.techniques import build_technique_factories
 
 
