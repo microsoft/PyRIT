@@ -30,6 +30,23 @@ API keys do not authenticate incoming GUI users.
 
 ## API Endpoints
 
+### Memory text search
+
+Text searches are case-insensitive literal substrings by default. Wildcards require
+an explicit full LIKE pattern: `%` matches any number of characters, `_` matches
+one, and `/` escapes the next character. Brackets, `*` and backslashes are literal.
+Patterns are not automatically wrapped in `%`; a dangling `/` is invalid.
+
+`GET /api/datasets/seeds` accepts `search` for literals or `value_pattern` for
+patterns. `GET /api/operations/{operation_id}/findings` accepts `title` or
+`title_pattern`. `POST /api/analytics/attacks/facets` accepts `search` or `search_pattern`.
+Supplying both companion filters is invalid. An explicit empty pattern matches
+empty text, whereas an empty literal query retains its no-filter behavior.
+Dataset cursors are bound to the pattern and search mode as well as other filters.
+Existing UI search boxes remain literal. Unicode lowercasing is used rather than
+full case folding; SQL Server's locale, accent and character semantics depend on
+its database collation.
+
 ### Health & Status
 - `GET /api/health` - Health check
 - `GET /api/version` - Version information
@@ -43,25 +60,41 @@ API keys do not authenticate incoming GUI users.
 - `POST /api/targets` - Create a target
 
 A registered target needs a `name` (otherwise **422**); only `"register": false`, which returns the target's
-descriptor without registering it, works without one. A created target is Temporary: a restart or
-reinitialization removes it. With `"persist": true`, `register` left on,
-and a name that starts with a lowercase letter and has at most 64 lowercase letters, digits, and underscores
-(otherwise **422**), the target is saved under `registry_recipes_source` and restored at every start, and the
-signed-in user is recorded as the one who saved it. A saved target can't hold or use a key: it authenticates with
-Microsoft Entra ID (`"auth_mode": "identity"`, through this server's Azure identity) or needs no key. An OpenAI
-target's empty `headers` is set to `"{}"` first, so a saved one doesn't send this server's
-`OPENAI_ADDITIONAL_REQUEST_HEADERS`; settings the OpenAI SDK reads by itself (`OPENAI_CUSTOM_HEADERS`,
-`OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`) still apply. After the usual permission checks, a request receives **400**
-with `"type": "/errors/not-saveable"`, and can be sent again without `persist`, if it would save a key, use one of
-this server's keys or address settings, give an address that can carry a credential, save a target type that can't
-be saved, or use a Temporary target. Where this server's address setting would apply, an address that isn't a full
-http(s) or ws(s) address receives a plain **400** to fix it. A name that a target or saved
-file already has receives **409**, and storage that can't be written receives **503**; the server log names the
-target and its folder in case the write reached storage anyway, since the target would then come back at the next
-start. Each listed target's `origin` is `saved`, `configuration`
-(registered by the server's startup scripts), or `temporary` (gone after a restart or reinitialization, such as a
-target created without `persist` or registered by a scan's launch scripts). A saved target can only use targets
-that come back after a restart; targets from configuration keep their own sign-in.
+descriptor without registering it, works without one. A created target is Temporary: a restart or a configuration
+apply removes it. With `"persist": true` (and `register` left on), the target is saved under `registry_recipes_source`
+and restored at every start, and the signed-in user is recorded as the one who saved it. A saved target can't hold or
+use a key: it signs in with Microsoft Entra ID (`"auth_mode": "identity"`, through this server's Azure identity) or
+needs no key. An OpenAI target's empty `headers` is set to `"{}"` first, so a saved one doesn't send this server's
+`OPENAI_ADDITIONAL_REQUEST_HEADERS`.
+
+| A request with `persist` that... | Gets |
+|---|---|
+| names the target with anything but up to 64 lowercase letters, digits, and underscores, starting with a letter | **422** |
+| would save a key, or use one of this server's keys or address settings | **400** not-saveable |
+| gives an address that can carry a credential | **400** not-saveable |
+| saves a target type that can't be saved, or one that only a scan's launch scripts added | **400** not-saveable |
+| saves an OpenAI target while this server sets `OPENAI_CUSTOM_HEADERS`, whose headers the OpenAI SDK adds to every request | **400** not-saveable |
+| uses a Temporary target | **400** not-saveable |
+| gives an address that isn't a full http(s) or ws(s) address, where this server's address setting would apply | **400** |
+| takes a name that a target or a saved file already has | **409** |
+| takes the name of a saved entry that couldn't be restored | **409** |
+| can't be written to storage | **503** |
+
+A not-saveable **400** has `"type": "/errors/not-saveable"`, and the request can be sent again without `persist`; the
+other **400** needs the address fixed. `GET /api/targets/types` gives the same class-level answer before a request is
+sent. When storage can't be written, the server log names the target and its folder, since the target comes back at
+the next start if the write reached storage anyway.
+
+Each listed target's `origin` is `saved`, `configuration` (registered by the server's startup scripts), or `temporary`
+(gone after a restart or a configuration apply, such as a target created without `persist` or registered by a scan's
+launch scripts). A saved target can only use targets that come back after a restart; targets from configuration keep
+their own sign-in.
+
+A saved target records its class and constructor parameters as the API accepted them, so it follows the class's
+constructor. A class that moves within PyRIT still restores. Renaming or removing a class or a constructor parameter
+changes the saved format: such a change raises `schema_version` and adds a migration for older files, with a test that
+restores one. A file that still doesn't match fails to restore with the reason, and its name stays held, so nothing
+else stands in for it.
 
 ### Manual attack creation
 
@@ -356,6 +389,19 @@ find `python` (for example, `<worktree>\.venv\Scripts\python.exe` on Windows).
 Stop these test-owned servers after the run.
 
 ### Request Limits
+
+Attachments upload in the background while editing remains available, with up to three
+uploads at a time. Send and Save reuse completed uploads; failures expose Retry and
+removal controls. Unused uploads expire after 24 hours, including across restarts.
+Only media used in a message or conversion enters permanent results storage.
+
+`POST /api/media/uploads` accepts `data_type`, base64 `content`, and `mime_type`.
+It returns **201** with an opaque `value` and `expires_at` (UTC Unix seconds).
+Retained drafts refresh uploads one hour before that expiration without changing their
+references. Older backends without `expires_at` use a 23-hour refresh interval.
+The shared local staging directory has a **1 GiB** quota; uploads exceeding it receive
+**507** and can be retried after unused uploads expire. Expired bytes are reclaimed
+before admitting new uploads. Renewing existing bytes does not consume extra quota.
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
 API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,

@@ -164,9 +164,9 @@ allow_custom_initializers: false
 # Optional storage for saved targets, converters, scorers, and techniques, so they
 # come back when the backend restarts. Each kind has its own folder under the source.
 # This supports the same local directory and Azure Blob sources as
-# scenario_presets_source. If any saved entry can't be restored, the backend stays
-# not ready and lists the failures in its runtime status. Defaults to
-# ~/.pyrit/registry_recipes.
+# scenario_presets_source. If a saved entry can't be restored, the backend still
+# starts, lists the failure in its runtime status, and refuses to use that entry's
+# name until the file is fixed or deleted. Defaults to ~/.pyrit/registry_recipes.
 # registry_recipes_source: https://account.blob.core.windows.net/container/registry_recipes
 
 # Upload Folder for API-Created Targets

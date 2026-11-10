@@ -832,6 +832,17 @@ describe('ScenarioPresetEditor edit mode', () => {
     expect(mockUpdate.mock.calls.at(-1)?.[1]).not.toHaveProperty('show_in_scanner')
   })
 
+  it('associates the unavailable baseline with its scenario-owned explanation', async () => {
+    mockGetScenario.mockResolvedValue(makeScenario({
+      baseline_policy: 'forbidden', include_baseline_by_default: false,
+    }))
+    renderEdit()
+
+    const baseline = await screen.findByRole('checkbox', { name: 'baseline', exact: true })
+    expect(baseline).toBeDisabled()
+    expect(baseline).toHaveAccessibleDescription('This scenario does not support a baseline comparison.')
+  })
+
   it('saves the techniques and baseline choice the operator changed', async () => {
     const user = userEvent.setup()
     renderEdit()

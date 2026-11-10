@@ -267,13 +267,16 @@ class ScenarioResult(BaseModel):
         Normalize a scenario name to match the stored class name format.
 
         Converts CLI-style snake_case names (e.g., "foundry" or "content_harms") to
-        PascalCase class names (e.g., "Foundry" or "ContentHarms") for database queries.
+        PascalCase class names (e.g., "ContentHarms") for callers resolving an alias.
         If the input is already in PascalCase or doesn't match the snake_case pattern,
         it is returned unchanged.
 
         This is the inverse of the snake_case registry-name conversion
         (``class_name_to_snake_case``) applied to scenario class names during
         discovery.
+
+        Memory text searches never call this helper implicitly; literal underscores
+        and LIKE pattern syntax must not be rewritten inside a search.
 
         Args:
             scenario_name (str): The scenario name to normalize.

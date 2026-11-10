@@ -5,7 +5,6 @@ import dataclasses
 import json
 import os
 import sys
-import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
 from types import MappingProxyType, ModuleType
@@ -26,10 +25,17 @@ from pyrit.models.catalog import (
     TechniqueRecipe,
 )
 from pyrit.prompt_target import GitHubCopilotTarget, OpenAIChatTarget, RoundRobinTarget
-from pyrit.registry import AttackRegistry, AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    AttackRegistry,
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    SavedEntryUnavailableError,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
-from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
+from pyrit.registry.registry_recipe_storage import MAX_FAILURE_MESSAGE_LENGTH, RegistryRecipeStorage
 
 _OPENAI_MODULE = "pyrit.prompt_target.openai.openai_chat_target"
 _IDENTITY_TARGET = {
@@ -173,12 +179,13 @@ class TestRestoreOrderAndRebuild:
 
     def test_finds_a_startup_entry_by_its_exact_name(self, tmp_path: Path) -> None:
         registry = TargetRegistry.get_registry_singleton()
-        for name in ("ghost\ud800", "other\udcff"):
+        # Each name has a different normalized form, so a lookup that normalized names would miss them.
+        for name in ("cafe\u0301", "target\uff10"):
             startup_target = OpenAIChatTarget(
                 endpoint="https://startup.openai.azure.com/openai/v1", model_name="gpt-4o", auth_mode="identity"
             )
             registry.instances.register(startup_target, name=name)
-        _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("ghost\ud800", "other\udcff"))
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "a_pool", _round_robin("cafe\u0301", "target\uff10"))
 
         report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
@@ -349,6 +356,19 @@ class TestRestoreFailures:
         assert failures["uses_unparsable"].reason is RestoreFailureReason.FAILED_DEPENDENCY
         assert failures["uses_unparsable"].dependency == SavedEntryRef(kind=RegistryRecipeKind.CONVERTERS, name="bad")
 
+    def test_restores_a_class_that_moved_within_pyrit(self, tmp_path: Path) -> None:
+        _save(
+            tmp_path,
+            RegistryRecipeKind.TARGETS,
+            "contoso_gpt4o",
+            {**_IDENTITY_TARGET, "class_module": "pyrit.prompt_target.openai_chat_target"},
+        )
+
+        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        assert report.failures == []
+        assert [ref.name for ref in report.restored] == ["contoso_gpt4o"]
+
     def test_never_imports_a_module_named_by_a_file(self, tmp_path: Path) -> None:
         module = "tests_registry_restore_never_imported"
         _save(tmp_path, RegistryRecipeKind.TARGETS, "moved", {**_IDENTITY_TARGET, "class_module": module})
@@ -396,7 +416,7 @@ class TestRestoreFailures:
         assert (failure.name, failure.reason) == (name, RestoreFailureReason.UNSUPPORTED_CREDENTIAL)
         assert f"'{left_out if left_out != 'auth_mode' else 'api_key'}' is empty" in failure.message
         assert "sk-server-key" not in failure.message
-        assert name not in TargetRegistry.get_registry_singleton().instances
+        assert name not in TargetRegistry.get_registry_singleton().instances.get_names()
 
     def test_refuses_a_target_that_signs_in_with_this_servers_account(self, tmp_path: Path) -> None:
         _save(
@@ -453,7 +473,7 @@ class TestRestoreFailures:
 
         (failure,) = report.failures
         assert failure.reason is RestoreFailureReason.UNSUPPORTED_CLASS
-        assert "uploader" not in TargetRegistry.get_registry_singleton().instances
+        assert "uploader" not in TargetRegistry.get_registry_singleton().instances.get_names()
 
     @pytest.mark.parametrize("auth_mode", [[], {}, ["identity"]])
     def test_reports_malformed_values_without_stopping_the_restore(self, tmp_path: Path, auth_mode: object) -> None:
@@ -479,7 +499,7 @@ class TestRestoreFailures:
             report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
-        assert (failure.name, failure.reason) == ("a_first", RestoreFailureReason.INVALID_RECIPE)
+        assert (failure.name, failure.reason) == ("a_first", RestoreFailureReason.BUILD_ERROR)
         assert failure.message == "RuntimeError: unexpected"
         assert [ref.name for ref in report.restored] == ["b_second"]
 
@@ -512,110 +532,28 @@ class TestRestoreFailures:
         assert "SECRET" not in failure.message
         assert [ref.name for ref in report.restored] == ["good"]
 
-    def test_error_text_with_a_percent_encoded_credential_is_hidden(self, tmp_path: Path) -> None:
-        encoded = {
-            **_IDENTITY_TARGET,
-            "params": {**_IDENTITY_TARGET["params"], "temperature": "https://host/v1%3Fsig%3DSECRET"},
-        }
-        _save(tmp_path, RegistryRecipeKind.TARGETS, "encoded", encoded)
-
-        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
-
-        (failure,) = report.failures
-        assert (failure.name, failure.reason) == ("encoded", RestoreFailureReason.BUILD_ERROR)
-        assert failure.message.endswith("(message hidden because it may include a credential)")
-        assert "SECRET" not in failure.message
-
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
-            (
-                "got https://host/v1?sig=SECRET",
-                "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
-            ),
-            (
-                "got https:host/p#SECRET",
-                "ValueError: got https:host/p (rest hidden because it may include a credential)",
-            ),
-            (
-                "got https://host/v1#a?b=SECRET",
-                "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
-            ),
-            (
-                "got https://host/v1? sig=SEC\tRET tail",
-                "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
-            ),
-            (
-                "got host/v1?api-version=1 &sig=SECRET",
-                "ValueError: got host/v1 (rest hidden because it may include a credential)",
-            ),
-            (
-                "got 'https://host/v1#SECRET' (again 'https://host/v1#SECRET')",
-                "ValueError: got 'https://host/v1 (rest hidden because it may include a credential)",
-            ),
-            ("?sig=SECRET", "ValueError (message hidden because it may include a credential)"),
-            (" \t?sig=SECRET", "ValueError (message hidden because it may include a credential)"),
+            ("got https://host/v1?sig=SECRET", "ValueError: got https://host/v1"),
+            ("got https://user:SECRET@host/v1#part tail", "ValueError: got https://host/v1 tail"),
+            ("got 'https://host/v1?api-key=SECRET' next", "ValueError: got 'https://host/v1 next"),
             ("could not be coerced to float: 'hot'", "ValueError: could not be coerced to float: 'hot'"),
-            (
-                "Missing required parameters: ['objective_target']",
-                "ValueError: Missing required parameters: ['objective_target']",
-            ),
-            ("got https://host/v1", "ValueError: got https://host/v1"),
-            ("got //user:SECRET@host/v1", "ValueError (message hidden because it may include a credential)"),
-            ("got https://user:SEC\nRET@host/v1", "ValueError (message hidden because it may include a credential)"),
-            ("got https://user:SE?CRET@host/v1", "ValueError (message hidden because it may include a credential)"),
-            ("got https://user:SECRET\uff20host/v1", "ValueError (message hidden because it may include a credential)"),
-            (
-                "got https://host/v1\uff1fsig=SECRET",
-                "ValueError: got https://host/v1 (rest hidden because it may include a credential)",
-            ),
-            ("contact admin@example.com", "ValueError (message hidden because it may include a credential)"),
-            ("got https://host/v1%3Fsig%3DSECRET", "ValueError (message hidden because it may include a credential)"),
-            ("got https://user:SECRET%40host/v1", "ValueError (message hidden because it may include a credential)"),
-            (
-                "could not convert '\uff10\uff0e\uff15' or 10\u00b3",
-                "ValueError: could not convert '\uff10\uff0e\uff15' or 10\u00b3",
-            ),
-            (
-                "got '\uff15' at https://host/v1\ufe56sig=SECRET",
-                "ValueError: got '\uff15' at https://host/v1 (rest hidden because it may include a credential)",
-            ),
+            ("Which one? Ask admin@example.com", "ValueError: Which one? Ask admin@example.com"),
+            ("", "ValueError"),
         ],
     )
-    def test_safe_messages_drop_queries_fragments_and_user_info(self, text: str, expected: str) -> None:
+    def test_safe_message_removes_url_credentials_and_keeps_the_rest(self, text: str, expected: str) -> None:
         assert RegistryRecipeRestorer._safe_message(ValueError(text)) == expected
 
-    @pytest.mark.parametrize(
-        "mark", ["?", "#", "\u2047", "\u2048", "\u2049", "\ufe16", "\ufe56", "\ufe5f", "\uff03", "\uff1f"]
-    )
-    def test_safe_message_cuts_at_any_form_of_a_query_or_fragment_mark(self, mark: str) -> None:
-        message = RegistryRecipeRestorer._safe_message(ValueError(f"got https://host/v1{mark}SECRET"))
+    def test_safe_message_is_shortened(self) -> None:
+        message = RegistryRecipeRestorer._safe_message(ValueError("x" * 5_000))
 
-        assert message == "ValueError: got https://host/v1 (rest hidden because it may include a credential)"
+        assert len(message) == MAX_FAILURE_MESSAGE_LENGTH
+        assert message.endswith("...")
 
-    @pytest.mark.parametrize("mark", ["@", "\ufe6b", "\uff20"])
-    def test_safe_message_hides_text_with_any_form_of_an_at_sign(self, mark: str) -> None:
-        message = RegistryRecipeRestorer._safe_message(ValueError(f"got https://USER:SECRET{mark}host/v1"))
-
-        assert message == "ValueError (message hidden because it may include a credential)"
-
-    @pytest.mark.parametrize("mark", ["%", "\ufe6a", "\uff05"])
-    def test_safe_message_hides_text_with_any_form_of_a_percent_sign(self, mark: str) -> None:
-        message = RegistryRecipeRestorer._safe_message(ValueError(f"got https://USER:SECRET{mark}40host/v1"))
-
-        assert message == "ValueError (message hidden because it may include a credential)"
-
-    def test_safe_message_folds_one_character_at_a_time(self) -> None:
-        marks = "\u0315" * 50 + "\u0300" * 50
-        text = f"a{marks}\uff1fsig=SECRET"
-        with patch(
-            "pyrit.registry.registry_recipe_restore.unicodedata.normalize", wraps=unicodedata.normalize
-        ) as normalize:
-            message = RegistryRecipeRestorer._safe_message(ValueError(text))
-
-        assert message == f"ValueError: a{marks} (rest hidden because it may include a credential)"
-        assert {len(call.args[1]) for call in normalize.call_args_list} == {1}
-        assert normalize.call_count <= 2 * len(text)
+    def test_safe_message_escapes_text_that_is_not_valid_unicode(self) -> None:
+        assert RegistryRecipeRestorer._safe_message(ValueError("bad \udcff")) == "ValueError: bad \\udcff"
 
     def test_safe_message_survives_an_error_that_cannot_be_printed(self) -> None:
         class UnprintableError(Exception):
@@ -624,34 +562,27 @@ class TestRestoreFailures:
 
         assert RegistryRecipeRestorer._safe_message(UnprintableError()) == "UnprintableError"
 
-    def test_safe_message_ignores_string_methods_an_error_overrides(self) -> None:
-        class KeepEverything(str):
-            __slots__ = ()
+    def test_logs_each_failure_once_with_its_traceback_and_without_url_credentials(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        leaky = {
+            **_IDENTITY_TARGET,
+            "params": {**_IDENTITY_TARGET["params"], "temperature": "https://host/v1?sig=SECRET"},
+        }
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "leaky", leaky)
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "pool", _round_robin("leaky"))
 
-            def __getitem__(self, key: Any) -> str:
-                return str.__str__(self)
+        with caplog.at_level("WARNING", logger="pyrit.registry.registry_recipe_restore"):
+            report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
-        class Exploding(str):
-            __slots__ = ()
+        assert {failure.name for failure in report.failures} == {"leaky", "pool"}
+        leaky_records = [record for record in caplog.records if "target 'leaky' (" in record.getMessage()]
+        assert len(leaky_records) == 1
+        assert "Traceback (most recent call last)" in leaky_records[0].getMessage()
+        assert len([record for record in caplog.records if "target 'pool' (" in record.getMessage()]) == 1
+        assert "SECRET" not in caplog.text
 
-            def __contains__(self, item: object) -> bool:
-                raise RuntimeError("cannot search")
-
-        class QuotingError(Exception):
-            def __init__(self, text: str) -> None:
-                super().__init__()
-                self.text = text
-
-            def __str__(self) -> str:
-                return self.text
-
-        keep = RegistryRecipeRestorer._safe_message(QuotingError(KeepEverything("got https://host/v1?sig=SECRET")))
-        exploding = RegistryRecipeRestorer._safe_message(QuotingError(Exploding("got https://host/v1")))
-
-        assert keep == "QuotingError: got https://host/v1 (rest hidden because it may include a credential)"
-        assert exploding == "QuotingError: got https://host/v1"
-
-    def test_reports_a_reference_name_that_is_not_valid_text(self, tmp_path: Path) -> None:
+    def test_reports_a_reference_name_that_is_not_valid_text_as_invalid(self, tmp_path: Path) -> None:
         _save_text(
             tmp_path,
             RegistryRecipeKind.TARGETS,
@@ -663,17 +594,15 @@ class TestRestoreFailures:
         report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
-        assert failure.reason is RestoreFailureReason.MISSING_DEPENDENCY
-        assert failure.dependency == SavedEntryRef(kind=RegistryRecipeKind.TARGETS, name="ghost\ud800")
-        sent = json.loads(json.dumps(report.model_dump(mode="json"), ensure_ascii=False).encode("utf-8"))
-        assert sent["failures"][0]["dependency"]["name"] == "ghost\\ud800"
+        assert (failure.name, failure.reason) == ("pool", RestoreFailureReason.INVALID_RECIPE)
+        assert json.loads(report.model_dump_json())["failures"][0]["name"] == "pool"
 
     def test_refuses_a_stored_credential_in_attack_parameters(self, tmp_path: Path) -> None:
         attack_registry = AttackRegistry.get_registry_singleton()
-        original_get_class_metadata = attack_registry.get_class_metadata
+        original_get_registered_class_metadata = attack_registry.get_registered_class_metadata
 
-        def with_credential(cls: type) -> Any:
-            metadata = original_get_class_metadata(cls)
+        def with_credential(name: str) -> Any:
+            metadata = original_get_registered_class_metadata(name)
             credential = Parameter(name="api_key", description="", sensitive=True)
             return dataclasses.replace(metadata, parameters=(*metadata.parameters, credential))
 
@@ -684,7 +613,7 @@ class TestRestoreFailures:
             {"type": "RedTeamingAttack", "params": {"api_key": "sk-x"}},
         )
 
-        with patch.object(attack_registry, "get_class_metadata", side_effect=with_credential):
+        with patch.object(attack_registry, "get_registered_class_metadata", side_effect=with_credential):
             report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
@@ -765,9 +694,9 @@ class TestRestoreFailures:
         report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
-        assert failure.reason is RestoreFailureReason.BUILD_ERROR
+        assert failure.reason is RestoreFailureReason.UNSUPPORTED_CLASS
         assert "wordswap_path" in failure.message
-        assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances
+        assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances.get_names()
 
     def test_lets_a_target_set_the_path_parameters_its_class_allows_callers(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
@@ -815,9 +744,9 @@ class TestRestoreFailures:
         report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
-        assert failure.reason is RestoreFailureReason.BUILD_ERROR
+        assert failure.reason is RestoreFailureReason.UNSUPPORTED_CLASS
         assert "wordswap_path" in failure.message
-        assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances
+        assert "wordswap" not in ConverterRegistry.get_registry_singleton().instances.get_names()
 
     def test_reports_a_name_taken_at_startup_and_fails_its_dependents(self, tmp_path: Path) -> None:
         startup_target = OpenAIChatTarget(
@@ -832,7 +761,9 @@ class TestRestoreFailures:
         failures = _failures_by_name(report.failures)
         assert failures["contoso_gpt4o"].reason is RestoreFailureReason.NAME_CLASH
         assert failures["pool"].reason is RestoreFailureReason.FAILED_DEPENDENCY
-        assert TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o") is startup_target
+        # The saved entry holds its name, so the startup target doesn't quietly stand in for it.
+        with pytest.raises(SavedEntryUnavailableError, match="already exists"):
+            TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o")
 
     def test_reports_a_technique_name_that_matches_a_tag_in_another_case(self, tmp_path: Path) -> None:
         without_converters = {key: value for key, value in _TECHNIQUE.items() if key != "request_converters"}
@@ -849,44 +780,89 @@ class TestRestoreFailures:
         assert (failure.name, failure.reason) == ("custom", RestoreFailureReason.NAME_CLASH)
         assert "custom" in failure.message
 
-    def test_builds_nothing_when_a_folder_cannot_be_listed(self, tmp_path: Path) -> None:
+    def test_builds_nothing_when_a_folder_cannot_be_listed(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
-        original_list_recipes = RegistryRecipeStorage.list_recipes
+        (tmp_path / "converters").write_text("a file where the folder should be")
 
-        def list_recipes(storage: RegistryRecipeStorage) -> Any:
-            if storage._kind is RegistryRecipeKind.CONVERTERS:
-                raise PermissionError(13, "Permission denied", str(tmp_path / "converters"))
-            return original_list_recipes(storage)
-
-        with patch.object(RegistryRecipeStorage, "list_recipes", autospec=True, side_effect=list_recipes):
+        with caplog.at_level("WARNING", logger="pyrit.registry.registry_recipe_restore"):
             report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
-        (failure,) = report.failures
-        assert (failure.kind, failure.name, failure.reason) == (
+        unbuilt, folder = report.failures
+        assert (folder.kind, folder.name, folder.reason) == (
             RegistryRecipeKind.CONVERTERS,
             None,
             RestoreFailureReason.UNREADABLE_STORAGE,
         )
-        assert str(tmp_path) not in failure.message
+        assert (unbuilt.name, unbuilt.reason) == ("contoso_gpt4o", RestoreFailureReason.UNREADABLE_STORAGE)
+        assert unbuilt.message == "Not restored, because the saved converters couldn't be listed."
+        assert str(tmp_path) not in folder.message
+        assert str(tmp_path / "converters") in caplog.text
         assert report.restored == []
-        assert "contoso_gpt4o" not in TargetRegistry.get_registry_singleton().instances
+        assert TargetRegistry.get_registry_singleton().instances.get_names() == []
 
-    def test_builds_nothing_when_listing_a_folder_fails_unexpectedly(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("kind", "document", "registry"),
+        [
+            (RegistryRecipeKind.TARGETS, {**_IDENTITY_TARGET, "class_name": "NoSuchTarget"}, TargetRegistry),
+            (RegistryRecipeKind.TECHNIQUES, {"type": "NoSuchAttack"}, AttackTechniqueRegistry),
+        ],
+    )
+    def test_holds_the_name_of_an_entry_that_failed(
+        self, tmp_path: Path, kind: RegistryRecipeKind, document: dict[str, Any], registry: Any
+    ) -> None:
+        _save(tmp_path, kind, "broken", document)
+
+        RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        with pytest.raises(SavedEntryUnavailableError, match="'broken' couldn't be restored: 'NoSuch"):
+            registry.get_registry_singleton().instances.get("broken")
+
+    def test_a_folder_that_cannot_be_listed_holds_every_unregistered_name_of_its_kind(self, tmp_path: Path) -> None:
+        startup_target = OpenAIChatTarget(
+            endpoint="https://startup.openai.azure.com/openai/v1", model_name="gpt-4o", auth_mode="identity"
+        )
+        instances = TargetRegistry.get_registry_singleton().instances
+        instances.register(startup_target, name="startup_chat")
+        (tmp_path / "targets").write_text("a file where the folder should be")
+
+        RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        assert instances.get("startup_chat") is startup_target
+        with pytest.raises(SavedEntryUnavailableError, match="'adversarial_chat' may be a saved target"):
+            instances.get("adversarial_chat")
+
+    def test_raises_a_listing_bug_instead_of_blaming_storage(self, tmp_path: Path) -> None:
+        with patch.object(RegistryRecipeStorage, "list_recipes", side_effect=KeyError("bug")):
+            with pytest.raises(KeyError, match="bug"):
+                RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+    def test_reports_a_planning_bug_as_a_build_error(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
-        original_list_recipes = RegistryRecipeStorage.list_recipes
 
-        def list_recipes(storage: RegistryRecipeStorage) -> Any:
-            if storage._kind is RegistryRecipeKind.SCORERS:
-                raise ValueError("https://account.blob.core.windows.net/x?sig=SECRET")
-            return original_list_recipes(storage)
-
-        with patch.object(RegistryRecipeStorage, "list_recipes", autospec=True, side_effect=list_recipes):
+        with (
+            patch.object(RegistryRecipeRestorer, "_component_references", side_effect=KeyError("bug")),
+            caplog.at_level("WARNING", logger="pyrit.registry.registry_recipe_restore"),
+        ):
             report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
 
         (failure,) = report.failures
-        assert (failure.kind, failure.reason) == (RegistryRecipeKind.SCORERS, RestoreFailureReason.UNREADABLE_STORAGE)
-        assert "SECRET" not in failure.message
-        assert report.restored == []
+        assert (failure.name, failure.reason) == ("contoso_gpt4o", RestoreFailureReason.BUILD_ERROR)
+        assert "KeyError: 'bug'" in caplog.text
+        assert "Traceback (most recent call last)" in caplog.text
+
+    def test_reports_a_technique_that_does_not_fit_its_scenarios_as_invalid(self, tmp_path: Path) -> None:
+        without_converters = {key: value for key, value in _TECHNIQUE.items() if key != "request_converters"}
+        _save(tmp_path, RegistryRecipeKind.TARGETS, "contoso_gpt4o", _IDENTITY_TARGET)
+        _save(tmp_path, RegistryRecipeKind.TECHNIQUES, "formal_red_team", without_converters)
+
+        with patch.object(AttackTechniqueRegistry, "validate_scenario_pools", side_effect=ValueError("pool conflict")):
+            report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+
+        (failure,) = report.failures
+        assert (failure.name, failure.reason) == ("formal_red_team", RestoreFailureReason.INVALID_RECIPE)
+        assert "pool conflict" in failure.message
 
     def test_reports_constructor_errors_and_keeps_going(self, tmp_path: Path) -> None:
         bad_value = {**_IDENTITY_TARGET, "params": {**_IDENTITY_TARGET["params"], "temperature": "hot"}}

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from typing import TYPE_CHECKING, Any
@@ -59,6 +60,7 @@ def check_saved_entry_params(*, cls: type, parameters: Sequence[Parameter], para
         SavedEntryRefusedError: If the class can't be saved, or the values hold or would use a credential.
     """
     _check_class(cls)
+    _check_server_headers(cls)
     _check_stored_credentials(parameters=parameters, params=params)
     _check_server_fallbacks(cls=cls, params=params)
     _check_destinations(cls=cls, params=params)
@@ -68,7 +70,7 @@ def check_saveable_class(cls: type) -> tuple[str, ...]:
     """
     Return the auth modes a saved entry of ``cls`` can use, before any of its values are known.
 
-    Runs the class check, then the server-fallback check once per auth mode the class supports, with each
+    Runs the class checks, then the server-fallback check once per auth mode the class supports, with each
     fallback set to the value that turns it off and every credential left empty. That's the best a saved entry
     of the class can do; the values it's given are checked when it's saved.
 
@@ -76,10 +78,11 @@ def check_saveable_class(cls: type) -> tuple[str, ...]:
         tuple[str, ...]: The supported auth modes that let a saved entry avoid this server's credentials.
 
     Raises:
-        SavedEntryRefusedError: If the class can't be saved, or every auth mode it supports would leave it
-            reading a credential from this server.
+        SavedEntryRefusedError: If the class can't be saved, its client would send headers this server sets, or
+            every auth mode it supports would leave it reading a credential from this server.
     """
     _check_class(cls)
+    _check_server_headers(cls)
     fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
     turned_off = {name: value for name, value in fallbacks.items() if value is not None}
     supported_auth_modes: tuple[str, ...] = tuple(getattr(cls, "supported_auth_modes", None) or ("api_key",))
@@ -116,6 +119,22 @@ def _check_class(cls: type) -> None:
         raise SavedEntryRefusedError(
             reason=RestoreFailureReason.UNSUPPORTED_CLASS, message=f"'{cls.__name__}' can't be saved. {reason}"
         )
+
+
+def _check_server_headers(cls: type) -> None:
+    """
+    Refuse a class whose client would send headers this server sets in its environment.
+
+    Raises:
+        SavedEntryRefusedError: If an environment variable the class's client reads headers from is set.
+    """
+    for variable in getattr(cls, "server_header_variables", ()):
+        if os.environ.get(variable):
+            message = (
+                f"This server sets {variable}, and '{cls.__name__}' would send its headers with every request. "
+                "A saved target can't use this server's settings, so it isn't built while that is set."
+            )
+            raise SavedEntryRefusedError(reason=RestoreFailureReason.UNSUPPORTED_CREDENTIAL, message=message)
 
 
 def _check_stored_credentials(*, parameters: Sequence[Parameter], params: Mapping[str, Any]) -> None:
