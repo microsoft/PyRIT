@@ -270,10 +270,36 @@ describe('ScenarioDatasetTable', () => {
   })
 
   it('does not expose loading or source selection for an inline-only scenario', () => {
-    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} />)
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }}
+      options={{ ...OPTIONS, mode: 'fixed', supports_overrides: false }} />)
     expect(screen.getByText('This scenario has no named datasets.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Load datasets' })).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: 'Add dataset' })).not.toBeInTheDocument()
+  })
+
+  it('lets a scenario without default datasets choose its first dataset', async () => {
+    const user = userEvent.setup()
+    const onChange = jest.fn()
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} onChange={onChange} />)
+
+    expect(screen.getByText('No dataset selected.')).toBeInTheDocument()
+    expect(screen.queryByText('This scenario has no named datasets.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table', { name: 'Selected datasets' })).not.toBeInTheDocument()
+    await addDataset(user, 'stored')
+
+    expect(onChange).toHaveBeenLastCalledWith({ sources: [{ name: 'stored' }] })
+    const table = screen.getByRole('table', { name: 'Selected datasets' })
+    expect(within(table).getByText('stored (local)')).toBeInTheDocument()
+    expect(screen.queryByText('No dataset selected.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove stored' })).not.toBeInTheDocument()
+  })
+
+  it('offers only permitted datasets when choosing the first one for a subset scenario', async () => {
+    const user = userEvent.setup()
+    render(<Harness defaults={{ ...DEFAULTS, sources: [] }} options={{ ...OPTIONS, mode: 'subset', allowed_names: ['other'] }} />)
+
+    await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(['other (local)'])
   })
 
   it('does not pretend a global policy can replace protected source-specific loading rules', () => {

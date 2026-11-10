@@ -3216,6 +3216,63 @@ describe('ScenarioDetail', () => {
     })
   })
 
+  describe('scenarios without default datasets', () => {
+    const POLICY_PATH = '/scanner/launch/foundry.assert_policy'
+
+    function policyScenario(): RegisteredScenario {
+      // The catalog lists dataset_config by name only; its external parameters omit the opaque input.
+      return makeScenario({
+        scenario_name: 'foundry.assert_policy',
+        default_datasets: [],
+        supported_parameters: [],
+        dataset_defaults: { sources: [], max_per_dataset: 'all', max_total: 'all', fetch: 'if_missing', filters: {} },
+        dataset_options: {
+          mode: 'any', allowed_names: [], max_selected: null, per_dataset_limit: true, total_limit: true,
+          supports_overrides: true, filters: true, source_settings: true,
+        },
+      })
+    }
+
+    it('should let the first stored dataset be chosen, estimated, and launched', async () => {
+      const user = userEvent.setup()
+      const scenario = policyScenario()
+      expect(scenario.supported_parameters.map((parameter) => parameter.name)).not.toContain('dataset_config')
+      mockGetScenario.mockResolvedValue(scenario)
+      mockEstimateRun.mockResolvedValue(makeEstimate(25))
+      renderDetail(POLICY_PATH)
+
+      expect(await screen.findByText('No dataset selected.')).toBeInTheDocument()
+      expect(screen.queryByText('This scenario has no named datasets.')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('combobox', { name: 'Add dataset' }))
+      await user.click(screen.getByRole('option', { name: 'ds_a (unknown)', exact: true }))
+
+      expect(within(screen.getByRole('table', { name: 'Selected datasets' })).getByText('ds_a (unknown)'))
+        .toBeInTheDocument()
+      await waitFor(() => expect(mockEstimateRun).toHaveBeenLastCalledWith(
+        'foundry.assert_policy',
+        expect.objectContaining({ datasets: { sources: [{ name: 'ds_a' }] } }),
+        expect.any(AbortSignal),
+      ))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
+      await confirmRunPreview(user)
+
+      await waitFor(() => expect(mockStartRun).toHaveBeenCalledTimes(1))
+      expect(mockStartRun.mock.calls[0][0]).toEqual(expect.objectContaining({
+        scenario_name: 'foundry.assert_policy',
+        target_name: 'target-a',
+        datasets: { sources: [{ name: 'ds_a' }] },
+      }))
+    })
+
+    it('should keep a dataset preselected by a link', async () => {
+      mockGetScenario.mockResolvedValue(policyScenario())
+      renderDetail(`${POLICY_PATH}?dataset=ds_b`)
+
+      expect(await screen.findByText('ds_b (unknown)')).toBeInTheDocument()
+      expect(screen.queryByText('No dataset selected.')).not.toBeInTheDocument()
+    })
+  })
+
   describe('dataset links', () => {
     const SCENARIO_PATH = '/scanner/launch/foundry.red_team_agent'
 
