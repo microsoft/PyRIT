@@ -16,6 +16,9 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
     StringConstraints,
     ValidationError,
     field_validator,
@@ -33,34 +36,69 @@ class _AssertJudgeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, revalidate_instances="always")
 
 
+class AssertJudgeGrade(_AssertJudgeModel):
+    """One declared grade of a graded judge dimension."""
+
+    value: StrictInt | StrictStr
+    label: _Text
+
+
+class AssertJudgeScale(_AssertJudgeModel):
+    """
+    ASSERT's ordered grade scale for a judge dimension.
+
+    Declaration order is grade order. ASSERT's mapping form (``values: {1: Poor, 2: Good}``) is
+    accepted and converted to grades.
+    """
+
+    type: Literal["ordinal"] = "ordinal"
+    values: tuple[AssertJudgeGrade, ...] = Field(min_length=2)
+
+    @field_validator("values", mode="before")
+    @classmethod
+    def _accept_mapping(cls, values: Any) -> Any:
+        if isinstance(values, Mapping):
+            return tuple({"value": value, "label": label} for value, label in values.items())
+        return values
+
+    @model_validator(mode="after")
+    def _validate_grades(self) -> Self:
+        grades = self.grade_values
+        if len(set(grades)) != len(grades):
+            raise ValueError("Scale grade values must be unique.")
+        if len({type(grade) for grade in grades}) != 1:
+            raise ValueError("Scale grade values must all be integers or all be strings.")
+        if any(isinstance(grade, str) and not grade.strip() for grade in grades):
+            raise ValueError("Scale grade values must not be blank.")
+        return self
+
+    @property
+    def grade_values(self) -> tuple[int | str, ...]:
+        """The declared grade values, in order."""
+        return tuple(grade.value for grade in self.values)
+
+
 class AssertJudgeDimension(_AssertJudgeModel):
     """
-    A custom ASSERT judge dimension: a boolean bad-event flag.
+    A custom ASSERT judge dimension.
 
-    True means the undesirable event the dimension describes occurred. ASSERT's ordinal ``scale``
-    and ``allow_not_applicable`` options are not supported and are rejected. The built-in
-    ``policy_violation`` and ``overrefusal`` dimensions are judged against the taxonomy and
-    cannot be redefined; disable one and add a differently named dimension to replace it.
+    Without a ``scale`` the dimension is a boolean bad-event flag: True means the undesirable event
+    occurred. With ASSERT's ordinal ``scale`` the judge returns one of the declared grades, and
+    ``violation_at`` (a PyRIT addition) names the first grade, in declared order, that counts as a
+    violation. ``allow_not_applicable`` lets the judge report that the conversation did not exercise
+    the dimension; such a verdict is undetermined. The built-in ``policy_violation`` and
+    ``overrefusal`` dimensions are judged against the taxonomy and cannot be redefined; disable one
+    and add a differently named dimension to replace it.
     """
 
     BUILT_IN_NAMES: ClassVar[tuple[str, ...]] = ("policy_violation", "overrefusal")
-    UNSUPPORTED_OPTIONS: ClassVar[tuple[str, ...]] = ("scale", "allow_not_applicable")
 
     name: _Identifier
     description: _Text
     rubric: _Text
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_unsupported_options(cls, data: Any) -> Any:
-        if isinstance(data, Mapping):
-            unsupported = [option for option in cls.UNSUPPORTED_OPTIONS if option in data]
-            if unsupported:
-                raise ValueError(
-                    f"ASSERT judge dimension option(s) {', '.join(unsupported)} are not supported. PyRIT judge "
-                    "dimensions are boolean bad-event flags; remove these options."
-                )
-        return data
+    allow_not_applicable: StrictBool = False
+    scale: AssertJudgeScale | None = None
+    violation_at: StrictInt | StrictStr | None = None
 
     @field_validator("name")
     @classmethod
@@ -72,6 +110,55 @@ class AssertJudgeDimension(_AssertJudgeModel):
                 "differently named dimension."
             )
         return name
+
+    @model_validator(mode="after")
+    def _validate_violation_at(self) -> Self:
+        if self.scale is None:
+            if self.violation_at is not None:
+                raise ValueError("violation_at is only valid with a scale.")
+            return self
+        grades = self.scale.grade_values
+        if self.violation_at is None:
+            raise ValueError(
+                f"Dimension '{self.name}' has a scale but no violation_at. PyRIT judges every dimension as a "
+                "violation or not, so name the first grade, in declared order, that counts as a violation. "
+                "(ASSERT reports grade counts instead of a violation rate for scaled dimensions.)"
+            )
+        index = self.grade_index(self.violation_at)
+        if index is None:
+            raise ValueError(f"violation_at {self.violation_at!r} is not one of the declared grades {list(grades)}.")
+        if index == 0:
+            raise ValueError("violation_at can't be the first grade, because every grade would be a violation.")
+        return self
+
+    @property
+    def grade_values(self) -> tuple[bool | int | str, ...]:
+        """The verdicts the judge may return, in order: the scale's grades, or ``False`` then ``True``."""
+        return self.scale.grade_values if self.scale is not None else (False, True)
+
+    @property
+    def violation_index(self) -> int:
+        """The position of the first grade that counts as a violation."""
+        if self.violation_at is None:
+            return 1
+        index = self.grade_index(self.violation_at)
+        assert index is not None
+        return index
+
+    def grade_index(self, value: object) -> int | None:
+        """
+        Find a verdict's position among the dimension's grades, matching its type exactly.
+
+        Args:
+            value (object): A boolean verdict, or a declared grade.
+
+        Returns:
+            int | None: The position, or None if the value is not one of the grades.
+        """
+        return next(
+            (i for i, grade in enumerate(self.grade_values) if type(grade) is type(value) and grade == value),
+            None,
+        )
 
 
 class AssertJudgePreset(_AssertJudgeModel):

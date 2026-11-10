@@ -472,10 +472,11 @@ for mode in AssertJudgmentMode:
 # This does not port ASSERT's XML citation resolution, and it does not establish accuracy parity or
 # calibration.
 #
-# `dimension` also accepts a custom `AssertJudgeDimension`, a boolean bad-event flag such as one from
-# ASSERT's judge presets (`list_assert_judge_presets()` or `load_assert_judge_preset()`) or your own
-# preset file (`load_assert_judge_preset_file()`). `samples` repeats the judge call and combines the
-# verdicts as ASSERT does: a majority vote with ties counted as failures. See
+# `dimension` also accepts a custom `AssertJudgeDimension`, such as one from ASSERT's judge presets
+# (`list_assert_judge_presets()` or `load_assert_judge_preset()`) or your own preset file
+# (`load_assert_judge_preset_file()`). A dimension with a graded `scale` is a violation at or past
+# its `violation_at` grade, and a not-applicable answer is undetermined. `samples` repeats the judge
+# call and combines the verdicts as ASSERT does: a majority vote with ties counted as failures. See
 # [Foundry scenarios](../../scanner/foundry.ipynb) for the preset file format.
 #
 # %% [markdown]
