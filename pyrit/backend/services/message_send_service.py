@@ -12,7 +12,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import lru_cache, partial
 from typing import Any
@@ -80,6 +80,7 @@ class _ValidatedMessage:
     owns_target: bool = False
     target_binding: TargetBinding | None = None
     replay_target: PromptTarget | None = None
+    target_metadata: dict[str, Any] = field(default_factory=dict)
     scoring: ChatScoringSelection | None = None
     scorer: Scorer | None = None
     scoring_error: str | None = None
@@ -377,9 +378,13 @@ class MessageSendService:
             self._validate_target_match(attack_identifier=ar.get_attack_strategy_identifier(), target=replay_target)
         if isinstance(request, MessageSendRequest) and request.count > 1 and target is not None:
             history = await self._memory.get_conversation_messages_async(conversation_id=msg_conversation_id)
-            if replay_target is not None and replay_target is not target:
-                validate_history_replay(target=replay_target, messages=history)
-            validate_history_replay(target=target, messages=history)
+            with (
+                get_target_service().capabilities_scope(target=target, metadata=ar.metadata),
+                get_target_service().capabilities_scope(target=replay_target, metadata=ar.metadata),
+            ):
+                if replay_target is not None and replay_target is not target:
+                    validate_history_replay(target=replay_target, messages=history)
+                validate_history_replay(target=target, messages=history)
 
         selection = policy.selection(ar)
         scorer = None
@@ -396,6 +401,7 @@ class MessageSendService:
             applied_identifiers=applied_identifiers,
             target_binding=binding if request.send else None,
             replay_target=replay_target,
+            target_metadata=dict(ar.metadata),
             scoring=selection,
             scorer=scorer,
             scoring_error=scoring_error,
@@ -417,7 +423,12 @@ class MessageSendService:
                     validated.owns_target = True
                 if progress is not None:
                     progress.state = MessageSendState.PREPARING
-                with attack_result_id_scope(attack_result_id=attack_result_id):
+                with (
+                    attack_result_id_scope(attack_result_id=attack_result_id),
+                    get_target_service().capabilities_scope(
+                        target=validated.target, metadata=validated.target_metadata
+                    ),
+                ):
                     target_identifier = validated.target.get_identifier() if validated.target else None
                     if not request.send:
                         existing_metadata = await self._memory.get_conversation_metadata_async(
@@ -476,9 +487,17 @@ class MessageSendService:
                             preparation.target_binding
                         )
                         preparation.owns_target = True
-                    messages = await self._prepare_repeated_send_async(
-                        operation=operation, request=request, validated=preparation
-                    )
+                    with (
+                        get_target_service().capabilities_scope(
+                            target=preparation.target, metadata=preparation.target_metadata
+                        ),
+                        get_target_service().capabilities_scope(
+                            target=preparation.replay_target, metadata=preparation.target_metadata
+                        ),
+                    ):
+                        messages = await self._prepare_repeated_send_async(
+                            operation=operation, request=request, validated=preparation
+                        )
                 finally:
                     if preparation.owns_target and preparation.target:
                         await release_component_async(preparation.target)

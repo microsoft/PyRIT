@@ -92,7 +92,7 @@ describe('useConversationDraft', () => {
     await act(async () => { await result.current.save('new_attack', onSaved) })
     const binding = {
       version: 1, source_name: 'source', source_hash: temperatureTarget.identifier.hash,
-      temperature: 0.8, effective_hash: 'effective-hash',
+      temperature: 0.8, effective_hash: 'effective-hash', capabilities: temperatureTarget.capabilities,
     }
     expect(jest.mocked(attacksApi.saveConversation).mock.calls[0][0].target_binding).toEqual(binding)
     expect(onSaved.mock.calls[0][1].binding).toEqual(binding)

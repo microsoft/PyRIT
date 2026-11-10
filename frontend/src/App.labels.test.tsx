@@ -65,6 +65,7 @@ jest.mock('@/services/api', () => ({
   },
   targetsApi: { listTargets: jest.fn(), getTarget: jest.fn() },
   scenariosApi: {
+    readiness: jest.fn().mockResolvedValue({ bindings: [], issues: [] }),
     listCatalog: jest.fn(),
     listRuns: jest.fn(),
     getScenario: jest.fn(),
@@ -149,6 +150,9 @@ async function chooseExisting(user: ReturnType<typeof userEvent.setup>, operatio
 
 async function launchScenario(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.selectOptions(await screen.findByRole('combobox', { name: 'Objective Target' }), 'test_target')
+  const review = screen.queryByRole('button', { name: 'I have reviewed the refreshed selections' })
+  if (review) await user.click(review)
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
   await user.click(screen.getByRole('button', { name: 'Launch scan' }))
   const dialog = await screen.findByRole('dialog')
   await user.click(within(dialog).getByRole('button', { name: 'Launch scan' }))
@@ -569,7 +573,7 @@ describe('Shared new run labels', () => {
       renderApp()
       await screen.findByDisplayValue('config_user')
       await user.selectOptions(screen.getByRole('combobox', { name: 'Objective Target' }), 'test_target')
-      expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled()
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Launch scan' })).toBeEnabled())
 
       jest.mocked(versionApi.getVersion).mockReturnValue(new Promise((resolve) => { resolveVersion = resolve }))
       await pollGeneration('gen-2')

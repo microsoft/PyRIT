@@ -340,6 +340,22 @@ describe("ChatWindow Integration", () => {
     labels: { operator: 'testuser', operation: 'test_op' },
   };
 
+  it("should keep the first send's transcript when the created attack route commits mid-send", async () => {
+    const user = userEvent.setup();
+    mockSendResult.mockImplementation(() => new Promise(() => {}));
+    const { rerender } = render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
+    await user.type(screen.getByTestId("chat-input"), "First prompt");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(mockSendResult).toHaveBeenCalled());
+
+    rerender(<TestWrapper><ChatWindow {...defaultProps} attackResultId="default-created-attack"
+      conversationId="default-created-conversation" activeConversationId="default-created-conversation" /></TestWrapper>);
+
+    expect(mockedAttacksApi.getMessages).not.toHaveBeenCalled();
+    expect(within(screen.getByTestId("message-list")).getByText("First prompt")).toBeInTheDocument();
+    mockSendResult.mockReset();
+  });
+
   it("should accept file drops across the chat and composer without duplicate attachments or lost text", async () => {
     const user = userEvent.setup();
     render(<TestWrapper><ChatWindow {...defaultProps} /></TestWrapper>);
@@ -4013,7 +4029,7 @@ describe("ChatWindow Integration", () => {
     await waitFor(() => expect(mockedAttacksApi.createAttack).toHaveBeenCalledTimes(1));
     const binding = {
       version: 1, source_name: source.target_registry_name, source_hash: source.identifier.hash,
-      temperature: 0.8, effective_hash: "private-hash",
+      temperature: 0.8, effective_hash: "private-hash", capabilities: source.capabilities,
     };
     expect(targetsApi.buildTarget).toHaveBeenCalledWith("OpenAIChatTarget", {
       source_name: source.target_registry_name, source_hash: source.identifier.hash,

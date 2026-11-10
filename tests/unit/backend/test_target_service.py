@@ -60,6 +60,22 @@ async def _test_token_provider() -> str:
     return "test-token"
 
 
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("value", [None, "", "   "])
+async def test_manual_model_field_never_inherits_ambient_default_async(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str | None,
+) -> None:
+    monkeypatch.setenv("OPENAI_CHAT_MODEL", "ambient-model")
+    request = CreateTargetRequest(
+        type="OpenAIChatTarget",
+        params={"endpoint": "https://api.openai.com", "api_key": "test-key", "model_name": value},
+        auth_mode="api_key",
+    )
+    with pytest.raises(ValueError, match="explicit connection fields: model_name"):
+        await TargetService().create_target_async(request=request)
+
+
 class TestListTargets:
     """Tests for TargetService.list_targets method."""
 
@@ -698,7 +714,11 @@ class TestCreateTargetCodeExecution:
 
     @staticmethod
     def _request(params: dict[str, object] | None = None) -> CreateTargetRequest:
-        return CreateTargetRequest(name="hf", type="HuggingFaceChatTarget", params={"model_id": "m", **(params or {})})
+        return CreateTargetRequest(
+            name="hf",
+            type="HuggingFaceChatTarget",
+            params={"model_id": "m", "hf_access_token": "test-token", **(params or {})},
+        )
 
     @pytest.mark.parametrize(
         ("params", "expected_written"),

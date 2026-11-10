@@ -77,6 +77,7 @@ def editor_target(patch_central_database: None) -> Iterator[MockPromptTarget]:
     target = MockPromptTarget()
     service = MagicMock(spec=TargetService)
     service.get_target_object.return_value = target
+    service.saved_capabilities.side_effect = lambda **kwargs: target.capabilities
 
     async def instance_async(*, target_registry_name: str) -> TargetInstance:
         return target_object_to_instance(target_registry_name, target)
@@ -103,6 +104,7 @@ def response_target(patch_central_database: None) -> Iterator[OpenAIResponseTarg
     )
     service = MagicMock(spec=TargetService)
     service.get_target_object.return_value = target
+    service.saved_capabilities.side_effect = lambda **kwargs: target.capabilities
     service.get_target_async.return_value = target_object_to_instance("responses", target)
     service.list_targets_async.return_value = TargetListResponse(
         items=[target_object_to_instance("responses", target)],
@@ -1502,7 +1504,7 @@ class TestConversationEditor:
             await service.save_conversation_async(request=request)
 
     async def test_first_send_binds_all_conversations_and_keeps_receipts_async(
-        self, sqlite_instance: SQLiteMemory
+        self, *, sqlite_instance: SQLiteMemory, editor_target: MockPromptTarget
     ) -> None:
         service = AttackService()
         first = await service.save_conversation_async(request=draft())
@@ -1594,7 +1596,9 @@ class TestConversationEditor:
                 }
                 assert all(conversation.target_identifier == editor_target.get_identifier() for conversation in owned)
 
-    async def test_competing_binding_cannot_replace_target_async(self, sqlite_instance: SQLiteMemory) -> None:
+    async def test_competing_binding_cannot_replace_target_async(
+        self, *, sqlite_instance: SQLiteMemory, editor_target: MockPromptTarget
+    ) -> None:
         service = AttackService()
         saved = await service.save_conversation_async(request=draft())
         original = (await sqlite_instance.get_attack_results_async(attack_result_ids=[saved.attack.attack_result_id]))[
