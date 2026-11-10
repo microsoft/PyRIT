@@ -193,6 +193,13 @@ class TestTargetRegistryTemporaryClasses:
 
         assert not registry.is_temporary_class("TextTarget")
 
+    def test_a_class_a_launch_script_puts_in_place_of_another_is_temporary(self, registry: TargetRegistry):
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            registry.register_class(MockPromptTarget, name="TextTarget")
+
+        assert registry.get_class("TextTarget") is MockPromptTarget
+        assert registry.is_temporary_class("TextTarget")
+
 
 @pytest.mark.usefixtures("patch_central_database")
 class TestTargetRegistryGetInstanceByName:
