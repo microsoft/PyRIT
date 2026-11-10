@@ -14,6 +14,7 @@ from pyrit.models import (
     ToolCall,
     ToolCallRequirement,
     ToolsCalled,
+    ToolsCalledInOrder,
     scoring_expectation_fingerprint,
 )
 from pyrit.models import ToolCall as MessageToolCall
@@ -197,3 +198,20 @@ def test_diverges_from_repetition_registered_without_scorer_import() -> None:
 def test_diverges_from_repetition_requires_string_text(value: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         DivergesFromRepetition.model_validate(value)
+
+
+def test_tools_called_in_order_round_trip_retains_order() -> None:
+    condition = ToolsCalledInOrder(tools=(ToolCallRequirement(name="send"), ToolCallRequirement(name="read")))
+    expectation = ScoringExpectation(conditions=(condition,))
+
+    assert Condition.model_validate(condition.model_dump(mode="json")) == condition
+    assert ScoringExpectation.model_validate_persisted(expectation.model_dump(mode="json")) == expectation
+    assert [tool.name for tool in condition.tools] == ["send", "read"]
+    assert _CONDITION_TYPES["tools_called_in_order"] is ToolsCalledInOrder
+    assert condition != ToolsCalledInOrder(tools=tuple(reversed(condition.tools)))
+
+
+@pytest.mark.parametrize("names", [[], ["lookup"], ["lookup", "send", "lookup"]])
+def test_tools_called_in_order_requires_two_unique_names(names: list[str]) -> None:
+    with pytest.raises(ValidationError, match="at least two tools|each tool name once"):
+        ToolsCalledInOrder(tools=tuple(ToolCallRequirement(name=name) for name in names))

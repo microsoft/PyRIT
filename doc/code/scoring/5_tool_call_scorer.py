@@ -14,7 +14,8 @@
 # `OtelToolCallScorer` answers "Did these tools run?" It matches exact,
 # case-sensitive names in execution spans, not claims in a response or
 # model-proposed calls. A failed execution attempt counts; the scorer does not
-# check tool success, arguments, order, or call count.
+# check tool success, arguments, or call count. `OtelToolCallOrderScorer`, shown
+# below, checks the order of tool calls from the same evidence.
 #
 # The example tool is named **`my_tool_call`**, implemented by the `my_tool_call()` function
 # below. Its span records `"gen_ai.tool.name": "my_tool_call"`.
@@ -137,6 +138,79 @@ assert (await memory.get_observations_async(observation_ids=negative.observation
     0
 ].model_dump_json() == before_replay
 print(f"my_tool_call in saved evidence after capture is closed: {replayed.get_value()}")
+
+# %% [markdown]
+# ## Check the order of tool calls
+#
+# `OtelToolCallOrderScorer` matches a `ToolsCalledInOrder` condition against the
+# same trace evidence. Each listed tool needs an execution span that ended before
+# a span of the next listed tool started. Other tools may run in between.
+#
+# Order comes from span timestamps. Overlapping or unfinished spans give no order,
+# so they produce an undetermined score rather than false. A negative still needs
+# complete capture. When spans come from different clocks, pass
+# `clock_skew_tolerance` to treat spans that are closer than that as unordered.
+#
+# This example records spans with explicit timestamps so the result does not depend
+# on clock resolution.
+
+# %%
+import time
+
+from pyrit.models import ToolsCalledInOrder
+from pyrit.score import OtelToolCallOrderScorer
+
+client = InMemoryTraceClient()
+provider = TracerProvider(sampler=ALWAYS_ON, span_limits=SpanLimits(max_span_attribute_length=SpanLimits.UNSET))
+provider.add_span_processor(SimpleSpanProcessor(InMemoryTraceExporter(trace_client=client)))
+tracer = provider.get_tracer("pyrit-tool-order-example")
+order_scorer = OtelToolCallOrderScorer(source=OtelTraceSource(trace_client=client))
+
+
+def expects_order(*names: str) -> ScoringExpectation:
+    """Build an ordering condition over exact tool names."""
+    return ScoringExpectation(
+        conditions=(ToolsCalledInOrder(tools=tuple(ToolCallRequirement(name=name) for name in names)),)
+    )
+
+
+def record_agent_run(*spans: tuple[str, int, int]) -> TraceScorable:
+    """Record one agent trace whose tool spans have explicit start and end offsets in milliseconds."""
+    base = time.time_ns()
+    with tracer.start_as_current_span("agent", context=Context()) as root:
+        for name, start_ms, end_ms in spans:
+            span = tracer.start_span(
+                name,
+                start_time=base + start_ms * 1_000_000,
+                attributes={"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": name},
+            )
+            span.end(end_time=base + end_ms * 1_000_000)
+        trace_id = f"{root.get_span_context().trace_id:032x}"
+    return TraceScorable(trace_ids=(trace_id,))
+
+
+sequential = record_agent_run(("read_file", 0, 1), ("send_email", 2, 3))
+concurrent = record_agent_run(("read_file", 0, 2), ("send_email", 1, 3))
+assert await asyncio.to_thread(provider.force_flush)  # type: ignore
+client.mark_complete(trace_ids=(*sequential.trace_ids, *concurrent.trace_ids))
+
+in_order = (
+    await order_scorer.score_async(scorable=sequential, expectation=expects_order("read_file", "send_email"))  # type: ignore
+)[0]
+reversed_order = (
+    await order_scorer.score_async(scorable=sequential, expectation=expects_order("send_email", "read_file"))  # type: ignore
+)[0]
+overlapping = (
+    await order_scorer.score_async(scorable=concurrent, expectation=expects_order("read_file", "send_email"))  # type: ignore
+)[0]
+assert in_order.get_value() is True
+assert reversed_order.get_value() is False
+assert overlapping.status is ScoreStatus.UNDETERMINED
+print(f"read_file before send_email: {in_order.get_value()}")
+print(f"send_email before read_file: {reversed_order.get_value()}")
+print(f"Overlapping spans: {overlapping.status.value}")
+await asyncio.to_thread(provider.shutdown)  # type: ignore
+client.close()
 
 # %% [markdown]
 # ## Score a tool call through an attack
