@@ -9,12 +9,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from openai.types.chat import ChatCompletionMessage
 
-from pyrit.backend.mappers.target_mappers import target_object_to_instance
+from pyrit.backend.mappers import target_object_to_instance
 from pyrit.models import Conversation, JsonResponseConfig, Message, MessagePiece
 from pyrit.models.messages.tool_content import validate_tool_conversation
 from pyrit.prompt_target import (
     CapabilityHandlingPolicy,
     CapabilityName,
+    LiteLLMChatTarget,
     OpenAIChatTarget,
     OpenAIResponseTarget,
     PromptTarget,
@@ -31,7 +32,6 @@ from pyrit.prompt_target.common.tool_call_history import (
     parse_function_call,
     parse_function_call_output,
 )
-from pyrit.prompt_target.litellm_chat_target import LiteLLMChatTarget
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 

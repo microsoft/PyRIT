@@ -5,7 +5,7 @@ from typing import ClassVar, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from pyrit.models.catalog.scenario import AttackErrorSummary, AttackRetrySummary
+from pyrit.models.catalog import AttackErrorSummary, AttackRetrySummary
 from pyrit.models.conversation_summary import ConversationSummary
 from pyrit.models.results.attack_result import AttackOutcome, AttackResultRole
 from pyrit.models.results.scenario_result import ScenarioRunState

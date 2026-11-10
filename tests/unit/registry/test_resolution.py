@@ -15,11 +15,17 @@ import pytest
 
 from pyrit.common import REQUIRED_VALUE, forward_init_parameters
 from pyrit.common.apply_defaults import _RequiredValueSentinel
-from pyrit.models import Message, MessagePiece, SeedPrompt
-from pyrit.models.identifiers import ConverterIdentifier, TargetIdentifier
-from pyrit.models.parameter import ComponentType, Parameter
+from pyrit.models import (
+    ComponentType,
+    ConverterIdentifier,
+    Message,
+    MessagePiece,
+    Parameter,
+    SeedPrompt,
+    TargetIdentifier,
+)
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry.components import ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, ScorerRegistry, SourceRegistry, TargetRegistry
 from pyrit.registry.resolution import (
     _registry_getter_for_component_type,
     derive_parameters,
@@ -789,6 +795,7 @@ _RESOLVABLE_COMPONENT_REGISTRIES = {
     ComponentType.TARGET: TargetRegistry,
     ComponentType.CONVERTER: ConverterRegistry,
     ComponentType.SCORER: ScorerRegistry,
+    ComponentType.SOURCE: SourceRegistry,
 }
 # Scenarios are created by name, never referenced by name inside another component,
 # so they are deliberately not wired for reference resolution.

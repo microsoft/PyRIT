@@ -15,6 +15,9 @@ from sqlalchemy import literal, select, update
 from sqlalchemy.dialects import mssql, sqlite
 from sqlalchemy.sql import Select, visitors
 
+from pyrit.memory import (
+    AttackResultEntry,
+)
 from pyrit.memory.alembic.versions.e5f7a9c1b3d2_add_identifiers_tables import IdentifierGraphInserter
 from pyrit.memory.analytics_identity_v1 import ObjectiveTargetAnalyticsIdentityV1
 from pyrit.memory.analytics_sql import JsonClassNamePresent, JsonScalar
@@ -24,7 +27,6 @@ from pyrit.memory.memory_models import (
     AttackIdentifierEntry,
     AttackRequestConverterIdentifierEntry,
     AttackResponseConverterIdentifierEntry,
-    AttackResultEntry,
     ConverterIdentifierEntry,
     ScenarioResultEntry,
     TargetIdentifierEntry,

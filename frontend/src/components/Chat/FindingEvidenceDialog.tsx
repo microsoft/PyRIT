@@ -16,6 +16,8 @@ import type { FindingCreate, FindingListItem, FindingListResponse, Operation } f
 import { useFindingEvidenceDialogStyles } from './FindingEvidenceDialog.styles'
 
 const PAGE_SIZE = 20
+// The findings list API rejects longer title searches.
+const MAX_TITLE_SEARCH_LENGTH = 1000
 
 interface FindingEvidenceDialogProps {
   attackResultId: string
@@ -207,7 +209,7 @@ export default function FindingEvidenceDialog({
                 }}>New finding</Button>
             </div>
             <Field label="Search findings by title">
-              <Input value={title} disabled={submitting} onChange={(_, data) => {
+              <Input value={title} disabled={submitting} maxLength={MAX_TITLE_SEARCH_LENGTH} onChange={(_, data) => {
                 setTitle(data.value); setOffset(0); setSelection(null); setNotice(null); setAttachError('')
               }} />
             </Field>

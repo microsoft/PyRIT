@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from pyrit.converter.colloquial_wordswap_converter import (
+from pyrit.converter import (
     ColloquialWordswapConverter,
 )
 from pyrit.registry import ConverterRegistry

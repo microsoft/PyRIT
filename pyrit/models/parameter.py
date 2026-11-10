@@ -26,7 +26,7 @@ from pydantic import (
     model_validator,
 )
 
-from pyrit.common.apply_defaults import REQUIRED_VALUE
+from pyrit.common import REQUIRED_VALUE
 
 _SUPPORTED_SCALAR_TYPES: tuple[type, ...] = (str, int, float, bool, Path)
 _SCALAR_NAME_TO_TYPE: dict[str, type | types.UnionType] = {
@@ -46,13 +46,14 @@ class ComponentType(str, Enum):
     Each member maps one-to-one to a registry singleton that resolves references
     of that family by name (``TARGET`` → ``TargetRegistry``, ``CONVERTER`` →
     ``ConverterRegistry``, ``SCORER`` → ``ScorerRegistry``, ``SCENARIO`` →
-    ``ScenarioRegistry``).
+    ``ScenarioRegistry``, ``SOURCE`` → ``SourceRegistry``).
     """
 
     TARGET = "target"
     CONVERTER = "converter"
     SCORER = "scorer"
     SCENARIO = "scenario"
+    SOURCE = "source"
 
 
 class ParameterDestination(str, Enum):
