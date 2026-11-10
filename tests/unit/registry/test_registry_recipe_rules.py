@@ -318,6 +318,26 @@ def test_check_saved_entry_params_refuses_an_endpoint_that_isnt_a_full_address(e
     assert str(refusal) == "'endpoint' must be a full http(s) or ws(s) address in a saved target."
 
 
+@pytest.mark.parametrize("class_name", _OPENAI_CLASSES)
+def test_check_saved_entry_params_refuses_an_openai_target_while_the_server_sets_sdk_headers(
+    class_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", "Ocp-Apim-Subscription-Key: server-secret")
+
+    refusal = _refusal(class_name, {"auth_mode": "identity", "endpoint": _ENDPOINT, "headers": "{}"})
+
+    assert refusal.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
+    assert "OPENAI_CUSTOM_HEADERS" in str(refusal)
+    assert "server-secret" not in str(refusal)
+
+
+def test_check_saved_entry_params_ignores_sdk_headers_for_other_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", "Ocp-Apim-Subscription-Key: server-secret")
+
+    _check("A2ATarget", {"endpoint": "https://agent.example.test"})
+    _check("TextTarget", {})
+
+
 @pytest.mark.parametrize(
     ("class_name", "auth_modes"),
     [
@@ -430,6 +450,20 @@ def test_check_saveable_class_agrees_with_the_check_a_save_runs() -> None:
             else:
                 with pytest.raises(SavedEntryRefusedError):
                     check_saved_entry_params(cls=cls, parameters=metadata.parameters, params=entry)
+
+
+@pytest.mark.parametrize("class_name", _OPENAI_CLASSES)
+def test_check_saveable_class_refuses_an_openai_class_while_the_server_sets_sdk_headers(
+    class_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", "Ocp-Apim-Subscription-Key: server-secret")
+    cls = TargetRegistry.get_registry_singleton().get_class(class_name)
+
+    with pytest.raises(SavedEntryRefusedError, match="OPENAI_CUSTOM_HEADERS") as refusal:
+        check_saveable_class(cls)
+
+    assert refusal.value.reason is RestoreFailureReason.UNSUPPORTED_CREDENTIAL
+    assert "server-secret" not in str(refusal.value)
 
 
 def _component_refusal(registry_class: Any, class_name: str, params: dict[str, Any]) -> SavedEntryRefusedError:

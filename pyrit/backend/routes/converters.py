@@ -36,6 +36,7 @@ from pyrit.backend.services.saved_entries import (
     SavedEntryRemovalError,
     SavedEntryStorageError,
 )
+from pyrit.registry import SavedEntryUnavailableError
 
 router = APIRouter(prefix="/converters", tags=["converters"])
 
@@ -111,7 +112,7 @@ async def create_converter(
     try:
         return await service.create_converter_async(
             request=body,
-            owner=saved_entry_owner_from_request(request),
+            owner=saved_entry_owner_from_request(request) if body.persist else None,
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as e:
@@ -125,6 +126,8 @@ async def create_converter(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+    except SavedEntryUnavailableError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -206,6 +209,8 @@ async def preview_conversion(request: ConverterPreviewRequest) -> ConverterPrevi
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+    except SavedEntryUnavailableError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

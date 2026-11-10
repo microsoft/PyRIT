@@ -30,6 +30,7 @@ from pyrit.models.catalog import (
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget, TargetCapabilities, TextTarget
 from pyrit.registry import TargetRegistry
+from pyrit.registry.instance_registry import RegistryNameTakenError, registration_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from unit.mocks import MockPromptTarget
@@ -1914,7 +1915,8 @@ class TestSaveTarget:
     @pytest.mark.parametrize(
         ("error", "raised"),
         [
-            (ValueError("Instance 'contoso_gpt4o' already exists"), SavedEntryConflictError),
+            (RegistryNameTakenError("Instance 'contoso_gpt4o' already exists"), SavedEntryConflictError),
+            (ValueError("Instance name 'contoso_gpt4o' is reserved"), ValueError),
             (RuntimeError("x"), RuntimeError),
         ],
     )
@@ -1925,18 +1927,26 @@ class TestSaveTarget:
 
         with (
             patch.object(service._registry.instances, "register", side_effect=error),
-            pytest.raises(raised),
+            pytest.raises(raised) as refusal,
         ):
             await service.create_target_async(request=_save_request(), recipes_source=str(tmp_path))
 
+        assert type(refusal.value) is raised
         assert not (tmp_path / "targets" / "contoso_gpt4o.json").exists()
 
-    @pytest.mark.parametrize("error", [PermissionError("denied"), OSError("disk full"), AzureError("unreachable")])
-    async def test_reports_storage_failures_as_unavailable(self, tmp_path: Path, error: Exception) -> None:
+    @pytest.mark.parametrize(
+        ("error", "reason"),
+        [
+            (PermissionError(13, "Permission denied", "/srv/recipes/targets/x.json"), "Permission denied"),
+            (OSError("disk full"), "OSError"),
+            (AzureError("unreachable"), "AzureError"),
+        ],
+    )
+    async def test_reports_storage_failures_as_unavailable(self, tmp_path: Path, error: Exception, reason: str) -> None:
         service = TargetService()
 
         with (
-            patch.object(RegistryRecipeStorage, "create_recipe", side_effect=error),
+            patch.object(RegistryRecipeStorage, "_save_local_conditional", side_effect=error),
             patch("pyrit.backend.services.saved_entries.logger") as log,
             pytest.raises(SavedEntryStorageError, match="Saved targets can't be written right now."),
         ):
@@ -1944,8 +1954,8 @@ class TestSaveTarget:
 
         assert service.get_target_object(target_registry_name="contoso_gpt4o") is None
         message = log.error.call_args.args[0] % log.error.call_args.args[1:]
-        assert f"'contoso_gpt4o' couldn't be written to {tmp_path / 'targets'} ({type(error).__name__})" in message
-        assert str(error) not in message
+        assert f"'contoso_gpt4o' couldn't be written to {tmp_path / 'targets'} ({reason})" in message
+        assert not any(detail in message for detail in ("/srv/recipes", "disk full", "unreachable"))
         assert log.error.call_args.kwargs.get("exc_info") is None
 
     async def test_two_saves_of_one_name_save_one_target(self, tmp_path: Path) -> None:
@@ -1964,9 +1974,9 @@ class TestSaveTarget:
 
     async def test_saves_a_round_robin_only_over_targets_that_come_back_after_a_restart(self, tmp_path: Path) -> None:
         service = TargetService()
-        for name in ("startup_one", "startup_two"):
-            await service.create_target_async(request=_save_request(name=name, persist=False))
-        service._registry.instances.mark_configuration_entries()
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            for name in ("startup_one", "startup_two"):
+                await service.create_target_async(request=_save_request(name=name, persist=False))
         await service.create_target_async(request=_save_request(name="launch_member", persist=False))
         await service.create_target_async(request=_save_request(name="saved_member"), recipes_source=str(tmp_path))
 
@@ -2003,6 +2013,44 @@ class TestSaveTarget:
         TargetRegistry.reset_registry_singleton()
         TargetRegistry.get_registry_singleton().register_class(AliasedTextTarget, name="contoso_text")
         assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+
+    async def test_refuses_to_save_a_target_whose_class_a_launch_script_added(self, tmp_path: Path) -> None:
+        class LaunchScriptTextTarget(TextTarget):
+            pass
+
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            TargetRegistry.get_registry_singleton().register_class(LaunchScriptTextTarget)
+        service = TargetService()
+        request = CreateTargetRequest(name="launched", type="LaunchScriptTextTarget", params={}, persist=True)
+
+        types = {item.target_type: item for item in (await service.list_target_types_async()).items}
+        with pytest.raises(NotSaveableError, match="'LaunchScriptTextTarget' was added by a scan's launch"):
+            await service.create_target_async(request=request, recipes_source=str(tmp_path))
+        await service.create_target_async(request=request.model_copy(update={"persist": False}))
+
+        launched = types["LaunchScriptTextTarget"]
+        assert (launched.saveable_auth_modes, launched.not_saveable_reason) == (
+            [],
+            (
+                "'LaunchScriptTextTarget' was added by a scan's launch script, so a saved entry of it couldn't be "
+                "restored after a restart."
+            ),
+        )
+        assert types["TextTarget"].not_saveable_reason is None
+        assert not (tmp_path / "targets").exists()
+        assert service.get_target_object(target_registry_name="launched") is not None
+
+    async def test_types_say_an_openai_target_cant_be_saved_while_the_server_sets_sdk_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENAI_CUSTOM_HEADERS", "Ocp-Apim-Subscription-Key: server-secret")
+
+        result = await TargetService().list_target_types_async()
+
+        entries = {item.target_type: item for item in result.items}
+        assert entries["OpenAIChatTarget"].saveable_auth_modes == []
+        assert "OPENAI_CUSTOM_HEADERS" in (entries["OpenAIChatTarget"].not_saveable_reason or "")
+        assert entries["TextTarget"].saveable_auth_modes == ["api_key"]
 
     async def test_reports_storage_trouble_when_a_failed_save_cant_be_undone(self, tmp_path: Path) -> None:
         service = TargetService()
@@ -2041,9 +2089,10 @@ class TestSaveTarget:
 
     async def test_lists_where_each_target_comes_from(self, tmp_path: Path) -> None:
         service = TargetService()
-        service._registry.instances.register(MockPromptTarget(), name="from_startup_script")
-        service._registry.instances.mark_configuration_entries()
-        service._registry.instances.register(MockPromptTarget(), name="from_launch_script")
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            service._registry.instances.register(MockPromptTarget(), name="from_startup_script")
+        with registration_origin(RegistryEntryOrigin.TEMPORARY):
+            service._registry.instances.register(MockPromptTarget(), name="from_launch_script")
         await service.create_target_async(request=_save_request(name="temporary_one", persist=False))
         await service.create_target_async(request=_save_request(name="saved_one"), recipes_source=str(tmp_path))
 

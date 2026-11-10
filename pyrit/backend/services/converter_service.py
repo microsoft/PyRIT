@@ -54,6 +54,7 @@ from pyrit.backend.services.saved_entries import (
     SavedEntryConflictError,
     SavedEntryRemovalError,
     copied_entry_name,
+    launch_script_class_reason,
     prepare_saved_copy_params_async,
     prepare_saved_params_async,
     save_then_register_async,
@@ -65,7 +66,7 @@ from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryR
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.prompt_normalizer import ConverterConfiguration, PromptNormalizer
 from pyrit.registry import ConverterRegistry
-from pyrit.registry.instance_registry import registry_entry_origin
+from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin
 from pyrit.registry.registry import Reconstructable
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
@@ -198,6 +199,8 @@ class ConverterService:
         Returns:
             str | None: The reason, or None when a converter of the type can be saved.
         """
+        if self._registry.is_temporary_class(converter_type):
+            return launch_script_class_reason(converter_type)
         try:
             check_saveable_class(self._registry.get_class(converter_type))
         except SavedEntryRefusedError as error:
@@ -423,10 +426,8 @@ class ConverterService:
         )
         try:
             self._registry.instances.validate_name_available(name)
-        except ValueError as error:
-            if name in self._registry.instances:
-                raise SavedEntryConflictError(str(error)) from error
-            raise
+        except RegistryNameTakenError as error:
+            raise SavedEntryConflictError(str(error)) from error
         converter_obj = await construct_component_async(
             self._registry.create_instance_from_external_input, request.type, params=params
         )
@@ -486,10 +487,8 @@ class ConverterService:
         source_name = copied_entry_name(registry=self._registry, kind=RegistryRecipeKind.CONVERTERS, source=source)
         try:
             self._registry.instances.validate_name_available(name)
-        except ValueError as error:
-            if name in self._registry.instances:
-                raise SavedEntryConflictError(str(error)) from error
-            raise
+        except RegistryNameTakenError as error:
+            raise SavedEntryConflictError(str(error)) from error
         # A copy can't change its source's connection settings even unsaved, so that refusal comes before the
         # credential and Temporary-entry checks on the changes, whose refusal says the copy can still be created
         # without saving it.

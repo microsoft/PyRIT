@@ -125,6 +125,10 @@ class PromptTarget(Identifiable):
     # ``api-version``.
     destination_parameters: ClassVar[Mapping[str, bool]] = MappingProxyType({})
 
+    # Environment variables the target's client reads extra headers from, whatever the target's own
+    # settings say. A server can put a credential there, so a saved target isn't built while one is set.
+    server_header_variables: ClassVar[tuple[str, ...]] = ()
+
     # Why this target type can't be saved even without a credential, or None when it can.
     not_saveable_reason: ClassVar[str | None] = None
 

@@ -1790,6 +1790,7 @@ describe('CreateConverterDialog', () => {
     ['indices', '0, 1.5', 'indices must be an integer.'],
     ['indices', '0, Infinity', 'indices must be a number.'],
     ['random', '1.5', 'seed must be an integer.'],
+    ['random', '9007199254740993', 'seed must be a safe integer.'],
   ])('should reject invalid %s input %s without submitting', async (strategy, value, message) => {
     const user = userEvent.setup()
     mockConverterParameters([wordSelectionParameter])

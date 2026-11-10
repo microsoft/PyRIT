@@ -32,6 +32,7 @@ from pyrit.backend.routes.common import (
 from pyrit.backend.services import get_target_service
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.models.catalog import TargetInstance
+from pyrit.registry import SavedEntryUnavailableError
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -140,7 +141,7 @@ async def create_target(
             request=body,
             upload_directory=_target_upload_directory(request),
             is_admin=has_admin_access(request),
-            owner=saved_entry_owner_from_request(request),
+            owner=saved_entry_owner_from_request(request) if body.persist else None,
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as e:
@@ -159,6 +160,8 @@ async def create_target(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+    except SavedEntryUnavailableError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

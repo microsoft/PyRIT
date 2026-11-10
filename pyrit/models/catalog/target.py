@@ -72,9 +72,10 @@ class TargetInstance(BaseModel):
     origin: RegistryEntryOrigin | None = Field(
         None,
         description=(
-            "Where the target comes from: 'saved' (restored at every start), 'configuration' (the server's "
-            "startup scripts), or 'temporary' (created through the API without saving, so gone after a "
-            "restart). None for an inner target"
+            "Where the target comes from: 'saved' (restored at every start), 'configuration' (registered by "
+            "the server's startup scripts), or 'temporary' (created through the API without saving, or "
+            "registered by a scan's launch scripts; gone after a restart or a configuration apply). None for "
+            "an inner target"
         ),
     )
     saved_by: str | None = Field(
