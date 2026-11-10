@@ -1142,7 +1142,7 @@ class OpenAIResponseTarget(OpenAITarget):
             if piece.api_role == "assistant" and piece.original_value_data_type == "function_call":
                 try:
                     section = json.loads(piece.original_value)
-                except Exception:
+                except (json.JSONDecodeError, TypeError):
                     continue
                 if isinstance(section, dict) and section.get("type") == "function_call":
                     # Do NOT skip function_call even if status == "completed" — we still need to emit the output.

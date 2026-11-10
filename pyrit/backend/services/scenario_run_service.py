@@ -3307,7 +3307,9 @@ def get_scenario_run_service() -> ScenarioRunService:
 
         max_runs = getattr(app.state, "max_concurrent_scenario_runs", _DEFAULT_MAX_CONCURRENT_RUNS)
     except Exception:
-        pass
+        logger.debug(
+            "Could not read max_concurrent_scenario_runs from the backend app; using the default.", exc_info=True
+        )
 
     _service_instance = ScenarioRunService(max_concurrent_runs=max_runs)
     return _service_instance

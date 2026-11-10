@@ -429,7 +429,7 @@ class PlaywrightCopilotTarget(PromptTarget):
                         iframe_imgs = await content_frame.query_selector_all(self.ARIA_LABEL_THUMBNAIL)
                         image_count += len(iframe_imgs)
                 except Exception:
-                    pass
+                    logger.debug("Could not count thumbnails in a Copilot iframe; skipping it.", exc_info=True)
 
             # Check direct images
             imgs = await msg_group.query_selector_all(self.ARIA_LABEL_THUMBNAIL)

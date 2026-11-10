@@ -8399,7 +8399,7 @@ class MemoryInterface(abc.ABC):
         if isinstance(metadata, str):
             try:
                 metadata = json.loads(metadata)
-            except Exception:
+            except json.JSONDecodeError:
                 metadata = {}
         metadata = metadata or {}
         attr_data = dict(row.get("attribution_data") or {})
