@@ -5,6 +5,7 @@
 
 import base64
 import json
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -57,6 +58,7 @@ from pyrit.score import (
     build_assert_policy_scorer,
     get_assert_failure_criterion,
 )
+from pyrit.score.assert_judge_presets import resolve_assert_judge_dimensions
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -1137,3 +1139,93 @@ async def test_assert_package_resumes_and_differs_from_red_teaming_async(harness
     changed = harness.scenario(scenario_result_id=package._scenario_result_id)
     with pytest.raises(ValueError, match="matching configuration"):
         await harness.initialize_async(changed, scenario_techniques=[_technique("red_teaming")], **args)
+
+
+async def test_judge_presets_are_read_in_a_worker_thread_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    on_event_loop: list[bool] = []
+
+    def resolve(config: Any) -> Any:
+        on_event_loop.append(threading.current_thread() is threading.main_thread())
+        return resolve_assert_judge_dimensions(config)
+
+    with patch("pyrit.scenario.scenarios.foundry.assert_policy.resolve_assert_judge_dimensions", side_effect=resolve):
+        scenario = harness.scenario()
+        args = {"objective_target": harness.objective, "judge_presets": ["safety-extended"]}
+        scenario.set_params_from_args(args={**args, **_prompt_case(), **_datasets("assert_a")})
+        assert on_event_loop == []
+        await scenario.get_run_size_estimate_async()
+        await scenario.initialize_async()
+
+    assert len(on_event_loop) == 2
+    assert not any(on_event_loop)
+
+
+async def test_unbounded_estimate_still_rejects_an_unknown_preset_async() -> None:
+    scenario = AssertPolicy()
+    scenario.set_params_from_args(args={"judge_presets": ["no-such-preset"], **_datasets("assert_a")})
+    with (
+        patch.object(AssertPolicy, "_estimate_run_size_async", new_callable=AsyncMock) as bounded,
+        pytest.raises(ValueError, match="Unknown judge preset"),
+    ):
+        await scenario.get_run_size_estimate_async()
+    bounded.assert_not_awaited()
+
+
+@pytest.mark.parametrize("technique", ["assert_package", "red_teaming"])
+async def test_turn_taking_techniques_need_a_native_multi_turn_target_async(harness: _Harness, technique: str) -> None:
+    harness.objective.apply_capabilities(
+        capabilities=harness.objective.capabilities.model_copy(update={"supports_multi_turn": False})
+    )
+    await _store_async(name="assert_a", result=_result(group_count=1))
+    args = {"scenario_techniques": [_technique(technique)], **_datasets("assert_a")}
+    with pytest.raises(IncompatibleTechniqueError, match=f"Technique '{technique}' is incompatible"):
+        await harness.initialize_async(harness.scenario(), incompatible_technique_policy="raise", **args)
+
+    await _store_async(name="assert_b", result=_result(include_adversarial_prompt=False, group_count=1))
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("prompt_sending"), _technique(technique)],
+        include_baseline=False,
+        **_datasets("assert_b"),
+    )
+    assert {attack.display_group for attack in scenario._atomic_attacks} == {"prompt_sending"}
+
+
+async def test_turn_settings_a_technique_sets_itself_are_kept_async(harness: _Harness) -> None:
+    AttackTechniqueRegistry.get_registry_singleton().register_from_factories(
+        [
+            AttackTechniqueFactory(
+                name="short_red_teaming",
+                attack_class=RedTeamingAttack,
+                technique_tags=["multi_turn"],
+                attack_kwargs={"max_turns": 2, "score_last_turn_only": False},
+            )
+        ]
+    )
+    _build_assert_policy_technique.cache_clear()
+    await _store_async(name="assert_a", result=_result(group_count=1))
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("red_teaming"), _technique("short_red_teaming")],
+        include_baseline=False,
+        max_turns=4,
+        **_datasets("assert_a"),
+    )
+
+    attacks = {attack.display_group: attack.attack_technique.attack for attack in scenario._atomic_attacks}
+    assert (attacks["red_teaming"]._max_turns, attacks["red_teaming"]._score_last_turn_only) == (4, True)
+    assert (attacks["short_red_teaming"]._max_turns, attacks["short_red_teaming"]._score_last_turn_only) == (2, False)
+
+
+async def test_only_techniques_with_a_tester_get_the_adversarial_chat_async(harness: _Harness) -> None:
+    await _store_async(name="assert_a", result=_result(include_adversarial_prompt=False, group_count=1))
+    scenario = await harness.initialize_async(
+        harness.scenario(),
+        scenario_techniques=[_technique("prompt_sending"), _technique("red_teaming")],
+        include_baseline=False,
+        **_datasets("assert_a"),
+    )
+
+    chats = {attack.display_group: attack._adversarial_chat for attack in scenario._atomic_attacks}
+    assert chats == {"prompt_sending": None, "red_teaming": harness.adversarial}

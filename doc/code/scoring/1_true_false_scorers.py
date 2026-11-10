@@ -476,7 +476,8 @@ for mode in AssertJudgmentMode:
 # (`list_assert_judge_presets()` or `load_assert_judge_preset()`) or your own preset file
 # (`load_assert_judge_preset_file()`). A dimension with a graded `scale` is a violation at or past
 # its `violation_at` grade, and a not-applicable answer is undetermined. `samples` repeats the judge
-# call and combines the verdicts as ASSERT does: a majority vote with ties counted as failures. See
+# call and combines the verdicts as ASSERT does: a majority vote with ties counted as failures, leaving
+# out undetermined samples and samples whose judgment is still invalid after retries. See
 # [Foundry scenarios](../../scanner/foundry.ipynb) for the preset file format.
 #
 # %% [markdown]

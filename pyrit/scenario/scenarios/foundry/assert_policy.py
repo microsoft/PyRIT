@@ -6,11 +6,10 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
@@ -35,6 +34,7 @@ from pyrit.models import (
 )
 from pyrit.models.score.assert_judge import AssertJudgeConfig, describe_validation_errors
 from pyrit.prompt_normalizer import ConverterConfiguration
+from pyrit.prompt_target import CapabilityName
 from pyrit.registry import AttackTechniqueRegistry
 from pyrit.scenario.core import DatasetConstraintError, get_default_scorer_target, resolve_technique_factories
 from pyrit.scenario.core.atomic_attack import AtomicAttack
@@ -44,6 +44,7 @@ from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration
 from pyrit.scenario.core.scenario import BaselineAttackPolicy, Scenario
 from pyrit.scenario.core.technique_requirements import (
     IncompatibleTechniqueError,
+    TechniqueRequirements,
     check_target_compatibility,
     filter_seed_groups,
 )
@@ -347,7 +348,9 @@ class AssertPolicy(Scenario):
         return [
             Parameter(
                 name="max_turns",
-                description="Target turns for techniques that take a turn count. ASSERT's default is 6.",
+                description=(
+                    "Target turns for techniques that take a turn count and don't set their own. ASSERT's default is 6."
+                ),
                 param_type=int,
                 default=6,
             ),
@@ -450,7 +453,18 @@ class AssertPolicy(Scenario):
         prompt = self.params.get("target_system_prompt")
         if prompt is not None and not prompt.strip():
             raise ValueError("target_system_prompt must not be blank.")
-        self._judge_dimensions = resolve_assert_judge_dimensions(self._get_judge_config())
+        self._get_judge_config()
+
+    async def _get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
+        estimate = await super()._get_run_size_estimate_async(target_is_configured=target_is_configured)
+        # Bounded estimates resolved the presets already; unbounded ones still report invalid presets.
+        if estimate.status is ScenarioRunSizeEstimateStatus.Unavailable:
+            await self._resolve_judge_dimensions_async()
+        return estimate
+
+    async def _resolve_judge_dimensions_async(self) -> None:
+        """Read the selected judge presets in a worker thread, so the event loop isn't blocked."""
+        self._judge_dimensions = await asyncio.to_thread(resolve_assert_judge_dimensions, self._get_judge_config())
 
     def _get_judge_config(self) -> AssertJudgeConfig:
         try:
@@ -471,6 +485,7 @@ class AssertPolicy(Scenario):
         return BoundedDatasetSize(value=1) if self._has_no_datasets() else super()._get_run_size_budget()
 
     async def _estimate_run_size_async(self, *, budget: BoundedDatasetSize) -> ScenarioRunSizeEstimate:
+        await self._resolve_judge_dimensions_async()
         count, datasets = await self._get_dataset_size_for_estimate_async(budget=budget)
         components = [
             ScenarioRunSizeComponent(label=f"{technique.value} units", count=count)
@@ -520,6 +535,7 @@ class AssertPolicy(Scenario):
                 "--datasets (or the deprecated --dataset-names), or supply dataset_config in Python. "
                 "Generate groups with AssertGenerator and store them with AssertProvider."
             )
+        await self._resolve_judge_dimensions_async()
         selection = await self._dataset_config._resolve_attack_groups_async()
         population = selection.select(apply_sampling=False)
         if not any(population.values()):
@@ -666,7 +682,7 @@ class AssertPolicy(Scenario):
             if not check_target_compatibility(
                 target=context.objective_target,
                 attack_class=factory.attack_class,
-                requirements=factory.requirements,
+                requirements=self._get_target_requirements(factory),
                 technique_name=name,
                 policy=context.incompatible_technique_policy,
             ):
@@ -694,22 +710,41 @@ class AssertPolicy(Scenario):
                     )
         return attacks
 
+    @staticmethod
+    def _get_target_requirements(factory: AttackTechniqueFactory) -> TechniqueRequirements:
+        """
+        Require native multi-turn support for techniques that take a turn count.
+
+        The judges read the whole conversation, which a target that doesn't keep multi-turn history
+        would split into separate conversations.
+
+        Returns:
+            TechniqueRequirements: The factory's requirements, plus native multi-turn support if it takes turns.
+        """
+        requirements = factory.requirements
+        if "max_turns" not in factory.get_effective_attack_kwargs():
+            return requirements
+        target = requirements.objective_target
+        native = target.native_required | {CapabilityName.MULTI_TURN}
+        return replace(requirements, objective_target=replace(target, native_required=native))
+
     def _apply_turn_limit(self, factory: AttackTechniqueFactory) -> AttackTechniqueFactory:
         """
-        Apply ``max_turns`` to techniques whose attack takes a turn count.
+        Apply ``max_turns`` to techniques whose attack takes a turn count and doesn't set one itself.
 
         Such attacks also judge only the final turn, so each conversation is judged once, as in ASSERT.
+        Turn settings that a registered technique sets itself are kept.
 
         Returns:
             AttackTechniqueFactory: The factory, with the turn settings its attack accepts.
         """
-        accepted = inspect.signature(factory.attack_class.__init__).parameters
+        accepted = factory.get_effective_attack_kwargs()
+        configured = factory.get_effective_settings().attack_kwargs
+        defaults: dict[str, Any] = {"max_turns": self.params["max_turns"], "score_last_turn_only": True}
         if "max_turns" not in accepted:
             return factory
-        attack_kwargs: dict[str, Any] = {"max_turns": self.params["max_turns"]}
-        if "score_last_turn_only" in accepted:
-            attack_kwargs["score_last_turn_only"] = True
-        return factory.with_attack_kwargs(attack_kwargs=attack_kwargs)
+        attack_kwargs = {key: value for key, value in defaults.items() if key in accepted and key not in configured}
+        return factory.with_attack_kwargs(attack_kwargs=attack_kwargs) if attack_kwargs else factory
 
     def _build_unit(
         self,
@@ -721,7 +756,9 @@ class AssertPolicy(Scenario):
     ) -> AtomicAttack:
         scoring = self._get_scoring(group)
         extra = context.technique_converters.get(technique_name)
-        adversarial_chat = self._adversarial_chat if factory.adversarial_chat is None else None
+        adversarial_chat = (
+            self._adversarial_chat if factory.uses_adversarial and factory.adversarial_chat is None else None
+        )
         create_kwargs: dict[str, Any] = {
             "objective_target": context.objective_target,
             "attack_scoring_config": AttackScoringConfig(

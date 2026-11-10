@@ -16,7 +16,7 @@
         "assert_ai/core/judge_normalization.py",
         "assert_ai/internal_pipeline_prompts/judge_system.md"
       ],
-      "adaptations": "Native true/false conversation scoring; optional category validation and policy flag correction; custom judge dimensions thresholded to true/false verdicts; repeated judge samples combined by ASSERT's vote with category re-aggregation; no XML citation processing."
+      "adaptations": "Native true/false conversation scoring; optional category validation and policy flag correction; custom judge dimensions thresholded to true/false verdicts; repeated judge samples combined by ASSERT's vote with category re-aggregation, dropping samples whose judgment stays invalid; no XML citation processing."
     },
     {
       "path": "pyrit/datasets/score/true_false_question/assert_policy_system_prompt.yaml",

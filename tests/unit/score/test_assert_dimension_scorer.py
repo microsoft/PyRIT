@@ -2,6 +2,7 @@
 # Licensed under the MIT license.
 
 import json
+import logging
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -30,7 +31,7 @@ from pyrit.score import (
     TrueFalseScorer,
     build_assert_policy_scorer,
 )
-from pyrit.score.true_false.assert_policy_scorer import _assert_vote
+from pyrit.score.true_false.assert_policy_scorer import _assert_vote, _warn_even_samples
 
 pytestmark = pytest.mark.usefixtures("patch_central_database")
 
@@ -333,12 +334,69 @@ def test_vote_is_undetermined_when_every_sample_is() -> None:
     assert AssertSampleMetadata.AGREEMENT not in result.metadata
 
 
-async def test_sampled_judge_records_every_sample_snapshot_async(taxonomy: AssertTaxonomy) -> None:
+async def test_sampled_judge_reuse_checks_every_sample_snapshot_async(taxonomy: AssertTaxonomy) -> None:
     scorer = build_assert_policy_scorer(target=MockPromptTarget(), taxonomy=taxonomy, dimension=_BUDGET, samples=3)
-
-    score, _ = await _score_async(scorer, _judgment(True), _judgment(True), _judgment(False))
+    target = scorer.get_chat_target()
+    assert target is not None
+    scorable = await _conversation_async()
+    replies = _responses(_judgment(True), _judgment(True), _judgment(False))
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=replies):
+        (score,) = await scorer.score_async(scorable=scorable)
 
     assert set(score._snapshot_participation) == {"0", "1", "2"}
+    assert len(set(score.observation_ids)) == len(score.observation_ids) > 3
+    assert await scorer.find_matching_scores_async(scores=[score], scorable=scorable) == [score]
+    # Each sample needs its own snapshot, so one retained snapshot can't stand in for the others.
+    score.observation_ids = score.observation_ids[:1]
+    assert await scorer.find_matching_scores_async(scores=[score], scorable=scorable) == []
+
+
+_INVALID_REPLIES = ["not json"] * 30
+
+
+async def test_sampled_judge_leaves_out_a_sample_with_an_invalid_judgment_async(taxonomy: AssertTaxonomy) -> None:
+    scorer = build_assert_policy_scorer(target=MockPromptTarget(), taxonomy=taxonomy, dimension=_BUDGET, samples=3)
+    target = scorer.get_chat_target()
+    assert target is not None
+    scorable = await _conversation_async()
+    replies = _responses(_judgment(True), _judgment(True), *_INVALID_REPLIES)
+    with patch.object(target, "_send_prompt_to_target_async", new_callable=AsyncMock, side_effect=replies):
+        (score,) = await scorer.score_async(scorable=scorable)
+
+    assert score.get_value() is True
+    assert sorted(json.loads(score.score_metadata[AssertSampleMetadata.VOTES])) == ["true", "true", "undetermined"]
+    assert score.score_metadata[AssertSampleMetadata.AGREEMENT] == 1.0
+    assert len(score._snapshot_participation) == 2
+    assert await scorer.find_matching_scores_async(scores=[score], scorable=scorable) == [score]
+
+
+async def test_sampled_judge_fails_when_every_sample_is_invalid_async(taxonomy: AssertTaxonomy) -> None:
+    scorer = build_assert_policy_scorer(target=MockPromptTarget(), taxonomy=taxonomy, dimension=_BUDGET, samples=2)
+
+    with pytest.raises(InvalidJsonException, match="Invalid ASSERT judgment"):
+        await _score_async(scorer, *_INVALID_REPLIES)
+
+
+async def test_sampled_judge_propagates_other_errors_async(taxonomy: AssertTaxonomy) -> None:
+    scorer = build_assert_policy_scorer(target=MockPromptTarget(), taxonomy=taxonomy, dimension=_BUDGET, samples=3)
+    target = scorer.get_chat_target()
+    assert target is not None
+    scorable = await _conversation_async()
+    transport = AsyncMock(side_effect=RuntimeError("judge transport is down"))
+    with (
+        patch.object(target, "_send_prompt_to_target_async", transport),
+        pytest.raises(Exception, match="Error scoring prompt") as raised,
+    ):
+        await scorer.score_async(scorable=scorable)
+    assert not isinstance(raised.value, InvalidJsonException)
+
+
+def test_even_sample_count_warns_once(taxonomy: AssertTaxonomy, caplog: pytest.LogCaptureFixture) -> None:
+    _warn_even_samples.cache_clear()
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            build_assert_policy_scorer(target=MockPromptTarget(), taxonomy=taxonomy, dimension=_BUDGET, samples=2)
+    assert sum("prefer an odd sample count" in record.message for record in caplog.records) == 1
 
 
 def _category_judgment(*nodes: tuple[str, bool]) -> str:

@@ -124,10 +124,15 @@ await output_scenario_async(scenario_result)
 # objective alongside the tester instructions. Groups with stored tester instructions run only with
 # techniques that accept them, such as `assert_package` and `red_teaming`; the others are skipped, or
 # rejected when `incompatible_technique_policy` is `raise`. A run fails when no selected technique
-# accepts any group, so for groups generated without tester instructions, select another technique,
-# such as `red_teaming`. Results are grouped by technique. The scenario parameters are:
+# accepts any group, so for groups generated without tester instructions, select another technique.
+# `red_teaming` accepts them, but without stored tester instructions it falls back to PyRIT's general
+# red-teaming prompt, which pursues the objective rather than playing a stored user, so it isn't an
+# ASSERT scenario case. Techniques that take a turn count need a target that natively keeps
+# multi-turn history, because the judges read the whole conversation; with other targets they're
+# skipped or rejected the same way. Results are grouped by technique. The scenario parameters are:
 #
 # - `max_turns`: target turns for techniques that take a turn count. Defaults to 6, as in ASSERT.
+#   A registered technique that sets its own turn count, such as `goat`, keeps it.
 # - `judgment_mode`: `category_validated` (the default) also records a judgment for each relevant
 #   taxonomy category. `direct` returns only the verdict.
 # - `target_system_prompt`: instructions that a target-owned application already uses. Only the
@@ -298,7 +303,8 @@ await output_attack_async(baseline_result, include_auxiliary_scores=True)  # typ
 # Each enabled dimension gets its own judge call. The objective dimension decides success, and every
 # other dimension is an auxiliary true/false score on the same result, with the dimension name as
 # its category. With `judge_samples` above 1, the samples are combined by majority vote with ties
-# counted as failures, as in ASSERT, and undetermined samples are left out. In `category_validated`
+# counted as failures, as in ASSERT. Undetermined samples are left out, and so is a sample whose
+# judgment is still invalid after its retries; scoring fails only when every sample does. In `category_validated`
 # mode, the per-category judgments are voted too and `policy_violation` is recomputed from them.
 # The `assert_sample_votes` metadata keeps every sample's verdict. Prefer an odd sample count.
 #
