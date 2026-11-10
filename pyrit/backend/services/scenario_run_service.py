@@ -20,6 +20,7 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
@@ -98,6 +99,7 @@ from pyrit.models import (
 )
 from pyrit.models.catalog import AttackErrorSummary, AttackRetrySummary, RunScenarioRequest, ScenarioRunSummary
 from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary
+from pyrit.models.scenario_readiness import ScenarioConfigurationError
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
@@ -122,12 +124,14 @@ _RESTART_INTERRUPTION_REASON = (
 _SHUTDOWN_INTERRUPTION_REASON = "The backend process shut down before this scenario run completed."
 _USER_CANCELLATION_REASON = "Run was cancelled by user"
 _LAUNCH_REQUEST_METADATA_KEY = "scenario_launch_request_v1"
-_LAUNCH_REFERENCES_METADATA_KEY = "scenario_launch_references_v1"
+_LAUNCH_REFERENCES_METADATA_KEY = "scenario_launch_references_v2"
+_LEGACY_LAUNCH_REFERENCES_METADATA_KEY = "scenario_launch_references_v1"
 _RESERVED_INITIAL_METADATA_KEYS = frozenset(
     {
         _SCHEDULER_METADATA_KEY,
         _LAUNCH_REQUEST_METADATA_KEY,
         _LAUNCH_REFERENCES_METADATA_KEY,
+        _LEGACY_LAUNCH_REFERENCES_METADATA_KEY,
         SCENARIO_CONVERSATIONS_METADATA_KEY,
         SCENARIO_RUN_PLAN_METADATA_KEY,
         SCENARIO_RUN_STARTED_AT_METADATA_KEY,
@@ -141,6 +145,7 @@ _LAUNCH_REQUEST_FIELDS = (
     "scenario_name",
     "target_name",
     "adversarial_target_name",
+    "scoring_target_name",
     "techniques",
     "technique_override",
     "objective_scorer",
@@ -154,7 +159,14 @@ _LAUNCH_REQUEST_FIELDS = (
 )
 # Fields added after the first saved launch records; older records omit them.
 _OPTIONAL_LAUNCH_FIELDS = frozenset(
-    {"adversarial_target_name", "datasets", "max_dataset_size", "technique_override", "objective_scorer"}
+    {
+        "adversarial_target_name",
+        "scoring_target_name",
+        "datasets",
+        "max_dataset_size",
+        "technique_override",
+        "objective_scorer",
+    }
 )
 
 _SAFE_SCENARIO_PARAMETER_NAMES = frozenset(
@@ -362,6 +374,18 @@ class ScenarioRunService:
         if metadata.scenario_version != stored.scenario_version:
             raise ScenarioRunConflictError("The scenario version changed. Start a new configuration explicitly.")
         references = stored.metadata.get(_LAUNCH_REFERENCES_METADATA_KEY)
+        if isinstance(references, dict):
+            readiness = self._configuration_resolver.resolve_readiness(
+                scenario_name=request.scenario_name,
+                request=request,
+            )
+            current_references = {f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings}
+            if readiness.issues or current_references != references:
+                raise ScenarioRunConflictError(
+                    "The saved scan dependencies changed or are unavailable. Review a new configuration explicitly."
+                )
+            return
+        references = stored.metadata.get(_LEGACY_LAUNCH_REFERENCES_METADATA_KEY)
         original_scorer_hash = references.get("objective_scorer_hash") if isinstance(references, dict) else None
         current_scorer = self._launch_objective_scorer_identifier(request=request, metadata=metadata)
         if request.objective_scorer is not None:
@@ -420,9 +444,13 @@ class ScenarioRunService:
         """
         if request.objective_scorer is not None:
             return request.objective_scorer.identifier_hash
-        scorer_identifier = metadata.default_objective_scorer_identifier
-        scorer_hash = getattr(scorer_identifier, "hash", None)
-        return scorer_hash if isinstance(scorer_hash, str) else None
+        identifier = metadata.default_objective_scorer_identifier
+        if identifier is not None and isinstance(identifier.hash, str):
+            return identifier.hash
+        readiness = self._configuration_resolver.resolve_readiness(scenario_name=request.scenario_name, request=request)
+        return next(
+            (binding.identifier.hash for binding in readiness.bindings if binding.role == "objective_scorer"), None
+        )
 
     @staticmethod
     def _selected_launch_factories(
@@ -958,9 +986,14 @@ class ScenarioRunService:
                 owner=request.scenario_name,
             )
         await self._run_initializers_async(request=request)
+        reference_issues, _, _ = await run_legacy_sync_async(
+            self._configuration_resolver.resolve_named_roles,
+            scenario_name=request.scenario_name,
+            request=request,
+        )
+        if reference_issues:
+            raise ScenarioConfigurationError(issues=reference_issues)
         declared_names = {parameter.name for parameter in scenario_class.supported_parameters()}
-        if "objective_target" in declared_names and not request.target_name:
-            raise ValueError(f"Scenario '{request.scenario_name}' requires an objective target.")
         objective_target = (
             self._configuration_resolver.resolve_target(target_name=request.target_name)
             if request.target_name is not None
@@ -975,6 +1008,7 @@ class ScenarioRunService:
                 scenario_name=request.scenario_name,
                 scenario_class=scenario_class,
                 objective_target=objective_target,
+                scoring_target_name=request.scoring_target_name,
                 techniques=request.techniques,
                 technique_override=request.technique_override,
                 datasets=request.dataset_request,
@@ -988,12 +1022,20 @@ class ScenarioRunService:
                 memory_labels=request.labels,
             )
             init_kwargs["operation_id"] = request.operation_id
+            metadata = dict(
+                initial_metadata if initial_metadata is not None else (_INITIAL_METADATA_CONTEXT.get() or {})
+            )
+            if request.scenario_result_id:
+                stored = await self._memory.get_scenario_result_header_async(
+                    scenario_result_id=request.scenario_result_id,
+                )
+                references = stored.metadata.get(_LAUNCH_REFERENCES_METADATA_KEY) if stored is not None else None
+                if isinstance(references, dict):
+                    metadata["scenario_expected_role_references_v1"] = references
             scenario = await self._initialize_scenario_async(
                 request=request,
                 init_kwargs=init_kwargs,
-                initial_metadata=(
-                    initial_metadata if initial_metadata is not None else (_INITIAL_METADATA_CONTEXT.get() or {})
-                ),
+                initial_metadata=metadata,
             )
         return _PreparedRun(scenario=scenario, adversarial_target=adversarial_target)
 
@@ -1714,33 +1756,41 @@ class ScenarioRunService:
             launch_request["include_baseline"] = (
                 baseline if baseline is not None else scenario_class.BASELINE_ATTACK_POLICY.value == "enabled"
             )
-        references = (
-            {
-                _LAUNCH_REFERENCES_METADATA_KEY: await run_legacy_sync_async(
-                    self._capture_launch_references,
-                    request=request,
-                    scenario_class=scenario_class,
-                    init_kwargs=init_kwargs,
-                )
-            }
-            if request.scenario_result_id is None
-            else {}
-        )
         return await scenario_registry.create_and_initialize_async(
             request.scenario_name,
             scenario_params=request.scenario_params or {},
             scenario_result_id=request.scenario_result_id or None,
             constructor_kwargs=self._configuration_resolver.resolve_constructor_kwargs(
-                scenario_class=scenario_class, objective_scorer=request.objective_scorer
+                scenario_class=scenario_class,
+                objective_scorer=request.objective_scorer,
+            ),
+            configuration_metadata=partial(
+                self._resolved_role_metadata,
+                expected_references=(initial_metadata or {}).get("scenario_expected_role_references_v1"),
             ),
             initial_metadata={
                 **(initial_metadata or {}),
                 _SCHEDULER_METADATA_KEY: _SCHEDULER_METADATA_VALUE,
                 _LAUNCH_REQUEST_METADATA_KEY: launch_request,
-                **references,
             },
             **init_kwargs,
         )
+
+    @staticmethod
+    def _resolved_role_metadata(
+        scenario: Scenario,
+        *,
+        expected_references: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        readiness = scenario.get_readiness()
+        if readiness.issues:
+            raise ScenarioConfigurationError(issues=readiness.issues)
+        references = {f"{binding.role}_hash": binding.identifier.hash for binding in readiness.bindings}
+        if expected_references is not None and references != expected_references:
+            raise ScenarioRunConflictError(
+                "The scan dependencies changed after preflight or since the saved run. Review a new configuration."
+            )
+        return {_LAUNCH_REFERENCES_METADATA_KEY: references}
 
     async def _execute_run_async(self, *, scenario_result_id: str) -> None:
         """

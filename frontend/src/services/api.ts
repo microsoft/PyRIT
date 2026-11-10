@@ -59,6 +59,7 @@ import type {
   ScenarioPresetResponse,
   ScenarioSuite,
   LaunchScenarioSuiteRequest,
+  ScenarioSuiteReadinessRequest,
   ScenarioSuiteExecutionSummary,
   ScenarioSuiteListResponse,
   ScenarioSuiteResponse,
@@ -66,12 +67,16 @@ import type {
   UpdateScenarioSuiteRequest,
   ScenarioRunSizeEstimateResponse,
   ScenarioRunSizeEstimateRequest,
+  ScenarioReadiness,
   ScenarioDatasetLoadResponse,
   ScenarioRunSummary,
   ScenarioRunListResponse,
   ScenarioRunProgress,
   ScenarioHierarchyNode,
   ScenarioHierarchyProjection,
+  PairedOutcomeStatistics,
+  PairedOutcomeDetailPage,
+  PairedOutcomeTransition,
   ScenarioQueueSnapshot,
   ScenarioRunState,
   ConfigurationFileContent,
@@ -636,6 +641,10 @@ export const scoresApi = {
 }
 
 export const scorersApi = {
+  listTypes: async (): Promise<{ items: Array<{ scorer_type: string; parameters: import('@/types').Parameter[]; supports_objective_scoring: boolean }> }> =>
+    (await apiClient.get('/scorers/types')).data,
+  createScorer: async (request: { name: string; type: string; params: Record<string, unknown> }): Promise<import('@/types').ScorerInstance> =>
+    (await apiClient.post('/scorers', request)).data,
   listScorers: async (limit = 200, cursor?: string): Promise<{
     items: import('@/types').ScorerInstance[]
     pagination: { has_more: boolean; next_cursor: string | null }
@@ -717,6 +726,12 @@ export const scenariosApi = {
     return response.data
   },
 
+  readiness: async (
+    scenarioName: string, request: ScenarioRunSizeEstimateRequest, signal?: AbortSignal,
+  ): Promise<ScenarioReadiness> => (await apiClient.post(
+    `/scenarios/catalog/${encodeURIComponent(scenarioName)}/readiness`, request, { signal },
+  )).data,
+
   getRun: async (scenarioResultId: string): Promise<ScenarioRunSummary> => {
     const response = await apiClient.get(`/scenarios/runs/${encodeURIComponent(scenarioResultId)}`)
     return response.data
@@ -789,6 +804,36 @@ export const scenariosApi = {
     return response.data
   },
 
+  getPairedOutcomes: async (
+    scenarioResultId: string,
+    params: { baseline_group_id: string; attack_group_id: string },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeStatistics> => {
+    const response = await apiClient.get<PairedOutcomeStatistics>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes`,
+      { params, signal },
+    )
+    return response.data
+  },
+
+  getPairedOutcomeDetails: async (
+    scenarioResultId: string,
+    params: {
+      baseline_group_id: string
+      attack_group_id: string
+      transition: PairedOutcomeTransition
+      cursor?: string
+      limit: number
+    },
+    signal?: AbortSignal,
+  ): Promise<PairedOutcomeDetailPage> => {
+    const response = await apiClient.get<PairedOutcomeDetailPage>(
+      `/scenarios/runs/${encodeURIComponent(scenarioResultId)}/paired-outcomes/details`,
+      { params, signal },
+    )
+    return response.data
+  },
+
   getQueue: async (signal?: AbortSignal): Promise<ScenarioQueueSnapshot> => {
     const response = await apiClient.get('/scenarios/runs/queue', { signal })
     return response.data
@@ -851,6 +896,8 @@ export const scenarioPresetsApi = {
 }
 
 export const scenarioSuitesApi = {
+  readiness: async (name: string, request: ScenarioSuiteReadinessRequest, signal?: AbortSignal): Promise<ScenarioReadiness> =>
+    (await apiClient.post(`/scenario-suites/${encodeURIComponent(name)}/readiness`, request, { signal })).data,
   list: async (signal?: AbortSignal): Promise<ScenarioSuiteListResponse> => {
     const response = await apiClient.get('/scenario-suites', { signal })
     return response.data

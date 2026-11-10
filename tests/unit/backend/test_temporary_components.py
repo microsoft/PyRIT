@@ -150,7 +150,7 @@ class TestTemporaryComponents:
                     name="local-model" if register else None,
                     type="HuggingFaceChatTarget",
                     register=register,
-                    params={"model_path": "test-model", "use_cuda": False},
+                    params={"model_path": "test-model", "use_cuda": False, "hf_access_token": "test-only-token"},
                 )
             )
             [target] = constructed
