@@ -64,9 +64,15 @@ from pyrit.models import (
     SeedObjective,
     config_hash,
 )
-from pyrit.models.catalog import RunScenarioRequest
+from pyrit.models.catalog import RestoreFailureReason, RunScenarioRequest
 from pyrit.prompt_target import TargetCapabilities
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScenarioMetadata, ScenarioRegistry
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    ScenarioMetadata,
+    ScenarioRegistry,
+    UnavailableEntry,
+)
 from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
 from pyrit.scenario import AttackTechniqueFactory, IncompatibleTechniquePolicy, Scenario, ScenarioTechnique
 from pyrit.scenario.core import (
@@ -358,6 +364,24 @@ async def test_tools_launch_script_cannot_replace_a_saved_converter_async(
         assert "role_play_tool_calls" not in AttackTechniqueRegistry.get_registry_singleton().instances
     finally:
         AttackTechniqueRegistry.reset_registry_singleton()
+
+
+@pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize(
+    "script",
+    [_LaunchScript(name="rot13"), _LaunchScript(name="rot13", swallow=True), _LaunchScript(name="rot13", wrap=True)],
+)
+async def test_launch_scripts_cannot_take_the_name_of_a_saved_entry_that_failed_async(
+    converter_registry: ConverterRegistry, script: Any
+) -> None:
+    converter_registry.instances.mark_unavailable(
+        UnavailableEntry(kind="converter", name="rot13", reason=RestoreFailureReason.BUILD_ERROR, message="boom")
+    )
+
+    with pytest.raises(SavedEntryLaunchConflictError, match="'converters' would replace the saved converter 'rot13'"):
+        await _run_launch_scripts_async({"converters": script})
+
+    assert converter_registry.instances.get_names() == []
 
 
 class _FailingLaunchScript:
@@ -3482,6 +3506,125 @@ class TestScenarioRunServiceCancelRun:
             call.kwargs["scenario_result_id"] for call in mock_memory.get_scenario_result_header_async.await_args_list
         ] == ["skipped-run", "next-run"]
         mock_memory.get_scenario_results_async.assert_not_awaited()
+
+    @staticmethod
+    def _fail_handoff_after_saving_start(*, mock_memory: MagicMock, next_run_id: str) -> MagicMock:
+        """
+        Make the next run's IN_PROGRESS update reach the database but report a failure to the caller.
+
+        Returns:
+            MagicMock: The persisted row for the next run.
+        """
+        row = _make_db_scenario_result(result_id=next_run_id, run_state=ScenarioRunState.QUEUED)
+
+        async def save_then_raise_async(
+            *, scenario_run_state: ScenarioRunState, metadata_fields: dict[str, Any], **_: object
+        ) -> None:
+            row.scenario_run_state = scenario_run_state
+            row.metadata.update(metadata_fields)
+            raise ConnectionError("connection lost after commit")
+
+        mock_memory.get_scenario_result_header_async.return_value = row
+        mock_memory.update_scenario_run_state_and_metadata_fields_async.side_effect = save_then_raise_async
+        return row
+
+    async def test_handoff_retry_starts_run_when_failed_attempt_saved_its_start_async(
+        self, *, mock_memory: MagicMock
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        next_run = _svc_mod._ActiveTask(scenario_result_id="next-run")
+        service._queued_runs.append(next_run)
+        row = self._fail_handoff_after_saving_start(mock_memory=mock_memory, next_run_id="next-run")
+
+        with patch.object(service, "_execute_run_async", new_callable=AsyncMock) as execute:
+            with pytest.raises(ConnectionError):
+                await service._handoff_scheduler_async(scenario_result_id="finished-run")
+            assert list(service._queued_runs) == [next_run]
+
+            await service._handoff_scheduler_async(scenario_result_id="finished-run")
+            assert next_run.task is not None
+            await next_run.task
+
+        execute.assert_awaited_once_with(scenario_result_id="next-run")
+        assert not service._queued_runs
+        assert service._active_scenario_result_id == "next-run"
+        assert service._active_tasks["next-run"] is next_run
+        mock_memory.update_scenario_run_state_and_metadata_fields_async.assert_awaited_once()
+        assert next_run.started_at is not None
+        assert row.metadata[_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY] == next_run.started_at.isoformat()
+
+    @pytest.mark.parametrize(
+        "persisted_started_at",
+        [
+            pytest.param("2026-01-02T03:04:05.123456Z", id="z-suffix"),
+            pytest.param(datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=UTC), id="datetime"),
+        ],
+    )
+    async def test_handoff_retry_matches_start_time_saved_in_another_format_async(
+        self, *, mock_memory: MagicMock, persisted_started_at: object
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        next_run = _svc_mod._ActiveTask(
+            scenario_result_id="next-run", started_at=datetime(2026, 1, 2, 3, 4, 5, 123456, tzinfo=UTC)
+        )
+        service._queued_runs.append(next_run)
+        row = _make_db_scenario_result(result_id="next-run", run_state=ScenarioRunState.IN_PROGRESS)
+        row.metadata = {_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY: persisted_started_at}
+        mock_memory.get_scenario_result_header_async.return_value = row
+
+        with patch.object(service, "_execute_run_async", new_callable=AsyncMock) as execute:
+            await service._handoff_scheduler_async(scenario_result_id="finished-run")
+            assert next_run.task is not None
+            await next_run.task
+
+        execute.assert_awaited_once_with(scenario_result_id="next-run")
+        assert not service._queued_runs
+        assert service._active_scenario_result_id == "next-run"
+        mock_memory.update_scenario_run_state_and_metadata_fields_async.assert_not_awaited()
+
+    async def test_handoff_skips_in_progress_run_with_a_different_start_time_async(
+        self, *, mock_memory: MagicMock
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        service._queued_runs.append(_svc_mod._ActiveTask(scenario_result_id="next-run", started_at=datetime.now(UTC)))
+        row = _make_db_scenario_result(result_id="next-run", run_state=ScenarioRunState.IN_PROGRESS)
+        row.metadata = {_svc_mod.SCENARIO_RUN_STARTED_AT_METADATA_KEY: "2020-01-01T00:00:00+00:00"}
+        mock_memory.get_scenario_result_header_async.return_value = row
+
+        await service._handoff_scheduler_async(scenario_result_id="finished-run")
+
+        assert not service._queued_runs
+        assert "next-run" not in service._active_tasks
+        assert service._active_scenario_result_id is None
+
+    async def test_cancel_during_handoff_retry_cancels_run_saved_as_in_progress_async(
+        self, *, mock_memory: MagicMock
+    ) -> None:
+        service = ScenarioRunService()
+        service._active_scenario_result_id = "finished-run"
+        service._queued_runs.append(_svc_mod._ActiveTask(scenario_result_id="next-run"))
+        row = self._fail_handoff_after_saving_start(mock_memory=mock_memory, next_run_id="next-run")
+        with pytest.raises(ConnectionError):
+            await service._handoff_scheduler_async(scenario_result_id="finished-run")
+
+        async def try_update_async(
+            *, expected_states: set[ScenarioRunState], scenario_run_state: ScenarioRunState, **_: object
+        ) -> bool:
+            if row.scenario_run_state not in expected_states:
+                return False
+            row.scenario_run_state = scenario_run_state
+            return True
+
+        mock_memory.try_update_scenario_run_state_async = AsyncMock(side_effect=try_update_async)
+        mock_memory.get_scenario_results_async.return_value = [row]
+
+        await service.cancel_run_async(scenario_result_id="next-run")
+
+        assert row.scenario_run_state == ScenarioRunState.CANCELLED
+        assert not service._queued_runs
 
     async def test_cancel_run_returns_none_for_unknown_id(self, mock_memory) -> None:
         """Test that cancel returns None for non-existent run."""

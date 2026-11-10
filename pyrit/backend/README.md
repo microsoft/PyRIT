@@ -30,6 +30,23 @@ API keys do not authenticate incoming GUI users.
 
 ## API Endpoints
 
+### Memory text search
+
+Text searches are case-insensitive literal substrings by default. Wildcards require
+an explicit full LIKE pattern: `%` matches any number of characters, `_` matches
+one, and `/` escapes the next character. Brackets, `*` and backslashes are literal.
+Patterns are not automatically wrapped in `%`; a dangling `/` is invalid.
+
+`GET /api/datasets/seeds` accepts `search` for literals or `value_pattern` for
+patterns. `GET /api/operations/{operation_id}/findings` accepts `title` or
+`title_pattern`. `POST /api/analytics/attacks/facets` accepts `search` or `search_pattern`.
+Supplying both companion filters is invalid. An explicit empty pattern matches
+empty text, whereas an empty literal query retains its no-filter behavior.
+Dataset cursors are bound to the pattern and search mode as well as other filters.
+Existing UI search boxes remain literal. Unicode lowercasing is used rather than
+full case folding; SQL Server's locale, accent and character semantics depend on
+its database collation.
+
 ### Health & Status
 - `GET /api/health` - Health check
 - `GET /api/version` - Version information
@@ -350,6 +367,19 @@ find `python` (for example, `<worktree>\.venv\Scripts\python.exe` on Windows).
 Stop these test-owned servers after the run.
 
 ### Request Limits
+
+Attachments upload in the background while editing remains available, with up to three
+uploads at a time. Send and Save reuse completed uploads; failures expose Retry and
+removal controls. Unused uploads expire after 24 hours, including across restarts.
+Only media used in a message or conversion enters permanent results storage.
+
+`POST /api/media/uploads` accepts `data_type`, base64 `content`, and `mime_type`.
+It returns **201** with an opaque `value` and `expires_at` (UTC Unix seconds).
+Retained drafts refresh uploads one hour before that expiration without changing their
+references. Older backends without `expires_at` use a 23-hour refresh interval.
+The shared local staging directory has a **1 GiB** quota; uploads exceeding it receive
+**507** and can be retried after unused uploads expire. Expired bytes are reclaimed
+before admitting new uploads. Renewing existing bytes does not consume extra quota.
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
 API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,

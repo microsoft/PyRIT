@@ -128,20 +128,18 @@ class RuntimeLifecycle:
         self.generation = str(uuid.uuid4())
         self.state, self.outcome, self.message = "ready", "success", "PyRIT is ready."
 
-    async def _restore_saved_entries_async(self, config: ConfigurationLoader) -> bool:
+    async def _restore_saved_entries_async(self, config: ConfigurationLoader) -> None:
         """
         Rebuild saved registry entries after the startup scripts have registered theirs.
 
         The startup scripts' targets are marked first, so they can be told apart from targets that are
-        gone after a restart, such as ones a scan's launch scripts register. A failure keeps the runtime
-        not ready, since a scan that would have used a missing entry could quietly fall back to a
-        different one. Fixing the stored file and restarting recovers.
+        gone after a restart, such as ones a scan's launch scripts register. The runtime becomes ready
+        even when some saved entries can't be restored. Each one that failed keeps its name, so looking
+        it up or starting a run that uses it fails with the reason instead of finding nothing or
+        something else, and the failures are listed in the runtime status.
 
         Args:
             config (ConfigurationLoader): The loaded configuration naming the storage source.
-
-        Returns:
-            bool: Whether every saved entry was restored.
         """
         TargetRegistry.get_registry_singleton().instances.mark_configuration_entries()
         restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
@@ -151,19 +149,13 @@ class RuntimeLifecycle:
         saved = await asyncio.to_thread(restorer.read)
         report = restorer.restore(saved=saved)
         self.restore_failures, self.restore_ignored = report.failures, report.ignored
-        if not report.failures:
-            return True
-        self.state, self.outcome = "failed", "restore-failed"
-        problems = f"{len(report.failures)} problem{'s' if len(report.failures) > 1 else ''}"
-        self.message = (
-            f"Saved registry entries couldn't be restored ({problems}). "
-            "Fix or delete the files named in the server log or GET /api/config/runtime, then restart the backend."
-        )
-        logger.error(
-            "Saved registry entries couldn't be restored: %s",
-            [f"{failure.kind.value}/{failure.name or '*'}: {failure.reason.value}" for failure in report.failures],
-        )
-        return False
+        if report.failures:
+            count = len(report.failures)
+            logger.warning(
+                "%d saved registry %s couldn't be restored. Fix or delete them; see GET /api/config/runtime.",
+                count,
+                "entry" if count == 1 else "entries",
+            )
 
     async def startup_async(self) -> None:
         """Keep management alive even when parsing or initialization fails."""
@@ -184,8 +176,8 @@ class RuntimeLifecycle:
             await config.initialize_pyrit_async(raise_on_initializer_error=True)
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
-            if await self._restore_saved_entries_async(config):
-                self._publish(config)
+            await self._restore_saved_entries_async(config)
+            self._publish(config)
         except Exception:
             self.state, self.outcome = "restart-required", "initialization-failed"
             self.message = "PyRIT setup failed. Repair saved configuration, then restart the backend."
@@ -267,8 +259,8 @@ class RuntimeLifecycle:
                 await config.apply_prepared_reinitialization_async(prepared=prepared)
                 await self._management_async(config)
                 self.version = current_version
-                if await self._restore_saved_entries_async(config):
-                    self._publish(config)
+                await self._restore_saved_entries_async(config)
+                self._publish(config)
             except (Exception, asyncio.CancelledError, BaseExceptionGroup) as error:
                 logger.exception(
                     "PyRIT live apply failed phase=%s generation=%s",
