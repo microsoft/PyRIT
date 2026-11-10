@@ -52,6 +52,8 @@ print(f"[output match] {scores[0].get_value()}")
 # searches the candidate text. For literal equality, use
 # `Equals(value="answer", case_sensitive=True, ignore_whitespace=False)`.
 # `Contains` returns false for empty candidate text; `Equals` can match two empty values.
+# `StartsWith` compares a literal prefix using `lower()` for case-insensitive matching, not
+# Unicode regex case equivalence. It strips only candidate edges; the expected prefix is preserved.
 # Blank or invalid regex patterns fail before scoring.
 #
 # By default, `OutputMatchesScorer` matches each supported text piece independently and returns
@@ -630,3 +632,25 @@ print(type(wildguard_scorer).__name__)
 # scores = await video_and_audio_scorer.score_async(scorable=video)
 # print(scores[0])
 # ```
+
+# %% [markdown]
+# ## Selecting one label from a multi-label scorer
+#
+# `MultiLabelTrueFalseScorer` reports independent verdicts. When an attack or evaluator
+# expects one true/false result, use `TrueFalseScoreSelector` to choose a category
+# instead of combining unrelated labels.
+#
+# Given a configured `multi_label_scorer` that declares `harmful_response`:
+#
+# ```python
+# from pyrit.score import TrueFalseScoreSelector
+#
+# objective_scorer = TrueFalseScoreSelector(
+#     scorer=multi_label_scorer,
+#     label="harmful_response",
+# )
+# ```
+#
+# Use `objective_scorer` wherever a single `TrueFalseScorer` is expected. The label
+# must match one of the source scorer's `labels`; the other verdicts are retained
+# as intermediate scores.

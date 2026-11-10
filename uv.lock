@@ -4963,6 +4963,7 @@ version = "1.2.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
+    { name = "aiohttp" },
     { name = "aioodbc" },
     { name = "aiosqlite" },
     { name = "alembic" },
@@ -4981,6 +4982,7 @@ dependencies = [
     { name = "datasets" },
     { name = "ecoji" },
     { name = "fastapi" },
+    { name = "filelock" },
     { name = "httpx", extra = ["http2"] },
     { name = "httpx2" },
     { name = "jinja2" },
@@ -5107,6 +5109,7 @@ requires-dist = [
     { name = "accelerate", marker = "extra == 'all'", specifier = ">=1.7.0" },
     { name = "accelerate", marker = "extra == 'gcg'", specifier = ">=1.7.0" },
     { name = "aiofiles", specifier = ">=24,<26" },
+    { name = "aiohttp", specifier = ">=3.13.4" },
     { name = "aioodbc", specifier = ">=0.5.0" },
     { name = "aiosqlite", specifier = ">=0.21.0" },
     { name = "alembic", specifier = ">=1.16.0" },
@@ -5129,6 +5132,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=4.8.0" },
     { name = "ecoji", specifier = ">=0.1.1" },
     { name = "fastapi", specifier = ">=0.133.0" },
+    { name = "filelock", specifier = ">=4.2.1" },
     { name = "flask", marker = "extra == 'all'", specifier = ">=3.1.3" },
     { name = "flask", marker = "extra == 'playwright'", specifier = ">=3.1.3" },
     { name = "github-copilot-sdk", marker = "extra == 'all'", specifier = ">=1.0.11,<1.0.23" },

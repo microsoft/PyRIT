@@ -54,6 +54,22 @@ its database collation.
 ### Targets
 - `GET /api/targets` - List available prompt targets
 - `GET /api/targets/{id}` - Get target details
+- `POST /api/targets/{id}/detect-capabilities` - Run live capability checks and
+  apply the result to the registered target. Send `{"expected_hash": "<identifier hash>"}`.
+  Detection uses a private target, has a four-minute operation deadline, and
+  returns the updated target. Changes last only for the current backend session.
+  Unsupported reconstruction returns 400, an unknown target 404, a changed or
+  busy target 409, an inconclusive check 502, and an operation timeout 504.
+  Checks send provider requests and can incur charges. Request acceptance does
+  not verify full feature behavior; features without probes keep declared values.
+  Shared target discovery first requires a successful control request with a
+  declared input. A failed control request is inconclusive, not evidence that
+  features are unsupported, and leaves the target unchanged.
+  For round-robin targets, each child is checked on a private copy. The parent
+  reports shared input combinations and feature support, and all possible outputs.
+  Only the selected parent is updated, after every child check succeeds; child
+  configuration and round-robin rotation stay unchanged. The four-minute deadline
+  covers the entire operation. Other composite types remain unsupported.
 
 ### Manual attack creation
 
@@ -347,6 +363,19 @@ find `python` (for example, `<worktree>\.venv\Scripts\python.exe` on Windows).
 Stop these test-owned servers after the run.
 
 ### Request Limits
+
+Attachments upload in the background while editing remains available, with up to three
+uploads at a time. Send and Save reuse completed uploads; failures expose Retry and
+removal controls. Unused uploads expire after 24 hours, including across restarts.
+Only media used in a message or conversion enters permanent results storage.
+
+`POST /api/media/uploads` accepts `data_type`, base64 `content`, and `mime_type`.
+It returns **201** with an opaque `value` and `expires_at` (UTC Unix seconds).
+Retained drafts refresh uploads one hour before that expiration without changing their
+references. Older backends without `expires_at` use a 23-hour refresh interval.
+The shared local staging directory has a **1 GiB** quota; uploads exceeding it receive
+**507** and can be retried after unused uploads expire. Expired bytes are reclaimed
+before admitting new uploads. Renewing existing bytes does not consume extra quota.
 
 The backend reads at most 100 MiB of a request body; larger bodies receive **413**, and
 API requests with URLs over 8 KiB receive **414**. Identifiers, names, titles, descriptions,

@@ -23,6 +23,7 @@ import {
   apiClient,
   authApi,
   healthApi,
+  mediaApi,
   initializersApi,
   versionApi,
   configurationApi,
@@ -42,10 +43,19 @@ import {
 import { compatibility, COMPATIBILITY_HEADER } from "./compatibility";
 import { toApiError } from "./errors";
 import { makeAnalyticsFacets, makeAnalyticsReport, makeAnalyticsResults } from "@/test-utils/analyticsFixtures";
+import { makeTarget } from "@/test-utils/targetFixtures";
 import type { FindingExportRequest } from "@/types";
 import { DEFAULT_ANALYTICS_VIEW } from "@/utils/attackAnalytics";
 
 describe("api service", () => {
+  it("should stage media without creating or sending a message", async () => {
+    const request = { data_type: "image_path", content: "aW1hZ2U=", mime_type: "image/png" };
+    const response = { value: "/stored/image.png" };
+    jest.mocked(apiClient.post).mockResolvedValueOnce({ data: response });
+    expect(await mediaApi.upload(request)).toEqual(response);
+    expect(apiClient.post).toHaveBeenCalledWith("/media/uploads", request);
+  });
+
   describe("operationsApi", () => {
     it("reads canonical harm categories without copying the taxonomy into the frontend", async () => {
       const options = { harm_types: ["Malware", "Other"] };
@@ -584,6 +594,21 @@ describe("api service", () => {
   });
 
   describe("targetsApi", () => {
+    it("should encode the detection name, guard the identifier, and unwrap the saved target", async () => {
+      const target = makeTarget({ target_registry_name: "team/a b?#" });
+      const updated = {
+        ...target,
+        capabilities: { ...target.capabilities, supports_multi_turn: false },
+      };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({ data: updated });
+
+      expect(await targetsApi.detectCapabilities(target)).toBe(updated);
+      expect(apiClient.post).toHaveBeenLastCalledWith(
+        "/targets/team%2Fa%20b%3F%23/detect-capabilities",
+        { expected_hash: target.identifier.hash },
+      );
+    });
+
     it("should list target types from registry metadata", async () => {
       const response = { data: { items: [] } };
       (apiClient.get as jest.Mock).mockResolvedValueOnce(response);

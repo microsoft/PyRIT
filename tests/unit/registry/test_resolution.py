@@ -25,7 +25,7 @@ from pyrit.models import (
     TargetIdentifier,
 )
 from pyrit.prompt_target import PromptTarget
-from pyrit.registry import ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import ConverterRegistry, ScorerRegistry, SourceRegistry, TargetRegistry
 from pyrit.registry.resolution import (
     _registry_getter_for_component_type,
     derive_parameters,
@@ -670,7 +670,7 @@ class TestDeriveParameters:
     def test_optional_annotation_preserved(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
         assert params["note"].param_type == str | None
-        assert params["note"].type_name == "str"
+        assert params["note"].type_name == "str | None"
 
     def test_descriptions_parsed(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
@@ -795,6 +795,7 @@ _RESOLVABLE_COMPONENT_REGISTRIES = {
     ComponentType.TARGET: TargetRegistry,
     ComponentType.CONVERTER: ConverterRegistry,
     ComponentType.SCORER: ScorerRegistry,
+    ComponentType.SOURCE: SourceRegistry,
 }
 # Scenarios are created by name, never referenced by name inside another component,
 # so they are deliberately not wired for reference resolution.

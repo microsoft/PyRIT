@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import ParseResult, parse_qs, unquote, urlparse
 
 from pyrit.backend.models import DEFAULT_MEDIA_EXTENSIONS
+from pyrit.backend.services.staged_media import staged_media_store
 from pyrit.memory import AzureBlobStorageIO, CentralMemory, data_serializer_factory
 from pyrit.models import MEDIA_PATH_DATA_TYPES
 
@@ -40,6 +41,7 @@ class MediaOrigin(str, Enum):
     LOCAL_PATH = "local_path"
     DATA_URI = "data_uri"
     RAW_BASE64 = "raw_base64"
+    STAGED_UPLOAD = "staged_upload"
 
 
 @dataclass(frozen=True)
@@ -270,9 +272,14 @@ async def persist_media_value_async(
                 mime_type=mime_type,
             )
 
+    staged_upload = value.startswith(staged_media_store.PREFIX)
+    if staged_upload:
+        data = await staged_media_store.read_async(value)
+        value = await asyncio.to_thread(lambda: base64.b64encode(data).decode("ascii"))
+
     data_uri_mime_type: str | None = None
     payload = value
-    origin = MediaOrigin.RAW_BASE64
+    origin = MediaOrigin.STAGED_UPLOAD if staged_upload else MediaOrigin.RAW_BASE64
     if value.startswith("data:"):
         data_uri_mime_type, payload = _data_uri_parts(value)
         origin = MediaOrigin.DATA_URI
