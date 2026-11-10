@@ -303,7 +303,9 @@ def _seed_summary_row(**overrides: Any) -> dict[str, Any]:
         ("not valid json", None),
     ],
 )
-def test_row_to_scenario_attempt_seed_summary_parses_or_ignores_string_metadata(raw_metadata, expected_attempt_index):
+def test_row_to_scenario_attempt_seed_summary_parses_or_ignores_string_metadata(
+    *, raw_metadata: str, expected_attempt_index: int | None
+) -> None:
     summary = MemoryInterface._row_to_scenario_attempt_seed_summary(_seed_summary_row(attack_metadata=raw_metadata))
 
     assert summary.attribution_data.get("attempt_index") == expected_attempt_index
