@@ -315,7 +315,9 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   sandbox adapters. An observation identifies the run and supports explicit replay, not deterministic
   execution.
 - `SandboxCheckScorer` runs a fixed check program in the stateful sandbox where a model's tool calls
-  ran, and scores the judged response by what the check finds. It never runs the response's text, and
+  ran, using separate stateful acquisition for `SESSION` or `ENVIRONMENT` state without weakening
+  `ProgramExecutionSource`'s fresh-invocation requirement. It scores the judged response by what the check
+  finds. It never runs the response's text, and
   never reuses a stored verdict, because the sandbox can change. The caller owns isolation between
   attempts, for example by resetting the sandbox.
 - Observation lifecycle is optional. A scorer that implements `AttemptObserver`, whether it is a

@@ -33,21 +33,12 @@ class _NoProgramError(Exception):
     """The named evidence holds nothing that can be submitted as a program."""
 
 
-class ProgramExecutionSource:
+class _ProgramExecutionSource:
     """
-    Submit verbatim program text and invocation inputs to an injected ``SandboxClient``.
+    Capture condition-independent program execution evidence under a concrete source's state contract.
 
-    Expected results never reach the source. Memory is needed only to resolve stored program
-    references. A message must contain exactly one text piece; blocked or failed responses
-    leave evidence unavailable. Code is not extracted from prose.
-
-    Each acquisition runs in fresh invocation environments and returns a new observation. Known stateful
-    ``Sandbox`` implementations are rejected; legacy clients must honor the same fresh-state contract.
-    Program failures are execution
-    evidence; infrastructure failures are acquisition errors. A run that stops after some
-    invocations leaves partial evidence. Streams retain at most ``max_output_chars`` characters
-    with truncation flags. Cleanup warnings remain in ``sandbox_warnings`` metadata, and the
-    sandbox's own run identifiers, when it reports them, in ``sandbox_execution_ids``.
+    Concrete sources validate whether the sandbox provides fresh or retained state. Resolution, stream
+    bounds and evidence capture are shared; this layer never resets, releases or recovers the sandbox.
     """
 
     def __init__(self, *, sandbox: SandboxClient, max_output_chars: int = 64_000) -> None:
@@ -59,14 +50,10 @@ class ProgramExecutionSource:
             max_output_chars (int): The most characters of each stream retained per invocation.
 
         Raises:
-            ValueError: If the output limit is not positive or the sandbox retains state between calls.
+            ValueError: If the output limit is not positive.
         """
         if max_output_chars < 1:
             raise ValueError("max_output_chars must be positive.")
-        if isinstance(sandbox, Sandbox) and sandbox.get_capabilities().state_kind is not SandboxStateKind.CALL:
-            raise ValueError(
-                "ProgramExecutionSource requires fresh invocation environments; stateful sandboxes are not supported."
-            )
         self._sandbox = sandbox
         self._max_output_chars = max_output_chars
 
@@ -85,7 +72,7 @@ class ProgramExecutionSource:
 
     async def acquire_async(self, *, scorable: ProgramExecutionScorable) -> Observation:
         """
-        Run every invocation in a fresh environment and return what the program did.
+        Run every invocation under the source's state contract and return what the program did.
 
         Args:
             scorable (ProgramExecutionScorable): The program, runtime profile, and invocations.
@@ -214,3 +201,36 @@ class ProgramExecutionSource:
                 reasons=reasons,
             ),
         )
+
+
+class ProgramExecutionSource(_ProgramExecutionSource):
+    """
+    Submit verbatim program text and invocation inputs to a fresh ``SandboxClient``.
+
+    Expected results never reach the source. Memory is needed only to resolve stored program
+    references. A message must contain exactly one text piece; blocked or failed responses
+    leave evidence unavailable. Code is not extracted from prose.
+
+    Each acquisition runs in fresh invocation environments and returns a new observation. Known stateful
+    ``Sandbox`` implementations are rejected; legacy clients must honor the same fresh-state contract.
+    Program failures are execution evidence; infrastructure failures are acquisition errors. A run that
+    stops after some invocations leaves partial evidence. Streams retain at most ``max_output_chars``
+    characters with truncation flags. Cleanup warnings and run identifiers remain in observation metadata.
+    """
+
+    def __init__(self, *, sandbox: SandboxClient, max_output_chars: int = 64_000) -> None:
+        """
+        Initialize with a sandbox whose invocations have fresh state.
+
+        Args:
+            sandbox (SandboxClient): Runs programs under its allowlisted runtime profiles.
+            max_output_chars (int): The most characters of each stream retained per invocation.
+
+        Raises:
+            ValueError: If the output limit is not positive or the sandbox retains state between calls.
+        """
+        super().__init__(sandbox=sandbox, max_output_chars=max_output_chars)
+        if isinstance(sandbox, Sandbox) and sandbox.get_capabilities().state_kind is not SandboxStateKind.CALL:
+            raise ValueError(
+                "ProgramExecutionSource requires fresh invocation environments; stateful sandboxes are not supported."
+            )

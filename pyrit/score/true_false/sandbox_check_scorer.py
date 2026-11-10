@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING
 
-from pyrit._code_execution import SandboxStateKind, resolve_sandbox
+from pyrit._code_execution import resolve_sandbox
 from pyrit.models import (
     ContentEntryScorable,
     ContentScorable,
@@ -19,7 +19,7 @@ from pyrit.models import (
     ScoreStatus,
 )
 from pyrit.score.observation.execution import NonReplayableObservationError, _collect_observation
-from pyrit.score.observation.program_execution_source import ProgramExecutionSource
+from pyrit.score.observation.sandbox_check_source import _SandboxCheckSource
 from pyrit.score.true_false.program_execution_scorer import _evaluate_program, _Evaluation
 from pyrit.score.true_false.true_false_scorer import TrueFalseScorer
 
@@ -56,6 +56,9 @@ class SandboxCheckScorer(TrueFalseScorer):
     attempts, and reset the sandbox between attempts. The check runs as the same account as the model's
     code, so it must not trust files the model could have written.
 
+    The check shares the tools' exact ``SESSION`` or ``ENVIRONMENT`` sandbox. It never ends a session or
+    recovers lost state; a session-owned effect remains available only until that session ends.
+
     Experimental: it is built on ``pyrit._code_execution``, which may change without a deprecation cycle.
     """
 
@@ -74,7 +77,8 @@ class SandboxCheckScorer(TrueFalseScorer):
 
         Args:
             sandbox (Sandbox | str): The sandbox the model's code runs in, or its name in the
-                ``SandboxRegistry``. Its state must persist between calls.
+                ``SandboxRegistry``. Its state must persist between calls, either within one session or
+                in the environment.
             check_program (str): The program that looks for the effect.
             condition (ProgramBehaves): The check's runtime, invocations and expected results.
             max_output_chars (int): The most characters of each output stream kept as evidence.
@@ -86,8 +90,6 @@ class SandboxCheckScorer(TrueFalseScorer):
         if not check_program.strip():
             raise ValueError("check_program must not be empty.")
         resolved = resolve_sandbox(sandbox)
-        if resolved.get_capabilities().state_kind is not SandboxStateKind.ENVIRONMENT:
-            raise ValueError("A check needs a sandbox whose state persists, so it can see what the model's code did.")
         if condition.runtime_profile_name not in resolved.get_runtime_profile_names():
             raise ValueError(
                 f"The sandbox does not offer runtime {condition.runtime_profile_name!r}; "
@@ -96,7 +98,7 @@ class SandboxCheckScorer(TrueFalseScorer):
         super().__init__()
         self._check_program = check_program
         self._condition = condition
-        self._source = ProgramExecutionSource(sandbox=resolved, max_output_chars=max_output_chars)
+        self._source = _SandboxCheckSource(sandbox=resolved, max_output_chars=max_output_chars)
 
     def find_matching_scores(
         self,

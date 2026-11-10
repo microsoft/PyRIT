@@ -349,10 +349,11 @@ def _tool_outputs(messages: list[Message]) -> list[tuple[dict[str, Any], bool]]:
 
 
 @pytest.mark.usefixtures("patch_central_database")
+@pytest.mark.parametrize("state_kind", [SandboxStateKind.ENVIRONMENT, SandboxStateKind.SESSION])
 async def test_the_check_sees_what_the_models_tool_call_did_async(
-    registry: SandboxRegistry, sqlite_instance: SQLiteMemory, tmp_path: Path
+    *, registry: SandboxRegistry, sqlite_instance: SQLiteMemory, tmp_path: Path, state_kind: SandboxStateKind
 ) -> None:
-    sandbox = LocalPythonSandbox(root=tmp_path)
+    sandbox = LocalPythonSandbox(root=tmp_path, state_kind=state_kind)
     registry.register(sandbox, name="linux")
     condition = ProgramBehaves(
         runtime_profile_name="python", cases=(ProgramCase(expected=ProgramResult(stdout=Equals(value="present"))),)

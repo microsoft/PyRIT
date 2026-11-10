@@ -18,12 +18,14 @@ from pyrit._code_execution import (
     ProcessResult,
     RuntimeProfile,
     SandboxCapabilities,
+    SandboxCondition,
     SandboxExecutionError,
     SandboxInputError,
     SandboxRegistry,
     SandboxStateKind,
 )
 from pyrit.models import (
+    Acquisition,
     ConversationScorable,
     Equals,
     MessagePiece,
@@ -37,6 +39,7 @@ from pyrit.models import (
     ScoreStatus,
     ScoringExpectation,
 )
+from pyrit.prompt_target import SandboxToolProvider
 from pyrit.score import (
     SandboxCheckScorer,
     SubStringScorer,
@@ -46,6 +49,7 @@ from pyrit.score import (
     TrueFalseScoreAggregator,
     TrueFalseScorer,
 )
+from pyrit.score.observation import ProgramExecutionSource
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -296,3 +300,101 @@ async def test_only_responses_are_scored_async() -> None:
     with pytest.raises(RuntimeError, match="scores a MessageScorable") as raised:
         await scorer.score_async(scorable=ConversationScorable(conversation_id=str(uuid.uuid4())))
     assert isinstance(raised.value.__cause__, TypeError)
+
+
+@pytest.mark.parametrize("kind", [SandboxStateKind.ENVIRONMENT, SandboxStateKind.SESSION])
+async def test_named_stateful_checks_share_tool_state_and_preserve_fresh_source_boundary_async(
+    *, registry: SandboxRegistry, sqlite_instance: SQLiteMemory, kind: SandboxStateKind
+) -> None:
+    capabilities = FakeSandbox.DEFAULT_CAPABILITIES.model_copy(update={"state_kind": kind})
+
+    def handle(run: FakeRun) -> ProcessResult:
+        if run.program == "set the flag":
+            sandbox.state["flag"] = True
+            return ProcessResult(exit_code=0)
+        assert run.program == _CHECK
+        return ProcessResult(exit_code=0, stdout="present" if sandbox.state.get("flag") else "absent")
+
+    sandbox = FakeSandbox(capabilities=capabilities, handler=handle)
+    registry.register(sandbox, name="shared-check")
+    with pytest.raises(ValueError, match="fresh invocation environments"):
+        ProgramExecutionSource(sandbox=sandbox)
+    scorer = SandboxCheckScorer(sandbox="shared-check", check_program=_CHECK, condition=_CONDITION)
+    response = await _response_async(sqlite_instance)
+    (before,) = await scorer.score_async(scorable=response)
+    tools = await SandboxToolProvider(sandbox="shared-check").get_tools_async()
+    runtime = next(tool for tool in tools if tool.name == "run_python")
+    arguments = {"program": "set the flag"}
+    runtime.validate_arguments(arguments=arguments)
+    await runtime.execute_async(arguments=arguments)
+    (after,) = await scorer.score_async(scorable=response)
+
+    assert before.get_value() is False and after.get_value() is True
+    assert len({run.session_id for run in sandbox.runs}) == 1
+    assert sandbox.closed_sessions == [] and sandbox.reset_count == 0
+    (observation,) = await sqlite_instance.get_observations_async(observation_ids=after.observation_ids)
+    assert observation.source_identifier.class_name == "_SandboxCheckSource"
+    await sandbox.reset_async()
+    assert await scorer.find_matching_scores_async(scores=[after], scorable=response) == []
+    (fresh,) = await scorer.score_async(scorable=response)
+    assert fresh.get_value() is False
+    run_count = len(sandbox.runs)
+    (replayed,) = await scorer.score_observation_async(observation=observation)
+    assert replayed.get_value() is True and len(sandbox.runs) == run_count
+
+
+@pytest.mark.parametrize("failure", ["state-loss", "uncertain-run"])
+async def test_a_session_check_never_recovers_lost_or_uncertain_state_async(
+    *, sqlite_instance: SQLiteMemory, failure: str
+) -> None:
+    capabilities = FakeSandbox.DEFAULT_CAPABILITIES.model_copy(update={"state_kind": SandboxStateKind.SESSION})
+    sandbox = FakeSandbox(capabilities=capabilities, handler=lambda run: ProcessResult(exit_code=0, stdout="present"))
+    scorer = SandboxCheckScorer(sandbox=sandbox, check_program=_CHECK, condition=_CONDITION)
+    response = await _response_async(sqlite_instance)
+    (first,) = await scorer.score_async(scorable=response)
+    assert first.get_value() is True
+    if failure == "state-loss":
+        sandbox.expire_sessions()
+    else:
+        sandbox.fail_next(hook=FakeSandboxHook.EXECUTE, error=SandboxExecutionError("outcome unknown"))
+
+    (unknown,) = await scorer.score_async(scorable=response)
+    assert unknown.status is ScoreStatus.UNDETERMINED and unknown.score_value is None
+    assert "could not be observed" in unknown.score_rationale
+    (saved,) = await sqlite_instance.get_scores_async(score_ids=[str(unknown.id)])
+    assert saved.status is ScoreStatus.UNDETERMINED and saved.score_value is None
+    (observation,) = await sqlite_instance.get_observations_async(observation_ids=saved.observation_ids)
+    assert observation.acquisition is Acquisition.ERROR
+    assert isinstance(observation.payload, ProgramExecutionObservationPayload) and observation.payload.events == ()
+    assert (await sandbox.get_status_async()).condition is SandboxCondition.QUARANTINED
+    await sandbox.release_async()
+    assert (await sandbox.get_status_async()).condition is SandboxCondition.QUARANTINED
+    (still_unknown,) = await scorer.score_async(scorable=response)
+    assert still_unknown.status is ScoreStatus.UNDETERMINED
+    assert len(sandbox.runs) == 1 and sandbox.reset_count == 0 and sandbox.open_sessions == set()
+    await sandbox.close_async()
+
+
+@pytest.mark.parametrize("kind", [SandboxStateKind.ENVIRONMENT, SandboxStateKind.SESSION])
+async def test_stateful_check_retains_bounded_run_evidence_async(
+    *, sqlite_instance: SQLiteMemory, kind: SandboxStateKind
+) -> None:
+    capabilities = FakeSandbox.DEFAULT_CAPABILITIES.model_copy(update={"state_kind": kind})
+    sandbox = FakeSandbox(
+        capabilities=capabilities,
+        handler=lambda run: ProcessResult(exit_code=0, stdout="present", execution_id="check-42"),
+    )
+    scorer = SandboxCheckScorer(sandbox=sandbox, check_program=_CHECK, condition=_CONDITION, max_output_chars=3)
+    (score,) = await scorer.score_async(scorable=await _response_async(sqlite_instance))
+    assert score.status is ScoreStatus.UNDETERMINED and "cut" in score.score_rationale
+    (observation,) = await sqlite_instance.get_observations_async(observation_ids=score.observation_ids)
+    assert isinstance(observation.payload, ProgramExecutionObservationPayload)
+    assert observation.payload.events[0].stdout == "pre" and observation.payload.events[0].stdout_truncated
+    assert observation.metadata["sandbox_execution_ids"] == "check-42"
+
+
+def test_stateful_check_rejects_an_invalid_retention_limit() -> None:
+    sandbox = FakeSandbox()
+    with pytest.raises(ValueError, match="max_output_chars must be positive"):
+        SandboxCheckScorer(sandbox=sandbox, check_program=_CHECK, condition=_CONDITION, max_output_chars=0)
+    assert sandbox.runs == [] and sandbox.open_sessions == set()

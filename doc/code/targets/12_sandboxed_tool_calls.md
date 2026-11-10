@@ -95,6 +95,11 @@ true on an earlier attempt's effect: run one attempt at a time per sandbox (`max
 retries of failed attempts (`max_attempts_on_failure=0`), and reset the sandbox between attempts. It needs a
 sandbox whose state persists.
 
+Checks use separate stateful acquisition, not the fresh-only `ProgramExecutionSource`. They share the
+tools' exact registered `session` or `environment` sandbox and never release, reset or recover it.
+Session-owned effects last only until that session ends; state loss or uncertain execution leaves the
+score undetermined and preserves quarantine until the caller explicitly handles recovery.
+
 The check runs as the same account as the model's code, so it must not trust anything the model could have
 written. For example, run Python checks in isolated mode, so a module the model saved in the working
 directory can't stand in for a standard one.
