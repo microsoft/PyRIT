@@ -377,9 +377,6 @@ export const runtimeApi = {
   getReadiness: async (): Promise<RuntimeReadiness> => {
     return (await apiClient.get('/runtime')).data
   },
-  getRestoreFailures: async (): Promise<RestoreFailureList> => {
-    return (await apiClient.get('/restore-failures')).data
-  },
 }
 
 export const targetsApi = {
@@ -997,4 +994,4 @@ export const datasetsApi = {
   },
 }
 
-import type { RestoreFailureList, RuntimeReadiness, RuntimeStatus } from '@/types'
+import type { RuntimeReadiness, RuntimeStatus } from '@/types'

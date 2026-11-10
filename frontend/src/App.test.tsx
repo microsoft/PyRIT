@@ -78,7 +78,6 @@ jest.mock("@azure/msal-react", () => ({
 jest.mock("./services/api", () => ({
   runtimeApi: {
     getReadiness: jest.fn().mockResolvedValue({ ready: true, state: 'ready', generation: '' }),
-    getRestoreFailures: jest.fn().mockResolvedValue({ items: [] }),
   },
   attacksApi: {
     getAttack: jest.fn(),
@@ -816,16 +815,16 @@ describe("App", () => {
     expect(screen.getByTestId("home-view")).toBeInTheDocument();
   });
 
-  it("shows saved entries that couldn't be restored inside the app's layout and theme", async () => {
+  it("says inside the app's layout and theme that saved entries couldn't be restored", async () => {
     const { runtimeApi } = jest.requireMock("./services/api");
     runtimeApi.getReadiness.mockResolvedValueOnce({
       ready: false, state: "failed", generation: "first", restore_failures: 1,
     });
     renderApp();
 
-    const title = await screen.findByText("Some saved entries couldn't be restored");
-    expect(screen.getByTestId("main-layout")).toContainElement(title);
-    expect(title.closest(`.${fluentProviderClassNames.root}`)).not.toBeNull();
+    const message = await screen.findByText(/Some saved entries couldn't be restored/);
+    expect(screen.getByTestId("main-layout")).toContainElement(message);
+    expect(message.closest(`.${fluentProviderClassNames.root}`)).not.toBeNull();
   });
 
   it("renders the view named by the initial URL", () => {

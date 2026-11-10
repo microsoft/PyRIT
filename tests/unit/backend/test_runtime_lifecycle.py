@@ -21,9 +21,9 @@ from starlette.requests import Request
 
 import pyrit.backend.services.runtime_lifecycle as lifecycle_module
 from pyrit.backend.authentication_policy import AuthenticationPolicy
-from pyrit.backend.middleware.auth import AuthenticatedUser, EntraAuthMiddleware, require_admin
+from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
-from pyrit.backend.routes import configuration, health, restore_failures
+from pyrit.backend.routes import configuration, health
 from pyrit.backend.services import ScenarioRunService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
@@ -33,7 +33,7 @@ from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.backend.services.technique_service import get_technique_service
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
-from pyrit.models.catalog import RegistryRecipeKind, RestoreFailure, RestoreFailureReason, RunScenarioRequest
+from pyrit.models.catalog import RunScenarioRequest
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, SavedRecipes
@@ -75,7 +75,6 @@ def runtime(tmp_path: Path) -> Generator[RuntimeLifecycle, None, None]:
     app.add_middleware(RuntimeAdmissionMiddleware)
     app.include_router(configuration.router, prefix="/api")
     app.include_router(health.router, prefix="/api")
-    app.include_router(restore_failures.router, prefix="/api")
     app.dependency_overrides[require_admin] = lambda: None
     config = ConfigurationLoader(
         memory_db_type="in_memory",
@@ -1281,7 +1280,7 @@ async def test_status_lists_a_file_name_that_is_not_valid_text_async(runtime: Ru
     assert [item["file_name"] for item in status.json()["restore_ignored"]] == ["bad\\udcffname.json"]
 
 
-async def test_every_signed_in_user_sees_why_saved_entries_were_not_restored_async(
+async def test_everyone_sees_how_many_entries_failed_and_administrators_see_why_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     recipes = tmp_path / "recipes"
@@ -1300,129 +1299,14 @@ async def test_every_signed_in_user_sees_why_saved_entries_were_not_restored_asy
 
     assert runtime.state == "failed"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        failures = await client.get("/api/restore-failures")
         readiness = await client.get("/api/runtime")
         health = await client.get("/api/health")
-    assert failures.status_code == 200
-    (item,) = failures.json()["items"]
-    assert (item["kind"], item["name"], item["reason"]) == ("targets", "pool", "missing_dependency")
-    assert item["dependency"] == {"kind": "targets", "name": "missing"}
-    assert item["message"] == "It uses an entry that doesn't exist."
-    assert item["version"]
+        status = await client.get("/api/config/runtime")
     assert readiness.json()["restore_failures"] == 1
     assert "restore_failures" not in health.json()
-
-
-_SERVER_SECRET = "server-secret-6f1c"
-
-
-class _SecretQuotingTarget(MockPromptTarget):
-    """A target whose constructor error quotes a server setting, as some SDK errors do."""
-
-    def __init__(self) -> None:
-        raise ValueError(f"The server rejected key {_SERVER_SECRET}")
-
-
-@pytest.mark.usefixtures("patch_central_database", "startup_chat")
-async def test_only_administrators_see_the_error_a_constructor_raised_async(
-    runtime: RuntimeLifecycle, tmp_path: Path
-) -> None:
-    TargetRegistry.get_registry_singleton().register_class(_SecretQuotingTarget)
-    recipes = tmp_path / "recipes"
-    _save_recipe(
-        recipes,
-        kind="targets",
-        name="quoting",
-        document={"class_module": _SecretQuotingTarget.__module__, "class_name": "_SecretQuotingTarget", "params": {}},
-    )
-
-    await _start_with_recipes_async(runtime, recipes=recipes)
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        user_view = await client.get("/api/restore-failures")
-        runtime.app.state.authentication_policy = AuthenticationPolicy(mode="local", allow_unauthenticated_admin=True)
-        admin_view = await client.get("/api/restore-failures")
-    assert _SERVER_SECRET not in user_view.text
-    (item,) = user_view.json()["items"]
-    assert (item["name"], item["reason"], item["message"]) == ("quoting", "build_error", "It couldn't be built.")
-    (admin_item,) = admin_view.json()["items"]
-    assert _SERVER_SECRET in admin_item["message"]
-
-
-@pytest.mark.usefixtures("patch_central_database", "startup_chat")
-@pytest.mark.parametrize("is_admin", [False, True])
-async def test_a_signed_in_user_sees_a_constructor_error_only_as_an_administrator_async(
-    runtime: RuntimeLifecycle, tmp_path: Path, is_admin: bool
-) -> None:
-    TargetRegistry.get_registry_singleton().register_class(_SecretQuotingTarget)
-    recipes = tmp_path / "recipes"
-    _save_recipe(
-        recipes,
-        kind="targets",
-        name="quoting",
-        document={"class_module": _SecretQuotingTarget.__module__, "class_name": "_SecretQuotingTarget", "params": {}},
-    )
-    await _start_with_recipes_async(runtime, recipes=recipes)
-    runtime.app.state.authentication_policy = AuthenticationPolicy(
-        mode="entra",
-        tenant_id="test-tenant",
-        client_id="test-client",
-        allowed_group_ids=("users",),
-        admin_group_id="admins",
-    )
-    runtime.app.add_middleware(EntraAuthMiddleware)
-    user = AuthenticatedUser(oid="user-oid", name="User", email="user@contoso.com", groups=["users"], is_admin=is_admin)
-
-    with patch.object(EntraAuthMiddleware, "_authenticate_with_graph_async", AsyncMock(return_value=user)):
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-            response = await client.get("/api/restore-failures", headers={"Authorization": "Bearer test-token"})
-
-    assert response.status_code == 200
-    assert (_SERVER_SECRET in response.text) is is_admin
-
-
-async def test_restore_failures_explain_every_reason_without_its_details_async(runtime: RuntimeLifecycle) -> None:
-    runtime.restore_failures = [
-        RestoreFailure(kind=RegistryRecipeKind.SCORERS, name=reason.value, reason=reason, message="detail")
-        for reason in RestoreFailureReason
-    ]
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        response = await client.get("/api/restore-failures")
-
-    assert response.status_code == 200
-    messages = {item["reason"]: item["message"] for item in response.json()["items"]}
-    assert set(messages) == {reason.value for reason in RestoreFailureReason}
-    assert all(message and message != "detail" for message in messages.values())
-
-
-async def test_restore_failures_need_sign_in_when_it_is_on_async(runtime: RuntimeLifecycle) -> None:
-    runtime.app.state.authentication_policy = AuthenticationPolicy(
-        mode="entra", tenant_id="test-tenant", client_id="test-client"
-    )
-    runtime.app.add_middleware(EntraAuthMiddleware)
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        anonymous = await client.get("/api/restore-failures")
-        health = await client.get("/api/health")
-
-    assert anonymous.status_code == 401
-    assert health.status_code == 200
-
-
-@pytest.mark.parametrize("state", ["ready", None])
-async def test_restore_failures_are_empty_when_nothing_failed_async(
-    runtime: RuntimeLifecycle, state: str | None
-) -> None:
-    if state is None:
-        del runtime.app.state.runtime_lifecycle
-    else:
-        runtime.state = state
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        response = await client.get("/api/restore-failures")
-
-    assert (response.status_code, response.json()) == (200, {"items": []})
+    (failure,) = status.json()["restore_failures"]
+    assert (failure["kind"], failure["name"], failure["reason"]) == ("targets", "pool", "missing_dependency")
+    assert failure["dependency"] == {"kind": "targets", "name": "missing"}
 
 
 async def test_startup_lists_ignored_files_without_blocking_readiness_async(
@@ -1578,7 +1462,7 @@ async def test_readiness_counts_restore_failures_without_their_details_async(
     }
 
 
-async def test_the_failure_list_answers_while_other_routes_wait_for_ready_async(
+async def test_administrators_see_the_failures_while_other_routes_wait_for_ready_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     recipes = tmp_path / "recipes"
@@ -1586,10 +1470,10 @@ async def test_the_failure_list_answers_while_other_routes_wait_for_ready_async(
     await _start_with_recipes_async(runtime, recipes=recipes)
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        failures = await client.get("/api/restore-failures")
+        status = await client.get("/api/config/runtime")
         targets = await client.get("/api/targets")
 
     assert runtime.state == "failed"
-    assert failures.status_code == 200
-    assert [item["name"] for item in failures.json()["items"]] == ["ghost"]
+    assert status.status_code == 200
+    assert [failure["name"] for failure in status.json()["restore_failures"]] == ["ghost"]
     assert targets.status_code == 503
