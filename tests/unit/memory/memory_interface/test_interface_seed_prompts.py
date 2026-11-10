@@ -2025,6 +2025,65 @@ async def test_get_seed_groups_filter_by_count(sqlite_instance: MemoryInterface)
     assert len(all_groups) == 2
 
 
+async def test_get_seed_groups_keeps_ungrouped_seeds_when_other_matches_are_grouped(sqlite_instance: MemoryInterface):
+    # Some loaders, like HarmBench, store seeds without a prompt_group_id.
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[SeedObjective(value="Text-only objective", dataset_name="text_only")], added_by="test_user"
+    )
+    grouped = SeedGroup(
+        seeds=[
+            SeedObjective(value="Grouped objective", dataset_name="grouped"),
+            SeedPrompt(value="Describe this picture", data_type="text", dataset_name="grouped"),
+        ]
+    )
+    await sqlite_instance.add_seed_groups_to_memory_async(prompt_groups=[grouped], added_by="test_user")
+
+    groups = await sqlite_instance.get_seed_groups_async(seed_type="objective")
+    assert sorted(sorted(seed.value for seed in group.seeds) for group in groups) == [
+        ["Describe this picture", "Grouped objective"],
+        ["Text-only objective"],
+    ]
+
+    single_groups = await sqlite_instance.get_seed_groups_async(seed_type="objective", group_length=[1])
+    assert [group.seeds[0].value for group in single_groups] == ["Text-only objective"]
+
+
+async def test_get_seed_groups_keeps_multiple_ungrouped_and_grouped_matches(sqlite_instance: MemoryInterface):
+    await sqlite_instance.add_seeds_to_memory_async(
+        seeds=[
+            SeedObjective(value="Ungrouped objective 1", dataset_name="text_only"),
+            SeedObjective(value="Ungrouped objective 2", dataset_name="text_only"),
+        ],
+        added_by="test_user",
+    )
+    grouped_one = SeedGroup(
+        seeds=[
+            SeedObjective(value="Grouped objective 1", dataset_name="grouped"),
+            SeedPrompt(value="Grouped prompt 1", data_type="text", dataset_name="grouped"),
+        ]
+    )
+    grouped_two = SeedGroup(
+        seeds=[
+            SeedObjective(value="Grouped objective 2", dataset_name="grouped"),
+            SeedPrompt(value="Grouped prompt 2", data_type="text", dataset_name="grouped"),
+        ]
+    )
+    await sqlite_instance.add_seed_groups_to_memory_async(
+        prompt_groups=[grouped_one, grouped_two], added_by="test_user"
+    )
+
+    groups = await sqlite_instance.get_seed_groups_async(seed_type="objective")
+    assert sorted(sorted(seed.value for seed in group.seeds) for group in groups) == [
+        ["Grouped objective 1", "Grouped prompt 1"],
+        ["Grouped objective 2", "Grouped prompt 2"],
+        ["Ungrouped objective 1"],
+        ["Ungrouped objective 2"],
+    ]
+    # Every seed appears exactly once across all groups.
+    all_ids = [seed.id for group in groups for seed in group.seeds]
+    assert len(all_ids) == len(set(all_ids)) == 6
+
+
 async def test_replace_seeds_for_dataset_async_replaces_all(sqlite_instance: MemoryInterface):
     """replace_seeds_for_dataset_async swaps the target dataset's seeds and leaves others intact."""
     await sqlite_instance.add_seeds_to_memory_async(

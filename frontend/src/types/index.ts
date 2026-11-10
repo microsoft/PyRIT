@@ -713,6 +713,7 @@ export interface RegistryReferenceOption {
 
 export interface Parameter {
   name: string
+  /** Serialized type, retaining nullability, e.g. `int | None` or `list[str] | None`. */
   type_name: string
   required: boolean
   /** Scalar default renders as a display string; a list default renders as a list of display strings. */
