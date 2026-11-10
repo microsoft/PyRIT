@@ -30,7 +30,8 @@ class LocalPythonSandbox(Sandbox):
     Run Python programs with the test interpreter, for tests of PyRIT's own programs only.
 
     An ``environment`` sandbox keeps one working directory across calls and sessions, and a reset empties
-    it. A ``call`` sandbox runs each program in a new, empty directory. With ``isolated=False``, Python runs
+    it. A ``session`` sandbox clears its directory when its session ends. A ``call`` sandbox runs each
+    program in a new, empty directory. With ``isolated=False``, Python runs
     without ``-I`` and the program is saved in the working directory, as a careless adapter might do.
     """
 
@@ -57,13 +58,13 @@ class LocalPythonSandbox(Sandbox):
         return ComponentIdentifier.of(self, params={"root": str(self._root), "state_kind": self._state_kind.value})
 
     def _get_capabilities(self) -> SandboxCapabilities:
-        environment = self._state_kind is SandboxStateKind.ENVIRONMENT
+        stateful = self._state_kind is not SandboxStateKind.CALL
         return SandboxCapabilities(
             runtime_profiles=(RuntimeProfile(name="python", description="Python 3"),),
             state_kind=self._state_kind,
             description="a local test directory",
-            supports_reset=environment,
-            file_runtime_profile_name="python" if environment else None,
+            supports_reset=stateful,
+            file_runtime_profile_name="python" if stateful else None,
             max_output_bytes=self._max_output_bytes,
         )
 
@@ -77,7 +78,7 @@ class LocalPythonSandbox(Sandbox):
         stdin: str | None,
         timeout_seconds: float,
     ) -> ProcessResult:
-        if self._state_kind is SandboxStateKind.ENVIRONMENT and session_id not in self.sessions:
+        if self._state_kind is not SandboxStateKind.CALL and session_id not in self.sessions:
             raise SandboxSessionLostError(f"Session {session_id} is not open.")
         working_dir = self.workspace if session_id is not None else self._new_call_directory()
         program_dir = self._root / "programs" if self._isolated else working_dir
@@ -148,6 +149,8 @@ class LocalPythonSandbox(Sandbox):
         return session_id
 
     async def _close_session_async(self, *, session_id: str) -> None:
+        if session_id in self.sessions and self._state_kind is SandboxStateKind.SESSION:
+            await asyncio.to_thread(self._clear_workspace)
         self.sessions.discard(session_id)
 
     async def _get_status_async(self) -> SandboxStatus:
@@ -156,5 +159,8 @@ class LocalPythonSandbox(Sandbox):
     async def _reset_async(self, *, expected_revision: str | None) -> None:
         if expected_revision is not None and expected_revision != self.revision:
             raise SandboxRevisionChangedError(f"The revision is {self.revision}.")
-        await asyncio.to_thread(shutil.rmtree, self.workspace)
+        await asyncio.to_thread(self._clear_workspace)
+
+    def _clear_workspace(self) -> None:
+        shutil.rmtree(self.workspace)
         self.workspace.mkdir()

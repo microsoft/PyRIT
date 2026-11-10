@@ -121,6 +121,8 @@ class FakeSandbox(Sandbox):
     def expire_sessions(self) -> None:
         """End every open session, as an infrastructure that expires sessions would."""
         self.open_sessions.clear()
+        if self._fake_capabilities.state_kind is SandboxStateKind.SESSION:
+            self.state.clear()
 
     def _build_identifier(self) -> ComponentIdentifier:
         return ComponentIdentifier.of(
@@ -141,7 +143,7 @@ class FakeSandbox(Sandbox):
         timeout_seconds: float,
     ) -> ProcessResult:
         self._raise_fault(FakeSandboxHook.EXECUTE)
-        if self._fake_capabilities.state_kind is SandboxStateKind.ENVIRONMENT and session_id not in self.open_sessions:
+        if self._fake_capabilities.state_kind is not SandboxStateKind.CALL and session_id not in self.open_sessions:
             raise SandboxSessionLostError(f"Session {session_id} is not open; nothing ran.")
         run = FakeRun(
             session_id=session_id,
@@ -171,6 +173,8 @@ class FakeSandbox(Sandbox):
 
     async def _close_session_async(self, *, session_id: str) -> None:
         self._raise_fault(FakeSandboxHook.CLOSE)
+        if session_id in self.open_sessions and self._fake_capabilities.state_kind is SandboxStateKind.SESSION:
+            self.state.clear()
         self.open_sessions.discard(session_id)
         self.closed_sessions.append(session_id)
 

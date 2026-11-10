@@ -34,6 +34,10 @@ class SandboxSessionLostError(SandboxExecutionError):
     """The session ended or expired before the work started, so nothing ran."""
 
 
+class SandboxStateLostError(SandboxExecutionError):
+    """Session-owned state was lost; do not silently replace it or retry the request."""
+
+
 class SandboxUnavailableError(SandboxExecutionError):
     """PyRIT refused the work, and nothing ran: the sandbox is closed, or quarantined until an operator acts."""
 
