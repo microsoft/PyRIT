@@ -8,6 +8,7 @@ Tests for backend target service.
 import asyncio
 import json
 import os
+from functools import partial
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -20,6 +21,7 @@ from pydantic import ValidationError
 from pyrit.backend.models import CreateTargetRequest
 from pyrit.backend.models.targets import UnregisteredTarget
 from pyrit.backend.services import TargetService, get_target_service
+from pyrit.backend.services.saved_entry_restore import build_saved_entry_async
 from pyrit.backend.services.target_service import (
     SavedTargetConflictError,
     SavedTargetRefusedError,
@@ -30,6 +32,7 @@ from pyrit.models.catalog import (
     ComponentRecipe,
     RegistryEntryOrigin,
     RegistryRecipeKind,
+    RegistryRestoreReport,
     SavedEntryOwner,
     TargetInstance,
 )
@@ -1812,6 +1815,13 @@ def _saved_document(source: Path, name: str) -> dict[str, Any]:
     return json.loads((source / "targets" / f"{name}.json").read_text())
 
 
+async def _restore(source: Path) -> RegistryRestoreReport:
+    """Restore the saved targets through the API's create, as startup does."""
+    get_target_service.cache_clear()
+    build_async = partial(build_saved_entry_async, upload_directory=None)
+    return await RegistryRecipeRestorer(source=str(source)).restore_async(build_async=build_async)
+
+
 @pytest.mark.usefixtures("sqlite_instance")
 class TestSaveTarget:
     async def test_saves_an_identity_target_that_restore_rebuilds(self, tmp_path: Path) -> None:
@@ -1825,12 +1835,13 @@ class TestSaveTarget:
             "schema_version": 1,
             "class_module": "pyrit.prompt_target.openai.openai_chat_target",
             "class_name": "OpenAIChatTarget",
-            "params": {"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o", "auth_mode": "identity", "headers": "{}"},
+            "auth_mode": "identity",
+            "params": {"endpoint": _AZURE_ENDPOINT, "model_name": "gpt-4o", "headers": "{}"},
             "owner": {"oid": owner.oid, "name": "Ada"},
         }
         saved_hash = service.get_target_object(target_registry_name="contoso_gpt4o").get_identifier().hash
         TargetRegistry.reset_registry_singleton()
-        report = RegistryRecipeRestorer(source=str(tmp_path)).restore()
+        report = await _restore(tmp_path)
         assert report.failures == []
         restored = TargetRegistry.get_registry_singleton().instances.get("contoso_gpt4o")
         assert restored is not None
@@ -1845,7 +1856,8 @@ class TestSaveTarget:
 
         assert target.origin is RegistryEntryOrigin.SAVED
         document = _saved_document(tmp_path, "local_llm")
-        assert document["params"]["auth_mode"] == "none"
+        assert document["auth_mode"] == "none"
+        assert "auth_mode" not in document["params"]
         assert "owner" not in document
 
     @pytest.mark.parametrize(
@@ -2031,7 +2043,7 @@ class TestSaveTarget:
         assert _saved_document(tmp_path, "aliased")["class_name"] == "contoso_text"
         TargetRegistry.reset_registry_singleton()
         TargetRegistry.get_registry_singleton().register_class(AliasedTextTarget, name="contoso_text")
-        assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
+        assert (await _restore(tmp_path)).failures == []
 
     async def test_refuses_to_save_a_target_whose_class_a_launch_script_added(self, tmp_path: Path) -> None:
         class LaunchScriptTextTarget(TextTarget):
@@ -2080,7 +2092,10 @@ class TestSaveTarget:
             pytest.raises(SavedTargetRefusedError, match="Uses temporary target 'temporary_member'"),
         ):
             await service._prepare_saved_params_async(
-                target_type="RoundRobinTarget", target_cls=RoundRobinTarget, params={"targets": ["temporary_member"]}
+                target_type="RoundRobinTarget",
+                target_cls=RoundRobinTarget,
+                params={"targets": ["temporary_member"]},
+                auth_mode="api_key",
             )
 
     async def test_reports_storage_trouble_when_a_failed_save_cant_be_undone(self, tmp_path: Path) -> None:
