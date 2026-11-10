@@ -225,9 +225,14 @@ describe("ChatInputArea", () => {
     const reason = "The converter state is no longer available.";
     render(<TestWrapper><ChatInputArea {...defaultProps}
       undoLastSend={{ isUndoing: false, disabledReason: reason, onUndo }} /></TestWrapper>);
-    expect(screen.getByRole("button", { name: "Undo last send" })).toBeDisabled();
-    await user.hover(screen.getByLabelText(reason));
+    const undo = screen.getByRole("button", { name: "Undo last send" });
+    expect(undo).toHaveAttribute("aria-disabled", "true");
+    undo.focus();
+    expect(undo).toHaveFocus();
+    await user.hover(undo);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    expect(undo).toHaveAccessibleDescription(reason);
+    await user.click(undo);
     expect(onUndo).not.toHaveBeenCalled();
   });
 
@@ -485,9 +490,15 @@ describe("ChatInputArea", () => {
     await user.keyboard("{Escape}");
     rerender(<TestWrapper><ChatInputArea {...defaultProps} onSend={onSend}
       convertedValue="Edited output" repeatDisabledReason={reason} /></TestWrapper>);
-    expect(screen.getByRole("button", { name: "Repetitions: 1" })).toBeDisabled();
-    await user.hover(screen.getByLabelText(reason));
+    const repetitions = screen.getByRole("button", { name: "Repetitions: 1" });
+    expect(repetitions).toHaveAttribute("aria-disabled", "true");
+    repetitions.focus();
+    expect(repetitions).toHaveFocus();
+    await user.hover(repetitions);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+    expect(repetitions).toHaveAccessibleDescription(reason);
+    await user.click(repetitions);
+    expect(screen.queryByRole("button", { name: "Increase repetitions" })).not.toBeInTheDocument();
     await user.click(getSendButton());
     expect(onSend).toHaveBeenCalledWith("Source prompt", "Edited output", []);
   });

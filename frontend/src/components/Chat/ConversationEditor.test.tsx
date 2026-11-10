@@ -287,6 +287,17 @@ describe('ConversationEditor', () => {
     expect(screen.getAllByTestId('converter-input-value')).toHaveLength(1)
   })
 
+  it('keeps Save as a single tab stop when a destination reason applies but Save is enabled', async () => {
+    const user = userEvent.setup()
+    setupEditor(undefined, undefined, undefined, 'New attacks are unavailable for this conversation.')
+    const save = await screen.findByRole('button', { name: 'Save conversation' })
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    expect(save).toBeEnabled()
+    cancel.focus()
+    await user.tab()
+    expect(save).toHaveFocus()
+  })
+
   it('disables Same attack with a focusable reason and permits a targetless new attack', async () => {
     const user = userEvent.setup()
     setupEditor([], 'This attack belongs to another operator.')
@@ -380,7 +391,7 @@ describe('ConversationEditor', () => {
     expect(screen.getByRole('menuitem', { name: 'Add tool response' })).toHaveAttribute('aria-disabled', 'true')
     await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: 'Remove piece 2 from message 2' }))
-    expect(screen.getByRole('button', { name: 'Save conversation' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save conversation' })).toHaveAttribute('aria-disabled', 'true')
     await user.click(screen.getByRole('button', { name: 'Delete message 3' }))
     await user.click(screen.getByRole('button', { name: 'Save conversation' }))
     await user.click(screen.getByRole('radio', { name: 'New attack' }))
@@ -487,7 +498,7 @@ describe('ConversationEditor', () => {
     const first = screen.getByRole('region', { name: 'Message 1' })
     await user.upload(within(first).getAllByTestId('file-input')[0], new File(['image'], 'photo.png', { type: 'image/png' }))
     expect(await screen.findByText(/Upload failed for photo.png: Storage unavailable/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Save conversation' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save conversation' })).toHaveAttribute('aria-disabled', 'true')
     expect(within(first).getAllByPlaceholderText('Type prompt here')[0]).toHaveValue('First piece')
     await user.click(screen.getByRole('button', { name: 'Retry upload' }))
     await waitFor(() => expect(screen.queryByText(/Upload failed for photo.png/)).not.toBeInTheDocument())
