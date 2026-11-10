@@ -78,6 +78,11 @@ SCENARIO_MAX_TOTAL: dict[str, int] = {
     "garak.web_injection": 6,  # One objective per technique-specific population.
 }
 
+#: Scenarios whose required data the e2e initializers can't prepare.
+SCENARIO_SKIP_REASONS: dict[str, str] = {
+    "foundry.assert_policy": "Needs stored ASSERT seed groups from AssertGenerator; it has no default dataset.",
+}
+
 
 def get_all_scenarios():
     """
@@ -115,6 +120,8 @@ def test_scenario_with_pyrit_scan(scenario_name: str, capsys: pytest.CaptureFixt
     Args:
         scenario_name: Name of the scenario to test (dynamically discovered).
     """
+    if scenario_name in SCENARIO_SKIP_REASONS:
+        pytest.skip(SCENARIO_SKIP_REASONS[scenario_name])
     initializers = _initializers_for(scenario_name)
     extra_args = _extra_args_for(scenario_name)
     target = _target_for(scenario_name)
