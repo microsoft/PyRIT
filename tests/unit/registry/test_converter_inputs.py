@@ -161,11 +161,11 @@ def test_binary_catalog_default_and_strategy_metadata() -> None:
     assert set(strategies) == {"all", "random", "position", "indices", "keywords", "regex", "content"}
     assert [(param["name"], param["type_name"]) for param in strategies["random"]] == [
         ("proportion", "float"),
-        ("seed", "int"),
+        ("seed", "int | None"),
     ]
     assert strategies["indices"][0]["type_name"] == "list[int]"
     assert strategies["regex"][0]["type_name"] == "str"
-    assert [param["type_name"] for param in strategies["content"]][-2:] == ["list[str]", "list[str]"]
+    assert [param["type_name"] for param in strategies["content"]][-2:] == ["list[str] | None", "list[str] | None"]
 
 
 @pytest.mark.parametrize("holder", [_GenericHolder, _OptionalGenericHolder])

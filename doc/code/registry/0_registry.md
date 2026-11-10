@@ -158,8 +158,12 @@ local file input. Use `Path | str` when a component also supports a remote URL.
 For this union, the registry preserves the supplied type: a `Path` stays a `Path`,
 and a string stays a string. It never passes a URL through `Path`. Both union
 orders have the same metadata, `type_name: "Path | str"`, including after a JSON
-round-trip. Optional forms accept `None` in Python; the display type omits `None`,
-as it does for other optional parameters.
+round-trip. Nullable annotations retain ` | None` in `type_name`, for example
+`"int | None"`, `"list[int] | None"`, or `"Path | str | None"`. Registry references
+use `"str | None"` or `"list[str] | None"` for nullable names. Deserialization
+preserves these null values without a separate nullable flag. A plain type name
+from an older payload keeps its existing non-nullable contract. Nullability is
+independent of whether a parameter is required or has a default.
 
 External construction rejects a parameter whose type includes `Path`, because its
 value can name a file on the server. A caller that has made the value safe, as the

@@ -664,7 +664,7 @@ class TestDeriveParameters:
     def test_optional_annotation_preserved(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}
         assert params["note"].param_type == str | None
-        assert params["note"].type_name == "str"
+        assert params["note"].type_name == "str | None"
 
     def test_descriptions_parsed(self) -> None:
         params = {p.name: p for p in derive_parameters(cls=_Plain)}

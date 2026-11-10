@@ -18,7 +18,7 @@ import math
 import sys
 from argparse import ArgumentParser, Namespace, RawDescriptionHelpFormatter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, assert_never, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, assert_never, cast, get_args
 from uuid import UUID
 
 import aiofiles
@@ -508,14 +508,16 @@ def _scenario_param_kwargs(*, parameter: Parameter) -> dict[str, Any]:
     Returns:
         dict[str, Any]: kwargs ready to pass to ``ArgumentParser.add_argument``.
     """
+    from pyrit.models.parameter import _unwrap_optional
+
     kwargs: dict[str, Any] = {
         "dest": f"{_SCENARIO_DEST_PREFIX}{parameter.name}",
         "default": argparse.SUPPRESS,
         "help": parameter.description,
     }
-    param_type = parameter.param_type
+    param_type = _unwrap_optional(parameter.param_type)
     element_type: Any
-    if get_origin(param_type) is list:
+    if parameter.is_list:
         type_args = get_args(param_type)
         element_type = type_args[0] if type_args else str
         kwargs["nargs"] = "+"

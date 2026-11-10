@@ -384,8 +384,8 @@ class TestClassMetadata:
 
         assert params["endpoint"].param_type == str | None
         assert params["model_name"].param_type == str | None
-        assert params["endpoint"].type_name == "str"
-        assert params["model_name"].type_name == "str"
+        assert params["endpoint"].type_name == "str | None"
+        assert params["model_name"].type_name == "str | None"
         assert "api_key" in params
 
     def test_http_request_metadata_is_multiline(self, registry: TargetRegistry) -> None:
