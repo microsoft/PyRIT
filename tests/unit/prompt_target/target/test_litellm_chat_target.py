@@ -458,6 +458,7 @@ class TestLiteLLMToolLoop:
 
     @pytest.mark.parametrize("target_class", [LiteLLMChatTarget, ClaudeChatTarget])
     @pytest.mark.parametrize("failure_index", [0, 1, 2])
+    @pytest.mark.parametrize("failure_invoked", [True, False])
     async def test_infrastructure_failure_ends_round_with_complete_persisted_history_async(
         self,
         *,
@@ -465,6 +466,7 @@ class TestLiteLLMToolLoop:
         sqlite_instance: SQLiteMemory,
         target_class: type[LiteLLMChatTarget],
         failure_index: int,
+        failure_invoked: bool,
     ) -> None:
         executions: list[int] = []
         events: list[str] = []
@@ -473,7 +475,7 @@ class TestLiteLLMToolLoop:
         async def unstable_async(*, index: int) -> str:
             executions.append(index)
             if index == failure_index:
-                raise ToolInfrastructureError("Sandbox unavailable; execution outcome unknown.")
+                raise ToolInfrastructureError("Sandbox unavailable.", invoked=failure_invoked)
             return f"completed {index}"
 
         class Provider:
@@ -510,7 +512,7 @@ class TestLiteLLMToolLoop:
         assert [
             ToolExecutionMetadata.from_metadata(metadata=message.get_piece().prompt_metadata).invoked
             for message in outputs
-        ] == [index <= failure_index for index in range(3)]
+        ] == [index < failure_index or (index == failure_index and failure_invoked) for index in range(3)]
         for message in outputs[failure_index:]:
             assert json.loads(json.loads(message.get_value())["output"]) == {"error": "tool_infrastructure_error"}
         target.validate_tool_history(history)

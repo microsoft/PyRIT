@@ -547,7 +547,7 @@ class LiteLLMChatTarget(PromptTarget):
                                 request=request,
                                 call=pending_call,
                                 output={"error": "tool_infrastructure_error"},
-                                invoked=offset == 0,
+                                invoked=offset == 0 and exc.invoked,
                             )
                         )
                     responses.append(

@@ -93,7 +93,8 @@ the entire send is not retried, so completed side effects are not repeated.
 Tools can raise `ToolInfrastructureError` (exported from `pyrit.prompt_target`)
 when their own infrastructure fails or the execution outcome is unknown.
 This stops the turn without another model request. The failing call receives
-an error result marked as invoked; remaining calls receive uninvoked error
+an error result marked as invoked unless the tool explicitly reports
+`ToolInfrastructureError(..., invoked=False)` because nothing ran; remaining calls receive uninvoked error
 results, followed by a terminal processing-error response. Earlier successful
 results remain in history. Ordinary tool/argument errors still go back to
 the model so it can recover.
