@@ -17,7 +17,8 @@ class TestScoreEntryRoundtrip:
 
     def test_score_entry_revalidates_mutated_score(self):
         score = Score(score_value="True", score_type="true_false")
-        score.score_value = None
+        with pytest.warns(DeprecationWarning, match="Score.set_value"):
+            score.score_value = None
 
         with pytest.raises(ValueError, match="complete score requires a score_value"):
             ScoreEntry(entry=score)

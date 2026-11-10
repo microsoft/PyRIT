@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from pyrit.models import ComponentIdentifier, Observation, Scorable
@@ -13,8 +13,14 @@ if TYPE_CHECKING:
 ScorableT = TypeVar("ScorableT", bound="Scorable", contravariant=True)
 
 
+@runtime_checkable
 class ObservationSource(Protocol[ScorableT]):
-    """Acquire replayable evidence for the declared scorable type."""
+    """
+    Acquire replayable evidence for the declared scorable type.
+
+    Runtime-checkable so the ``SourceRegistry`` can recognize source classes and
+    check registered instances structurally; sources do not share a base class.
+    """
 
     def get_identifier(self) -> ComponentIdentifier:
         """Return the nonsecret source configuration."""

@@ -28,6 +28,10 @@ __all__ = ["AUTH_MODES", "AuthMode"]
 #: an ambient Azure identity when no SAS token is configured, but that fallback is
 #: deprecated and is removed in 1.4.0, after which every component treats the two modes
 #: as disjoint.
-AuthMode = Literal["api_key", "identity"]
+#:
+#: ``none`` is for endpoints that need no credential, such as a local OpenAI-compatible
+#: server. The component reads no key and mints no token. Only components that list it in
+#: ``supported_auth_modes`` accept it.
+AuthMode = Literal["api_key", "identity", "none"]
 
-AUTH_MODES: tuple[AuthMode, ...] = ("api_key", "identity")
+AUTH_MODES: tuple[AuthMode, ...] = ("api_key", "identity", "none")

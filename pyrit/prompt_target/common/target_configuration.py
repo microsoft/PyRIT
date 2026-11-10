@@ -4,10 +4,10 @@
 import logging
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any, assert_never
 
 from pyrit.message_normalizer import MessageListNormalizer
-from pyrit.models import Message
+from pyrit.models import ComponentIdentifier, Identifiable, Message
 from pyrit.prompt_target.common.conversation_normalization_pipeline import ConversationNormalizationPipeline
 from pyrit.prompt_target.common.target_capabilities import (
     CapabilityHandlingPolicy,
@@ -126,11 +126,19 @@ class TargetConfiguration:
             raise ValueError(
                 f"Target does not support '{capability.value}' and no handling policy exists for it."
             ) from None
-        if behavior == UnsupportedCapabilityBehavior.RAISE:
-            raise ValueError(f"Target does not support '{capability.value}' and the handling policy is RAISE.")
-        raise ValueError(
+        adapt_error = (
             f"Target does not support '{capability.value}', but no default or configured normalizer can adapt it."
         )
+        match behavior:
+            case UnsupportedCapabilityBehavior.RAISE:
+                raise ValueError(f"Target does not support '{capability.value}' and the handling policy is RAISE.")
+            case UnsupportedCapabilityBehavior.ADAPT:
+                raise ValueError(adapt_error)
+            case _:
+                if TYPE_CHECKING:
+                    assert_never(behavior)
+                # Preserve the historical runtime fallback for values outside the declared enum.
+                raise ValueError(adapt_error)
 
     async def normalize_async(
         self,
@@ -194,10 +202,86 @@ class TargetConfiguration:
             # ``self._pipeline``. Attack-owned overrides are represented by the
             # attack identifier instead.
             "normalization_pipeline": [
-                f"{type(normalizer).__module__}.{type(normalizer).__qualname__}"
-                for normalizer in self._pipeline.normalizers
+                self._serialize_normalizer(normalizer) for normalizer in self._pipeline.normalizers
             ],
         }
+
+    @classmethod
+    def _serialize_normalizer(cls, normalizer: Any) -> dict[str, Any]:
+        """
+        Serialize a normalizer into a deterministic dictionary containing its type, parameters, and children.
+
+        Args:
+            normalizer (Any): The message normalizer instance to serialize.
+
+        Returns:
+            dict[str, Any]: Dictionary with 'type', 'params', and optionally 'children' keys.
+        """
+        params: dict[str, Any] = {}
+        children: dict[str, Any] = {}
+        if isinstance(normalizer, Identifiable):
+            ident = normalizer.get_identifier()
+            if ident.params:
+                params = ident.params
+            if ident.children:
+                children = cls._serialize_identifier_children(ident.children)
+        elif hasattr(normalizer, "as_identifier_params"):
+            val = normalizer.as_identifier_params()
+            if isinstance(val, dict):
+                params = val
+
+        result: dict[str, Any] = {
+            "type": f"{type(normalizer).__module__}.{type(normalizer).__qualname__}",
+            "params": params,
+        }
+        if children:
+            result["children"] = children
+        return result
+
+    @classmethod
+    def _serialize_identifier(cls, ident: ComponentIdentifier) -> dict[str, Any]:
+        """
+        Serialize a ComponentIdentifier into a deterministic dictionary.
+
+        Args:
+            ident (ComponentIdentifier): The component identifier to serialize.
+
+        Returns:
+            dict[str, Any]: Dictionary containing 'type', 'params', and optionally 'children'.
+        """
+        result: dict[str, Any] = {
+            "type": f"{ident.class_module}.{ident.class_name}",
+            "params": ident.params,
+        }
+        if ident.children:
+            result["children"] = cls._serialize_identifier_children(ident.children)
+        return result
+
+    @classmethod
+    def _serialize_identifier_children(
+        cls, children: Mapping[str, ComponentIdentifier | list[ComponentIdentifier] | Any]
+    ) -> dict[str, Any]:
+        """
+        Recursively serialize a mapping of child identifiers.
+
+        Args:
+            children (Mapping[str, ComponentIdentifier | list[ComponentIdentifier] | Any]): The mapping of children.
+
+        Returns:
+            dict[str, Any]: Recursively serialized dictionary of child configurations.
+        """
+        serialized: dict[str, Any] = {}
+        for key in sorted(children.keys()):
+            val = children[key]
+            if isinstance(val, list):
+                serialized[key] = [
+                    cls._serialize_identifier(c) if isinstance(c, ComponentIdentifier) else c for c in val
+                ]
+            elif isinstance(val, ComponentIdentifier):
+                serialized[key] = cls._serialize_identifier(val)
+            else:
+                serialized[key] = val
+        return serialized
 
     @staticmethod
     def _capabilities_to_identifier_params(capabilities: TargetCapabilities) -> dict[str, Any]:

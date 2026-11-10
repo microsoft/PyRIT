@@ -6,20 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pyrit.executor.attack.component import PrependedConversationConfig
+from pyrit.executor.attack import (
+    AttackParameters,
+    ConversationSession,
+    MultiTurnAttackContext,
+    PrependedConversationConfig,
+)
 from pyrit.executor.attack.component.prepended_history_send_context import (
     PrependedHistorySendContext,
 )
-from pyrit.executor.attack.core.attack_parameters import AttackParameters
-from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import (
-    ConversationSession,
-    MultiTurnAttackContext,
-)
 from pyrit.memory import CentralMemory
 from pyrit.models import ConversationType, Message, MessagePiece, ScoringExpectation
-from pyrit.prompt_target import PromptTarget
-from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 
 
 class _SingleTurnPromptTarget(PromptTarget):
@@ -50,7 +48,7 @@ def _make_context() -> MultiTurnAttackContext:
 
 def _make_strategy(*, supports_multi_turn: bool):
     """Create a minimal MultiTurnAttackStrategy for testing."""
-    from pyrit.executor.attack.multi_turn.multi_turn_attack_strategy import MultiTurnAttackStrategy
+    from pyrit.executor.attack import MultiTurnAttackStrategy
 
     target = MagicMock()
     target.capabilities.supports_multi_turn = supports_multi_turn
@@ -805,8 +803,7 @@ class TestValueErrorGuards:
     """Test that incompatible attacks raise ValueError for single-turn targets."""
 
     def _make_single_turn_target(self):
-        from pyrit.prompt_target.common.target_capabilities import TargetCapabilities
-        from pyrit.prompt_target.common.target_configuration import TargetConfiguration
+        from pyrit.prompt_target import TargetCapabilities, TargetConfiguration
 
         target = MagicMock()
         target.capabilities.supports_multi_turn = False
@@ -817,14 +814,14 @@ class TestValueErrorGuards:
         return target
 
     def _make_adversarial_config(self):
-        from pyrit.executor.attack.core.attack_config import AttackAdversarialConfig
+        from pyrit.executor.attack import AttackAdversarialConfig
 
         adversarial_chat = MagicMock()
         adversarial_chat.get_identifier.return_value = {"__type__": "MockTarget", "__module__": "test", "id": "mock-id"}
         return AttackAdversarialConfig(target=adversarial_chat)
 
     def _make_scoring_config(self):
-        from pyrit.executor.attack.core.attack_config import AttackScoringConfig
+        from pyrit.executor.attack import AttackScoringConfig
         from pyrit.score import TrueFalseScorer
 
         scorer = MagicMock(spec=TrueFalseScorer)
@@ -832,7 +829,7 @@ class TestValueErrorGuards:
         return AttackScoringConfig(objective_scorer=scorer)
 
     async def test_crescendo_raises_for_single_turn_target(self):
-        from pyrit.executor.attack.multi_turn.crescendo import CrescendoAttack
+        from pyrit.executor.attack import CrescendoAttack
 
         target = self._make_single_turn_target()
 
@@ -844,7 +841,7 @@ class TestValueErrorGuards:
             )
 
     async def test_multi_prompt_sending_raises_for_single_turn_target(self):
-        from pyrit.executor.attack.multi_turn.multi_prompt_sending import MultiPromptSendingAttack
+        from pyrit.executor.attack import MultiPromptSendingAttack
 
         target = self._make_single_turn_target()
 
@@ -852,7 +849,7 @@ class TestValueErrorGuards:
             MultiPromptSendingAttack(objective_target=target)
 
     async def test_chunked_request_raises_for_single_turn_target(self):
-        from pyrit.executor.attack.multi_turn.chunked_request import ChunkedRequestAttack
+        from pyrit.executor.attack import ChunkedRequestAttack
 
         target = self._make_single_turn_target()
 

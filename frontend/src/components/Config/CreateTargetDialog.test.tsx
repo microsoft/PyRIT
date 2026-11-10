@@ -200,7 +200,7 @@ const TARGET_TYPES: TargetTypeListResponse = {
         },
         ...OPENAI_COMMON_PARAMETERS,
       ],
-      supported_auth_modes: ["api_key", "identity"],
+      supported_auth_modes: ["api_key", "identity", "none"],
       description: "Facilitates multimodal (image and text) input and text output generation.",
     },
     {
@@ -272,6 +272,12 @@ const TARGET_TYPES: TargetTypeListResponse = {
       parameters: [],
       supported_auth_modes: ["api_key"],
       description: "A prompt target that distributes requests across multiple inner targets using weighted round-robin selection.",
+    },
+    {
+      target_type: "TextTarget",
+      parameters: [],
+      supported_auth_modes: [],
+      description: "Writes prompts to a local text stream.",
     },
     {
       target_type: "HTTPTarget",
@@ -346,6 +352,7 @@ const TARGET_DISPLAY_NAMES: Record<string, string> = {
   OpenAIVideoTarget: "OpenAI video",
   RoundRobinTarget: "Weighted round robin",
   HTTPTarget: "HTTPTarget",
+  TextTarget: "TextTarget",
   AzureBlobStorageTarget: "AzureBlobStorageTarget",
 };
 
@@ -543,7 +550,7 @@ describe("CreateTargetDialog", () => {
 
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(11);
-    for (const entry of TARGET_TYPES.items.filter((item) => item.target_type !== "PlaywrightTarget")) {
+    for (const entry of TARGET_TYPES.items.filter((item) => !["PlaywrightTarget", "TextTarget"].includes(item.target_type))) {
       const option = screen.getByRole("option", {
         name: new RegExp(`Implementation: ${entry.target_type}`),
       });
@@ -581,6 +588,49 @@ describe("CreateTargetDialog", () => {
     expect(selectedDetails).toHaveTextContent("RoundRobinTarget");
     expect(selectedDetails).toHaveTextContent("weighted round-robin selection");
     expect(selectedDetails).toHaveTextContent("Supported authentication: API key");
+  });
+
+  it("should not offer the SDK-only TextTarget", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await openTargetTypePicker();
+
+    expect(screen.queryByRole("option", { name: /Implementation: TextTarget/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Writes prompts to a local text stream.")).not.toBeInTheDocument();
+  });
+
+  it("should still describe other credential-free target types", async () => {
+    mockedTargetsApi.listTargetTypes.mockResolvedValue({
+      items: [...TARGET_TYPES.items, {
+        target_type: "CredentialFreeTarget",
+        parameters: [],
+        supported_auth_modes: [],
+        description: "A credential-free endpoint.",
+      }],
+    });
+    render(<TestWrapper><CreateTargetDialog {...defaultProps} /></TestWrapper>);
+    await openTargetTypePicker();
+    const option = screen.getByRole("option", { name: /Implementation: CredentialFreeTarget/ });
+    expect(option).toHaveTextContent("No authentication required");
+    expect(option).not.toHaveTextContent("API key");
+  });
+
+  it("should not offer SDK-only inner targets in a round-robin target", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} existingTargets={[
+          makeTarget({ target_registry_name: "demo", target_type: "TextTarget" }),
+          makeTarget({ target_registry_name: "endpoint", target_type: "OpenAIChatTarget" }),
+        ]} />
+      </TestWrapper>
+    );
+    await selectTargetType("RoundRobinTarget");
+    expect(screen.queryByRole("option", { name: /demo/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /endpoint/ })).toBeInTheDocument();
   });
 
   it("should keep the selected target displayed after focus moves to another field", async () => {
@@ -1074,6 +1124,7 @@ describe("CreateTargetDialog", () => {
   });
 
   it("should show constructor defaults as editable guidance without setting the values", async () => {
+    const user = userEvent.setup();
     render(
       <TestWrapper>
         <CreateTargetDialog {...defaultProps} />
@@ -1081,13 +1132,15 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("AzureMLChatTarget");
+    await user.click(screen.getByText("Advanced settings"));
 
-    const maxNewTokens = screen.getByLabelText("Max New Tokens");
+    const maxNewTokens = screen.getByRole("spinbutton", { name: "Max New Tokens" });
     expect(maxNewTokens).toHaveValue(null);
     expect(maxNewTokens).toHaveAttribute("placeholder", "Defaults to 400");
-    expect(screen.getByText(/maximum number of tokens.*Defaults to 400\./i)).toBeInTheDocument();
+    expect(maxNewTokens).toHaveAccessibleDescription(/maximum number of tokens.*Defaults to 400\./i);
+    expect(maxNewTokens).toBeVisible();
 
-    const repetitionPenalty = screen.getByLabelText("Repetition Penalty");
+    const repetitionPenalty = screen.getByRole("spinbutton", { name: "Repetition Penalty" });
     expect(repetitionPenalty).toHaveValue(null);
     expect(repetitionPenalty).toHaveAttribute("placeholder", "Defaults to 1.0");
   });
@@ -1117,18 +1170,18 @@ describe("CreateTargetDialog", () => {
       target: { value: "https://my-model.eastus.inference.ml.azure.com/score" },
     });
 
-    // Modify AzureML-specific fields to non-default values via label queries
+    // Modify AzureML-specific fields to non-default values via input roles.
     // Use fireEvent.change for the same jsdom/FluentUI reason as endpoint input.
-    fireEvent.change(screen.getByLabelText("Max New Tokens"), {
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Max New Tokens" }), {
       target: { value: "512" },
     });
-    fireEvent.change(screen.getByLabelText("Temperature"), {
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Temperature" }), {
       target: { value: "0.7" },
     });
-    fireEvent.change(screen.getByLabelText("Top P"), {
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Top P" }), {
       target: { value: "0.9" },
     });
-    fireEvent.change(screen.getByLabelText("Repetition Penalty"), {
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Repetition Penalty" }), {
       target: { value: "1.2" },
     });
 
@@ -1168,14 +1221,14 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
       target: { value: "https://api.openai.com" },
     });
-    fireEvent.change(screen.getByLabelText("Temperature"), {
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Temperature" }), {
       target: { value: "0" },
     });
-    fireEvent.change(screen.getByLabelText("Seed"), {
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Seed" }), {
       target: { value: "42" },
     });
 
-    expect(screen.getByLabelText("Extra Body Parameters")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Extra Body Parameters" })).toBeVisible();
 
     await user.click(screen.getByText("Create Target"));
 
@@ -1233,7 +1286,7 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(screen.getByPlaceholderText("e.g. gpt-4o, my-deployment"), {
       target: { value: "sora-2" },
     });
-    fireEvent.change(screen.getByLabelText("N Seconds"), {
+    fireEvent.change(screen.getByRole("spinbutton", { name: "N Seconds" }), {
       target: { value: "8" },
     });
 
@@ -1270,14 +1323,14 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
       target: { value: "https://api.openai.com" },
     });
-    await user.selectOptions(screen.getByLabelText("Reasoning Effort"), "high");
-    const failOnMissingFunction = screen.getByLabelText("Fail On Missing Function");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Reasoning Effort" }), "high");
+    const failOnMissingFunction = screen.getByRole("combobox", { name: "Fail On Missing Function" });
     expect(within(failOnMissingFunction).getByRole("option", {
       name: "Use default (False)",
     })).toBeInTheDocument();
     await user.selectOptions(failOnMissingFunction, "false");
 
-    expect(screen.queryByLabelText("Custom Functions")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Custom Functions" })).not.toBeInTheDocument();
 
     await user.click(screen.getByText("Create Target"));
 
@@ -1312,7 +1365,7 @@ describe("CreateTargetDialog", () => {
     fireEvent.change(screen.getByPlaceholderText("https://your-resource.openai.azure.com/"), {
       target: { value: "https://api.openai.com" },
     });
-    fireEvent.change(screen.getByLabelText("Stop"), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Stop" }), {
       target: { value: "END, DONE" },
     });
 
@@ -1380,10 +1433,10 @@ describe("CreateTargetDialog", () => {
     });
     await user.click(screen.getByText("Advanced settings"));
 
-    fireEvent.change(screen.getByLabelText("Extra Body Parameters"), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Extra Body Parameters" }), {
       target: { value: '{"reasoning":{"effort":"high"},"include":["usage"]}' },
     });
-    fireEvent.change(screen.getByLabelText("Httpx Client Kwargs"), {
+    fireEvent.change(screen.getByRole("textbox", { name: "Httpx Client Kwargs" }), {
       target: { value: '{"timeout":180}' },
     });
 
@@ -1416,7 +1469,7 @@ describe("CreateTargetDialog", () => {
     await selectTargetType("OpenAIChatTarget");
     await user.click(screen.getByText("Advanced settings"));
 
-    const extraBody = screen.getByLabelText("Extra Body Parameters");
+    const extraBody = screen.getByRole("textbox", { name: "Extra Body Parameters" });
     fireEvent.change(extraBody, {
       target: { value: '{"reasoning":' },
     });
@@ -1446,12 +1499,12 @@ describe("CreateTargetDialog", () => {
     const summary = screen.getByText("Advanced settings");
     const advancedSettings = summary.closest("details");
     expect(advancedSettings).not.toHaveAttribute("open");
-    expect(screen.getByLabelText("Reasoning Effort")).not.toBeVisible();
+    expect(screen.getByLabelText("Reasoning Effort", { selector: "select" })).not.toBeVisible();
 
     await user.click(summary);
 
     expect(advancedSettings).toHaveAttribute("open");
-    expect(screen.getByLabelText("Reasoning Effort")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Reasoning Effort" })).toBeVisible();
     expect(screen.getByText(/Python callables cannot be configured in CopyRIT/)).toBeVisible();
   });
 
@@ -1479,7 +1532,7 @@ describe("CreateTargetDialog", () => {
     // newlines, not on literal "\r\n" characters. The http_request field
     // must render as a multiline control (Textarea) for this to be entered.
     const httpRequestTemplate = "POST /chat HTTP/1.1\nHost: example.com\nContent-Type: application/json\n\n{\"message\": \"{PROMPT}\"}";
-    const httpRequestField = screen.getByLabelText(/Http Request/);
+    const httpRequestField = screen.getByRole("textbox", { name: /Http Request/ });
     expect(httpRequestField.tagName).toBe("TEXTAREA");
     fireEvent.change(httpRequestField, {
       target: { value: httpRequestTemplate },
@@ -1518,7 +1571,9 @@ describe("CreateTargetDialog", () => {
     expect(screen.getByText(/CoPyRIT does not use browser or saved Copilot logins/)).toBeVisible();
     expect(screen.getByText(/Tokens and created targets can be used by anyone with access to this CoPyRIT instance/))
       .toBeVisible();
-    expect(screen.getByText(/Required unless GITHUB_TOKEN is configured for this CoPyRIT instance/)).toBeVisible();
+    expect(screen.getByLabelText("GitHub Token", { selector: "input" })).toHaveAccessibleDescription(
+      /Required unless GITHUB_TOKEN is configured for this CoPyRIT instance/,
+    );
     expect(screen.getByText(/Model IDs are not validated when creating a target/)).toBeVisible();
     expect(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ })).toHaveAccessibleDescription(
       /Model IDs are not validated.*An unrecognized ID may cause Copilot to use a different model.*Verify the exact model ID is available to the GitHub account associated with this target's token/,
@@ -1528,8 +1583,8 @@ describe("CreateTargetDialog", () => {
     expect(screen.queryByLabelText(/Underlying model differs/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /Identity-based/ })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("GitHub Token")).toBeVisible();
-    expect(screen.getByLabelText("GitHub Token")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("GitHub Token", { selector: "input" })).toBeVisible();
+    expect(screen.getByLabelText("GitHub Token", { selector: "input" })).toHaveAttribute("type", "password");
     expect(screen.getByRole("button", { name: "Create Target" })).toBeDisabled();
 
     await user.type(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "gpt-4.1");
@@ -1571,7 +1626,7 @@ describe("CreateTargetDialog", () => {
     expect(defaultProps.onCreated).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ })).toHaveValue("gpt-4.1");
 
-    await user.type(screen.getByLabelText("GitHub Token"), "test-github-token");
+    await user.type(screen.getByLabelText("GitHub Token", { selector: "input" }), "test-github-token");
     await user.click(screen.getByRole("button", { name: "Create Target" }));
 
     await waitFor(() => expect(defaultProps.onCreated).toHaveBeenCalledTimes(1));
@@ -1596,7 +1651,7 @@ describe("CreateTargetDialog", () => {
 
     await selectTargetType("GitHubCopilotTarget");
     await user.type(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "gpt-4.1");
-    await user.type(screen.getByLabelText("GitHub Token"), "test-github-token");
+    await user.type(screen.getByLabelText("GitHub Token", { selector: "input" }), "test-github-token");
     await user.click(screen.getByText("Advanced settings"));
     await user.type(screen.getByRole("textbox", { name: "Working Directory" }), "C:\\copilot-workspace");
     await user.selectOptions(screen.getByRole("combobox", { name: "Retain Session" }), "false");
@@ -1619,7 +1674,7 @@ describe("CreateTargetDialog", () => {
     });
 
     await selectTargetType("GitHubCopilotTarget");
-    expect(screen.getByLabelText("GitHub Token")).toHaveValue("");
+    expect(screen.getByLabelText("GitHub Token", { selector: "input" })).toHaveValue("");
   });
 
   it.each(["loading", "failed", "empty"] as const)(
@@ -1652,10 +1707,10 @@ describe("CreateTargetDialog", () => {
       expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
       expect(screen.queryByRole("radio", { name: /Identity-based/ })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Create Target" })).toBeDisabled();
-      expect(screen.getByLabelText("GitHub Token")).toHaveAttribute("type", "password");
+      expect(screen.getByLabelText("GitHub Token", { selector: "input" })).toHaveAttribute("type", "password");
 
       await user.type(screen.getByRole("textbox", { name: /Model \/ Deployment Name/ }), "gpt-4.1");
-      await user.type(screen.getByLabelText("GitHub Token"), "test-github-token");
+      await user.type(screen.getByLabelText("GitHub Token", { selector: "input" }), "test-github-token");
       await user.click(screen.getByRole("button", { name: "Create Target" }));
 
       await waitFor(() => {
@@ -1681,7 +1736,7 @@ describe("CreateTargetDialog", () => {
     );
 
     await selectTargetType("GitHubCopilotTarget");
-    await user.type(screen.getByLabelText("GitHub Token"), "test-github-token");
+    await user.type(screen.getByLabelText("GitHub Token", { selector: "input" }), "test-github-token");
     await selectTargetType("OpenAIChatTarget");
     expect(screen.queryByText(/Model IDs are not validated when creating a target/)).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: /Endpoint URL/ }), "https://api.openai.com");
@@ -1695,7 +1750,7 @@ describe("CreateTargetDialog", () => {
     });
 
     await selectTargetType("GitHubCopilotTarget");
-    expect(screen.getByLabelText("GitHub Token")).toHaveValue("");
+    expect(screen.getByLabelText("GitHub Token", { selector: "input" })).toHaveValue("");
   });
 
   it("should support identity auth for targets without an endpoint or api_key parameter", async () => {
@@ -1734,7 +1789,7 @@ describe("CreateTargetDialog", () => {
     await selectTargetType("AzureBlobStorageTarget");
     await user.click(screen.getByText("Advanced settings"));
 
-    const sasTokenField = screen.getByLabelText(/Sas Token/);
+    const sasTokenField = screen.getByLabelText(/Sas Token/, { selector: "input" });
     expect(sasTokenField).toHaveAttribute("type", "password");
 
     fireEvent.change(sasTokenField, { target: { value: "sv=2024&sig=secret" } });
@@ -1876,6 +1931,91 @@ describe("CreateTargetDialog", () => {
       expect(call.auth_mode).toBe("identity");
       expect(call.params).not.toHaveProperty("api_key");
     });
+  });
+
+  it("should submit no-key auth without an API key", async () => {
+    const onCreated = jest.fn();
+    const user = userEvent.setup();
+    mockedTargetsApi.createTarget.mockResolvedValue(makeTarget({
+      target_registry_name: "local_chat",
+      target_type: "OpenAIChatTarget",
+    }));
+
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} onCreated={onCreated} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+
+    expect(screen.getByRole("region", { name: /selected target details/i })).toHaveTextContent(
+      "Supported authentication: API key or Microsoft Entra ID or No key",
+    );
+    await user.type(
+      screen.getByPlaceholderText("https://your-resource.openai.azure.com/"),
+      "http://localhost:11434/v1",
+    );
+    await user.type(screen.getByPlaceholderText("API key (stored in memory only)"), "sk-typed-before-switch");
+    await user.click(screen.getByRole("radio", { name: /No key/ }));
+
+    expect(screen.queryByPlaceholderText("API key (stored in memory only)")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Create Target"));
+
+    await waitFor(() => {
+      expect(mockedTargetsApi.createTarget).toHaveBeenCalledWith({
+        type: "OpenAIChatTarget",
+        params: {
+          endpoint: "http://localhost:11434/v1",
+        },
+        auth_mode: "none",
+      });
+      expect(onCreated).toHaveBeenCalled();
+    });
+  });
+
+  it("should offer no-key auth only for target types that support it", async () => {
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("AzureMLChatTarget");
+
+    expect(screen.getByRole("radio", { name: /Identity-based/ })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /No key/ })).not.toBeInTheDocument();
+  });
+
+  it("should return to API key auth when the next target type has no no-key option", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    await selectTargetType("OpenAIChatTarget");
+    await user.click(screen.getByRole("radio", { name: /No key/ }));
+    await selectTargetType("AzureMLChatTarget");
+
+    expect(screen.getByRole("radio", { name: /API Key/ })).toBeChecked();
+    expect(screen.getByPlaceholderText("API key (stored in memory only)")).toBeInTheDocument();
+  });
+
+  it("should offer no-key auth for OpenAI targets when type metadata fails to load", async () => {
+    mockedTargetsApi.listTargetTypes.mockRejectedValueOnce(new Error("registry unavailable"));
+    render(
+      <TestWrapper>
+        <CreateTargetDialog {...defaultProps} />
+      </TestWrapper>
+    );
+
+    expect(await screen.findByText(/Target details could not be loaded/)).toBeInTheDocument();
+    await selectTargetType("OpenAIChatTarget");
+
+    expect(screen.getByRole("radio", { name: /No key/ })).toBeInTheDocument();
   });
 
   it("should warn the user when identity is selected for a non-Azure OpenAI endpoint", async () => {

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from pyrit.models.conversation_stats import ConversationStats
+from pyrit.models import ConversationStats
 
 
 def test_conversation_stats_defaults():

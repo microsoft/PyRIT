@@ -1,7 +1,8 @@
 import { useId, useState } from 'react'
 
-import { Button, Field, Select, Text } from '@fluentui/react-components'
+import { Button, Select, Text } from '@fluentui/react-components'
 
+import HelpField from '@/components/HelpField'
 import type { RegistryReferenceOption } from '@/types'
 
 import { useReferenceFieldStyles } from './ReferenceField.styles'
@@ -13,12 +14,13 @@ interface ReferenceFieldProps {
   multiple?: boolean
   disabled?: boolean
   hint?: string
+  readonly help?: string
   onChange: (value: string | string[]) => void
 }
 
 /** Ordered registry references. Repeated entries are intentional. */
 export default function ReferenceField({
-  label, options, value, multiple = false, disabled = false, hint, onChange,
+  label, options, value, multiple = false, disabled = false, hint, help, onChange,
 }: ReferenceFieldProps) {
   const styles = useReferenceFieldStyles()
   const [pending, setPending] = useState('')
@@ -28,17 +30,27 @@ export default function ReferenceField({
   const selected = Array.isArray(value) ? value : []
 
   const move = (index: number, delta: number): void => {
+    const target = index + delta
+    if (index < 0 || target < 0 || index >= selected.length || target >= selected.length) return
     const next = [...selected]
     const ids = selected.map((_, position) => entryIds[position] ?? `${id}-initial-${position}`)
-    ;[next[index], next[index + delta]] = [next[index + delta], next[index]]
-    ;[ids[index], ids[index + delta]] = [ids[index + delta], ids[index]]
-    setEntryIds(ids)
-    onChange(next)
+    const itemA = next[index]
+    const itemB = next[target]
+    const idA = ids[index]
+    const idB = ids[target]
+    if (itemA !== undefined && itemB !== undefined && idA !== undefined && idB !== undefined) {
+      next[index] = itemB
+      next[target] = itemA
+      ids[index] = idB
+      ids[target] = idA
+      setEntryIds(ids)
+      onChange(next)
+    }
   }
 
   return (
     <div className={styles.root}>
-      <Field label={label} hint={hint}>
+      <HelpField label={label} hint={hint} help={help}>
         <Select
           className={styles.control}
           value={multiple ? pending : typeof value === 'string' ? value : ''}
@@ -50,7 +62,7 @@ export default function ReferenceField({
             <option key={option.name} value={option.name}>{option.name} ({option.type})</option>
           ))}
         </Select>
-      </Field>
+      </HelpField>
       {multiple && (
         <>
           <Button

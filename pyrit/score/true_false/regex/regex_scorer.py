@@ -94,12 +94,11 @@ class RegexScorer(MessageTrueFalseScorer):
         Returns:
             ComponentIdentifier: The identifier for this scorer.
         """
-        params: dict[str, object] = {"pattern_count": len(self._patterns)}
-        # Default pattern sets keep their existing identity; anything else is told apart by content.
-        if self._patterns != type(self)._DEFAULT_PATTERNS:
-            params["patterns_digest"] = _patterns_digest(self._patterns)
         return self._create_identifier(
-            params=params,
+            params={
+                "pattern_count": len(self._patterns),
+                "patterns_digest": _patterns_digest(self._patterns),
+            },
             score_aggregator=self._score_aggregator.__name__,  # type: ignore[ty:unresolved-attribute]
         )
 

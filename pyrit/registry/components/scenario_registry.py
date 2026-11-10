@@ -21,11 +21,11 @@ from pyrit.common.async_compatibility import run_legacy_sync_async
 from pyrit.models import (
     ScenarioDatasetOptions,
     ScenarioDatasetSettings,
+    ScenarioIdentifier,
     ScenarioRunSizeEstimate,
     ScenarioTechniqueSummary,
     class_name_to_snake_case,
 )
-from pyrit.models.identifiers.scenario_identifier import ScenarioIdentifier
 from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
 from pyrit.registry.registry import ParamBagRegistry
 from pyrit.registry.registry_metadata import RegistryMetadata
@@ -34,10 +34,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from types import ModuleType
 
-    from pyrit.models import Parameter
-    from pyrit.models.identifiers.component_identifier import ComponentIdentifier
+    from pyrit.models import ComponentIdentifier, Parameter
+    from pyrit.scenario import ScenarioTechnique
     from pyrit.scenario.core import Scenario
-    from pyrit.scenario.core.scenario_technique import ScenarioTechnique
 
 
 @dataclass(frozen=True)
@@ -70,6 +69,7 @@ class ScenarioMetadata(RegistryMetadata):
 
     # Descriptions and tags for each available concrete technique.
     technique_summaries: tuple[ScenarioTechniqueSummary, ...] = field(kw_only=True, default=())
+    default_objective_scorer_identifier: ComponentIdentifier | None = field(kw_only=True, default=None)
 
     # Aggregate techniques that combine multiple attack approaches.
     aggregate_techniques: tuple[str, ...] = field(kw_only=True)
@@ -222,6 +222,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
                 name=technique.value,
                 description=technique.description,
                 tags=sorted(technique.tags),
+                identifier=technique.identifier,
             )
             for technique in technique_class.get_all_techniques()
         )
@@ -233,7 +234,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             )
             for aggregate in technique_class.get_aggregate_techniques()
         )
-        default_datasets = tuple(instance._default_dataset_config.dataset_names)
+        default_datasets = tuple(instance.get_default_dataset_names())
 
         return ScenarioMetadata(
             class_name=cls.__name__,
@@ -248,6 +249,7 @@ class ScenarioRegistry(ParamBagRegistry["Scenario", ScenarioMetadata]):
             all_techniques=all_techniques,
             technique_class=technique_class,
             technique_summaries=technique_summaries,
+            default_objective_scorer_identifier=instance._objective_scorer_identifier,
             aggregate_techniques=aggregate_techniques,
             aggregate_technique_expansions=aggregate_technique_expansions,
             default_datasets=default_datasets,

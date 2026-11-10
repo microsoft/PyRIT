@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router'
 
 import { attacksApi, targetsApi } from '@/services/api'
 import { makeTarget } from '@/test-utils/targetFixtures'
-import type { AttackSummary, ConversationMessagesResponse, RegisteredComponentReference, ScorerInstance } from '@/types'
+import type { AttackMetadata, AttackSummary, ConversationMessagesResponse, RegisteredComponentReference, ScorerInstance, TargetInfo } from '@/types'
 import { DEFAULT_USER_PREFERENCES, readUserPreferences, writeUserPreferences } from '@/utils/userPreferences'
 
 import App from './App'
@@ -49,6 +49,7 @@ jest.mock('@/services/api', () => ({
   },
   attacksApi: {
     getAttack: jest.fn(),
+    getAttackMetadata: jest.fn(),
     getMessages: jest.fn(),
     getConversations: jest.fn(),
     submitMessageSend: jest.fn(),
@@ -77,10 +78,23 @@ const savedAttack: AttackSummary = {
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   target: {
-    target_type: 'TextTarget',
+    target_type: 'OpenAIChatTarget',
     target_registry_name: 'target-b',
     identifier_hash: targetB.identifier.hash,
   },
+}
+const savedMetadata: AttackMetadata = {
+  attack_result_id: savedAttack.attack_result_id,
+  conversation_id: savedAttack.conversation_id,
+  objective: savedAttack.objective,
+  labels: savedAttack.labels,
+  operator: savedAttack.operator,
+  target: savedAttack.target,
+  execution_read_only: false,
+  last_response_message_piece_id: 'saved-response',
+  related_conversation_count: 0,
+  selected_conversation_id: savedAttack.conversation_id,
+  selected_conversation_valid: true,
 }
 const savedMessages: ConversationMessagesResponse = {
   conversation_id: 'saved-conversation',
@@ -131,6 +145,7 @@ describe('App target selection with the chat composer', () => {
     })
     jest.mocked(targetsApi.getTarget).mockResolvedValue(targetB)
     jest.mocked(attacksApi.getAttack).mockResolvedValue(savedAttack)
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue(savedMetadata)
     jest.mocked(attacksApi.getMessages).mockResolvedValue(savedMessages)
     jest.mocked(attacksApi.getConversations).mockResolvedValue({
       main_conversation_id: 'saved-conversation', conversations: [],
@@ -145,7 +160,7 @@ describe('App target selection with the chat composer', () => {
     const user = userEvent.setup()
     saveDefault('alice', targetA)
     render(<App />, { wrapper: TestWrapper })
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-a'))
     await user.click(screen.getByRole('link', { name: 'Open saved chat' }))
     expect(await screen.findByText('Saved reply from target B')).toBeInTheDocument()
     expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective?.registryName).toBe('target-a')
@@ -162,16 +177,52 @@ describe('App target selection with the chat composer', () => {
       }),
     ))
     expect(attacksApi.createAttack).not.toHaveBeenCalled()
-    expect(screen.queryByRole('combobox', { name: 'Chat target' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Objective target' })).not.toBeInTheDocument()
     await waitFor(() => expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective?.registryName).toBe('target-b'))
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-a'))
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-b'))
+  })
+
+  it('does not offer an SDK-only target or restore it as the last-used target', async () => {
+    const sdkTarget = makeTarget({
+      target_registry_name: 'sdk-demo', target_type: 'TextTarget',
+      capabilities: { supports_multi_turn: true },
+    })
+    saveDefault('alice', sdkTarget)
+    jest.mocked(targetsApi.listTargets).mockResolvedValue({
+      items: [sdkTarget, targetA], pagination: { limit: 200, has_more: false },
+    })
+    render(<App />, { wrapper: TestWrapper })
+    const selector = screen.getByRole('combobox', { name: 'Objective target' })
+    await waitFor(() => expect(selector).toBeEnabled())
+    expect(selector).toHaveValue('')
+    expect(screen.queryByRole('option', { name: /sdk-demo/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: /target-a/ })).toBeInTheDocument()
+  })
+
+  it('keeps saved TextTarget history readable without allowing another send', async () => {
+    const user = userEvent.setup()
+    const sdkInfo: TargetInfo = {
+      target_type: 'TextTarget', target_registry_name: 'target-b', identifier_hash: targetB.identifier.hash,
+    }
+    jest.mocked(attacksApi.getAttack).mockResolvedValue({ ...savedAttack, target: sdkInfo })
+    jest.mocked(attacksApi.getAttackMetadata).mockResolvedValue({ ...savedMetadata, target: sdkInfo })
+    render(<App />, { wrapper: TestWrapper })
+    await user.click(screen.getByRole('link', { name: 'Open saved chat' }))
+    expect(await screen.findByText('Saved reply from target B')).toBeInTheDocument()
+    expect(screen.getByTestId('target-resolution-unavailable-banner')).toHaveTextContent('unavailable in the GUI. Sending is disabled')
+    expect(screen.queryByPlaceholderText('Type prompt here')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Send message' })).not.toBeInTheDocument()
+    expect(targetsApi.getTarget).not.toHaveBeenCalled()
+    expect(attacksApi.submitMessageSend).not.toHaveBeenCalled()
   })
 
   it('selects a new-chat target from the badge without changing the default', async () => {
     const user = userEvent.setup()
     render(<App />, { wrapper: TestWrapper })
-    const selector = screen.getByRole('combobox', { name: 'Chat target' })
+    const selector = screen.getByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.selectOptions(selector, 'target-b')
     expect(selector).toHaveValue('target-b')
@@ -185,13 +236,13 @@ describe('App target selection with the chat composer', () => {
     saveDefault('alice', targetA)
     saveDefault('bob', targetB)
     const { rerender } = render(<App />, { wrapper: TestWrapper })
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-a'))
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Private draft')
     mockGetActiveAccount.mockReturnValue({
       homeAccountId: 'bob', tenantId: 'tenant', username: 'bob@example.test',
     })
     rerender(<App />)
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-b'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
     expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective?.registryName).toBe('target-a')
   })
@@ -201,7 +252,7 @@ describe('App target selection with the chat composer', () => {
     saveDefault('alice', targetA)
     jest.mocked(attacksApi.createAttack).mockResolvedValue(savedAttack)
     render(<App />, { wrapper: TestWrapper })
-    const selector = screen.getByRole('combobox', { name: 'Chat target' })
+    const selector = screen.getByRole('combobox', { name: 'Objective target' })
     await waitFor(() => expect(selector).toHaveValue('target-a'))
     await user.selectOptions(selector, 'target-b')
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Prompt for B')
@@ -222,7 +273,7 @@ describe('App target selection with the chat composer', () => {
     const user = userEvent.setup()
     saveDefault('alice', targetA)
     render(<App />, { wrapper: TestWrapper })
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-a'))
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Prompt for A')
     act(() => {
       saveDefault('alice', targetB)
@@ -230,14 +281,14 @@ describe('App target selection with the chat composer', () => {
         key: 'pyrit.userPreferences.v1.tenant:alice', storageArea: window.localStorage,
       }))
     })
-    expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a')
+    expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-a')
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Prompt for A')
     await user.click(screen.getByRole('link', { name: 'Open registry' }))
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-a'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('Prompt for A')
     await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-b'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-b'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
@@ -249,7 +300,7 @@ describe('App target selection with the chat composer', () => {
     await screen.findByText('Saved reply from target B')
     await user.type(screen.getByPlaceholderText('Type prompt here'), 'Do not carry this into A')
     await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-a'))
     expect(screen.getByPlaceholderText('Type prompt here')).toHaveValue('')
   })
 
@@ -264,7 +315,7 @@ describe('App target selection with the chat composer', () => {
     expect(screen.queryByRole('combobox', { name: 'Default objective target' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
     await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Chat target' })).toHaveValue('target-a'))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-a'))
     expect(screen.getByPlaceholderText('Type prompt here')).toBeEnabled()
     expect(screen.queryByText('Targets unavailable')).not.toBeInTheDocument()
     expect(targetsApi.listTargets).toHaveBeenCalledTimes(2)
@@ -286,7 +337,7 @@ describe('App target selection with the chat composer', () => {
     await user.click(await screen.findByRole('button', { name: 'Add objective', exact: true }))
     await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Check the policy')
     await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
     expect(screen.getByRole('combobox', { name: 'Chat scorer', exact: true })).toHaveValue('')
     expect(screen.queryByText(/saved scorer is unavailable/i)).not.toBeInTheDocument()
@@ -313,13 +364,13 @@ describe('App target selection with the chat composer', () => {
       isAxiosError: true, response: { status: 409, data: { detail: 'Configured scorer is unavailable.' } },
     })
     render(<App />, { wrapper: TestWrapper })
-    const target = screen.getByRole('combobox', { name: 'Chat target', exact: true })
+    const target = screen.getByRole('combobox', { name: 'Objective target', exact: true })
     await waitFor(() => expect(target).toBeEnabled())
     await user.selectOptions(target, 'target-a')
     await user.click(screen.getByRole('button', { name: 'Add objective', exact: true }))
     await user.type(screen.getByRole('textbox', { name: 'Attack objective' }), 'Check the policy')
     await user.click(screen.getByRole('button', { name: 'Save', exact: true }))
-    await user.click(screen.getByRole('button', { name: /objective achieved outcome/i }))
+    await user.click(screen.getByRole('button', { name: /^objective achieved outcome:/i }))
     await user.click(screen.getByRole('button', { name: /^automated scorer:/i }))
     expect(screen.getByRole('combobox', { name: 'Chat scorer', exact: true })).toHaveValue('unavailable')
     expect(screen.getByText(/The saved scorer is unavailable or its configuration changed/)).toBeVisible()

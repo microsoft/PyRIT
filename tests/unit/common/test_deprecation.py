@@ -5,10 +5,12 @@ import sys
 import types
 import warnings
 
+from pyrit.common import (
+    print_deprecation_message,
+)
 from pyrit.common.deprecation import (
     deprecated_kwarg,
     module_deprecation_getattr,
-    print_deprecation_message,
 )
 
 
