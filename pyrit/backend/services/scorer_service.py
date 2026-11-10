@@ -32,7 +32,7 @@ from pyrit.models.catalog import (
 from pyrit.models.component_spec import RegisteredComponentReference
 from pyrit.output.scorer.json import format_scorer_type, scorer_metrics_to_dict
 from pyrit.registry import ScorerRegistry
-from pyrit.registry.instance_registry import registry_entry_origin, saved_entry_owner
+from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin, saved_entry_owner
 from pyrit.score import Scorer
 
 
@@ -316,10 +316,8 @@ class ScorerService:
         def build() -> tuple[Any, ScorerInstance]:
             try:
                 self._registry.instances.validate_name_available(name)
-            except ValueError as error:
-                if name in self._registry.instances:
-                    raise SavedEntryConflictError(str(error)) from error
-                raise
+            except RegistryNameTakenError as error:
+                raise SavedEntryConflictError(str(error)) from error
             scorer = self._registry.create_instance_from_external_input(request.type, params=params)
             # The user saving the scorer is the one asking, so the response marks it as theirs.
             return scorer, self._build_instance(

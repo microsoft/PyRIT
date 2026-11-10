@@ -1,17 +1,15 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import { Button, MessageBar, MessageBarActions, MessageBarBody } from '@fluentui/react-components'
+import { MessageBar, MessageBarBody } from '@fluentui/react-components'
 
 import DeleteSavedEntryButton from '@/components/Registry/DeleteSavedEntryButton'
 import { runtimeApi } from '@/services/api'
-import { toApiError } from '@/services/errors'
 import type { RegistryRecipeKind, RestoreFailure, RuntimeReadiness } from '@/types'
 
 import { useRuntimeBannerStyles } from './useRuntime.styles'
 
 const POLL_INTERVAL_MS = 2_000
-const RESTORE_FAILED_STATE = 'failed'
 const KIND_LABELS: Record<RegistryRecipeKind, string> = {
   targets: 'Target',
   converters: 'Converter',
@@ -19,7 +17,6 @@ const KIND_LABELS: Record<RegistryRecipeKind, string> = {
   techniques: 'Technique',
 }
 const RuntimeContext = createContext<RuntimeReadiness>({ ready: true, state: 'ready', generation: '' })
-const RuntimeRefreshContext = createContext<() => void>(() => {})
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useRuntime(): RuntimeReadiness {
@@ -28,7 +25,6 @@ export function useRuntime(): RuntimeReadiness {
 
 export function RuntimeProvider({ children }: { children: ReactNode }) {
   const [runtime, setRuntime] = useState<RuntimeReadiness>({ ready: false, state: 'connecting', generation: '' })
-  const [refreshRequests, setRefreshRequests] = useState(0)
   useEffect(() => {
     let cancelled = false
     let polling = false
@@ -47,97 +43,52 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     void refresh()
     const timer = setInterval(() => { void refresh() }, POLL_INTERVAL_MS)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [refreshRequests])
-  const requestRefresh = useCallback(() => { setRefreshRequests((count) => count + 1) }, [])
-  return (
-    <RuntimeContext.Provider value={runtime}>
-      <RuntimeRefreshContext.Provider value={requestRefresh}>{children}</RuntimeRefreshContext.Provider>
-    </RuntimeContext.Provider>
-  )
+  }, [])
+  return <RuntimeContext.Provider value={runtime}>{children}</RuntimeContext.Provider>
 }
 
 interface RestoreFailures {
   failures: RestoreFailure[]
   listFailed: boolean
-  retrying: boolean
-  retryError: string | null
-  retry: () => Promise<void>
   forget: (failure: RestoreFailure) => void
 }
 
-function useRestoreFailures(failed: boolean, generation: string): RestoreFailures {
-  const requestRuntimeRefresh = useContext(RuntimeRefreshContext)
+// The list is read when the count or the runtime generation changes, rather than on every readiness poll.
+function useRestoreFailures(active: boolean, count: number, generation: string): RestoreFailures {
   const [failures, setFailures] = useState<RestoreFailure[]>([])
   const [listFailed, setListFailed] = useState(false)
-  const [retrying, setRetrying] = useState(false)
-  const [retryError, setRetryError] = useState<string | null>(null)
-  const listRevision = useRef(0)
-  const retryInFlight = useRef(false)
-  // The generation changes only when the runtime becomes ready or the backend restarts, so a new one
-  // while failed means a later failure, even if no poll saw that happen.
   useEffect(() => {
-    if (!failed) return
+    if (!active) return
     let cancelled = false
-    let fetching = false
-    const refresh = async (): Promise<void> => {
-      if (fetching || retryInFlight.current) return
-      fetching = true
-      const revision = listRevision.current
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    const load = async (): Promise<void> => {
       try {
         const list = await runtimeApi.getRestoreFailures()
-        // A retry that started after this request has newer results.
-        if (!cancelled && revision === listRevision.current) {
+        if (!cancelled) {
           setFailures(list.items)
           setListFailed(false)
         }
       } catch {
-        // Keep the last list and say it couldn't be refreshed; the next refresh tries again.
-        if (!cancelled && revision === listRevision.current) setListFailed(true)
-      } finally {
-        fetching = false
+        // Keep the last list and say it couldn't be refreshed; try again shortly.
+        if (!cancelled) {
+          setListFailed(true)
+          retryTimer = setTimeout(() => { void load() }, POLL_INTERVAL_MS)
+        }
       }
     }
-    void refresh()
-    // A restarted backend can fail again without the state changing, so keep the list current.
-    const timer = setInterval(() => { void refresh() }, POLL_INTERVAL_MS)
+    void load()
     return () => {
       cancelled = true
-      clearInterval(timer)
-      // A retry still in flight belongs to this failure, not to a later one.
-      listRevision.current += 1
-      setFailures([])
-      setListFailed(false)
-      setRetryError(null)
+      clearTimeout(retryTimer)
     }
-  }, [failed, generation])
-  const retry = async (): Promise<void> => {
-    if (retryInFlight.current) return
-    retryInFlight.current = true
-    listRevision.current += 1
-    const revision = listRevision.current
-    setRetrying(true)
-    setRetryError(null)
-    try {
-      const result = await runtimeApi.retryRestore()
-      if (revision === listRevision.current) {
-        setFailures(result.items)
-        setListFailed(false)
-      }
-    } catch (error) {
-      if (revision === listRevision.current) setRetryError(toApiError(error).detail)
-    } finally {
-      retryInFlight.current = false
-      setRetrying(false)
-      requestRuntimeRefresh()
-    }
-  }
+  }, [active, count, generation])
   // A deleted entry is gone from the server's list too, so it leaves this one without waiting for the next refresh.
   const forget = (deleted: RestoreFailure): void => {
     setFailures((current) => current.filter((failure) => (
       failure.kind !== deleted.kind || failure.name !== deleted.name
     )))
   }
-  return { failures: failed ? failures : [], listFailed: failed && listFailed, retrying, retryError, retry, forget }
+  return { failures: active ? failures : [], listFailed: active && listFailed, forget }
 }
 
 function describeFailure(failure: RestoreFailure): string {
@@ -150,15 +101,23 @@ function describeFailure(failure: RestoreFailure): string {
 
 export function RuntimeBanner() {
   const runtime = useRuntime()
-  const failed = runtime.state === RESTORE_FAILED_STATE
+  const failureCount = runtime.restore_failures ?? 0
   const styles = useRuntimeBannerStyles()
-  const { failures, listFailed, retrying, retryError, retry, forget } = useRestoreFailures(failed, runtime.generation)
-  if (runtime.ready) return null
-  if (failed) {
+  const { failures, listFailed, forget } = useRestoreFailures(
+    runtime.ready && failureCount > 0,
+    failureCount,
+    runtime.generation,
+  )
+  if (runtime.ready) {
+    if (failureCount === 0) return null
+    const techniqueFailed = failures.some((failure) => failure.kind === 'techniques')
     return (
       <MessageBar intent="warning">
         <MessageBarBody>
-          Some saved entries couldn&apos;t be restored, so new runs and sends are unavailable. Drafts are preserved.
+          Some saved entries couldn&apos;t be restored, so they can&apos;t be used until they&apos;re deleted or their
+          saved files are fixed. Whoever saved an entry, or an administrator, can delete it here; an administrator can
+          also fix its saved file, then apply the configuration or restart the backend.
+          {techniqueFailed && ' Until then, a scan has to name its techniques instead of choosing all, default, or a tag.'}
           <div aria-live="polite">
             {failures.length > 0 && (
               // Focusable so the list can be scrolled from the keyboard.
@@ -180,13 +139,7 @@ export function RuntimeBanner() {
             )}
             {listFailed && <div>The list of saved entries couldn&apos;t be loaded. Trying again.</div>}
           </div>
-          Whoever saved an entry, or an administrator, can delete it here; an administrator can also fix its saved
-          file. Then select Retry. Retry rebuilds only these entries.
-          {retryError && <div role="alert">{retryError}</div>}
         </MessageBarBody>
-        <MessageBarActions>
-          <Button onClick={() => { void retry() }} disabled={retrying}>{retrying ? 'Retrying…' : 'Retry'}</Button>
-        </MessageBarActions>
       </MessageBar>
     )
   }

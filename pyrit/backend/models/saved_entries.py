@@ -68,8 +68,8 @@ class SavedEntryUpdateResponse(SavedEntryResponse):
     running: bool = Field(
         ...,
         description=(
-            "Whether the edit replaced a running entry. False when the entry hadn't been restored; select Retry, or "
-            "restart, to restore it."
+            "Whether the entry was running before the edit. False when it hadn't been restored; the edit registers "
+            "it once its new settings work."
         ),
     )
     still_using_old: list[str] = Field(

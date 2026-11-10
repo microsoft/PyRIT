@@ -19,7 +19,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from azure.core.exceptions import AzureError
 from pydantic import ValidationError
 
 from pyrit.backend.models import CreateConverterRequest, CreateScorerRequest, CreateTargetRequest
@@ -50,7 +49,7 @@ from pyrit.models.catalog import (
     StoredRecipe,
     TechniqueRecipe,
 )
-from pyrit.registry.file_document_storage import DocumentConflictError
+from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import registry_entry_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
@@ -150,8 +149,9 @@ class SavedEntryService:
         Change a saved entry's settings, rebuilding it through the API that creates one.
 
         The running entry is removed while it's rebuilt and put back if the edit fails. Registered entries that hold
-        it keep the old object until the next apply or restart. An entry that hadn't been restored is only saved;
-        Retry restores it. The name, the class or attack type, and who saved it stay the same.
+        it keep the old object until the next apply or restart. An entry that couldn't be restored is registered
+        once its new settings work, which frees its name. The name, the class or attack type, and who saved it stay
+        the same.
 
         Args:
             kind (RegistryRecipeKind): The kind of entry.
@@ -194,11 +194,18 @@ class SavedEntryService:
                     f"Saved {singular} '{name}' changed since it was read. Look at it again before changing it."
                 )
             instances = REGISTRIES_BY_KIND[kind].get_registry_singleton().instances
-            entry = instances.get_entry(name)
+            held = next(
+                (unavailable for unavailable in instances.get_unavailable_entries() if unavailable.name == name), None
+            )
+            # A held name isn't listed, so this looks up only an entry that was registered.
+            entry = instances.get_entry(name) if name in instances.get_names() else None
             if entry is not None and registry_entry_origin(entry.metadata) is not RegistryEntryOrigin.SAVED:
                 entry = None
             if entry is not None:
                 instances.unregister(name, expected_entry=entry)
+            if held is not None:
+                # The rebuilt entry takes the name that its failed restore held.
+                instances.clear_unavailable(name)
             try:
                 await _rebuild_async(
                     kind=kind,
@@ -207,13 +214,15 @@ class SavedEntryService:
                     changed=request.recipe,
                     caller=caller,
                     recipes_source=recipes_source,
-                    replacing=SavedEntryReplacement(
-                        version=stored.version, previous=stored.recipe, running=entry is not None
-                    ),
+                    replacing=SavedEntryReplacement(version=stored.version, previous=stored.recipe),
                 )
             except BaseException:
                 _put_back(kind=kind, entry=entry)
+                if held is not None:
+                    instances.mark_unavailable(held)
                 raise
+            if held is not None and runtime is not None:
+                runtime.forget_restore_failure(SavedEntryRef(kind=kind, name=name))
             # Listed after the rebuild, since a request that finished during it may have registered an entry that
             # holds the old one.
             holders = _holders(kind=kind, entry=entry) if entry is not None else []
@@ -245,7 +254,8 @@ class SavedEntryService:
         Delete a saved entry's file and remove the entry it restored, so it doesn't come back.
 
         The running entry is removed before its file is deleted, so no request can pick it up in between, and is
-        put back if the file can't be deleted. A startup entry that has the same name stays.
+        put back if the file can't be deleted. A startup entry that has the same name stays. Deleting an entry that
+        couldn't be restored frees its name, which brings back a startup entry it hid.
 
         Args:
             kind (RegistryRecipeKind): The kind of entry.
@@ -288,7 +298,9 @@ class SavedEntryService:
             if users:
                 raise SavedEntryInUseError(_in_use_message(singular=singular, name=name, users=users))
             instances = REGISTRIES_BY_KIND[kind].get_registry_singleton().instances
-            entry = instances.get_entry(name)
+            held = any(unavailable.name == name for unavailable in instances.get_unavailable_entries())
+            # A held name isn't listed, so this looks up only an entry that was registered.
+            entry = instances.get_entry(name) if name in instances.get_names() else None
             if entry is not None and registry_entry_origin(entry.metadata) is not RegistryEntryOrigin.SAVED:
                 entry = None
             if entry is not None:
@@ -306,16 +318,18 @@ class SavedEntryService:
             except DocumentConflictError as error:
                 _put_back(kind=kind, entry=entry)
                 raise SavedEntryInUseError(_changed_message(singular=singular, name=name)) from error
-            except (OSError, AzureError, TimeoutError) as error:
+            except DocumentStorageUnavailableError as error:
                 _put_back(kind=kind, entry=entry)
                 logger.error(
                     "Saved %s '%s' couldn't be deleted from %s (%s).",
                     singular,
                     name,
                     storage.display_source,
-                    type(error).__name__,
+                    error.reason,
                 )
                 raise SavedEntryStorageError(f"Saved {kind.value} can't be deleted right now.") from error
+            if held:
+                instances.clear_unavailable(name)
             if entry is not None and not _registered_anywhere(entry.instance):
                 await release_component_async(entry.instance)
             if runtime is not None:
@@ -464,13 +478,13 @@ async def _read_async(
     """
     try:
         stored = await asyncio.to_thread(storage.read_recipe, name)
-    except (AzureError, TimeoutError) as error:
+    except DocumentStorageUnavailableError as error:
         logger.error(
             "Saved %s '%s' couldn't be read from %s (%s).",
             _singular(kind),
             name,
             storage.display_source,
-            type(error).__name__,
+            error.reason,
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be read right now.") from error
     if stored is None:
@@ -504,8 +518,8 @@ async def _saved_users_async(*, kind: RegistryRecipeKind, name: str, recipes_sou
 
     try:
         return await asyncio.to_thread(scan)
-    except (OSError, AzureError, TimeoutError) as error:
-        logger.error("Saved entries couldn't be read to check what uses '%s' (%s).", name, type(error).__name__)
+    except DocumentStorageUnavailableError as error:
+        logger.error("Saved entries couldn't be read to check what uses '%s' (%s).", name, error.reason)
         raise SavedEntryStorageError("Saved entries can't be read right now.") from error
 
 

@@ -19,8 +19,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
-from azure.core.exceptions import AzureError
-
 from pyrit.common.apply_defaults import resolve_constructor_defaults
 from pyrit.models import ComponentType, Parameter
 from pyrit.models.catalog import (
@@ -38,10 +36,11 @@ from pyrit.registry import (
     ScorerRegistry,
     TargetRegistry,
 )
-from pyrit.registry.file_document_storage import DocumentConflictError
+from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
 from pyrit.registry.instance_registry import (
     SAVED_ENTRY_METADATA_KEY,
     SAVED_ENTRY_OWNER_METADATA_KEY,
+    RegistryNameTakenError,
     registry_entry_origin,
 )
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
@@ -65,18 +64,16 @@ class SavedEntryReplacement:
     """
     A saved entry an edit rebuilds, so its recipe is overwritten instead of created.
 
-    The edit holds ``hold_saved_entry_lock_async()`` and has removed the running entry before the entry is rebuilt.
+    The edit holds ``hold_saved_entry_lock_async()``, and before the entry is rebuilt it has removed the running entry
+    or released the name that a failed restore held.
 
     Attributes:
         version (str): The version of the recipe the edit read.
         previous (ComponentRecipe | TechniqueRecipe): That recipe, written back if the new entry can't be registered.
-        running (bool): Whether the entry was running, so the rebuilt one is registered in its place. One that
-            wasn't, such as an entry that failed to restore, is only saved, and Retry or the next start restores it.
     """
 
     version: str
     previous: ComponentRecipe | TechniqueRecipe
-    running: bool
 
 
 # Whether the running task holds the lock, so it can't wait on it a second time.
@@ -142,6 +139,22 @@ class SavedEntryRemovalError(RuntimeError):
     """A saved entry can't be removed through the API yet, since it comes back from its saved file at every start."""
 
 
+def launch_script_class_reason(type_name: str) -> str:
+    """
+    Explain why an entry of a class that a scan's launch script added can't be saved.
+
+    Args:
+        type_name (str): The name the class is registered under.
+
+    Returns:
+        str: The reason.
+    """
+    return (
+        f"'{type_name}' was added by a scan's launch script, so a saved entry of it couldn't be restored after a "
+        "restart."
+    )
+
+
 async def prepare_saved_params_async(
     *,
     registry: InstanceHoldingRegistry[Any, Any],
@@ -162,16 +175,22 @@ async def prepare_saved_params_async(
         dict[str, Any]: The parameters to build and save the entry with.
 
     Raises:
-        NotSaveableError: If the entry would hold or use a credential, or names a Temporary entry.
+        NotSaveableError: If the entry would hold or use a credential, its class was added by a scan's launch
+            script, or it names a Temporary entry.
         ValueError: If an address the entry would use isn't a full http(s) or ws(s) address.
     """
+    if registry.is_temporary_class(type_name):
+        raise NotSaveableError(f"{launch_script_class_reason(type_name)} It can still be created without saving it.")
     saved_params = dict(params)
     fallbacks: Mapping[str, str | None] = getattr(cls, "server_fallback_parameters", {})
     for name, turned_off in fallbacks.items():
         if turned_off is not None and saved_params.get(name) in (None, ""):
             saved_params[name] = turned_off
     metadata = await asyncio.to_thread(registry.get_registered_class_metadata, type_name)
-    parameters = metadata.parameters if metadata is not None else ()
+    if metadata is None:
+        # Restore falls back to the class itself the same way, so saving never checks less than restoring.
+        metadata = await asyncio.to_thread(registry.get_class_metadata, cls)
+    parameters = metadata.parameters
     try:
         check_saved_entry_params(cls=cls, parameters=parameters, params=saved_params)
     except SavedEntryRefusedError as error:
@@ -325,9 +344,9 @@ async def save_then_register_async(
     Save an entry's recipe, then register the entry as saved.
 
     The recipe is written only if no saved entry of the kind has the name, so of two saves under one name only one
-    succeeds. If registering then fails, the recipe is deleted again. Saving holds the lock deleting does, and first
-    checks that every entry the recipe names still comes back after a restart, since one may have been deleted after
-    the request was checked.
+    succeeds. If registering then fails, the recipe is deleted again, unless another writer has replaced it since.
+    Saving holds the lock deleting does, and first checks that every entry the recipe names still comes back after a
+    restart, since one may have been deleted after the request was checked.
 
     Args:
         kind (RegistryRecipeKind): The kind of entry.
@@ -396,26 +415,26 @@ async def _save_then_register_async(
     singular = kind.value.removesuffix("s")
     storage = RegistryRecipeStorage(kind=kind, source=recipes_source)
     try:
-        await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)
+        version = await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)
     except DocumentConflictError as error:
         raise SavedEntryConflictError(f"A saved {singular} named '{name}' already exists.") from error
-    except (OSError, AzureError) as error:
+    except DocumentStorageUnavailableError as error:
         logger.error(
             "Saved %s '%s' couldn't be written to %s (%s). If the write reached storage anyway, the %s is restored "
             "at the next start.",
             singular,
             name,
             storage.display_source,
-            type(error).__name__,
+            error.reason,
             singular,
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
     try:
         register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
     except Exception as error:
-        if not await _delete_recipe_async(storage=storage, singular=singular, name=name):
+        if not await _delete_recipe_async(storage=storage, singular=singular, name=name, version=version):
             raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
-        if isinstance(error, ValueError):
+        if isinstance(error, RegistryNameTakenError):
             raise SavedEntryConflictError(str(error)) from error
         raise
 
@@ -430,7 +449,7 @@ async def _replace_then_register_async(
     replacing: SavedEntryReplacement,
 ) -> None:
     """
-    Overwrite the recipe an edit read, then register the rebuilt entry if the old one was running.
+    Overwrite the recipe an edit read, then register the rebuilt entry.
 
     The old recipe is put back if registering fails.
 
@@ -448,17 +467,15 @@ async def _replace_then_register_async(
         raise SavedEntryConflictError(
             f"Saved {singular} '{name}' changed since it was read. Look at it again before changing it."
         ) from error
-    except (OSError, AzureError, TimeoutError) as error:
+    except DocumentStorageUnavailableError as error:
         logger.error(
             "Saved %s '%s' couldn't be written to %s (%s).",
             singular,
             name,
             storage.display_source,
-            type(error).__name__,
+            error.reason,
         )
         raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
-    if not replacing.running:
-        return
     try:
         register({SAVED_ENTRY_METADATA_KEY: kind.value, SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner})
     except Exception as error:
@@ -466,7 +483,7 @@ async def _replace_then_register_async(
             await asyncio.to_thread(
                 storage.replace_recipe, name=name, recipe=replacing.previous, expected_version=version
             )
-        except (DocumentConflictError, OSError, AzureError, TimeoutError):
+        except (DocumentConflictError, DocumentStorageUnavailableError):
             logger.error(
                 "Saved %s '%s' in %s holds the new settings, but the edited entry couldn't be registered. Its old "
                 "settings come back only if the file is fixed.",
@@ -475,20 +492,23 @@ async def _replace_then_register_async(
                 storage.display_source,
             )
             raise SavedEntryStorageError(f"Saved {kind.value} can't be written right now.") from error
-        if isinstance(error, ValueError):
+        if isinstance(error, RegistryNameTakenError):
             raise SavedEntryConflictError(str(error)) from error
         raise
 
 
-async def _delete_recipe_async(*, storage: RegistryRecipeStorage, singular: str, name: str) -> bool:
+async def _delete_recipe_async(*, storage: RegistryRecipeStorage, singular: str, name: str, version: str) -> bool:
     """
-    Delete a recipe whose entry couldn't be registered.
+    Delete a recipe whose entry couldn't be registered, unless another writer has replaced it since.
 
     Returns:
         bool: False if the recipe couldn't be deleted, which is logged for an operator to fix.
     """
     try:
-        await asyncio.to_thread(storage.delete_recipe, name)
+        await asyncio.to_thread(storage.delete_recipe, name, expected_version=version)
+    except DocumentConflictError:
+        # The file holds what another writer saved since, so it isn't this recipe to delete.
+        return True
     except Exception as error:
         logger.error(
             "Saved %s '%s' couldn't be registered, and its saved recipe in %s couldn't be deleted (%s). "
@@ -496,7 +516,7 @@ async def _delete_recipe_async(*, storage: RegistryRecipeStorage, singular: str,
             singular,
             name,
             storage.display_source,
-            type(error).__name__,
+            error.reason if isinstance(error, DocumentStorageUnavailableError) else type(error).__name__,
             singular,
         )
         return False

@@ -35,9 +35,27 @@ from pyrit.backend.services.saved_entry_service import (
 from pyrit.backend.services.scorer_service import ScorerService, get_scorer_service
 from pyrit.backend.services.technique_service import TechniqueService, get_technique_service
 from pyrit.converter import SearchReplaceConverter, ToneConverter
-from pyrit.models.catalog import ComponentRecipe, RegistryEntryOrigin, RegistryRecipeKind, SavedEntryOwner
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
-from pyrit.registry.instance_registry import SAVED_ENTRY_OWNER_METADATA_KEY, registry_entry_origin
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    RestoreFailureReason,
+    SavedEntryOwner,
+)
+from pyrit.prompt_target import OpenAIChatTarget
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    SavedEntryUnavailableError,
+    ScorerRegistry,
+    TargetRegistry,
+)
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    RegistryNameTakenError,
+    registration_origin,
+    registry_entry_origin,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.setup.initializers.techniques import build_technique_factories
@@ -269,7 +287,7 @@ async def test_replacing_a_saved_entry_needs_the_lock_an_edit_holds(tmp_path: Pa
             recipe=recipe,
             recipes_source=str(tmp_path),
             register=register,
-            replacing=SavedEntryReplacement(version="v1", previous=recipe, running=True),
+            replacing=SavedEntryReplacement(version="v1", previous=recipe),
         )
 
     register.assert_not_called()
@@ -480,12 +498,13 @@ async def test_the_old_entry_is_released_only_when_nothing_could_use_it(tmp_path
         release.assert_awaited_once_with(old)
 
 
-async def test_an_entry_that_failed_to_restore_is_fixed_and_comes_back_on_retry(tmp_path: Path) -> None:
+async def test_an_edit_that_fixes_an_entry_that_failed_to_restore_registers_it(tmp_path: Path) -> None:
     broken = {**_SAVED_CHAT, "params": {**_SAVED_CHAT["params"], "endpoint": "https://api.example.test/v1"}}
     _write(tmp_path, TARGETS, "saved_chat", broken)
     assert [failure.name for failure in RegistryRecipeRestorer(source=str(tmp_path)).restore().failures] == [
         "saved_chat"
     ]
+    instances = TargetRegistry.get_registry_singleton().instances
     details = await _read(tmp_path, TARGETS, "saved_chat")
 
     edited = await _edit(
@@ -497,10 +516,25 @@ async def test_an_entry_that_failed_to_restore_is_fixed_and_comes_back_on_retry(
     )
 
     assert edited.running is False
-    # Retry restores it into the registries as they are, so the edit must not have registered it.
-    assert TargetRegistry.get_registry_singleton().instances.get("saved_chat") is None
+    assert isinstance(instances.get("saved_chat"), OpenAIChatTarget)
+    TargetRegistry.reset_registry_singleton()
     assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
-    assert TargetRegistry.get_registry_singleton().instances.get("saved_chat") is not None
+
+
+async def test_an_edit_that_doesnt_fix_an_entry_that_failed_to_restore_keeps_its_name_held(tmp_path: Path) -> None:
+    broken = {**_SAVED_CHAT, "params": {**_SAVED_CHAT["params"], "endpoint": "https://api.example.test/v1"}}
+    _write(tmp_path, TARGETS, "saved_chat", broken)
+    assert len(RegistryRecipeRestorer(source=str(tmp_path)).restore().failures) == 1
+    instances = TargetRegistry.get_registry_singleton().instances
+    details = await _read(tmp_path, TARGETS, "saved_chat")
+    before = _file(tmp_path, TARGETS, "saved_chat").read_bytes()
+
+    with pytest.raises(ValueError):
+        await _edit(tmp_path, TARGETS, "saved_chat", version=details.version, recipe=details.recipe)
+
+    with pytest.raises(SavedEntryUnavailableError):
+        instances.get("saved_chat")
+    assert _file(tmp_path, TARGETS, "saved_chat").read_bytes() == before
 
 
 async def test_a_file_rewritten_after_the_edit_read_it_isnt_overwritten(tmp_path: Path) -> None:
@@ -570,8 +604,8 @@ async def test_a_name_a_startup_entry_took_cant_be_edited_into_coming_back(tmp_p
     ConverterRegistry.reset_registry_singleton()
     instances = ConverterRegistry.get_registry_singleton().instances
     startup = SearchReplaceConverter(pattern="fish", replace="dog")
-    instances.register(startup, name="cat_replace")
-    instances.mark_configuration_entries()
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        instances.register(startup, name="cat_replace")
     details = await _read(tmp_path, CONVERTERS, "cat_replace")
     before = _file(tmp_path, CONVERTERS, "cat_replace").read_bytes()
 
@@ -588,7 +622,39 @@ async def test_a_name_a_startup_entry_took_cant_be_edited_into_coming_back(tmp_p
     assert _file(tmp_path, CONVERTERS, "cat_replace").read_bytes() == before
 
 
-async def test_a_new_entry_that_cant_be_registered_puts_the_old_file_and_entry_back(tmp_path: Path) -> None:
+async def test_an_edit_of_an_entry_whose_name_a_startup_entry_took_keeps_the_name_held(tmp_path: Path) -> None:
+    await _save_replace(tmp_path)
+    ConverterRegistry.reset_registry_singleton()
+    instances = ConverterRegistry.get_registry_singleton().instances
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        instances.register(SearchReplaceConverter(pattern="fish", replace="dog"), name="cat_replace")
+    failures = RegistryRecipeRestorer(source=str(tmp_path)).restore().failures
+    assert [failure.reason for failure in failures] == [RestoreFailureReason.NAME_CLASH]
+    details = await _read(tmp_path, CONVERTERS, "cat_replace")
+
+    with pytest.raises(SavedEntryConflictError, match="already exists"):
+        await _edit(
+            tmp_path,
+            CONVERTERS,
+            "cat_replace",
+            version=details.version,
+            recipe={**details.recipe, "params": {"pattern": "cat", "replace": "bird"}},
+        )
+
+    with pytest.raises(SavedEntryUnavailableError):
+        instances.get("cat_replace")
+
+
+@pytest.mark.parametrize(
+    ("error", "raised"),
+    [
+        (RegistryNameTakenError("Instance 'cat_replace' already exists"), SavedEntryConflictError),
+        (ValueError("refused"), ValueError),
+    ],
+)
+async def test_a_new_entry_that_cant_be_registered_puts_the_old_file_and_entry_back(
+    tmp_path: Path, error: Exception, raised: type[Exception]
+) -> None:
     await _save_replace(tmp_path)
     instances = ConverterRegistry.get_registry_singleton().instances
     old = instances.get("cat_replace")
@@ -598,11 +664,11 @@ async def test_a_new_entry_that_cant_be_registered_puts_the_old_file_and_entry_b
 
     def refuse_the_new_one(registry: Any, instance: Any, **kwargs: Any) -> None:
         if instance is not old:
-            raise ValueError("refused")
+            raise error
         register(registry, instance, **kwargs)
 
     with patch.object(type(instances), "register", refuse_the_new_one):
-        with pytest.raises(SavedEntryConflictError):
+        with pytest.raises(raised) as refusal:
             await _edit(
                 tmp_path,
                 CONVERTERS,
@@ -611,5 +677,6 @@ async def test_a_new_entry_that_cant_be_registered_puts_the_old_file_and_entry_b
                 recipe={**details.recipe, "params": {"pattern": "cat", "replace": "bird"}},
             )
 
+    assert type(refusal.value) is raised
     assert _file(tmp_path, CONVERTERS, "cat_replace").read_bytes() == before
     assert instances.get("cat_replace") is old

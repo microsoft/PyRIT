@@ -436,3 +436,17 @@ def test_scorer_list_and_get_pass_the_signed_in_users_object_id(
 
     assert service.list_scorers_async.call_args.kwargs["current_user_oid"] == expected
     assert service.get_scorer_async.call_args.kwargs["current_user_oid"] == expected
+
+
+def test_create_scorer_records_no_owner_when_not_saving(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    with (
+        patch("pyrit.backend.routes.scorers.get_scorer_service") as get_service,
+        patch("pyrit.backend.routes.scorers.saved_entry_owner_from_request") as saved_entry_owner,
+    ):
+        get_service.return_value.create_scorer_async = AsyncMock(side_effect=ValueError("stop"))
+
+        client.post("/api/scorers", json={"name": "leak", "type": "SubStringScorer", "params": {"substring": "x"}})
+
+    assert get_service.return_value.create_scorer_async.call_args.kwargs["owner"] is None
+    saved_entry_owner.assert_not_called()

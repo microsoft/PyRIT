@@ -5,12 +5,18 @@
 Tests for backend error handler middleware.
 """
 
+import logging
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
+from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware import register_error_handlers
+from pyrit.models.catalog import RestoreFailureReason
+from pyrit.registry import SavedEntryUnavailableError, TechniqueSelectionUnavailableError, UnavailableEntry
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 
 class TestErrorHandlers:
@@ -124,6 +130,90 @@ class TestErrorHandlers:
         assert data["type"] == "/errors/forbidden"
         assert data["title"] == "Forbidden"
         assert data["status"] == 403
+
+    def test_storage_failure_returns_503_and_names_the_location_only_in_the_log(
+        self, app: FastAPI, client: TestClient, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test that the log names the storage location and the response doesn't."""
+        error = DocumentStorageUnavailableError(
+            label="Scenario preset", source="/srv/presets", reason="Permission denied"
+        )
+
+        @app.get("/test")
+        async def test_endpoint() -> dict:
+            raise error
+
+        with caplog.at_level(logging.DEBUG, logger="pyrit.backend.middleware.error_handlers"):
+            response = client.get("/test")
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "type": "/errors/storage-unavailable",
+            "title": "Service Unavailable",
+            "status": 503,
+            "detail": "Scenario preset storage is unavailable",
+            "instance": "/test",
+        }
+        assert "Scenario preset storage at /srv/presets is unavailable: Permission denied (GET /test)" in (
+            caplog.messages
+        )
+        assert any(record.exc_info and record.exc_info[1] is error for record in caplog.records)
+
+    def test_unreadable_document_returns_503_with_the_reason(self, app: FastAPI, client: TestClient) -> None:
+        """Test that one document that can't be read is named with its reason."""
+
+        @app.get("/test")
+        async def test_endpoint() -> dict:
+            raise DocumentUnreadableError(
+                label="Scenario preset",
+                source="/srv/presets",
+                name="nightly",
+                file_name="nightly.json",
+                reason="Not a regular file",
+            )
+
+        response = client.get("/test")
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "Scenario preset 'nightly' can't be read: Not a regular file"
+        assert "/srv/presets" not in response.text
+
+    @pytest.mark.parametrize(
+        ("admin", "detail"),
+        [
+            (True, "The saved target 'broken' couldn't be restored: ValueError: https://host/v1"),
+            (False, "The saved target 'broken' couldn't be restored. It couldn't be built."),
+        ],
+    )
+    def test_a_held_saved_entry_returns_409_with_details_only_for_admins(
+        self, app: FastAPI, client: TestClient, admin: bool, detail: str
+    ) -> None:
+        """Test that a saved entry that couldn't be restored is a conflict naming it and the reason."""
+        app.state.authentication_policy = AuthenticationPolicy(mode="local", allow_unauthenticated_admin=admin)
+        entry = UnavailableEntry(
+            kind="target", name="broken", reason=RestoreFailureReason.BUILD_ERROR, message="ValueError: https://host/v1"
+        )
+
+        @app.get("/test")
+        async def test_endpoint() -> dict:
+            raise SavedEntryUnavailableError(entry=entry, name="broken")
+
+        response = client.get("/test")
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == detail
+
+    def test_a_broad_technique_selection_returns_409(self, app: FastAPI, client: TestClient) -> None:
+        """Test that choosing techniques broadly while one is held is a conflict naming it."""
+
+        @app.get("/test")
+        async def test_endpoint() -> dict:
+            raise TechniqueSelectionUnavailableError(names=["formal"])
+
+        response = client.get("/test")
+
+        assert response.status_code == 409
+        assert "Saved technique 'formal' couldn't be restored" in response.json()["detail"]
 
     def test_not_implemented_error_returns_501(self, app: FastAPI, client: TestClient) -> None:
         """Test that NotImplementedError returns 501 with RFC 7807 format."""

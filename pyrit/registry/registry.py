@@ -32,7 +32,13 @@ import threading
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
-from pyrit.registry.instance_registry import DefaultInstanceRegistry, InstanceRegistry
+from pyrit.models.catalog import RegistryEntryOrigin
+from pyrit.registry.instance_registry import (
+    DefaultInstanceRegistry,
+    InstanceRegistry,
+    SupportsIdentifier,
+    current_registration_origin,
+)
 from pyrit.registry.registry_metadata import RegistryMetadata
 from pyrit.registry.resolution import (
     derive_parameters,
@@ -44,7 +50,7 @@ if TYPE_CHECKING:
     from types import ModuleType
     from typing import Self
 
-    from pyrit.models import ComponentIdentifier, ComponentType, Identifiable, Parameter
+    from pyrit.models import ComponentIdentifier, ComponentType, Parameter
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +74,7 @@ class ReconstructionContext(Protocol):
 
 
 T = TypeVar("T")
-InstanceT = TypeVar("InstanceT", bound="Identifiable")
+InstanceT = TypeVar("InstanceT", bound=SupportsIdentifier)
 MetadataT = TypeVar("MetadataT", bound=RegistryMetadata)
 ConfigurableT = TypeVar("ConfigurableT", bound="SupportsParamBag")
 
@@ -212,16 +218,17 @@ class Registry(ABC, Generic[T, MetadataT]):
         # so catalog reads (__contains__, get_class, ...) are never parked behind a build.
         self._metadata_build_lock = threading.RLock()
         self._classes: dict[str, type[T]] = {}
+        self._temporary_class_names: set[str] = set()
         self._metadata_cache: dict[str, MetadataT] | None = None
         # Bumped on every catalog mutation so an in-flight metadata build can detect a
         # registration that landed mid-build and retry instead of caching a stale snapshot.
         self._catalog_version = 0
         self._discovered = False
+        self._discovering = False
         self._lazy_discovery = lazy_discovery
 
         if not lazy_discovery:
-            self._discover()
-            self._discovered = True
+            self._ensure_discovered()
 
     @classmethod
     def get_registry_singleton(cls) -> Self:
@@ -281,7 +288,11 @@ class Registry(ABC, Generic[T, MetadataT]):
         """Ensure discovery has been performed. Runs discovery on first access."""
         with self._catalog_lock:
             if not self._discovered:
-                self._discover()
+                self._discovering = True
+                try:
+                    self._discover()
+                finally:
+                    self._discovering = False
                 self._discovered = True
 
     def _base_type(self) -> type[T]:
@@ -598,9 +609,28 @@ class Registry(ABC, Generic[T, MetadataT]):
             if name is None:
                 name = self._get_registry_name(cls)
             self._validate_class(cls)
+            if current_registration_origin() is RegistryEntryOrigin.TEMPORARY and not self._discovering:
+                # A class that first appears while a scan's launch scripts run is gone after a restart.
+                # The classes discovery finds come back, so they are found first.
+                self._ensure_discovered()
+                if name not in self._classes:
+                    self._temporary_class_names.add(name)
             self._classes[name] = cls
             self._metadata_cache = None
             self._catalog_version += 1
+
+    def is_temporary_class(self, name: str) -> bool:
+        """
+        Return whether a class was first registered by a scan's launch scripts, so it's gone after a restart.
+
+        Args:
+            name (str): The catalog name.
+
+        Returns:
+            bool: True for a class only a scan's launch scripts registered.
+        """
+        with self._catalog_lock:
+            return name in self._temporary_class_names
 
     def get_class(self, name: str) -> type[T]:
         """

@@ -33,6 +33,7 @@ from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.backend.services.saved_entries import (
     SavedEntryConflictError,
     SavedEntryReplacement,
+    launch_script_class_reason,
     prepare_saved_params_async,
     save_then_register_async,
 )
@@ -48,7 +49,7 @@ from pyrit.models.catalog import (
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.instance_registry import registry_entry_origin, saved_entry_owner
+from pyrit.registry.instance_registry import RegistryNameTakenError, registry_entry_origin, saved_entry_owner
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saveable_class
 
 logger = logging.getLogger(__name__)
@@ -314,6 +315,8 @@ class TargetService:
         Returns:
             tuple[list[AuthMode], str | None]: The saveable auth modes, and the reason when there are none.
         """
+        if self._registry.is_temporary_class(target_type):
+            return [], launch_script_class_reason(target_type)
         try:
             auth_modes = check_saveable_class(self._registry.get_class(target_type))
         except SavedEntryRefusedError as error:
@@ -558,8 +561,8 @@ class TargetService:
         if request.register:
             try:
                 self._registry.instances.validate_name_available(target_registry_name)
-            except ValueError as error:
-                if request.persist and target_registry_name in self._registry.instances:
+            except RegistryNameTakenError as error:
+                if request.persist:
                     raise SavedEntryConflictError(str(error)) from error
                 raise
         if (

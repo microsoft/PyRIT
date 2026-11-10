@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import logging
 import os
 from collections.abc import Callable, Generator
 from contextlib import ExitStack
@@ -42,7 +43,13 @@ from pyrit.models.catalog import (
     SavedEntryOwner,
 )
 from pyrit.prompt_target import OpenAIChatTarget, TextTarget
-from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, ScorerRegistry, TargetRegistry
+from pyrit.registry import (
+    AttackTechniqueRegistry,
+    ConverterRegistry,
+    SavedEntryUnavailableError,
+    ScorerRegistry,
+    TargetRegistry,
+)
 from pyrit.registry.instance_registry import (
     CONFIGURATION_ENTRY_METADATA_KEY,
     SAVED_ENTRY_OWNER_METADATA_KEY,
@@ -55,6 +62,18 @@ from pyrit.score import SubStringScorer
 from pyrit.setup import ConfigurationLoader
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, make_scenario_result
+
+_RESTORED_REGISTRIES = (TargetRegistry, ConverterRegistry, ScorerRegistry, AttackTechniqueRegistry)
+
+
+@pytest.fixture(autouse=True)
+def fresh_registries() -> Generator[None, None, None]:
+    """Start each test from the registries a new process has, as a real startup or apply does."""
+    for registry in _RESTORED_REGISTRIES:
+        registry.reset_registry_singleton()
+    yield
+    for registry in _RESTORED_REGISTRIES:
+        registry.reset_registry_singleton()
 
 
 @pytest.fixture
@@ -122,6 +141,7 @@ async def test_runtime_readiness_reports_state_async(*, runtime: RuntimeLifecycl
         "ready": state == "ready",
         "state": state if state is not None else "failed",
         "generation": "original" if state is not None else "",
+        "restore_failures": 0,
     }
 
 
@@ -792,7 +812,12 @@ async def test_shutdown_drains_disconnected_requests_before_closing_async(
             assert runtime.status()["state"] == "stopping"
             readiness = await client.get("/api/runtime")
             assert readiness.status_code == 200
-            assert readiness.json() == {"ready": False, "state": "stopping", "generation": "original"}
+            assert readiness.json() == {
+                "ready": False,
+                "state": "stopping",
+                "generation": "original",
+                "restore_failures": 0,
+            }
             liveness = await client.get("/api/health")
             assert liveness.status_code == 200
             assert liveness.json()["status"] == "healthy"
@@ -960,7 +985,12 @@ async def test_shutdown_keeps_admission_closed_while_accepted_apply_finishes_asy
             assert runtime.status()["state"] == "stopping"
             readiness = await client.get("/api/runtime")
             assert readiness.status_code == 200
-            assert readiness.json() == {"ready": False, "state": "stopping", "generation": runtime.generation}
+            assert readiness.json() == {
+                "ready": False,
+                "state": "stopping",
+                "generation": runtime.generation,
+                "restore_failures": 0,
+            }
             assert (await client.get("/api/config")).status_code == 503
             release_request.set()
             await asyncio.wait_for(shutdown, timeout=5)
@@ -1233,28 +1263,35 @@ async def test_apply_restores_an_entry_that_uses_a_startup_target_async(
     converter = ConverterRegistry.get_registry_singleton().instances.get("formal")
     assert converter is not None
     assert converter._converter_target is startup_chat
+    startup_entry = targets.instances.get_entry("startup_chat")
+    assert startup_entry is not None
+    assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
 
 
-async def test_startup_with_an_unrestorable_entry_is_not_ready_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+async def test_startup_with_an_unrestorable_entry_is_ready_and_holds_its_name_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     recipes = tmp_path / "recipes"
     _save_recipe(recipes, kind="targets", name="broken", document={"class_module": "nowhere", "class_name": "Nope"})
 
-    await _start_with_recipes_async(runtime, recipes=recipes)
+    with caplog.at_level(logging.WARNING, logger="pyrit.backend.services.runtime_lifecycle"):
+        await _start_with_recipes_async(runtime, recipes=recipes)
 
-    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
-    assert "1 problem" in runtime.message
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
         health = await client.get("/api/health")
         status = await client.get("/api/config/runtime")
-    assert health.json()["ready"] is False
+    assert health.json()["ready"] is True
     assert status.json()["version"] == runtime.version
-    assert runtime.version is not None
     (failure,) = status.json()["restore_failures"]
     assert (failure["kind"], failure["name"], failure["reason"]) == ("targets", "broken", "unknown_class")
     assert failure["version"]
+    assert "1 saved registry entry couldn't be restored" in caplog.text
+    with pytest.raises(SavedEntryUnavailableError, match="'Nope' is not a registered target class"):
+        TargetRegistry.get_registry_singleton().instances.get("broken")
 
 
-async def test_status_reports_a_reference_name_that_is_not_valid_text_async(
+async def test_status_reports_a_recipe_whose_text_is_not_valid_unicode_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     recipes = tmp_path / "recipes"
@@ -1275,7 +1312,7 @@ async def test_status_reports_a_reference_name_that_is_not_valid_text_async(
         status = await client.get("/api/config/runtime")
     assert status.status_code == 200
     (failure,) = status.json()["restore_failures"]
-    assert (failure["reason"], failure["dependency"]["name"]) == ("missing_dependency", "missing\\udcff")
+    assert (failure["name"], failure["reason"]) == ("pool", "invalid_recipe")
 
 
 async def test_status_lists_a_file_name_that_is_not_valid_text_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
@@ -1305,27 +1342,25 @@ async def test_every_signed_in_user_sees_why_saved_entries_were_not_restored_asy
         document={
             "class_module": "pyrit.prompt_target.round_robin_target",
             "class_name": "RoundRobinTarget",
-            "params": {"targets": ["missing\udcff"]},
+            "params": {"targets": ["missing"]},
         },
     )
 
     await _start_with_recipes_async(runtime, recipes=recipes)
 
-    assert runtime.state == "failed"
+    assert runtime.state == "ready"
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
         failures = await client.get("/api/restore-failures")
         readiness = await client.get("/api/runtime")
         health = await client.get("/api/health")
-        blocked = await client.get("/api/targets")
     assert failures.status_code == 200
     (item,) = failures.json()["items"]
     assert (item["kind"], item["name"], item["reason"]) == ("targets", "pool", "missing_dependency")
-    assert item["dependency"] == {"kind": "targets", "name": "missing\\udcff"}
+    assert item["dependency"] == {"kind": "targets", "name": "missing"}
     assert item["message"] == "It uses an entry that doesn't exist."
     assert item["version"]
-    assert set(readiness.json()) == {"ready", "state", "generation"}
+    assert readiness.json()["restore_failures"] == 1
     assert "restore_failures" not in health.json()
-    assert blocked.status_code == 503
 
 
 _SERVER_SECRET = "server-secret-6f1c"
@@ -1397,7 +1432,6 @@ async def test_a_signed_in_user_sees_a_constructor_error_only_as_an_administrato
 
 
 async def test_restore_failures_explain_every_reason_without_its_details_async(runtime: RuntimeLifecycle) -> None:
-    runtime.state = "failed"
     runtime.restore_failures = [
         RestoreFailure(kind=RegistryRecipeKind.SCORERS, name=reason.value, reason=reason, message="detail")
         for reason in RestoreFailureReason
@@ -1409,14 +1443,10 @@ async def test_restore_failures_explain_every_reason_without_its_details_async(r
     assert response.status_code == 200
     messages = {item["reason"]: item["message"] for item in response.json()["items"]}
     assert set(messages) == {reason.value for reason in RestoreFailureReason}
-    assert all(message and message != "detail" for message in messages.values())
-    assert messages["unsupported_credential"] == (
-        "It holds a credential, or would use one of this server's, which a saved entry can't do."
-    )
+    assert messages == {reason.value: reason.explanation for reason in RestoreFailureReason}
 
 
 async def test_restore_failures_need_sign_in_when_it_is_on_async(runtime: RuntimeLifecycle) -> None:
-    runtime.state = "failed"
     runtime.app.state.authentication_policy = AuthenticationPolicy(
         mode="entra", tenant_id="test-tenant", client_id="test-client"
     )
@@ -1430,7 +1460,7 @@ async def test_restore_failures_need_sign_in_when_it_is_on_async(runtime: Runtim
     assert health.status_code == 200
 
 
-@pytest.mark.parametrize("state", ["ready", "initializing", None])
+@pytest.mark.parametrize("state", ["ready", None])
 async def test_restore_failures_are_empty_when_nothing_failed_async(
     runtime: RuntimeLifecycle, state: str | None
 ) -> None:
@@ -1474,7 +1504,7 @@ async def test_fixing_the_file_and_restarting_reaches_ready_async(runtime: Runti
     assert runtime.status()["restore_failures"] == []
 
 
-async def test_apply_with_an_unrestorable_entry_keeps_the_new_version_async(
+async def test_apply_with_an_unrestorable_entry_becomes_ready_with_the_new_version_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     recipes = tmp_path / "recipes"
@@ -1485,11 +1515,10 @@ async def test_apply_with_an_unrestorable_entry_keeps_the_new_version_async(
     await apply_async(runtime)
 
     _, current_version = await runtime.source.read_with_version_async()
-    assert (runtime.state, runtime.outcome) == ("failed", "restore-failed")
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
     assert runtime.version == current_version
     assert runtime.status()["restore_failures"][0]["reason"] == "unknown_class"
     config.apply_prepared_reinitialization_async.assert_awaited_once()
-    assert runtime.begin_apply(version=current_version)["outcome"] == "restart-required"
 
 
 async def test_restore_cancellation_propagates_from_startup_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
@@ -1548,69 +1577,29 @@ _RESTORABLE_TARGET = {
 _BROKEN_TARGET = {"class_module": "nowhere", "class_name": "Nope"}
 
 
-async def _retry_async(runtime: RuntimeLifecycle) -> httpx.Response:
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
-        return await client.post("/api/restore-failures/retry")
-
-
 @pytest.mark.usefixtures("patch_central_database")
-async def test_retry_restores_what_was_fixed_and_publishes_the_configuration_async(
-    runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
-) -> None:
-    recipes = tmp_path / "recipes"
-    _save_converter_using_startup_chat(recipes)
-    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
-    config = await runtime._load_async()
-    config.operator = "red_team_lead"
-    targets = TargetRegistry.get_registry_singleton()
-    await _start_with_recipes_async(
-        runtime, recipes=recipes, initialize=lambda **_: targets.instances.register(startup_chat, name="startup_chat")
-    )
-    assert (runtime.state, runtime.app.state.default_labels) == ("failed", {})
-    converter = ConverterRegistry.get_registry_singleton().instances.get("formal")
-    assert converter is not None
-
-    _save_recipe(recipes, kind="targets", name="ghost", document=_RESTORABLE_TARGET)
-    changed = ConfigurationLoader(memory_db_type="in_memory", env_files=[], operator="someone_else")
-    with patch.object(runtime, "_load_async", AsyncMock(return_value=changed)):
-        response = await _retry_async(runtime)
-
-    assert (response.status_code, response.json()) == (200, {"state": "ready", "outcome": "success", "items": []})
-    assert isinstance(targets.instances.get("ghost"), OpenAIChatTarget)
-    assert targets.instances.get("startup_chat") is startup_chat
-    assert ConverterRegistry.get_registry_singleton().instances.get("formal") is converter
-    assert runtime.app.state.default_labels == {"operator": "red_team_lead"}
-
-
-@pytest.mark.usefixtures("patch_central_database", "startup_chat")
-async def test_retry_keeps_what_it_restored_while_other_entries_still_fail_async(
+async def test_fixing_the_file_and_applying_restores_the_entry_and_releases_its_name_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     recipes = tmp_path / "recipes"
-    _save_recipe(recipes, kind="targets", name="first", document=_BROKEN_TARGET)
-    _save_recipe(recipes, kind="targets", name="second", document=_BROKEN_TARGET)
+    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
     await _start_with_recipes_async(runtime, recipes=recipes)
-    targets = TargetRegistry.get_registry_singleton()
+    assert [failure["name"] for failure in runtime.status()["restore_failures"]] == ["ghost"]
+    _save_recipe(recipes, kind="targets", name="ghost", document=_RESTORABLE_TARGET)
+    config = await runtime._load_async()
+    config.apply_prepared_reinitialization_async.side_effect = lambda **_: TargetRegistry.reset_registry_singleton()
 
-    _save_recipe(recipes, kind="targets", name="first", document=_RESTORABLE_TARGET)
-    partial = await _retry_async(runtime)
-    first = targets.instances.get("first")
-    _save_recipe(recipes, kind="targets", name="second", document=_RESTORABLE_TARGET)
-    complete = await _retry_async(runtime)
+    await apply_async(runtime)
 
-    assert (partial.status_code, partial.json()["state"], partial.json()["outcome"]) == (
-        200,
-        "failed",
-        "restore-failed",
-    )
-    assert [item["name"] for item in partial.json()["items"]] == ["second"]
-    assert isinstance(first, OpenAIChatTarget)
-    assert (complete.json()["state"], runtime.state) == ("ready", "ready")
-    assert targets.instances.get("first") is first
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    assert runtime.status()["restore_failures"] == []
+    assert isinstance(TargetRegistry.get_registry_singleton().instances.get("ghost"), OpenAIChatTarget)
 
 
 @pytest.mark.usefixtures("patch_central_database", "startup_chat")
-async def test_retry_restores_an_entry_an_edit_fixed_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
+async def test_an_edit_that_fixes_an_entry_that_couldnt_be_restored_registers_it_async(
+    runtime: RuntimeLifecycle, tmp_path: Path
+) -> None:
     # The cached service holds the registry it was made with, so it's made again with this test's.
     get_target_service.cache_clear()
     recipes = tmp_path / "recipes"
@@ -1622,7 +1611,7 @@ async def test_retry_restores_an_entry_an_edit_fixed_async(runtime: RuntimeLifec
         document={**_RESTORABLE_TARGET, "params": {**_RESTORABLE_TARGET["params"], **unreachable}},
     )
     await _start_with_recipes_async(runtime, recipes=recipes)
-    assert runtime.state == "failed"
+    assert [failure["name"] for failure in runtime.status()["restore_failures"]] == ["ghost"]
     # The fixture skips the management setup that names the storage source.
     runtime.app.state.registry_recipes_source = str(recipes)
     runtime.app.include_router(saved_entries.router, prefix="/api")
@@ -1636,100 +1625,26 @@ async def test_retry_restores_an_entry_an_edit_fixed_async(runtime: RuntimeLifec
                 "recipe": {**details["recipe"], "params": _RESTORABLE_TARGET["params"]},
             },
         )
-    retry = await _retry_async(runtime)
     get_target_service.cache_clear()
 
     assert (edit.status_code, edit.json()["running"]) == (200, False)
-    assert (retry.status_code, retry.json()) == (200, {"state": "ready", "outcome": "success", "items": []})
+    assert runtime.status()["restore_failures"] == []
     assert isinstance(TargetRegistry.get_registry_singleton().instances.get("ghost"), OpenAIChatTarget)
 
 
-@pytest.mark.usefixtures("patch_central_database", "startup_chat")
-async def test_retry_hides_a_constructor_error_from_users_who_are_not_admins_async(
-    runtime: RuntimeLifecycle, tmp_path: Path
-) -> None:
-    TargetRegistry.get_registry_singleton().register_class(_SecretQuotingTarget)
-    recipes = tmp_path / "recipes"
-    _save_recipe(
-        recipes,
-        kind="targets",
-        name="quoting",
-        document={"class_module": _SecretQuotingTarget.__module__, "class_name": "_SecretQuotingTarget", "params": {}},
-    )
-    await _start_with_recipes_async(runtime, recipes=recipes)
-
-    response = await _retry_async(runtime)
-
-    assert (response.status_code, response.json()["state"]) == (200, "failed")
-    assert _SERVER_SECRET not in response.text
-    (item,) = response.json()["items"]
-    assert (item["reason"], item["message"]) == ("build_error", "It couldn't be built.")
-
-
-async def test_retry_is_refused_when_no_restore_failed_async(runtime: RuntimeLifecycle) -> None:
-    response = await _retry_async(runtime)
-
-    assert response.status_code == 409
-    assert runtime.state == "ready"
-
-
-@pytest.mark.usefixtures("patch_central_database", "startup_chat")
-async def test_retry_is_refused_with_several_workers_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
-    recipes = tmp_path / "recipes"
-    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
-    await _start_with_recipes_async(runtime, recipes=recipes)
-    runtime.topology_supported = False
-
-    response = await _retry_async(runtime)
-
-    assert response.status_code == 409
-    assert "one backend worker" in response.json()["detail"]
-    assert runtime.state == "failed"
-
-
-@pytest.mark.usefixtures("patch_central_database", "startup_chat")
-async def test_retry_is_refused_while_another_configuration_write_runs_async(
+async def test_readiness_counts_restore_failures_without_their_details_async(
     runtime: RuntimeLifecycle, tmp_path: Path
 ) -> None:
     recipes = tmp_path / "recipes"
     _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
     await _start_with_recipes_async(runtime, recipes=recipes)
-    _save_recipe(recipes, kind="targets", name="ghost", document=_RESTORABLE_TARGET)
 
-    async with runtime.edit_lock:
-        response = await _retry_async(runtime)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        readiness = await client.get("/api/runtime")
 
-    assert response.status_code == 503
-    assert runtime.state == "failed"
-
-
-@pytest.mark.usefixtures("patch_central_database", "startup_chat")
-async def test_a_retry_that_stops_partway_requires_a_restart_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
-    recipes = tmp_path / "recipes"
-    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
-    await _start_with_recipes_async(runtime, recipes=recipes)
-
-    with patch.object(RegistryRecipeRestorer, "restore", side_effect=RuntimeError("stopped partway")):
-        response = await _retry_async(runtime)
-
-    assert (response.status_code, response.json()["state"]) == (200, "restart-required")
-    assert runtime.state == "restart-required"
-
-
-@pytest.mark.usefixtures("patch_central_database", "startup_chat")
-async def test_apply_after_a_retry_rebuilds_every_saved_entry_async(runtime: RuntimeLifecycle, tmp_path: Path) -> None:
-    recipes = tmp_path / "recipes"
-    _save_recipe(recipes, kind="targets", name="kept", document=_RESTORABLE_TARGET)
-    _save_recipe(recipes, kind="targets", name="ghost", document=_BROKEN_TARGET)
-    await _start_with_recipes_async(runtime, recipes=recipes)
-    _save_recipe(recipes, kind="targets", name="ghost", document=_RESTORABLE_TARGET)
-    assert (await _retry_async(runtime)).json()["state"] == "ready"
-    config = await runtime._load_async()
-    config.apply_prepared_reinitialization_async.side_effect = lambda **_: TargetRegistry.reset_registry_singleton()
-
-    await apply_async(runtime)
-
-    assert (runtime.state, runtime.outcome) == ("ready", "success")
-    targets = TargetRegistry.get_registry_singleton()
-    assert isinstance(targets.instances.get("kept"), OpenAIChatTarget)
-    assert isinstance(targets.instances.get("ghost"), OpenAIChatTarget)
+    assert readiness.json() == {
+        "ready": True,
+        "state": "ready",
+        "generation": runtime.generation,
+        "restore_failures": 1,
+    }

@@ -33,14 +33,17 @@ from pyrit.models import AttackIdentifier, ComponentType
 from pyrit.models.component_spec import SourceInstanceSpec
 from pyrit.registry.instance_registry import (
     DefaultInstanceRegistry,
+    RegistryNameTakenError,
+    SavedEntryUnavailableError,
     _record_saved_entry_refusal,
+    record_held_name_refusal,
     refuse_saved_entry,
 )
 from pyrit.registry.registry import Registry
 from pyrit.registry.registry_metadata import RegistryMetadata
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from typing import Protocol
 
     from pyrit.models import Parameter
@@ -144,8 +147,40 @@ class AttackTechniqueMetadata(RegistryMetadata):
     """Shared metadata type for the inherited, empty technique class catalog."""
 
 
-class TechniqueSelectorConflictError(ValueError):
-    """A technique's name or a tag conflicts with the name or a tag of a registered technique."""
+class TechniqueSelectorConflictError(RegistryNameTakenError):
+    """
+    A technique's name or tag conflicts with the name or a tag of a registered technique.
+
+    Names and tags both select techniques, so either one counts as taken.
+    """
+
+
+class TechniqueSelectionUnavailableError(Exception):
+    """
+    A launch picks techniques by all, default, or a tag while a saved technique couldn't be restored.
+
+    A broken technique's tags may be unknown, so a broad selection could quietly leave it out. Naming the
+    techniques still works.
+    """
+
+    def __init__(self, *, names: Sequence[str]) -> None:
+        """
+        Initialize the error.
+
+        Args:
+            names (Sequence[str]): The saved techniques that couldn't be restored, or none when their folder
+                couldn't be listed.
+        """
+        if names:
+            listed = ", ".join(f"'{name}'" for name in names)
+            subject = f"Saved technique{'s' if len(names) > 1 else ''} {listed} couldn't be restored"
+        else:
+            subject = "The saved techniques couldn't be listed"
+        super().__init__(
+            f"{subject}, so a launch has to name its techniques. Choosing them by all, default, or a tag "
+            "is refused until that's fixed."
+        )
+        self.names = tuple(names)
 
 
 class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"]):
@@ -159,6 +194,8 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             factory (AttackTechniqueFactory): The technique to check.
 
         Raises:
+            SavedEntryUnavailableError: If the name, in any letter case, is held for a saved technique
+                that couldn't be restored.
             TechniqueSelectorConflictError: If the name or a tag conflicts with a registered technique.
             ValueError: If the technique can't be registered for another reason, such as a scenario pool it breaks.
         """
@@ -177,6 +214,8 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             metadata (dict[str, Any] | None): Optional per-entry metadata. Defaults to None.
 
         Raises:
+            SavedEntryUnavailableError: If the name, in any letter case, is held for a saved technique
+                that couldn't be restored.
             TechniqueSelectorConflictError: If the name or a tag conflicts with a registered technique.
             ValueError: If the technique can't be registered for another reason, such as a scenario pool it breaks.
         """
@@ -193,11 +232,20 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
         Check a technique against the registered ones; the caller holds the instance lock.
 
         Raises:
+            SavedEntryUnavailableError: If the name, in any letter case, is held for a saved technique
+                that couldn't be restored.
             TechniqueSelectorConflictError: If the name or a tag conflicts with a registered technique.
             ValueError: If the technique can't be registered for another reason, such as a scenario pool it breaks.
         """
+        held = {entry.name.casefold(): entry for entry in self.get_unavailable_entries() if entry.name is not None}
+        if (held_entry := held.get(factory.name.casefold())) is not None:
+            record_held_name_refusal(entry=held_entry, name=factory.name)
+            raise SavedEntryUnavailableError(entry=held_entry, name=factory.name)
         entries = self.get_all_instances()
-        names = {entry.name.casefold(): entry.name for entry in entries}
+        # A held name still counts as taken, so no tag can claim it while its saved technique is broken.
+        names = {entry.name.casefold(): entry.name for entry in entries} | {
+            folded: entry.name for folded, entry in held.items() if entry.name is not None
+        }
         tags = {tag.casefold(): tag for entry in entries for tag in entry.instance.technique_tags}
         folded_name = factory.name.casefold()
         if folded_name in names:
@@ -213,7 +261,9 @@ class TechniqueInstanceRegistry(DefaultInstanceRegistry["AttackTechniqueFactory"
             raise TechniqueSelectorConflictError(f"Technique name '{factory.name}' conflicts with an aggregate tag")
         for tag in factory.technique_tags:
             folded = tag.casefold()
-            if folded in names:
+            if folded in held:
+                record_held_name_refusal(entry=held[folded], name=tag)
+            elif folded in names:
                 _record_saved_entry_refusal(self.get_entry(names[folded]))
             if folded in names or folded == folded_name:
                 raise TechniqueSelectorConflictError(f"Tag '{tag}' conflicts with a technique name")
