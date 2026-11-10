@@ -408,7 +408,12 @@ class SecretDisclosureScorer(MessageFloatScaleScorer):
         }
 
     def _credited_view_positions(self, *, secret: str, view: str, share_occurrences: bool) -> set[int]:
-        """Find credited positions for one candidate without combining alternative texts."""
+        """
+        Find credited positions for one candidate without combining alternative texts.
+
+        Returns:
+            set[int]: Secret positions credited by this candidate alone.
+        """
         length = len(secret)
         min_length = self._min_fragment_length
         alignments: list[tuple[int, int, int]] = []
