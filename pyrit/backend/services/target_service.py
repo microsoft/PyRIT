@@ -554,7 +554,7 @@ class TargetService:
         )
         if request.persist:
             params = await self._prepare_saved_params_async(
-                target_type=request.type, target_cls=target_cls, params=params
+                target_type=request.type, target_cls=target_cls, params=params, auth_mode=request.auth_mode
             )
 
         # LEGACY COMPATIBILITY: Only API callers that leave out the name reach this fallback; the GUI sends one.
@@ -599,6 +599,7 @@ class TargetService:
                     type_name=request.type,
                     target_cls=target_cls,
                     target_obj=target_obj,
+                    auth_mode=request.auth_mode,
                     params=params,
                     owner=owner,
                     recipes_source=recipes_source,
@@ -613,7 +614,7 @@ class TargetService:
             raise
 
     async def _prepare_saved_params_async(
-        self, *, target_type: str, target_cls: type[PromptTarget], params: dict[str, Any]
+        self, *, target_type: str, target_cls: type[PromptTarget], params: dict[str, Any], auth_mode: AuthMode
     ) -> dict[str, Any]:
         """
         Turn off the server values a target to save would read, then refuse what it still can't hold.
@@ -640,7 +641,7 @@ class TargetService:
             metadata = await asyncio.to_thread(self._registry.get_class_metadata, target_cls)
         parameters = metadata.parameters
         try:
-            check_saved_entry_params(cls=target_cls, parameters=parameters, params=saved_params)
+            check_saved_entry_params(cls=target_cls, parameters=parameters, params=saved_params, auth_mode=auth_mode)
         except SavedEntryRefusedError as error:
             # The address needs fixing; creating the target without saving it wouldn't make it usable.
             if error.reason is RestoreFailureReason.INVALID_RECIPE:
@@ -675,6 +676,7 @@ class TargetService:
         type_name: str,
         target_cls: type[PromptTarget],
         target_obj: PromptTarget,
+        auth_mode: AuthMode,
         params: dict[str, Any],
         owner: SavedEntryOwner | None,
         recipes_source: str | None,
@@ -684,7 +686,8 @@ class TargetService:
 
         The recipe is written only if no saved target has the name, so of two saves under one name
         only one succeeds. If registering then fails, the recipe is deleted again. The recipe names
-        the class by the registry name the request used, which restore looks up.
+        the class by the registry name the request used, which restore looks up, and keeps the auth
+        mode apart from the parameters, as the create request does.
 
         Returns:
             TargetInstance: The saved target.
@@ -696,7 +699,14 @@ class TargetService:
         target = self._build_instance_from_object(
             target_registry_name=name, target_obj=target_obj, origin=RegistryEntryOrigin.SAVED
         )
-        recipe = ComponentRecipe(class_module=target_cls.__module__, class_name=type_name, params=params, owner=owner)
+        auth_parameters = target_cls.get_auth_mode_parameters(auth_mode=auth_mode)
+        recipe = ComponentRecipe(
+            class_module=target_cls.__module__,
+            class_name=type_name,
+            auth_mode=auth_mode,
+            params={key: value for key, value in params.items() if key not in auth_parameters},
+            owner=owner,
+        )
         storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=recipes_source)
         try:
             await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)

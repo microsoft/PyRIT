@@ -24,11 +24,13 @@ from pyrit.backend.authentication_policy import AuthenticationPolicy
 from pyrit.backend.middleware.auth import require_admin
 from pyrit.backend.middleware.runtime import RuntimeAdmissionMiddleware
 from pyrit.backend.routes import configuration, health, targets
-from pyrit.backend.services import ScenarioRunService
+from pyrit.backend.services import ScenarioRunService, get_converter_service, get_target_service
 from pyrit.backend.services.configuration_file_service import ConfigurationFileService
 from pyrit.backend.services.manual_send_scheduler import get_manual_send_scheduler
 from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 from pyrit.backend.services.scenario_run_service import _PreparedRun
+from pyrit.backend.services.scorer_service import get_scorer_service
+from pyrit.backend.services.technique_service import get_technique_service
 from pyrit.memory import CentralMemory, MemoryInterface
 from pyrit.models import ScenarioRunState
 from pyrit.models.catalog import ComponentRecipe, RunScenarioRequest
@@ -45,6 +47,7 @@ from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer, Saved
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.scenario import Scenario
 from pyrit.setup import ConfigurationLoader
+from pyrit.setup.initialization import reset_setup_registries
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget, make_scenario_result
 
@@ -1142,28 +1145,100 @@ async def test_startup_reads_saved_entries_off_the_runtime_loop_async(
     assert read_threads[0] is not current_thread()
 
 
+async def _forget_registry_services_async() -> None:
+    """Stand in for close_services_async, which drops services bound to the registries an apply replaces."""
+    for factory in (get_target_service, get_converter_service, get_scorer_service, get_technique_service):
+        factory.cache_clear()
+
+
 @pytest.mark.usefixtures("patch_central_database")
-async def test_apply_restores_an_entry_that_uses_a_startup_target_async(
+async def test_apply_after_a_startup_restore_restores_the_same_entries_async(
     runtime: RuntimeLifecycle, tmp_path: Path, startup_chat: OpenAIChatTarget
 ) -> None:
     recipes = tmp_path / "recipes"
     _save_converter_using_startup_chat(recipes)
-    targets = TargetRegistry.get_registry_singleton()
-    config = await runtime._load_async()
-    config.registry_recipes_source = str(recipes)
-    config.apply_prepared_reinitialization_async.side_effect = lambda **_: targets.instances.register(
-        startup_chat, name="startup_chat"
+    _save_recipe(
+        recipes,
+        kind="scorers",
+        name="refusal",
+        document={
+            "class_module": "pyrit.score.true_false.self_ask_refusal_scorer",
+            "class_name": "SelfAskRefusalScorer",
+            "params": {"chat_target": "startup_chat"},
+        },
     )
+
+    def register_startup_chat(**_: object) -> None:
+        TargetRegistry.get_registry_singleton().instances.register(startup_chat, name="startup_chat")
+
+    def reinitialize(**_: object) -> None:
+        reset_setup_registries()
+        register_startup_chat()
+
+    await _start_with_recipes_async(runtime, recipes=recipes, initialize=register_startup_chat)
+    assert runtime.restore_failures == []
+    config = await runtime._load_async()
+    config.apply_prepared_reinitialization_async.side_effect = reinitialize
+    lifecycle_module.close_services_async.side_effect = _forget_registry_services_async
 
     await apply_async(runtime)
 
     assert (runtime.state, runtime.outcome) == ("ready", "success")
+    assert runtime.restore_failures == []
     converter = ConverterRegistry.get_registry_singleton().instances.get("formal")
     assert converter is not None
     assert converter._converter_target is startup_chat
-    startup_entry = targets.instances.get_entry("startup_chat")
+    assert ScorerRegistry.get_registry_singleton().instances.get("refusal") is not None
+    startup_entry = TargetRegistry.get_registry_singleton().instances.get_entry("startup_chat")
     assert startup_entry is not None
     assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
+
+
+class _UnreachableTarget(MockPromptTarget):
+    """A target whose constructor fails with a URL that carries a SAS token."""
+
+    def __init__(self) -> None:
+        raise ValueError("can't reach https://contoso.blob.core.windows.net/c?sv=2024&sig=SYNTHETIC-SAS")
+
+
+@pytest.mark.usefixtures("patch_central_database")
+async def test_startup_logs_each_failure_once_without_url_credentials_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    TargetRegistry.get_registry_singleton().register_class(_UnreachableTarget)
+    recipes = tmp_path / "recipes"
+    _save_recipe(
+        recipes,
+        kind="targets",
+        name="unreachable",
+        document={"class_module": _UnreachableTarget.__module__, "class_name": "_UnreachableTarget", "params": {}},
+    )
+    _save_recipe(recipes, kind="targets", name="broken", document={"class_module": "nowhere", "class_name": "Nope"})
+
+    with caplog.at_level(logging.WARNING):
+        await _start_with_recipes_async(runtime, recipes=recipes)
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    for name in ("unreachable", "broken"):
+        assert len([record for record in caplog.records if f"target '{name}' (" in record.getMessage()]) == 1
+    assert "can't reach https://contoso.blob.core.windows.net/c" in caplog.text
+    assert "sig=" not in caplog.text
+    assert "SYNTHETIC-SAS" not in caplog.text
+
+
+async def test_startup_says_when_a_saved_folder_couldnt_be_read_async(
+    runtime: RuntimeLifecycle, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    recipes = tmp_path / "recipes"
+    recipes.mkdir()
+    (recipes / "targets").write_text("a file where the folder should be")
+
+    with caplog.at_level(logging.WARNING, logger="pyrit.backend.services.runtime_lifecycle"):
+        await _start_with_recipes_async(runtime, recipes=recipes)
+
+    assert (runtime.state, runtime.outcome) == ("ready", "success")
+    assert "The saved targets couldn't be read, so no saved entries were restored" in caplog.text
+    assert "Fix or delete" not in caplog.text
 
 
 async def test_startup_with_an_unrestorable_entry_is_ready_and_holds_its_name_async(
