@@ -396,7 +396,7 @@ async def test_bulk_message_write_ignores_unrelated_seed_reservation(
             session.add(entry)
             await session.commit()
             statement = (
-                update(PromptMemoryEntry.__table__)                .where(PromptMemoryEntry.id == entry_id).values(original_value="new")
+                update(PromptMemoryEntry.__table__).where(PromptMemoryEntry.id == entry_id).values(original_value="new")
             )
         else:
             statement = insert(PromptMemoryEntry.__table__).values(
