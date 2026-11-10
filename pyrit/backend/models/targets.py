@@ -105,8 +105,14 @@ class CreateTargetRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_source(self) -> "CreateTargetRequest":
-        if self.source is not None and (self.register or self.params or "auth_mode" in self.model_fields_set):
-            raise ValueError("source requires register=false and overrides, including auth_mode, in source.params")
+        if self.source is None:
+            return self
+        if self.register:
+            raise ValueError("source requires register=false")
+        if self.params:
+            raise ValueError("a copy takes its overrides in source.params")
+        if "auth_mode" in self.model_fields_set:
+            raise ValueError("a copy uses its source's auth mode, so auth_mode can't be set")
         return self
 
     @model_validator(mode="after")
