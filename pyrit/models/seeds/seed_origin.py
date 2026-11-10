@@ -1,10 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from enum import Enum
+from enum import StrEnum
 
 
-class SeedOrigin(str, Enum):
+class SeedOrigin(StrEnum):
     """How a seed entered PyRIT, independent of upstream authorship."""
 
     LOCAL = "local"

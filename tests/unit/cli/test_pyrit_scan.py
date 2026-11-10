@@ -866,6 +866,15 @@ class TestAddScenarioParamsFromApi:
 class TestBuildRunRequest:
     """Tests for _build_run_request."""
 
+    def test_explicit_helper_roles_match_shell_parser(self) -> None:
+        flags = ["--scoring-target", "judge", "--adversarial-target", "generator"]
+        parsed = pyrit_scan.parse_args(["run", "test", "--target", "objective", *flags])
+        request = pyrit_scan._build_run_request(parsed_args=parsed, scenario_name="test")
+        shell = parse_run_arguments(args_string="test --target objective " + " ".join(flags))
+        assert request.scoring_target_name == shell["scoring_target"] == "judge"
+        assert request.adversarial_target_name == shell["adversarial_target"] == "generator"
+        assert request.target_name == shell["target"] == "objective"
+
     @pytest.mark.parametrize("value", [None, "default", "all", "7", ""])
     def test_limit_presence_matches_shell_parser(self, value: str | None) -> None:
         flags = [] if value is None else ["--max-dataset-size", value]
@@ -1286,13 +1295,14 @@ class TestScenarioParamCoercion:
             parser.parse_args(["--dry-run", "on"])
         assert "invalid value" in capsys.readouterr().err
 
-    def test_list_int_param_coerces_each_value(self):
+    @pytest.mark.parametrize("type_name", ["list[int]", "list[int] | None", "list[int | None] | None"])
+    def test_list_int_param_coerces_each_value(self, type_name: str) -> None:
         from argparse import ArgumentParser
 
         parser = ArgumentParser()
         pyrit_scan._add_scenario_params_from_api(
             parser=parser,
-            params=[_sp(name="sample_ids", description="...", param_type="list[int]", is_list=True)],
+            params=[_sp(name="sample_ids", description="...", param_type=type_name, is_list=True)],
         )
 
         parsed = parser.parse_args(["--sample-ids", "1", "2", "3"])

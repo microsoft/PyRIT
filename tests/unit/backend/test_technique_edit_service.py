@@ -9,7 +9,7 @@ import codecs
 import json
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +18,7 @@ from pyrit.backend.main import app
 from pyrit.backend.models.techniques import CreateTechniqueRequest
 from pyrit.backend.services import ScenarioRunService, ScenarioService
 from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
+from pyrit.backend.services.scenario_run_service import ScenarioRunConflictError
 from pyrit.backend.services.technique_edit_service import TechniqueEditService
 from pyrit.backend.services.technique_service import TechniqueService
 from pyrit.common.apply_defaults import GlobalDefaultValues
@@ -61,7 +62,7 @@ from pyrit.prompt_normalizer import ConverterConfiguration
 from pyrit.prompt_target import TargetCapabilities
 from pyrit.registry import AttackTechniqueRegistry, ConverterRegistry, Registry, ScorerRegistry, TargetRegistry
 from pyrit.scenario import TechniqueRequirements
-from pyrit.scenario.core import AttackTechniqueFactory
+from pyrit.scenario.core import AttackTechniqueFactory, DatasetAttackConfiguration
 from pyrit.scenario.scenarios.technique import Execute
 from pyrit.score import SubStringScorer
 from unit.mocks import MockPromptTarget
@@ -902,8 +903,24 @@ async def test_isolated_run_overrides_estimate_and_resume_async(edit_catalog: At
             assert all(not entry.instance.prompt_sent for entry in targets.get_all_instances())
             targets.unregister("adversarial_chat")
             targets.register(_ChangedTarget(), name="adversarial_chat")
-            with pytest.raises(ValueError, match="run-local technique does not match"):
-                await service._prepare_run_async(request=restored)
+            count_before = len(await CentralMemory.get_memory_instance().get_scenario_results_async())
+            with patch.object(DatasetAttackConfiguration, "prepare_async", new_callable=AsyncMock) as prepare:
+                with pytest.raises(ScenarioRunConflictError, match="scan dependencies changed after preflight"):
+                    await service._prepare_run_async(request=restored)
+                prepare.assert_not_awaited()
+            assert len(await CentralMemory.get_memory_instance().get_scenario_results_async()) == count_before
+            fresh = await service._prepare_run_async(
+                request=restored.model_copy(
+                    update={
+                        "scenario_result_id": None,
+                        "technique_override": second,
+                    }
+                )
+            )
+            assert fresh.scenario._scenario_result_id != prepared.scenario._scenario_result_id
+            assert fresh.scenario._objective_scorer is scorer
+            assert fresh.scenario.params["local_technique_factory"].seed_technique.seeds[0].num_turns == 5
+            assert all(not entry.instance.prompt_sent for entry in targets.get_all_instances())
 
 
 def test_edit_routes_and_invalid_selection(

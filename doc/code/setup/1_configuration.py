@@ -52,6 +52,8 @@ await initialize_pyrit_async(memory_db_type="InMemory", initializers=[TargetInit
 # The recommended step to setup PyRIT is that it needs access to secrets and endpoints. These can be loaded in environment variables or put in a `.env` file. See `.env_example` for how this file is formatted.
 #
 # Each target has default environment variables to look for. For example, `OpenAIChatTarget` looks for the `OPENAI_CHAT_ENDPOINT` for its endpoint, `OPENAI_CHAT_MODEL` for its model name, and `OPENAI_CHAT_KEY` for its key. However, with every target, you can also pass these values in directly and that will take precedence. For Azure endpoints with Entra ID authentication, pass a token provider from `pyrit.auth` as the `api_key`.
+#
+# Environment resolution happens only in deliberately invoked constructors or initializers. Scenarios never construct an implicit OpenAI helper: select/register each required scoring and generation role before scanning. See [explicit scan targets and migration](0_setup.md#explicit-scan-targets-and-migration).
 
 # %%
 import os
@@ -165,8 +167,7 @@ from pyrit.prompt_normalizer import (
 )
 from pyrit.registry import ScorerRegistry, TargetRegistry
 from pyrit.setup import initialize_pyrit_async
-from pyrit.setup.initializers import ScorerInitializer, TargetInitializer
-from pyrit.setup.initializers.scorers import ScorerInitializerTags
+from pyrit.setup.initializers import ScorerInitializer, ScorerInitializerTags, TargetInitializer
 
 # Run the built-in initializers. ScorerInitializer pulls its chat targets
 # out of the TargetRegistry.

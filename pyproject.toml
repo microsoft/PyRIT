@@ -80,6 +80,7 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "websockets>=14.0",
     "wcwidth>=0.2.14",
+    "filelock>=4.2.1",
 ]
 
 [dependency-groups]

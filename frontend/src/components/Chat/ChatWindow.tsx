@@ -479,6 +479,7 @@ export default function ChatWindow({
   const editorTarget = editDraft?.target ?? null
   const editorObjective = editDraft?.objective ?? ''
   const isSavingEditor = editor.saving
+  const [editorUploadError, setEditorUploadError] = useState<string>()
   const editorRef = useRef<ConversationEditorHandle>(null)
   const [editorInitialConverters, setEditorInitialConverters] = useState<ChatConverterSnapshot>()
   const [isLoadingEdit, setIsLoadingEdit] = useState(false)
@@ -1788,6 +1789,9 @@ export default function ChatWindow({
           }
           viewedAttackRef.current = currentAttackResultId
           setViewedConversationId(currentConversationId)
+          // Hold the created conversation so committing its route during the
+          // first send does not fetch over the optimistic transcript.
+          markConversationLoaded(currentConversationId)
         }
         // Update sending tracker to use real ID instead of __pending__
         setSendingConversations(prev => {
@@ -2581,6 +2585,7 @@ export default function ChatWindow({
                 setTemperatureExplanationId(data.visible ? temperatureExplanationContext ?? null : null)
               }}>
               <span
+                // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled
                 tabIndex={!temperatureTarget.supports_temperature_override || temperatureReadOnly && (isSending || isSavingEditor) ? 0 : undefined}
                 onPointerDownCapture={() => {
                   if (temperatureReadOnly) setTemperatureExplanationId(temperatureExplanationContext ?? null)
@@ -2682,13 +2687,13 @@ export default function ChatWindow({
           />
         </Tooltip>
         {editDraft !== null && <Tooltip
-          content={editor.targetError ?? editor.validationError ?? newAttackDisabledReason ?? 'Save to new attack'}
+          content={editor.targetError ?? editor.validationError ?? newAttackDisabledReason ?? editorUploadError ?? 'Save to new attack'}
           relationship="description">
           <Button
             appearance="primary"
             icon={<AddRegular />}
             onClick={() => { editorRef.current?.saveToNewAttack() }}
-            disabled={isSavingEditor || Boolean(newAttackDisabledReason || editor.targetError || editor.validationError)}
+            disabled={isSavingEditor || Boolean(newAttackDisabledReason || editor.targetError || editor.validationError || editorUploadError)}
             data-testid="new-attack-btn"
             aria-label="Save to new attack"
             className={styles.newAttackButton}
@@ -2819,6 +2824,7 @@ export default function ChatWindow({
           ref={editorRef}
           initialConverters={editorInitialConverters}
           controller={editor}
+          onUploadErrorChange={setEditorUploadError}
           sameAttackDisabledReason={sameAttackDisabledReason}
           newAttackDisabledReason={newAttackDisabledReason}
           onSaved={handleEditorSaved}
