@@ -143,7 +143,8 @@ class InMemoryTraceClient:
             requested = query.scope.trace_ids
             spans = sorted(
                 (self._spans[key] for trace_id in requested for key in self._trace_keys.get(trace_id, ())),
-                key=lambda span: (span.start_time, span.trace_id, span.span_id),
+                # Stable on ties, so spans with equal start times keep the order they were recorded in.
+                key=lambda span: span.start_time,
             )
             reasons: list[str] = []
             if self._capture_failed:

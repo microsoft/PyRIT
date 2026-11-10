@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import re
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
 
 from pyrit.models import (
@@ -44,7 +45,7 @@ class OtelExecutionTraceSource:
     hashed, or cut. With ``retain_content=False``, steps keep names, lengths, and digests only.
     """
 
-    NORMALIZATION_VERSION: ClassVar[int] = 2
+    NORMALIZATION_VERSION: ClassVar[int] = 3
     MAX_LABEL_CHARS: ClassVar[int] = 200
     _OPEN_INFERENCE_KINDS: ClassVar[dict[str, ExecutionStepKind]] = {
         "LLM": ExecutionStepKind.LLM,
@@ -181,9 +182,8 @@ class OtelExecutionTraceSource:
 
     def _normalize(self, *, spans: Sequence[TraceSpan]) -> tuple[tuple[ExecutionStep, ...], list[str]]:
         reasons: list[str] = []
-        ordered = sorted(spans, key=lambda span: (span.start_time, span.trace_id, span.span_id))
         steps = []
-        for span in ordered:
+        for span in _execution_order(spans):
             step, step_reasons = self._normalize_span(span=span, index=len(steps))
             reasons.extend(step_reasons)
             steps.append(step)
@@ -378,3 +378,35 @@ def _first_int(attributes: Mapping[str, JsonValue], *keys: str) -> int | None:
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             return value
     return None
+
+
+def _execution_order(spans: Sequence[TraceSpan]) -> list[TraceSpan]:
+    """
+    Order spans by start time, then parent before child, then end time, then the order received.
+
+    Clocks can give a parent and its children the same start time (Windows' timer is coarse), so
+    the tree depth keeps step numbering deterministic and each parent before its children.
+
+    Returns:
+        list[TraceSpan]: The spans in step order.
+    """
+    parents = {(span.trace_id, span.span_id): span.parent_span_id for span in spans}
+
+    def depth(span: TraceSpan) -> int:
+        seen = {span.span_id}
+        parent, count = span.parent_span_id, 0
+        while parent is not None and parent not in seen and (span.trace_id, parent) in parents:
+            seen.add(parent)
+            parent, count = parents[(span.trace_id, parent)], count + 1
+        return count
+
+    arrival = {id(span): position for position, span in enumerate(spans)}
+    return sorted(
+        spans,
+        key=lambda span: (
+            span.start_time,
+            depth(span),
+            span.end_time or datetime.max.replace(tzinfo=UTC),
+            arrival[id(span)],
+        ),
+    )

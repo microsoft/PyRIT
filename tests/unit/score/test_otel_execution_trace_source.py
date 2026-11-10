@@ -320,3 +320,31 @@ def test_identifier_records_content_policy_without_the_client(client: InMemoryTr
 def test_rejects_invalid_limits(client: InMemoryTraceClient, options: dict[str, int]) -> None:
     with pytest.raises(ValueError, match="must be positive"):
         OtelExecutionTraceSource(trace_client=client, **options)
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_equal_start_times_order_parents_first_then_by_end_time_async(
+    client: InMemoryTraceClient, reverse: bool
+) -> None:
+    def tied(span_id: int, name: str, *, parent: int | None, end_ms: int) -> TraceSpan:
+        return TraceSpan(
+            trace_id=TRACE,
+            span_id=f"{span_id:016x}",
+            parent_span_id=f"{parent:016x}" if parent is not None else None,
+            name=name,
+            start_time=START,
+            end_time=START + timedelta(milliseconds=end_ms),
+        )
+
+    # Exported as spans end: children first. Span IDs sort the root last.
+    spans = [
+        tied(3, "fetch", parent=2, end_ms=1),
+        tied(2, "search", parent=255, end_ms=2),
+        tied(1, "book", parent=255, end_ms=3),
+        tied(255, "pyrit.target", parent=None, end_ms=5),
+    ]
+
+    payload = await _acquire_async(client, *(reversed(spans) if reverse else spans))
+
+    assert [step.name for step in payload.steps] == ["pyrit.target", "search", "book", "fetch"]
+    assert [step.index for step in payload.steps] == [0, 1, 2, 3]
