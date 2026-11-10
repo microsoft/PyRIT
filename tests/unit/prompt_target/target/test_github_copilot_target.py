@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, NonCallableMagicMock, call, create_autospec
 from uuid import UUID, uuid4
 
 import pytest
-from unit.async_utils import get_defined_tasks, wait_for_completion_async, wait_for_event_async
+from unit.async_utils import TEST_WATCHDOG_SECONDS, get_defined_tasks, wait_for_completion_async, wait_for_event_async
 from unit.mocks import store_message_async
 
 from pyrit.models import Message, MessagePiece, MessageScorable, ScoringExpectation
@@ -31,7 +31,7 @@ from pyrit.prompt_target import (
 from pyrit.score import SelfAskTrueFalseScorer, TrueFalseQuestion
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Awaitable, Callable, Iterator
     from pathlib import Path
 
     from copilot import CopilotSession
@@ -1699,24 +1699,48 @@ async def test_normalizer_surfaces_dispatch_timeout_and_cleans_up_without_replay
     native_session: tuple[CopilotSession, AsyncMock],
     client: NonCallableMagicMock,
     completion_rpc: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from copilot._jsonrpc import JsonRpcError
 
     session, request = native_session
-    target = GitHubCopilotTarget(model_name="gpt-5-mini", response_timeout_seconds=0.01)
+    target = GitHubCopilotTarget(model_name="gpt-5-mini", response_timeout_seconds=TEST_WATCHDOG_SECONDS)
+    dispatch_started = asyncio.Event()
+    dispatch_cancelled = asyncio.Event()
+    response_deadline = asyncio.timeout(None)
+
+    async def controlled_wait_for_async(
+        awaitable: Awaitable[SessionEvent | None], *, timeout: float
+    ) -> SessionEvent | None:
+        assert timeout == TEST_WATCHDOG_SECONDS
+        async with response_deadline:
+            return await awaitable
+
+    deadline = AsyncMock(side_effect=controlled_wait_for_async)
+    monkeypatch.setattr(asyncio, "wait_for", deadline)
 
     async def stall_send_async(method: str, *_args: Any, **_kwargs: Any) -> None:
         if method == "session.sendAndWait" and not completion_rpc:
             raise JsonRpcError(-32601, "Method not found")
-        await asyncio.Event().wait()
+        dispatch_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            dispatch_cancelled.set()
 
     request.side_effect = stall_send_async
     send_task = asyncio.create_task(_send_normalized_async(target=target, original_value="Reply exactly HELLO."))
     try:
+        await wait_for_event_async(event=dispatch_started, tasks=[send_task])
+        # Expire only after dispatch: a short Windows timer can fire before the SDK reaches fallback.
+        response_deadline.reschedule(asyncio.get_running_loop().time())
         with pytest.raises(Exception, match="Error sending prompt with conversation ID:") as exc_info:
             # A bare watchdog TimeoutError must not satisfy the normalizer-wrapped failure.
             await wait_for_completion_async(future=send_task)
         assert isinstance(exc_info.value.__cause__, TimeoutError)
+        deadline.assert_awaited_once()
+        assert response_deadline.expired()
+        assert dispatch_cancelled.is_set()
         assert [entry.args[0] for entry in request.await_args_list] == (
             ["session.sendAndWait"] if completion_rpc else ["session.sendAndWait", "session.send"]
         )
