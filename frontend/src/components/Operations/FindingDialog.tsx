@@ -38,6 +38,7 @@ export default function FindingDialog({
   initialValues = EMPTY_DRAFT, editing = false, context, evidenceField = false, saveDisabled = false, onSave, onClose,
 }: FindingDialogProps) {
   const styles = useFindingDialogStyles()
+  const [initialDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
   const [draft, setDraft] = useState<FindingCreate>({ ...EMPTY_DRAFT, ...initialValues })
   const [attackResultId, setAttackResultId] = useState('')
   const [error, setError] = useState('')
@@ -63,12 +64,17 @@ export default function FindingDialog({
   }, [optionsRevision])
 
   useEffect(() => {
-    if (!draft.title && !draft.description && !draft.severity_other && !draft.harm_type && !draft.harm_type_other
-      && draft.severity === initialValues.severity && !attackResultId) return
+    // Clean means the draft still equals its initial values. An edit dialog
+    // opens prefilled, so emptiness can never prove it clean; every watched
+    // field is compared against what the dialog started with.
+    const unchanged = (field: keyof FindingCreate): boolean => draft[field] === initialDraft[field]
+    if (unchanged('title') && unchanged('description') && unchanged('severity_other')
+      && unchanged('harm_type') && unchanged('harm_type_other') && unchanged('severity')
+      && !attackResultId) return
     const protectDraft = (event: BeforeUnloadEvent): void => { event.preventDefault() }
     window.addEventListener('beforeunload', protectDraft)
     return () => { window.removeEventListener('beforeunload', protectDraft) }
-  }, [draft.title, draft.description, draft.severity_other, draft.harm_type, draft.harm_type_other, draft.severity, initialValues.severity, attackResultId])
+  }, [draft, initialDraft, attackResultId])
 
   const save = async (): Promise<void> => {
     if (submitting.current || !canSave) return
