@@ -150,7 +150,6 @@ class OpenAITarget(PromptTarget):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
         capabilities=TargetCapabilities(supports_multi_message_pieces=True)
     )
-    _GENERATION_RANGE_ADAPTER: ClassVar[TypeAdapter[tuple[float, float]]] = TypeAdapter(GenerationRange)
     _GENERATION_RANGES_ADAPTER: ClassVar[TypeAdapter[dict[str, tuple[float, float]]]] = TypeAdapter(
         dict[str, GenerationRange]
     )
@@ -338,18 +337,17 @@ class OpenAITarget(PromptTarget):
 
     def _apply_generation_range(self, *, capability: CapabilityName, bounds: tuple[float, float] | None) -> None:
         """
-        Apply capability-specific bounds until the next model change; None restores inference.
+        Apply validated capability-specific bounds until the next model change; None restores inference.
 
         Raises:
-            ValueError: Bounds are invalid or the adapter does not implement the generation capability.
+            ValueError: The adapter does not implement the generation capability.
         """
         if bounds is None:
             self._effective_generation.get("ranges", {}).pop(capability, None)
             return
         if capability not in self._SUPPORTED_GENERATION_CAPABILITIES:
             raise ValueError(f"{type(self).__name__} does not implement runtime {capability.name.lower()}.")
-        validated = self._GENERATION_RANGE_ADAPTER.validate_python(bounds)
-        self._effective_generation.setdefault("ranges", {})[capability] = validated
+        self._effective_generation.setdefault("ranges", {})[capability] = bounds
 
     def _refresh_generation_capabilities(self) -> None:
         self._effective_generation = deepcopy(self._declared_generation)

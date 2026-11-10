@@ -1542,23 +1542,6 @@ async def test_declared_bounds_do_not_change_target_identity_async(
         assert original.generation_range(capability=CapabilityName.TEMPERATURE) == (0, 2)
 
 
-@pytest.mark.parametrize("bounds", [(1, 0), (float("nan"), 1), (0, float("inf"))])
-async def test_invalid_bounds_leave_applied_declarations_unchanged_async(
-    *, target: OpenAIChatTarget, bounds: tuple[float, float]
-) -> None:
-    target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0.2, 0.8))
-    with pytest.raises(ValueError):
-        target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=bounds)
-    assert target.generation_range(capability=CapabilityName.TEMPERATURE) == (0.2, 0.8)
-    with pytest.raises(ValueError):
-        OpenAIChatTarget(
-            model_name="gpt-4o",
-            endpoint="https://example.test/v1",
-            api_key="test-only-key",
-            generation_ranges={"temperature": bounds},
-        )
-
-
 @pytest.mark.parametrize(
     "ranges",
     [
@@ -1566,14 +1549,22 @@ async def test_invalid_bounds_leave_applied_declarations_unchanged_async(
         {"supports_temperature": (0, 1)},
         {"temperature": None},
         {"temperature": [0]},
+        {"temperature": (1, 0)},
+        {"temperature": (float("nan"), 1)},
+        {"temperature": (0, float("inf"))},
         [],
         "temperature",
     ],
 )
-def test_invalid_generation_range_map_fails_before_client_creation(*, patch_central_database: Any, ranges: Any) -> None:
-    with patch.object(OpenAIChatTarget, "_initialize_openai_client") as initialize:
+def test_invalid_generation_range_map_fails_before_client_creation(
+    *,
+    patch_central_database: Any,
+    generation_target_type: type[OpenAIChatTarget | OpenAICompletionTarget | OpenAIResponseTarget],
+    ranges: Any,
+) -> None:
+    with patch.object(generation_target_type, "_initialize_openai_client") as initialize:
         with pytest.raises(ValueError):
-            OpenAIChatTarget(
+            generation_target_type(
                 model_name="gpt-4o",
                 endpoint="https://example.test/v1",
                 api_key="test-only-key",
@@ -1697,10 +1688,12 @@ async def test_openai_generation_ranges_are_independent_and_reset_to_constructor
             target._apply_generation_range(capability=CapabilityName.TEMPERATURE, bounds=(0, 0))
             expected = {"temperature": (0, 0), "additional_parameter": (1, 4)}
             assert target.generation_ranges == expected
-            with pytest.raises(ValueError):
-                target._apply_generation_range(capability=CapabilityName.JSON_OUTPUT, bounds=(4, 1))
             parameters = TargetRegistry.get_registry_singleton().get_reconstruction_parameters(target)
             assert parameters["generation_ranges"] == expected
+            with pytest.raises(ValueError, match="additional_parameter"):
+                ExtendedGenerationTarget(
+                    **{**parameters, "generation_ranges": {**expected, "additional_parameter": (4, 1)}}
+                )
             copied = ExtendedGenerationTarget(**parameters)
             try:
                 assert copied.generation_ranges == expected
