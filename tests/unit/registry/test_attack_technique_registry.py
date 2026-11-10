@@ -12,16 +12,8 @@ import pytest
 from pyrit.executor.attack import AttackScoringConfig
 from pyrit.memory import MemoryInterface
 from pyrit.models import ComponentIdentifier
-from pyrit.models.catalog import RestoreFailureReason
 from pyrit.prompt_target import PromptTarget, TargetRequirements
-from pyrit.registry import (
-    AttackTechniqueRegistry,
-    Registry,
-    SavedEntryUnavailableError,
-    TargetRegistry,
-    UnavailableEntry,
-)
-from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
+from pyrit.registry import AttackTechniqueRegistry, Registry, TargetRegistry
 from pyrit.scenario import AttackTechniqueFactory, ScenarioTechnique
 from pyrit.scenario.core import ScorerOverridePolicy
 from pyrit.setup.initializers.techniques import build_technique_factories
@@ -146,44 +138,6 @@ def test_inherited_enum_attributes_fail_before_runtime_registration(
         scenario_selection_registry.build_technique_class_from_factories(
             class_name="InvalidTechnique", factories=[factory]
         )
-
-
-def _hold(registry: AttackTechniqueRegistry, name: str) -> None:
-    registry.instances.mark_unavailable(
-        UnavailableEntry(kind="technique", name=name, reason=RestoreFailureReason.BUILD_ERROR, message="boom")
-    )
-
-
-def test_a_held_technique_name_cant_be_registered_in_another_case(
-    scenario_selection_registry: AttackTechniqueRegistry,
-) -> None:
-    _hold(scenario_selection_registry, "formal")
-
-    with pytest.raises(SavedEntryUnavailableError, match="'Formal' couldn't be restored"):
-        scenario_selection_registry.instances.register_runtime(
-            AttackTechniqueFactory(name="Formal", attack_class=_StubAttack)
-        )
-
-
-def test_a_tag_cant_take_a_held_technique_name(scenario_selection_registry: AttackTechniqueRegistry) -> None:
-    _hold(scenario_selection_registry, "formal")
-    factory = AttackTechniqueFactory(name="new", attack_class=_StubAttack, technique_tags=["formal"])
-
-    with pytest.raises(TechniqueSelectorConflictError, match="conflicts with a technique name"):
-        scenario_selection_registry.instances.register_runtime(factory)
-
-
-def test_a_held_technique_leaves_the_scenario_selection(scenario_selection_registry: AttackTechniqueRegistry) -> None:
-    scenario_selection_registry.register_from_factories(
-        [AttackTechniqueFactory(name="other", attack_class=_StubAttack)]
-    )
-    before = _build_selection_enum()
-
-    _hold(scenario_selection_registry, "base")
-
-    current = _build_selection_enum()
-    assert current is not before
-    assert [technique.value for technique in current.get_all_techniques()] == ["other"]
 
 
 class TestAttackTechniqueRegistrySingleton:

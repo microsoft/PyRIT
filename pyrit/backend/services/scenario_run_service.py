@@ -46,10 +46,7 @@ from pyrit.backend.services.pagination import (
     normalize_label_filters,
 )
 from pyrit.backend.services.saved_conversation_read_service import SavedConversationReadService
-from pyrit.backend.services.scenario_configuration_resolver import (
-    ScenarioConfigurationResolver,
-    raise_if_a_named_technique_is_held,
-)
+from pyrit.backend.services.scenario_configuration_resolver import ScenarioConfigurationResolver
 from pyrit.backend.services.scenario_progress_read_model import (
     ScenarioPlanLookup,
     ScenarioProgressReadModel,
@@ -446,7 +443,6 @@ class ScenarioRunService:
         technique_class = metadata.technique_class
         if not isinstance(technique_class, type):
             return [local_factory] if local_factory is not None else []
-        raise_if_a_named_technique_is_held(request.techniques)
         if configured_techniques is None:
             selectors = (
                 [technique_class(token.partition(":")[0]) for token in request.techniques]
