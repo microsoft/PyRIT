@@ -5,6 +5,7 @@
 
 import threading
 import uuid
+from typing import Any
 
 import pytest
 
@@ -969,7 +970,7 @@ class TestSeedGroupMetadataIsolation:
         assert seed.metadata == {"wrapped": ({"labels": []},)}
 
     @pytest.mark.parametrize("metadata", [None, {}])
-    def test_derived_messages_with_empty_metadata_get_independent_dicts(self, metadata) -> None:
+    def test_derived_messages_with_empty_metadata_get_independent_dicts(self, metadata: dict[str, Any] | None) -> None:
         seed = SeedPrompt(value="hello", role="user", metadata=metadata)
         group = SeedGroup(seeds=[seed])
 
