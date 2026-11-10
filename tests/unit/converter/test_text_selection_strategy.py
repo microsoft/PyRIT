@@ -6,8 +6,7 @@ import re
 
 import pytest
 
-from pyrit.converter.text_selection_strategy import (
-    DEFAULT_CONTENT_STOPWORDS,
+from pyrit.converter import (
     AllWordsSelectionStrategy,
     ContentWordSelectionStrategy,
     IndexSelectionStrategy,
@@ -22,6 +21,9 @@ from pyrit.converter.text_selection_strategy import (
     WordPositionSelectionStrategy,
     WordProportionSelectionStrategy,
     WordRegexSelectionStrategy,
+)
+from pyrit.converter.text_selection_strategy import (
+    DEFAULT_CONTENT_STOPWORDS,
 )
 
 

@@ -4,8 +4,10 @@ import { Button, Caption1, Menu, MenuItem, MenuList, MenuPopover, MenuTrigger, S
 import { ArrowShuffleRegular, ArrowUndoRegular, AttachRegular, DismissRegular, OpenRegular } from '@fluentui/react-icons'
 
 import type { ConvertedFileChip, MessageAttachment, PieceConversion, UndoLastSendAction } from '@/types'
+import FileDropZone from '@/components/Media/FileDropZone'
+import { formatFileSize } from '@/utils/formatFileSize'
 
-import { withDraftIdentity } from './converterTypes'
+import { attachmentsFromFiles } from './converterTypes'
 import { usePromptEditorStyles } from './PromptEditor.styles'
 
 interface PromptEditorProps {
@@ -14,6 +16,8 @@ interface PromptEditorProps {
   onInputChange: (value: string) => void
   onAttachmentsChange: (attachments: MessageAttachment[]) => void
   disabled?: boolean
+  disabledReason?: string
+  fileDropEnabled?: boolean
   header?: ReactNode
   setup?: ReactNode
   warning?: ReactNode
@@ -33,18 +37,12 @@ interface PromptEditorProps {
   onClearConvertedFileChip?: () => void
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 function attachmentIcon(kind: MessageAttachment['type']): string {
   return { image: '🖼️', audio: '🎵', video: '🎥', file: '📄' }[kind]
 }
 
 export default function PromptEditor({
-  text, attachments, onInputChange, onAttachmentsChange, disabled = false, header, setup, warning, actions,
+  text, attachments, onInputChange, onAttachmentsChange, disabled = false, disabledReason, fileDropEnabled = true, header, setup, warning, actions,
   attachmentMenuItems, showTextInput = true, textareaRef: externalTextareaRef, onKeyDown,
   onToggleConverterPanel, isConverterPanelOpen, undoLastSend, convertedValue, onConvertedValueChange,
   mediaConversions = [], onClearMediaConversion, convertedFileChip, onClearConvertedFileChip,
@@ -70,19 +68,19 @@ export default function PromptEditor({
     }
   }, [convertedValue])
 
+  const addFiles = (files: File[]): void => {
+    if (disabled) return
+    onAttachmentsChange([...attachments, ...attachmentsFromFiles(files)])
+  }
   const selectFiles = (event: React.ChangeEvent<HTMLInputElement>): void => {
     const files = event.target.files
     if (!files) return
-    const additions = Array.from(files, (file: File): MessageAttachment => withDraftIdentity({
-      type: file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio'
-        : file.type.startsWith('video/') ? 'video' : 'file',
-      name: file.name, url: URL.createObjectURL(file), mimeType: file.type, size: file.size, file,
-    }))
-    onAttachmentsChange([...attachments, ...additions])
+    addFiles(Array.from(files))
     event.target.value = ''
   }
 
-  return <div className={styles.inputWrapper} data-testid="prompt-editor">
+  return <FileDropZone className={styles.inputWrapper} testId="prompt-editor" disabled={disabled} disabledReason={disabledReason}
+    enabled={fileDropEnabled} onFiles={addFiles}>
     {header && <div className={styles.editHeader}>{header}</div>}
     {setup}
     <input ref={fileInputRef} type="file" data-testid="file-input" multiple
@@ -112,6 +110,7 @@ export default function PromptEditor({
           <Tooltip content={undoLastSend.disabledReason
             ?? 'Undo last send: restore the prompt and converter stages in a new branch. External target actions are not reversed.'}
             relationship="description">
+            {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- focusable so keyboard users can reach the tooltip explaining why the control is disabled */}
             <span className={styles.undoAction} tabIndex={undoLastSend.disabledReason ? 0 : undefined}
               aria-label={undoLastSend.disabledReason}>
               <Button className={styles.iconButton} appearance="subtle"
@@ -190,5 +189,5 @@ export default function PromptEditor({
       </div>
       {actions && <div className={styles.columnRight}>{actions}</div>}
     </div>
-  </div>
+  </FileDropZone>
 }

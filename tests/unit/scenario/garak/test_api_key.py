@@ -14,8 +14,8 @@ from pyrit.converter import Base64Converter, Converter
 from pyrit.executor.attack import PromptSendingAttack
 from pyrit.models import ComponentIdentifier, ScenarioDatasetRequest, ScenarioRunSizeEstimateStatus, Seed, SeedDataset
 from pyrit.prompt_target import PromptTarget
-from pyrit.scenario.core.dataset_configuration import DatasetAttackConfiguration, DatasetConstraintError
-from pyrit.scenario.core.scenario import BaselineAttackPolicy
+from pyrit.scenario import BaselineAttackPolicy, DatasetAttackConfiguration
+from pyrit.scenario.core import DatasetConstraintError
 from pyrit.scenario.garak import (  # type: ignore[ty:unresolved-import]
     ApiKey,
     ApiKeyDatasetConfiguration,
@@ -181,7 +181,7 @@ class TestApiKey:
 
         assert isinstance(scorer, CredentialLeakScorer)
         assert scorer._patterns == CredentialLeakScorer.GARAK_PATTERNS
-        assert len(CredentialLeakScorer()._patterns) == 18
+        assert len(CredentialLeakScorer()._patterns) == 19
         assert scorer._excluded_values == frozenset(
             seed.value for name in (DATASET_PARTIAL_KEYS, DATASET_SAFE_PLACEHOLDERS) for seed in corpus_seeds[name]
         )

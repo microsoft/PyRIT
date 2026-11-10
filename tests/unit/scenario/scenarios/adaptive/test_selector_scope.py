@@ -5,7 +5,7 @@ import dataclasses
 
 import pytest
 
-from pyrit.scenario.scenarios.adaptive.selectors import SelectorScope
+from pyrit.scenario.scenarios.adaptive import SelectorScope
 
 
 class TestSelectorScopeDefaults:
