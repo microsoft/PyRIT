@@ -54,7 +54,11 @@ from pyrit.registry import (
     TargetRegistry,
 )
 from pyrit.registry.components.attack_technique_registry import TechniqueSelectorConflictError
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SAVED_ENTRY_OWNER_METADATA_KEY
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    registration_origin,
+)
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 from pyrit.scenario import DatasetAttackConfiguration, Scenario, ScenarioTechnique
@@ -100,7 +104,9 @@ def registry(patch_central_database: Any) -> Iterator[AttackTechniqueRegistry]:
     get_technique_service.cache_clear()
     with patch.dict(Registry._singletons, {}, clear=True):
         registry = AttackTechniqueRegistry.get_registry_singleton()
-        registry.register_from_factories(build_technique_factories())
+        # The startup scripts register these, so they come back after a restart.
+        with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+            registry.register_from_factories(build_technique_factories())
         yield registry
     get_technique_service.cache_clear()
 
@@ -920,10 +926,9 @@ def saving_catalog(registry: AttackTechniqueRegistry) -> AttackTechniqueRegistry
     """The startup techniques, with startup and Temporary converters and targets for saved techniques to use."""
     converters = ConverterRegistry.get_registry_singleton().instances
     targets = TargetRegistry.get_registry_singleton().instances
-    converters.register(Base64Converter(), name="base64")
-    targets.register(MockPromptTarget(), name="attacker")
-    for instances in (registry.instances, converters, targets):
-        instances.mark_configuration_entries()
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        converters.register(Base64Converter(), name="base64")
+        targets.register(MockPromptTarget(), name="attacker")
     converters.register(ROT13Converter(), name="rot13")
     targets.register(MockPromptTarget(), name="temporary_attacker")
     return registry
@@ -967,8 +972,8 @@ async def test_saves_a_technique_that_restore_rebuilds(saving_catalog: AttackTec
 
     AttackTechniqueRegistry.reset_registry_singleton()
     restarted = AttackTechniqueRegistry.get_registry_singleton()
-    restarted.register_from_factories(build_technique_factories())
-    restarted.instances.mark_configuration_entries()
+    with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+        restarted.register_from_factories(build_technique_factories())
     assert RegistryRecipeRestorer(source=str(tmp_path)).restore().failures == []
 
     restored = restarted.instances.get_entry("base64_send")
@@ -1077,7 +1082,7 @@ async def test_reports_technique_storage_failures_as_unavailable(
     saving_catalog: AttackTechniqueRegistry, tmp_path: Path
 ) -> None:
     with (
-        patch.object(RegistryRecipeStorage, "create_recipe", side_effect=OSError("disk full")),
+        patch.object(RegistryRecipeStorage, "_save_local_conditional", side_effect=OSError("disk full")),
         pytest.raises(SavedEntryStorageError, match="Saved techniques can't be written right now."),
     ):
         await TechniqueService().create_async(request=_persist_technique("base64_send"), recipes_source=str(tmp_path))
@@ -1263,3 +1268,40 @@ def test_technique_list_and_get_pass_the_signed_in_users_object_id(
 
     assert service.list_async.call_args.kwargs["current_user_oid"] == expected
     assert service.get_async.call_args.kwargs["current_user_oid"] == expected
+
+
+def test_rest_create_records_no_owner_when_not_saving(compatibility_headers: dict[str, str]) -> None:
+    client = TestClient(app, headers=compatibility_headers)
+    with (
+        patch("pyrit.backend.routes.techniques.get_technique_service") as get_service,
+        patch("pyrit.backend.routes.techniques.saved_entry_owner_from_request") as saved_entry_owner,
+    ):
+        get_service.return_value.create_async = AsyncMock(side_effect=ValueError("stop"))
+
+        client.post("/api/techniques", json={"name": "base64_send", "type": "PromptSendingAttack"})
+
+    assert get_service.return_value.create_async.call_args.kwargs["owner"] is None
+    saved_entry_owner.assert_not_called()
+
+
+class _LaunchScriptAttack(PromptSendingAttack):
+    """An attack class that only a scan's launch script registers."""
+
+
+async def test_refuses_to_save_a_technique_whose_attack_type_a_launch_script_added(
+    saving_catalog: AttackTechniqueRegistry, tmp_path: Path
+) -> None:
+    with registration_origin(RegistryEntryOrigin.TEMPORARY):
+        AttackRegistry.get_registry_singleton().register_class(_LaunchScriptAttack, name="launch_attack")
+    request = CreateTechniqueRequest(name="launch_send", type="launch_attack", persist=True)
+
+    with pytest.raises(NotSaveableError) as refusal:
+        await TechniqueService().create_async(request=request, recipes_source=str(tmp_path))
+    await TechniqueService().create_async(request=request.model_copy(update={"persist": False}))
+
+    assert str(refusal.value) == (
+        "'launch_attack' was added by a scan's launch script, so a saved entry of it couldn't be restored after a "
+        "restart. It can still be created without saving it."
+    )
+    assert not (tmp_path / "techniques").exists()
+    assert saving_catalog.instances.get("launch_send") is not None

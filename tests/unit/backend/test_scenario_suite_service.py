@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
-from azure.core.exceptions import AzureError
 
 from pyrit.backend.services import ScenarioSuiteService, get_scenario_suite_service
 from pyrit.models import PresetEntry, PresetIssue, ScenarioPreset, ScenarioSuite, ScenarioSuiteEntry
@@ -19,6 +18,7 @@ from pyrit.registry import (
     ScenarioSuiteRegistry,
     ScenarioSuiteStorage,
 )
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError, DocumentUnreadableError
 
 ENTRY_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ENTRY_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -119,8 +119,17 @@ async def test_registered_suite_is_listed_with_nullable_version(
 
 @pytest.mark.parametrize(
     "error",
-    [AzureError("expired preset credentials"), OSError("preset directory unavailable")],
-    ids=["azure", "local"],
+    [
+        DocumentStorageUnavailableError(label="Scenario preset", source="/srv/presets", reason="Permission denied"),
+        DocumentUnreadableError(
+            label="Scenario preset",
+            source="/srv/presets",
+            name="nightly",
+            file_name="nightly.json",
+            reason="Not a regular file",
+        ),
+    ],
+    ids=["storage", "one_document"],
 )
 async def test_preset_storage_failure_is_advisory_after_committed_save(
     service: ScenarioSuiteService,

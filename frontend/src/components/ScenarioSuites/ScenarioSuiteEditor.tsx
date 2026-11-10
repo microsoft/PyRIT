@@ -241,7 +241,9 @@ function ScenarioSuiteEditorContent({ mode, suiteName }: ScenarioSuiteEditorCont
       }
       const reordered = [...current]
       const [entry] = reordered.splice(index, 1)
-      reordered.splice(nextIndex, 0, entry)
+      if (entry) {
+        reordered.splice(nextIndex, 0, entry)
+      }
       return reordered
     })
   }

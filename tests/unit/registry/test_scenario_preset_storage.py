@@ -15,7 +15,11 @@ import pytest
 from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest, ScenarioPreset
 from pyrit.models.catalog.scenario_preset import PRESET_SCHEMA_VERSION
 from pyrit.registry import ScenarioPresetConflictError, ScenarioPresetStorage
-from pyrit.registry.file_document_storage import _release_exclusive_lock, _try_acquire_exclusive_lock
+from pyrit.registry.file_document_storage import (
+    DocumentStorageUnavailableError,
+    _release_exclusive_lock,
+    _try_acquire_exclusive_lock,
+)
 
 
 def _make_preset(**overrides: object) -> ScenarioPreset:
@@ -465,6 +469,7 @@ def test_blob_storage_reads_missing_document_as_none() -> None:
     client = MagicMock()
     client.__enter__.return_value = client
     client.download_blob.side_effect = ResourceNotFoundError("missing")
+    client.download_blob.side_effect.error_code = "BlobNotFound"
     storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
 
     with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
@@ -490,6 +495,7 @@ def test_blob_delete_of_a_missing_document_reports_absence_instead_of_raising() 
     client = MagicMock()
     client.__enter__.return_value = client
     client.delete_blob.side_effect = ResourceNotFoundError("missing")
+    client.delete_blob.side_effect.error_code = "BlobNotFound"
     storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
 
     with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
@@ -699,7 +705,7 @@ def test_failed_write_preserves_the_previous_preset(tmp_path: Path) -> None:
         raise OSError(28, "No space left on device")
 
     with patch("os.replace", fail):
-        with pytest.raises(OSError):
+        with pytest.raises(DocumentStorageUnavailableError):
             storage.save_preset(preset=_make_preset(description="second"), expected_version=first.version)
 
     loaded = storage.load_preset("nightly")
@@ -774,7 +780,7 @@ def test_a_second_writer_cannot_enter_while_a_save_is_in_flight(tmp_path: Path) 
     real_replace_file = ScenarioPresetStorage._replace_file
 
     def replace_once_a_competitor_has_tried(*, path: Path, content: bytes) -> None:
-        with pytest.raises(TimeoutError) as error:
+        with pytest.raises(DocumentStorageUnavailableError) as error:
             competitor.save_preset(preset=_make_preset(description="racer"), expected_version=first.version)
         refusals.append(str(error.value))
         real_replace_file(path=path, content=content)
@@ -798,7 +804,7 @@ def test_a_delete_cannot_enter_while_a_save_is_in_flight(tmp_path: Path) -> None
     real_replace_file = ScenarioPresetStorage._replace_file
 
     def replace_once_a_deleter_has_tried(*, path: Path, content: bytes) -> None:
-        with pytest.raises(TimeoutError) as error:
+        with pytest.raises(DocumentStorageUnavailableError) as error:
             competitor.delete_preset("nightly")
         refusals.append(str(error.value))
         real_replace_file(path=path, content=content)
@@ -846,7 +852,7 @@ def test_a_lock_held_by_a_live_writer_is_respected(tmp_path: Path) -> None:
 
     try:
         with patch.object(ScenarioPresetStorage, "LOCK_TIMEOUT_SECONDS", 0.1):
-            with pytest.raises(TimeoutError, match="nightly.json.lock"):
+            with pytest.raises(DocumentStorageUnavailableError, match="nightly.json.lock"):
                 storage.save_preset(preset=_make_preset(), expected_version=None)
     finally:
         _release_exclusive_lock(descriptor)
@@ -919,7 +925,7 @@ def test_blob_create_refuses_to_overwrite_a_document_another_writer_just_created
 
 def test_blob_create_against_a_missing_container_is_not_reported_as_a_conflict() -> None:
     """Test that an absent container surfaces as a storage error instead of a phantom concurrent edit."""
-    from azure.core.exceptions import AzureError, ResourceNotFoundError
+    from azure.core.exceptions import ResourceNotFoundError
 
     client = MagicMock()
     client.__enter__.return_value = client
@@ -927,7 +933,7 @@ def test_blob_create_against_a_missing_container_is_not_reported_as_a_conflict()
     storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/absent?sig=secret")
 
     with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):
-        with pytest.raises(AzureError):
+        with pytest.raises(DocumentStorageUnavailableError):
             storage.save_preset(preset=_make_preset(), expected_version=None)
 
 
@@ -969,6 +975,7 @@ def test_blob_update_of_a_deleted_document_is_a_conflict() -> None:
     client = MagicMock()
     client.__enter__.return_value = client
     client.download_blob.side_effect = ResourceNotFoundError("missing")
+    client.download_blob.side_effect.error_code = "BlobNotFound"
     storage = ScenarioPresetStorage(source="https://account.blob.core.windows.net/presets?sig=secret")
 
     with patch("azure.storage.blob.ContainerClient.from_container_url", return_value=client):

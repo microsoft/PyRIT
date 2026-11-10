@@ -27,6 +27,7 @@ from pyrit.backend.routes.common import (
 from pyrit.backend.services.saved_entries import NotSaveableError, SavedEntryConflictError, SavedEntryStorageError
 from pyrit.backend.services.scorer_service import get_scorer_service
 from pyrit.models.catalog import ScorerInstance
+from pyrit.registry import SavedEntryUnavailableError
 
 router = APIRouter(prefix="/scorers", tags=["scorers"])
 
@@ -88,7 +89,7 @@ async def create_scorer(
     try:
         return await get_scorer_service().create_scorer_async(
             request=body,
-            owner=saved_entry_owner_from_request(request),
+            owner=saved_entry_owner_from_request(request) if body.persist else None,
             recipes_source=getattr(request.app.state, "registry_recipes_source", None),
         )
     except NotSaveableError as exc:
@@ -99,6 +100,8 @@ async def create_scorer(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except SavedEntryUnavailableError:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

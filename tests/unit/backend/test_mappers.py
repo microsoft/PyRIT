@@ -1561,7 +1561,7 @@ def test_target_instance_reports_effective_history_replay(mode: str) -> None:
         assert not result.capabilities.supports_editable_history
 
 
-class TestTargetOrigin:
+class TestTargetInstanceOrigin:
     @pytest.mark.usefixtures("patch_central_database")
     def test_carries_the_origin_onto_the_instance(self) -> None:
         result = target_object_to_instance("t-1", MockPromptTarget(), origin=RegistryEntryOrigin.SAVED)

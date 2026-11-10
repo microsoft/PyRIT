@@ -6,6 +6,7 @@ import json
 import logging
 import warnings
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -28,6 +29,9 @@ class HuggingFaceChatTarget(PromptTarget):
     """
     The HuggingFaceChatTarget interacts with HuggingFace models, specifically for conducting red teaming activities.
     Inherits from PromptTarget to comply with the current design standards.
+
+    Generation is serialized across instances on a dedicated worker. Cancelling a queued send
+    prevents it from generating; cancelling an active send waits for its generation to finish.
     """
 
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(
@@ -56,6 +60,11 @@ class HuggingFaceChatTarget(PromptTarget):
 
     # Class-level flag to enable or disable cache
     _cache_enabled = True
+
+    # The worker shares the process lifetime of the model cache, not an individual target.
+    _generation_executor: ClassVar[ThreadPoolExecutor] = ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="pyrit-huggingface"
+    )
 
     # Define the environment variable name for the Hugging Face token
     HUGGINGFACE_TOKEN_ENVIRONMENT_VARIABLE = "HUGGINGFACE_TOKEN"
@@ -355,6 +364,7 @@ class HuggingFaceChatTarget(PromptTarget):
 
         Raises:
             EmptyResponseException: If the model generates an empty response.
+            asyncio.CancelledError: If the send is cancelled, after any active generation finishes.
         """
         await self._wait_for_model_and_tokenizer_async()
 
@@ -371,16 +381,14 @@ class HuggingFaceChatTarget(PromptTarget):
         logger.info(f"Tokenized chat: {input_ids}")
 
         try:
-            # Ensure model is on the correct device (should already be, but safeguard for device changes)
-            self.model.to(self.device)
-
             # Record input length to extract only newly generated tokens
             input_length = input_ids.shape[-1]
 
             generate_kwargs = {"input_ids": input_ids, "attention_mask": attention_mask, **self._generation_params}
 
             logger.info("Generating response from model...")
-            generated_ids = self.model.generate(**generate_kwargs)
+            # Generation is a blocking forward pass that can run for minutes, so keep it off the event loop.
+            generated_ids = await self._generate_async(generate_kwargs=generate_kwargs)
 
             logger.info(f"Generated IDs: {generated_ids}")
 
@@ -413,6 +421,48 @@ class HuggingFaceChatTarget(PromptTarget):
         except Exception as e:
             logger.error(f"Error occurred during inference: {e}")
             raise
+
+    async def _generate_async(self, *, generate_kwargs: dict[str, Any]) -> Any:
+        """
+        Cancel queued generation or drain active generation before propagating cancellation.
+
+        Args:
+            generate_kwargs (dict[str, Any]): Keyword arguments for ``model.generate()``.
+
+        Returns:
+            Any: The generated token ids.
+
+        Raises:
+            asyncio.CancelledError: After queued work is cancelled or active generation finishes.
+        """
+        submitted = HuggingFaceChatTarget._generation_executor.submit(self._generate, generate_kwargs=generate_kwargs)
+        generation = asyncio.wrap_future(submitted)
+        try:
+            return await asyncio.shield(generation)
+        except asyncio.CancelledError as cancellation:
+            submitted.cancel()
+            while not generation.done():
+                try:
+                    await asyncio.wait({generation})
+                except asyncio.CancelledError:
+                    continue
+            if not generation.cancelled() and (error := generation.exception()) is not None:
+                raise cancellation from error
+            raise
+
+    def _generate(self, *, generate_kwargs: dict[str, Any]) -> Any:
+        """
+        Run the blocking model generation, one call at a time.
+
+        Args:
+            generate_kwargs (dict[str, Any]): Keyword arguments for ``model.generate()``.
+
+        Returns:
+            Any: The generated token ids.
+        """
+        # Ensure model is on the correct device (should already be, but safeguard for device changes)
+        self.model.to(self.device)
+        return self.model.generate(**generate_kwargs)
 
     async def _wait_for_model_and_tokenizer_async(self) -> None:
         """Wait for shared model loading without allowing a send cancellation to cancel it."""

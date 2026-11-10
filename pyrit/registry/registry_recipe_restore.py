@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
-import unicodedata
-from dataclasses import dataclass
+import logging
+import traceback
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from pyrit.common.azure_storage import redact_urls
 from pyrit.models import ComponentType
 from pyrit.models.catalog import (
     ComponentRecipe,
@@ -20,16 +23,32 @@ from pyrit.models.catalog import (
     StoredRecipe,
     TechniqueRecipe,
 )
-from pyrit.registry.file_document_storage import describe_storage_error
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, SAVED_ENTRY_OWNER_METADATA_KEY
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
+from pyrit.registry.instance_registry import (
+    SAVED_ENTRY_METADATA_KEY,
+    SAVED_ENTRY_OWNER_METADATA_KEY,
+    UnavailableEntry,
+)
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
-from pyrit.registry.registry_recipe_storage import RecipeListing, RegistryRecipeStorage
+from pyrit.registry.registry_recipe_storage import (
+    MAX_FAILURE_MESSAGE_LENGTH,
+    RecipeListing,
+    RegistryRecipeStorage,
+    shorten_text,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
 
     from pyrit.models import Parameter
-    from pyrit.registry.registry import InstanceHoldingRegistry
+    from pyrit.registry.instance_registry import InstanceRegistry
+    from pyrit.registry.registry import InstanceHoldingRegistry, Registry
+    from pyrit.registry.registry_metadata import RegistryMetadata
+
+logger = logging.getLogger(__name__)
+
+# Identifies a failure for the log: one saved entry, or a whole folder when the name is None.
+_FailureKey = tuple[RegistryRecipeKind, str | None]
 
 
 @dataclass(frozen=True)
@@ -38,6 +57,10 @@ class SavedRecipes:
 
     listings: tuple[RecipeListing, ...]
     failures: tuple[RestoreFailure, ...]
+    # The storage error behind each folder that couldn't be listed, for the log only.
+    causes: Mapping[RegistryRecipeKind, BaseException] = field(
+        default_factory=lambda: MappingProxyType({}), compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True)
@@ -52,13 +75,20 @@ class RegistryRecipeRestorer:
     """
     Rebuild saved targets, converters, scorers, and techniques into their registries.
 
-    Each entry is built after the saved entries it names, with the same calls the API uses to
-    create one, so a restored entry passes the same checks. A file never chooses what gets
-    imported: classes and attack types are looked up among the ones already registered. Server
-    paths are refused as they are for API input, and ``check_saved_entry_params`` refuses a recipe
-    that stores a credential, that would let its entry use one from this server, or, for a target,
-    that would send requests where this server's settings say. Entries that can't come back are
-    reported with the reason instead of being skipped.
+    Each entry is built after the saved entries it names, through the registry calls the API's create
+    makes: parameters are checked as external input, and a technique is registered the same way. A file
+    never chooses what gets imported: classes and attack types are looked up among the ones already
+    registered. Server paths are refused as they are for API input, so a class that reads a file a
+    caller uploads can't be restored, and ``check_saved_entry_params`` refuses a recipe that stores a
+    credential, that would let its entry use one from this server, or, for a target, that would send
+    requests where this server's settings say. Entries that can't come back are reported with the reason
+    instead of being skipped.
+
+    The API's create also runs steps around those calls that restore skips. A recipe already holds
+    constructor parameters, so the API's auth-mode translation doesn't apply. The admin-only checks, on
+    code a model repository runs and on server credentials, ran when an admin saved the entry, and
+    restore runs as the server. Until the API and restore share one create function, a check added
+    there must be added here.
 
     Stored files are otherwise trusted the way configuration is.
     """
@@ -79,73 +109,141 @@ class RegistryRecipeRestorer:
             source (str | None): Local directory or Azure Blob URI holding the per-registry folders.
                 Defaults to ``registry_recipes`` under the PyRIT configuration directory.
         """
+        from pyrit.registry.components.converter_registry import ConverterRegistry
+        from pyrit.registry.components.scorer_registry import ScorerRegistry
+        from pyrit.registry.components.target_registry import TargetRegistry
+
         self._storages = {kind: RegistryRecipeStorage(kind=kind, source=source) for kind in RegistryRecipeKind}
+        self._registry_types: dict[RegistryRecipeKind, Any] = {
+            RegistryRecipeKind.TARGETS: TargetRegistry,
+            RegistryRecipeKind.CONVERTERS: ConverterRegistry,
+            RegistryRecipeKind.SCORERS: ScorerRegistry,
+        }
 
     def read(self) -> SavedRecipes:
         """
         Read every registry's folder without building anything.
 
         Reading can wait on storage, so a caller on an event loop can run this in a worker thread and
-        pass the result to ``restore`` on the loop. A folder that can't be listed becomes a failure.
+        pass the result to ``restore`` on the loop. A folder that can't be listed becomes a failure; any
+        other error is a bug rather than a problem with the files, so it isn't caught.
 
         Returns:
             SavedRecipes: The folders that were read, and a failure for each one that wasn't.
         """
         listings: list[RecipeListing] = []
         failures: list[RestoreFailure] = []
+        causes: dict[RegistryRecipeKind, BaseException] = {}
         for kind, storage in self._storages.items():
             try:
                 listings.append(storage.list_recipes())
-            except Exception as error:  # Any listing error, not only storage ones, must become a failure.
-                message = f"The saved {kind.value} couldn't be listed: {describe_storage_error(error)}"
+            except DocumentStorageUnavailableError as error:
+                message = f"The saved {kind.value} couldn't be listed: {error.reason}"
                 failures.append(
                     RestoreFailure(kind=kind, reason=RestoreFailureReason.UNREADABLE_STORAGE, message=message)
                 )
-        return SavedRecipes(listings=tuple(listings), failures=tuple(failures))
+                causes[kind] = error
+        return SavedRecipes(listings=tuple(listings), failures=tuple(failures), causes=MappingProxyType(causes))
 
-    def restore(
-        self, *, saved: SavedRecipes | None = None, restored: Collection[SavedEntryRef] = ()
-    ) -> RegistryRestoreReport:
+    def restore(self, *, saved: SavedRecipes | None = None) -> RegistryRestoreReport:
         """
         Rebuild every saved entry that can be rebuilt and register it.
 
         Entries are built on the calling thread, as the target API builds them, because a constructor
         can need the running event loop. Call it when the registries hold only startup entries, as they
-        do at startup and after an apply resets them, plus the entries named in ``restored``; any other
-        entry restored earlier would clash with itself by name. If any registry's folder can't be read,
-        nothing is built, since entries in the other folders may name entries in the unread one.
+        do at startup and after an apply resets them; an entry restored earlier would otherwise clash
+        with itself by name. If any registry's folder can't be read, nothing is built, since entries
+        in the other folders may name entries in the unread one, and each entry left unbuilt is a failure.
+
+        Each failure is logged once, with the error behind it, if any, and URL credentials removed. Then
+        the name of each entry that failed is held in its registry, so looking it up or taking it fails
+        with the reason instead of finding nothing or something else. A folder that couldn't be listed
+        holds every name of its kind that isn't registered.
 
         Args:
             saved (SavedRecipes | None): What ``read`` returned. Defaults to reading now.
-            restored (Collection[SavedEntryRef]): Saved entries an earlier restore already rebuilt and
-                registered. They are left as they are, and entries that use them can be built.
 
         Returns:
             RegistryRestoreReport: What was restored, what failed and why, and which files were ignored.
         """
         saved = saved if saved is not None else self.read()
         listings, failures = list(saved.listings), list(saved.failures)
+        causes: dict[_FailureKey, BaseException] = {(kind, None): error for kind, error in saved.causes.items()}
+        for listing in listings:
+            failures.extend(listing.failures)
+            for failure in listing.failures:
+                cause = listing.causes.get(failure.name) if failure.name is not None else None
+                if cause is not None:
+                    causes[(failure.kind, failure.name)] = cause
         ignored = [file for listing in listings for file in listing.ignored]
-        failures.extend(
-            failure
-            for listing in listings
-            for failure in listing.failures
-            if failure.name is None or SavedEntryRef(kind=failure.kind, name=failure.name) not in restored
-        )
-        if len(listings) < len(self._storages):
-            return RegistryRestoreReport(failures=self._sorted(failures), ignored=ignored)
-        stored = {
-            recipe.ref: recipe
-            for listing in listings
-            for recipe in listing.recipes.values()
-            if recipe.ref not in restored
-        }
-        planned = self._plan_all(stored=stored, failures=failures)
-        built = self._build_in_order(planned=planned, failures=failures)
-        return RegistryRestoreReport(restored=built, failures=self._sorted(failures), ignored=ignored)
+        if saved.failures:
+            unread = " and ".join(failure.kind.value for failure in saved.failures)
+            failures.extend(
+                self._failure(
+                    stored=recipe,
+                    reason=RestoreFailureReason.UNREADABLE_STORAGE,
+                    message=f"Not restored, because the saved {unread} couldn't be listed.",
+                )
+                for listing in listings
+                for recipe in listing.recipes.values()
+            )
+            report = RegistryRestoreReport(failures=self._sorted(failures), ignored=ignored)
+        else:
+            stored = {recipe.ref: recipe for listing in listings for recipe in listing.recipes.values()}
+            planned = self._plan_all(stored=stored, failures=failures, causes=causes)
+            restored = self._build_in_order(planned=planned, failures=failures, causes=causes)
+            report = RegistryRestoreReport(restored=restored, failures=self._sorted(failures), ignored=ignored)
+        self._log_failures(failures=report.failures, causes=causes)
+        self._hold_failed_names(failures=report.failures)
+        return report
+
+    def _hold_failed_names(self, *, failures: Sequence[RestoreFailure]) -> None:
+        """
+        Hold the name of each entry that couldn't be restored, so using or taking it fails with the reason.
+
+        A folder that couldn't be listed holds every unregistered name of its kind, since any of them could
+        be a saved entry in it.
+        """
+        for failure in failures:
+            entry = UnavailableEntry(
+                kind=self._singular(failure.kind), name=failure.name, reason=failure.reason, message=failure.message
+            )
+            self._get_instances(failure.kind).mark_unavailable(entry)
+
+    def _get_instances(self, kind: RegistryRecipeKind) -> InstanceRegistry[Any]:
+        """
+        Get the instances of the registry that holds saved entries of a kind.
+
+        Returns:
+            InstanceRegistry[Any]: The registry's instances.
+        """
+        if kind is RegistryRecipeKind.TECHNIQUES:
+            from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+
+            return AttackTechniqueRegistry.get_registry_singleton().instances
+        return self._get_registry(kind).instances
+
+    def _log_failures(self, *, failures: Sequence[RestoreFailure], causes: Mapping[_FailureKey, BaseException]) -> None:
+        """Log each failure once, with the error behind it, if any, and URL credentials removed."""
+        for failure in failures:
+            subject = (
+                f"the saved {failure.kind.value}"
+                if failure.name is None
+                else self._describe_ref(SavedEntryRef(kind=failure.kind, name=failure.name))
+            )
+            summary = f"Couldn't restore {subject} ({failure.reason.value}): {failure.message}"
+            cause = causes.get((failure.kind, failure.name))
+            if cause is None:
+                logger.warning(summary)
+            else:
+                logger.warning(f"{summary}\n{redact_urls(''.join(traceback.format_exception(cause))).rstrip()}")
 
     def _plan_all(
-        self, *, stored: Mapping[SavedEntryRef, StoredRecipe], failures: list[RestoreFailure]
+        self,
+        *,
+        stored: Mapping[SavedEntryRef, StoredRecipe],
+        failures: list[RestoreFailure],
+        causes: dict[_FailureKey, BaseException],
     ) -> dict[SavedEntryRef, _PlannedEntry]:
         """
         Check every readable recipe's class, credentials, name, and references.
@@ -154,21 +252,27 @@ class RegistryRecipeRestorer:
         never silently attached to a startup entry that only shares its name.
 
         Returns:
-            dict[SavedEntryRef, _PlannedEntry]: The entries ready to build. Failures are appended.
+            dict[SavedEntryRef, _PlannedEntry]: The entries ready to build. Failures and their errors are added.
         """
         saved_refs = set(stored) | {
             SavedEntryRef(kind=failure.kind, name=failure.name) for failure in failures if failure.name is not None
         }
         planned: dict[SavedEntryRef, _PlannedEntry] = {}
         for ref in sorted(stored, key=self._sort_key):
-            outcome = self._plan(stored=stored[ref], saved_refs=saved_refs)
+            outcome = self._plan(stored=stored[ref], saved_refs=saved_refs, causes=causes)
             if isinstance(outcome, RestoreFailure):
                 failures.append(outcome)
             else:
                 planned[ref] = outcome
         return planned
 
-    def _plan(self, *, stored: StoredRecipe, saved_refs: set[SavedEntryRef]) -> _PlannedEntry | RestoreFailure:
+    def _plan(
+        self,
+        *,
+        stored: StoredRecipe,
+        saved_refs: set[SavedEntryRef],
+        causes: dict[_FailureKey, BaseException],
+    ) -> _PlannedEntry | RestoreFailure:
         """
         Check one recipe and collect the saved entries it depends on.
 
@@ -184,9 +288,10 @@ class RegistryRecipeRestorer:
             )
         except (_RecipeRejectedError, SavedEntryRefusedError) as rejection:
             return self._failure(stored=stored, reason=rejection.reason, message=str(rejection))
-        except Exception as error:  # Planning one entry must never stop the others from being checked.
+        except Exception as error:  # A bug here must not stop the others from being checked, or blame the file.
+            causes[(stored.ref.kind, stored.ref.name)] = error
             return self._failure(
-                stored=stored, reason=RestoreFailureReason.INVALID_RECIPE, message=self._safe_message(error)
+                stored=stored, reason=RestoreFailureReason.BUILD_ERROR, message=self._safe_message(error)
             )
         dependencies: list[SavedEntryRef] = []
         for reference in references:
@@ -210,7 +315,8 @@ class RegistryRecipeRestorer:
             list[SavedEntryRef]: The referenced entries, in parameter order.
 
         Raises:
-            _RecipeRejectedError: If the class is unknown or moved, or the name is already taken.
+            _RecipeRejectedError: If the class is unknown or is now one from outside PyRIT, the recipe
+                sets a server file or folder, or the name is already taken.
             SavedEntryRefusedError: If the class can't be saved, or the recipe holds or would use a credential.
         """
         registry = self._get_registry(ref.kind)
@@ -219,14 +325,35 @@ class RegistryRecipeRestorer:
         except KeyError as error:
             message = f"'{recipe.class_name}' is not a registered {self._singular(ref.kind)} class."
             raise _RecipeRejectedError(reason=RestoreFailureReason.UNKNOWN_CLASS, message=message) from error
-        if cls.__module__ != recipe.class_module:
+        # Classes are found by registered name, so one that moved within PyRIT is still the same class.
+        moved_within_pyrit = _is_pyrit_module(cls.__module__) and _is_pyrit_module(recipe.class_module)
+        if cls.__module__ != recipe.class_module and not moved_within_pyrit:
             message = (
                 f"'{recipe.class_name}' is registered from '{cls.__module__}', "
                 f"but the saved entry was made with the one in '{recipe.class_module}'."
             )
             raise _RecipeRejectedError(reason=RestoreFailureReason.MODULE_MISMATCH, message=message)
-        parameters = registry.get_class_metadata(cls).parameters
+        parameters = self._class_parameters(registry=registry, name=recipe.class_name, cls=cls)
         check_saved_entry_params(cls=cls, parameters=parameters, params=recipe.params)
+        # As in the target API, a target may let callers set some path parameters, such as a working folder.
+        allowed_paths = (
+            getattr(cls, "caller_path_parameters", frozenset())
+            if ref.kind is RegistryRecipeKind.TARGETS
+            else frozenset()
+        )
+        server_paths = sorted(
+            parameter.name
+            for parameter in parameters
+            if parameter.mentions_path
+            and parameter.name not in allowed_paths
+            and recipe.params.get(parameter.name) not in (None, "")
+        )
+        if server_paths:
+            message = (
+                f"'{recipe.class_name}' reads a server file or folder from '{server_paths[0]}', "
+                "which a saved entry can't set."
+            )
+            raise _RecipeRejectedError(reason=RestoreFailureReason.UNSUPPORTED_CLASS, message=message)
         try:
             registry.instances.validate_name_available(ref.name)
         except ValueError as error:
@@ -255,7 +382,7 @@ class RegistryRecipeRestorer:
         except KeyError as error:
             message = f"'{recipe.type}' is not a registered attack type."
             raise _RecipeRejectedError(reason=RestoreFailureReason.UNKNOWN_CLASS, message=message) from error
-        parameters = attack_registry.get_class_metadata(attack_class).parameters
+        parameters = self._class_parameters(registry=attack_registry, name=recipe.type, cls=attack_class)
         check_saved_entry_params(cls=attack_class, parameters=parameters, params=recipe.params)
         return self.recipe_references(kind=RegistryRecipeKind.TECHNIQUES, recipe=recipe)
 
@@ -286,14 +413,26 @@ class RegistryRecipeRestorer:
                 attack_class = attack_registry.get_class(recipe.type)
             except KeyError:
                 return references
-            parameters = attack_registry.get_class_metadata(attack_class).parameters
+            parameters = self._class_parameters(registry=attack_registry, name=recipe.type, cls=attack_class)
             return references + self._parameter_references(parameters=parameters, params=recipe.params)
         registry = self._get_registry(kind)
         try:
             cls = registry.get_class(recipe.class_name)
         except KeyError:
             return []
-        return self._parameter_references(parameters=registry.get_class_metadata(cls).parameters, params=recipe.params)
+        parameters = self._class_parameters(registry=registry, name=recipe.class_name, cls=cls)
+        return self._parameter_references(parameters=parameters, params=recipe.params)
+
+    @staticmethod
+    def _class_parameters(*, registry: Registry[Any, Any], name: str, cls: type) -> tuple[Parameter, ...]:
+        """
+        Get a registered class's constructor parameters from the registry's cached metadata.
+
+        Returns:
+            tuple[Parameter, ...]: The parameters the class declares.
+        """
+        metadata: RegistryMetadata = registry.get_registered_class_metadata(name) or registry.get_class_metadata(cls)
+        return metadata.parameters
 
     def _parameter_references(
         self, *, parameters: Sequence[Parameter], params: Mapping[str, Any]
@@ -318,13 +457,17 @@ class RegistryRecipeRestorer:
         return references
 
     def _build_in_order(
-        self, *, planned: dict[SavedEntryRef, _PlannedEntry], failures: list[RestoreFailure]
+        self,
+        *,
+        planned: dict[SavedEntryRef, _PlannedEntry],
+        failures: list[RestoreFailure],
+        causes: dict[_FailureKey, BaseException],
     ) -> list[SavedEntryRef]:
         """
         Build entries once everything they depend on has been settled.
 
         Returns:
-            list[SavedEntryRef]: The entries that were rebuilt and registered. Failures are appended.
+            list[SavedEntryRef]: The entries that were rebuilt and registered. Failures and their errors are added.
         """
         failed = {SavedEntryRef(kind=failure.kind, name=failure.name) for failure in failures if failure.name}
         restored: list[SavedEntryRef] = []
@@ -333,7 +476,9 @@ class RegistryRecipeRestorer:
         while ready:
             for ref in ready:
                 entry = pending.pop(ref)
-                failure = self._failed_dependency(entry=entry, failed=failed) or self._build(stored=entry.stored)
+                failure = self._failed_dependency(entry=entry, failed=failed) or self._build(
+                    stored=entry.stored, causes=causes
+                )
                 if failure is None:
                     restored.append(ref)
                 else:
@@ -420,7 +565,7 @@ class RegistryRecipeRestorer:
             stack.extend(dependency for dependency in pending[current].dependencies if dependency in pending)
         return False
 
-    def _build(self, *, stored: StoredRecipe) -> RestoreFailure | None:
+    def _build(self, *, stored: StoredRecipe, causes: dict[_FailureKey, BaseException]) -> RestoreFailure | None:
         """
         Build one entry and register it.
 
@@ -451,6 +596,7 @@ class RegistryRecipeRestorer:
         except _RecipeRejectedError as rejection:
             return self._failure(stored=stored, reason=rejection.reason, message=str(rejection))
         except Exception as error:  # A constructor can raise anything; one bad entry must not stop the rest.
+            causes[(stored.ref.kind, stored.ref.name)] = error
             return self._failure(
                 stored=stored, reason=RestoreFailureReason.BUILD_ERROR, message=self._safe_message(error)
             )
@@ -462,9 +608,13 @@ class RegistryRecipeRestorer:
         Build a technique with the call the technique API uses, then register it.
 
         Raises:
-            _RecipeRejectedError: If the name or a tag conflicts with a registered technique.
+            _RecipeRejectedError: If the name or a tag conflicts with a registered technique, or the
+                technique doesn't fit the scenarios it would join.
         """
-        from pyrit.registry.components.attack_technique_registry import AttackTechniqueRegistry
+        from pyrit.registry.components.attack_technique_registry import (
+            AttackTechniqueRegistry,
+            TechniqueSelectorConflictError,
+        )
 
         registry = AttackTechniqueRegistry.get_registry_singleton()
         args = recipe.model_dump(exclude_unset=True, exclude={"schema_version", "type", "tags", "owner"})
@@ -479,8 +629,10 @@ class RegistryRecipeRestorer:
                     SAVED_ENTRY_OWNER_METADATA_KEY: recipe.owner,
                 },
             )
-        except ValueError as error:
+        except TechniqueSelectorConflictError as error:
             raise _RecipeRejectedError(reason=RestoreFailureReason.NAME_CLASH, message=str(error)) from error
+        except ValueError as error:
+            raise _RecipeRejectedError(reason=RestoreFailureReason.INVALID_RECIPE, message=str(error)) from error
 
     def _get_registry(self, kind: RegistryRecipeKind) -> InstanceHoldingRegistry[Any, Any]:
         """
@@ -489,16 +641,7 @@ class RegistryRecipeRestorer:
         Returns:
             InstanceHoldingRegistry[Any, Any]: The registry.
         """
-        from pyrit.registry.components.converter_registry import ConverterRegistry
-        from pyrit.registry.components.scorer_registry import ScorerRegistry
-        from pyrit.registry.components.target_registry import TargetRegistry
-
-        registries = {
-            RegistryRecipeKind.TARGETS: TargetRegistry,
-            RegistryRecipeKind.CONVERTERS: ConverterRegistry,
-            RegistryRecipeKind.SCORERS: ScorerRegistry,
-        }
-        return registries[kind].get_registry_singleton()
+        return self._registry_types[kind].get_registry_singleton()
 
     def _failure(
         self,
@@ -563,45 +706,32 @@ class RegistryRecipeRestorer:
     @staticmethod
     def _safe_message(error: Exception) -> str:
         """
-        Describe an error for the failure report without any credential a URL in it may carry.
+        Describe an error for the failure report: its type and text, without URL credentials, and shortened.
 
-        Constructor errors can quote a server setting, such as an endpoint with a SAS token. The text
-        is cut at the first ``?`` or ``#``, where a URL's query or fragment starts. A user name and
-        password can't be told apart reliably, so text with an ``@`` isn't shown at all, nor is text
-        with a ``%``, since a percent escape such as ``%40`` or ``%3F`` can stand for any of these
-        marks. A look-alike character, such as a full-width ``＠``, counts as the character it looks
-        like, and the text that is shown keeps its original characters.
+        Stored files are trusted the way configuration is, so the text is shown as it is, except that each
+        URL in it loses its user name and password, query, and fragment, which can hold a credential such
+        as a SAS token. The log has the whole error.
 
         Returns:
-            str: The error's type and its text, noting when the rest of the text or all of it is hidden.
+            str: The error's type and text, at most ``MAX_FAILURE_MESSAGE_LENGTH`` characters long.
         """
         name = type(error).__name__
-        hidden = "because it may include a credential"
         try:
-            # A plain str, so no string method a subclass overrides runs on the text below.
-            text = str.__str__(str(error))
+            text = str(error)
         except Exception:
             return name
-        if any(_looks_like(char=char, marks="@%") for char in text):
-            return f"{name} (message hidden {hidden})"
-        cut_at = next((index for index, char in enumerate(text) if _looks_like(char=char, marks="?#")), None)
-        if cut_at is None:
-            return f"{name}: {text}" if text else name
-        cut = text[:cut_at]
-        return f"{name}: {cut} (rest hidden {hidden})" if cut.strip() else f"{name} (message hidden {hidden})"
+        text = redact_urls(text).encode("utf-8", "backslashreplace").decode("utf-8")
+        return shorten_text(f"{name}: {text}" if text else name, limit=MAX_FAILURE_MESSAGE_LENGTH)
 
 
-def _looks_like(*, char: str, marks: str) -> bool:
+def _is_pyrit_module(module: str) -> bool:
     """
-    Return whether a character is, or looks like, one of the given marks.
-
-    Each character is folded on its own, which keeps the check linear in the length of the text.
+    Return whether a module is part of PyRIT.
 
     Returns:
-        bool: True if the character's compatibility form contains one of the marks.
+        bool: True for ``pyrit`` and its submodules.
     """
-    folded = unicodedata.normalize("NFKC", char)
-    return any(mark in folded for mark in marks)
+    return module == "pyrit" or module.startswith("pyrit.")
 
 
 class _RecipeRejectedError(Exception):
