@@ -16,7 +16,15 @@ import pytest
 from openai.types.responses import ResponseOutputText
 
 from pyrit.memory import CentralMemory, MemoryInterface
-from pyrit.models import Message, MessagePiece, ToolExecutionMetadata, ToolLoopStop, ToolLoopStopReason
+from pyrit.models import (
+    Message,
+    MessagePiece,
+    RequestGenerationConfig,
+    RequestGenerationInfo,
+    ToolExecutionMetadata,
+    ToolLoopStop,
+    ToolLoopStopReason,
+)
 from pyrit.prompt_normalizer import PromptNormalizer
 from pyrit.prompt_target import FunctionTool, OpenAIResponseTarget, ToolInfrastructureError
 from pyrit.prompt_target.common.target_history import filter_non_replayable_messages
@@ -520,8 +528,9 @@ def test_identifier_records_max_tool_rounds_only_with_local_tools(
 
 
 @pytest.mark.parametrize("max_tool_rounds", [0, 2])
+@pytest.mark.parametrize("temperature", [None, 0])
 async def test_tool_rounds_stop_at_the_limit_with_every_call_answered_async(
-    patch_central_database, max_tool_rounds: int
+    patch_central_database, max_tool_rounds: int, temperature: float | None
 ) -> None:
     executed: list[str] = []
 
@@ -537,12 +546,23 @@ async def test_tool_rounds_stop_at_the_limit_with_every_call_answered_async(
         max_tool_rounds=max_tool_rounds,
     )
     responses = [create_mock_function_call_response(f"call_{i}", "lookup", {"key": str(i)}) for i in range(5)]
+    message = MessagePiece(
+        role="user", original_value="Go", prompt_metadata=RequestGenerationConfig(temperature=temperature).to_metadata()
+    ).to_message()
     with patch.object(
         target._async_client.responses, "create", new_callable=AsyncMock, side_effect=responses
     ) as create:
-        result = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
+        result = await target.send_prompt_async(message=message)
 
     assert create.await_count == max_tool_rounds + 1
+    if temperature is not None:
+        assert all(call.kwargs["temperature"] == temperature for call in create.await_args_list)
+        for returned in [message, *result]:
+            for piece in returned.message_pieces:
+                info = RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)
+                assert info is not None
+                assert info.temperature.requested == info.temperature.resolved == temperature
+                assert info.temperature.source == "request"
     assert executed == [str(i) for i in range(max_tool_rounds)]
     outputs = _call_outputs(result)
     assert [call_id for call_id, _, _ in outputs] == [f"call_{i}" for i in range(max_tool_rounds + 1)]
@@ -601,8 +621,9 @@ async def test_tool_round_limit_counts_parallel_responses_and_answers_every_pend
 
 
 @pytest.mark.parametrize("invoked", [None, False], ids=["unknown-outcome", "not-invoked"])
+@pytest.mark.parametrize("temperature", [None, 0])
 async def test_tool_infrastructure_error_ends_the_turn_with_every_call_answered_async(
-    *, patch_central_database: None, invoked: bool | None
+    *, patch_central_database: None, invoked: bool | None, temperature: float | None
 ) -> None:
     executed: list[str] = []
     failure = (
@@ -623,12 +644,23 @@ async def test_tool_infrastructure_error_ends_the_turn_with_every_call_answered_
     round_one = create_mock_function_call_response("call_ok", "lookup_async", {"key": "ok"})
     for call_id, key in (("call_broken", "broken"), ("call_skipped", "skipped")):
         round_one.output.extend(create_mock_function_call_response(call_id, "lookup_async", {"key": key}).output)
+    message = MessagePiece(
+        role="user", original_value="Go", prompt_metadata=RequestGenerationConfig(temperature=temperature).to_metadata()
+    ).to_message()
     with patch.object(
         target._async_client.responses, "create", new_callable=AsyncMock, side_effect=[round_one]
     ) as create:
-        result = await target.send_prompt_async(message=MessagePiece(role="user", original_value="Go").to_message())
+        result = await target.send_prompt_async(message=message)
 
     create.assert_awaited_once()
+    if temperature is not None:
+        assert create.call_args.kwargs["temperature"] == temperature
+        for returned in [message, *result]:
+            for piece in returned.message_pieces:
+                info = RequestGenerationInfo.from_metadata(metadata=piece.prompt_metadata)
+                assert info is not None
+                assert info.temperature.requested == info.temperature.resolved == temperature
+                assert info.temperature.source == "request"
     assert executed == ["ok", "broken"]
     assert _call_outputs(result) == [
         ("call_ok", "ok", True),
