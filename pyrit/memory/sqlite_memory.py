@@ -27,7 +27,7 @@ from sqlalchemy.util.concurrency import greenlet_spawn
 
 from pyrit.common import Singleton
 from pyrit.common.path import DB_DATA_PATH
-from pyrit.memory.analytics_sql import UnicodeLower, text_match, validate_text_search
+from pyrit.memory.analytics_sql import UnicodeCaseFold, UnicodeLower, text_match, validate_text_search
 from pyrit.memory.memory_interface import MemoryInterface
 from pyrit.memory.memory_models import (
     AttackResultEntry,
@@ -281,13 +281,26 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
         return str(value).lower() if value is not None else None
 
     @staticmethod
+    def _unicode_casefold(value: str | int | float | bytes | None) -> str | None:
+        """
+        Casefold SQLite text per character, retaining NULL semantics.
+
+        Returns:
+            str | None: The folded value, or SQL NULL.
+        """
+        return str(value).casefold() if value is not None else None
+
+    @staticmethod
     def _register_analytics_lower(*, engine: Engine) -> None:
-        """Install the Unicode lowercase function for analytics and JSON filters on every pooled SQLite connection."""
+        """Install the Unicode fold functions for analytics and JSON filters on every pooled SQLite connection."""
 
         @event.listens_for(engine, "connect")
         def register(dbapi_connection: Any, connection_record: Any) -> None:
             dbapi_connection.create_function(
                 UnicodeLower.SQLITE_FUNCTION_NAME, 1, SQLiteMemory._unicode_lower, deterministic=True
+            )
+            dbapi_connection.create_function(
+                UnicodeCaseFold.SQLITE_FUNCTION_NAME, 1, SQLiteMemory._unicode_casefold, deterministic=True
             )
 
     async def get_session_async(self) -> AsyncSession:

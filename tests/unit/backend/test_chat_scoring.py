@@ -74,7 +74,12 @@ from pyrit.score import (
     XSSOutputScorer,
     create_conversation_scorer,
 )
-from unit.async_utils import TEST_WATCHDOG_SECONDS
+from unit.async_utils import (
+    TEST_WATCHDOG_SECONDS,
+    drain_tasks_async,
+    wait_for_completion_async,
+    wait_for_event_async,
+)
 from unit.mocks import MockPromptTarget, run_memory_session_async
 
 
@@ -1834,16 +1839,21 @@ async def test_late_score_does_not_overwrite_changed_settings_async(
             service.add_message_async(attack_result_id=attack.attack_result_id, request=chat_request(attack))
         )
         try:
-            await asyncio.wait_for(entered.wait(), 10)
+            await wait_for_event_async(event=entered, tasks=[task])
+            if task.done():
+                task.result()
+            assert not task.done(), "The scoring operation completed before settings could be changed."
             update = (
                 UpdateAttackRequest(objective="New objective")
                 if change == "objective"
                 else UpdateAttackRequest(chat_scorer=None)
             )
             await AttackService().update_attack_async(attack_result_id=attack.attack_result_id, request=update)
+            release.set()
+            await wait_for_completion_async(future=task)
         finally:
             release.set()
-            await task
+            await drain_tasks_async(task)
     [stored] = await sqlite_instance.get_attack_results_async(attack_result_ids=[attack.attack_result_id])
     assert stored.automated_score is None
     assert stored.get_scoring_failure(stored.conversation_id) is None
