@@ -162,30 +162,6 @@ class RestoreFailureReason(str, Enum):
     DEPENDENCY_LOOP = "dependency_loop"
     BUILD_ERROR = "build_error"
 
-    @property
-    def explanation(self) -> str:
-        """A fixed explanation of the reason that's safe to show anyone, unlike a failure's message."""
-        return _RESTORE_FAILURE_EXPLANATIONS[self]
-
-
-_RESTORE_FAILURE_EXPLANATIONS: dict[RestoreFailureReason, str] = {
-    RestoreFailureReason.UNREADABLE_STORAGE: "The folder of saved entries couldn't be read.",
-    RestoreFailureReason.UNREADABLE_RECIPE: "The saved file couldn't be read.",
-    RestoreFailureReason.INVALID_RECIPE: "The saved file isn't a valid entry.",
-    RestoreFailureReason.NEWER_SCHEMA_VERSION: "It was saved by a newer version of PyRIT.",
-    RestoreFailureReason.UNKNOWN_CLASS: "Its class or attack type isn't available.",
-    RestoreFailureReason.MODULE_MISMATCH: "Its class is now one from outside PyRIT.",
-    RestoreFailureReason.UNSUPPORTED_CLASS: "Its class can't be rebuilt from a saved file.",
-    RestoreFailureReason.UNSUPPORTED_CREDENTIAL: (
-        "It holds a credential, or would use one of this server's, which a saved entry can't do."
-    ),
-    RestoreFailureReason.NAME_CLASH: "Its name or one of its tags is already taken.",
-    RestoreFailureReason.MISSING_DEPENDENCY: "It uses an entry that doesn't exist.",
-    RestoreFailureReason.FAILED_DEPENDENCY: "It uses an entry that couldn't be restored.",
-    RestoreFailureReason.DEPENDENCY_LOOP: "It is part of a group of entries that use each other.",
-    RestoreFailureReason.BUILD_ERROR: "It couldn't be built.",
-}
-
 
 class RestoreFailure(BaseModel):
     """One saved entry, or one whole storage folder, that couldn't be restored."""
