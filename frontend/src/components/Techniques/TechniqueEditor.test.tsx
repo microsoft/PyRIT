@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { FluentProvider, webLightTheme } from '@fluentui/react-components'
 
@@ -43,6 +43,23 @@ function tree(original = configuration(), onApplied = jest.fn(), initial?: Techn
   </UserPreferencesProvider></FluentProvider>
 }
 
+function promptConfiguration(): TechniqueConfiguration {
+  const original = configuration()
+  return {
+    ...original,
+    source_name: 'crescendo', attack_type: 'crescendo',
+    settings: { ...original.settings, simulation: undefined, adversarial_system_prompt: null },
+    editable_fields: ['adversarial_chat', 'adversarial_system_prompt', 'request_converters', 'response_converters'],
+    prompt_templates: {
+      adversarial_system_prompt: {
+        value: 'Escalate toward {{ objective }} over {{ max_turns }} turns.',
+        parameters: ['objective', 'max_turns'], source: 'builtin',
+      },
+    },
+    system_prompt_prefix: 'Keep questions concise.',
+  }
+}
+
 describe('TechniqueEditor', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -54,6 +71,182 @@ describe('TechniqueEditor', () => {
       { converter_id: 'base64', identifier: { class_name: 'Base64Converter', hash: 'b64' } },
       { converter_id: 'rot13', identifier: { class_name: 'ROT13Converter', hash: 'rot' } },
     ] })
+  })
+
+  it('should show effective defaults and omit unused prompt slots without materializing an override', async () => {
+    const user = userEvent.setup()
+    const original = promptConfiguration()
+    const onApplied = jest.fn()
+    render(tree(original, onApplied))
+    expect(await screen.findByRole('textbox', { name: 'Adversarial system prompt' }))
+      .toHaveValue(original.prompt_templates?.adversarial_system_prompt?.value)
+    expect(screen.getByText('Default', { exact: true })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset adversarial system prompt to default' })).toBeDisabled()
+    expect(screen.getByText(/Template variables:/)).toHaveTextContent('{{ objective }}, {{ max_turns }}')
+    expect(screen.getByText(/Additional guidance/)).toHaveTextContent('Keep questions concise.')
+    expect(screen.queryByRole('textbox', { name: 'Adversarial seed prompt' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Adversarial per-turn prompt' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({})
+  })
+
+  it('should reset only the customized prompt and preserve other run-local settings', async () => {
+    const user = userEvent.setup()
+    const original = promptConfiguration()
+    const initial = promptConfiguration()
+    initial.prompt_templates = {
+      adversarial_system_prompt: { value: 'Custom guidance.', parameters: ['objective', 'max_turns'], source: 'technique' },
+    }
+    initial.settings.params = { max_attempts_on_failure: 3 }
+    render(tree(original, jest.fn(), initial))
+    expect(await screen.findByRole('textbox', { name: 'Adversarial system prompt' })).toHaveValue('Custom guidance.')
+    expect(screen.getByText('Customized', { exact: true })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Reset adversarial system prompt to default' }))
+    expect(screen.getByRole('textbox', { name: 'Adversarial system prompt' }))
+      .toHaveValue(original.prompt_templates?.adversarial_system_prompt?.value)
+    expect(screen.getByText('Default', { exact: true })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({ params: { max_attempts_on_failure: 3 } })
+  })
+
+  it('should mark prompt edits customized and return to default when the original text is restored', async () => {
+    const user = userEvent.setup()
+    const original = promptConfiguration()
+    render(tree(original))
+    const field = await screen.findByRole('textbox', { name: 'Adversarial system prompt' })
+    await user.clear(field)
+    await user.paste('New guidance for {{ objective }}.')
+    expect(screen.getByText('Customized', { exact: true })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({
+      adversarial_system_prompt: 'New guidance for {{ objective }}.',
+    })
+    await user.clear(field)
+    await user.paste('Escalate toward {{ objective }} over {{ max_turns }} turns.')
+    expect(screen.getByText('Default', { exact: true })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(2))
+    expect(techniques.validateEdit.mock.calls[1][0].changes).toEqual({})
+  })
+
+  it('should reset an explicit persona to the technique default, not the generic built-in prompt', async () => {
+    const user = userEvent.setup()
+    const original = promptConfiguration()
+    original.settings.adversarial_system_prompt = 'Original persona.'
+    original.prompt_templates = {
+      adversarial_system_prompt: { value: 'Original persona.', parameters: [], source: 'technique' },
+    }
+    const initial = { ...original, prompt_templates: {
+      adversarial_system_prompt: { value: 'Edited persona.', parameters: [], source: 'technique' as const },
+    } }
+    render(tree(original, jest.fn(), initial))
+    await user.click(await screen.findByRole('button', { name: 'Reset adversarial system prompt to default' }))
+    expect(screen.getByRole('textbox', { name: 'Adversarial system prompt' })).toHaveValue('Original persona.')
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalled())
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({})
+  })
+
+  it.each([
+    ['adversarial_system_prompt', 'Adversarial system prompt', ''],
+    ['adversarial_system_prompt', 'Adversarial system prompt', ' \n '],
+    ['adversarial_seed_prompt', 'Adversarial seed prompt', ''],
+    ['adversarial_seed_prompt', 'Adversarial seed prompt', ' \n '],
+    ['adversarial_prompt_template', 'Adversarial per-turn prompt', ''],
+    ['adversarial_prompt_template', 'Adversarial per-turn prompt', ' \n '],
+  ] as const)('should reject blank prompt text in %s (%s, %j) and recover through reset', async (field, label, blank) => {
+    const user = userEvent.setup()
+    const original = promptConfiguration()
+    original.source_name = 'goat'
+    original.attack_type = 'red_teaming'
+    original.editable_fields.push(field)
+    original.settings[field] = 'Selected technique prompt.'
+    original.prompt_templates = {
+      ...original.prompt_templates,
+      [field]: { value: 'Selected technique prompt.', parameters: [], source: 'technique' },
+    }
+    const onApplied = jest.fn()
+    render(tree(original, onApplied))
+    const input = await screen.findByRole('textbox', { name: label })
+    await user.clear(input)
+    if (blank) await user.paste(blank)
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      `${label} must contain non-empty text. Use Reset to default to restore the selected technique's prompt.`,
+    )
+    expect(input).toHaveValue(blank)
+    expect(techniques.validateEdit).not.toHaveBeenCalled()
+    expect(onApplied).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: `Reset ${label.toLowerCase()} to default` }))
+    expect(input).toHaveValue('Selected technique prompt.')
+    await user.click(screen.getByRole('button', { name: 'Apply to run' }))
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+    expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({})
+  })
+
+  it('should keep a blank prompt draft pending without auto-applying a null override', async () => {
+    jest.useFakeTimers()
+    try {
+      const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime })
+      const original = promptConfiguration()
+      original.settings.adversarial_system_prompt = 'Original persona.'
+      original.prompt_templates = {
+        adversarial_system_prompt: { value: 'Original persona.', parameters: [], source: 'technique' },
+      }
+      const onApplied = jest.fn()
+      const onPending = jest.fn()
+      render(<FluentProvider theme={webLightTheme}>
+        <TechniqueEditor original={original} autoApply onApplied={onApplied} onPending={onPending} />
+      </FluentProvider>)
+      const field = await screen.findByRole('textbox', { name: 'Adversarial system prompt' })
+      await user.clear(field)
+      expect(screen.getByRole('alert')).toHaveTextContent('Adversarial system prompt must contain non-empty text.')
+      expect(onPending).toHaveBeenCalled()
+      await act(async () => { jest.advanceTimersByTime(600) })
+      expect(techniques.validateEdit).not.toHaveBeenCalled()
+      expect(onApplied).not.toHaveBeenCalled()
+      expect(screen.queryByText('Technique settings applied to this run.')).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Reset adversarial system prompt to default' }))
+      await act(async () => { jest.advanceTimersByTime(300) })
+      expect(onApplied).toHaveBeenCalledTimes(1)
+      expect(techniques.validateEdit.mock.calls[0][0].changes).toEqual({})
+      expect(field).toHaveValue('Original persona.')
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('should keep a field reset when an earlier auto-apply response arrives late', async () => {
+    const user = userEvent.setup()
+    const original = promptConfiguration()
+    const onApplied = jest.fn()
+    let finishEarlier: (value: Awaited<ReturnType<typeof techniquesApi.validateEdit>>) => void = () => {
+      throw new Error('Validation has not started')
+    }
+    techniques.validateEdit.mockImplementationOnce(() => new Promise((resolve) => { finishEarlier = resolve }))
+    render(<FluentProvider theme={webLightTheme}>
+      <TechniqueEditor original={original} autoApply onApplied={onApplied} />
+    </FluentProvider>)
+    const field = await screen.findByRole('textbox', { name: 'Adversarial system prompt' })
+    await user.clear(field)
+    await user.paste('New guidance.')
+    await waitFor(() => expect(techniques.validateEdit).toHaveBeenCalledTimes(1))
+    await user.click(screen.getByRole('button', { name: 'Reset adversarial system prompt to default' }))
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+    expect(onApplied.mock.calls[0][0].override.changes).toEqual({})
+    await act(async () => { finishEarlier({
+      configuration: original, override: {
+        source_name: original.source_name, source_identity: original.source_identity, dependencies: {},
+        changes: { adversarial_system_prompt: 'New guidance.' }, effective_identity: 'obsolete',
+      },
+    }) })
+    expect(onApplied).toHaveBeenCalledTimes(1)
+    expect(field).toHaveValue(original.prompt_templates?.adversarial_system_prompt?.value)
+    expect(screen.getByText('Default', { exact: true })).toBeInTheDocument()
   })
 
   it('should exclude SDK-only targets from technique references', async () => {

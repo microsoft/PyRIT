@@ -200,6 +200,8 @@ IDs remain available through the single-node and saved-conversation APIs.
 | `GET /api/techniques` | A page of active registered technique factories |
 | `GET /api/techniques/types` | Attack-class parameters and supported converter/adversarial controls |
 | `GET /api/techniques/{name}` | Safe settings for one factory; 404 if not registered |
+| `GET /api/techniques/{name}/configuration` | Source settings and effective prompt templates for run-local editing |
+| `POST /api/techniques/{name}/edit` | Validate a source-pinned run-local override without registering a factory |
 | `POST /api/techniques` | Validate and register a basic runtime technique; 201 on success |
 
 The list accepts `limit` (default 50, range 1-200) and `cursor` (the last returned
@@ -230,6 +232,26 @@ constructors; the factory retains omitted arguments and explicit `None` values.
 
 The basic GUI supports scalar inputs and one level of declared structured settings.
 It hides nested structured settings that the shared resolver cannot construct.
+
+The run-local technique editor prefills consumed adversarial prompt templates, including
+built-in defaults such as Crescendo's system prompt. Configuration responses keep
+`prompt_templates` (text, template parameters, and `technique` or `builtin` origin)
+separate from supplied `settings`; inherited settings remain unset. Any fixed
+`system_prompt_prefix` is read-only and is applied once at execution.
+Unused prompt slots are not editable in the GUI.
+
+Each prompt shows **Default** or **Customized** and offers **Reset to default**.
+Reset restores the selected technique's original effective template, including any
+technique-specific persona, and removes that field's run-local override. Viewing
+defaults or applying unchanged text does not materialize inherited settings.
+Empty or whitespace-only edited prompts are invalid; use **Reset to default** instead
+of clearing a field. The editor keeps invalid drafts pending rather than applying a
+different built-in prompt. The API still supports explicit `null` to clear a supplied
+override, which is distinct from restoring the selected technique's default.
+Prompt edits preserve template metadata and response schemas. Changes affect only
+the current run; registered techniques and packaged defaults remain unchanged.
+All consumed edited templates are checked for syntax and supported variables,
+including Python-created `SeedPrompt` objects without construction-time rendering.
 
 Additions are runtime-only and available in compatible scenarios. Restart or
 reinitialize PyRIT to remove them. Existing scenario snapshots and runs do not

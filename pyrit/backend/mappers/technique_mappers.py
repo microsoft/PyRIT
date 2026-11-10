@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pyrit.backend.models.techniques import TechniqueConfiguration, TechniqueInstance
+from pyrit.backend.models.techniques import TechniqueConfiguration, TechniqueInstance, TechniquePromptTemplate
 from pyrit.models import Identifiable, SeedPrompt
 from pyrit.models.technique_edit import TechniqueSettings
 from pyrit.registry import AttackRegistry, AttackTechniqueRegistry
@@ -116,6 +116,24 @@ def technique_to_configuration(
     metadata = AttackRegistry.get_registry_singleton().get_class_metadata(factory.attack_class)
     parameters = registry.get_editable_parameters(factory)
     values = registry.get_editable_settings(factory)
+    templates = factory.get_adversarial_prompt_templates()
+    prompt_templates = {
+        name: TechniquePromptTemplate(
+            value=prompt.value,
+            parameters=prompt.parameters or prompt.get_template_parameter_names(),
+            source=(
+                "builtin"
+                if values.get(name) is None or name != "adversarial_prompt_template" and not values.get(name)
+                else "technique"
+            ),
+        )
+        for name, prompt in templates.items()
+        if name in values and prompt.data_type == "text"
+    }
+    if factory.attack_class.ADVERSARIAL_PROMPT_REQUIREMENTS is not None:
+        for name in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
+            if name not in templates:
+                values.pop(name, None)
     effective = factory.get_effective_attack_kwargs()
     values["params"] = {
         parameter.name: project_parameter_value(
@@ -135,7 +153,11 @@ def technique_to_configuration(
     if "attack_adversarial_config" in accepted:
         for key in ("adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"):
             if key not in values:
-                readonly[key] = "Opaque prompt; retained unchanged."
+                readonly[key] = (
+                    "Not consumed by this attack."
+                    if factory.attack_class.ADVERSARIAL_PROMPT_REQUIREMENTS is not None and key not in templates
+                    else "Opaque prompt; retained unchanged."
+                )
     if "attack_converter_config" in accepted:
         for key in ("request_converters", "response_converters"):
             if key not in values:
@@ -153,4 +175,6 @@ def technique_to_configuration(
         read_only=readonly,
         supports_prepended_conversation=factory.supports_prepended_conversation,
         supports_prompt=factory.supports_prompt,
+        prompt_templates=prompt_templates,
+        system_prompt_prefix=factory.adversarial_system_prompt_prefix,
     )

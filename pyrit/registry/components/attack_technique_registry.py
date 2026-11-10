@@ -405,6 +405,13 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
         )
         for name in supplied - {"simulation", "request_converters", "response_converters"}:
             value = getattr(changes, name)
+            if (
+                name.startswith("adversarial_")
+                and name != "adversarial_chat"
+                and isinstance(value, str)
+                and not value.strip()
+            ):
+                raise ValueError(f"{name} must contain non-empty text; use null to clear the override")
             if name == "adversarial_chat" and value is not None:
                 value = resolve_reference_value(
                     component_type=ComponentType.TARGET, value=value, owner="Technique", name=name
@@ -414,6 +421,19 @@ class AttackTechniqueRegistry(Registry["AttackTechniqueFactory", AttackTechnique
             {name: getattr(changes, name) for name in supplied & {"request_converters", "response_converters"}}
         )
         factory = source.with_settings(settings=settings, simulation=changes.simulation, converter_changes=converters)
+        if supplied & {"adversarial_system_prompt", "adversarial_seed_prompt", "adversarial_prompt_template"}:
+            original_templates = source.get_adversarial_prompt_templates()
+            for name, prompt in factory.get_adversarial_prompt_templates(include_prefix=True).items():
+                if name not in supplied or getattr(changes, name) is None:
+                    continue
+                original = original_templates[name]
+                allowed = set(original.parameters or []) | set(original.get_template_parameter_names())
+                if name != "adversarial_system_prompt":
+                    allowed.add("objective")
+                if name == "adversarial_prompt_template":
+                    allowed.add("feedback_text")
+                if unknown := set(prompt.get_template_parameter_names()) - allowed:
+                    raise ValueError(f"{name} has unsupported template variables: {', '.join(sorted(unknown))}")
         return self._with_replay_converter_roles(factory) if changes.request_converters else factory
 
     @staticmethod
