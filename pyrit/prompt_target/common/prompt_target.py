@@ -3,7 +3,9 @@
 
 import abc
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, ClassVar, final
 
 from pyrit.common import AuthMode, print_deprecation_message
@@ -69,6 +71,12 @@ class PromptTarget(Identifiable):
     _DEFAULT_CONFIGURATION: TargetConfiguration = TargetConfiguration(capabilities=TargetCapabilities())
     _DEFAULT_TRACE_ENABLED: ClassVar[bool] = False
     _SUPPORTS_TOOL_CALL_HISTORY: ClassVar[bool] = False
+    _DISPATCH_CAPABILITIES: ClassVar[ContextVar[tuple["PromptTarget", TargetCapabilities] | None]] = ContextVar(
+        "target_dispatch_capabilities", default=None
+    )
+    _CONFIGURATION_SCOPES: ClassVar[ContextVar[tuple[tuple["PromptTarget", TargetConfiguration], ...]]] = ContextVar(
+        "target_configuration_scopes", default=()
+    )
 
     # Declarative auth facts consumed by the create-target service and catalog.
     # Kept off ``TargetCapabilities`` (auth is a construction/credential axis, not
@@ -385,6 +393,25 @@ class PromptTarget(Identifiable):
         Returns:
             list[Message]: Response messages from the target.
         """
+
+    async def _send_with_capabilities_async(
+        self, *, normalized_conversation: list[Message], capabilities: TargetCapabilities
+    ) -> list[Message]:
+        """
+        Send already-normalized messages with the owning composite's capability flags.
+
+        Args:
+            normalized_conversation: Messages normalized by the owning composite.
+            capabilities: The composite's effective capability flags.
+
+        Returns:
+            list[Message]: Responses from the child target.
+        """
+        token = self._DISPATCH_CAPABILITIES.set((self, capabilities))
+        try:
+            return await self._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+        finally:
+            self._DISPATCH_CAPABILITIES.reset(token)
 
     def _validate_request(self, *, normalized_conversation: list[Message]) -> None:
         """
@@ -724,19 +751,50 @@ class PromptTarget(Identifiable):
         Returns:
             TargetConfiguration: The configuration for this target.
         """
+        for target, configuration in reversed(self._CONFIGURATION_SCOPES.get()):
+            if target is self:
+                return configuration
         return self._configuration
+
+    @contextmanager
+    def capabilities_scope(self, capabilities: TargetCapabilities) -> Generator[None, None, None]:
+        """
+        Use saved capabilities for this task without replacing the live target or its state.
+
+        Args:
+            capabilities: Capabilities used for normalization, validation, and provider serialization.
+
+        Yields:
+            None: The task-local configuration scope, restored even on cancellation.
+        """
+        configuration = self.configuration
+        scoped = TargetConfiguration(
+            capabilities=capabilities,
+            policy=configuration.policy,
+            normalizer_overrides=configuration.normalizer_overrides,
+        )
+        token = self._CONFIGURATION_SCOPES.set((*self._CONFIGURATION_SCOPES.get(), (self, scoped)))
+        try:
+            yield
+        finally:
+            self._CONFIGURATION_SCOPES.reset(token)
 
     @property
     def capabilities(self) -> TargetCapabilities:
         """
-        The capabilities of this target instance.
+        The effective capabilities of this target for the current dispatch.
 
-        Shorthand for ``self.configuration.capabilities``.
+        Normally these are ``self.configuration.capabilities``. A composite can
+        supply task-local flags during child dispatch without changing the
+        child's configuration or independently initiated sends.
 
         Returns:
             TargetCapabilities: The capabilities for this target.
         """
-        return self._configuration.capabilities
+        override = self._DISPATCH_CAPABILITIES.get()
+        if override is not None and override[0] is self:
+            return override[1]
+        return self.configuration.capabilities
 
     def apply_capabilities(self, *, capabilities: TargetCapabilities) -> None:
         """
