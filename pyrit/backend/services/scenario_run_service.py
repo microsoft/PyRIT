@@ -99,11 +99,21 @@ from pyrit.models import (
     TargetIdentifier,
     project_behavioral_identity,
 )
-from pyrit.models.catalog import AttackErrorSummary, AttackRetrySummary, RunScenarioRequest, ScenarioRunSummary
+from pyrit.models.catalog import (
+    AttackErrorSummary,
+    AttackRetrySummary,
+    RegistryEntryOrigin,
+    RunScenarioRequest,
+    ScenarioRunSummary,
+)
 from pyrit.models.catalog.scenario import ScenarioOverloadSummary, ScenarioTargetSummary
 from pyrit.prompt_target import PromptTarget
 from pyrit.registry import InitializerRegistry, ScenarioRegistry
-from pyrit.registry.instance_registry import SavedEntryReplacementError, record_saved_entry_refusals
+from pyrit.registry.instance_registry import (
+    SavedEntryReplacementError,
+    record_saved_entry_refusals,
+    registration_origin,
+)
 from pyrit.registry.resolution import reject_non_external_params, resolve_declared_params
 from pyrit.scenario import IncompatibleTechniquePolicy, Scenario
 from pyrit.scenario.core import get_default_adversarial_target, override_default_adversarial_target
@@ -1639,7 +1649,7 @@ class ScenarioRunService:
                 raise ValueError(f"Initializer not found: {e}") from None
             # The registries refuse to replace a saved entry; the record also catches a refusal
             # that the script itself caught, which would leave the saved entry in its place.
-            with record_saved_entry_refusals() as refusals:
+            with record_saved_entry_refusals() as refusals, registration_origin(RegistryEntryOrigin.TEMPORARY):
                 try:
                     await instance.initialize_async()
                 except SavedEntryReplacementError as error:

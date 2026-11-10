@@ -19,10 +19,7 @@ from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from typing import Any
 
-from azure.core.exceptions import AzureError
-
 from pyrit.backend.mappers import target_object_to_instance
-from pyrit.backend.mappers.target_mappers import target_origin
 from pyrit.backend.models import (
     CreateTargetRequest,
     PaginationInfo,
@@ -36,12 +33,18 @@ from pyrit.backend.models.targets import (
 from pyrit.backend.services.component_lifecycle import release_component_async
 from pyrit.common import AUTH_MODES, REQUIRED_VALUE, AuthMode, default_values
 from pyrit.models import ComponentType, Parameter, TargetIdentifier
-from pyrit.models.catalog import ComponentRecipe, RegistryRecipeKind, SavedEntryOwner, TargetInstance, TargetOrigin
+from pyrit.models.catalog import (
+    ComponentRecipe,
+    RegistryEntryOrigin,
+    RegistryRecipeKind,
+    SavedEntryOwner,
+    TargetInstance,
+)
 from pyrit.models.component_spec import SourceInstanceSpec, TargetBinding
 from pyrit.prompt_target import GitHubCopilotTarget, PromptTarget
 from pyrit.registry import TargetRegistry
-from pyrit.registry.file_document_storage import DocumentConflictError
-from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY
+from pyrit.registry.file_document_storage import DocumentConflictError, DocumentStorageUnavailableError
+from pyrit.registry.instance_registry import SAVED_ENTRY_METADATA_KEY, RegistryNameTakenError, registry_entry_origin
 from pyrit.registry.registry_recipe_rules import SavedEntryRefusedError, check_saved_entry_params
 from pyrit.registry.registry_recipe_storage import RegistryRecipeStorage
 
@@ -82,7 +85,7 @@ class TargetService:
         self._registry = TargetRegistry.get_registry_singleton()
 
     def _build_instance_from_object(
-        self, *, target_registry_name: str, target_obj: Any, origin: TargetOrigin | None = None
+        self, *, target_registry_name: str, target_obj: Any, origin: RegistryEntryOrigin | None = None
     ) -> TargetInstance:
         """
         Build a TargetInstance from a registry object.
@@ -110,7 +113,7 @@ class TargetService:
         """
         items = [
             self._build_instance_from_object(
-                target_registry_name=entry.name, target_obj=entry.instance, origin=target_origin(entry.metadata)
+                target_registry_name=entry.name, target_obj=entry.instance, origin=registry_entry_origin(entry.metadata)
             )
             for entry in self._registry.instances.get_all_instances()
         ]
@@ -156,7 +159,9 @@ class TargetService:
         if entry is None:
             return None
         return self._build_instance_from_object(
-            target_registry_name=target_registry_name, target_obj=entry.instance, origin=target_origin(entry.metadata)
+            target_registry_name=target_registry_name,
+            target_obj=entry.instance,
+            origin=registry_entry_origin(entry.metadata),
         )
 
     def get_target_object(self, *, target_registry_name: str) -> Any | None:
@@ -512,8 +517,8 @@ class TargetService:
         if request.register:
             try:
                 self._registry.instances.validate_name_available(target_registry_name)
-            except ValueError as error:
-                if request.persist and target_registry_name in self._registry.instances:
+            except RegistryNameTakenError as error:
+                if request.persist:
                     raise SavedTargetConflictError(str(error)) from error
                 raise
         if (
@@ -553,7 +558,7 @@ class TargetService:
                     recipes_source=recipes_source,
                 )
             target = self._build_instance_from_object(
-                target_registry_name=target_registry_name, target_obj=target_obj, origin=TargetOrigin.TEMPORARY
+                target_registry_name=target_registry_name, target_obj=target_obj, origin=RegistryEntryOrigin.TEMPORARY
             )
             self._registry.instances.register(target_obj, name=target_registry_name)
             return target
@@ -577,8 +582,16 @@ class TargetService:
         for name, turned_off in target_cls.server_fallback_parameters.items():
             if turned_off is not None and saved_params.get(name) in (None, ""):
                 saved_params[name] = turned_off
+        if self._registry.is_temporary_class(target_type):
+            raise ValueError(
+                f"'{target_type}' was added by a scan's launch script, so a saved target of it couldn't be "
+                "restored after a restart. It can still be created without saving it."
+            )
         metadata = await asyncio.to_thread(self._registry.get_registered_class_metadata, target_type)
-        parameters = metadata.parameters if metadata is not None else ()
+        if metadata is None:
+            # Restore falls back to the class itself the same way, so saving never checks less than restoring.
+            metadata = await asyncio.to_thread(self._registry.get_class_metadata, target_cls)
+        parameters = metadata.parameters
         try:
             check_saved_entry_params(cls=target_cls, parameters=parameters, params=saved_params)
         except SavedEntryRefusedError as error:
@@ -599,7 +612,7 @@ class TargetService:
             value = params.get(parameter.name)
             for name in value if isinstance(value, list) else [value]:
                 entry = self._registry.instances.get_entry(name) if isinstance(name, str) else None
-                if entry is not None and target_origin(entry.metadata) is TargetOrigin.TEMPORARY:
+                if entry is not None and registry_entry_origin(entry.metadata) is RegistryEntryOrigin.TEMPORARY:
                     raise ValueError(
                         f"Uses temporary target '{name}', which won't exist after a restart. "
                         "It can still be created without saving it."
@@ -631,7 +644,7 @@ class TargetService:
             SavedTargetStorageError: If the recipe can't be written, or can't be deleted after registering failed.
         """
         target = self._build_instance_from_object(
-            target_registry_name=name, target_obj=target_obj, origin=TargetOrigin.SAVED
+            target_registry_name=name, target_obj=target_obj, origin=RegistryEntryOrigin.SAVED
         )
         recipe = ComponentRecipe(class_module=target_cls.__module__, class_name=type_name, params=params, owner=owner)
         storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=recipes_source)
@@ -639,13 +652,13 @@ class TargetService:
             await asyncio.to_thread(storage.create_recipe, name=name, recipe=recipe)
         except DocumentConflictError as error:
             raise SavedTargetConflictError(f"A saved target named '{name}' already exists.") from error
-        except (OSError, AzureError) as error:
+        except DocumentStorageUnavailableError as error:
             logger.error(
                 "Saved target '%s' couldn't be written to %s (%s). If the write reached storage anyway, the "
                 "target is restored at the next start.",
                 name,
                 storage.display_source,
-                type(error).__name__,
+                error.reason,
             )
             raise SavedTargetStorageError("Saved targets can't be written right now.") from error
         try:
@@ -655,7 +668,7 @@ class TargetService:
         except Exception as error:
             if not await self._delete_recipe_async(storage=storage, name=name):
                 raise SavedTargetStorageError("Saved targets can't be written right now.") from error
-            if isinstance(error, ValueError):
+            if isinstance(error, RegistryNameTakenError):
                 raise SavedTargetConflictError(str(error)) from error
             raise
         return target
@@ -676,7 +689,7 @@ class TargetService:
                 "Delete it there, or the target is restored at the next start.",
                 name,
                 storage.display_source,
-                type(error).__name__,
+                error.reason if isinstance(error, DocumentStorageUnavailableError) else type(error).__name__,
             )
             return False
         return True

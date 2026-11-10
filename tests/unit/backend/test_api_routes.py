@@ -1445,6 +1445,18 @@ class TestTargetRoutes:
 
         assert mock_get_service.return_value.create_target_async.call_args.kwargs["owner"] == owner
 
+    def test_create_target_records_no_owner_when_not_saving(self, client: TestClient) -> None:
+        with (
+            patch("pyrit.backend.routes.targets.get_target_service") as mock_get_service,
+            patch("pyrit.backend.routes.targets._saved_entry_owner") as saved_entry_owner,
+        ):
+            mock_get_service.return_value.create_target_async = AsyncMock(side_effect=ValueError("stop"))
+
+            client.post("/api/targets", json={"name": "contoso", "type": "TextTarget", "params": {}})
+
+        assert mock_get_service.return_value.create_target_async.call_args.kwargs["owner"] is None
+        saved_entry_owner.assert_not_called()
+
     @pytest.mark.parametrize(
         ("fields", "message"),
         [

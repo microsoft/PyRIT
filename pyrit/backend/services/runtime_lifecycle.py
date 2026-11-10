@@ -25,7 +25,9 @@ from pyrit.backend.services.service_lifecycle import (
 )
 from pyrit.common.path import CONFIGURATION_DIRECTORY_PATH
 from pyrit.memory import CentralMemory
-from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry, TargetRegistry
+from pyrit.models.catalog import RegistryEntryOrigin
+from pyrit.registry import InitializerRegistry, ScenarioPresetRegistry, ScenarioSuiteRegistry
+from pyrit.registry.instance_registry import registration_origin
 from pyrit.registry.registry_recipe_restore import RegistryRecipeRestorer
 from pyrit.setup import ConfigurationLoader
 from pyrit.setup.environment_loading import resolve_environment_async
@@ -132,16 +134,13 @@ class RuntimeLifecycle:
         """
         Rebuild saved registry entries after the startup scripts have registered theirs.
 
-        The startup scripts' targets are marked first, so they can be told apart from targets that are
-        gone after a restart, such as ones a scan's launch scripts register. The runtime becomes ready
-        even when some saved entries can't be restored. Each one that failed keeps its name, so looking
-        it up or starting a run that uses it fails with the reason instead of finding nothing or
-        something else, and the failures are listed in the runtime status.
+        The runtime becomes ready even when some can't be restored. Each one that failed keeps its name,
+        so looking it up or starting a run that uses it fails with the reason instead of finding nothing
+        or something else, and the failures are listed in the runtime status.
 
         Args:
             config (ConfigurationLoader): The loaded configuration naming the storage source.
         """
-        TargetRegistry.get_registry_singleton().instances.mark_configuration_entries()
         restorer = RegistryRecipeRestorer(source=config.registry_recipes_source)
         # Reading can wait on storage, so it runs in a worker thread. Entries are built on this loop, as
         # the target API builds them, because a constructor such as HuggingFaceChatTarget's starts a task
@@ -173,7 +172,10 @@ class RuntimeLifecycle:
             if config.allow_custom_initializers:
                 logger.warning("Custom initializer registration is ENABLED (allow_custom_initializers: true).")
                 await asyncio.to_thread(registry.register_stored_initializers, strict=True)
-            await config.initialize_pyrit_async(raise_on_initializer_error=True)
+            # Entries the startup scripts register are marked as configuration, so they can be told apart
+            # from entries that are gone after a restart, such as ones a scan's launch scripts register.
+            with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+                await config.initialize_pyrit_async(raise_on_initializer_error=True)
             await get_scenario_run_service().reconcile_interrupted_runs_async()
             _, self.version = await self.source.read_with_version_async()
             await self._restore_saved_entries_async(config)
@@ -256,7 +258,8 @@ class RuntimeLifecycle:
 
                 mutated = True
                 await close_services_async()
-                await config.apply_prepared_reinitialization_async(prepared=prepared)
+                with registration_origin(RegistryEntryOrigin.CONFIGURATION):
+                    await config.apply_prepared_reinitialization_async(prepared=prepared)
                 await self._management_async(config)
                 self.version = current_version
                 await self._restore_saved_entries_async(config)

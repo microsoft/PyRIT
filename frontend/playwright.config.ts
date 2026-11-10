@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -35,6 +35,8 @@ const E2E_BACKEND_URL = `http://127.0.0.1:${E2E_BACKEND_PORT}`;
  */
 function createSeededBackendConfigFile(): string {
   const folder = mkdtempSync(path.join(tmpdir(), "pyrit-seeded-backend-"));
+  // The runner stops the backend before it exits, so nothing still uses the folder by then.
+  process.once("exit", () => rmSync(folder, { recursive: true, force: true }));
   const configFile = path.join(folder, "browser_config.yaml");
   const config = readFileSync(new URL("../tests/end_to_end/browser_config.yaml", import.meta.url), "utf-8");
   const recipesSource = JSON.stringify(path.join(folder, "registry_recipes"));

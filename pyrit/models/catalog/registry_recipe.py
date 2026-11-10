@@ -16,6 +16,14 @@ _Identifier = Annotated[str, Field(max_length=MAX_IDENTIFIER_LENGTH)]
 _TechniqueTag = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,63}$")]
 
 
+class RegistryEntryOrigin(str, Enum):
+    """Where a registered entry comes from, and so whether it is still there after a restart."""
+
+    SAVED = "saved"
+    CONFIGURATION = "configuration"
+    TEMPORARY = "temporary"
+
+
 class RegistryRecipeKind(str, Enum):
     """The registries whose entries can be saved, named after their storage folders."""
 

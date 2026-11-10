@@ -181,12 +181,10 @@ class RegistryRecipeStorage(FileDocumentStorage):
         Raises:
             DocumentConflictError: If a recipe with this name is already saved.
             ValueError: If the name isn't a legal registry name.
-            TimeoutError: If a local write could not acquire the document lock.
-            OSError: If the local folder can't be written.
-            AzureError: If the Blob container can't be written.
+            DocumentStorageUnavailableError: If the folder or container can't be written, or a local write
+                could not acquire the document lock.
         """
-        content = recipe.model_dump_json(indent=2, exclude_none=True).encode("utf-8")
-        return self._save_document_conditional(name=name, content=content, expected_version=None)
+        return self._save_document_conditional(name=name, content=self._serialize(recipe), expected_version=None)
 
     def delete_recipe(self, name: str) -> bool:
         """
@@ -200,11 +198,24 @@ class RegistryRecipeStorage(FileDocumentStorage):
 
         Raises:
             ValueError: If the name isn't a legal registry name.
-            TimeoutError: If a local delete could not acquire the document lock.
-            OSError: If the local folder can't be written.
-            AzureError: If the Blob container can't be written.
+            DocumentStorageUnavailableError: If the folder or container can't be written, or a local delete
+                could not acquire the document lock.
         """
         return self._delete_document(name)
+
+    @staticmethod
+    def _serialize(recipe: ComponentRecipe | TechniqueRecipe) -> bytes:
+        """
+        Write a recipe as JSON, labeled with the format version this PyRIT writes.
+
+        A recipe built in memory reads as version 1 unless it says otherwise, so the label is set here;
+        otherwise, once the version moves past 1, new files would be labeled with the old version.
+
+        Returns:
+            bytes: The document.
+        """
+        current = recipe.model_copy(update={"schema_version": type(recipe).CURRENT_SCHEMA_VERSION})
+        return current.model_dump_json(indent=2, exclude_none=True).encode("utf-8")
 
     def _parse_recipe(self, *, name: str, content: bytes) -> StoredRecipe | RestoreFailure:
         """

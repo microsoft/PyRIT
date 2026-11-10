@@ -1161,6 +1161,9 @@ async def test_apply_restores_an_entry_that_uses_a_startup_target_async(
     converter = ConverterRegistry.get_registry_singleton().instances.get("formal")
     assert converter is not None
     assert converter._converter_target is startup_chat
+    startup_entry = targets.instances.get_entry("startup_chat")
+    assert startup_entry is not None
+    assert CONFIGURATION_ENTRY_METADATA_KEY in startup_entry.metadata
 
 
 async def test_startup_with_an_unrestorable_entry_is_ready_and_holds_its_name_async(

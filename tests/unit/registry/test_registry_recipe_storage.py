@@ -307,6 +307,24 @@ class TestRegistryRecipeStorageWrites:
 
         assert "owner" not in json.loads((tmp_path / "targets" / "contoso_gpt4o.json").read_text())
 
+    @pytest.mark.parametrize(
+        ("kind", "recipe"),
+        [
+            (RegistryRecipeKind.TARGETS, ComponentRecipe(class_module="m", class_name="TextTarget")),
+            (RegistryRecipeKind.TECHNIQUES, TechniqueRecipe.model_validate({"type": "RedTeamingAttack"})),
+        ],
+    )
+    def test_labels_a_new_recipe_with_the_format_version_this_pyrit_writes(
+        self, tmp_path: Path, kind: RegistryRecipeKind, recipe: ComponentRecipe | TechniqueRecipe
+    ) -> None:
+        storage = RegistryRecipeStorage(kind=kind, source=str(tmp_path))
+
+        with patch.object(type(recipe), "CURRENT_SCHEMA_VERSION", 2):
+            storage.create_recipe(name="contoso", recipe=recipe)
+
+        assert json.loads((tmp_path / kind.value / "contoso.json").read_text())["schema_version"] == 2
+        assert recipe.schema_version == 1
+
     def test_refuses_to_create_a_recipe_that_is_already_saved(self, tmp_path: Path) -> None:
         storage = RegistryRecipeStorage(kind=RegistryRecipeKind.TARGETS, source=str(tmp_path))
         storage.create_recipe(name="contoso_gpt4o", recipe=ComponentRecipe.model_validate(_TARGET))

@@ -28,8 +28,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
+from pyrit.models.catalog import RegistryEntryOrigin
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Callable, Generator, Iterator, Mapping
 
     from pyrit.models import ComponentIdentifier
     from pyrit.models.catalog import RestoreFailureReason
@@ -54,6 +56,11 @@ SAVED_ENTRY_METADATA_KEY = "saved_recipe_kind"
 CONFIGURATION_ENTRY_METADATA_KEY = "configuration_entry"
 
 _saved_entry_refusals: ContextVar[list[tuple[str, str]] | None] = ContextVar("_saved_entry_refusals", default=None)
+_registration_origin: ContextVar[RegistryEntryOrigin | None] = ContextVar("_registration_origin", default=None)
+
+
+class RegistryNameTakenError(ValueError):
+    """A name is already registered, so another entry can't take it."""
 
 
 @dataclass(frozen=True)
@@ -203,6 +210,56 @@ def record_held_name_refusal(*, entry: UnavailableEntry, name: str) -> None:
         refusals.append((entry.kind, name))
 
 
+def registry_entry_origin(metadata: Mapping[str, Any]) -> RegistryEntryOrigin:
+    """
+    Tell where a registered entry comes from, from its metadata.
+
+    Args:
+        metadata (Mapping[str, Any]): The entry's registry metadata.
+
+    Returns:
+        RegistryEntryOrigin: Saved when rebuilt from a saved recipe, configuration when the server's startup scripts
+            registered it, and temporary otherwise, such as an entry created through the API without saving it or
+            one a scan's launch scripts registered.
+    """
+    if SAVED_ENTRY_METADATA_KEY in metadata:
+        return RegistryEntryOrigin.SAVED
+    if metadata.get(CONFIGURATION_ENTRY_METADATA_KEY):
+        return RegistryEntryOrigin.CONFIGURATION
+    return RegistryEntryOrigin.TEMPORARY
+
+
+@contextmanager
+def registration_origin(origin: RegistryEntryOrigin) -> Generator[None, None, None]:
+    """
+    Mark what code run in this context registers as coming from the server's startup scripts or a scan.
+
+    Entries registered while the startup scripts run are marked as configuration. Classes that first
+    appear while a scan's launch scripts run are temporary, since those scripts don't run at startup.
+
+    Args:
+        origin (RegistryEntryOrigin): ``CONFIGURATION`` for startup scripts, ``TEMPORARY`` for launch scripts.
+
+    Yields:
+        None: Control while the scripts run.
+    """
+    token = _registration_origin.set(origin)
+    try:
+        yield
+    finally:
+        _registration_origin.reset(token)
+
+
+def current_registration_origin() -> RegistryEntryOrigin | None:
+    """
+    Return the origin set by the innermost ``registration_origin`` around the caller, if any.
+
+    Returns:
+        RegistryEntryOrigin | None: The origin, or None outside any.
+    """
+    return _registration_origin.get()
+
+
 @contextmanager
 def record_saved_entry_refusals() -> Generator[list[tuple[str, str]], None, None]:
     """
@@ -271,10 +328,6 @@ class InstanceRegistry(Protocol[T]):
 
     def get_all_instances(self) -> list[RegistryEntry[T]]:
         """Return all entries sorted by name."""
-        ...
-
-    def mark_configuration_entries(self) -> None:
-        """Mark every entry not rebuilt from a saved recipe as registered by the server's startup scripts."""
         ...
 
     def get_by_tag(self, *, tag: str, value: str | None = None) -> list[RegistryEntry[T]]:
@@ -447,6 +500,9 @@ class DefaultInstanceRegistry(Generic[T]):
         """
         Register a pre-configured instance.
 
+        An entry registered while the server's startup scripts run is marked as configuration
+        (see ``registration_origin``).
+
         Args:
             instance (T): The instance to register.
             name (str | None): The registry name. Defaults to the instance's
@@ -459,10 +515,13 @@ class DefaultInstanceRegistry(Generic[T]):
         Raises:
             TypeError: If this registry was created with an ``instance_type`` and
                 ``instance`` is not of that type.
-            ValueError: If the name is reserved or already registered and ``replace``
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered and ``replace``
                 is False.
             SavedEntryReplacementError: If ``replace`` would replace an entry rebuilt
                 from a saved recipe.
+            SavedEntryUnavailableError: If the name belongs to a saved entry that
+                couldn't be restored.
         """
         expected_type = self._resolve_instance_type()
         if expected_type is not None and not isinstance(instance, expected_type):
@@ -473,11 +532,14 @@ class DefaultInstanceRegistry(Generic[T]):
 
         if name is None:
             name = instance.get_identifier().unique_name
+        entry_metadata = dict(metadata or {})
+        if _registration_origin.get() is RegistryEntryOrigin.CONFIGURATION:
+            entry_metadata[CONFIGURATION_ENTRY_METADATA_KEY] = True
         entry = RegistryEntry(
             name=name,
             instance=instance,
             tags=self._normalize_tags(tags),
-            metadata=metadata or {},
+            metadata=entry_metadata,
         )
         with self._lock:
             if name in self._reserved_names:
@@ -486,22 +548,10 @@ class DefaultInstanceRegistry(Generic[T]):
             if not replace:
                 self.validate_name_available(name)
             else:
-                replaced = self._registry_items.get(name)
-                refuse_saved_entry(replaced)
-                # The startup scripts register this name again after a restart, whatever replaced it since.
-                if replaced is not None and CONFIGURATION_ENTRY_METADATA_KEY in replaced.metadata:
-                    entry.metadata = {**entry.metadata, CONFIGURATION_ENTRY_METADATA_KEY: True}
+                refuse_saved_entry(self._registry_items.get(name))
             self._registry_items[name] = entry
             self._metadata_cache = None
             self._instance_version += 1
-
-    def mark_configuration_entries(self) -> None:
-        """Mark every entry that wasn't rebuilt from a saved recipe as one the server's startup scripts registered."""
-        with self._lock:
-            for entry in self._registry_items.values():
-                if SAVED_ENTRY_METADATA_KEY not in entry.metadata:
-                    entry.metadata = {**entry.metadata, CONFIGURATION_ENTRY_METADATA_KEY: True}
-            self._metadata_cache = None
 
     def get(self, name: str) -> T | None:
         """
@@ -527,7 +577,8 @@ class DefaultInstanceRegistry(Generic[T]):
             name (str): The proposed registry name.
 
         Raises:
-            ValueError: If the name is reserved or already registered.
+            ValueError: If the name is reserved.
+            RegistryNameTakenError: If the name is already registered.
             SavedEntryUnavailableError: If the name belongs to a saved entry that couldn't be restored.
         """
         with self._lock:
@@ -537,7 +588,7 @@ class DefaultInstanceRegistry(Generic[T]):
             if name in self._registry_items:
                 # Code that catches this error would leave a saved entry standing in, so the clash is recorded.
                 _record_saved_entry_refusal(self._registry_items[name])
-                raise ValueError(f"Instance '{name}' already exists")
+                raise RegistryNameTakenError(f"Instance '{name}' already exists")
 
     def unregister(self, name: str, *, expected_entry: RegistryEntry[T] | None = None) -> T | None:
         """
