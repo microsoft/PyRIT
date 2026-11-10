@@ -124,6 +124,26 @@ describe('Reinitialize', () => {
     expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeDisabled()
   })
 
+  it('should let a failed restore be retried by reinitializing', async () => {
+    const user = userEvent.setup()
+    api.getRuntimeStatus.mockResolvedValue({
+      ...ready,
+      state: 'failed',
+      outcome: 'restore-failed',
+      message: "1 saved registry entry couldn't be restored.",
+    })
+    render(
+      <TestWrapper>
+        <Reinitialize version="saved-v1" hasUnsavedChanges={false} liveReinitializationEnabled />
+      </TestWrapper>,
+    )
+    expect(await screen.findByText(/Runtime: failed\. 1 saved registry entry/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reinitialize PyRIT' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: 'Reinitialize PyRIT' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Reinitialize PyRIT' }))
+    await waitFor(() => expect(api.reinitialize).toHaveBeenCalledWith('saved-v1'))
+  })
+
   describe('runtime status polling', () => {
     beforeEach(() => {
       jest.useFakeTimers()

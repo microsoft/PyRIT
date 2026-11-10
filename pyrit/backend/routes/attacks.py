@@ -45,7 +45,6 @@ from pyrit.backend.services.manual_send_scheduler import ManualSendConflictError
 from pyrit.backend.services.media_persistence import MediaAccessDeniedError
 from pyrit.common import print_deprecation_message
 from pyrit.memory.memory_interface import AttackStateConflictError
-from pyrit.registry import SavedEntryUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -667,8 +666,6 @@ async def add_message(  # pyrit-async-suffix-exempt
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_msg,
         ) from e
-    except SavedEntryUnavailableError:
-        raise
     except Exception as e:
         logger.exception("Failed to add message to attack '%s'", attack_result_id)
         raise HTTPException(
