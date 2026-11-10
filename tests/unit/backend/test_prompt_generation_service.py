@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import threading
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from pyrit.backend.models.prompt_generations import (
     PromptGenerationReviewUpdate,
     PromptGenerationStatus,
 )
+from pyrit.backend.services import prompt_generation_store
 from pyrit.backend.services.prompt_generation_service import (
     PromptGenerationConflictError,
     PromptGenerationNotFoundError,
@@ -345,6 +347,13 @@ async def test_target_objective_generation_async(
     seeds = await sqlite_instance.get_seeds_async(dataset_name="objectives")
     assert sorted(seed.value for seed in seeds) == ["Objective 0", "Objective 1", "Objective 2"]
     assert all(seed.harm_categories == ["privacy"] for seed in seeds)
+    reconstructed = await service.request_from_dataset_async("dataset:named:objectives")
+    assert reconstructed.generator == "target_objective"
+    assert reconstructed.request == {
+        "instructions": "Ask for private order details.",
+        "count": 3,
+        "harm_categories": ["privacy"],
+    }
     with pytest.raises(ValueError, match="no review step"):
         service._adapters["target_objective"].get_review(checkpoint={})
 
@@ -558,3 +567,94 @@ async def test_store_replaces_records_atomically_and_caches_reads_async(tmp_path
     with patch.object(DiskStorageIO, "read_file_async", side_effect=AssertionError("cached reads only")):
         assert (await reopened.get_async(record.id)) is not None
         assert len(await reopened.list_async()) == 1
+
+
+async def test_pause_for_review_needs_a_reviewable_stage_async(service: PromptGenerationService) -> None:
+    request = PromptGenerationCreateRequest(
+        generator="target_objective",
+        dataset_name="objectives",
+        request={"instructions": "Ask for private order details.", "count": 3},
+        targets={"generation": TARGET_NAME},
+        pause_for_review=True,
+    )
+    preflight = await service.preflight_async(request)
+    assert not preflight.valid
+    assert any("no review step" in error for error in preflight.errors)
+    with pytest.raises(ValueError, match="no review step"):
+        await service.create_async(request=request)
+    assert await service.list_async() == []
+
+
+async def test_batch_members_keep_request_order_after_a_restart_async(
+    service: PromptGenerationService, target: PromptTarget, tmp_path: Path
+) -> None:
+    config = make_assert_config().model_dump(mode="json")
+    names = ["suite_zeta", "suite_alpha", "suite_mid"]
+    with _respond_with(target):
+        created = await service.create_batch_async(
+            request=PromptGenerationBatchCreateRequest(
+                generator="assert",
+                label="Suite",
+                items=[{"dataset_name": name, "request": config} for name in names],
+                targets={"generation": TARGET_NAME},
+            )
+        )
+        await _settle_async(service)
+    assert [record.dataset_name for record in created] == names
+    reopened = sorted(await _local_store(tmp_path).list_async(), key=lambda record: record.created_at)
+    assert [record.dataset_name for record in reopened] == names
+
+
+async def test_cancelled_save_finishes_its_write_before_the_next_save_async(tmp_path: Path) -> None:
+    store = _local_store(tmp_path)
+    await store.list_async()
+    record = _record(status=PromptGenerationStatus.RUNNING)
+    started = threading.Event()
+    release = threading.Event()
+    replace = prompt_generation_store._replace_file
+
+    def held_replace(path: Path, data: bytes) -> None:
+        started.set()
+        release.wait(timeout=10)
+        replace(path, data)
+
+    with patch.object(prompt_generation_store, "_replace_file", side_effect=held_replace):
+        save = asyncio.create_task(store.save_async(record))
+        await asyncio.to_thread(started.wait, 10)
+        save.cancel()
+        await asyncio.sleep(0)
+        assert not save.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await save
+    assert await store.get_async(record.id) == record
+
+    await store.save_async(record.model_copy(update={"status": PromptGenerationStatus.CANCELLED}))
+    stored = await _local_store(tmp_path).get_async(record.id)
+    assert stored is not None and stored.status == PromptGenerationStatus.CANCELLED
+    assert not list((tmp_path / PromptGenerationStore.DIRECTORY_NAME).glob("*.tmp"))
+
+
+async def test_saves_during_the_first_load_are_kept_async(tmp_path: Path) -> None:
+    store = _local_store(tmp_path)
+    reading = asyncio.Event()
+    release = asyncio.Event()
+    read_all = store._read_all_async
+
+    async def held_read_all_async() -> list[PromptGenerationRecord]:
+        records = await read_all()
+        reading.set()
+        await release.wait()
+        return records
+
+    record = _record(status=PromptGenerationStatus.QUEUED)
+    with patch.object(store, "_read_all_async", side_effect=held_read_all_async) as read:
+        first_read = asyncio.create_task(store.list_async())
+        await wait_for_event_async(event=reading, tasks=[first_read])
+        second_read = asyncio.create_task(store.list_async())
+        save = asyncio.create_task(store.save_async(record))
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(first_read, second_read, save)
+    read.assert_called_once()
+    assert await store.get_async(record.id) == record

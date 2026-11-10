@@ -284,7 +284,11 @@ cancellation, and dataset-name reservation. Each record is a JSON document at
 
 A single backend instance owns generation records. It reads them once into an
 in-process cache and every write updates both; local files are replaced atomically.
-Don't run two backends against the same results storage. On first use after a
+Several backends sharing one results storage, such as one blob container, aren't
+supported for generations: record writes, cancellation, and dataset-name reservations
+aren't coordinated across processes, so two backends could accept the same dataset
+name or cancel each other's work. `pause_for_review` is rejected for generators
+without a reviewable stage. On first use after a
 restart, records that were active become `interrupted`, and retry resumes from the
 last stored checkpoint. Shutdown interrupts running generations but lets a dataset
 save finish. A dataset is saved once, under a name that didn't exist when the

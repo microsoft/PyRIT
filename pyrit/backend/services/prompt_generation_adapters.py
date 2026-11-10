@@ -486,11 +486,27 @@ class TargetObjectiveGenerationAdapter(PromptGenerationAdapter):
             tuple[SeedDataset, dict[str, JsonValue]]: The dataset and its objective count.
         """
         result = TargetObjectiveGeneratorResult.model_validate(dict(checkpoint))
-        harm_categories = TargetObjectiveGenerationRequest.model_validate(dict(request)).harm_categories
+        parsed = TargetObjectiveGenerationRequest.model_validate(dict(request))
         dataset = TargetObjectiveProvider.package_result(
-            dataset_name=dataset_name, result=result, harm_categories=harm_categories
+            dataset_name=dataset_name,
+            result=result,
+            instructions=parsed.instructions,
+            harm_categories=parsed.harm_categories,
         )
         return dataset, {"objective_count": len(result.objectives)}
+
+    def request_from_seeds(self, seeds: Sequence[SeedRecord]) -> dict[str, Any] | None:
+        """
+        Read the generation request stored in objective metadata.
+
+        Returns:
+            dict[str, Any] | None: The request, or None when no seed records one.
+        """
+        for seed in seeds:
+            request = TargetObjectiveProvider.request_from_metadata(seed.metadata)
+            if request is not None:
+                return self.normalize_request(request)
+        return None
 
     def dataset_matches_checkpoint(self, *, seeds: Sequence[SeedRecord], checkpoint: Mapping[str, Any]) -> bool:
         """

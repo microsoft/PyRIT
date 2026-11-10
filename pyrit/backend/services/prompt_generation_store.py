@@ -29,6 +29,8 @@ class PromptGenerationStore:
     Records live at ``<results_path>/prompt_generations/<id>.json``: the local data directory for
     SQLite memory and the results blob container for Azure SQL memory. One backend instance owns
     the records, so they are read once into an in-process cache that every write keeps current.
+    Several backends sharing one results storage aren't supported: nothing coordinates their writes
+    or dataset-name reservations.
     """
 
     DIRECTORY_NAME: ClassVar[str] = "prompt_generations"
@@ -48,6 +50,7 @@ class PromptGenerationStore:
         self._storage: StorageIO = memory.results_storage_io
         self._directory = f"{str(memory.results_path).rstrip('/')}/{self.DIRECTORY_NAME}"
         self._cache: dict[str, PromptGenerationRecord] | None = None
+        self._cache_lock = asyncio.Lock()
 
     @property
     def is_local(self) -> bool:
@@ -62,14 +65,23 @@ class PromptGenerationStore:
             record (PromptGenerationRecord): The record to write.
         """
         path = self._path(record.id)
+        cache = await self._load_cache_async()
         data = record.model_dump_json(indent=2).encode("utf-8")
         await self._storage.create_directory_if_not_exists_async(self._directory)
         if self.is_local:
-            await asyncio.to_thread(_replace_file, Path(path), data)
+            write = asyncio.ensure_future(asyncio.to_thread(_replace_file, Path(path), data))
+            try:
+                await asyncio.shield(write)
+            except asyncio.CancelledError:
+                # The replacement keeps running in its thread. Let it finish and publish it before the
+                # caller's cancellation handler writes again, so the two writes can't interleave.
+                await asyncio.wait({write})
+                if not write.cancelled() and write.exception() is None:
+                    cache[record.id] = record
+                raise
         else:
             await self._storage.write_file_async(path, data)
-        if self._cache is not None:
-            self._cache[record.id] = record
+        cache[record.id] = record
 
     async def get_async(self, record_id: str) -> PromptGenerationRecord | None:
         """
@@ -100,14 +112,19 @@ class PromptGenerationStore:
         Args:
             record_id (str): The record ID.
         """
-        await self._storage.delete_file_async(self._path(record_id))
-        if self._cache is not None:
-            self._cache.pop(record_id, None)
+        path = self._path(record_id)
+        cache = await self._load_cache_async()
+        await self._storage.delete_file_async(path)
+        cache.pop(record_id, None)
 
     async def _load_cache_async(self) -> dict[str, PromptGenerationRecord]:
-        if self._cache is None:
-            self._cache = {record.id: record for record in await self._read_all_async()}
-        return self._cache
+        loaded = self._cache
+        if loaded is not None:
+            return loaded
+        async with self._cache_lock:
+            if self._cache is None:
+                self._cache = {record.id: record for record in await self._read_all_async()}
+            return self._cache
 
     async def _read_all_async(self) -> list[PromptGenerationRecord]:
         records: list[PromptGenerationRecord] = []

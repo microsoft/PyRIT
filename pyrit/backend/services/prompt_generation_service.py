@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -188,6 +188,7 @@ class PromptGenerationService:
             errors.append(f"Unknown generator '{request.generator}'.")
             return PromptGenerationPreflightResponse(valid=False, errors=errors, dataset_name_available=available)
         try:
+            _require_review_support(adapter=adapter, pause_for_review=request.pause_for_review)
             normalized = adapter.normalize_request(request.request)
             estimate = adapter.estimate(request=normalized, checkpoint=None)
             self._validate_targets(adapter=adapter, request=normalized, targets=request.targets)
@@ -443,6 +444,7 @@ class PromptGenerationService:
         self._require_admission()
         await self._reconcile_once_async()
         adapter = self._get_adapter(request.generator)
+        _require_review_support(adapter=adapter, pause_for_review=request.pause_for_review)
         normalized = [adapter.normalize_request(item.request) for item in request.items]
         for item_request in normalized:
             self._validate_targets(adapter=adapter, request=item_request, targets=request.targets)
@@ -450,6 +452,7 @@ class PromptGenerationService:
         if len(set(names)) != len(names):
             raise ValueError("Each generation in a batch needs a different dataset name.")
         now = datetime.now(UTC)
+        # A millisecond apart, so batch members keep their request order after a restart and in browsers.
         records = [
             PromptGenerationRecord(
                 id=str(uuid.uuid4()),
@@ -463,10 +466,10 @@ class PromptGenerationService:
                 group_label=request.label if group_id is not None else None,
                 progress=adapter.get_progress(request=item_request, checkpoint=None),
                 created_by=created_by,
-                created_at=now,
+                created_at=now + timedelta(milliseconds=index),
                 updated_at=now,
             )
-            for item, item_request in zip(request.items, normalized, strict=True)
+            for index, (item, item_request) in enumerate(zip(request.items, normalized, strict=True))
         ]
         async with self._lock:
             _require_names_available(names=names, taken=await self._get_taken_dataset_names_async())
@@ -674,6 +677,13 @@ def to_summary(record: PromptGenerationRecord) -> PromptGenerationSummary:
         PromptGenerationSummary: The listing view.
     """
     return PromptGenerationSummary.model_validate(record.model_dump(include=set(PromptGenerationSummary.model_fields)))
+
+
+def _require_review_support(*, adapter: PromptGenerationAdapter, pause_for_review: bool) -> None:
+    if pause_for_review and not any(stage.reviewable for stage in adapter.descriptor.stages):
+        raise ValueError(
+            f"The {adapter.descriptor.display_name} generator has no review step, so it can't pause for review."
+        )
 
 
 def _require_names_available(*, names: list[str], taken: set[str]) -> None:

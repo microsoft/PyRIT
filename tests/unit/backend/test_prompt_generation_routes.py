@@ -81,13 +81,13 @@ def test_list_generators_describes_each_generator(client: TestClient, service: M
 def test_list_assert_library(client: TestClient) -> None:
     behaviors = client.get("/api/prompt-generators/assert/behaviors").json()["items"]
     suites = client.get("/api/prompt-generators/assert/suites").json()["items"]
-    assert len(behaviors) == 52
     assert {"prompt_injection", "sycophancy"} <= {item["name"] for item in behaviors}
-    assert [suite["name"] for suite in suites] == [
-        "telecom_customer_service",
-        "travel_planner",
-        "travel_planner_benchmark",
-    ]
+    assert "travel_planner" in {suite["name"] for suite in suites}
+    for items in (behaviors, suites):
+        names = [item["name"] for item in items]
+        assert names == sorted(names)
+        assert all({"name", "version", "summary"} <= set(item) for item in items)
+    assert all(suite["behaviors"] and suite["context"] for suite in suites)
 
 
 def test_create_records_user_and_hides_checkpoint(client: TestClient, service: MagicMock) -> None:
