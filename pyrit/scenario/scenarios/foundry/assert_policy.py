@@ -52,6 +52,8 @@ from pyrit.scenario.core.technique_requirements import (
 )
 from pyrit.score import (
     AssertJudgmentMode,
+    AssertTraceEvidence,
+    TraceEvidenceRequirement,
     TrueFalseCompositeScorer,
     TrueFalseScoreAggregator,
     TrueFalseScorer,
@@ -67,11 +69,18 @@ from pyrit.score.scorer import _set_snapshot_participation
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from pyrit.models import ScenarioDatasetSizeEstimate, Scorable, ScorableUnion, Score, ScoringExpectation
+    from pyrit.models import (
+        ScenarioDatasetSizeEstimate,
+        Scorable,
+        ScorableUnion,
+        Score,
+        ScoringExpectation,
+        TraceScorable,
+    )
     from pyrit.prompt_target import PromptTarget
     from pyrit.scenario.core.scenario_context import ScenarioContext
     from pyrit.scenario.core.scenario_technique import ScenarioTechnique
-    from pyrit.score import Scorer
+    from pyrit.score import ObservationSource, Scorer
     from pyrit.score.scorer import SnapshotParticipation
 
 logger = logging.getLogger(__name__)
@@ -300,6 +309,11 @@ class AssertPolicy(Scenario):
     repeats every judge call and aggregates the verdicts as ASSERT does. Conversations with a
     blocked or errored target reply are not judged and stay undetermined. Results are grouped by
     technique.
+
+    With a trace source, each judge also reads the execution traces the target recorded for the
+    conversation (tool calls with arguments and results, model calls, and agent steps).
+    ``trace_requirement`` sets the evidence a judge needs before it runs; the default judges every
+    conversation, as ASSERT does, with whatever traces are available.
     """
 
     #: Version 2 runs registered attack techniques instead of ``single_turn``/``multi_turn``.
@@ -315,6 +329,8 @@ class AssertPolicy(Scenario):
         "disabled_judge_dimensions",
         "judge_samples",
         "objective_dimension",
+        "trace_source",
+        "trace_requirement",
     )
     BASELINE_ATTACK_POLICY: ClassVar[BaselineAttackPolicy] = BaselineAttackPolicy.Enabled
 
@@ -324,6 +340,7 @@ class AssertPolicy(Scenario):
         *,
         adversarial_chat: PromptTarget | None = None,
         judge_target: PromptTarget | None = None,
+        trace_source: ObservationSource[TraceScorable] | None = None,
         scenario_result_id: str | None = None,
     ) -> None:
         """
@@ -334,10 +351,14 @@ class AssertPolicy(Scenario):
                 don't set their own. Defaults to the registered adversarial target.
             judge_target (PromptTarget | None): The ASSERT judge. Defaults to the registered scorer
                 target, resolved when the selected groups are read.
+            trace_source (ObservationSource[TraceScorable] | None): Execution evidence for the
+                judges, such as ``LocalTraceCapture.source()``. A registered source can instead be
+                named with the ``trace_source`` parameter. Defaults to None.
             scenario_result_id (str | None): Existing result to resume.
         """
         self._adversarial_chat = adversarial_chat
         self._judge_target = judge_target
+        self._trace_source = trace_source
         self._judges_by_policy: dict[str, _PolicyJudges] = {}
         self._judge_dimensions: tuple[AssertJudgeDimensionSpec, ...] = ()
         self._repeated_ids: set[str] = set()
@@ -423,6 +444,25 @@ class AssertPolicy(Scenario):
                 param_type=str,
                 default=AssertJudgeConfig.DEFAULT_OBJECTIVE_DIMENSION,
             ),
+            Parameter(
+                name="trace_source",
+                description=(
+                    "Registered trace source whose execution evidence the judges read with the transcript. "
+                    "The target must record a trace for each request."
+                ),
+                param_type=str | None,
+                default=None,
+            ),
+            Parameter(
+                name="trace_requirement",
+                description=(
+                    "Trace evidence a judge needs before it runs: none always judges, with whatever traces "
+                    "exist; available needs some trace; complete needs complete traces. Otherwise the result "
+                    "is undetermined."
+                ),
+                param_type=TraceEvidenceRequirement,
+                default=TraceEvidenceRequirement.NONE,
+            ),
         ]
 
     @classmethod
@@ -437,14 +477,16 @@ class AssertPolicy(Scenario):
 
     def _get_identity_params(self) -> dict[str, Any]:
         """
-        Record judge settings that differ from the defaults.
+        Record judge and trace settings that differ from the defaults.
 
         Default settings add nothing, so runs from before judge settings existed still resume.
         Preset files are not recorded: they can't be restored through the API, and every resolved
-        judge, including its dimension content, is already part of the identity.
+        judge, including its dimension content, is already part of the identity. A registered
+        trace source is recorded by name, which is stable to replay; a source passed to the
+        constructor is only identified through the judges.
 
         Returns:
-            dict[str, Any]: The scenario parameters plus non-default judge settings.
+            dict[str, Any]: The scenario parameters plus non-default judge and trace settings.
         """
         params = super()._get_identity_params()
         config = self._get_judge_config()
@@ -457,6 +499,11 @@ class AssertPolicy(Scenario):
             params["judge_samples"] = config.samples
         if config.objective_dimension != defaults.objective_dimension:
             params["objective_dimension"] = config.objective_dimension
+        if self.params.get("trace_source"):
+            params["trace_source"] = self.params["trace_source"]
+        requirement = self._get_trace_requirement()
+        if requirement is not TraceEvidenceRequirement.NONE:
+            params["trace_requirement"] = requirement.value
         return params
 
     def _validate_runtime_configuration(self) -> None:
@@ -466,6 +513,8 @@ class AssertPolicy(Scenario):
         prompt = self.params.get("target_system_prompt")
         if prompt is not None and not prompt.strip():
             raise ValueError("target_system_prompt must not be blank.")
+        if self._trace_source is not None and self.params.get("trace_source"):
+            raise ValueError("Pass a trace source either to the constructor or as the trace_source parameter.")
         self._get_judge_config()
 
     async def _get_run_size_estimate_async(self, *, target_is_configured: bool = False) -> ScenarioRunSizeEstimate:
@@ -490,6 +539,34 @@ class AssertPolicy(Scenario):
             )
         except ValidationError as error:
             raise ValueError(f"Invalid ASSERT judge settings: {describe_validation_errors(error)}") from None
+
+    def _resolve_trace_evidence(self) -> AssertTraceEvidence | None:
+        """
+        Resolve the configured trace source into the judges' trace evidence.
+
+        Returns:
+            AssertTraceEvidence | None: The evidence configuration, or None without a trace source.
+
+        Raises:
+            ValueError: If the named trace source is not registered.
+        """
+        source = self._trace_source
+        name = self.params.get("trace_source")
+        if source is None and name:
+            from pyrit.registry import SourceRegistry
+
+            source = SourceRegistry.get_registry_singleton().instances.get(name)
+            if source is None:
+                raise ValueError(
+                    f"Trace source '{name}' is not registered. Register one with LocalTraceCapture.register() "
+                    "or SourceRegistry before running foundry.assert_policy."
+                )
+        if source is None:
+            return None
+        return AssertTraceEvidence(source=source, requirement=self._get_trace_requirement())
+
+    def _get_trace_requirement(self) -> TraceEvidenceRequirement:
+        return TraceEvidenceRequirement(self.params.get("trace_requirement") or TraceEvidenceRequirement.NONE)
 
     def _has_no_datasets(self) -> bool:
         return self._dataset_config.source_kind is DatasetSourceKind.MEMORY and not self._dataset_config.dataset_names
@@ -575,6 +652,7 @@ class AssertPolicy(Scenario):
         """
         judge_target = self._judge_target or get_default_scorer_target()
         mode = AssertJudgmentMode(self.params["judgment_mode"])
+        trace_evidence = self._resolve_trace_evidence()
         self._judges_by_policy = {}
         for dataset_name, groups in population.items():
             for group in groups:
@@ -589,7 +667,11 @@ class AssertPolicy(Scenario):
                 key = self._get_policy_key(metadata=metadata, system_prompt=system_prompt)
                 if key not in self._judges_by_policy:
                     self._judges_by_policy[key] = self._build_judges(
-                        judge_target=judge_target, metadata=metadata, system_prompt=system_prompt, mode=mode
+                        judge_target=judge_target,
+                        metadata=metadata,
+                        system_prompt=system_prompt,
+                        mode=mode,
+                        trace_evidence=trace_evidence,
                     )
         # The OR composite's identity doesn't depend on judge order. The objective dimension is part of
         # the identity parameters.
@@ -653,6 +735,7 @@ class AssertPolicy(Scenario):
         metadata: AssertGroupMetadata,
         system_prompt: str | None,
         mode: AssertJudgmentMode,
+        trace_evidence: AssertTraceEvidence | None = None,
     ) -> _PolicyJudges:
         """
         Build one judge per enabled dimension for one policy.
@@ -678,6 +761,7 @@ class AssertPolicy(Scenario):
                 target_system_prompt=system_prompt,
                 judgment_mode=mode,
                 samples=self.params["judge_samples"],
+                trace_evidence=trace_evidence,
             ).with_scorer_block_policy(raise_if_scorer_blocks=False)
             judged = _AssertJudgedScorer(scorer=cast("TrueFalseScorer", scorer), dimension_name=name)
             if name == objective_name:
@@ -689,6 +773,7 @@ class AssertPolicy(Scenario):
         return _PolicyJudges(objective=objective, auxiliaries=tuple(auxiliaries))
 
     async def _build_atomic_attacks_async(self, *, context: ScenarioContext) -> list[AtomicAttack]:
+        self._warn_if_target_untraced(target=context.objective_target)
         attacks = self._build_baselines(context=context) if context.include_baseline else []
         local = {_ASSERT_PACKAGE: _build_assert_package_factory()}
         for name, factory in resolve_technique_factories(context=context, extra_factories=local).items():
@@ -740,6 +825,28 @@ class AssertPolicy(Scenario):
         target = requirements.objective_target
         native = target.native_required | {CapabilityName.MULTI_TURN}
         return replace(requirements, objective_target=replace(target, native_required=native))
+
+    def _warn_if_target_untraced(self, *, target: PromptTarget) -> None:
+        """
+        Warn, as ASSERT does, when judges expect traces that the target will not record.
+
+        Tracing belongs to the target, so the scenario does not change it.
+        """
+        if self._trace_source is None and not self.params.get("trace_source"):
+            return
+        if target.trace_config.enabled:
+            return
+        consequence = (
+            "judges will use the transcript alone"
+            if self._get_trace_requirement() is TraceEvidenceRequirement.NONE
+            else "results will be undetermined"
+        )
+        logger.warning(
+            "foundry.assert_policy has a trace source, but the objective target does not record request traces, "
+            "so %s. Give the target trace_config=TargetTraceConfig(enabled=True) "
+            "(for example LocalTraceCapture.trace_config()).",
+            consequence,
+        )
 
     def _apply_turn_limit(self, factory: AttackTechniqueFactory) -> AttackTechniqueFactory:
         """

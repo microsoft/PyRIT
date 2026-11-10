@@ -302,6 +302,11 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   undetermined, not false. For a `MessageScorable`, the scoring layer resolves
   outbound request trace links, regardless of chat role, through the scored response.
   Attacks pass message evidence and route expectations according to scorer support.
+- `OtelExecutionTraceSource` normalizes model, tool, and agent spans, with bounded tool
+  arguments, results, and messages, into an execution snapshot. A conversation scorer given a
+  trace source renders those steps after the turns they produced and owns citation and coverage
+  handling. A `trace_requirement` lets it decline to judge, with an undetermined result, when
+  the evidence it needs is missing.
 - Surface sources read what a location holds for a `SurfaceScorable`, such as files under one
   root directory. `FileWriteScorer` evaluates its `ContentWritten` condition against that
   evidence. The caller owns workspace isolation; a snapshot does not identify its writer.
@@ -331,7 +336,8 @@ If you are contributing to PyRIT, that work will most likely land in one of the 
   When the judge's response is blocked, conversation scoring handles direct and message-triggered
   calls the same way. If it returns an undetermined score, it retains the evidence snapshot.
 - The local SDK exporter supports caller-owned, in-process capture, not a remote collector or
-  durable store.
+  durable store. `LocalTraceCapture` bundles it with a provider and completion tracking for
+  in-process targets.
 - Observation capture requires durable scored evidence. A custom general-scorer template that reads `message_piece` fields does not emit an observation for a loose `ContentScorable`.
 - `Score.scored_expectation` records the complete expectation used for the verdict. `Score.objective` is its read-only compatibility view.
 - Scorer trees check that all conditions have a matching leaf. Wrappers route supported subsets

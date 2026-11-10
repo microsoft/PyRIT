@@ -16,11 +16,12 @@ from pyrit.executor.attack import RedTeamingAttack
 from pyrit.memory import CentralMemory
 from pyrit.models import DatasetSourceInput, ScenarioDatasetRequest
 from pyrit.models.catalog import RunScenarioRequest
-from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, TargetRegistry
+from pyrit.registry import AttackTechniqueRegistry, ScenarioRegistry, SourceRegistry, TargetRegistry
 from pyrit.registry.resolution import reject_non_external_params
 from pyrit.scenario import AttackTechniqueFactory
 from pyrit.scenario.scenarios.foundry import AssertPolicy
 from pyrit.scenario.scenarios.foundry.assert_policy import _build_assert_policy_technique
+from pyrit.score import LocalTraceCapture
 from unit.assert_mocks import make_assert_config, make_assert_result
 from unit.async_utils import TEST_WATCHDOG_SECONDS
 from unit.mocks import MockPromptTarget
@@ -142,3 +143,46 @@ def test_api_rejects_preset_files() -> None:
             declared=AssertPolicy.supported_parameters(),
             owner=_SCENARIO_NAME,
         )
+
+
+@pytest.fixture
+def traced_objective_target() -> Iterator[MockPromptTarget]:
+    capture = LocalTraceCapture()
+    SourceRegistry.reset_registry_singleton()
+    capture.register(name="travel_agent")
+    yield MockPromptTarget()
+    SourceRegistry.reset_registry_singleton()
+    capture.close()
+
+
+async def test_saved_launch_restores_trace_settings_async(
+    service: ScenarioRunService, objective_target: MockPromptTarget, traced_objective_target: MockPromptTarget
+) -> None:
+    trace_params = {"trace_source": "travel_agent", "trace_requirement": "complete"}
+    judge = MockPromptTarget()
+    original = await _initialize_async(objective_target=objective_target, judge=judge, params=trace_params)
+    assert original._scenario_result_id is not None
+    stored = await CentralMemory.get_memory_instance().get_scenario_result_header_async(
+        scenario_result_id=original._scenario_result_id
+    )
+    assert stored is not None
+    stored.metadata[_LAUNCH_REQUEST_METADATA_KEY] = RunScenarioRequest(
+        scenario_name=_SCENARIO_NAME, target_name=_TARGET_NAME, max_concurrency=1, include_baseline=False
+    ).model_dump(mode="json", exclude={"initializers", "initializer_args", "scenario_params", "scenario_result_id"})
+
+    restored = service._restore_launch_request(stored=stored)
+
+    assert restored.scenario_params is not None
+    assert {name: restored.scenario_params[name] for name in trace_params} == trace_params
+    reject_non_external_params(
+        params=restored.scenario_params, declared=AssertPolicy.supported_parameters(), owner=_SCENARIO_NAME
+    )
+    resumed = await _initialize_async(
+        objective_target=objective_target,
+        judge=judge,
+        params={
+            name: value for name, value in restored.scenario_params.items() if name != "incompatible_technique_policy"
+        },
+        scenario_result_id=original._scenario_result_id,
+    )
+    assert resumed._scenario_result_id == original._scenario_result_id
