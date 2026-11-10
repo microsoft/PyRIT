@@ -470,6 +470,8 @@ export interface ManualContinuation {
 }
 
 export interface TargetCapabilities {
+  input_modalities?: string[][]
+  output_modalities?: string[][]
   supports_multi_turn: boolean
   supports_multi_message_pieces?: boolean
   supports_json_schema: boolean
@@ -621,6 +623,7 @@ export interface TargetBinding {
   source_hash: string
   temperature: number
   effective_hash: string
+  capabilities?: TargetCapabilities | null
 }
 
 export interface UnregisteredTarget {
@@ -822,6 +825,8 @@ export interface TargetInfo {
   model_name?: string | null
   identifier_hash: string
   binding?: TargetBinding | null
+  capabilities?: TargetCapabilities | null
+  supports_history_replay?: boolean | null
 }
 
 export type AttackTargetResolutionStatus =

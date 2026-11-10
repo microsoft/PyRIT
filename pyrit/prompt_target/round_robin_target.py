@@ -205,6 +205,39 @@ class RoundRobinTarget(PromptTarget):
                 target.validate_request_generation_config(message)
         return config
 
+    def aggregate_capabilities(self, *, child_capabilities: list[TargetCapabilities]) -> TargetCapabilities:
+        """
+        Combine one capability result per child without changing the children.
+
+        Inputs and feature flags must be supported by every child because
+        requests can reach any child. Outputs include every combination that
+        any child can produce.
+
+        Args:
+            child_capabilities: Capability results in inner-target order.
+
+        Returns:
+            TargetCapabilities: Shared input and feature support, and possible outputs.
+
+        Raises:
+            ValueError: Results are missing or the children have no shared input combination.
+        """
+        if len(child_capabilities) != len(self._targets):
+            raise ValueError("Provide one capability result for every round-robin child.")
+        inputs = frozenset.intersection(*(result.input_modalities for result in child_capabilities))
+        if not inputs:
+            raise ValueError("Round-robin children have no shared supported input modality combination.")
+        return TargetCapabilities.model_validate(
+            {
+                **{
+                    capability.value: all(result.includes(capability=capability) for result in child_capabilities)
+                    for capability in CapabilityName
+                },
+                "input_modalities": inputs,
+                "output_modalities": frozenset.union(*(result.output_modalities for result in child_capabilities)),
+            }
+        )
+
     def _next_target(self) -> PromptTarget:
         """
         Return the next inner target in the weighted rotation.
@@ -251,7 +284,9 @@ class RoundRobinTarget(PromptTarget):
                 # Each child resolves its own defaults; only its internal retries share evidence.
                 for piece in normalized_conversation[-1].message_pieces:
                     RequestGenerationInfo.clear_metadata(piece.prompt_metadata)
-                responses = await target._send_prompt_to_target_async(normalized_conversation=normalized_conversation)
+                responses = await target._send_with_capabilities_async(
+                    normalized_conversation=normalized_conversation, capabilities=self.capabilities
+                )
 
                 inner_id_hash = target.get_identifier().hash
                 for response in responses:

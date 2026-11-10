@@ -18,10 +18,17 @@ from pyrit.models.component_spec import SourceInstanceSpec
 
 __all__ = [
     "CreateTargetRequest",
+    "DetectTargetCapabilitiesRequest",
     "TargetListResponse",
     "TargetTypeEntry",
     "TargetTypeResponse",
 ]
+
+
+class DetectTargetCapabilitiesRequest(BaseModel):
+    """The target identity selected before starting discovery."""
+
+    expected_hash: str = Field(..., min_length=1, max_length=128)
 
 
 def _default_auth_modes() -> list[AuthMode]:

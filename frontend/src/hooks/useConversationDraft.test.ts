@@ -102,6 +102,7 @@ describe('useConversationDraft', () => {
       const binding = {
         version: 1 as const, source_name: 'source', source_hash: registeredTarget.identifier.hash,
         temperature: 0.8, effective_hash: 'effective-hash',
+        capabilities: { ...registeredTarget.capabilities, supports_multi_turn: false },
       }
       const target: TargetInstance = {
         ...registeredTarget, binding,
@@ -133,6 +134,7 @@ describe('useConversationDraft', () => {
       expect(metadata._pyrit_generation.temperature.resolved).toBe(0)
       expect(target.binding).toEqual(binding)
       expect(target.identifier.temperature).toBe(0.8)
+      expect(registeredTarget.capabilities?.supports_multi_turn).toBe(true)
       expect(targetsApi.buildTarget).not.toHaveBeenCalled()
     },
   )
