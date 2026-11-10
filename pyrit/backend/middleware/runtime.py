@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from pyrit.backend.services.runtime_lifecycle import current_operation
+
 if TYPE_CHECKING:
     from pyrit.backend.services.runtime_lifecycle import RuntimeLifecycle
 
@@ -62,6 +64,7 @@ class RuntimeAdmissionMiddleware:
             return
 
         async def execute_async() -> None:
+            current_operation.set(task)
             try:
                 if write:
                     async with runtime.edit_lock:

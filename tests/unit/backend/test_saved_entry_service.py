@@ -399,7 +399,7 @@ async def test_an_entry_a_request_comes_to_hold_while_the_delete_waits_isnt_dele
     version = await _version(tmp_path, TARGETS, "saved_chat")
     busy = iter([True, False])
 
-    def finish_a_request_that_registers_a_holder() -> bool:
+    def finish_a_request_that_registers_a_holder(**_: object) -> bool:
         still_busy = next(busy)
         if not still_busy:
             ConverterRegistry.get_registry_singleton().instances.register(

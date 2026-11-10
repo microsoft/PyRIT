@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import uuid
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
@@ -37,6 +38,9 @@ if TYPE_CHECKING:
     from pyrit.models.catalog import IgnoredRecipeFile, RestoreFailure, SavedEntryRef
 
 logger = logging.getLogger(__name__)
+
+# The admitted request that the running code belongs to, so a request doesn't count itself as work in progress.
+current_operation: ContextVar[asyncio.Task[None] | None] = ContextVar("pyrit_runtime_operation", default=None)
 
 
 class RuntimeLifecycle:
@@ -288,12 +292,12 @@ class RuntimeLifecycle:
 
     def has_active_work(self) -> bool:
         """
-        Return whether a request, run, send, or estimate could still be using a registered entry.
+        Return whether a run, send, estimate, or another request could still be using a registered entry.
 
         Returns:
-            bool: Whether any admitted or background runtime operation remains.
+            bool: Whether any admitted or background runtime operation remains, apart from the caller's request.
         """
-        return self._has_active_work()
+        return self._has_active_work(excluding=current_operation.get())
 
     def forget_restore_failure(self, ref: "SavedEntryRef") -> None:
         """
@@ -306,14 +310,14 @@ class RuntimeLifecycle:
             failure for failure in self.restore_failures if (failure.kind, failure.name) != (ref.kind, ref.name)
         ]
 
-    def _has_active_work(self) -> bool:
-        """Return whether any admitted or background runtime operation remains."""
+    def _has_active_work(self, *, excluding: asyncio.Task[None] | None = None) -> bool:
+        """Return whether any admitted or background runtime operation remains, other than ``excluding``."""
         service = peek_scenario_run_service()
         suite_execution_service = peek_scenario_suite_execution_service()
         return bool(
             (service and service.has_active_work())
             or (suite_execution_service and suite_execution_service.has_active_work())
-            or self.operations
+            or any(operation is not excluding for operation in self.operations)
             or outstanding_estimates()
             or has_active_manual_sends()
             or has_active_analytics_work()

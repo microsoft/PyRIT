@@ -459,6 +459,28 @@ async def test_admitted_manual_send_blocks_reinitialization_without_an_http_requ
         get_manual_send_scheduler.cache_clear()
 
 
+async def test_a_request_doesnt_count_itself_as_active_work_async(runtime: RuntimeLifecycle) -> None:
+    @runtime.app.get("/api/probe-active-work")
+    async def probe() -> dict[str, bool]:
+        return {"active": runtime.has_active_work()}
+
+    release = asyncio.Event()
+
+    async def other_request_async() -> None:
+        await release.wait()
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=runtime.app), base_url="http://test") as client:
+        assert (await client.get("/api/probe-active-work")).json() == {"active": False}
+        other = asyncio.create_task(other_request_async())
+        runtime.operations.add(other)
+        try:
+            assert (await client.get("/api/probe-active-work")).json() == {"active": True}
+        finally:
+            release.set()
+            await other
+            runtime.operations.discard(other)
+
+
 async def test_second_idle_check_closes_admission_race(runtime: RuntimeLifecycle) -> None:
     with patch.object(runtime, "_has_active_work", side_effect=[False, True]):
         await apply_async(runtime)
