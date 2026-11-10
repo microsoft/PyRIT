@@ -5304,6 +5304,7 @@ class MemoryInterface(abc.ABC):
                 "execution": self._seed_standalone_key(seed),
                 "value_sha256": seed.value_sha256,
                 "sequence": getattr(seed, "sequence", None),
+                "parameters": getattr(seed, "parameters", None) or [],
             },
             sort_keys=True,
             separators=(",", ":"),

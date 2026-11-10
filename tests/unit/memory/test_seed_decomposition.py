@@ -223,9 +223,10 @@ class TestSeedDecompositionStorage:
         assert {seed.id: seed.model_dump() for seed in after} == {seed.id: seed.model_dump() for seed in before}
         assert [seed.id for seed in incoming.seeds] == incoming_ids
 
-    @pytest.mark.parametrize("change", ["role", "sequence", "schema", "conditions", "path_steps"])
+    @pytest.mark.parametrize("prepared", [False, True])
+    @pytest.mark.parametrize("change", ["role", "sequence", "schema", "conditions", "parameters", "path_steps"])
     async def test_execution_edits_keep_trees_separate_async(
-        self, sqlite_instance: MemoryInterface, change: str
+        self, sqlite_instance: MemoryInterface, change: str, prepared: bool
     ) -> None:
         first = _decomposed_dataset()
         await _add(sqlite_instance, first)
@@ -239,13 +240,23 @@ class TestSeedDecompositionStorage:
             prompt.response_json_schema = {"type": "object"}
         elif change == "conditions":
             incoming.objectives[-1].conditions = (AnswerMatches(correct_answer="expected"),)
+        elif change == "parameters":
+            prompt.parameters = ["objective"]
         else:
             root = _root(incoming)
             root.paths = tuple(path.model_copy(update={"steps": tuple(reversed(path.steps))}) for path in root.paths)
 
-        await sqlite_instance.add_seeds_to_memory_async(seeds=incoming.seeds, added_by="tester")
+        if prepared:
+            batch = await sqlite_instance.prepare_seed_batch_async(seeds=incoming.seeds, added_by="tester")
+            await sqlite_instance.add_prepared_seed_batch_async(batch)
+        else:
+            await sqlite_instance.add_seeds_to_memory_async(seeds=incoming.seeds, added_by="tester")
 
         assert len(await sqlite_instance.get_seeds_async(dataset_name=DATASET)) == 2 * len(first.seeds)
+        if change == "parameters":
+            templates = await sqlite_instance.get_seeds_async(dataset_name=DATASET, parameters=["objective"])
+            assert len(templates) == 1
+            assert templates[0].parameters == ["objective"]
 
     @pytest.mark.parametrize("batch_size", [1, 1000])
     async def test_decomposition_orders_siblings_by_date_then_id_async(
