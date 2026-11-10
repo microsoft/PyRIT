@@ -322,6 +322,36 @@ async def test_program_failure_is_a_false_verdict_not_undetermined_async(
     assert rationale in score.score_rationale
 
 
+async def test_rejected_input_is_undetermined_with_persisted_unavailable_evidence_async(
+    sqlite_instance: SQLiteMemory,
+) -> None:
+    sandbox = DockerSandboxClient(
+        profiles={_PROFILE: DockerRuntimeProfile(image="python@" + _IMAGE_DIGEST, command=("python3", "-I"))}
+    )
+    scorer = ProgramExecutionScorer(source=ProgramExecutionSource(sandbox=sandbox))
+    expectation = _expectation(_case("x" * 16_385))
+    with (
+        patch.object(sandbox, "_control_async", new_callable=AsyncMock) as control,
+        patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as launch,
+    ):
+        score = (await scorer.score_async(scorable=ContentScorable(value="print(1)"), expectation=expectation))[0]
+    control.assert_not_awaited()
+    launch.assert_not_awaited()
+    assert score.status is ScoreStatus.UNDETERMINED and score.score_value is None
+    assert "the sandbox rejected it" in score.score_rationale
+    assert "standard input instead" in score.score_rationale
+    stored = (await sqlite_instance.get_scores_async(score_ids=[str(score.id)]))[0]
+    assert stored.status is ScoreStatus.UNDETERMINED and stored.score_value is None
+    assert stored.scored_expectation == expectation
+    assert stored.observation_ids == score.observation_ids
+    observation = (await sqlite_instance.get_observations_async(observation_ids=stored.observation_ids))[0]
+    assert observation.acquisition is Acquisition.UNAVAILABLE
+    assert isinstance(observation.payload, ProgramExecutionObservationPayload)
+    assert observation.payload.events == () and observation.payload.program_sha256 is None
+    assert len(observation.payload.reasons) == 1
+    assert "the sandbox rejected it" in observation.payload.reasons[0]
+
+
 async def test_sandbox_failure_is_undetermined_not_false_async(sqlite_instance: SQLiteMemory) -> None:
     sandbox = _FakeSandbox()
     sandbox.error = SandboxExecutionError("service unavailable")

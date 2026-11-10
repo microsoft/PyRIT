@@ -9,7 +9,7 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING
 
-from pyrit._code_execution import SandboxExecutionError
+from pyrit._code_execution import SandboxExecutionError, SandboxInputError
 from pyrit.memory import CentralMemory
 from pyrit.models import (
     Acquisition,
@@ -42,7 +42,8 @@ class ProgramExecutionSource:
     leave evidence unavailable. Code is not extracted from prose.
 
     Each acquisition runs afresh and returns a new observation. Program failures are execution
-    evidence; infrastructure failures are acquisition errors. A run that stops after some
+    evidence; infrastructure failures are acquisition errors. A request the sandbox rejects before
+    running, such as one over its declared limits, leaves evidence unavailable. A run that stops after some
     invocations leaves partial evidence. Streams retain at most ``max_output_chars`` characters
     with truncation flags, and cleanup warnings remain in ``sandbox_warnings`` metadata.
     """
@@ -105,6 +106,10 @@ class ProgramExecutionSource:
                 program=program,
                 runtime_profile_name=scorable.runtime_profile_name,
                 invocations=scorable.invocations,
+            )
+        except SandboxInputError as error:
+            return self._observation(
+                scorable=scorable, acquisition=Acquisition.UNAVAILABLE, reasons=(f"the sandbox rejected it: {error}",)
             )
         except SandboxExecutionError as error:
             logger.warning("Sandbox could not run program under %s: %s", scorable.runtime_profile_name, error)

@@ -482,6 +482,7 @@ def test_code_execution_is_independent_of_component_layers() -> None:
         import pyrit.models
         import pyrit.models.code_execution as execution_models
         from pyrit._code_execution import DockerRuntimeProfile, DockerSandboxClient, SandboxClient
+        from pyrit._code_execution import RuntimeProfile, SandboxCapabilities, SandboxInputError
         from pyrit.models.code_execution import (
             _ProgramExecutionEvent, _ProgramInvocation, _RuntimeProfileName, _SandboxRun,
         )
@@ -498,6 +499,9 @@ def test_code_execution_is_independent_of_component_layers() -> None:
             profiles={"python": DockerRuntimeProfile(image="python@sha256:" + "a" * 64, command=("python3",))}
         )
         assert isinstance(client, SandboxClient)
+        assert isinstance(client.get_capabilities(), SandboxCapabilities)
+        assert client.get_capabilities().runtime_profiles == (RuntimeProfile(name="python"),)
+        assert issubclass(SandboxInputError, ValueError)
         assert client.get_runtime_profile_names() == frozenset({"python"})
         assert client.get_identifier().class_module == "pyrit._code_execution.docker_client"
         assert importlib.util.find_spec("pyrit.code_execution") is None
