@@ -438,9 +438,9 @@ async def test_deadline_distinguishes_stalled_capture_client_and_program_async(
     ):
         if error is not None:
             with pytest.raises(SandboxExecutionError, match=error):
-                await _run_async(client, timeout_seconds=0.05)
+                await _run_async(client)
         else:
-            event = (await _run_async(client, timeout_seconds=0.05)).events[0]
+            event = (await _run_async(client)).events[0]
             assert event.timed_out is (not eof)
             assert event.exit_code == (0 if eof else None)
             assert event.stdout_truncated and event.stderr_truncated

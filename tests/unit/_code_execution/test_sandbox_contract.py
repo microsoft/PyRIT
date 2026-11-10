@@ -9,6 +9,7 @@ import asyncio
 import shutil
 from contextlib import suppress
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
@@ -28,7 +29,7 @@ from pyrit._code_execution import (
     SandboxStateKind,
     check_sandbox_contract_async,
 )
-from pyrit._code_execution.sandbox_contract import _check_session_hooks_async
+from pyrit._code_execution.sandbox_contract import _check_session_hooks_async, _check_timeout_async
 from pyrit.models import ComponentIdentifier
 
 if TYPE_CHECKING:
@@ -94,7 +95,7 @@ class _LeavesTimedOutRunsRunning(LocalPythonSandbox):
         return b"", b""
 
 
-@pytest.mark.parametrize("state_kind", [SandboxStateKind.ENVIRONMENT, SandboxStateKind.CALL])
+@pytest.mark.parametrize("state_kind", [SandboxStateKind.ENVIRONMENT, SandboxStateKind.SESSION, SandboxStateKind.CALL])
 async def test_contract_passes_for_a_sandbox_that_follows_the_rules_async(
     tmp_path: Path, state_kind: SandboxStateKind
 ) -> None:
@@ -147,7 +148,6 @@ async def test_contract_catches_a_timeout_that_leaves_the_program_running_async(
         {"max_arguments_bytes": 28},
         {"max_output_bytes": 1},
         {"max_output_bytes": 8},
-        {"max_session_seconds": 61.5, "default_timeout_seconds": 1.0},
     ],
 )
 async def test_contract_respects_small_declared_budgets_async(
@@ -173,6 +173,25 @@ async def test_contract_still_detects_dropped_arguments_with_small_budgets_async
             await check_sandbox_contract_async(sandbox=sandbox, probes=SandboxProbes.python())
     finally:
         await sandbox.close_async()
+
+
+async def test_contract_timeout_probe_fits_the_exact_session_budget_async() -> None:
+    sandbox = FakeSandbox(
+        capabilities=FakeSandbox.DEFAULT_CAPABILITIES.model_copy(
+            update={"max_session_seconds": 61.5, "default_timeout_seconds": 1.0}
+        )
+    )
+    sandbox._handler = lambda run: (
+        ProcessResult(exit_code=None, timed_out=True) if len(sandbox.runs) == 1 else ProcessResult(exit_code=0)
+    )
+    with patch("pyrit._code_execution.sandbox.time", SimpleNamespace(monotonic=lambda: 1_000.0)):
+        try:
+            await _check_timeout_async(sandbox=sandbox, probes=SandboxProbes.python(), timeout_seconds=2.0)
+            assert len(sandbox.runs) == 2
+            assert [run.timeout_seconds for run in sandbox.runs] == [1.0, 1.0]
+            assert sandbox.get_capabilities().max_session_seconds == 61.5
+        finally:
+            await sandbox.close_async()
 
 
 async def test_contract_counts_utf8_comment_prefix_bytes_async(tmp_path: Path) -> None:

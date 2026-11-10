@@ -165,6 +165,8 @@ class _RunProgramTool(_SandboxTool):
         capabilities = sandbox.get_capabilities()
         if capabilities.state_kind is SandboxStateKind.ENVIRONMENT:
             persistence = "Files it writes stay for later calls until the sandbox is reset."
+        elif capabilities.state_kind is SandboxStateKind.SESSION:
+            persistence = "Files it writes stay for later calls in this session; ending the session discards them."
         else:
             persistence = "Nothing persists between calls."
         runtime = profile.description or profile.name
@@ -483,8 +485,8 @@ class SandboxToolProvider:
     Give a model tools that run its code in a ``Sandbox``.
 
     Each runtime becomes a ``run_<tool_name>`` tool, such as ``run_python``; the name comes from the
-    runtime's ``tool_name``, or else from its name. An ``environment`` sandbox with a file runtime also
-    offers ``write_file``, ``read_file`` and ``list_dir``, which run as small Python programs. Each call
+    runtime's ``tool_name``, or else from its name. A stateful sandbox with a file runtime also offers
+    ``write_file``, ``read_file`` and ``list_dir``, which run as small Python programs. Each call
     runs once, and its result is JSON: the exit code and output, cut at ``max_output_chars`` per stream.
     Arguments are checked against the sandbox's limits before anything runs, so a rejected call is never
     recorded as invoked. An adapter's input rejection raises ``ToolInputError`` with the same no-run
@@ -564,7 +566,7 @@ class SandboxToolProvider:
             _RunProgramTool(sandbox=self._sandbox, profile=profile, max_output_chars=self._max_output_chars)
             for profile in capabilities.runtime_profiles
         ]
-        if capabilities.state_kind is SandboxStateKind.ENVIRONMENT and capabilities.file_runtime_profile_name:
+        if capabilities.state_kind is not SandboxStateKind.CALL and capabilities.file_runtime_profile_name:
             tools += [
                 _WriteFileTool(sandbox=self._sandbox),
                 _ReadFileTool(sandbox=self._sandbox, max_output_chars=self._max_output_chars),

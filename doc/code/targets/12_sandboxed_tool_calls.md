@@ -35,7 +35,7 @@ The model sees ordinary tools in its own API:
 | Tool | What it does |
 |------|--------------|
 | `run_<runtime>` | Runs a program once, such as `run_python` or `run_powershell`, with optional arguments, standard input and timeout |
-| `write_file`, `read_file`, `list_dir` | Work with files in an `environment` sandbox whose `file_runtime_profile_name` names a Python 3 runtime |
+| `write_file`, `read_file`, `list_dir` | Work with files in an `environment` or `session` sandbox whose `file_runtime_profile_name` names a Python 3 runtime |
 
 Results are JSON. `run_<runtime>` returns the exit code, the output of each stream (cut at
 `max_output_chars`, and marked when cut), whether the program timed out, and how long it took. A program
@@ -60,7 +60,9 @@ await SandboxRegistry.get_registry_singleton().close_all_async()
 ```
 
 `close_async` is final. To end a session and keep using the sandbox, use `release_async`, which can also
-retry a close that couldn't be confirmed, even after `close_async`.
+retry a close that couldn't be confirmed, even after `close_async`. It does not lift quarantine from
+uncertain work, reset, or session-state loss; that needs a confirmed reset or `recover_async` after an
+operator has verified backend recovery. Ending a `session` sandbox's session discards its state.
 
 ## Check what the code did
 
@@ -149,6 +151,7 @@ and so how to share the sandbox:
 | State kind | Meaning | What PyRIT does |
 |------------|---------|-----------------|
 | `environment` | State lives in the machine and survives closing a session | One shared session, which callers take turns using |
+| `session` | State ends with the session | One shared session; no automatic idle eviction, renewal or replacement |
 | `call` | Nothing persists between calls | No sessions; calls run concurrently; no file tools |
 
 Adapters raise these errors, so PyRIT knows what is safe to retry:
@@ -157,7 +160,8 @@ Adapters raise these errors, so PyRIT knows what is safe to retry:
 |-------|---------|-----------------|
 | `SandboxInputError` | The request was invalid, and nothing ran | Reports it to the caller, or to the model |
 | `SandboxBusyError` | The sandbox can't start the work right now, and nothing ran | Retries opening a session until the deadline; reports a busy run |
-| `SandboxSessionLostError` | The session is gone, and nothing ran | Reopens the session and retries once |
+| `SandboxSessionLostError` | The session is gone, and nothing ran | Reopens and retries once for an `environment` sandbox |
+| `SandboxStateLostError` | Session-owned state was lost | Reports the loss and requires explicit recovery or reset, without replacement |
 | `SandboxRevisionChangedError` | A reset was refused, because the revision changed | Reports it to the caller |
 | anything else | The outcome is unknown | Closes the session and never retries |
 
@@ -171,8 +175,13 @@ sandbox, it also:
 - when a caller gives up, lets its running program finish, holding the sandbox so nothing runs beside it,
   and starts nothing more for it, not even a run that was waiting out a busy sandbox;
 - quarantines the sandbox when it can't confirm that a session closed, that a run's processes stopped, or
-  that a reset finished, until `release_async`, which retries the close, or `reset_async`;
+  that a reset finished; `release_async` retries closes, while uncertain work or reset requires a confirmed
+  reset or operator `recover_async`;
 - resets only after the running call finishes, closing the session first, and records the outcome.
+
+A `session` sandbox uses the same serialization and cancellation rules, but does not idle-close or renew
+its session. A reset is attempted before closing, so a refused reset preserves its state.
+The provider only shares the sandbox; it does not release, reset or recover it between model calls.
 
 A `call` sandbox's calls run in their callers' tasks, so the adapter cleans up when a caller gives up.
 

@@ -137,7 +137,7 @@ async def _check_all_async(*, sandbox: Sandbox, probes: SandboxProbes, timeout_p
     )
     await _check_arguments_and_input_async(sandbox=sandbox, probes=probes)
     await _check_status_async(sandbox=sandbox)
-    if capabilities.state_kind is SandboxStateKind.ENVIRONMENT:
+    if capabilities.state_kind is not SandboxStateKind.CALL:
         await _check_state_persists_async(sandbox=sandbox, probes=probes)
         await _check_session_hooks_async(sandbox=sandbox, probes=probes)
     else:
@@ -201,13 +201,14 @@ async def _check_state_persists_async(*, sandbox: Sandbox, probes: SandboxProbes
     name, token = await _write_marker_async(sandbox=sandbox, probes=probes)
     _require(
         await _read_marker_async(sandbox=sandbox, probes=probes, name=name) == token,
-        "An environment sandbox must keep files between calls.",
+        "A stateful sandbox must keep files between calls in the same session.",
     )
     await sandbox.release_async()
-    _require(
-        await _read_marker_async(sandbox=sandbox, probes=probes, name=name) == token,
-        "An environment sandbox's files must survive closing its session.",
-    )
+    after_close = await _read_marker_async(sandbox=sandbox, probes=probes, name=name)
+    if sandbox.get_capabilities().state_kind is SandboxStateKind.ENVIRONMENT:
+        _require(after_close == token, "An environment sandbox's files must survive closing its session.")
+    else:
+        _require(after_close == "", "A session sandbox must discard its files when its session ends.")
 
 
 async def _check_nothing_persists_async(*, sandbox: Sandbox, probes: SandboxProbes) -> None:
@@ -315,7 +316,7 @@ async def _check_timeout_async(*, sandbox: Sandbox, probes: SandboxProbes, timeo
     elapsed = time.monotonic() - started
     _require(event.timed_out and event.exit_code is None, "A run past its timeout must be marked timed out.")
     _require(elapsed < timeout + 20, f"A run with a {timeout:g} s timeout took {elapsed:.0f} s to come back.")
-    if sandbox.get_capabilities().state_kind is SandboxStateKind.ENVIRONMENT:
+    if sandbox.get_capabilities().state_kind is not SandboxStateKind.CALL:
         # The probe writes its marker one second after its timeout; give a stray run one more second.
         await asyncio.sleep(max(timeout + 2 - elapsed, 0.5))
         _require(
