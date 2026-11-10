@@ -116,8 +116,8 @@ Core components are pluggable bricks. Each one can be swapped, combined, or repl
 
 **Responsibility**: Run PyRIT against something. A scenario turns user input into datasets paired with attack techniques, and runs them against an objective target with its scorers.
 
-- Supply the run inputs: objectives, the objective target, and the objective scorer.
-- Own parallelism and resiliency: concurrency, retries, and resuming interrupted runs.
+- **Declare the scenario; let the base class run it.** Subclass `Scenario`, give the base its technique class, default datasets, and objective scorer, and implement `_build_atomic_attacks_async`, its one extension point. For a technique × dataset matrix, that's one call to `build_matrix_atomic_attacks`; `Cyber` is a good model.
+- Leave the run to the base class: run parameters (including the objective target), dataset preparation, concurrency, retries, resume, and results. Don't rebuild any of it in a subclass. If the base can't express what you need, extend the base.
 - Decide whether to skip or fail on incompatible techniques.
 - Keep the results of a run independent; none depends on another. Anything that adapts to results within a run belongs in an attack, such as a compound attack.
 - **Does not own**: conversation logic, new attack algorithms, or new datasets. A scenario selects and packages existing techniques and datasets.
