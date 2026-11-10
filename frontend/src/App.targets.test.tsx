@@ -180,6 +180,8 @@ describe('App target selection with the chat composer', () => {
     expect(screen.queryByRole('combobox', { name: 'Objective target' })).not.toBeInTheDocument()
     await waitFor(() => expect(readUserPreferences('tenant:alice').lastUsedTargets?.objective?.registryName).toBe('target-b'))
     await user.click(screen.getByRole('link', { name: 'Open new chat' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-a'))
+    await user.click(screen.getByRole('button', { name: 'New attack', exact: true }))
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Objective target' })).toHaveValue('target-b'))
   })
 

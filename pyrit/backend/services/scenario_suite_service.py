@@ -9,8 +9,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Literal
 
-from azure.core.exceptions import AzureError
-
 from pyrit.backend.models import (
     ScenarioSuiteEntryStatus,
     ScenarioSuiteListResponse,
@@ -25,6 +23,7 @@ from pyrit.models.catalog import (
     ScenarioSuiteRegistryEntry,
 )
 from pyrit.registry import ScenarioPresetRegistry, ScenarioSuiteRegistry
+from pyrit.registry.file_document_storage import DocumentStorageUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +208,7 @@ class ScenarioSuiteService:
                 )
 
             stored_version = registry.get_preset_version(name=preset_name)
-        except (AzureError, OSError):
+        except DocumentStorageUnavailableError:
             logger.warning(
                 "Could not project scenario preset '%s' because preset storage is unavailable.",
                 preset_name,

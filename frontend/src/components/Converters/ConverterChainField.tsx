@@ -70,11 +70,13 @@ export default function ConverterChainField({
     if (index + delta < 0 || index + delta >= value.length) return
     const next = [...value]
     const [entry] = next.splice(index, 1)
-    next.splice(index + delta, 0, entry)
     const [entryId] = ids.splice(index, 1)
-    ids.splice(index + delta, 0, entryId)
-    setEntryIds(ids)
-    onChange(next)
+    if (entry !== undefined && entryId !== undefined) {
+      next.splice(index + delta, 0, entry)
+      ids.splice(index + delta, 0, entryId)
+      setEntryIds(ids)
+      onChange(next)
+    }
   }
 
   return <section className={styles.root} aria-label={label}>
@@ -98,7 +100,7 @@ export default function ConverterChainField({
           } : undefined}
         onReset={() => onChange(value.map((entry, position) => position === index ? name : entry))}
         onSave={allowTemporary && converter && typeof selection !== 'string' ? () => setSaving({
-          entryId: ids[index], source: selection, converterType: converter.identifier.class_name, generation,
+          entryId: ids[index] ?? '', source: selection, converterType: converter.identifier.class_name, generation,
         }) : undefined}
         onMove={(delta) => move(index, delta)}
         onDragStart={(event) => {

@@ -24,6 +24,7 @@ from pyrit.backend.models.converters import (
     UnregisteredConverter,
 )
 from pyrit.backend.services import get_converter_service
+from pyrit.registry import SavedEntryUnavailableError
 
 router = APIRouter(prefix="/converters", tags=["converters"])
 
@@ -89,6 +90,8 @@ async def create_converter(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+    except SavedEntryUnavailableError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -165,6 +168,8 @@ async def preview_conversion(request: ConverterPreviewRequest) -> ConverterPrevi
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+    except SavedEntryUnavailableError:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
